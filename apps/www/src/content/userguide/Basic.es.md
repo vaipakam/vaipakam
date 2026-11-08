@@ -1364,7 +1364,19 @@ Mientras el protocolo está en pausa, la página Bóveda lo dice arriba: los ret
 
 ### Tus ofertas
 
-Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada oferta cuyo token de posición tienes ahora, la más reciente primero. Cada una muestra el estado que informa el protocolo: abierta, completada, vendida, vencida o cancelada, y los filtros sobre la lista cuentan cada estado. Una solicitud de préstamo figura como vendida cuando su garantía se vendió mediante su anuncio en el mercado antes de que alguien la aceptara: no se abrió ningún préstamo y lo obtenido en la venta fue a la bóveda de quien la creó. Una oferta abierta mantiene en tu bóveda lo que presta o compromete hasta que se completa o se cancela; una vencida lo mantiene ahí hasta que alguien la limpia. Cuando el protocolo cancela una oferta que nada completó, borra sus condiciones, así que la página muestra solo su número y su estado. Si otra billetera tiene el token de posición de una oferta que creaste, aún puedes cancelarla y la devolución llega a ti; si tienes una que creó otra billetera, solo esa billetera puede cancelarla antes de que venza. El libro de ofertas sigue en la app actual, y la página enlaza a él.
+Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada oferta cuyo token de posición tienes ahora, la más reciente primero. Cada una muestra el estado que informa el protocolo: abierta, completada, vendida, vencida o cancelada, y los filtros sobre la lista cuentan cada estado. Una solicitud de préstamo figura como vendida cuando su garantía se vendió mediante su anuncio en el mercado antes de que alguien la aceptara: no se abrió ningún préstamo y lo obtenido en la venta fue a la bóveda de quien la creó. Una oferta abierta mantiene en tu bóveda lo que presta o compromete hasta que se completa o se cancela; una vencida lo mantiene ahí hasta que alguien la limpia. Cuando el protocolo cancela una oferta que nada completó, borra sus condiciones, así que la página muestra solo su número y su estado. Si otra billetera tiene el token de posición de una oferta que creaste, aún puedes cancelarla y la devolución llega a ti; si tienes una que creó otra billetera, solo esa billetera puede cancelarla antes de que venza. Debajo de tus ofertas está el libro de ofertas, que se describe a continuación.
+
+<a id="offer-book"></a>
+
+### El libro de ofertas
+
+Debajo de tus ofertas, el libro de ofertas muestra todas las ofertas abiertas de la red, de la más nueva a la más antigua, y puedes leerlo sin conectar una billetera. Las pestañas separan los préstamos de un token de los alquileres de NFT, un filtro muestra las ofertas de prestamistas, las solicitudes de prestatarios o ambas, y una vez conectado puedes ocultar tus propias ofertas. Las ofertas más antiguas se cargan con «Mostrar ofertas anteriores»; los filtros se aplican a lo leído, y la línea de recuento dice cuánto es. El libro viene del índice del protocolo, que puede ir unos minutos por detrás de la cadena, así que solo te señala ofertas: abre una para verla tal como la guarda la cadena. Una oferta pasada su vencimiento se marca como vencida; cualquiera puede limpiarla, y lo que bloqueaba vuelve a su creador. Si el índice no se puede leer, el libro lo dice en lugar de mostrar que no hay ofertas.
+
+<a id="offer-detail"></a>
+
+### La página de una oferta
+
+Cada oferta tiene su propia página, leída de la cadena haya o no una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes.
 
 <a id="offer-cancel"></a>
 

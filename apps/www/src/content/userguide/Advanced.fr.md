@@ -2523,6 +2523,18 @@ L'avis lit, dans un même bloc, `paused`, `VaultPayoutFacet.isEscapeOpen`, `esca
 
 La liste est l'union de `getUserOffersPaginated(wallet)` (l'index par créateur, qui garde un id annulé) et de `getUserPositionOffersPaginated(wallet)` (les offres dont le portefeuille détient le jeton de position), lues par lots d'au plus 250 via `MetricsDashboardFacet.getOffersWithState`, qui répond position par position. Chaque ligne est associée à l'id demandé : une offre annulée sans exécution a son enregistrement supprimé, la vue rapporte donc l'id 0 avec l'état dérivé Annulée, et la ligne n'affiche aucune condition plutôt que des conditions reconstruites. Une offre annulée après une exécution partielle garde son enregistrement avec `accepted` positionné et se lit comme exécutée. Les compteurs des filtres portent sur les lignes lues ; si l'un des index n'a pas pu être lu jusqu'au bout, la page dit que la liste peut être incomplète.
 
+<a id="offer-book"></a>
+
+### Le carnet d'offres
+
+Le carnet lit `GET /offers/active?chainId&limit=50&before=<offerId>` de l'indexeur, la plus récente d'abord par identifiant d'offre, paginé par `nextBefore`. L'indexeur garde `active` une offre échue (l'expiration est paresseuse sur la chaîne), donc une ligne dont le `expiresAt` est passé est marquée expirée. `isSaleVehicle`, `isOffsetVehicle` et `refinanceTargetLoanId` (null = non lu) marquent le type, et `positionFlow.movedSinceOpened` une position liée qui a bougé (#3205). Chaque champ est analysé exactement ; une ligne qui échoue est comptée comme non lue. L'onglet est `assetType` (0 = un prêt ERC-20, sinon une location), le côté `offerType`. La requête est invalidée par le canal push et relue toutes les 60 s tant qu'elle est visible ; une panne de l'index est signalée, jamais un carnet vide.
+
+<a id="offer-detail"></a>
+
+### La page d'une offre
+
+`/offers/:id` lit, à un même bloc, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` et `getOfferLinkedLoanId(id)`, via le portefeuille s'il est connecté, sinon via le proxy en lecture seule. Un créateur nul signifie que l'enregistrement a été supprimé (une annulation sans rien de pourvu) ou jamais écrit ; le protocole ne tient aucun compte des offres, donc la page ne dit pas lequel. Un prêt lié non nul marque une vente de prêt (offre d'emprunteur) ou une compensation (offre de prêteur) ; le `refinanceTargetLoanId` d'une offre d'emprunteur marque une demande de refinancement. La prise exécute le flux partagé `acceptOffer` (`AcceptTerms` signés, approbation exacte, simulation, résultat mesuré) sous sa propre clé de stockage ; l'annulation et le nettoyage exécutent le flux partagé `cancelOffer`. Les locations, la garantie NFT, les ventes de prêt et les compensations renvoient à l'application actuelle.
+
 <a id="offer-cancel"></a>
 
 ### Annuler une offre

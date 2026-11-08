@@ -1,9 +1,12 @@
-// Watch-only live review of the Offers page (OFF-46, OFF-48, OFF-49,
-// RB-OFFERS-MINE, RB-OFFER-CANCEL) (live tier, run after each deploy),
+// Watch-only live review of the Offers page (OFF-39, OFF-40, OFF-41,
+// OFF-45, OFF-46, OFF-48, OFF-49, RB-OFFERS-MINE, RB-OFFER-BOOK,
+// RB-OFFER-PAGE, RB-OFFER-CANCEL) (live tier, run after each deploy),
 // through the shared watch-only wallet (watch-wallet.cjs): nothing can be
 // sent. Opens Offers as <address> and prints the page: the state filters
 // with their counts and every row under All, then the review of the first
-// Cancel or Clean up button it finds, left unsigned. Checks that nothing
+// Cancel or Clean up button it finds, left unsigned; then the offer book
+// (its count line and first rows) and the page of the book's first offer,
+// with what it offers the wallet, nothing clicked. Checks that nothing
 // scrolls sideways and saves full-page screenshots per device.
 // Usage: node e2e/live/offers-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
@@ -48,6 +51,28 @@ async function session(b, opts, label) {
   } else console.log('----- no offer this wallet can cancel or clean up');
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
   await p.screenshot({ path: `${OUT}/live-offers-${label}.png`, fullPage: true });
+  const book = p.getByTestId('offer-book');
+  await book
+    .locator('[data-testid="offer-book-count"], [data-testid="offer-book-failed"]')
+    .first()
+    .waitFor({ timeout: 60000 })
+    .catch(() => {});
+  const bookRows = book.locator('[data-testid^="book-row-"]');
+  console.log(`----- offer book (${await bookRows.count()} rows shown)`);
+  if (await book.count()) console.log((await text(book)).split('\n').slice(0, 40).join('\n'));
+  const first = book.locator('[data-testid^="book-link-"]').first();
+  if (await first.count()) {
+    await first.click();
+    await p
+      .locator('[data-testid="offer-state"], [data-testid="offer-no-terms"]')
+      .first()
+      .waitFor({ timeout: 60000 })
+      .catch(() => {});
+    await p.waitForTimeout(2000);
+    console.log(`----- offer page ${p.url()}\n${await text(p.locator('main'))}`);
+    console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
+    await p.screenshot({ path: `${OUT}/live-offer-page-${label}.png`, fullPage: true });
+  } else console.log('----- the book shows no offer to open');
   console.log(`errors: ${JSON.stringify(errs)}`);
   await ctx.close();
 }

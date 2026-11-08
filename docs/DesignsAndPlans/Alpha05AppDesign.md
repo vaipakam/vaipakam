@@ -1278,8 +1278,56 @@ above. Each resolves here, so a route reviewer needs no private file:
   cleared its terms and shows only its number and state, never rebuilt
   terms. An offer held by one wallet but created by another says who may
   cancel it and where its return goes. The offer line is one shared helper,
-  the same as Home's open offers. The offer book comes in a later slice; the
-  page says so and links the current app for it.
+  the same as Home's open offers. Each row opens the offer's own page
+  (RB-OFFER-PAGE).
+- **RB-OFFER-BOOK** — the offer book (OFF-39, OFF-40, OFF-43) is on the
+  Offers page below the wallet's own offers and is read with or without a
+  wallet: every open offer the index files on the screen's network, newest
+  first, a page at a time ("Show older offers"), in two tabs (loans of a
+  token, NFT rentals), with a side filter and, when a wallet is connected,
+  a switch that hides its own offers. The filters apply to what has been
+  read so far, and the count line says how many that is and whether older
+  offers remain. The index only names candidates: no row carries an action,
+  and each opens the offer's page, which reads the chain. A lapsed offer the
+  index still files as open is tagged expired, with anyone allowed to clean
+  it up; a refinance request, a loan sale, an offset and an offer whose
+  bound position moved are tagged by kind, and a request the index has not
+  read as refinance or not says it may be one. A borrower request's
+  collateral reads as its range when it has one, and as "at least" its
+  floor when the index has not read the ceiling, never as the floor alone;
+  an ERC-1155 leg, rented or pledged, states its unit count.
+  A row the index returned in
+  a shape the app cannot read is counted as unread, never dropped silently;
+  a failed read is a degraded-source warning ("nothing here means no
+  offers"), and a failed re-read behind a list already shown says the list
+  may be out of date. The book refreshes on the index's push signal and on
+  a bounded interval while visible (RB-REFRESH). Advanced sorting and the
+  remaining filters (asset, duration, amount, liquidity) are later work.
+- **RB-OFFER-PAGE** — an offer's page (`/offers/:id`, OFF-41, OFF-45) reads
+  it from the chain at one block, with or without a wallet: the stored
+  terms, the protocol's state, and the running loan a loan-sale or offset
+  offer is tied to. The protocol keeps no count of offers and clears the
+  terms of an offer cancelled with nothing filled, so an id with no stored
+  terms says exactly that: cancelled, or never posted, and the protocol does
+  not say which. The page states the side, the creator, the amount (a range
+  when it has one), what is already filled, the collateral asked for or
+  pledged (a request's range when it has one, and what of it is already
+  committed to loans), the term and when the offer lapses, and what a refinance
+  request, loan sale or offset would do. What the reader may do follows
+  from that read: take an open loan offer of a token against token
+  collateral whole, through the same acceptance flow and Terms gate as
+  Borrow and Lend (OFF-50, kept in its own store so a review in flight on
+  another page never shows here, and one review at a time); cancel their
+  own open offer, or clean up an expired one whoever created it, through
+  RB-OFFER-CANCEL; or, for a rental, an NFT-collateral offer, a loan sale or
+  an offset, be told it is taken in the current app for now, with a link.
+  An ended offer says how it ended and offers nothing. A take, cancel or
+  clean-up that is open or in flight keeps its panel, finish card included,
+  after its own transaction changes the offer, even when a cancel cleared
+  the terms, and a take whose offer the creator cancels under the review
+  keeps its panel and its Close. Without a wallet the page asks for one at the action, never
+  before reading, and a failed re-read behind terms already shown says the
+  terms are the earlier read and may be out of date.
 - **RB-OFFER-CANCEL** — cancelling an offer (OFF-48) or cleaning up an
   expired one (OFF-49) is one flow, keyed by the offer, opened from its row.
   The review is read at one block: the offer, the protocol's state for it,

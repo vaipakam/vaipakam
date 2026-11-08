@@ -2513,6 +2513,18 @@ Der Hinweis liest in einem Block `paused`, `VaultPayoutFacet.isEscapeOpen`, `esc
 
 Die Liste ist die Vereinigung von `getUserOffersPaginated(wallet)` (dem Index je Ersteller, der eine stornierte ID behält) und `getUserPositionOffersPaginated(wallet)` (den Angeboten, deren Positions-Token die Wallet hält), gelesen in Stapeln von höchstens 250 über `MetricsDashboardFacet.getOffersWithState`, das Position für Position antwortet. Jede Zeile wird der ID zugeordnet, nach der gefragt wurde: Bei einem ohne Erfüllung stornierten Angebot ist der Datensatz gelöscht, die Ansicht meldet ID 0 mit dem abgeleiteten Status Storniert, und die Zeile zeigt keine Bedingungen statt rekonstruierter. Ein nach teilweiser Erfüllung storniertes Angebot behält seinen Datensatz mit gesetztem `accepted` und gilt als erfüllt. Die Filterzahlen werden über die gelesenen Zeilen gebildet; konnte einer der Indizes nicht bis zum Ende gelesen werden, sagt die Seite, dass die Liste unvollständig sein kann.
 
+<a id="offer-book"></a>
+
+### Das Orderbuch
+
+Das Buch liest `GET /offers/active?chainId&limit=50&before=<offerId>` des Indexers, das neueste zuerst nach Angebots-ID, seitenweise über `nextBefore`. Der Indexer behält ein verfallenes Angebot als `active` (der Ablauf ist on-chain träge), daher wird eine Zeile, deren `expiresAt` verstrichen ist, als abgelaufen markiert. `isSaleVehicle`, `isOffsetVehicle` und `refinanceTargetLoanId` (null = nicht gelesen) markieren die Art, `positionFlow.movedSinceOpened` eine bewegte gebundene Position (#3205). Jedes Feld wird exakt geparst; eine Zeile, die scheitert, zählt als ungelesen. Der Reiter ist `assetType` (0 = ein ERC-20-Kredit, sonst eine Miete), die Seite `offerType`. Die Abfrage wird durch die Push-Schiene invalidiert und alle 60 s neu gelesen, solange sie sichtbar ist; ein Indexfehler wird genannt, nie ein leeres Buch.
+
+<a id="offer-detail"></a>
+
+### Die Seite eines Angebots
+
+`/offers/:id` liest an einem Block `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` und `getOfferLinkedLoanId(id)`, über die Wallet, wenn eine verbunden ist, sonst über den Nur-Lese-Proxy. Ein Ersteller null bedeutet, dass der Datensatz gelöscht (eine Stornierung ohne Füllung) oder nie geschrieben wurde; das Protokoll führt keine Angebotszahl, daher sagt die Seite nicht, welches von beiden. Ein verknüpfter Kredit ungleich null markiert einen Kreditverkauf (ein Angebot eines Kreditnehmers) oder einen Offset (ein Angebot eines Kreditgebers); `refinanceTargetLoanId` eines Kreditnehmer-Angebots markiert eine Refinanzierungsanfrage. Die Annahme läuft über den gemeinsamen `acceptOffer`-Ablauf (signierte `AcceptTerms`, exakte Freigabe, Probelauf, gemessenes Ergebnis) unter einem eigenen Speicherschlüssel; Stornieren und Aufräumen laufen über den gemeinsamen `cancelOffer`-Ablauf. Mieten, NFT-Sicherheiten, Kreditverkäufe und Offsets verlinken die aktuelle App.
+
 <a id="offer-cancel"></a>
 
 ### Ein Angebot stornieren

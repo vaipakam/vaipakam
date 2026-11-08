@@ -6,7 +6,8 @@
  */
 import type { CopyAccess } from '../copy/useCopy';
 import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../positions/model';
-import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { assetAmount } from '../positions/assetAmount';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps } from '../ui/format';
 
 type Hex = `0x${string}`;
@@ -24,12 +25,15 @@ export interface OfferLineFields {
   interestRateBpsMax: bigint;
   durationDays: bigint;
   tokenId: bigint;
+  /** An ERC-1155 rental's unit count (1 or 0 for an ERC-721). */
+  quantity: bigint;
   prepayAsset: Hex;
 }
 
-/** An amount of the offer's lending asset in words, or the NFT it names. */
+/** An amount of the offer's lending asset in words, or the NFT it names
+ *  (with its unit count for an ERC-1155), through the one leg rule. */
 export function offerAmount(o: OfferLineFields, v: bigint, meta: TokenMetaMap | null, format: Copy['format']): string {
-  return o.assetType === ASSET_ERC20 ? tokenAmount(v, o.lendingAsset, meta, format) : format('asset.nft', { id: o.tokenId.toString(), asset: assetName(o.lendingAsset, meta) });
+  return assetAmount({ asset: o.lendingAsset, assetType: o.assetType, amount: v, tokenId: o.tokenId, quantity: o.quantity }, meta, format);
 }
 
 export function offerLine(o: OfferLineFields, meta: TokenMetaMap | null, copy: Copy): string {

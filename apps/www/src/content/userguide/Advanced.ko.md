@@ -2216,6 +2216,18 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 목록은 `getUserOffersPaginated(wallet)`(취소된 ID도 남기는 생성자별 인덱스)과 `getUserPositionOffersPaginated(wallet)`(지갑이 포지션 토큰을 가진 오퍼)의 합집합이며, 위치별로 답하는 `MetricsDashboardFacet.getOffersWithState`를 통해 최대 250개씩 읽습니다. 각 행은 요청한 ID에 맞춰집니다. 아무것도 체결되지 않고 취소된 오퍼는 레코드가 삭제되어 뷰가 ID 0과 파생 상태 취소를 보고하므로, 행은 재구성한 조건 대신 아무 조건도 보여 주지 않습니다. 부분 체결 후 취소된 오퍼는 `accepted`가 설정된 채 레코드를 유지하며 체결로 읽힙니다. 필터 개수는 읽은 행을 기준으로 세며, 어느 인덱스든 끝까지 읽지 못했다면 페이지가 목록이 불완전할 수 있다고 알립니다.
 
+<a id="offer-book"></a>
+
+### 오퍼 북
+
+오퍼 북은 인덱서의 `GET /offers/active?chainId&limit=50&before=<offerId>`를 읽으며, 오퍼 ID 기준 최신순이고 `nextBefore`로 페이지를 넘깁니다. 인덱서는 만료된 오퍼를 `active`로 유지하므로(체인에서 만료는 지연 처리됨) `expiresAt`이 지난 행에는 만료 태그를 붙입니다. `isSaleVehicle`, `isOffsetVehicle`, `refinanceTargetLoanId`(null = 읽지 않음)가 종류를, `positionFlow.movedSinceOpened`가 이동한 연결 포지션을 표시합니다(#3205). 모든 필드는 정확히 파싱하며, 실패한 행은 읽지 못한 것으로 셉니다. 탭은 `assetType`(0 = ERC-20 대출, 그 외는 임대), 쪽은 `offerType`입니다. 쿼리는 푸시 레일로 무효화되고 보이는 동안 60초마다 다시 읽습니다. 인덱스 장애는 그대로 알리며, 빈 오퍼 북으로 보여 주지 않습니다.
+
+<a id="offer-detail"></a>
+
+### 오퍼 페이지
+
+`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 지갑이 연결되어 있으면 지갑을, 아니면 읽기 전용 프록시를 거칩니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다.
+
 <a id="offer-cancel"></a>
 
 ### 오퍼 취소
