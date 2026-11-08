@@ -2192,6 +2192,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 예치는 `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)`입니다. kind 0은 ERC-20, 1은 ERC-721, 2는 ERC-1155이며, ERC-20의 토큰 ID는 0, ERC-721의 수량은 1입니다. `whenNotPaused`이고, 호출자를 심사하며(Tier-1), 교체로 은퇴한 지갑을 거부합니다(`requireManager`). 검토는 한 블록에서 `getUserVaultAddress`, `paused`, 제재 심사 상태, `getProtectedAccount(wallet)`, 지갑의 잔액과 승인을 읽습니다. 읽지 못한 일시 중지·심사·은퇴는 그렇다고 밝히고 드라이 런이 결정합니다. 승인은 ERC-20이면 정확한 `approve`(먼저 0으로 되돌려야 하는 토큰은 두 단계), ERC-721이면 `approve(diamond, tokenId)`, ERC-1155이면 `setApprovalForAll(diamond, true)`이며, 이미 부여된 것이 아니면 예치 후 철회합니다. 드라이 런은 승인 뒤에 실행되며, ERC-20은 전액 도착 확인(`LibDelivery.pullExact`)과 함께 가져오므로 전송 수수료가 있는 토큰은 되돌려집니다. 완료 카드는 `VaultDeposited(account, asset, kind, tokenId, amount)`와 볼트로 들어간 토큰 자체의 전송 로그를 읽습니다. 이 예치에는 permit 경로가 없습니다. 검토는 `getProtectedAccount(wallet)`에서 `enabled`, `locked`, `delaySeconds`, `requireCosign`도 보관하고, 영수증은 예치가 다시 나갈 수 있는 방식을 알려 줍니다. 즉시, 대기 시간 후(필요하면 보조 서명자 승인과 함께), 또는 계정이 잠긴 동안에는 나갈 수 없으며, 잠긴 계정이어도 `depositToVault`는 거부하지 않습니다. 서명 전 마지막 확인은 `hasAcceptedCurrentTerms`를 다시 읽고 동의하지 않은 버전을 거부합니다.
 
+<a id="vault-withdraw"></a>
+
+### 볼트에서 출금
+
+출금은 `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`이며, `account`와 `recipient`는 모두 연결된 지갑입니다. 한도는 `withdrawableNow(account, kind, asset, tokenId)`이고(넘으면 `AmountExceedsFree`), `requireManager(account)`를 확인하며, 호출자(Tier-1)와 수령인을 심사하고, 일시 중지 중에는 계정이 보호되어 있고 `isEscapeOpen`이 참인 경우가 아니면 거부됩니다. 검토는 한 블록에서 `getUserVaultAddress`, `paused`, `isEscapeOpen`, 제재 상태, `getProtectedAccount(wallet)`, `withdrawableNow`를 읽은 뒤 호출을 모의 실행합니다. 보호 모드가 꺼져 있으면 볼트 경로가 지갑에 바로 지급하고, 켜져 있으면 `LibProtectedAccount.queuePayout`이 `delaySeconds` 동안 지급을 대기열에 넣으며 `ProtectedVaultLocked`, `RecipientNotAllowlisted`, `TooManyPendingRows`를 거부합니다. 완료 카드는 `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`, `PayoutQueued`, 그리고 볼트에서 지갑으로 간 토큰 자체의 전송 로그를 읽습니다. 예치 기록이 토큰 ID 없이 알려 주는 컬렉션은 토큰 ID를 입력해 출금하며, 양식의 한도는 그 토큰의 `withdrawableNow`로 블록마다 다시 읽습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
