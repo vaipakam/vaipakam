@@ -1412,6 +1412,20 @@ above. Each resolves here, so a route reviewer needs no private file:
   expiry defaults to 7 days; choosing "until taken or cancelled" is
   explicit and shows a note that such an offer keeps its rate as the
   market moves.
+- **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
+  public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
+  so it can be seen before mainnet; #3357), the review of a write that a
+  watcher could act on first says so before the wallet opens: posting,
+  taking or cancelling an offer, repaying in full or in part, and adding
+  collateral. It names the exposure (anyone watching, bots included, can
+  see the transaction and act first, such as taking an offer before its
+  cancel lands) and its help says some wallets can send privately, that
+  neither the protocol nor the app can choose that route, and that the
+  usual route changes only who sees the transaction before it lands. No
+  private sending service is named or set by the app. The single-sequencer
+  rollups the app serves keep no public queue, so nothing is said there.
+  The list of networks is one rule (`publicQueue.ts`), and a test fails if
+  a served network is not decided.
 
 ## 3. Companion specifications
 

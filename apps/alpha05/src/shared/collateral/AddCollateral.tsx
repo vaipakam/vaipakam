@@ -400,6 +400,7 @@ function AddFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose }: 
       )}
       <ActionFlow
         tx={tx}
+        publicQueue
         identity={identity}
         reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
         receipt={review ? addReceipt(review, meta, copy) : null}

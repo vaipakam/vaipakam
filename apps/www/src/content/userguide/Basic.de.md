@@ -1234,6 +1234,12 @@ Sofern Sie im Advanced-Modus keine Teile festlegen, übernimmt ein Kreditnehmer 
 
 Unter dem Zinssatz zeigt die App auf beiden Formularen, dem Angebot eines Verleihers und der Anfrage eines Kreditnehmers, den mittleren Zinssatz der Kredite, die in den letzten 30 Tagen mit demselben Paar und derselben Laufzeit begonnen haben, und wie viele es waren. Liegt Ihr Satz mehr als fünf Prozentpunkte daneben, warnt die App und sagt, in welche Richtung das wirkt: Ein Verleiher weit unter dem Markt oder ein Kreditnehmer weit darüber stellt das Angebot ein, das zuerst angenommen wird, wenn sich die Zinsen bewegen; in die andere Richtung bleibt das Angebot womöglich liegen. Es ist nur eine Warnung, Sie können trotzdem posten. Gibt es keine aktuellen Kredite zum Vergleich, ist die Sicherheit ein NFT oder kann der Index des Protokolls nicht gelesen werden, sagt das Formular das, statt zu schweigen.
 
+<a id="public-queue"></a>
+
+### Netzwerke mit öffentlicher Warteschlange
+
+Auf Ethereum und BNB Chain (und dem BNB Testnet) wartet eine gesendete Transaktion in einer öffentlichen Warteschlange, bevor sie aufgenommen wird, und wer diese Warteschlange beobachtet, auch Bots, kann sie sehen und zuerst handeln: ein Angebot annehmen, bevor Ihre Stornierung ankommt, oder auf einen Kredit reagieren, bevor Ihre Rückzahlung ankommt. Auf diesen Netzwerken sagt die Prüfung beim Einstellen, Annehmen oder Stornieren eines Angebots, beim Zurückzahlen und beim Nachlegen von Sicherheiten das deshalb, bevor sich Ihre Wallet öffnet. Manche Wallets können eine Transaktion stattdessen privat senden; sehen Sie in den Netzwerk- oder Sicherheitseinstellungen Ihrer Wallet nach. Die App kann diesen Weg nicht für Sie wählen, und der übliche Weg ändert nur, wer die Transaktion sieht, bevor sie ankommt. Base, Arbitrum und Optimism haben keine öffentliche Warteschlange, dort wird nichts angezeigt.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Ein Angebot in Teilen (Erweitert)

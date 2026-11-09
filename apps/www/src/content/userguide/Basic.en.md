@@ -1185,6 +1185,12 @@ Unless you set parts in Advanced mode, one borrower takes the whole amount, or n
 
 Under the rate on both posting forms, a lender's offer and a borrower's request, the app shows the middle rate of loans that started on the same pair and term in the last 30 days, and how many there were. If your rate is more than five points away, it warns you and says which way it cuts: a lender far under the market, or a borrower far over it, posts the offer taken first when rates move; the other way, the offer may sit untaken. It only warns, and you can still post. When there are no recent loans to compare with, when the collateral is an NFT, or when the protocol's index cannot be read, the form says so instead of staying silent.
 
+<a id="public-queue"></a>
+
+### Networks with a public queue
+
+On Ethereum and BNB Chain (and BNB Testnet), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts (Advanced)
