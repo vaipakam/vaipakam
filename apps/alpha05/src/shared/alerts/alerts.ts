@@ -154,9 +154,29 @@ export type AlertProblem =
   /** Anything else: the status is stated. */
   | 'other';
 
+/** A network whose chat keeps receiving alerts after an unlink, because
+ *  protected mode holds it until the protection delay passes. The service
+ *  reports `effective_at` as null while the chat has not yet been told, so
+ *  the delay has not started. */
+export interface PendingRemoval {
+  chainId: number;
+  effectiveAt: number | null;
+}
+
+/** One pending entry as the service sends it, `{ chain_id, effective_at }`;
+ *  anything else is not read. */
+export function parsePendingRemoval(v: unknown): PendingRemoval | null {
+  if (!v || typeof v !== 'object') return null;
+  const { chain_id, effective_at } = v as { chain_id?: unknown; effective_at?: unknown };
+  if (!Number.isSafeInteger(chain_id) || (chain_id as number) <= 0) return null;
+  if (effective_at === null) return { chainId: chain_id as number, effectiveAt: null };
+  if (!Number.isSafeInteger(effective_at) || (effective_at as number) <= 0) return null;
+  return { chainId: chain_id as number, effectiveAt: effective_at as number };
+}
+
 export type AlertAnswer =
   | { ok: true; action: 'link'; code: string; botUrl: string | null }
-  | { ok: true; action: 'unlink'; scope: 'wallet' | 'chain'; pending: number[] }
+  | { ok: true; action: 'unlink'; scope: 'wallet' | 'chain'; pending: PendingRemoval[] }
   | { ok: true; action: 'test-alert' }
   | { ok: true; action: 'save'; push: 'stored' | 'kept' | 'not-requested' }
   | { ok: false; problem: AlertProblem; status: number };
@@ -180,7 +200,7 @@ export function readAlertAnswer(action: AlertAction, status: number, data: Recor
     if (kind === 'unlink') {
       const scope = data.scope === 'wallet' || data.scope === 'chain' ? data.scope : null;
       if (scope === null) return { ok: false, problem: 'other', status };
-      const pending = Array.isArray(data.pending) ? data.pending.filter((n): n is number => Number.isSafeInteger(n) && (n as number) > 0) : [];
+      const pending = Array.isArray(data.pending) ? data.pending.map(parsePendingRemoval).filter((p): p is PendingRemoval => p !== null) : [];
       return { ok: true, action: 'unlink', scope, pending };
     }
     if (kind === 'test-alert') return { ok: true, action: 'test-alert' };

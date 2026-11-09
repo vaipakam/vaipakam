@@ -84,9 +84,15 @@ test('Telegram is linked with a code, proven by a test alert, and unlinked, each
   expect((await agentState()).linked).not.toContain(me.toLowerCase());
 
   // Protected mode holds a chat; an unreadable protection check changes nothing.
-  await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'chain', pending: [84532] } } });
+  // The service names each held network as { chain_id, effective_at }.
+  await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'chain', pending: [{ chain_id: 84532, effective_at: 1_800_000_000 }] } } });
   await page.getByTestId('alert-telegram-unlink').click();
-  await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Base Sepolia: that chat keeps every alert', { timeout: 30_000 });
+  await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Base Sepolia: that chat keeps every alert until Jan 15, 2027', {
+    timeout: 30_000,
+  });
+  await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'chain', pending: [{ chain_id: 84532, effective_at: null }] } } });
+  await page.getByTestId('alert-telegram-unlink').click();
+  await expect(page.getByTestId('alert-telegram-pending')).toContainText('The protection delay starts only once the chat has been told', { timeout: 30_000 });
   await expect(page.getByTestId('alert-telegram-state')).toContainText('A smart-account wallet unlinks one network at a time.');
   await controlAgent({ next: { path: '/unlink/telegram', status: 503, body: { error: 'protection-unknown' } } });
   await page.getByTestId('alert-telegram-unlink').click();

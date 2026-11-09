@@ -79,6 +79,9 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
     staleTime: 60_000,
     retry: 1,
   });
+  // Only a read that succeeded now offers push: after a failed refetch the
+  // query keeps its last answer, which must not stand beside "could not ask".
+  const pushNow = push.status === 'success' ? push.data : null;
 
   /** Record what the service did, for the wallet and network that signed. */
   const record = (a: AlertAction, answer: AlertAnswer) => {
@@ -96,7 +99,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
       // A wallet-wide unlink cleared every network's link for this wallet.
       const chains = answer.scope === 'wallet' ? SUPPORTED_CHAINS.map((c) => c.chainId) : [chain.chainId];
       for (const id of chains) {
-        const next = writeKnown(id, account, { telegram: { ...telegram, pending: answer.pending.filter((p) => p === id) } });
+        const next = writeKnown(id, account, { telegram: { ...telegram, pending: answer.pending.filter((p) => p.chainId === id) } });
         if (id === chain.chainId) setKnown(next);
       }
     } else if (typeof a !== 'string') {
@@ -190,11 +193,14 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
             {telegramLine(tg, chain, nowS, copy)}
           </p>
         )}
-        {tg?.state === 'unlinked' && tg.pending.length > 0 && (
-          <p className="tier-a" data-testid="alert-telegram-pending">
-            {format('alertChannels.unlinkPending', { chains: chainNames(tg.pending) })}
-          </p>
-        )}
+        {tg?.state === 'unlinked' &&
+          tg.pending.map((p) => (
+            <p key={p.chainId} className="tier-a" data-testid="alert-telegram-pending">
+              {p.effectiveAt === null
+                ? format('alertChannels.unlinkPendingUntold', { chain: chainName(p.chainId) })
+                : format('alertChannels.unlinkPending', { chain: chainName(p.chainId), time: formatUtc(p.effectiveAt) })}
+            </p>
+          ))}
         <div className="form-actions">
           {!codeLive && (
             <button type="button" className="btn btn-primary" disabled={signUpBlocked} onClick={() => gated('link')} data-testid="alert-telegram-link">
@@ -218,12 +224,12 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
             {format('alertChannels.pushUnknown', { reason: (push.error as Error).message })}
           </p>
         )}
-        {push.data?.kind === 'available' && (
+        {pushNow?.kind === 'available' && (
           <>
             <p className="tier-b" data-testid="alert-push-available">
-              {format('alertChannels.pushAvailable', { channel: shortAddress(push.data.channel) })}
+              {format('alertChannels.pushAvailable', { channel: shortAddress(pushNow.channel) })}
             </p>
-            {push.data.scope === 'agent' && (
+            {pushNow.scope === 'agent' && (
               <p className="tier-a" data-testid="alert-push-scope">
                 {text('alertChannels.pushRemindersOnly')}
               </p>
@@ -239,14 +245,14 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
             )}
             <p className="tier-b">
               {text('alertChannels.pushSubscribe')}{' '}
-              <a href={pushChannelUrl(push.data.channel)} target="_blank" rel="noreferrer" data-testid="alert-push-channel">
+              <a href={pushChannelUrl(pushNow.channel)} target="_blank" rel="noreferrer" data-testid="alert-push-channel">
                 {text('alertChannels.pushChannelLink')}
               </a>
             </p>
             <p className="tier-b">{text('alertChannels.pushOff')}</p>
           </>
         )}
-        {push.data?.kind === 'unavailable' && (
+        {pushNow?.kind === 'unavailable' && (
           <>
             <p className="tier-b" data-testid="alert-push-unavailable">
               {text('alertChannels.pushUnavailable')}
@@ -289,8 +295,8 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
   );
 }
 
-function chainNames(ids: readonly number[]): string {
-  return ids.map((id) => SUPPORTED_CHAINS.find((c) => c.chainId === id)?.name ?? `network ${id}`).join(', ');
+function chainName(id: number): string {
+  return SUPPORTED_CHAINS.find((c) => c.chainId === id)?.name ?? `network ${id}`;
 }
 
 function telegramLine(tg: KnownAlerts['telegram'], chain: SupportedChain, nowS: number, { text, format }: CopyAccess): string {

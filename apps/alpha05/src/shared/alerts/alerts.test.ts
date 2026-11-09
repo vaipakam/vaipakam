@@ -89,7 +89,21 @@ describe('answers', () => {
     expect(readAlertAnswer('link', 200, { ok: true })).toEqual({ ok: false, problem: 'other', status: 200 });
   });
   it('reads an unlink’s scope and pending networks', () => {
-    expect(readAlertAnswer('unlink', 200, { ok: true, scope: 'chain', pending: [84532, 'x'] })).toEqual({ ok: true, action: 'unlink', scope: 'chain', pending: [84532] });
+    expect(
+      readAlertAnswer('unlink', 200, {
+        ok: true,
+        scope: 'chain',
+        pending: [{ chain_id: 84532, effective_at: 1_800_000_000 }, { chain_id: 97, effective_at: null }, 84532, { chain_id: 'x', effective_at: 1 }],
+      }),
+    ).toEqual({
+      ok: true,
+      action: 'unlink',
+      scope: 'chain',
+      pending: [
+        { chainId: 84532, effectiveAt: 1_800_000_000 },
+        { chainId: 97, effectiveAt: null },
+      ],
+    });
     expect(readAlertAnswer('unlink', 200, { ok: true })).toEqual({ ok: false, problem: 'other', status: 200 });
   });
   it('reads a save’s push outcome, older services as stored', () => {
@@ -134,6 +148,9 @@ describe('what this browser knows', () => {
   it('drops a field it cannot read', () => {
     expect(parseKnown({ telegram: { state: 'linked', at: 1 }, push: { at: 2, outcome: 'stored' }, bands: { warnHf: 'x' } })).toEqual({ push: { at: 2, outcome: 'stored' } });
     expect(parseKnown('nope')).toEqual({});
+    const unlinked = { state: 'unlinked', at: 3, scope: 'chain', pending: [{ chainId: 84532, effectiveAt: null }] };
+    expect(parseKnown({ telegram: unlinked })).toEqual({ telegram: unlinked });
+    expect(parseKnown({ telegram: { ...unlinked, pending: [84532] } })).toEqual({});
   });
   it('works with no storage', () => {
     expect(readKnown(1, W, null)).toEqual({});

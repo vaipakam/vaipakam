@@ -1481,7 +1481,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   scope the service applied: every network for an ordinary wallet, this
   network only for a smart account; a network whose protected mode holds
   the chat names it and says the chat keeps every alert until the delay
-  passes. Push is offered only when the service says it can send now; when
+  ends, with the time the service gives, or says the delay has not started
+  because the chat has not yet been told. Push is offered only when the
+  service's current answer, read successfully, says it can send now; when
   its answer covers the reminder sender only, the page says warnings may not
   reach push; when it cannot send, push is not offered, and an earlier
   switch-on made here is said to stay stored; when the service cannot be

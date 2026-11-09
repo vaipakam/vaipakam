@@ -1563,7 +1563,12 @@ export const copy = {
     telegramUnlinkedWallet: B('Unlinked from here at {{time}}, for this wallet on every network.'),
     telegramUnlinkedChain: B('A smart-account wallet unlinks one network at a time.'),
     unlinkedAt: B('Unlinked on {{chain}} from here at {{time}}.'),
-    unlinkPending: A('Protected mode is on for {{chains}}: that chat keeps every alert until the protection delay passes, and it was told it may cancel.'),
+    unlinkPending: A(
+      'Protected mode is on for {{chain}}: that chat keeps every alert until {{time}}, when the protection delay ends. The chat was told and may cancel the unlink.',
+    ),
+    unlinkPendingUntold: A(
+      'Protected mode is on for {{chain}}: that chat keeps every alert. The protection delay starts only once the chat has been told of the unlink, which the alert service has not managed yet and keeps trying.',
+    ),
     codeLead: B('Send this code to the Vaipakam bot on Telegram before {{time}}; it works once.'),
     openBot: B('Open the bot in Telegram'),
     noBotLink: B('This service gave no bot link; send the code as a message to the Vaipakam alerts bot.'),
