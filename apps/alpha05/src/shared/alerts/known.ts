@@ -74,7 +74,15 @@ export function parseKnown(raw: unknown): KnownAlerts {
   return out;
 }
 
+/** Records this page visit could not write to the browser's storage, by
+ *  key. While one is held it is the record: storage then holds an older
+ *  copy, or none, and reading it back would undo a change just made. A later
+ *  write that does reach storage releases it. */
+const unsaved = new Map<string, KnownAlerts>();
+
 export function readKnown(chainId: number, wallet: Hex, storage: Pick<Storage, 'getItem'> | null = safeStorage()): KnownAlerts {
+  const held = unsaved.get(key(chainId, wallet));
+  if (held) return held;
   if (!storage) return {};
   try {
     const raw = storage.getItem(key(chainId, wallet));
@@ -86,12 +94,16 @@ export function readKnown(chainId: number, wallet: Hex, storage: Pick<Storage, '
 
 /** Merge `patch` into the record for one network. */
 export function writeKnown(chainId: number, wallet: Hex, patch: Partial<KnownAlerts>, storage: Pick<Storage, 'getItem' | 'setItem'> | null = safeStorage()): KnownAlerts {
+  const k = key(chainId, wallet);
   const next = { ...readKnown(chainId, wallet, storage), ...patch };
-  if (!storage) return next;
   try {
-    storage.setItem(key(chainId, wallet), JSON.stringify(next));
+    if (!storage) throw new Error('no storage');
+    storage.setItem(k, JSON.stringify(next));
+    unsaved.delete(k);
   } catch {
-    // Nothing is remembered; the page still shows what was just done.
+    // Not stored: held for this page visit, so the next change merges into
+    // it rather than into what storage still has.
+    unsaved.set(k, next);
   }
   return next;
 }

@@ -148,13 +148,41 @@ describe('what this browser knows', () => {
   it('drops a field it cannot read', () => {
     expect(parseKnown({ telegram: { state: 'linked', at: 1 }, push: { at: 2, outcome: 'stored' }, bands: { warnHf: 'x' } })).toEqual({ push: { at: 2, outcome: 'stored' } });
     expect(parseKnown('nope')).toEqual({});
-    const unlinked = { state: 'unlinked', at: 3, scope: 'chain', pending: [{ chainId: 84532, effectiveAt: null }] };
-    expect(parseKnown({ telegram: unlinked })).toEqual({ telegram: unlinked });
-    expect(parseKnown({ telegram: { ...unlinked, pending: [84532] } })).toEqual({});
+    const unlinked = { state: 'unlinked', at: 3, scope: 'chain' };
+    const held = { at: 3, pending: [{ chainId: 84532, effectiveAt: null }, { chainId: 421614, effectiveAt: 1_800_000_000 }] };
+    expect(parseKnown({ telegram: unlinked, held })).toEqual({ telegram: unlinked, held });
+    // A malformed hold is dropped on its own; the link state stays.
+    expect(parseKnown({ telegram: unlinked, held: { ...held, pending: [84532] } })).toEqual({ telegram: unlinked });
+    expect(parseKnown({ held: { pending: [] } })).toEqual({});
   });
-  it('works with no storage', () => {
-    expect(readKnown(1, W, null)).toEqual({});
-    expect(writeKnown(1, W, { dueDate: { on: true, at: 1 } }, null)).toEqual({ dueDate: { on: true, at: 1 } });
+  it('keeps a hold when a code or a test alert is recorded later', () => {
+    const s = memory();
+    const held = { at: 3, pending: [{ chainId: 421614, effectiveAt: null }] };
+    writeKnown(84532, W, { telegram: { state: 'unlinked', at: 3, scope: 'wallet' }, held }, s);
+    writeKnown(84532, W, { telegram: { state: 'code', at: 4, expiresAt: 604 } }, s);
+    writeKnown(84532, W, { telegram: { state: 'confirmed', at: 5 } }, s);
+    expect(readKnown(84532, W, s)).toEqual({ telegram: { state: 'confirmed', at: 5 }, held });
+  });
+  it('works with no storage, and keeps what this visit did when storage refuses', () => {
+    const none = '0x00000000000000000000000000000000000000a1' as const;
+    expect(readKnown(1, none, null)).toEqual({});
+    writeKnown(1, none, { dueDate: { on: false, at: 1 } }, null);
+    // A later change merges into what this visit did, not into nothing.
+    expect(writeKnown(1, none, { bands: { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05, at: 2 } }, null)).toEqual({
+      dueDate: { on: false, at: 1 },
+      bands: { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05, at: 2 },
+    });
+    // Storage holding an older copy, then refusing writes: the visit's own record wins.
+    const w = '0x00000000000000000000000000000000000000a2' as const;
+    const old = memory();
+    writeKnown(84532, w, { dueDate: { on: true, at: 1 } }, old);
+    const full = { getItem: old.getItem, setItem: () => { throw new Error('quota'); } };
+    writeKnown(84532, w, { dueDate: { on: false, at: 2 } }, full);
+    writeKnown(84532, w, { push: { at: 3, outcome: 'stored' } }, full);
+    expect(readKnown(84532, w, full)).toEqual({ dueDate: { on: false, at: 2 }, push: { at: 3, outcome: 'stored' } });
+    // Once a write reaches storage again, storage is the record.
+    writeKnown(84532, w, {}, old);
+    expect(readKnown(84532, w, old)).toEqual({ dueDate: { on: false, at: 2 }, push: { at: 3, outcome: 'stored' } });
   });
 });
 
