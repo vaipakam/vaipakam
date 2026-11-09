@@ -1,4 +1,4 @@
-## Thread — alpha05 can list an NFT for rent (PR #<n>)
+## Thread — alpha05 can list an NFT for rent (PR #3468)
 
 An owner can now list an NFT for rent on the new app's Rent page. A short
 form asks for the collection and the token's number (and a quantity for a
