@@ -1597,6 +1597,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   not affected; switching strict mode off says it is a check removed and
   when it stops applying. Per-pair agreements and acknowledgements stay in
   the flows that need them (RB-RISK-STEP).
+- **RB-APPROVALS** — Settings › Approvals (ACC-32) lists the standing
+  approvals the connected wallet gives the protocol on its network: an ERC-20
+  allowance (stated as unlimited at half the largest value or above), a
+  Permit2 allowance with its expiry where Permit2 is deployed, an operator
+  approval over an NFT collection, and a single ERC-721 token's approval.
+  No chain read lists every approval a wallet has given, so the page checks
+  the suggested assets and every asset the wallet's deposit record, loans,
+  offers and standing offers name on this network, plus any contract the
+  reader adds, and says what it checked and that an approval outside that
+  set is not found. A record that could not be read to its end, or an asset
+  that did not answer, is stated; neither is ever "no approval". Each
+  approval is withdrawn in one signed transaction through RB-CONFIDENCE (what
+  it lets the protocol move now, nothing after, no funds moved), read again
+  before the wallet opens and measured at the receipt's block; the receipt
+  says that anything relying on it refuses until approved again, and a
+  Permit2 withdrawal leaves the token's own approval for Permit2, which other
+  apps may use, unchanged.
 
 ## 3. Companion specifications
 
