@@ -1660,9 +1660,9 @@ deployments remain testnet and local only until that audit and launch approval a
 
 Security-sensitive reports go through the private channels in `SECURITY.md`: GitHub private security
 advisories or encrypted email — never a public issue — with a 24-hour acknowledgement target and a
-remediation ETA within 72 hours. A bug-bounty bucket exists as a multisig-held treasury allocation
-(2% of VPFI supply), an operational funding reserve for the program whose public scope and reward
-ranges are published separately.
+remediation ETA within 72 hours. No bug bounty programme is offered and no rewards are paid for reports. The 2%-of-supply allocation
+labelled "Bug Bounty" in the tokenomics table is a multisig-held treasury reserve only, and is not an
+offer of rewards.
 
 ## 19. References
 

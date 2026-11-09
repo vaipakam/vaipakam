@@ -473,7 +473,7 @@ via the manual procedure above.
 ### Trigger criteria (pause **immediately**, decide later)
 - External exploit evidence (funds leaving user vaults, unexpected `LoanInitiated` events).
 - Oracle anomaly: price deviation > 20% vs. centralized reference, or a feed reports `answer == 0` / stale.
-- Critical bug report from audit channel / bounty.
+- Critical bug report from the audit channel or a private disclosure (`SECURITY.md`).
 - Any `DayForceFinalized` that was **not** pre-authorized in ops chat.
 
 ### What does **not** require an emergency pause

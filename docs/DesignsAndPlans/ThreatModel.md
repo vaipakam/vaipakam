@@ -120,8 +120,8 @@ A "residual" below is a stated limit, not a bug report.
 | Bounds on the sanctions list's adder key | #3239 |
 | Mainnet operations baseline (keeper host, credential scope) | #3243 |
 
-Mainnet also waits on an external audit after code freeze and a live bug
-bounty.
+Mainnet also waits on an external audit after code freeze. No bug bounty
+programme is offered (owner, 2026-11-09).
 
 ## 5. Residuals
 

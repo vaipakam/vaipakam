@@ -3701,8 +3701,9 @@ The required functional safeguards are:
   not ready for launch.
 - User-facing success requires a successful chain outcome, not merely block
   inclusion. Unknown outcomes and incomplete observations are stated.
-- Mainnet readiness requires external audit and a defined public bug-bounty
-  scope. No unresolved high-risk issue is silently treated as discharged.
+- Mainnet readiness requires an external audit after the code freeze. No bug
+  bounty programme is offered; whether to run one is an owner decision taken
+  after the freeze (owner, 2026-11-09). No unresolved high-risk issue is silently treated as discharged.
 - Repository-tracked configuration contains no signing keys. A release must
   not acquire authority merely by reading a deployment setting.
 
