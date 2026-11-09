@@ -132,6 +132,9 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
+import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
+import {PriceGuardDeployment} from "./lib/PriceGuardDeployment.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #3204 — the VaultBeacon deployed in step 5c, kept in storage so
@@ -139,8 +142,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     address internal vaultBeacon;
     /// @dev #3205 — the PositionNFT core deployed in step 5d.
     address internal positionNFT;
-    /// @dev #3272 — the ProtocolRegistry deployed in step 5c-ii.
-    address internal protocolRegistry;
+    /// @notice #3272 — the ProtocolRegistry deployed in step 5c-ii.
+    address public protocolRegistry;
+    /// @notice #3272 — the PriceGuard built in step 5c-ii, and the feed
+    ///         registry it reads (recorded only when this run created it).
+    address public priceGuard;
+    address public feedRegistry;
+    bool internal feedRegistryCreated;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
     bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
@@ -247,6 +255,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         env-var round-trip, no parallel-test race. Production
     ///         `forge script` invocations keep using `run()` and are
     ///         unaffected.
+    /// @dev #3272 — the chain's feed registry (recorded, or created here) and
+    ///      the PriceGuard built on it. Kept out of `runWith` so its frame
+    ///      stays within the stack budget; the results land in storage.
+    function _deployPriceGuard(address admin) internal {
+        (feedRegistry, feedRegistryCreated) = FeedRegistryDeployment.createOrReuse(admin);
+        console.log("Feed registry:", feedRegistry);
+        priceGuard = PriceGuardDeployment.deploy(admin, feedRegistry);
+    }
+
     function runWith(
         address admin,
         address treasury,
@@ -1037,16 +1054,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // every vault must agree on, held where no facet can write. Owned by
         // `admin` (the Timelock takes it at handover), guardian `admin` until
         // the handover moves it to the Pauser Safe, and the minimum delay.
-        // It starts empty: the price guard (#3272) and the vault payout
-        // endpoints (#3205) add their pointers and set members (seeded here,
-        // without the delay, like the constructor's pointers) when they ship.
-        protocolRegistry = ArtifactDeploy.deploy(
-            type(ProtocolRegistry).name,
-            abi.encode(
-                admin, admin, uint256(3 days),
-                new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
-            )
-        );
+        // Its pointers are seeded here, at construction, the only write that
+        // does not wait. The vault payout endpoints (#3205) add theirs when
+        // they ship.
+        //
+        // The price guard comes first: the one price source the Diamond and
+        // the vaults read (nothing reads it until the Diamond's oracle moves
+        // onto it, #3272 PR 2). It is built here, with its whole starting
+        // config, because the registry that points at it is built here (owner
+        // decision 2026-11-09, "Set at deploy, checked once"). So the chain's
+        // feed registry, the guard's feed source, is created here too; the
+        // later DeployFeedRegistry step reuses it and sets a testnet's delay.
+        _deployPriceGuard(admin);
+        {
+            bytes32[] memory keys = new bytes32[](1);
+            address[] memory values = new address[](1);
+            keys[0] = RegistryKeys.PRICE_GUARD;
+            values[0] = priceGuard;
+            protocolRegistry = ArtifactDeploy.deploy(
+                type(ProtocolRegistry).name,
+                abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
+            );
+        }
         console.log("Protocol registry:", protocolRegistry);
 
         // 5d. #3205 — the PositionNFT core: the ownership record of every
@@ -1241,6 +1270,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeVaultBeacon(vaultBeacon);
         Deployments.writePositionNFT(positionNFT);
         Deployments.writeProtocolRegistry(protocolRegistry);
+        Deployments.writePriceGuard(priceGuard);
+        if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
         // #1566 slice 4 PR A — the custody holder's address is part of the

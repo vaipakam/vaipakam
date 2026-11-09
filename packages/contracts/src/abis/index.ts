@@ -212,6 +212,7 @@ import VaultBeaconABI from './VaultBeacon.json';
 // ownership record.
 import PositionNFTABI from './PositionNFT.json';
 import ProtocolRegistryABI from './ProtocolRegistry.json';
+import PriceGuardABI from './PriceGuard.json';
 
 export {
   OfferCreateFacetABI,
@@ -346,6 +347,7 @@ export {
   VaultBeaconABI,
   PositionNFTABI,
   ProtocolRegistryABI,
+  PriceGuardABI,
 };
 
 import type { Abi } from 'viem';

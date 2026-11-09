@@ -261,6 +261,11 @@ export interface Deployment {
    *  Diamond and every vault share (the price guard first). Optional until
    *  each chain's next fresh deploy writes it. */
   protocolRegistry?: HexAddress;
+  /** #3272 — the PriceGuard: the one price source the Diamond and every
+   *  vault read, through the registry's `PRICE_GUARD` pointer (read the
+   *  pointer, not this key, to find the guard in force). Optional until each
+   *  chain's next fresh deploy writes it. */
+  priceGuard?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;
