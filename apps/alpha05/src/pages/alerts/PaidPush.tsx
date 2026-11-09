@@ -30,6 +30,7 @@ import { useCopy } from '../../shared/copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../../shared/eligibility/refusal';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
+import { readTerms, type TermsState } from '../../shared/terms/terms';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
 import { useTerms } from '../../shared/terms/useTerms';
 import { useTermsGate } from '../../shared/terms/useTermsGate';
@@ -216,6 +217,7 @@ export function PaidPush({ chain, account }: { chain: SupportedChain; account: H
                 own={own}
                 choice={choice}
                 billing={billing}
+                onTermsDue={terms.refetch}
                 onClose={() => {
                   setChoice(null);
                   read.refetch();
@@ -241,12 +243,16 @@ function ConsentFlow({
   own,
   choice,
   billing,
+  onTermsDue,
   onClose,
 }: {
   chain: SupportedChain;
   own: OwnStateClient;
   choice: ConsentChoice | null;
   billing: Billing;
+  /** Called when the last check before an agreement finds an unaccepted
+   *  Terms version, so the page reads the Terms again and asks for them. */
+  onTermsDue: () => void;
   onClose: () => void;
 }) {
   const copy = useCopy();
@@ -340,10 +346,22 @@ function ConsentFlow({
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
     let next: ConsentReview;
+    let nowTerms: TermsState | null;
     try {
-      next = await readFor(review.identity, review.choice);
+      // ACC-15: an agreement reads the Terms again right before signing, so a
+      // wallet switched to while the review was open, or a version published
+      // since, never agrees without acceptance. A withdrawal never asks.
+      const agreeing = review.choice.kind === 'agree';
+      [next, nowTerms] = await Promise.all([
+        readFor(review.identity, review.choice),
+        agreeing ? own.read((c) => readTerms(c, diamond, account)).then((x) => x.value) : Promise.resolve(null),
+      ]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
+    }
+    if (nowTerms?.kind === 'needed') {
+      onTermsDue();
+      return { kind: 'refused', refusal: { code: 'TermsNotAccepted', reason: text('paidPush.termsNewer'), reopensAt: null, remedy: null } };
     }
     const what = consentChanged(review, next, copy);
     if (current()) setReview(next);

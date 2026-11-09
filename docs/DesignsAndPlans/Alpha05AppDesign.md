@@ -1519,7 +1519,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   read", never zero. Agreeing is offered only where the service charges, at
   or above the fee and within the ceiling, never to a wallet the sanctions
   screen flags; Basic agrees at the fee now, Advanced types a cap. Agreeing
-  asks for the Terms first (ACC-15); withdrawing is offered whenever a cap
+  asks for the Terms first (ACC-15), and reads them again right before the
+  wallet opens, so a version published during the review, or a wallet
+  switched to, stops it; withdrawing is offered whenever a cap
   is stored, whatever the Terms, a pause or the service say. The review and
   the protocol's dry run come before the wallet, and the fee is read again
   right before it opens (RB-REVIEW). The finish card names the cap the

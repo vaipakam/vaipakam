@@ -8,7 +8,8 @@
  * service says. A fee raised after the review was read stops the wallet
  * from opening (RB-REVIEW); a cap below the fee or above the ceiling is
  * refused before the wallet; Terms in force are asked for before agreeing,
- * never before withdrawing. Runs on the desktop and the phone; the chain is
+ * never before withdrawing, and Terms published while an agreement review is
+ * open stop it before the wallet. Runs on the desktop and the phone; the chain is
  * reverted after each test.
  */
 import { keccak256, toHex, type Hex } from 'viem';
@@ -199,5 +200,24 @@ test('with Terms in force, agreeing asks for them first; withdrawing never does'
   await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
   await dialog.getByRole('button', { name: 'Continue: Agreeing to pay for push alerts' }).click();
   await expect(flow.locator('.receipt')).toContainText('Agree to pay for push alerts', { timeout: 60_000 });
+  await fitsWidth(page);
+});
+
+test('Terms published while an agreement review is open stop it before the wallet opens', async ({ launchWallet }) => {
+  test.setTimeout(240_000);
+  await controlAgent({ billed: [BASE_SEPOLIA] });
+  const sc = scenario({ borrower: 'freshBorrower' });
+  const { page, flags } = await launchWallet('freshBorrower');
+  await openPaidPush(page);
+  const card = page.getByTestId('paid-push');
+  await card.getByTestId('paid-push-agree').click();
+  const flow = page.getByTestId('paid-push-panel');
+  await expect(flow.locator('.receipt')).toContainText('Agree to pay for push alerts', { timeout: 60_000 });
+
+  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  const sent = flags.sentTransactions;
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(flow).toContainText('A Terms version you have not accepted is now in force, so nothing was sent', { timeout: 60_000 });
+  expect(flags.sentTransactions).toBe(sent);
   await fitsWidth(page);
 });

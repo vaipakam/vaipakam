@@ -1,4 +1,4 @@
-## Thread — alpha05 asks before push alerts can cost anything (PR #<n>)
+## Thread — alpha05 asks before push alerts can cost anything (PR #3448)
 
 The new app (alpha05) now shows and changes a wallet's agreement to pay for
 push alerts. On some networks the alert service charges a small fee in VPFI

@@ -1708,6 +1708,7 @@ export const copy = {
     'problem_above-ceiling': B('The cap can be at most the protocol’s ceiling, {{ceiling}} VPFI.'),
     'problem_same-cap': B('That is the cap you already agreed to.'),
     notRecorded: A('The transaction’s record names no agreement for this wallet, so nothing is known to have changed. The card reads again.'),
+    termsNewer: A('A Terms version you have not accepted is now in force, so nothing was sent. Close this and agree again to read and accept it first.'),
     legAgreed: B('Agreement recorded: up to {{cap}} VPFI per loan side.'),
     legWithdrawn: B('Agreement withdrawn: no new fee can be charged to you.'),
     noRecordBills: A('This deployment has no agreement record, and it can still charge the fee. Whether a fee would be charged to you cannot be checked or stopped from here.'),
