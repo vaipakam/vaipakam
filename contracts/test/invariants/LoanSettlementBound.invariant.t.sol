@@ -223,6 +223,7 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("refinances", ledger.refinanceLanded());
         console.log("rentals opened", ledger.rentalsOpened());
         console.log("rent deductions", ledger.rentDeductions());
+        console.log("rentals closed by their last deduction", ledger.rentalsFullyDeducted());
         console.log("exact rental settlements", ledger.rentalChecks());
     }
 
@@ -408,6 +409,25 @@ contract LoanSettlementBoundInvariant is Test {
         ledger.claimAsLender(0);
         ledger.claimAsBorrower(0);
         assertEq(ledger.rentalChecks(), 2, "the preclosed rental's settlement was not checked exactly");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksARentalPaidByItsDeductions() public {
+        // A 3-day rental whose every day is paid by the daily deduction: the third deduction
+        // closes it, and the ledger checks both sides against the whole term's rent.
+        ledger.createRentalOffer(0, 1, 7 ether, 3);
+        ledger.acceptRentalOffer(1, 0);
+        for (uint256 d = 0; d < 3; d++) {
+            ledger.warp(1 days + 1);
+            ledger.autoDeductDaily(0);
+        }
+        assertEq(ledger.rentDeductions(), 3, "the daily deductions did not run");
+        assertEq(ledger.rentalsFullyDeducted(), 1, "the last deduction did not close the rental");
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+        assertEq(ledger.rentalChecks(), 2, "the deducted rental's settlement was not checked exactly");
 
         invariant_PerActionChecksHold();
         invariant_NoLoanPaysOutMoreThanEnteredIt();

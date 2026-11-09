@@ -153,6 +153,7 @@ contract LoanLedgerHandler is Test {
     uint256 public refinanceLanded;
     uint256 public rentalsOpened;
     uint256 public rentDeductions;
+    uint256 public rentalsFullyDeducted;
     uint256 public rentalChecks;
 
     /// @dev Set only while a periodic-interest sale is booked: the one action the market may trade in.
@@ -279,11 +280,14 @@ contract LoanLedgerHandler is Test {
     }
 
     /// @notice #3241: the daily rent deduction pays the lender side at most one day's fee and
-    ///         takes at most that from the renter.
+    ///         takes at most that from the renter. The deduction that pays the term's last day
+    ///         closes the rental with no late fee and the whole buffer refunded, so the rent it
+    ///         owes is the whole term, whenever that deduction lands.
     function autoDeductDaily(uint256 loanIdx) external {
         (bool ok, uint256 loanId) = _pickLoan(loanIdx);
         if (!ok) return;
-        uint256 lastBefore = _loan(loanId).lastDeductTime;
+        LibVaipakam.Loan memory pre = _loan(loanId);
+        uint256 lastBefore = pre.lastDeductTime;
         Snap memory before = _snap();
         inner.autoDeductDaily(loanIdx);
         int256[2] memory dB = _book(loanId, before, "autoDeductDaily");
@@ -294,6 +298,13 @@ contract LoanLedgerHandler is Test {
         if (dB[USDC] < -fee || dB[WETH] != 0) {
             rentalViolations++;
             _flag(string.concat("autoDeductDaily: renter charged ", vm.toString(-dB[USDC]), " for one day of ", vm.toString(fee)));
+        }
+        if (
+            b.isRental && pre.status == LibVaipakam.LoanStatus.Active
+                && _loan(loanId).status == LibVaipakam.LoanStatus.Repaid
+        ) {
+            rentalsFullyDeducted++;
+            _setRentOwed(loanId, b.termDays);
         }
     }
 
@@ -954,7 +965,14 @@ contract LoanLedgerHandler is Test {
         uint256 daysUsed = (elapsed + 1 days - 1) / 1 days;
         if (daysUsed == 0) daysUsed = 1;
         if (daysUsed > b.termDays || directClose) daysUsed = b.termDays;
-        b.rentOwed = b.principal0 * daysUsed;
+        _setRentOwed(loanId, daysUsed);
+    }
+
+    /// @dev Records the rent a closed rental owes (`days` of the daily fee) and checks any side
+    ///      whose claim is already paid.
+    function _setRentOwed(uint256 loanId, uint256 days_) internal {
+        LoanBook storage b = books[loanId];
+        b.rentOwed = b.principal0 * days_;
         b.rentOwedSet = true;
         _checkRentalSettled(loanId);
     }
