@@ -1,4 +1,4 @@
-## Thread — alpha05 can take a renter's request (PR #<n>)
+## Thread — alpha05 can take a renter's request (PR #3470)
 
 An owner can now take a renter's request to rent an NFT in the new app. The
 request's own page names it a renter's request and offers "Rent out your
