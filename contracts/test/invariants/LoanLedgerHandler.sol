@@ -8,6 +8,8 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
+import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
  * @title  LoanLedgerHandler
@@ -28,8 +30,12 @@ import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
  *           on one loan that pays out of, or into, a third user's funds is the cross-loan theft
  *           supply conservation cannot see.
  *         - PERIMETER: no token leaves or enters the tracked set (actors, their vaults, the
- *           Diamond, the caller). The rig has no working swap venue, so nothing may go anywhere
- *           else.
+ *           Diamond, the caller, the market). The rig's one working swap venue is the MARKET; it
+ *           is tracked like a party and may move only inside a periodic-interest sale.
+ *         - PERIODIC: a periodic-interest settlement whose period is already paid moves nothing;
+ *           one that sells pays the lender side at most the period's shortfall, and the market
+ *           takes at most the collateral the forced-sale preview allows (`maxSell`) and gives
+ *           only principal asset for it.
  *         - ACCEPT: at origination the borrower is charged the Loan Initiation Fee (0.2% of
  *           principal, spec "Treasury Fees"), the acceptor receives the 1% matcher share of it,
  *           and the Diamond keeps the rest; the side that did not accept moves exactly the
@@ -73,6 +79,7 @@ contract LoanLedgerHandler is Test {
         uint256[2][6] actor; // wallet + vault
         uint256[2] diamond;
         uint256[2] caller; // the inner handler: msg.sender of permissionless steps
+        uint256[2] market; // the working swap venue
         uint256[2] outside; // totalSupply minus everything above
     }
 
@@ -91,10 +98,14 @@ contract LoanLedgerHandler is Test {
         /// @dev #3241 — every holder the lender position has had. A sale moves value between
         ///      them (the buyer pays the seller), so the lender side is booked as one party.
         mapping(address => bool) lenderSide;
+        /// @dev #3241 — a periodic settlement sold this loan's collateral: the borrower's
+        ///      collateral became principal asset, so its principal-asset bound is read in value.
+        bool hadPeriodicSale;
         int256[2] dLender;
         int256[2] dBorrower;
         int256[2] dDiamond;
         int256[2] dCaller;
+        int256[2] dMarket;
     }
 
     mapping(uint256 => LoanBook) internal books;
@@ -105,6 +116,7 @@ contract LoanLedgerHandler is Test {
     uint256 public perimeterViolations;
     uint256 public acceptViolations;
     uint256 public interestViolations;
+    uint256 public periodicViolations;
     string public firstViolation;
 
     // ── Coverage counters: how often each per-action check actually ran ──
@@ -114,6 +126,12 @@ contract LoanLedgerHandler is Test {
     uint256 public precloseLanded;
     uint256 public liquidationLanded;
     uint256 public saleLanded;
+    uint256 public periodicStamped;
+    uint256 public periodicSold;
+
+    /// @dev Set only while a periodic-interest sale is booked: the one action the market may trade in.
+    bool internal marketOpen;
+    address public market;
 
     constructor(InvariantBase _base) {
         base = _base;
@@ -121,6 +139,7 @@ contract LoanLedgerHandler is Test {
         diamond = address(_base.diamond());
         assets[USDC] = _base.mockUsdc();
         assets[WETH] = _base.mockWeth();
+        market = address(_base.workingVenue());
         for (uint256 i = 0; i < 3; i++) {
             actors[i] = _base.lenderAt(i);
             actors[i + 3] = _base.borrowerAt(i);
@@ -247,6 +266,79 @@ contract LoanLedgerHandler is Test {
         saleLanded++;
     }
 
+    /// @notice #3241: settle a periodic-interest period (a just-stamp, or a collateral sale through
+    ///         the market). The wrapper warps to the period's grace end itself, so the shortfall
+    ///         and the sale bound it reads are the ones the settlement acts on.
+    function settlePeriodic(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        LibVaipakam.Loan memory pre = _loan(loanId);
+        if (pre.status != LibVaipakam.LoanStatus.Active) return;
+        if (pre.periodicInterestCadence == LibVaipakam.PeriodicInterestCadence.None) return;
+        (uint256 shortfall, uint256 maxSell) = _periodicBounds(loanId);
+
+        Snap memory before = _snap();
+        inner.settlePeriodic(loanIdx);
+        LibVaipakam.Loan memory post = _loan(loanId);
+        if (post.lastPeriodicInterestSettledAt == pre.lastPeriodicInterestSettledAt) {
+            // Nothing settled (the sale reverted, or the loan was not eligible).
+            _requireNoMovement(before, "settlePeriodic (not settled)");
+            return;
+        }
+        if (shortfall == 0) {
+            _requireNoMovement(before, "settlePeriodic (just-stamp)");
+            periodicStamped++;
+            return;
+        }
+        int256[2] memory dLenderBefore = [books[loanId].dLender[USDC], books[loanId].dLender[WETH]];
+        int256[2] memory dMarketBefore = [books[loanId].dMarket[USDC], books[loanId].dMarket[WETH]];
+        marketOpen = true; // the market may trade in this booking, and only in this one
+        _book(loanId, before, "settlePeriodic");
+        marketOpen = false;
+        LoanBook storage b = books[loanId];
+        b.hadPartial = true; // interest was paid mid-loan; the exact on-time check no longer applies
+        b.hadPeriodicSale = true;
+        periodicSold++;
+        _checkPeriodicSale(b, shortfall, maxSell, dLenderBefore, dMarketBefore);
+    }
+
+    /// @dev Warps to the period's grace end when it is still ahead, then reads the shortfall and
+    ///      the forced-sale preview's `maxSell` at that block.
+    function _periodicBounds(uint256 loanId) internal returns (uint256 shortfall, uint256 maxSell) {
+        (,, uint256 graceEndsAt,,,,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
+        if (graceEndsAt > block.timestamp) vm.warp(graceEndsAt);
+        (,,,,, shortfall,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
+        maxSell = ForcedSaleFacet(diamond)
+            .previewForcedSale(loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement).maxSell;
+    }
+
+    /// @dev Spec "Periodic Interest Payments": a missed period is covered by selling just enough
+    ///      collateral; the lender is paid at most the shortfall, the market only buys collateral,
+    ///      and never more than the preview allowed.
+    function _checkPeriodicSale(
+        LoanBook storage b,
+        uint256 shortfall,
+        uint256 maxSell,
+        int256[2] memory dLenderBefore,
+        int256[2] memory dMarketBefore
+    ) internal {
+        int256 lenderGot = b.dLender[USDC] - dLenderBefore[USDC];
+        int256 marketWeth = b.dMarket[WETH] - dMarketBefore[WETH];
+        int256 marketUsdc = b.dMarket[USDC] - dMarketBefore[USDC];
+        if (lenderGot > int256(shortfall)) {
+            periodicViolations++;
+            _flag(string.concat("settlePeriodic: lender paid ", vm.toString(lenderGot), " > shortfall ", vm.toString(shortfall)));
+        }
+        if (b.dLender[WETH] != dLenderBefore[WETH]) {
+            periodicViolations++;
+            _flag("settlePeriodic: the lender side received collateral");
+        }
+        if (marketWeth < 0 || marketWeth > int256(maxSell) || marketUsdc > 0) {
+            periodicViolations++;
+            _flag(string.concat("settlePeriodic: market took ", vm.toString(marketWeth), " collateral, maxSell ", vm.toString(maxSell)));
+        }
+    }
+
     function claimAsLender(uint256 loanIdx) external {
         (bool ok, uint256 loanId) = _pickLoan(loanIdx);
         if (!ok) return;
@@ -296,6 +388,13 @@ contract LoanLedgerHandler is Test {
         return (b.dLender[a], b.dBorrower[a], b.dDiamond[a], b.dCaller[a]);
     }
 
+    /// @notice A booked loan's cumulative market delta in asset `a`, and whether a periodic
+    ///         settlement ever sold its collateral.
+    function loanMarket(uint256 loanId, uint256 a) external view returns (int256 dMarket, bool hadPeriodicSale) {
+        LoanBook storage b = books[loanId];
+        return (b.dMarket[a], b.hadPeriodicSale);
+    }
+
     // ── Internals ──────────────────────────────────────────────────────
 
     /// @dev Replays the inner handler's pick: `bound(idx, 0, len - 1)` over its loan list.
@@ -326,7 +425,8 @@ contract LoanLedgerHandler is Test {
             }
             s.diamond[a] = t.balanceOf(diamond);
             s.caller[a] = t.balanceOf(address(inner));
-            trackedSum += s.diamond[a] + s.caller[a];
+            s.market[a] = t.balanceOf(market);
+            trackedSum += s.diamond[a] + s.caller[a] + s.market[a];
             s.outside[a] = t.totalSupply() - trackedSum;
         }
     }
@@ -350,9 +450,12 @@ contract LoanLedgerHandler is Test {
                     _flag(string.concat(action, ": an actor's holdings moved with no loan booked"));
                 }
             }
-            if (s.diamond[a] != before.diamond[a] || s.caller[a] != before.caller[a]) {
+            if (
+                s.diamond[a] != before.diamond[a] || s.caller[a] != before.caller[a]
+                    || s.market[a] != before.market[a]
+            ) {
                 isolationViolations++;
-                _flag(string.concat(action, ": the Diamond or caller balance moved with no loan booked"));
+                _flag(string.concat(action, ": the Diamond, caller or market balance moved with no loan booked"));
             }
             if (s.outside[a] != before.outside[a]) {
                 perimeterViolations++;
@@ -453,6 +556,12 @@ contract LoanLedgerHandler is Test {
             }
             b.dDiamond[a] += _delta(s.diamond[a], before.diamond[a]);
             b.dCaller[a] += _delta(s.caller[a], before.caller[a]);
+            int256 dM = _delta(s.market[a], before.market[a]);
+            b.dMarket[a] += dM;
+            if (dM != 0 && !marketOpen) {
+                isolationViolations++;
+                _flag(string.concat(action, ": the market traded outside a periodic sale"));
+            }
             if (s.outside[a] != before.outside[a]) {
                 perimeterViolations++;
                 _flag(string.concat(action, ": tokens crossed the tracked perimeter"));
