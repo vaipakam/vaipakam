@@ -1037,6 +1037,25 @@ serves. Each ships switched off behind its own flag.
   forgotten.
 - The duty ships switched off behind its own flag and pays only gas.
 
+## Writing hourly price checkpoints for the forced-sale floor
+
+- The tighter forced-sale floor counts a pair as calm only when its oracle
+  rate now is close to its rate at both of the last two hourly checkpoints.
+  Anyone may write a checkpoint; until someone does, every forced sale uses
+  the full slippage allowance. The keeper writes them so the floor can work.
+- Twice an hour, on each chain whose Diamond carries the floor, the keeper
+  records the hour's checkpoint for every asset that is a token leg of an
+  active loan, has none for the current hour yet, and has an oracle price
+  that reads. It simulates first and sends a bounded batch per transaction;
+  the second run in the hour sends only what the first left.
+- An asset whose price does not read is not sent. A missed hour can only
+  return a sale to the full allowance for the next two hours, never make a
+  floor tighter. A checkpoint stores only the oracle's own reading and moves
+  no value. Each run reports the hour, what was already recorded, what it
+  recorded, what landed in the next hour, what another caller recorded first
+  and what had no price.
+- The duty ships switched off behind its own flag and pays only gas.
+
 ## Moving held reward claim days on to payment
 
 - A reward claim day that one call could not settle is held in a staging
@@ -1348,9 +1367,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, and vault-beacon upkeep must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, and the hourly price checkpoints must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, and vault-beacon upkeep ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, and the hourly price checkpoints ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
