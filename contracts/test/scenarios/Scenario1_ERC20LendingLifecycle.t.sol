@@ -45,6 +45,8 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
+import {LibTestPayout} from "../helpers/LibTestPayout.sol";
+import {LibTestVaultBeacon as LibTestVaultBeaconPayout} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title Scenario1_ERC20LendingLifecycle
@@ -252,6 +254,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         // Initialize diamond admin state
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeaconPayout.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -366,6 +369,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         // Verify lender received funds
         uint256 lenderUsdcAfterClaim = IERC20(mockUsdc).balanceOf(lender);
@@ -377,6 +381,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         // Step 7: Verify loan is now Settled after both claims
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -468,6 +473,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         uint256 lenderWethAfter = IERC20(mockWeth).balanceOf(lender);
         assertEq(lenderWethAfter - lenderWethBefore, COLLATERAL, "Lender should receive full collateral");
@@ -543,6 +549,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         uint256 borrowerWethBefore = IERC20(mockWeth).balanceOf(borrower);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         uint256 borrowerWethAfter = IERC20(mockWeth).balanceOf(borrower);
         assertEq(borrowerWethAfter - borrowerWethBefore, COLLATERAL, "Borrower should receive full collateral");

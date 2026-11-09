@@ -51,6 +51,8 @@ import {MockZeroExLegacyAdapter} from "../mocks/MockZeroExLegacyAdapter.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
+import {LibTestPayout} from "../helpers/LibTestPayout.sol";
+import {LibTestVaultBeacon as LibTestVaultBeaconPayout} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title Scenario2b_ERC1155RentalLending
@@ -272,6 +274,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         AdminFacet(address(diamond)).unpause();
 
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeaconPayout.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -439,6 +442,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         assertEq(
             IERC20(mockUsdc).balanceOf(lender),
@@ -447,14 +451,15 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
         // ERC1155 returned from vault to lender
         assertEq(
-            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID),
-            10, // back to full bundle
+            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID)
+                + IERC1155(mockNft1155).balanceOf(VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender), TOKEN_ID),
+            10, // back to full bundle: the lent units return to the lender's vault (#3205 part 2)
             "ERC1155 bundle returned to lender on claim"
         );
         assertEq(
             IERC1155(mockNft1155).balanceOf(lenderVault, TOKEN_ID),
-            0,
-            "Vault drained after claim"
+            5,
+            "the lent units are back in the lender's vault after the claim (#3205 part 2)"
         );
 
         (address borrowerClaimAsset, uint256 borrowerClaimAmount, bool borrowerClaimed) =
@@ -466,6 +471,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         uint256 borrowerUsdcBeforeClaim = IERC20(mockUsdc).balanceOf(borrower);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         assertEq(
             IERC20(mockUsdc).balanceOf(borrower),
@@ -525,6 +531,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         assertEq(
             IERC20(mockUsdc).balanceOf(lender),
@@ -533,8 +540,9 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
         // ERC1155 returned to lender on default (rental bundle reverts to owner)
         assertEq(
-            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID),
-            10,
+            IERC1155(mockNft1155).balanceOf(lender, TOKEN_ID)
+                + IERC1155(mockNft1155).balanceOf(VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender), TOKEN_ID),
+            10, // the lent units return to the lender's vault (#3205 part 2)
             "ERC1155 bundle returned to lender on default"
         );
 

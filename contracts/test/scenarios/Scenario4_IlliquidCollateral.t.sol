@@ -45,6 +45,7 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
+import {LibTestPayout} from "../helpers/LibTestPayout.sol";
 
 /**
  * @title Scenario4_IlliquidCollateral
@@ -247,6 +248,7 @@ contract Scenario4_IlliquidCollateral is Test {
         // Initialize diamond admin state
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -385,6 +387,9 @@ contract Scenario4_IlliquidCollateral is Test {
         // so newBothClaimed=true the moment lender claims → loan settles + NFT burns.
         emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockIlliquid, COLLATERAL, /* newBothClaimed */ true);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        // #3205 part 2 — the claim pays the lender's vault; the lender
+        // withdraws it to the wallet, as the app does.
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         // Verify lender received the collateral
         uint256 lenderIllqAfter = IERC20(mockIlliquid).balanceOf(lender);

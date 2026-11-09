@@ -277,6 +277,7 @@ contract InvariantBase is Test {
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
+        LibTestVaultBeacon.installDepository(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
     }

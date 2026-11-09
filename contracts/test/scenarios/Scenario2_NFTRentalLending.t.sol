@@ -52,6 +52,8 @@ import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
+import {LibTestPayout} from "../helpers/LibTestPayout.sol";
+import {LibTestVaultBeacon as LibTestVaultBeaconPayout} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title Scenario2_NFTRentalLending
@@ -284,6 +286,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Initialize admin state
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeaconPayout.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -483,6 +486,7 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         // Verify lender received USDC and NFT
         assertEq(
@@ -492,8 +496,8 @@ contract Scenario2_NFTRentalLending is Test {
         );
         assertEq(
             IERC721(mockNft721).ownerOf(1),
-            lender,
-            "NFT should be returned to lender after claim"
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender),
+            "NFT should be returned to the lender's vault after claim (#3205 part 2)"
         );
 
         // Step 6: Borrower claims buffer refund
@@ -511,6 +515,7 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 borrowerUsdcBeforeClaim = IERC20(mockUsdc).balanceOf(borrower);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         assertEq(
             IERC20(mockUsdc).balanceOf(borrower),
@@ -582,6 +587,7 @@ contract Scenario2_NFTRentalLending is Test {
         uint256 lenderUsdcBefore = IERC20(mockUsdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         // Verify lender received USDC and NFT
         assertEq(
@@ -591,8 +597,8 @@ contract Scenario2_NFTRentalLending is Test {
         );
         assertEq(
             IERC721(mockNft721).ownerOf(1),
-            lender,
-            "NFT should be returned to lender after default claim"
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender),
+            "NFT should be returned to the lender's vault after default claim (#3205 part 2)"
         );
 
         // Step 6: Verify no borrower claim on default (borrower loses prepay)

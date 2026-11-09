@@ -12,6 +12,8 @@ import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {LibTestPayout} from "../helpers/LibTestPayout.sol";
+import {LibTestVaultBeacon as LibTestVaultBeaconPayout} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title ScenarioFallbackClaimRace
@@ -125,6 +127,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
         uint256 before = IERC20(usdc).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(diamond).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
         assertGt(
             IERC20(usdc).balanceOf(lender),
             before,
@@ -164,6 +167,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
 
         vm.prank(borrower);
         ClaimFacet(diamond).claimAsBorrower(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         uint256 got = IERC20(weth).balanceOf(borrower) - before;
         assertEq(got, 10 ether, "collateral not returned in full");
@@ -200,6 +204,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
 
         vm.prank(borrower);
         ClaimFacet(diamond).claimAsBorrower(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         // Lender separately claims returned principal.
         vm.prank(borrower);
@@ -208,5 +213,6 @@ contract ScenarioFallbackClaimRaceTest is Test {
 
         vm.prank(lender);
         ClaimFacet(diamond).claimAsLender(loanId);
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
     }
 }
