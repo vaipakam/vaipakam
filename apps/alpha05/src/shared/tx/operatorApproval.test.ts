@@ -56,18 +56,40 @@ describe('granting the operator approval for one action', () => {
     states = [at(false), at(false)];
     await expect(make().grant()).rejects.toMatchObject({ refusal: { code: 'OperatorApprovalNotSet' } });
   });
-  it('states a grant whose read-back failed as unverified, with its transaction', async () => {
+  /** Fails the reads `failing` names (1 is the read before the prompt). */
+  const flakyAt = (failing: (n: number) => boolean) => {
     let calls = 0;
     const flaky = {
       account: WALLET,
       read: async <T>(fn: (c: never) => Promise<T>) => {
-        if (++calls > 1) throw new Error('rpc down');
+        if (failing(++calls)) throw new Error('rpc down');
         return { value: await fn(client as never), via: 'wallet' };
       },
     } as unknown as OwnStateClient;
+    return operatorApproval({ own: flaky, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, collection: 'vMULTI', setStep: () => {} }, ASSET, 7n);
+  };
+  it('takes back a mined grant whose read-back failed before it throws', async () => {
+    states = [at(false), at(true), at(false)];
+    await expect(flakyAt((n) => n === 2).grant()).rejects.toMatchObject({
+      refusal: { code: 'OperatorApprovalUnverified', reason: 'operatorApproval.unreadMined operatorApproval.revoked' },
+    });
+    expect(sent).toEqual([
+      { operator: DIAMOND, on: true },
+      { operator: DIAMOND, on: false },
+    ]);
+  });
+  it('states a take-back it could not make, never as done', async () => {
     states = [at(false)];
-    const ap = operatorApproval({ own: flaky, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, collection: 'vMULTI', setStep: () => {} }, ASSET, 7n);
-    await expect(ap.grant()).rejects.toMatchObject({ refusal: { code: 'OperatorApprovalUnverified', reason: 'operatorApproval.unread' } });
+    await expect(flakyAt((n) => n > 1).grant()).rejects.toMatchObject({
+      refusal: { code: 'OperatorApprovalUnverified', reason: 'operatorApproval.unreadMined operatorApproval.revokeFailed' },
+    });
+    expect(sent).toEqual([{ operator: DIAMOND, on: true }]);
+  });
+  it('states a grant whose receipt never read as unverified, with its transaction, and sends nothing over it', async () => {
+    states = [at(false)];
+    vi.mocked(waitForTransactionReceipt).mockRejectedValueOnce(new Error('timeout'));
+    await expect(make().grant()).rejects.toMatchObject({ refusal: { code: 'OperatorApprovalUnverified', reason: 'operatorApproval.unread' } });
+    expect(sent).toEqual([{ operator: DIAMOND, on: true }]);
   });
 });
 

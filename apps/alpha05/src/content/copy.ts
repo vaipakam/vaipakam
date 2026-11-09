@@ -3679,6 +3679,7 @@ export const copy = {
     unread: A(
       'The approval was sent ({{hash}}), but whether it landed could not be read, so nothing else was sent. If it lands, it lets the protocol move this one NFT; you can clear it from your wallet.',
     ),
+    unreadMined: A('The NFT approval was sent ({{hash}}) and mined, but what it set could not be read, so nothing else was sent and it is being put back.'),
     notSet: A('The approval for {{token}} did not land, so nothing else was sent.'),
     notHeld: A('Your wallet no longer holds the NFT, so there was no approval to put back.'),
     restored: A('The NFT approval was put back to what it was.'),
@@ -3695,6 +3696,7 @@ export const copy = {
     unread: A(
       'The approval was sent ({{hash}}), but whether it landed could not be read, so nothing else was sent. If it lands, it lets the protocol move every {{collection}} token you hold; take it back from your wallet.',
     ),
+    unreadMined: A('The approval was sent ({{hash}}) and mined, but what it set could not be read, so nothing else was sent and it is being taken back.'),
     notSet: A('The approval over your {{collection}} tokens did not land, so nothing else was sent.'),
     revoked: A("The protocol's approval over your {{collection}} tokens is taken back."),
     revokePending: A(

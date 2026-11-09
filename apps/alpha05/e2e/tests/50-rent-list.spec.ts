@@ -60,7 +60,15 @@ test('an owner lists an NFT for rent: a token not held is refused in the review,
   await expect(form).toBeVisible();
   await expect(form).toContainText('a rental fee is never a range');
   const tokenId = freshId(testInfo.project.name);
+  // Choosing "another" opens an empty paste box that stays open, for the
+  // collection and the payment token alike; choosing a suggestion closes it.
+  for (const [select, box] of [['rent-list-nft', 'rent-list-nft-address'], ['rent-list-pay', 'rent-list-pay-address']] as const) {
+    await form.getByTestId(select).selectOption('other');
+    await expect(form.getByTestId(select)).toHaveValue('other');
+    await expect(form.getByTestId(box)).toHaveValue('');
+  }
   await form.getByTestId('rent-list-nft').selectOption(nft);
+  await expect(form.getByTestId('rent-list-nft-address')).toHaveCount(0);
   await form.getByTestId('rent-list-token-id').fill(tokenId.toString());
   await form.getByTestId('rent-list-pay').selectOption(pay);
   await form.getByTestId('rent-list-fee').fill('2');

@@ -38,7 +38,9 @@ export interface NftApproval {
   /** Approves the protocol for the token, overwriting `prior` (the approved
    *  address read just before; the caller names the prompt), and resolves
    *  with the block the approval mined in. Throws a stated refusal when the
-   *  approval or the holder moved meanwhile or the step did not land. */
+   *  approval or the holder moved meanwhile or the step did not land. An
+   *  approval that mined but could not be read back is put back before it
+   *  throws, so no ending leaves it standing unstated. */
   approve: (prior: Hex | null) => Promise<bigint>;
   /** Puts the approval back to `prior`, only while it still reads the
    *  protocol and the wallet still holds the token, and says what happened.
@@ -89,6 +91,18 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     // The caller names this prompt in its own step count.
     const r = await setTo(diamond);
     if (r.landed && r.at !== null) return r.at;
+    if (r.hash !== null && r.at !== null) {
+      // Mined, but what it set could not be read: the caller holds nothing
+      // to put back yet, so it is put back here (read no earlier than the
+      // block it mined in) and the outcome is stated.
+      const back = await putBack(prior, r.at);
+      throw new StatedRefusal({
+        code: 'NftApprovalUnverified',
+        reason: `${format('nftApproval.unreadMined', { hash: r.hash })} ${back.sentence}`,
+        reopensAt: null,
+        remedy: null,
+      });
+    }
     throw new StatedRefusal({
       code: r.hash !== null ? 'NftApprovalUnverified' : 'NftApprovalNotSet',
       reason: r.hash !== null ? format('nftApproval.unread', { hash: r.hash }) : format('nftApproval.notSet', { token: d.tokenName }),

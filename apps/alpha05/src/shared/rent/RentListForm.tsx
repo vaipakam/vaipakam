@@ -45,6 +45,23 @@ const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, 'request.expiryNeverOption' | 
   custom: 'request.expiryOther',
 };
 
+/**
+ * Which option a stored field selects. The stored value is a suggested
+ * address, a pasted one, or the OTHER marker itself: choosing "another" with
+ * nothing pasted yet stores the marker, so the paste box stays open instead
+ * of the list snapping back to its first suggestion. Empty means untouched.
+ */
+function choiceOf(value: string, suggested: readonly string[]): string {
+  if (value === '') return suggested[0] ?? OTHER;
+  if (value === OTHER) return OTHER;
+  return suggested.some((a) => a.toLowerCase() === value.toLowerCase()) ? value : OTHER;
+}
+
+/** The text a reopened paste box starts with: a pasted address, never the marker. */
+function pastedOf(value: string, choice: string): string {
+  return choice === OTHER && value !== OTHER ? value : '';
+}
+
 /** A suggested address or a pasted one: the select's value and the address
  *  it stands for (null while a pasted one is not an address yet). */
 function chosen(value: string, pasted: string): Hex | null {
@@ -80,10 +97,10 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
 
   const nftSuggested = (faucetAssets(chain) ?? []).filter((a) => a.kind === 'nft' || a.kind === 'multi').map((a) => a.address);
   const paySuggested = suggestedAssets(chain).map((c) => c.address);
-  const nftChoice = input.nft === '' ? (nftSuggested[0] ?? OTHER) : nftSuggested.some((a) => a.toLowerCase() === input.nft.toLowerCase()) ? input.nft : OTHER;
-  const [nftPasted, setNftPasted] = useState(nftChoice === OTHER ? input.nft : '');
-  const payChoice = input.payment === '' ? (paySuggested[0] ?? OTHER) : paySuggested.some((a) => a.toLowerCase() === input.payment.toLowerCase()) ? input.payment : OTHER;
-  const [payPasted, setPayPasted] = useState(payChoice === OTHER ? input.payment : '');
+  const nftChoice = choiceOf(input.nft, nftSuggested);
+  const [nftPasted, setNftPasted] = useState(pastedOf(input.nft, nftChoice));
+  const payChoice = choiceOf(input.payment, paySuggested);
+  const [payPasted, setPayPasted] = useState(pastedOf(input.payment, payChoice));
 
   const nft = chosen(nftChoice, nftPasted);
   const payment = chosen(payChoice, payPasted);
@@ -174,7 +191,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
           value={nftChoice}
           onChange={(e) => {
             const v = e.target.value;
-            set({ nft: v === OTHER ? nftPasted : v });
+            set({ nft: v === OTHER ? nftPasted || OTHER : v });
             if (v !== OTHER) setNftPasted('');
           }}
           data-testid="rent-list-nft"
@@ -195,7 +212,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
               value={nftPasted}
               onChange={(e) => {
                 setNftPasted(e.target.value);
-                set({ nft: e.target.value });
+                set({ nft: e.target.value || OTHER });
               }}
               aria-describedby={describedBy}
               aria-invalid={invalid}
@@ -229,7 +246,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
           value={payChoice}
           onChange={(e) => {
             const v = e.target.value;
-            set({ payment: v === OTHER ? payPasted : v });
+            set({ payment: v === OTHER ? payPasted || OTHER : v });
             if (v !== OTHER) setPayPasted('');
           }}
           data-testid="rent-list-pay"
@@ -250,7 +267,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
               value={payPasted}
               onChange={(e) => {
                 setPayPasted(e.target.value);
-                set({ payment: e.target.value });
+                set({ payment: e.target.value || OTHER });
               }}
               aria-describedby={describedBy}
               aria-invalid={invalid}

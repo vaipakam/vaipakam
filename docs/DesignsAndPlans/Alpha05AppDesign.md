@@ -504,6 +504,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   already done. While the action's own receipt is unknown the grant still
   stands, and the page says so beside the transaction. A take-back that did
   not land or could not be read is stated with what to do in the wallet.
+  An approval or grant that mined but could not be read back is put back
+  (or taken back) at once, before the flow stops, since nothing else holds
+  it to clean up; the stop states both. One whose receipt never read is
+  stated with its transaction and what to do in the wallet, never reset
+  while it may still be pending.
 - **RB-RANGE** — a ranged offer (OFF-10) is shown at both ends it can be
   taken at, never as one figure: what a direct taker gets (for a borrower's
   request, the smallest amount against the floor collateral, the rest of the
