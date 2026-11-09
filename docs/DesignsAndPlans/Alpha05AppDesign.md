@@ -1604,13 +1604,22 @@ above. Each resolves here, so a route reviewer needs no private file:
   approval over an NFT collection, and a single ERC-721 token's approval.
   No chain read lists every approval a wallet has given, so the page checks
   the suggested assets and every asset the wallet's deposit record, loans,
-  offers and standing offers name on this network, plus any contract the
+  offers and standing offers name on this network (a standing offer's lent
+  asset and the collateral it asks for), plus any contract the
   reader adds, and says what it checked and that an approval outside that
   set is not found. A record that could not be read to its end, or an asset
-  that did not answer, is stated; neither is ever "no approval". Each
+  that did not answer, is stated; neither is ever "no approval" (a token the
+  wallet owns whose approval did not answer is counted unknown). Each
   approval is withdrawn in one signed transaction through RB-CONFIDENCE (what
-  it lets the protocol move now, nothing after, no funds moved), read again
-  before the wallet opens and measured at the receipt's block; the receipt
+  it lets the protocol move now, what still lets it move the asset after, no
+  funds moved), read again before the wallet opens and measured at the
+  receipt's block. "After" is read with the row at one block: another
+  approval of the same asset (the collection's operator approval for one NFT,
+  the single-token approvals found for a collection, the Permit2 allowance
+  for an ERC-20, the token's own allowance for a Permit2 one) is named as
+  staying, one that did not answer makes it unknown, and only when each was
+  read and none stands does it say nothing remains; a change in it before
+  the signature stops the signature as a change. The receipt
   says that anything relying on it refuses until approved again, and a
   Permit2 withdrawal leaves the token's own approval for Permit2, which other
   apps may use, unchanged.

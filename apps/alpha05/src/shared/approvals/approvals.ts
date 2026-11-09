@@ -16,10 +16,14 @@ import { LenderIntentFacetABI, LoanFacetABI, MetricsFacetABI, OfferCancelFacetAB
 import type { SupportedChain } from '../../chain/chains';
 import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
 import { suggestedAssets, suggestedCollateral } from '../offers/assets';
-import { answerOrNull } from '../reads/answer';
+import { answerOrNull, isContractAnswer } from '../reads/answer';
 import { intentAssets, loanAssets, offerLegs, readLoanLegs, readPagedList, type IntentRow, type LoanLegs, type OfferRecord } from '../vault/holdings';
 
 type Hex = `0x${string}`;
+
+/** A standing offer as `getLenderIntentsByOwner` returns it: the lent asset
+ *  and the collateral asset it asks for (an ERC-20). */
+type StandingOfferRow = IntentRow & { intent: { collateralAsset?: Hex } };
 
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const INTENT = LenderIntentFacetABI as Abi;
@@ -125,7 +129,10 @@ export async function readApprovalSubjects(c: PublicClient, diamond: Hex, accoun
   };
   for (const s of suggestedAssets(chain)) addUnique(erc20, s.address);
   for (const s of legs.erc20) addUnique(erc20, s.asset);
+  // A standing offer names both its lent asset and the collateral it asks
+  // for; either may carry an approval.
   for (const s of intentAssets(intents.assets as IntentRow[])) addUnique(erc20, s.asset);
+  for (const r of intents.assets as StandingOfferRow[]) if (r.intent.collateralAsset) addUnique(erc20, r.intent.collateralAsset);
   const tokens: ApprovalSubjects['tokens'] = [];
   for (const n of legs.nfts) {
     addCollection(n.asset, n.standard);
@@ -176,10 +183,15 @@ export async function readApprovals(c: PublicClient, diamond: Hex, account: Hex,
     }),
     ...subjects.tokens.map(async ({ asset, tokenId }) => {
       const [owner, approved] = await Promise.all([view<Hex>(asset, NFT_ABI as Abi, 'ownerOf', [tokenId]), view<Hex>(asset, NFT_ABI as Abi, 'getApproved', [tokenId])]);
-      // A token the wallet no longer owns carries no approval of its own;
-      // an unanswered read is a token that may no longer exist.
-      if (owner === null || approved === null) return;
-      if (owner.toLowerCase() === account.toLowerCase() && approved.toLowerCase() === diamond.toLowerCase())
+      // A token that no longer exists (ownerOf reverts) or that the wallet
+      // no longer owns carries no approval of its own. A token the wallet
+      // owns whose approval did not answer is unknown, never "none".
+      if (owner === null || owner.toLowerCase() !== account.toLowerCase()) return;
+      if (approved === null) {
+        unreadable++;
+        return;
+      }
+      if (approved.toLowerCase() === diamond.toLowerCase())
         rows.push({ kind: 'token', asset, tokenId, amount: 0n, expiration: 0n });
     }),
   ]);
@@ -253,3 +265,63 @@ export async function readRow(c: PublicClient, diamond: Hex, account: Hex, r: Ap
     }
   }
 }
+
+/** The other approvals that let the protocol move the same asset, which
+ *  withdrawing `r` leaves in place: for one NFT, its collection's operator
+ *  approval; for a collection, the single-token approvals found for it; for
+ *  an ERC-20, its Permit2 allowance; for a Permit2 allowance, the token's
+ *  own allowance. Read at a block; `unread` when one of them did not answer,
+ *  so the receipt never says nothing remains when that is unknown. */
+export interface Overlap {
+  rows: ApprovalRow[];
+  unread: boolean;
+}
+
+export async function readOverlap(
+  c: PublicClient,
+  diamond: Hex,
+  account: Hex,
+  r: ApprovalRow,
+  known: readonly ApprovalRow[],
+  blockNumber: bigint,
+): Promise<Overlap> {
+  const same = (x: Pick<ApprovalRow, 'asset'>) => x.asset.toLowerCase() === r.asset.toLowerCase();
+  const probe = async (row: ApprovalRow): Promise<ApprovalRow | null | 'unread'> => {
+    try {
+      return await readRow(c, diamond, account, row, blockNumber);
+    } catch (e) {
+      if (isContractAnswer(e)) return 'unread';
+      throw e;
+    }
+  };
+  const blank = { asset: r.asset, tokenId: 0n, amount: 0n, expiration: 0n };
+  let candidates: ApprovalRow[];
+  switch (r.kind) {
+    case 'token':
+      candidates = [{ ...blank, kind: 'collection' }];
+      break;
+    case 'collection':
+      candidates = known.filter((x) => x.kind === 'token' && same(x));
+      break;
+    case 'erc20': {
+      const code = await c.getCode({ address: PERMIT2, blockNumber });
+      candidates = code !== undefined && code !== '0x' ? [{ ...blank, kind: 'permit2' }] : [];
+      break;
+    }
+    case 'permit2':
+      candidates = [{ ...blank, kind: 'erc20' }];
+      break;
+  }
+  const answers = await Promise.all(candidates.map(probe));
+  return {
+    rows: answers.filter((a): a is ApprovalRow => a !== null && a !== 'unread'),
+    unread: answers.includes('unread'),
+  };
+}
+
+/** Whether two overlap readings say the same thing. */
+export function sameOverlap(a: Overlap, b: Overlap): boolean {
+  if (a.unread !== b.unread || a.rows.length !== b.rows.length) return false;
+  return a.rows.every((x) => b.rows.some((y) => rowKey(x) === rowKey(y) && x.amount === y.amount && x.expiration === y.expiration));
+}
+

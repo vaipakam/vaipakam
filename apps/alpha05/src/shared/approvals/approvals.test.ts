@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ContractFunctionZeroDataError, type PublicClient } from 'viem';
-import { PERMIT2, isUnlimited, readApprovals, readRow, revokeCall, type ApprovalRow, type ApprovalSubjects } from './approvals';
+import { PERMIT2, isUnlimited, readApprovals, readOverlap, readRow, revokeCall, sameOverlap, type ApprovalRow, type ApprovalSubjects } from './approvals';
+import { afterRevoke } from './approvalReceipt';
 
 type Hex = `0x${string}`;
 const diamond = '0x00000000000000000000000000000000000000d1' as Hex;
@@ -11,7 +12,7 @@ const nft = '0x0000000000000000000000000000000000000003' as Hex;
 const broken = '0x0000000000000000000000000000000000000004' as Hex;
 
 /** A chain stand-in: each contract answers from a table; `broken` reverts. */
-function client(opts: { permit2?: boolean; allowances?: Record<string, bigint>; permit2Allowance?: [bigint, number]; operator?: boolean; owner?: Hex; approved?: Hex } = {}): PublicClient {
+function client(opts: { permit2?: boolean; allowances?: Record<string, bigint>; permit2Allowance?: [bigint, number]; operator?: boolean; owner?: Hex; approved?: Hex; approvedFails?: boolean } = {}): PublicClient {
   return {
     getBlock: async () => ({ number: 10n, timestamp: 1_000n }),
     getCode: async ({ address }: { address: Hex }) => (address === PERMIT2 && opts.permit2 ? '0x60' : '0x'),
@@ -22,6 +23,7 @@ function client(opts: { permit2?: boolean; allowances?: Record<string, bigint>; 
       if (functionName === 'allowance') return opts.allowances?.[address] ?? 0n;
       if (functionName === 'isApprovedForAll') return opts.operator ?? false;
       if (functionName === 'ownerOf') return opts.owner ?? account;
+      if (functionName === 'getApproved' && opts.approvedFails) throw new ContractFunctionZeroDataError({ functionName });
       if (functionName === 'getApproved') return opts.approved ?? '0x0000000000000000000000000000000000000000';
       throw new Error(`unexpected ${functionName}`);
     },
@@ -49,6 +51,11 @@ describe('reading the approvals', () => {
     const scan = await readApprovals(client({ approved: diamond, owner: tokB }), diamond, account, { ...subjects, erc20: [], collections: [] });
     expect(scan.rows).toEqual([]);
   });
+  it('a token the wallet owns whose approval does not answer is unknown, never none', async () => {
+    const scan = await readApprovals(client({ approvedFails: true }), diamond, account, { ...subjects, erc20: [], collections: [] });
+    expect(scan.rows).toEqual([]);
+    expect(scan.unreadable).toBe(1);
+  });
   it('an asset that does not answer is counted as unknown, never as no approval', async () => {
     const scan = await readApprovals(client(), diamond, account, { ...subjects, erc20: [broken], collections: [], tokens: [] });
     expect(scan.rows).toEqual([]);
@@ -73,5 +80,29 @@ describe('withdrawing one', () => {
     expect(await readRow(client(), diamond, account, row({}))).toBeNull();
     expect(await readRow(client({ allowances: { [tokA]: 3n } }), diamond, account, row({}))).toMatchObject({ amount: 3n });
     await expect(readRow(client(), diamond, account, row({ asset: broken }))).rejects.toThrow();
+  });
+  it('names the other approval of the same asset that withdrawing this one leaves in place', async () => {
+    const copy = { text: (k: string) => k, format: (k: string, v: Record<string, string>) => `${k}|${Object.values(v).join(',')}` } as unknown as Parameters<typeof afterRevoke>[2];
+    const token = row({ kind: 'token', asset: nft, tokenId: 7n });
+    const both = await readOverlap(client({ operator: true, approved: diamond }), diamond, account, token, [], 10n);
+    expect(both.rows.map((r) => r.kind)).toEqual(['collection']);
+    expect(afterRevoke(both, null, copy)).toMatch(/^approvals\.afterOther\|/);
+    const alone = await readOverlap(client({ approved: diamond }), diamond, account, token, [], 10n);
+    expect(alone).toEqual({ rows: [], unread: false });
+    expect(afterRevoke(alone, null, copy)).toBe('approvals.after');
+    const collection = await readOverlap(client({ operator: true, approved: diamond }), diamond, account, row({ kind: 'collection', asset: nft }), [token], 10n);
+    expect(collection.rows).toEqual([token]);
+    const permit2 = await readOverlap(client({ permit2: true, permit2Allowance: [9n, 2_000] }), diamond, account, row({}), [], 10n);
+    expect(permit2.rows.map((r) => r.kind)).toEqual(['permit2']);
+    const erc20 = await readOverlap(client({ allowances: { [tokA]: 4n } }), diamond, account, row({ kind: 'permit2' }), [], 10n);
+    expect(erc20.rows).toMatchObject([{ kind: 'erc20', amount: 4n }]);
+    expect(sameOverlap(both, alone)).toBe(false);
+    expect(sameOverlap(both, both)).toBe(true);
+  });
+  it('says it cannot tell when the other approval does not answer', async () => {
+    const copy = { text: (k: string) => k, format: (k: string) => k } as unknown as Parameters<typeof afterRevoke>[2];
+    const unread = await readOverlap(client(), diamond, account, row({ kind: 'token', asset: broken, tokenId: 1n }), [], 10n);
+    expect(unread).toEqual({ rows: [], unread: true });
+    expect(afterRevoke(unread, null, copy)).toBe('approvals.afterUnread');
   });
 });

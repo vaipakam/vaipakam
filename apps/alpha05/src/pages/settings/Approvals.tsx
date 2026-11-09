@@ -1,9 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
-import { readApprovals, readApprovalSubjects, readRow, revokeCall, rowKey, type ApprovalRow } from '../../shared/approvals/approvals';
+import { readApprovals, readApprovalSubjects, readOverlap, readRow, revokeCall, rowKey, sameOverlap, type ApprovalRow, type Overlap } from '../../shared/approvals/approvals';
 import { revokeReceipt, rowAsset, rowReach } from '../../shared/approvals/approvalReceipt';
 import { useCopy } from '../../shared/copy/useCopy';
 import { refusalFromError } from '../../shared/eligibility/refusal';
@@ -23,6 +23,8 @@ type Hex = `0x${string}`;
 /** The approval under review, with the identity it was read under. */
 interface Reviewed {
   row: ApprovalRow;
+  /** The other approvals of the same asset, read at the same block. */
+  overlap: Overlap;
   readAt: number;
   identity: string;
 }
@@ -72,27 +74,41 @@ export function Approvals({ chain, own }: { chain: SupportedChain; own: OwnState
     },
   });
 
+  // The row and the other approvals of its asset, read at one block.
+  const readReview = (c: Parameters<Parameters<typeof own.read>[0]>[0], row: ApprovalRow) =>
+    c.getBlockNumber({ cacheTime: 0 }).then(async (block) => {
+      const now = await readRow(c, diamond, account, row, block);
+      if (now === null) return null;
+      return { row: now, overlap: await readOverlap(c, diamond, account, now, s?.rows ?? [], block) };
+    });
+
   // Opening reads the row again, so the receipt stands on a read taken now,
-  // never on the list's last poll.
+  // never on the list's last poll. Each opening has its own number: closing
+  // or opening another retires it, so a late answer for an approval the
+  // reader moved away from never replaces the one under review.
   const [loadError, setLoadError] = useState<string | null>(null);
+  const opening = useRef(0);
   const open = (row: ApprovalRow) => {
     if (tx.phase.kind !== 'idle') tx.reset();
     setReviewed(null);
     setLoadError(null);
     tx.review();
-    void own.read((c) => readRow(c, diamond, account, row)).then(
+    const mine = ++opening.current;
+    const live = () => mounted.current && opening.current === mine;
+    void own.read((c) => readReview(c, row)).then(
       ({ value }) => {
-        if (!mounted.current) return;
+        if (!live()) return;
         if (value === null) setLoadError(text('approvals.already'));
-        else setReviewed({ row: value, readAt: Date.now(), identity });
+        else setReviewed({ ...value, readAt: Date.now(), identity });
       },
       (e: unknown) => {
-        if (mounted.current) setLoadError(refusalFromError(e).reason);
+        if (live()) setLoadError(refusalFromError(e).reason);
       },
     );
   };
 
   const close = () => {
+    opening.current++;
     const k = tx.phase.kind;
     if (k === 'review' || k === 'measured' || k === 'failed' || k === 'superseded') tx.reset();
     setReviewed(null);
@@ -104,15 +120,15 @@ export function Approvals({ chain, own }: { chain: SupportedChain; own: OwnState
   // already, or changed, stops the signature; then the call is simulated.
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!reviewed) return { kind: 'unreadable', reason: text('flow.reading') };
-    let now: ApprovalRow | null;
+    let now: { row: ApprovalRow; overlap: Overlap } | null;
     try {
-      now = (await own.read((c) => readRow(c, diamond, account, reviewed.row))).value;
+      now = (await own.read((c) => readReview(c, reviewed.row))).value;
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
     if (now === null) return { kind: 'refused', refusal: { code: 'AlreadySet', reason: text('approvals.already'), reopensAt: null, remedy: null } };
-    if (now.amount !== reviewed.row.amount || now.expiration !== reviewed.row.expiration) {
-      if (current()) setReviewed({ ...reviewed, row: now, readAt: Date.now() });
+    if (now.row.amount !== reviewed.row.amount || now.row.expiration !== reviewed.row.expiration || !sameOverlap(now.overlap, reviewed.overlap)) {
+      if (current()) setReviewed({ ...reviewed, ...now, readAt: Date.now() });
       return { kind: 'changed', what: text('approvals.changedWhat') };
     }
     return simulateCall(own, revokeCall(reviewed.row, diamond));
@@ -227,7 +243,7 @@ export function Approvals({ chain, own }: { chain: SupportedChain; own: OwnState
             tx={tx}
             identity={identity}
             reviewedFor={reviewed?.identity ?? tx.frozen?.identity ?? identity}
-            receipt={reviewed ? revokeReceipt(reviewed.row, meta ?? null, copy, { chain: chain.name, readAt: reviewed.readAt }) : null}
+            receipt={reviewed ? revokeReceipt(reviewed.row, reviewed.overlap, meta ?? null, copy, { chain: chain.name, readAt: reviewed.readAt }) : null}
             recheck={recheck}
             describeAsset={() => null}
             explorer={chain.blockExplorer}
