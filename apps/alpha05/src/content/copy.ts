@@ -1578,6 +1578,34 @@ export const copy = {
       'offer-detail',
     ),
   },
+  rateCheck: {
+    reading: B('Reading the rates of recent loans on this pair and term…'),
+    none: B('No confirmed loans on this pair and term in the last {{days}} days to compare this rate with.'),
+    near: B('Recent loans on this pair and term: a middle rate of {{median}}% a year, {{count}} loans, {{days}} days.'),
+    capped: B('Only the latest {{count}} were read.'),
+    farTakenBelow: A(
+      'At {{rate}}% your rate is more than five points below the middle rate of recent loans on this pair and term ({{median}}% a year, {{count}} loans in {{days}} days). A lender’s offer this far under the market is the one taken first when rates move; check it before posting.',
+    ),
+    farTakenAbove: A(
+      'At {{rate}}% your rate is more than five points above the middle rate of recent loans on this pair and term ({{median}}% a year, {{count}} loans in {{days}} days). A request this far over the market is taken quickly and you would pay more than recent borrowers; check it before posting.',
+    ),
+    farIdleAbove: A(
+      'At {{rate}}% your rate is more than five points above the middle rate of recent loans on this pair and term ({{median}}% a year, {{count}} loans in {{days}} days), so borrowers may pass it by. You may still post it.',
+    ),
+    farIdleBelow: A(
+      'At {{rate}}% your rate is more than five points below the middle rate of recent loans on this pair and term ({{median}}% a year, {{count}} loans in {{days}} days), so lenders may pass it by. You may still post it.',
+    ),
+    failed: B('Recent rates could not be read ({{reason}}), so this rate is not compared.'),
+    nft: B('No rate comparison is made for NFT collateral.'),
+    noIndex: B('this build is not connected to the protocol’s index'),
+    unplaced: B('{{count}} loans on this pair have terms the index has not confirmed; they are not compared.'),
+    unplacedCapped: B('At least {{count}} loans on this pair have terms the index has not confirmed; they are not compared.'),
+    whySummary: B('How this comparison works'),
+    why: C(
+      'The middle rate is read from the protocol’s index: loans that started on the same pair and term in the last 30 days, counting only rates the index has confirmed and leaving out loans opened by selling a running loan. A rate more than five points from it is flagged; it is a guide, never a limit, and the index can lag the chain by a few minutes.',
+      'rate-check',
+    ),
+  },
   offerCancel: {
     title: B('Cancel this offer'),
     titleCleanup: B('Clean up this expired offer'),
@@ -2484,6 +2512,7 @@ export const copy = {
     durationNone: A('No term this app offers is open on this network now, so a request cannot be posted here.'),
     expiryLabel: B('Request stays open'),
     expiryNeverOption: B('Until taken or cancelled'),
+    expiryNeverNote: A('An offer that never lapses keeps its rate as the market moves, so it can be taken at a rate you would no longer choose. Cancel it if rates change.'),
     expiry1d: B('1 day'),
     expiry7d: B('7 days'),
     expiry30d: B('30 days'),

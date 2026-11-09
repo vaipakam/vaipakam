@@ -1179,6 +1179,12 @@ When no request fits, you can post your own lending offer for your two tokens: t
 
 Unless you set parts in Advanced mode, one borrower takes the whole amount, or nobody does, and must lock exactly the collateral you set. The form shows how much of the lending token your wallet holds. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows. The offer stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, means an early repayment does not lower what you earn; pro-rata pays you only for the time the loan is open. You can also let the borrower repay part early. The form shows what the borrower would owe you at the due date if they took the offer now. In Advanced mode an offer can also be lent in parts, carry a fill mode, pay interest on a schedule and take the Full fee tariff.
 
+<a id="rate-check"></a>
+
+### Checking your rate against recent loans
+
+Under the rate on both posting forms, a lender's offer and a borrower's request, the app shows the middle rate of loans that started on the same pair and term in the last 30 days, and how many there were. If your rate is more than five points away, it warns you and says which way it cuts: a lender far under the market, or a borrower far over it, posts the offer taken first when rates move; the other way, the offer may sit untaken. It only warns, and you can still post. When there are no recent loans to compare with, when the collateral is an NFT, or when the protocol's index cannot be read, the form says so instead of staying silent.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts (Advanced)

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { formatUnits } from 'viem';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
+import { RateCheck } from './RateCheck';
 import { useCopy, type CopyKey } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
 import { refusalFromError } from '../eligibility/refusal';
@@ -806,6 +807,15 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
             />
           )}
         </FormField>
+        <RateCheck
+          lender={lender}
+          chain={chain}
+          lending={pair.lending}
+          collateral={pair.collateral}
+          erc20Collateral={pair.standard === 'erc20'}
+          durationDays={durationDays === null ? null : BigInt(durationDays)}
+          rateBps={rate.ok ? rate.value : null}
+        />
       </div>
 
       <fieldset className="choice-group">
@@ -867,6 +877,11 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           </select>
         )}
       </FormField>
+      {input.expiry === 'never' && (
+        <Notice tone="info" tier="A">
+          <span data-testid="request-expiry-never">{text('request.expiryNeverNote')}</span>
+        </Notice>
+      )}
       {input.expiry === 'custom' && (
         <FormField label={text(k.expiryDaysLabel)} hint={format('request.expiryDaysHint', { max: String(MAX_EXPIRY_DAYS) })} error={show('expiry') ? expiryError : null}>
           {({ id, describedBy, invalid }) => (
