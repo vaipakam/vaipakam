@@ -671,6 +671,18 @@ beobachtet deine Loans alle fünf Minuten und pingt dich in dem
 Moment an, in dem der Score eine Gefahrenbande kreuzt. Es kostet
 kein Gas; nichts passiert on-chain.
 
+<a id="alerts-inbox"></a>
+
+### Der Alerts-Posteingang
+
+Die Seite Alerts listet die Hinweise, die der Index des Protokolls für deine Wallet im aktuellen Netzwerk führt, die neuesten zuerst. Sie ist kostenlos, und du musst dich für nichts anmelden. Ein Hinweis entsteht, wenn ein Kredit startet, teilweise oder vollständig zurückgezahlt wird, ausfällt oder liquidiert wird, sich seiner Fälligkeit nähert, in seine Nachfrist eintritt oder sie verlässt oder seine Gesundheit unter 1,5, 1,2 oder 1,05 fällt, und wenn sich ein Belohnungseintrag seiner Einlösefrist nähert oder sie überschreitet. Jeder Hinweis öffnet den Kredit, dessen Seite ihn von der Chain liest, oder bei einer Belohnung die Seite Claims. Die Glocke neben deiner Wallet oben zählt die Hinweise, die seit deinem letzten Öffnen der Seite in diesem Browser eingegangen sind. Kann der Index nicht gelesen werden, sagt die Seite das, statt einen leeren Posteingang zu zeigen. Telegram, Push, Gesundheitswarnungen und Zahlungserinnerungen richtest du direkt unter dem Posteingang ein. Jede Benachrichtigung beschreibt den Stand zu dem Zeitpunkt, als sie geschrieben wurde; öffnen Sie den Kredit, um den aktuellen Stand zu sehen.
+
+<a id="alerts-channels"></a>
+
+### Telegram, Push und Warnungen
+
+Unter dem Posteingang richtet die Seite Alerts Hinweise ein, die dich außerhalb der App erreichen. Jede Änderung ist eine kostenlose Signatur in deiner Wallet, keine Transaktion. Um Telegram zu verbinden, tippe auf Telegram verbinden, sende den Einmalcode innerhalb von zehn Minuten an den Vaipakam-Bot und sende dann eine Testnachricht: Die Verbindung gilt als funktionierend, sobald diese Nachricht deinen Chat erreicht. Push wird nur angeboten, wenn der Hinweisdienst sagt, dass er gerade senden kann; zusätzlich abonnierst du den Vaipakam-Kanal in deiner Push-App und kündigst ihn dort, um Push zu beenden. Gesundheitswarnungen sind immer an, sobald Telegram oder Push eingerichtet ist, bei Gesundheit 1,5, 1,2 und 1,05. Zahlungserinnerungen lassen sich aus- und einschalten. Die Seite zeigt, was dieser Browser getan hat; eine Verbindung oder Einstellung von einem anderen Gerät kann trotzdem bestehen.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Schwellen-Leiter
@@ -1404,13 +1416,13 @@ Angebote listet jedes Angebot, das Sie im verbundenen Netzwerk erstellt haben, u
 
 ### Das Orderbuch
 
-Unter Ihren Angeboten listet das Orderbuch jedes offene Angebot im Netzwerk, das neueste zuerst, und Sie können es lesen, ohne eine Wallet zu verbinden. Reiter trennen Kredite eines Tokens von NFT-Mieten, ein Filter zeigt Angebote von Kreditgebern, Anfragen von Kreditnehmern oder beides, und nach dem Verbinden können Sie Ihre eigenen Angebote ausblenden. Ältere Angebote laden mit „Ältere Angebote anzeigen“; die Filter gelten für das bisher Gelesene, und die Zählzeile sagt, wie viel das ist. Das Buch stammt aus dem Index des Protokolls, der der Chain einige Minuten hinterherhinken kann; es weist Sie also nur auf Angebote hin: Öffnen Sie eines, um es so zu sehen, wie die Chain es hält. Ein Angebot nach seinem Ablauf ist als abgelaufen markiert; jeder darf es aufräumen, und was es gesperrt hat, geht an seinen Ersteller zurück. Kann der Index nicht gelesen werden, sagt das Buch das, statt keine Angebote zu zeigen.
+Unter Ihren Angeboten listet das Orderbuch jedes offene Angebot im Netzwerk, das neueste zuerst; es wird erst gelesen, wenn Sie eine Wallet verbinden. Reiter trennen Kredite eines Tokens von NFT-Mieten, ein Filter zeigt Angebote von Kreditgebern, Anfragen von Kreditnehmern oder beides, und nach dem Verbinden können Sie Ihre eigenen Angebote ausblenden. Ältere Angebote laden mit „Ältere Angebote anzeigen“; die Filter gelten für das bisher Gelesene, und die Zählzeile sagt, wie viel das ist. Das Buch stammt aus dem Index des Protokolls, der der Chain einige Minuten hinterherhinken kann; es weist Sie also nur auf Angebote hin: Öffnen Sie eines, um es so zu sehen, wie die Chain es hält. Ein Angebot nach seinem Ablauf ist als abgelaufen markiert; jeder darf es aufräumen, und was es gesperrt hat, geht an seinen Ersteller zurück. Kann der Index nicht gelesen werden, sagt das Buch das, statt keine Angebote zu zeigen.
 
 <a id="offer-detail"></a>
 
 ### Die Seite eines Angebots
 
-Jedes Angebot hat seine eigene Seite, die aus der Chain gelesen wird, ob eine Wallet verbunden ist oder nicht. Sie zeigt, wer es eingestellt hat, den Betrag, was bereits gefüllt ist, die Sicherheit, die Laufzeit und wann das Angebot verfällt. Von dort können Sie ein offenes Kreditangebot ganz annehmen, über dieselbe Prüfung und Zustimmung wie bei Leihen und Verleihen: von einem Angebot eines Kreditgebers leihen oder die Anfrage eines Kreditnehmers finanzieren. Stornieren und Aufräumen funktionieren dort wie bei Ihren Angeboten. Mieten, Angebote mit NFT-Sicherheit, Verkäufe eines laufenden Kredits und Angebote zur vorzeitigen Schließung werden vorerst in der aktuellen App angenommen, und die Seite verlinkt dorthin. Ein Angebot ist nicht reserviert, während Sie es prüfen; jemand anderes kann es zuerst annehmen oder stornieren.
+Jedes Angebot hat seine eigene Seite, die aus der Chain gelesen wird, sobald eine Wallet verbunden ist. Sie zeigt, wer es eingestellt hat, den Betrag, was bereits gefüllt ist, die Sicherheit, die Laufzeit und wann das Angebot verfällt. Von dort können Sie ein offenes Kreditangebot ganz annehmen, über dieselbe Prüfung und Zustimmung wie bei Leihen und Verleihen: von einem Angebot eines Kreditgebers leihen oder die Anfrage eines Kreditnehmers finanzieren. Stornieren und Aufräumen funktionieren dort wie bei Ihren Angeboten. Mieten, Angebote mit NFT-Sicherheit, Verkäufe eines laufenden Kredits und Angebote zur vorzeitigen Schließung werden vorerst in der aktuellen App angenommen, und die Seite verlinkt dorthin. Ein Angebot ist nicht reserviert, während Sie es prüfen; jemand anderes kann es zuerst annehmen oder stornieren.
 
 <a id="offer-cancel"></a>
 

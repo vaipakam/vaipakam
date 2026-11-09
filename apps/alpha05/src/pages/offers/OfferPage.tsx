@@ -13,17 +13,16 @@ import { collateralWords } from '../../shared/offers/collateralWords';
 import { offerAmount, offerLine } from '../../shared/offers/offerLine';
 import type { OfferState } from '../../shared/offers/reads';
 import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../../shared/positions/model';
-import { useChainRead, useScreenChain } from '../../shared/reads/chainRead';
+import { useScreenChain } from '../../shared/reads/chainRead';
 import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
 import { useTerms } from '../../shared/terms/useTerms';
 import { useTermsGate } from '../../shared/terms/useTermsGate';
 import { useStoredValue } from '../../shared/tx/txStore';
-import { formatAge, formatUtc, shortAddress } from '../../shared/ui/format';
+import { formatUtc, shortAddress } from '../../shared/ui/format';
 import { Notice } from '../../shared/ui/Notice';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
-import { useNow } from '../../shared/ui/useNow';
 import { Fact, Facts } from '../position/Facts';
 
 type Hex = `0x${string}`;
@@ -91,12 +90,11 @@ export function OfferPage() {
   const chain = connected && walletChain ? walletChain : screenChain;
   const diamond = chain.diamondAddress as Hex;
   const parts = ['offerDetail', diamond, id?.toString() ?? ''];
-  const ownRead = useOwnRead(parts, (c) => readOfferDetail(c, diamond, id!), { enabled: id !== null && connected && walletChain !== null });
-  const publicRead = useChainRead(parts, (c) => readOfferDetail(c, diamond, id!), { enabled: id !== null && !(connected && walletChain !== null) });
-  const read = connected && walletChain !== null ? ownRead : publicRead;
+  // The offer is read only once a wallet is connected on a served network
+  // (owner decision 2026-11-09: no offer-book read before a wallet).
+  const read = useOwnRead(parts, (c) => readOfferDetail(c, diamond, id!), { enabled: id !== null && connected && walletChain !== null });
   const d = read.data;
   const meta = useTokenMeta(d?.kind === 'offer' ? [d.offer.lendingAsset, d.offer.collateralAsset, d.offer.prepayAsset] : []).data;
-  const now = useNow();
   // A held flow renders here when the read finds no terms (a cancel cleared
   // them), and inside the offer's body otherwise.
   const held = useHeldFlows(id);
@@ -112,19 +110,15 @@ export function OfferPage() {
         <p className="tier-a">{text('offerPage.badId')}</p>
       ) : (
         <>
-          {connected && walletChain === null && <p className="tier-b">{format('offerPage.unsupported', { chain: chain.name })}</p>}
-          {connected && walletChain !== null ? (
-            <OwnStamp reads={[ownRead]} />
-          ) : (
-            publicRead.readAt !== null && <p className="tier-b stamp">{format('offerPage.readAt', { age: formatAge((now - publicRead.readAt) / 1000), chain: chain.name })}</p>
-          )}
-          {read.state === 'failed' && <p className="tier-a notice-warn">{format('offerPage.failed', { reason: read.error ?? '' })}</p>}
-          {read === publicRead && read.state === 'ready' && read.error !== null && (
-            <p className="tier-a notice-warn" data-testid="offer-refresh-failed">
-              {format('offerPage.refreshFailed', { reason: read.error, chain: chain.name })}
+          {!connected && (
+            <p className="tier-b" data-testid="offer-connect">
+              {text('offerPage.connectView')}
             </p>
           )}
-          {d === null && read.state !== 'failed' && <p className="tier-b">{text('offerPage.reading')}</p>}
+          {connected && walletChain === null && <p className="tier-b">{format('offerPage.unsupported', { chain: chain.name })}</p>}
+          {connected && walletChain !== null && <OwnStamp reads={[read]} />}
+          {read.state === 'failed' && <p className="tier-a notice-warn">{format('offerPage.failed', { reason: read.error ?? '' })}</p>}
+          {connected && walletChain !== null && d === null && read.state !== 'failed' && <p className="tier-b">{text('offerPage.reading')}</p>}
           {d?.kind === 'no-terms' && (
             <p className="tier-a" data-testid="offer-no-terms">
               {format('offerPage.noTerms', { id: id.toString(), chain: chain.name })}

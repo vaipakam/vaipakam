@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
@@ -157,11 +159,18 @@ library LibSwapToRepayIntentSettlement {
         address collateral = loan.collateralAsset;
         address vault = s.userVaipakamVaults[loan.borrower];
         LibEncumbrance.decrementCollateralLien(loanId, lot);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.recordVaultOutflowERC20.selector, loan.borrower, collateral, lot, taker
-            ),
-            bytes4(0)
+        // #3205 part 2 — the just-in-time allowance: exactly the lot, to the
+        // pinned order protocol (a registry order taker), for this fill only.
+        // The post-hook closes it and books what the protocol took.
+        LibVaultOutflow.grant(
+            loan.borrower,
+            LibVaultOutflow.ERC20,
+            collateral,
+            0,
+            lot,
+            commit.lopAtCommit,
+            VaultOutflowTypes.GrantClass.OrderTaker,
+            loanId
         );
         {
             uint256 vaultBefore = IERC20(collateral).balanceOf(vault);
@@ -208,6 +217,14 @@ library LibSwapToRepayIntentSettlement {
         LibPositionNFT.requireUnmoved(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // #3205 part 2 — close the fill's allowance FIRST (the vault refuses
+        // every other outflow while it is open) and require that the order
+        // protocol took exactly the lot; the close books the tracked balance.
+        {
+            uint256 taken = LibVaultOutflow.closeGrant(loan.borrower);
+            if (taken != commit.makerAmount) revert IntentCollateralFeeOnTransferUnsupported(taken, commit.makerAmount);
+        }
 
         // ── Step 3: actual principal received via transient-storage
         //    baseline (Codex round-5 P1 #2 + round-7 P1 #6) ─────────
@@ -264,9 +281,8 @@ library LibSwapToRepayIntentSettlement {
         _runSettlement(s, loan, loanId, actualDelivered, consumed, lateFee);
 
         // ── Step 7 (#1566 S3e): the live count; the vault stops signing ──
-        // The vault's allowance to the LOP was consumed by the LOP's own
-        // transfer of the lot, and the vault's ERC-1271 stops answering
-        // for this hash.
+        // The fill's allowance was closed above, and the vault's ERC-1271
+        // stops answering for this hash.
         s.intentLiveCommitCount -= 1;
         VaipakamVaultImplementation(s.userVaipakamVaults[loan.borrower]).revokeListingOrderHash(orderHash);
 

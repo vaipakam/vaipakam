@@ -31,6 +31,8 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
@@ -118,6 +120,9 @@ contract RedeployFacets is Script {
     /// @notice #3359 - the target Diamond predates the forced-sale floor
     ///         rule; see {_requireSaleFloorRule}.
     error PredatesSaleFloorRule(address diamond);
+    /// @notice #3205 part 2 - the target Diamond predates the vault outflow
+    ///         policy; see {_requireVaultOutflowPolicy}.
+    error PredatesVaultOutflowPolicy(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -195,6 +200,7 @@ contract RedeployFacets is Script {
         // #3359 - and one from before the forced-sale floor rule; see
         // {_requireSaleFloorRule}.
         _requireSaleFloorRule(diamond);
+        _requireVaultOutflowPolicy(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -1102,6 +1108,19 @@ contract RedeployFacets is Script {
         }
     }
 
+    /// @dev #3205 part 2 - refuse a Diamond that does not route the vault
+    ///      outflow policy. Every facet this script carries moves vault funds
+    ///      through a self-call to `VaultOutflowFacet`, which this script does
+    ///      not carry; against an older Diamond every settlement, claim and
+    ///      liquidation would revert `FunctionDoesNotExist`. The crossing is a
+    ///      fresh deploy (#3205 part 2 is a fresh-deploy change). Called
+    ///      before the broadcast starts.
+    function _requireVaultOutflowPolicy(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(VaultOutflowFacet.vaultOutflowArgs.selector) == address(0)) {
+            revert PredatesVaultOutflowPolicy(diamond);
+        }
+    }
+
     function _replace(address facet, bytes4[] memory selectors)
         internal
         pure
@@ -1295,20 +1314,32 @@ contract RedeployFacets is Script {
     ///      Deploys the host and partitions its selectors by live routing (Add
     ///      on a pre-#1841 Diamond, Replace on a current one). Kept out of
     ///      `runWith` so its locals do not join that frame.
+    /// @dev The cuts of two read hosts this refresh carries beside the
+    ///      facets that read them: SaleExitVerdictFacet (#1841, both sale
+    ///      entries self-call it) and ForcedSalePreviewFacet (#3205 part 2, the
+    ///      forced-sale previews, sized by the same `LibForcedSalePlan` rule
+    ///      ForcedSaleFacet sells by, so the two are refreshed together).
     function _saleExitVerdictCuts(address diamond)
         internal
         returns (IDiamondCut.FacetCut[] memory out)
     {
         address host = ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name);
         console.log("SaleExitVerdictFacet: ", host);
+        address preview = ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name);
+        console.log("ForcedSalePreviewFacet:", preview);
         (bytes4[] memory toAdd, bytes4[] memory toReplace) =
             _partitionByRouting(diamond, FacetSelectors.saleExitVerdict());
+        (bytes4[] memory pvAdd, bytes4[] memory pvReplace) =
+            _partitionByRouting(diamond, FacetSelectors.forcedSalePreview());
         out = new IDiamondCut.FacetCut[](
-            (toAdd.length > 0 ? 1 : 0) + (toReplace.length > 0 ? 1 : 0)
+            (toAdd.length > 0 ? 1 : 0) + (toReplace.length > 0 ? 1 : 0) + (pvAdd.length > 0 ? 1 : 0)
+                + (pvReplace.length > 0 ? 1 : 0)
         );
         uint256 i;
         if (toReplace.length > 0) out[i++] = _replace(host, toReplace);
         if (toAdd.length > 0) out[i++] = _add(host, toAdd);
+        if (pvReplace.length > 0) out[i++] = _replace(preview, pvReplace);
+        if (pvAdd.length > 0) out[i++] = _add(preview, pvAdd);
     }
 
     function _loanSelectors() internal pure returns (bytes4[] memory s) {

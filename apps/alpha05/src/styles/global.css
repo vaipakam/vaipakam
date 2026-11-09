@@ -1756,3 +1756,70 @@ a.btn {
   word-break: break-all;
   user-select: all;
 }
+
+/* The header's way to Alerts (RB-INBOX): the bell beside its word, with the
+   count of new alerts as a filled chip (the primary-button pair, so its
+   contrast is the tested one). It sits just before the wallet control. */
+.inbox-bell {
+  margin-inline-start: auto;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--taptarget, 44px);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  color: var(--text-body);
+  text-decoration: none;
+}
+.inbox-bell:hover {
+  background: var(--surface-hover);
+}
+.inbox-bell.active {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+}
+.inbox-bell + .wallet-slot {
+  margin-inline-start: 4px;
+}
+.inbox-bell-word {
+  font-size: 0.9rem;
+}
+.inbox-bell-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--brand-fill);
+  color: var(--text-on-brand);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+/* On a phone the header holds the brand mark, the bell and the wallet
+   control on one row; the word stays (RB-ICONS) at a smaller size. */
+@media (max-width: 719px) {
+  .inbox-bell {
+    padding-inline: 6px;
+    gap: 4px;
+  }
+  .inbox-bell-word {
+    font-size: 0.8rem;
+  }
+}
+.alerts-list .alert-row p {
+  margin: 0;
+}
+.alerts-list .alert-row p + p {
+  margin-top: 4px;
+}
+.alert-new {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 20px;
+}

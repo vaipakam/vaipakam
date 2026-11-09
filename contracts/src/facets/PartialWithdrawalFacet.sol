@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -189,16 +191,30 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
             LibProtectedAccount.requirePayoutRoom(loan.borrower);
         }
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
+        // #3205 part 2 — through the one policy. The side was consolidated
+        // above, so the caller is normally the stored borrower and is paid to
+        // its own wallet (Owner). A retired protected account's controller is
+        // an allowlisted payee; any other holder is paid into its vault.
+        if (msg.sender == loan.borrower) {
+            LibVaultOutflow.toOwner(
+                loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, amount, OutflowReason.PARTIAL_WITHDRAWAL
+            );
+        } else if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
+            LibVaultOutflow.toAllowlisted(
+                loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, amount, msg.sender, OutflowReason.PARTIAL_WITHDRAWAL
+            );
+        } else {
+            LibVaultOutflow.toPositionHolder(
                 loan.borrower,
+                LibVaultOutflow.ERC20,
                 loan.collateralAsset,
-                msg.sender,
-                amount
-            ),
-            VaultWithdrawFailed.selector
-        );
+                0,
+                amount,
+                loanId,
+                loan.borrowerTokenId,
+                OutflowReason.PARTIAL_WITHDRAWAL
+            );
+        }
 
         // Update loan collateral
         loan.collateralAmount -= amount;

@@ -22,7 +22,11 @@ import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 import {LibSwap} from "../../src/libraries/LibSwap.sol";
+import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
  * @title Handler
@@ -72,6 +76,16 @@ contract Handler is Test {
     /// @dev #3241 — loans a periodic settlement sold collateral from. That sale is the one path
     ///      that lowers an Active loan's collateral, so the monotonicity suite skips these.
     mapping(uint256 => bool) public ghostPeriodicSold;
+    /// @dev #3241 — the loan an offset offer was posted to close (0 for an ordinary offer).
+    mapping(uint256 => uint256) public ghostOffsetOf;
+    /// @dev #3241 — the loan a refinance request was posted to replace (0 for an ordinary offer).
+    mapping(uint256 => uint256) public ghostRefinanceOf;
+    /// @dev #3241 — open NFT-rental offers. Kept apart from `lenderOfferIds` so a suite that has
+    ///      not opted into rentals never sees one through the ERC-20 accept.
+    uint256[] public rentalOfferIds;
+    /// @dev #3241 — rentals are off unless the deployer turns them on ({enableRentals}).
+    bool public rentalsEnabled;
+    address internal immutable deployer;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -81,6 +95,14 @@ contract Handler is Test {
         diamond = address(_base.diamond());
         usdc = _base.mockUsdc();
         weth = _base.mockWeth();
+        deployer = msg.sender;
+    }
+
+    /// @notice #3241 — lets a suite opt into NFT rentals. Only the deployer may: the suites that
+    ///         target this handler directly keep their ERC-20-only surface.
+    function enableRentals() external {
+        require(msg.sender == deployer, "Handler: deployer only");
+        rentalsEnabled = true;
     }
 
     // ── Actor selection helpers ─────────────────────────────────────────
@@ -221,7 +243,7 @@ contract Handler is Test {
         // sign as the borrower (view-only) before the pranked external call so
         // the try/catch still observes the protocol-level accept outcome.
         LibAcceptTerms.AcceptTerms memory t =
-            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
+            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, ghostOffsetOf[offerId]);
         bytes memory sig =
             LibAcceptTestSigner.sign(diamond, t, base.borrowerPkAt(borrowerSeed));
         vm.prank(borrower);
@@ -312,6 +334,180 @@ contract Handler is Test {
 
         vm.prank(L.borrower);
         try PrecloseFacet(diamond).precloseDirect(loanId) {} catch {}
+    }
+
+    /// @notice #3241 — the borrower of an active loan starts the preclose offset: it posts a lender
+    ///         offer from its own principal (escrowed in its own vault, so nothing crosses
+    ///         parties). When another borrower accepts that offer, the original loan closes in the
+    ///         same transaction and its lender is paid. The offer joins the open lender offers,
+    ///         so `acceptLenderOffer` is what completes it.
+    function offsetLoan(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        callCount["offsetLoan"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        uint256 maturity = uint256(L.startTime) + L.durationDays * 1 days;
+        if (maturity <= block.timestamp + 1 days) return;
+        durationDays = bound(durationDays, 1, (maturity - block.timestamp) / 1 days);
+        rateBps = bound(rateBps, 100, 2000);
+
+        vm.prank(L.borrower);
+        try PrecloseFacet(diamond).offsetWithNewOffer(
+            loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset
+        ) returns (uint256 offerId) {
+            lenderOfferIds.push(offerId);
+            ghostOffsetOf[offerId] = loanId;
+        } catch {}
+    }
+
+    /// @notice #3241 — the borrower of an active loan asks to refinance it: it consents to a rate
+    ///         cap, posts a refinance request for the loan's principal on the loan's own
+    ///         collateral (carried over, so nothing is pledged again), and attaches the payoff
+    ///         permit that pays what the new lender's principal does not cover. Nothing crosses
+    ///         parties. When a lender accepts the request, the replacement loan opens and the
+    ///         original closes in the same transaction, so `acceptBorrowerOffer` completes it.
+    function refinanceRequest(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        callCount["refinanceRequest"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        rateBps = bound(rateBps, 100, 2000);
+        durationDays = bound(durationDays, 1, 365);
+
+        LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: L.principalAsset,
+            amount: L.principal,
+            interestRateBps: rateBps,
+            collateralAsset: L.collateralAsset,
+            collateralAmount: L.collateralAmount,
+            durationDays: durationDays,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: L.prepayAsset,
+            collateralAssetType: L.collateralAssetType,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: true,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: L.principal,
+            interestRateBpsMax: rateBps,
+            collateralAmountMax: L.collateralAmount,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Aon, // a refinance request is all-or-nothing
+            refinanceTargetLoanId: loanId,
+            useFullTermInterest: false
+        });
+
+        vm.startPrank(L.borrower);
+        try AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+            loanId, true, uint16(rateBps), uint64(block.timestamp + 400 days)
+        ) {
+            try OfferCreateFacet(diamond).createOffer(p) returns (uint256 offerId) {
+                vm.stopPrank();
+                RefinancePayoffPermitHelper.attach(diamond, L.borrower, L.principalAsset, offerId);
+                borrowerOfferIds.push(offerId);
+                ghostRefinanceOf[offerId] = loanId;
+                return;
+            } catch {}
+        } catch {}
+        vm.stopPrank();
+    }
+
+    /// @notice #3241 — a lender lists one of its rentable NFTs at a daily fee, prepaid in USDC.
+    ///         The NFT moves from the lender's wallet into its own vault.
+    function createRentalOffer(uint256 lenderSeed, uint256 tokenPick, uint256 dailyFee, uint256 durationDays)
+        external
+    {
+        callCount["createRentalOffer"]++;
+        if (!rentalsEnabled) return;
+        address lender = _lender(lenderSeed);
+        uint256 tokenId = (lenderSeed % 3) * 1000 + 1 + (tokenPick % base.RENTAL_TOKENS_PER_LENDER());
+        address nft = base.mockNft();
+        if (IERC721(nft).ownerOf(tokenId) != lender) return;
+        dailyFee = bound(dailyFee, 1 ether, 100 ether);
+        durationDays = bound(durationDays, 1, 60);
+
+        LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: nft,
+            amount: dailyFee,
+            interestRateBps: 0,
+            collateralAsset: address(0),
+            collateralAmount: 0,
+            durationDays: durationDays,
+            assetType: LibVaipakam.AssetType.ERC721,
+            tokenId: tokenId,
+            quantity: 1,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: usdc,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: dailyFee,
+            interestRateBpsMax: 0,
+            collateralAmountMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+        vm.prank(lender);
+        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+            rentalOfferIds.push(id);
+        } catch {}
+    }
+
+    /// @notice #3241 — a borrower rents a listed NFT: the prepayment (rent for the whole term
+    ///         plus the 5% buffer) moves from its wallet into its own vault, and it receives the
+    ///         NFT's user rights. The NFT itself stays in the lender's vault.
+    function acceptRentalOffer(uint256 borrowerSeed, uint256 offerIdx) external {
+        callCount["acceptRentalOffer"]++;
+        if (rentalOfferIds.length == 0) return;
+        address borrower = _borrower(borrowerSeed);
+        uint256 idx = bound(offerIdx, 0, rentalOfferIds.length - 1);
+        uint256 offerId = rentalOfferIds[idx];
+
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
+        if (o.accepted || o.creator == address(0)) {
+            _popOfferAt(rentalOfferIds, idx);
+            return;
+        }
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
+        bytes memory sig = LibAcceptTestSigner.sign(diamond, t, base.borrowerPkAt(borrowerSeed));
+        vm.prank(borrower);
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, t, sig) returns (uint256 loanId) {
+            loanIds.push(loanId);
+            _popOfferAt(rentalOfferIds, idx);
+        } catch {}
+    }
+
+    /// @notice #3241 — the permissionless daily rent deduction on a rental: one agreed day's fee
+    ///         from the renter's prepayment to the lender side, less the treasury's share.
+    function autoDeductDaily(uint256 loanIdx) external {
+        callCount["autoDeductDaily"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        if (L.assetType == LibVaipakam.AssetType.ERC20) return;
+        try RepayPeriodicFacet(diamond).autoDeductDaily(loanId) {} catch {}
     }
 
     /// @notice The lender of an active loan sells the position into a standing
@@ -421,7 +617,7 @@ contract Handler is Test {
         (,, uint256 graceEndsAt,,,,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
         if (graceEndsAt > block.timestamp) vm.warp(graceEndsAt);
 
-        uint256 sell = ForcedSaleFacet(diamond)
+        uint256 sell = ForcedSalePreviewFacet(diamond)
             .previewForcedSale(loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement).sell;
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
         calls[0] = LibSwap.AdapterCall({adapterIdx: 1, data: bytes("")});
@@ -482,6 +678,10 @@ contract Handler is Test {
 
     function lenderOfferIdsLength() external view returns (uint256) {
         return lenderOfferIds.length;
+    }
+
+    function rentalOfferIdsLength() external view returns (uint256) {
+        return rentalOfferIds.length;
     }
 
     function borrowerOfferIdsLength() external view returns (uint256) {

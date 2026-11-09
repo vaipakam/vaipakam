@@ -8,6 +8,7 @@ import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/
 import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @notice The pluggable part that draws a position NFT. It can only answer
 ///         reads; nothing it returns can move a token.
@@ -69,6 +70,8 @@ interface IPositionTransferCheck {
  *         before any deploy.
  */
 contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     // ─── Constants ───────────────────────────────────────────────────────
 
     /// @notice The minimum wait between proposing and executing a renderer or
@@ -137,6 +140,13 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     mapping(uint256 => uint64) private _tokenApprovalEpoch;
     /// @dev The approval epoch an operator approval was granted in.
     mapping(address => mapping(address => uint64)) private _operatorApprovalEpoch;
+    /// @dev Every holder with a pending unlock (`unlockAt` != 0). Kept in step
+    ///      by {_setUnlockAt}, the one writer of `unlockAt`, so a keeper can
+    ///      find every unlock that will mature without replaying events.
+    EnumerableSet.AddressSet private _pendingUnlocks;
+    /// @dev Every holder with a pending delay lowering (`lowerAt` != 0). Kept
+    ///      in step by {_setLowering}, the one writer of `lowerAt`.
+    EnumerableSet.AddressSet private _pendingDelayChanges;
 
     // ─── Events ──────────────────────────────────────────────────────────
 
@@ -224,6 +234,46 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
         return (l.locked, l.delay, l.unlockAt, l.lowerDelay, l.lowerAt);
     }
 
+    /// @notice How many holders have an unlock pending.
+    function pendingUnlockCount() external view returns (uint256) {
+        return _pendingUnlocks.length();
+    }
+
+    /// @notice Up to `limit` holders with an unlock pending, from position
+    ///         `offset`, with each one's `unlockAt`. Order is not stable
+    ///         across a change to the set; a keeper re-reads from 0 each pass.
+    function pendingUnlocks(uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory unlockAt)
+    {
+        holders = _page(_pendingUnlocks, offset, limit);
+        unlockAt = new uint256[](holders.length);
+        for (uint256 i; i < holders.length; ++i) unlockAt[i] = _locks[holders[i]].unlockAt;
+    }
+
+    /// @notice How many holders have a lock-delay lowering pending.
+    function pendingDelayChangeCount() external view returns (uint256) {
+        return _pendingDelayChanges.length();
+    }
+
+    /// @notice Up to `limit` holders with a lock-delay lowering pending, from
+    ///         position `offset`, with each one's new delay and `lowerAt`.
+    function pendingDelayChanges(uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory holders, uint256[] memory lowerDelay, uint256[] memory lowerAt)
+    {
+        holders = _page(_pendingDelayChanges, offset, limit);
+        lowerDelay = new uint256[](holders.length);
+        lowerAt = new uint256[](holders.length);
+        for (uint256 i; i < holders.length; ++i) {
+            HolderLock storage l = _locks[holders[i]];
+            lowerDelay[i] = l.lowerDelay;
+            lowerAt[i] = l.lowerAt;
+        }
+    }
+
     /// @notice Whether `holder`'s tokens are locked now.
     function isLocked(address holder) public view returns (bool) {
         return _locks[holder].locked;
@@ -292,7 +342,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
             return;
         }
         uint64 at = _at(l.delay);
-        l.unlockAt = at;
+        _setUnlockAt(msg.sender, at);
         emit HolderUnlockRequested(msg.sender, at);
     }
 
@@ -300,7 +350,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     function cancelUnlock() external {
         HolderLock storage l = _locks[msg.sender];
         if (l.unlockAt == 0) revert NoUnlockPending(msg.sender);
-        l.unlockAt = 0;
+        _setUnlockAt(msg.sender, 0);
         emit HolderUnlockCancelled(msg.sender, msg.sender);
     }
 
@@ -325,8 +375,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
             return;
         }
         uint64 at = _at(old);
-        l.lowerDelay = SafeCast.toUint64(delay);
-        l.lowerAt = at;
+        _setLowering(msg.sender, SafeCast.toUint64(delay), at);
         emit LockDelayLowerRequested(msg.sender, delay, at);
     }
 
@@ -337,8 +386,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
         if (l.lowerAt == 0) revert NoDelayChange(holder);
         if (block.timestamp < l.lowerAt) revert TooEarly(l.lowerAt);
         uint256 newDelay = l.lowerDelay;
-        l.lowerDelay = 0;
-        l.lowerAt = 0;
+        _setLowering(holder, 0, 0);
         _setDelay(holder, l.delay, newDelay);
     }
 
@@ -363,7 +411,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     function voidPending(address holder) external onlyDiamond {
         HolderLock storage l = _locks[holder];
         if (l.unlockAt != 0) {
-            l.unlockAt = 0;
+            _setUnlockAt(holder, 0);
             emit HolderUnlockCancelled(holder, msg.sender);
         }
         _dropLowering(holder, msg.sender);
@@ -484,7 +532,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
 
     function _lock(address holder) private {
         HolderLock storage l = _locks[holder];
-        l.unlockAt = 0;
+        _setUnlockAt(holder, 0);
         if (!l.locked) {
             l.locked = true;
             unchecked {
@@ -497,7 +545,7 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     function _unlock(address holder) private {
         HolderLock storage l = _locks[holder];
         l.locked = false;
-        l.unlockAt = 0;
+        _setUnlockAt(holder, 0);
         emit HolderUnlocked(holder);
     }
 
@@ -505,8 +553,38 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
         HolderLock storage l = _locks[holder];
         if (l.lowerAt == 0) return;
         emit LockDelayLowerCancelled(holder, l.lowerDelay, by);
-        l.lowerDelay = 0;
-        l.lowerAt = 0;
+        _setLowering(holder, 0, 0);
+    }
+
+    /// @dev THE writer of `unlockAt`: keeps {_pendingUnlocks} in step.
+    function _setUnlockAt(address holder, uint64 at) private {
+        _locks[holder].unlockAt = at;
+        if (at == 0) _pendingUnlocks.remove(holder);
+        else _pendingUnlocks.add(holder);
+    }
+
+    /// @dev THE writer of a pending lowering: keeps {_pendingDelayChanges}
+    ///      in step. `at` 0 clears it.
+    function _setLowering(address holder, uint64 newDelay, uint64 at) private {
+        HolderLock storage l = _locks[holder];
+        l.lowerDelay = newDelay;
+        l.lowerAt = at;
+        if (at == 0) _pendingDelayChanges.remove(holder);
+        else _pendingDelayChanges.add(holder);
+    }
+
+    /// @dev A page of `set` from `offset`, at most `limit` long.
+    function _page(EnumerableSet.AddressSet storage set, uint256 offset, uint256 limit)
+        private
+        view
+        returns (address[] memory out)
+    {
+        uint256 n = set.length();
+        if (offset >= n) return new address[](0);
+        uint256 len = n - offset;
+        if (limit < len) len = limit;
+        out = new address[](len);
+        for (uint256 i; i < out.length; ++i) out[i] = set.at(offset + i);
     }
 
     /// @dev THE lock-delay bound, applied by every path that sets one.

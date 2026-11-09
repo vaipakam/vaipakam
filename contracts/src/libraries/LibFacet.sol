@@ -172,47 +172,7 @@ library LibFacet {
         return ret;
     }
 
-    /// @dev #2440 — `VaultFactoryFacet.vaultWithdrawERC20` with its measured
-    ///      delivery decoded: returns what `recipient` received, never more
-    ///      than `amount`. For a caller that books the arrival; a payout to a
-    ///      wallet books nothing and keeps the plain {crossFacetCall}.
-    function vaultWithdrawDelivered(
-        address user,
-        address token,
-        address recipient,
-        uint256 amount,
-        bytes4 fallbackSelector
-    ) internal returns (uint256) {
-        return abi.decode(
-            crossFacetCallReturn(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    user,
-                    token,
-                    recipient,
-                    amount
-                ),
-                fallbackSelector
-            ),
-            (uint256)
-        );
-    }
 
-    /// @dev #2440 — outcome 1 of {LibDelivery} (a VOLUNTARY flow): the vault
-    ///      withdraw, refused unless `recipient` received all of `amount`.
-    function vaultWithdrawExact(
-        address user,
-        address token,
-        address recipient,
-        uint256 amount,
-        bytes4 fallbackSelector
-    ) internal {
-        LibDelivery.requireFull(
-            token,
-            amount,
-            vaultWithdrawDelivered(user, token, recipient, amount, fallbackSelector)
-        );
-    }
 
     /// @dev Deposits `amount` of `asset` into the new lender's vault and
     ///      records it in `heldForLender`. No-op on zero.

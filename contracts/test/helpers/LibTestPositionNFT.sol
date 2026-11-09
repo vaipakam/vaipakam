@@ -21,11 +21,28 @@ library LibTestPositionNFT {
         0xffc14e8dfa13b7ea215d815404bdf757f7212df791bac9ce070c8e8dcd574f00;
     uint256 private constant CORE_SLOT_OFFSET = 25;
 
+    /// @dev Idempotent: a Diamond whose core is already installed (the vault
+    ///      beacon's installer sets it up first, #3205 part 2) keeps it.
     function install(address diamond, address owner) internal returns (PositionNFT nft) {
+        nft = PositionNFT(
+            address(uint160(uint256(VM.load(diamond, bytes32(uint256(ERC721_STORAGE_POSITION) + CORE_SLOT_OFFSET)))))
+        );
+        if (address(nft) != address(0)) return nft;
         nft = PositionNFT(
             ArtifactDeploy.deploy(type(PositionNFT).name, abi.encode(owner, diamond, owner, diamond, diamond))
         );
-        VaipakamNFTFacet(diamond).initializeNFT(address(nft));
+        // A suite Diamond that does not route the NFT facet still needs the
+        // core recorded: the vault code reads it as an immutable and the
+        // policy reads the holder from it. Record it in the slot the facet's
+        // initializer writes (the same slot read above).
+        try VaipakamNFTFacet(diamond).initializeNFT(address(nft)) {}
+        catch {
+            VM.store(
+                diamond,
+                bytes32(uint256(ERC721_STORAGE_POSITION) + CORE_SLOT_OFFSET),
+                bytes32(uint256(uint160(address(nft))))
+            );
+        }
     }
 
     /// @notice The PositionNFT core `diamond` records: where every position's

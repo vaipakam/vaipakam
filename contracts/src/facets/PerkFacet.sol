@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
@@ -256,12 +258,7 @@ contract PerkFacet is
         //    Spending VPFI lowers the buyer's hold tier; the withdraw
         //    refreshes their tier record at that moment (#1820).
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            msg.sender,
-            vpfi,
-            address(this),
-            spend
-        );
+        LibVaultOutflow.toDiamondERC20(msg.sender, vpfi, spend, 0, OutflowReason.RECYCLE);
 
         // 2. Credit the bucket now the tokens are on the Diamond, through the
         //    perk's own delta-checked operation.

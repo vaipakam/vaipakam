@@ -25,7 +25,6 @@ const KEYS = {
     rowRiskStep: 'borrow.rowRiskStep',
     take: 'borrow.take',
     takeWithStep: 'borrow.takeWithStep',
-    takeConnect: 'borrow.takeConnect',
     matchesTitle: 'borrow.matchesTitle',
     matchesReading: 'borrow.matchesReading',
     matchesFailed: 'borrow.matchesFailed',
@@ -52,7 +51,6 @@ const KEYS = {
     rowRiskStep: 'lend.rowRiskStep',
     take: 'lend.take',
     takeWithStep: 'lend.takeWithStep',
-    takeConnect: 'lend.takeConnect',
     matchesTitle: 'lend.matchesTitle',
     matchesReading: 'lend.matchesReading',
     matchesFailed: 'lend.matchesFailed',
@@ -86,7 +84,6 @@ function OfferRow({
   row,
   matcherBps,
   meta,
-  connected,
   onTake,
   takeDisabled,
 }: {
@@ -94,7 +91,6 @@ function OfferRow({
   row: MatchRow;
   matcherBps: bigint | null;
   meta: TokenMetaMap | null;
-  connected: boolean;
   onTake: (id: bigint) => void;
   takeDisabled: boolean;
 }) {
@@ -177,14 +173,11 @@ function OfferRow({
           {blockedText}
         </Notice>
       )}
-      {(!blocked || ownStep) &&
-        (connected ? (
-          <button type="button" className="btn btn-primary" disabled={takeDisabled} onClick={() => onTake(o.id)}>
-            {text(ownStep ? k.takeWithStep : k.take)}
-          </button>
-        ) : (
-          <p className="tier-b">{text(k.takeConnect)}</p>
-        ))}
+      {(!blocked || ownStep) && (
+        <button type="button" className="btn btn-primary" disabled={takeDisabled} onClick={() => onTake(o.id)}>
+          {text(ownStep ? k.takeWithStep : k.take)}
+        </button>
+      )}
     </li>
   );
 }
@@ -194,14 +187,12 @@ export function MatchingOffers({
   role,
   view,
   meta,
-  connected,
   onTake,
   takeDisabled,
 }: {
   role: AcceptRole;
   view: MatchesView;
   meta: TokenMetaMap | null;
-  connected: boolean;
   onTake: (id: bigint) => void;
   takeDisabled: boolean;
 }) {
@@ -239,7 +230,7 @@ export function MatchingOffers({
           {live.length > 0 && (
             <ul className="rows offer-rows">
               {live.map((r) => (
-                <OfferRow key={r.offer.id.toString()} role={role} row={r} matcherBps={m.matcherBps} meta={meta} connected={connected} onTake={onTake} takeDisabled={takeDisabled} />
+                <OfferRow key={r.offer.id.toString()} role={role} row={r} matcherBps={m.matcherBps} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
               ))}
             </ul>
           )}

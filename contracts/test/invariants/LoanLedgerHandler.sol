@@ -10,6 +10,10 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
+import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 
 /**
  * @title  LoanLedgerHandler
@@ -101,6 +105,21 @@ contract LoanLedgerHandler is Test {
         /// @dev #3241 — a periodic settlement sold this loan's collateral: the borrower's
         ///      collateral became principal asset, so its principal-asset bound is read in value.
         bool hadPeriodicSale;
+        /// @dev #3241 — closed by a preclose offset. Its lender may be paid the interest the
+        ///      original term would still have earned, past what has accrued so far.
+        bool offsetClosed;
+        /// @dev #3241 — an NFT rental: the principal is the daily fee, paid from a USDC
+        ///      prepayment (rent for the whole term plus the buffer) the renter holds in its own
+        ///      vault. `rentOwed` is set when the rental closes on time: the fee times every day
+        ///      used, any part of a day counting as a whole day, never past the term.
+        bool isRental;
+        uint256 tokenId;
+        uint256 termDays;
+        uint256 prepay;
+        uint256 rentOwed;
+        bool rentOwedSet;
+        bool renterSettledChecked;
+        bool lenderSettledChecked;
         int256[2] dLender;
         int256[2] dBorrower;
         int256[2] dDiamond;
@@ -117,6 +136,9 @@ contract LoanLedgerHandler is Test {
     uint256 public acceptViolations;
     uint256 public interestViolations;
     uint256 public periodicViolations;
+    uint256 public offsetViolations;
+    uint256 public refinanceViolations;
+    uint256 public rentalViolations;
     string public firstViolation;
 
     // ── Coverage counters: how often each per-action check actually ran ──
@@ -128,6 +150,12 @@ contract LoanLedgerHandler is Test {
     uint256 public saleLanded;
     uint256 public periodicStamped;
     uint256 public periodicSold;
+    uint256 public offsetLanded;
+    uint256 public refinanceLanded;
+    uint256 public rentalsOpened;
+    uint256 public rentDeductions;
+    uint256 public rentalsFullyDeducted;
+    uint256 public rentalChecks;
 
     /// @dev Set only while a periodic-interest sale is booked: the one action the market may trade in.
     bool internal marketOpen;
@@ -147,6 +175,7 @@ contract LoanLedgerHandler is Test {
         for (uint256 i = 0; i < 6; i++) {
             vaults[i] = VaultFactoryFacet(diamond).getUserVaultAddress(actors[i]);
         }
+        inner.enableRentals();
     }
 
     // ── Wrapped actions ────────────────────────────────────────────────
@@ -167,16 +196,126 @@ contract LoanLedgerHandler is Test {
 
     function acceptLenderOffer(uint256 borrowerSeed, uint256 offerIdx) external {
         uint256 n = inner.loanIdsLength();
+        uint256 offsetOf = _pickedOffsetLoan(offerIdx);
+        // An offset accept whose acceptor already holds the closing loan's lender side (an
+        // earlier offset made a borrower a lender) puts one party on both loans in two roles,
+        // and its delta cannot be split between them. The ledger does not drive that case.
+        if (offsetOf != 0) {
+            address acceptor = base.borrowerAt(borrowerSeed);
+            LoanBook storage b1 = books[offsetOf];
+            if (acceptor == b1.lender || b1.lenderSide[acceptor]) return;
+        }
         Snap memory before = _snap();
         inner.acceptLenderOffer(borrowerSeed, offerIdx);
-        _afterAccept(n, before, true);
+        if (offsetOf != 0 && inner.loanIdsLength() != n) {
+            _afterOffsetAccept(n, offsetOf, before);
+        } else {
+            _afterAccept(n, before, true);
+        }
+    }
+
+    /// @notice #3241: the borrower starts the preclose offset by posting a lender offer from its
+    ///         own principal. The escrow is wallet -> own vault, so nothing may move.
+    function offsetLoan(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        Snap memory before = _snap();
+        inner.offsetLoan(loanIdx, rateBps, durationDays);
+        _requireNoMovement(before, "offsetLoan");
     }
 
     function acceptBorrowerOffer(uint256 lenderSeed, uint256 offerIdx) external {
         uint256 n = inner.loanIdsLength();
+        uint256 refinanceOf = _pickedRefinanceLoan(offerIdx);
+        if (refinanceOf == 0) {
+            Snap memory before0 = _snap();
+            inner.acceptBorrowerOffer(lenderSeed, offerIdx);
+            _afterAccept(n, before0, false);
+            return;
+        }
+        // A refinance accept by a lender who already holds the closing loan's lender side puts
+        // one party on both loans, and its delta cannot be split between them. Not driven.
+        address acceptor = base.lenderAt(lenderSeed);
+        LoanBook storage b1 = books[refinanceOf];
+        if (acceptor == b1.lender || b1.lenderSide[acceptor]) return;
+        LibVaipakam.Loan memory pre = _loan(refinanceOf);
         Snap memory before = _snap();
+        vm.recordLogs();
         inner.acceptBorrowerOffer(lenderSeed, offerIdx);
-        _afterAccept(n, before, false);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        if (inner.loanIdsLength() == n) {
+            _requireNoMovement(before, "refinance accept (no loan)");
+            return;
+        }
+        _afterRefinanceAccept(n, refinanceOf, pre, before, logs);
+    }
+
+    /// @notice #3241: a lender lists an NFT for rent. The NFT moves into its own vault, and no
+    ///         token balance may move.
+    function createRentalOffer(uint256 s, uint256 t, uint256 fee, uint256 d) external {
+        Snap memory before = _snap();
+        inner.createRentalOffer(s, t, fee, d);
+        _requireNoMovement(before, "createRentalOffer");
+    }
+
+    /// @notice #3241: a borrower rents a listed NFT. Its prepayment moves wallet -> own vault and
+    ///         nothing crosses parties: a rental charges no Loan Initiation Fee, and the lender
+    ///         is paid only as the rent is earned.
+    function acceptRentalOffer(uint256 borrowerSeed, uint256 offerIdx) external {
+        uint256 n = inner.loanIdsLength();
+        Snap memory before = _snap();
+        inner.acceptRentalOffer(borrowerSeed, offerIdx);
+        if (inner.loanIdsLength() == n) {
+            _requireNoMovement(before, "acceptRentalOffer (no loan)");
+            return;
+        }
+        uint256 loanId = inner.loanIdAt(n);
+        _register(loanId);
+        _book(loanId, before, "acceptRentalOffer");
+        LoanBook storage b = books[loanId];
+        rentalsOpened++;
+        for (uint256 a = 0; a < 2; a++) {
+            if (b.dLender[a] != 0 || b.dBorrower[a] != 0 || b.dDiamond[a] != 0 || b.dCaller[a] != 0) {
+                rentalViolations++;
+                _flag("acceptRentalOffer: value crossed between parties when the rental opened");
+            }
+        }
+    }
+
+    /// @notice #3241: the daily rent deduction pays the lender side at most one day's fee and
+    ///         takes at most that from the renter. The deduction that pays the term's last day
+    ///         closes the rental with no late fee and the whole buffer refunded, so the rent it
+    ///         owes is the whole term, whenever that deduction lands.
+    function autoDeductDaily(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        LibVaipakam.Loan memory pre = _loan(loanId);
+        uint256 lastBefore = pre.lastDeductTime;
+        Snap memory before = _snap();
+        inner.autoDeductDaily(loanIdx);
+        int256[2] memory dB = _book(loanId, before, "autoDeductDaily");
+        if (_loan(loanId).lastDeductTime == lastBefore) return; // nothing deducted
+        rentDeductions++;
+        LoanBook storage b = books[loanId];
+        int256 fee = int256(b.principal0);
+        if (dB[USDC] < -fee || dB[WETH] != 0) {
+            rentalViolations++;
+            _flag(string.concat("autoDeductDaily: renter charged ", vm.toString(-dB[USDC]), " for one day of ", vm.toString(fee)));
+        }
+        if (
+            b.isRental && pre.status == LibVaipakam.LoanStatus.Active
+                && _loan(loanId).status == LibVaipakam.LoanStatus.Repaid
+        ) {
+            rentalsFullyDeducted++;
+            _setRentOwed(loanId, b.termDays);
+        }
+    }
+
+    /// @notice #3241: the borrower asks to refinance a loan. Consenting to the rate cap, posting
+    ///         the request on the loan's own collateral and attaching the payoff permit move
+    ///         nothing.
+    function refinanceRequest(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        Snap memory before = _snap();
+        inner.refinanceRequest(loanIdx, rateBps, durationDays);
+        _requireNoMovement(before, "refinanceRequest");
     }
 
     function repay(uint256 loanIdx) external {
@@ -186,7 +325,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.repay(loanIdx);
         int256[2] memory dB = _book(loanId, before, "repay");
-        _checkExactInterest(loanId, pre, dB);
+        _checkExactInterest(loanId, pre, dB, false);
     }
 
     /// @notice #3241: a direct preclose closes the loan early. Booked like a repayment; when it
@@ -200,7 +339,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.precloseDirect(loanIdx);
         int256[2] memory dB = _book(loanId, before, "precloseDirect");
-        _checkExactInterest(loanId, pre, dB);
+        _checkExactInterest(loanId, pre, dB, true);
         if (wasActive && _loan(loanId).status != LibVaipakam.LoanStatus.Active) precloseLanded++;
     }
 
@@ -308,7 +447,7 @@ contract LoanLedgerHandler is Test {
         (,, uint256 graceEndsAt,,,,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
         if (graceEndsAt > block.timestamp) vm.warp(graceEndsAt);
         (,,,,, shortfall,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
-        maxSell = ForcedSaleFacet(diamond)
+        maxSell = ForcedSalePreviewFacet(diamond)
             .previewForcedSale(loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement).maxSell;
     }
 
@@ -345,6 +484,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.claimAsLender(loanIdx);
         _book(loanId, before, "claimAsLender");
+        _checkRentalSettled(loanId);
     }
 
     function claimAsBorrower(uint256 loanIdx) external {
@@ -353,6 +493,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.claimAsBorrower(loanIdx);
         _book(loanId, before, "claimAsBorrower");
+        _checkRentalSettled(loanId);
     }
 
     /// @notice Time passes; no balance may move.
@@ -386,6 +527,11 @@ contract LoanLedgerHandler is Test {
     {
         LoanBook storage b = books[loanId];
         return (b.dLender[a], b.dBorrower[a], b.dDiamond[a], b.dCaller[a]);
+    }
+
+    /// @notice Whether a preclose offset closed a booked loan, and the loan's original due time.
+    function loanOffset(uint256 loanId) external view returns (bool closed, uint256 dueTime) {
+        return (books[loanId].offsetClosed, books[loanId].dueTime);
     }
 
     /// @notice A booked loan's cumulative market delta in asset `a`, and whether a periodic
@@ -477,6 +623,13 @@ contract LoanLedgerHandler is Test {
             return;
         }
         uint256 loanId = inner.loanIdAt(lenBefore);
+        _register(loanId);
+        int256[2] memory dB = _book(loanId, before, "accept");
+        _checkAccept(loanId, dB, borrowerAccepted);
+    }
+
+    /// @dev Opens the book of a newly originated loan.
+    function _register(uint256 loanId) internal {
         LibVaipakam.Loan memory L = _loan(loanId);
         LoanBook storage b = books[loanId];
         b.known = true;
@@ -487,10 +640,19 @@ contract LoanLedgerHandler is Test {
         b.startTime = L.startTime;
         b.dueTime = uint256(L.startTime) + L.durationDays * 1 days;
         b.collateralIn = L.collateralAmount;
+        if (L.assetType != LibVaipakam.AssetType.ERC20) {
+            b.isRental = true;
+            b.tokenId = L.tokenId;
+            b.termDays = L.durationDays;
+            b.prepay = L.prepayAmount + L.bufferAmount;
+        }
         bookedLoanIds.push(loanId);
+    }
 
-        int256[2] memory dB = _book(loanId, before, "accept");
-
+    /// @dev The origination checks on a loan's accept booking; `dB` is the borrower's delta.
+    function _checkAccept(uint256 loanId, int256[2] memory dB, bool borrowerAccepted) internal {
+        LibVaipakam.Loan memory L = _loan(loanId);
+        LoanBook storage b = books[loanId];
         // Origination (spec "Treasury Fees" and the matcher kickback): the borrower is charged
         // a Loan Initiation Fee F of 0.2% of the principal, 1% of F (S) goes to whoever
         // completed the match -- on a direct accept, the acceptor -- and the Diamond keeps F - S.
@@ -528,6 +690,192 @@ contract LoanLedgerHandler is Test {
         if (b.dLender[WETH] != 0 || dB[WETH] != 0 || b.dDiamond[WETH] != 0 || b.dCaller[WETH] != 0) {
             acceptViolations++;
             _flag("accept: collateral crossed between parties at origination");
+        }
+    }
+
+    /// @dev The original loan an offset offer was posted to close, replaying the inner handler's
+    ///      pick over the open lender offers; 0 when the picked offer is an ordinary one.
+    function _pickedOffsetLoan(uint256 offerIdx) internal view returns (uint256 loanId) {
+        uint256 len = inner.lenderOfferIdsLength();
+        if (len == 0) return 0;
+        loanId = inner.ghostOffsetOf(inner.lenderOfferIds(_boundView(offerIdx, 0, len - 1)));
+        if (!books[loanId].known) return 0;
+    }
+
+    /// @dev #3241: accepting an offset offer is ONE action over TWO loans. It opens the new loan
+    ///      (the offsetting borrower A lends to the acceptor C) and closes the original one (A
+    ///      pays its lender side L the payoff, and the Diamond the treasury cut). A is a party
+    ///      to both, so its delta is split. The new loan takes the origination A's offer defines:
+    ///      the lender side moves exactly the principal, C's delta is C's own, and the Diamond
+    ///      keeps the rest of C's charge (so its LIF is checked as on any accept). Everything
+    ///      else A moved, and the rest of the Diamond's delta, belongs to the original loan.
+    function _afterOffsetAccept(uint256 lenBefore, uint256 oldLoanId, Snap memory before) internal {
+        uint256 newLoanId = inner.loanIdAt(lenBefore);
+        _register(newLoanId);
+        LoanBook storage b1 = books[oldLoanId];
+        LoanBook storage b2 = books[newLoanId];
+        bookedActions++;
+        b1.lastActionTs = block.timestamp;
+        b2.lastActionTs = block.timestamp;
+        if (b2.lender != b1.borrower) {
+            offsetViolations++;
+            _flag("offset: the new loan's lender is not the original loan's borrower");
+        }
+        Snap memory s = _snap();
+        int256[2] memory dC;
+        for (uint256 a = 0; a < 2; a++) {
+            int256 dA;
+            for (uint256 i = 0; i < 6; i++) {
+                int256 d = _delta(s.actor[i][a], before.actor[i][a]);
+                if (actors[i] == b2.borrower) {
+                    dC[a] = d;
+                } else if (actors[i] == b2.lender) {
+                    dA = d;
+                } else if (actors[i] == b1.lender || b1.lenderSide[actors[i]]) {
+                    b1.dLender[a] += d;
+                } else if (d != 0) {
+                    isolationViolations++;
+                    _flag("offset accept: a non-party's holdings moved");
+                }
+            }
+            int256 aNew = a == USDC ? -int256(b2.principal0) : int256(0);
+            int256 diamondNew = -(aNew + dC[a]);
+            b2.dLender[a] += aNew;
+            b2.dBorrower[a] += dC[a];
+            b2.dDiamond[a] += diamondNew;
+            b1.dBorrower[a] += dA - aNew;
+            b1.dDiamond[a] += _delta(s.diamond[a], before.diamond[a]) - diamondNew;
+            b1.dCaller[a] += _delta(s.caller[a], before.caller[a]);
+            if (s.market[a] != before.market[a]) {
+                isolationViolations++;
+                _flag("offset accept: the market traded outside a periodic sale");
+            }
+            if (s.outside[a] != before.outside[a]) {
+                perimeterViolations++;
+                _flag("offset accept: tokens crossed the tracked perimeter");
+            }
+        }
+        _checkAccept(newLoanId, dC, true);
+
+        if (_loan(oldLoanId).status != LibVaipakam.LoanStatus.Repaid) {
+            offsetViolations++;
+            _flag("offset accept: the offset offer was taken but the original loan did not close");
+            return;
+        }
+        b1.offsetClosed = true;
+        b1.hadPartial = true; // closed by the offset, not by an on-time repayment
+        offsetLanded++;
+    }
+
+    /// @dev The loan a refinance request was posted to replace, replaying the inner handler's
+    ///      pick over the open borrower offers; 0 when the picked offer is an ordinary one.
+    function _pickedRefinanceLoan(uint256 offerIdx) internal view returns (uint256 loanId) {
+        uint256 len = inner.borrowerOfferIdsLength();
+        if (len == 0) return 0;
+        loanId = inner.ghostRefinanceOf(inner.borrowerOfferIds(_boundView(offerIdx, 0, len - 1)));
+        if (!books[loanId].known) return 0;
+    }
+
+    /// @dev #3241: accepting a refinance request is ONE action over TWO loans. It opens the
+    ///      replacement loan (the acceptor C lends to the borrower B) and closes the original
+    ///      (its lender side L is paid off). B is a party to both, so its delta is split. C's
+    ///      net principal never reaches B: it pays L, vault to vault, and B's wallet pays the
+    ///      rest of L's payoff and the treasury cut. The contract's `RefinancePayoffSettled`
+    ///      states that net principal, and it is used for one thing only, to apportion B's
+    ///      single delta: the replacement loan's borrower is credited the net principal (so its
+    ///      Loan Initiation Fee and C's matcher share are checked as on any lender accept), and
+    ///      everything else B moved is the original loan's payoff, which must then be exactly
+    ///      principal plus interest to the second when it closes on time with no partial. The
+    ///      totals across the two books stay exactly what was observed.
+    function _afterRefinanceAccept(
+        uint256 lenBefore,
+        uint256 oldLoanId,
+        LibVaipakam.Loan memory pre,
+        Snap memory before,
+        Vm.Log[] memory logs
+    ) internal {
+        uint256 newLoanId = inner.loanIdAt(lenBefore);
+        _register(newLoanId);
+        LoanBook storage b1 = books[oldLoanId];
+        LoanBook storage b2 = books[newLoanId];
+        bookedActions++;
+        b1.lastActionTs = block.timestamp;
+        b2.lastActionTs = block.timestamp;
+        if (b2.borrower != b1.borrower) {
+            refinanceViolations++;
+            _flag("refinance: the replacement loan's borrower is not the original loan's borrower");
+        }
+        (bool found, uint256 net) = _refinanceNet(logs, oldLoanId, newLoanId);
+        if (!found) {
+            refinanceViolations++;
+            _flag("refinance: the accept opened a loan but stated no payoff for the original");
+        }
+        Snap memory s = _snap();
+        int256[2] memory dB2;
+        dB2[USDC] = int256(net);
+        for (uint256 a = 0; a < 2; a++) {
+            int256 dCNew;
+            for (uint256 i = 0; i < 6; i++) {
+                int256 d = _delta(s.actor[i][a], before.actor[i][a]);
+                if (actors[i] == b2.lender) {
+                    dCNew = d;
+                } else if (actors[i] == b1.borrower) {
+                    b1.dBorrower[a] += d - dB2[a];
+                } else if (actors[i] == b1.lender || b1.lenderSide[actors[i]]) {
+                    b1.dLender[a] += d;
+                } else if (d != 0) {
+                    isolationViolations++;
+                    _flag("refinance accept: a non-party's holdings moved");
+                }
+            }
+            int256 diamondNew = -(dCNew + dB2[a]);
+            b2.dLender[a] += dCNew;
+            b2.dBorrower[a] += dB2[a];
+            b2.dDiamond[a] += diamondNew;
+            b1.dDiamond[a] += _delta(s.diamond[a], before.diamond[a]) - diamondNew;
+            b1.dCaller[a] += _delta(s.caller[a], before.caller[a]);
+            if (s.market[a] != before.market[a]) {
+                isolationViolations++;
+                _flag("refinance accept: the market traded outside a periodic sale");
+            }
+            if (s.outside[a] != before.outside[a]) {
+                perimeterViolations++;
+                _flag("refinance accept: tokens crossed the tracked perimeter");
+            }
+        }
+        _checkAccept(newLoanId, dB2, false);
+
+        if (_loan(oldLoanId).status != LibVaipakam.LoanStatus.Repaid) {
+            refinanceViolations++;
+            _flag("refinance accept: the request was taken but the original loan did not close");
+            return;
+        }
+        // The original loan's own share of this action, for the exact on-time interest check.
+        int256[2] memory dBOld;
+        for (uint256 i = 0; i < 6; i++) {
+            if (actors[i] != b1.borrower) continue;
+            for (uint256 a = 0; a < 2; a++) {
+                dBOld[a] = _delta(s.actor[i][a], before.actor[i][a]) - dB2[a];
+            }
+        }
+        _checkExactInterest(oldLoanId, pre, dBOld, false);
+        refinanceLanded++;
+    }
+
+    /// @dev The net principal `RefinancePayoffSettled` states moved from the new lender to the
+    ///      original loan's lender, for this pair of loans.
+    function _refinanceNet(Vm.Log[] memory logs, uint256 oldLoanId, uint256 newLoanId)
+        internal
+        view
+        returns (bool found, uint256 net)
+    {
+        bytes32 topic = RefinanceFacet.RefinancePayoffSettled.selector;
+        for (uint256 i = 0; i < logs.length; i++) {
+            Vm.Log memory l = logs[i];
+            if (l.emitter != diamond || l.topics.length != 4 || l.topics[0] != topic) continue;
+            if (uint256(l.topics[1]) != oldLoanId || uint256(l.topics[2]) != newLoanId) continue;
+            (net,,) = abi.decode(l.data, (uint256, uint256, uint256));
+            return (true, net);
         }
     }
 
@@ -571,8 +919,15 @@ contract LoanLedgerHandler is Test {
 
     /// @dev Spec "Interest Formula": a loan closed by one on-time full repayment with no earlier
     ///      partial pays `floor(P x rate x elapsed / (365 days x 10_000))`, to the second.
-    function _checkExactInterest(uint256 loanId, LibVaipakam.Loan memory pre, int256[2] memory dB) internal {
+    ///      `directClose` marks a direct preclose, which a rental settles on its own rule.
+    function _checkExactInterest(uint256 loanId, LibVaipakam.Loan memory pre, int256[2] memory dB, bool directClose)
+        internal
+    {
         LoanBook storage b = books[loanId];
+        if (b.isRental) {
+            _recordRentOwed(loanId, pre, directClose);
+            return;
+        }
         if (b.hadPartial) return;
         if (pre.status != LibVaipakam.LoanStatus.Active) return;
         if (_loan(loanId).status != LibVaipakam.LoanStatus.Repaid) return;
@@ -595,5 +950,78 @@ contract LoanLedgerHandler is Test {
                 )
             );
         }
+    }
+
+    /// @dev Spec "NFT Rental Outcome": a rental returned on time owes the fee for every day used,
+    ///      any part of a day counting as a whole day (at least one), never past the term. A
+    ///      direct preclose is the spec's Option 1, "the full interest that would have been due
+    ///      for the original agreed loan term": it owes the fee for every day of the term.
+    function _recordRentOwed(uint256 loanId, LibVaipakam.Loan memory pre, bool directClose) internal {
+        LoanBook storage b = books[loanId];
+        if (pre.status != LibVaipakam.LoanStatus.Active) return;
+        if (_loan(loanId).status != LibVaipakam.LoanStatus.Repaid) return;
+        if (block.timestamp > b.dueTime) return; // a late fee may apply; bounded elsewhere
+        if (pre.useFullTermInterest) return;
+        uint256 elapsed = block.timestamp - b.startTime;
+        uint256 daysUsed = (elapsed + 1 days - 1) / 1 days;
+        if (daysUsed == 0) daysUsed = 1;
+        if (daysUsed > b.termDays || directClose) daysUsed = b.termDays;
+        _setRentOwed(loanId, daysUsed);
+    }
+
+    /// @dev Records the rent a closed rental owes (`days` of the daily fee) and checks any side
+    ///      whose claim is already paid.
+    function _setRentOwed(uint256 loanId, uint256 days_) internal {
+        LoanBook storage b = books[loanId];
+        b.rentOwed = b.principal0 * days_;
+        b.rentOwedSet = true;
+        _checkRentalSettled(loanId);
+    }
+
+    /// @dev Once a rental that closed on time has paid out a side's claim, that side's net is
+    ///      exact: the renter has paid exactly the rent owed (the rest of its prepayment, the
+    ///      buffer included, is back with it), and the lender side has received that rent less
+    ///      the treasury's share (each payment floors its own share, so the lender may be up to
+    ///      one wei a payment above the single split). Each side
+    ///      is checked once, when its claim is first seen paid.
+    function _checkRentalSettled(uint256 loanId) internal {
+        LoanBook storage b = books[loanId];
+        if (!b.rentOwedSet) return;
+        (,, bool borrowerClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, false);
+        (,, bool lenderClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, true);
+        int256 owed = int256(b.rentOwed);
+        if (borrowerClaimed && !b.renterSettledChecked) {
+            b.renterSettledChecked = true;
+            rentalChecks++;
+            if (b.dBorrower[USDC] != -owed) {
+                rentalViolations++;
+                _flag(string.concat("rental: renter paid ", vm.toString(-b.dBorrower[USDC]), ", rent owed ", vm.toString(owed)));
+            }
+        }
+        if (lenderClaimed && !b.lenderSettledChecked) {
+            b.lenderSettledChecked = true;
+            rentalChecks++;
+            uint256 bps = _loan(loanId).treasuryFeeBpsAtInit;
+            // Each payment (a daily deduction, or the close) floors its own treasury share, and
+            // a sum of floors is at most the floor of the sum and at most one wei a payment
+            // below it. A rental makes at most `termDays` payments.
+            int256 lo = owed - int256((b.rentOwed * bps) / BPS);
+            int256 hi = lo + int256(b.termDays);
+            if (b.dLender[USDC] > hi || b.dLender[USDC] < lo) {
+                rentalViolations++;
+                _flag(string.concat("rental: lender received ", vm.toString(b.dLender[USDC]), ", rent less the treasury share is ", vm.toString(lo)));
+            }
+        }
+    }
+
+    /// @notice A booked loan's rental terms: whether it is a rental, the rented token, the
+    ///         prepayment (whole-term rent plus buffer), and its two parties.
+    function loanRental(uint256 loanId)
+        external
+        view
+        returns (bool isRental, uint256 tokenId, uint256 prepay, address lender, address borrower)
+    {
+        LoanBook storage b = books[loanId];
+        return (b.isRental, b.tokenId, b.prepay, b.lender, b.borrower);
     }
 }

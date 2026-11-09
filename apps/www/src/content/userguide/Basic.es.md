@@ -658,6 +658,18 @@ pequeño servicio off-chain vigila tus préstamos cada cinco minutos y
 te envía un ping en el momento en que la puntuación cruza una banda
 de peligro. No hay coste de gas; nada ocurre on-chain.
 
+<a id="alerts-inbox"></a>
+
+### La bandeja de Alertas
+
+La página Alertas muestra los avisos que el índice del protocolo guarda para tu wallet en la red en la que estás, los más recientes primero. Es gratis y no hay que darse de alta en nada. Se escribe un aviso cuando un préstamo empieza, se devuelve en parte o del todo, entra en impago o se liquida, se acerca a su vencimiento, entra en su periodo de gracia o sale de él, o su salud baja de 1,5, 1,2 o 1,05, y cuando una entrada de recompensa se acerca a su plazo de reclamación o lo pasa. Cada aviso abre el préstamo, cuya página lo lee de la cadena, o Claims para una recompensa. La campana junto a tu wallet, arriba, cuenta los avisos llegados desde la última vez que abriste la página en este navegador. Si el índice no se puede leer, la página lo dice en lugar de mostrar una bandeja vacía. Telegram, push, los avisos de salud y los recordatorios de pago se configuran justo debajo de la bandeja. Cada alerta describe cómo estaban las cosas cuando se escribió; abra el préstamo para ver cómo está ahora.
+
+<a id="alerts-channels"></a>
+
+### Telegram, push y avisos
+
+Debajo de la bandeja, la página Alertas configura los avisos que te llegan fuera de la app. Cada cambio es una firma gratuita en tu billetera, no una transacción. Para vincular Telegram, pulsa Vincular Telegram, envía el código de un solo uso al bot de Vaipakam en diez minutos y luego envía una alerta de prueba: el vínculo funciona cuando ese mensaje llega a tu chat. Push solo se ofrece cuando el servicio de alertas dice que puede enviar ahora; además te suscribes al canal de Vaipakam en tu app de push y cancelas la suscripción allí para detenerlo. Los avisos de salud están siempre activos una vez configurado Telegram o push, con salud 1,5, 1,2 y 1,05. Los recordatorios de pago se pueden desactivar y activar. La página muestra lo que ha hecho este navegador; puede existir un vínculo o ajuste hecho en otro dispositivo.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Escalera de umbrales
@@ -1382,13 +1394,13 @@ Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada
 
 ### El libro de ofertas
 
-Debajo de tus ofertas, el libro de ofertas muestra todas las ofertas abiertas de la red, de la más nueva a la más antigua, y puedes leerlo sin conectar una billetera. Las pestañas separan los préstamos de un token de los alquileres de NFT, un filtro muestra las ofertas de prestamistas, las solicitudes de prestatarios o ambas, y una vez conectado puedes ocultar tus propias ofertas. Las ofertas más antiguas se cargan con «Mostrar ofertas anteriores»; los filtros se aplican a lo leído, y la línea de recuento dice cuánto es. El libro viene del índice del protocolo, que puede ir unos minutos por detrás de la cadena, así que solo te señala ofertas: abre una para verla tal como la guarda la cadena. Una oferta pasada su vencimiento se marca como vencida; cualquiera puede limpiarla, y lo que bloqueaba vuelve a su creador. Si el índice no se puede leer, el libro lo dice en lugar de mostrar que no hay ofertas.
+Debajo de tus ofertas, el libro de ofertas muestra todas las ofertas abiertas de la red, de la más nueva a la más antigua; solo se lee una vez que conectas una billetera. Las pestañas separan los préstamos de un token de los alquileres de NFT, un filtro muestra las ofertas de prestamistas, las solicitudes de prestatarios o ambas, y una vez conectado puedes ocultar tus propias ofertas. Las ofertas más antiguas se cargan con «Mostrar ofertas anteriores»; los filtros se aplican a lo leído, y la línea de recuento dice cuánto es. El libro viene del índice del protocolo, que puede ir unos minutos por detrás de la cadena, así que solo te señala ofertas: abre una para verla tal como la guarda la cadena. Una oferta pasada su vencimiento se marca como vencida; cualquiera puede limpiarla, y lo que bloqueaba vuelve a su creador. Si el índice no se puede leer, el libro lo dice en lugar de mostrar que no hay ofertas.
 
 <a id="offer-detail"></a>
 
 ### La página de una oferta
 
-Cada oferta tiene su propia página, leída de la cadena haya o no una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes.
+Cada oferta tiene su propia página, leída de la cadena una vez que hay una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes.
 
 <a id="offer-cancel"></a>
 

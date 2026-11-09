@@ -55,7 +55,9 @@ test('Claim everything collects the payouts picked in one transaction and leaves
   const lenderAddr = sc.address('lender');
   const [, owedA] = await sc.read<Claimable>('getClaimable', [a, true]);
   const [, owedB] = await sc.read<Claimable>('getClaimable', [b, true]);
-  const balance = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] });
+  // A loan claim credits the lender's own vault: what it may withdraw now.
+  const balance = () => sc.read<bigint>('withdrawableNow', [lenderAddr, 0, WETH, 0n]);
+  const wallet = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] });
 
   const { page, flags } = await launchWallet('lender');
   await page.goto('/claims');
@@ -80,19 +82,22 @@ test('Claim everything collects the payouts picked in one transaction and leaves
   await expect(receipt).toContainText(`Loan #${a}, lender payout`);
   await expect(receipt).not.toContainText(`Loan #${b}`);
   await expect(receipt).toContainText('Each payout runs on its own inside this one transaction');
-  await expect(receipt).toContainText('Your wallet');
+  await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
   await expect(receipt).toContainText('Wallet prompts: 1');
   await fitsWidth(page);
 
   const before = await balance();
+  const walletBefore = await wallet();
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText(`Loan #${a}, lender payout: collected`);
-  await expect(finish).toContainText(/arrived in your wallet/);
+  await expect(finish).toContainText(/credited to your vault, free to withdraw/);
+  await expect(finish.getByRole('link', { name: 'Withdraw from your vault' })).toHaveAttribute('href', '/vault');
   expect(flags.sentTransactions).toBe(sent + 1);
   expect(await balance()).toBe(before + owedA);
+  expect(await wallet()).toBe(walletBefore);
   expect((await sc.read<Claimable>('getClaimable', [a, true]))[2]).toBe(true);
   expect((await sc.read<Claimable>('getClaimable', [b, true]))[2]).toBe(false);
 

@@ -33,7 +33,27 @@
 //    logs name, read back from the Diamond, filtered to the scope asked for
 //    and echoing that scope as the indexer does. The agreed rate is the
 //    loan's stored rate (the fixture never refinances a loan it reads here).
-//    Refused while the posture is `down`.
+//    Refused while the posture is `down`;
+//  - the indexer's `GET /notifications/:address?chainId&limit&before`, the
+//    wallet's inbox: a `loan_matched` row for both parties of every
+//    `LoanInitiated` and a `loan_repaid` row for both parties of every
+//    `LoanRepaid`, from the chain's logs (filed under the loan's parties, as
+//    the indexer files them under the position holders when no position has
+//    moved), with ids in chain order, plus any rows a spec adds through
+//    `POST /__stub/notifications` (kinds the fixture cannot reach by itself,
+//    such as health bands, reward deadlines, an unknown kind or an
+//    unreadable row), stamped after every chain row. Newest first, paged by
+//    the indexer's `block:log:id` cursor, with the `newerThan` count of rows
+//    written after an id; refused while the posture is `down`.
+//  - the alert service (the agent Worker, which alpha05 is pointed at here
+//    too): `GET /push/status`, `POST /link/telegram`, `POST /telegram/test`,
+//    `POST /unlink/telegram` and `PUT /thresholds`, answering as the agent
+//    does (codes, refusals and statuses), with each signed request accepted
+//    once. It does NOT verify signatures: it records every request
+//    (`GET /__stub/agent`), and the spec checks each signature against the
+//    shared message builders, which is the stronger claim. A spec drives
+//    the bot handshake, the push posture and one forced answer through
+//    `POST /__stub/agent`.
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
@@ -41,7 +61,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http as viemHttp, toEventSelector } from 'viem';
+
+import { createPublicClient, decodeEventLog, http as viemHttp, toEventSelector } from 'viem';
+
+/** How long a slowed agent answer waits (see the agent's `slow` control). */
+const SLOW_ANSWER_MS = 6_000;
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.ALPHA05_E2E_ANVIL_URL ?? 'http://127.0.0.1:8546';
@@ -70,6 +94,7 @@ const ACTIVITY_TOPICS = new Map(
 );
 
 const LOAN_INITIATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanInitiated'));
+const LOAN_REPAID = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanRepaid'));
 const OFFER_CREATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'OfferCreated'));
 const chain = createPublicClient({ transport: viemHttp(ANVIL_URL) });
 
@@ -176,6 +201,71 @@ async function recentLoans(url) {
   };
 }
 
+/** Inbox rows a spec added (`/__stub/notifications`), each for one wallet. */
+let addedNotifications = [];
+
+/** `/notifications/:address`: the wallet's inbox rows, newest first, one
+ *  page at a time on the indexer's (block, log, id) cursor. */
+async function notifications(url, address) {
+  const addr = address.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) return { status: 400, body: { error: 'bad-address' } };
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[LOAN_INITIATED, LOAN_REPAID]] }]);
+  const times = new Map();
+  const rows = [];
+  for (const l of logs) {
+    const block = Number(l.blockNumber);
+    if (!times.has(block)) times.set(block, Number((await anvil('eth_getBlockByNumber', [l.blockNumber, false])).timestamp));
+    const loanId = BigInt(l.topics[1]);
+    let kind;
+    let parties;
+    if (l.topics[0] === LOAN_INITIATED) {
+      const { args } = decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
+      kind = 'loan_matched';
+      parties = [args.lender, args.borrower];
+    } else {
+      const loan = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [loanId] });
+      kind = 'loan_repaid';
+      parties = [loan.lender, loan.borrower];
+    }
+    const logIndex = Number(l.logIndex);
+    parties.forEach((p, side) => {
+      if (p.toLowerCase() !== addr) return;
+      rows.push({
+        id: block * 10_000 + logIndex * 2 + side,
+        kind,
+        loanId: Number(loanId),
+        offerId: null,
+        eventKind: kind === 'loan_matched' ? 'LoanInitiated' : 'LoanRepaid',
+        data: null,
+        createdAt: times.get(block),
+        blockNumber: block,
+        logIndex,
+      });
+    });
+  }
+  for (const n of addedNotifications) if (n.recipient === addr) rows.push(n.row);
+  rows.sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex || b.id - a.id);
+  const before = url.searchParams.get('before');
+  let page = rows;
+  if (before) {
+    const [blk, li, id] = before.split(':').map(Number);
+    page = rows.filter((r) => r.blockNumber < blk || (r.blockNumber === blk && (r.logIndex < li || (r.logIndex === li && r.id < id))));
+  }
+  page = page.slice(0, limit);
+  const last = page.length === limit ? page[page.length - 1] : null;
+  const body = { chainId: CHAIN_ID, address: addr, notifications: page, nextBefore: last ? `${last.blockNumber}:${last.logIndex}:${last.id}` : null };
+  // `newerThan=<id>`: how many of the wallet's rows have a larger id, and its
+  // newest id, as the indexer counts them (every row, whatever its block).
+  const newer = url.searchParams.get('newerThan');
+  if (newer !== null) {
+    if (!/^\d{1,15}$/.test(newer)) return { status: 400, body: { error: 'bad-newer-than' } };
+    const id = Number(newer);
+    body.newerThan = { id, count: rows.filter((r) => r.id > id).length, capped: false, newestId: rows.reduce((m, r) => Math.max(m, r.id), 0) };
+  }
+  return { status: 200, body };
+}
+
 /** The `/loans/recent` disclosure of loans whose terms the index has not
  *  confirmed; set by a spec through `/__stub/unplaced`. */
 let unplaced = { count: 0, capped: false };
@@ -259,7 +349,7 @@ function cors(req, res) {
     res.setHeader('access-control-allow-origin', origin);
     res.setHeader('vary', 'origin');
   }
-  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
   res.setHeader('access-control-allow-headers', 'content-type');
   res.setHeader('cache-control', 'no-store');
 }
@@ -268,6 +358,26 @@ function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
 }
+
+/** The alert service's routes, by method. */
+const AGENT_ROUTES = { '/link/telegram': 'POST', '/telegram/test': 'POST', '/unlink/telegram': 'POST', '/thresholds': 'PUT' };
+
+function freshAgent() {
+  return {
+    push: 'available',
+    requests: [],
+    used: new Set(),
+    codes: new Map(),
+    linked: new Set(),
+    lastTest: new Map(),
+    thresholds: new Map(),
+    next: new Map(),
+    slow: new Set(),
+  };
+}
+/** The alert service's state: every request, the issued codes, the linked
+ *  wallets, the stored settings and the push posture. */
+let agent = freshAgent();
 
 const server = http.createServer(async (req, res) => {
   cors(req, res);
@@ -286,10 +396,14 @@ const server = http.createServer(async (req, res) => {
           '/activity (seller and reserve kinds)',
           '/offers/active',
           '/loans/recent',
+          '/notifications/:address',
           '/ws/chain/:chainId (503)',
           '/rpc/:chainId',
           '/__stub/index-posture',
           '/__stub/unplaced',
+          '/__stub/notifications',
+          '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
+          '/__stub/agent',
         ],
       });
       return;
@@ -312,6 +426,160 @@ const server = http.createServer(async (req, res) => {
       }
       unplaced = { count: next.count, capped: next.capped };
       json(res, 200, { unplaced });
+      return;
+    }
+    if (url.pathname === '/__stub/notifications' && req.method === 'POST') {
+      // { recipient, rows: [partial row] } adds rows stamped after every chain
+      // row; { reset: true } removes every added row.
+      const body = JSON.parse(await readBody(req));
+      if (body.reset === true) {
+        addedNotifications = [];
+        json(res, 200, { added: 0 });
+        return;
+      }
+      if (typeof body.recipient !== 'string' || !Array.isArray(body.rows)) {
+        json(res, 400, { error: 'notifications needs { recipient, rows } or { reset: true }' });
+        return;
+      }
+      const head = Number(await anvil('eth_blockNumber'));
+      const now = Math.floor(Date.now() / 1000);
+      // Added rows take ids above every chain row's (block × 10,000 + …) and
+      // within the 15 digits the route accepts for `newerThan`, as the
+      // index's own ids are: written after, so numbered after.
+      for (const r of body.rows) {
+        const seq = addedNotifications.length + 1;
+        addedNotifications.push({
+          recipient: body.recipient.toLowerCase(),
+          row: { id: 900_000_000_000_000 + seq, offerId: null, eventKind: null, data: null, createdAt: now, blockNumber: head, logIndex: 1_000_000 + seq, ...r },
+        });
+      }
+      json(res, 200, { added: addedNotifications.length });
+      return;
+    }
+    if (url.pathname === '/__stub/agent') {
+      if (req.method === 'GET') {
+        json(res, 200, { requests: agent.requests, thresholds: Object.fromEntries(agent.thresholds), linked: [...agent.linked] });
+        return;
+      }
+      // { reset }, { push: 'available' | 'agent-only' | 'unavailable' | 'down' },
+      // { handshake: wallet } (the bot received that wallet's latest code),
+      // { next: { path, status, body } } (the next request to that path gets it).
+      // { slow: { path } } (the next request to that path is answered SLOW_ANSWER_MS later).
+      const body = JSON.parse(await readBody(req));
+      if (body.reset === true) agent = freshAgent();
+      if (body.push !== undefined) {
+        if (!['available', 'agent-only', 'unavailable', 'down'].includes(body.push)) {
+          json(res, 400, { error: `unknown push posture ${String(body.push)}` });
+          return;
+        }
+        agent.push = body.push;
+      }
+      if (typeof body.handshake === 'string') {
+        const w = body.handshake.toLowerCase();
+        if (![...agent.codes.values()].includes(w)) {
+          json(res, 409, { error: 'no code was issued for that wallet' });
+          return;
+        }
+        agent.linked.add(w);
+      }
+      if (body.next !== undefined) agent.next.set(body.next.path, { status: body.next.status, body: body.next.body });
+      if (body.slow !== undefined) agent.slow.add(body.slow.path);
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === '/push/status' && req.method === 'GET') {
+      if (agent.push === 'down') {
+        json(res, 503, { error: 'e2e stand-in: alert service down' });
+        return;
+      }
+      const channel = '0x00000000000000000000000000000000000e2e01';
+      json(
+        res,
+        200,
+        agent.push === 'unavailable'
+          ? { available: false, reason: 'signer-unset', rail: 'agent', scope: 'service', billedChainIds: [] }
+          : { available: true, channel, scope: agent.push === 'agent-only' ? 'agent' : 'service', billedChainIds: [] },
+      );
+      return;
+    }
+    if (AGENT_ROUTES[url.pathname] === req.method) {
+      const raw = await readBody(req);
+      let body;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        json(res, 400, { error: 'invalid-json' });
+        return;
+      }
+      agent.requests.push({ path: url.pathname, body });
+      if (agent.slow.delete(url.pathname)) {
+        // A fixed delay: the request names which answer to slow, never how long.
+        await new Promise((r) => setTimeout(r, SLOW_ANSWER_MS));
+      }
+      const forced = agent.next.get(url.pathname);
+      if (forced) {
+        agent.next.delete(url.pathname);
+        json(res, forced.status, forced.body);
+        return;
+      }
+      if (
+        typeof body.wallet !== 'string' ||
+        !/^0x[0-9a-fA-F]{40}$/.test(body.wallet) ||
+        typeof body.signature !== 'string' ||
+        !Number.isSafeInteger(body.issuedAt) ||
+        body.chain_id !== CHAIN_ID
+      ) {
+        json(res, 400, { error: 'invalid-payload' });
+        return;
+      }
+      // The agent's one-time ledger is keyed on the signed message; the
+      // signature stands in for it here (one message, one signature).
+      if (agent.used.has(body.signature)) {
+        json(res, 409, { error: 'request-already-used', reason: 'this signed request was already used — sign again' });
+        return;
+      }
+      agent.used.add(body.signature);
+      const w = body.wallet.toLowerCase();
+      if (url.pathname === '/link/telegram') {
+        const code = `E2E${String(agent.codes.size + 1).padStart(5, '0')}`;
+        agent.codes.set(code, w);
+        json(res, 200, { ok: true, code, bot_url: `https://t.me/vaipakam_e2e_bot?start=${code}` });
+        return;
+      }
+      if (url.pathname === '/telegram/test') {
+        if (!agent.linked.has(w)) {
+          json(res, 404, { error: 'not-linked' });
+          return;
+        }
+        const now = Math.floor(Date.now() / 1000);
+        if ((agent.lastTest.get(w) ?? 0) > now - 60) {
+          json(res, 429, { error: 'rate-limited' });
+          return;
+        }
+        agent.lastTest.set(w, now);
+        json(res, 200, { ok: true });
+        return;
+      }
+      if (url.pathname === '/unlink/telegram') {
+        agent.linked.delete(w);
+        json(res, 200, { ok: true, scope: 'wallet' });
+        return;
+      }
+      // PUT /thresholds
+      if (body.push_channel === 'subscribed' && agent.push !== 'available' && agent.push !== 'agent-only') {
+        const stored = agent.thresholds.get(w)?.push_channel === 'subscribed';
+        if (!stored) {
+          json(res, 409, { error: 'push-unavailable', push: 'unavailable' });
+          return;
+        }
+      }
+      const prev = agent.thresholds.get(w) ?? {};
+      const next = { ...prev };
+      for (const k of ['warn_hf', 'alert_hf', 'critical_hf', 'notify_maturity_approaching']) if (body[k] !== undefined) next[k] = body[k];
+      if (body.push_channel === 'subscribed') next.push_channel = 'subscribed';
+      agent.thresholds.set(w, next);
+      const push = body.push_channel !== 'subscribed' ? 'not-requested' : agent.push === 'available' || agent.push === 'agent-only' ? 'stored' : 'kept';
+      json(res, 200, { ok: true, push });
       return;
     }
     if (url.pathname === '/health/ingest') {
@@ -345,6 +613,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await recentLoans(url));
+      return;
+    }
+    const inbox = url.pathname.match(/^\/notifications\/([^/]+)$/);
+    if (inbox && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const r = await notifications(url, inbox[1]);
+      json(res, r.status, r.body);
       return;
     }
     const rpc = url.pathname.match(/^\/rpc\/(\d+)$/);

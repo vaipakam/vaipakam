@@ -9,7 +9,7 @@ import { loadLastPair, saveLastPair, suggestedAssets } from '../../shared/offers
 import { readMatches } from '../../shared/offers/matches';
 import { MatchingOffers, type MatchesView } from '../../shared/offers/MatchingOffers';
 import { PairPicker } from '../../shared/offers/PairPicker';
-import { useChainRead, useScreenChain } from '../../shared/reads/chainRead';
+import { useScreenChain } from '../../shared/reads/chainRead';
 import { useTokenMeta } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -97,17 +97,16 @@ export function LendPage() {
   const flows = indexerPositionFlowReader(world.indexer, chain?.chainId ?? world.chainId);
   const lending = pair.lending ?? ('0x' as Hex);
   const collateral = pair.collateral ?? ('0x' as Hex);
-  const ownMatches = useOwnRead(['lend', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'lender', flows), {
-    enabled: ready && walletChain !== null,
-  });
-  const publicMatches = useChainRead(
-    ['lend', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
-    (c) => readMatches(c, diamond, lending, collateral, null, 'lender', flows),
+  const ownMatches = useOwnRead(
+    ['lend', 'matches', lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readMatches(c, diamond, lending, collateral, own!.account, 'lender', flows),
     {
-      enabled: ready && !connected,
+      enabled: ready && walletChain !== null,
     },
   );
-  const view: MatchesView = connected ? ownMatches : publicMatches;
+  // Offers are read only once a wallet is connected on a served network
+  // (owner decision 2026-11-09: no offer-book read before a wallet).
+  const view: MatchesView = ownMatches;
 
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
   const meta = useTokenMeta(assets).data;
@@ -165,10 +164,10 @@ export function LendPage() {
           </button>
         </Notice>
       )}
-      {chain && !flowOpen && <PairPicker key={chain.chainId} role="lender" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
-      {chain && ready && !flowOpen && (
-        <MatchingOffers role="lender" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />
+      {chain && connected && walletChain !== null && !flowOpen && (
+        <PairPicker key={chain.chainId} role="lender" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />
       )}
+      {chain && ready && !flowOpen && connected && walletChain !== null && <MatchingOffers role="lender" view={view} meta={meta} onTake={take} takeDisabled={takeDisabled} />}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
         <section className="borrow-section request-open" aria-labelledby="lend-offer-open">
           <h2 id="lend-offer-open" className="sr-only">

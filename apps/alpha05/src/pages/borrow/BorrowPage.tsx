@@ -5,7 +5,7 @@ import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { loadLastPair, saveLastPair, suggestedAssets } from '../../shared/offers/assets';
-import { useChainRead, useScreenChain } from '../../shared/reads/chainRead';
+import { useScreenChain } from '../../shared/reads/chainRead';
 import { useTokenMeta } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -106,14 +106,9 @@ export function BorrowPage() {
       enabled: ready && walletChain !== null,
     },
   );
-  const publicMatches = useChainRead(
-    ['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
-    (c) => readMatches(c, diamond, lending, collateral, null, 'borrower', flows),
-    {
-      enabled: ready && !connected,
-    },
-  );
-  const view: MatchesView = connected ? ownMatches : publicMatches;
+  // Offers are read only once a wallet is connected on a served network
+  // (owner decision 2026-11-09: no offer-book read before a wallet).
+  const view: MatchesView = ownMatches;
 
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
   const meta = useTokenMeta(assets).data;
@@ -178,10 +173,10 @@ export function BorrowPage() {
           </button>
         </Notice>
       )}
-      {chain && !flowOpen && <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
-      {chain && ready && !flowOpen && (
-        <MatchingOffers role="borrower" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />
+      {chain && connected && walletChain !== null && !flowOpen && (
+        <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />
       )}
+      {chain && ready && !flowOpen && connected && walletChain !== null && <MatchingOffers role="borrower" view={view} meta={meta} onTake={take} takeDisabled={takeDisabled} />}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
         <section className="borrow-section request-open" aria-labelledby="borrow-request-open">
           <h2 id="borrow-request-open" className="sr-only">

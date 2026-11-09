@@ -35,6 +35,12 @@ export interface WalletFlags {
    *  `SignedOffer`, `PermitTransferFrom`, ...). Lets a spec prove a signer
    *  refused BEFORE the wallet was asked. */
   typedDataRequests: Record<string, number>;
+  /** When true, every `personal_sign` is refused as a user would (code
+   *  4001), so a spec can prove nothing was sent after a declined
+   *  signature. */
+  rejectMessages: boolean;
+  /** `personal_sign` requests SEEN, whether signed or refused. */
+  messageRequests: number;
 }
 
 export function newWalletFlags(): WalletFlags {
@@ -44,6 +50,8 @@ export function newWalletFlags(): WalletFlags {
     permit2SignatureRequests: 0,
     sentTransactions: 0,
     typedDataRequests: {},
+    rejectMessages: false,
+    messageRequests: 0,
   };
 }
 
@@ -183,6 +191,12 @@ export async function wireWallet(
       case 'personal_sign':
         // params: [data, address]
         assertSessionAccount(p[1], method);
+        flags.messageRequests += 1;
+        if (flags.rejectMessages) {
+          const err = new Error('User rejected the signature request') as Error & { code: number };
+          err.code = 4001;
+          throw err;
+        }
         return account.signMessage({ message: { raw: p[0] as `0x${string}` } });
       case 'eth_signTypedData_v4': {
         // params: [address, typedDataJson]

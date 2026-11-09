@@ -149,8 +149,12 @@ export interface AcceptFigures {
   fee: bigint;
   /** The part of the fee the protocol pays to whoever submits the
    *  acceptance (the matcher's share), which on a direct take is the
-   *  borrower: it reaches the wallet with the principal. */
+   *  borrower: it reaches the wallet. */
   feeBack: bigint;
+  /** The principal less the fee: paid into the borrower's own vault,
+   *  credited as the borrower's funds, which the borrower withdraws. */
+  toVault: bigint;
+  /** Everything the borrower receives: `toVault` plus `feeBack`. */
   received: bigint;
   collateral: bigint;
   refund: bigint;
@@ -166,6 +170,7 @@ export function acceptFigures(preview: AcceptPreview, durationDays: bigint, matc
     principal: preview.effectivePrincipal,
     fee: preview.lifEstimate,
     feeBack,
+    toVault: preview.effectivePrincipal - preview.lifEstimate,
     received: preview.effectivePrincipal - preview.lifEstimate + feeBack,
     collateral: preview.collateralAmount,
     refund: preview.collateralResidualRefund,

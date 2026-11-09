@@ -1271,8 +1271,16 @@ contract CollateralListingExecutor is
         // existence checks). Route to the matching precondition stack.
         if (offerContext[params.orderHash].offerId != 0) {
             _checkOfferOrderPreconditions(params);
+            // #3205 part 2 — the listed token is approved to this fill's
+            // conduit now, for this transaction only.
+            IVaipakamPrepayCallbacks(vaipakamDiamond).executorOpenListingGrant(
+                0, offerContext[params.orderHash].offerId, offerContext[params.orderHash].conduit
+            );
         } else {
-            _checkOrderPreconditions(params);
+            uint256 loanId = _checkOrderPreconditions(params);
+            IVaipakamPrepayCallbacks(vaipakamDiamond).executorOpenListingGrant(
+                loanId, 0, orderContext[params.orderHash].conduit
+            );
         }
         _snapshotBookedLeg(params);
         return ISeaportZone.authorizeOrder.selector;
@@ -1287,10 +1295,13 @@ contract CollateralListingExecutor is
 
         // T-086 Round-8 (#358) §19.6 — dispatch on the
         // dispatch-disjoint invariant (see {authorizeOrder} above).
+        // #3205 part 2 — close the fill's allowance before anything settles.
         if (offerContext[params.orderHash].offerId != 0) {
+            IVaipakamPrepayCallbacks(vaipakamDiamond).executorCloseListingGrant(0, offerContext[params.orderHash].offerId);
             _finalizeOfferSale(params);
             return ISeaportZone.validateOrder.selector;
         }
+        IVaipakamPrepayCallbacks(vaipakamDiamond).executorCloseListingGrant(orderContext[params.orderHash].loanId, 0);
 
         // Re-run the full precondition stack here too (design doc §5.7):
         // defence in depth for the state the two hooks read. (The design

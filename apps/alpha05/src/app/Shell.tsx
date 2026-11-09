@@ -6,6 +6,7 @@ import { IdentityLine, WalletControl } from './WalletControl';
 import { useCapabilities } from '../shared/capability/CapabilityContext';
 import { useCopy } from '../shared/copy/useCopy';
 import { HelpPanel } from '../shared/help/HelpPanel';
+import { InboxBell } from '../shared/inbox/InboxBell';
 import { WhyLink } from '../shared/help/WhyLink';
 import { useWorldRail } from '../shared/reads/world/WorldRailContext';
 import { FreshnessStamp } from '../shared/ui/FreshnessStamp';
@@ -219,6 +220,7 @@ export function Shell() {
             </label>
           </div>
         </div>
+        <InboxBell />
         <div className="wallet-slot">
           <WalletControl />
         </div>

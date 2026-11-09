@@ -4,9 +4,12 @@
  * (grouped by token, since the claim row and funds held for the lender can be
  * the same token), each NFT, and whether the loan settled.
  *
- * Where a payment landed follows the wallet's protected mode: paid to the
- * wallet (its transfers to the wallet are summed), or queued, kept in the
- * vault, or paid into the vault (the Diamond's own payout records say which).
+ * A claim pays the current holder's VAULT, credited as the holder's own free
+ * funds, which the holder then withdraws: measured from the Diamond's own
+ * record of that movement into the claimant's vault (`vaultCredit`). A
+ * matching reward a claim-time match pays the claimant goes to the wallet,
+ * or, under protected mode, is queued, kept in the vault or paid into it (the
+ * Diamond's own payout records say which), and is measured with the rest.
  * A figure that differs from the review is stated beside it, never hidden;
  * on a loan in fallback a match at claim time can change what the claim row
  * pays in ways the protocol records only in part, so when the logs show a
@@ -18,7 +21,9 @@
 import type { Log } from 'viem';
 import type { CopyAccess } from '../copy/useCopy';
 import { moved } from '../offers/acceptOutcome';
-import { payoutOutcomes, type Protection } from '../protection/payout';
+import { readVault } from '../offers/reads';
+import type { AnchoredReader } from '../tx/anchored';
+import { payoutOutcomes, vaultCredit, type PayoutOutcome, type Protection } from '../protection/payout';
 import { payoutLegs, routedLeg } from '../protection/payoutCopy';
 import type { LegOutcome } from '../tx/outcome';
 import { claimRecorded, loanSettled, matchedInTx, nftArrived, surplusPaid } from './claimLog';
@@ -45,7 +50,40 @@ export interface PaidIncentive {
   amount: bigint;
 }
 
-export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamond: Hex, account: Hex, t: OutcomeText, incentives: readonly PaidIncentive[] = []): LegOutcome[] {
+/** The claimant's vault as read at the transaction's block, or null when it
+ *  could not be read (a credit there is then stated as unmeasured). */
+export type ClaimantVault = Hex | null;
+
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+/** The claimant's vault at the claim's own block (the claim creates one for
+ *  a holder that had none), or null when it could not be read. */
+export async function readClaimantVault(at: AnchoredReader, diamond: Hex, account: Hex): Promise<ClaimantVault> {
+  try {
+    const vault = await at.read((c, b) => readVault(c, diamond, account, b));
+    return vault.toLowerCase() === ZERO ? null : vault;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the transaction put a payout of `asset` to the claimant: what the
+ *  claims of `refs` credited to its vault, then every place the payout
+ *  records routed it (a matching reward under protected mode). */
+export function claimOutcomes(logs: readonly Log[], diamond: Hex, account: Hex, vault: Hex, asset: Hex, refs: readonly bigint[], tokenId?: bigint): PayoutOutcome[] {
+  const credit = vaultCredit(logs, diamond, vault, asset, { ref: refs, tokenId });
+  return [...(credit ? [credit] : []), ...payoutOutcomes(logs, diamond, account, asset, tokenId)];
+}
+
+export function measureLoanClaim(
+  r: LoanClaimReview,
+  logs: readonly Log[],
+  diamond: Hex,
+  account: Hex,
+  vault: ClaimantVault,
+  t: OutcomeText,
+  incentives: readonly PaidIncentive[] = [],
+): LegOutcome[] {
   const { text, format } = t.copy;
   const legs: LegOutcome[] = [];
   const record = claimRecorded(logs, diamond, r.loanId, r.side);
@@ -117,7 +155,11 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
   if (matched && Number(r.loan.assetType) === ASSET_ERC20)
     for (const asset of [r.loan.principalAsset, r.loan.collateralAsset]) if (!byToken.has(asset.toLowerCase())) byToken.set(asset.toLowerCase(), { asset, amount: 0n });
   for (const { asset, amount: reviewed } of byToken.values()) {
-    const outcomes = payoutOutcomes(logs, diamond, account, asset);
+    if (vault === null) {
+      if (reviewed > 0n) legs.push({ status: 'unknown', label: format('payout.legCredit', { what: t.amount(asset, reviewed) }), reason: text('payout.vaultUnread') });
+      continue;
+    }
+    const outcomes = claimOutcomes(logs, diamond, account, vault, asset, [r.loanId]);
     const wallet = moved(logs, asset, null, account);
     const delivered = outcomes.reduce((total, o) => total + o.amount, wallet);
     if (reviewed === 0n && delivered === 0n) continue;
@@ -132,6 +174,7 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
           exact: (v) => t.exact(asset, v),
           walletLeg: (what) => format('loanClaim.legArrived', { amount: what }),
           walletOther: (got, want) => format('loanClaim.arrivedOther', { amount: got, expected: want }),
+          none: (what) => format('payout.legCredit', { what }),
         },
         t.copy,
       ),
@@ -140,7 +183,7 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
 
   for (const l of lanes) {
     if (l.assetType === ASSET_ERC20) continue;
-    legs.push(...nftLegs(logs, diamond, account, l, (n) => t.nft({ ...l, amount: n }), r.protection, t.copy));
+    legs.push(...nftLegs(logs, diamond, account, vault, [r.loanId], l, (n) => t.nft({ ...l, amount: n }), r.protection, t.copy));
   }
 
   if (loanSettled(logs, diamond, r.loanId)) legs.push({ status: 'done', label: text('loanClaim.legSettled') });
@@ -148,8 +191,9 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
 }
 
 /**
- * One NFT payout's finish-card legs: each place the routing records put THIS
- * token (matched by collection and token id), and the wallet if it arrived
+ * One NFT payout's finish-card legs: what the claims of `refs` credited of
+ * THIS token (matched by collection and token id) to the claimant's vault,
+ * each other place the routing records put it, and the wallet if it arrived
  * there, each named with the quantity that went there, done only when they
  * account for the whole amount promised; else one leg saying it did not
  * arrive. `label` names the NFT with a quantity.
@@ -158,15 +202,18 @@ export function nftLegs(
   logs: readonly Log[],
   diamond: Hex,
   account: Hex,
+  vault: ClaimantVault,
+  refs: readonly bigint[],
   p: { asset: Hex; assetType: number; tokenId: bigint; amount: bigint },
   label: (amount: bigint) => string,
   protection: Protection | null,
   copy: Pick<CopyAccess, 'text' | 'format'>,
 ): LegOutcome[] {
-  const routed = payoutOutcomes(logs, diamond, account, p.asset, p.tokenId);
+  if (vault === null) return [{ status: 'unknown', label: copy.format('payout.legCredit', { what: label(p.amount) }), reason: copy.text('payout.vaultUnread') }];
+  const routed = claimOutcomes(logs, diamond, account, vault, p.asset, refs, p.tokenId);
   const arrived = nftArrived(logs, p.asset, p.assetType, p.tokenId, account);
   const total = routed.reduce((t, o) => t + o.amount, 0n) + arrived;
-  if (total < p.amount) return [{ status: 'not-done', label: copy.format('loanClaim.legNft', { nft: label(p.amount) }), reason: copy.text('loanClaim.nftNotArrived') }];
+  if (total < p.amount) return [{ status: 'not-done', label: copy.format('payout.legCredit', { what: label(p.amount) }), reason: copy.text('loanClaim.nftNotArrived') }];
   const out: LegOutcome[] = routed.map((o) => ({ status: 'done', label: routedLeg(o, label(o.amount), protection, copy) }));
   if (arrived > 0n) out.push({ status: 'done', label: copy.format('loanClaim.legNft', { nft: label(arrived) }) });
   return out;

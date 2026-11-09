@@ -76,7 +76,7 @@ export default defineConfig({
       // fell through would fail loudly rather than pass on live state.
       VITE_RPC_PROXY_ORIGIN: STUB_ORIGIN,
       VITE_INDEXER_ORIGIN: STUB_ORIGIN,
-      VITE_AGENT_ORIGIN: '',
+      VITE_AGENT_ORIGIN: STUB_ORIGIN,
       VITE_WALLETCONNECT_PROJECT_ID: '',
     },
   },

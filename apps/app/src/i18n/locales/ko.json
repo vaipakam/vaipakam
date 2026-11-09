@@ -2709,6 +2709,8 @@
         "VPFIDepositedToVault": "VPFI가 vault에 deposit됨",
         "VPFIWithdrawnFromVault": "VPFI가 vault에서 withdrawn됨",
         "VaultVpfiDebited": "vault에서 VPFI 사용됨",
+        "VaultOutflow": "vault에서 이동됨",
+        "VaultGrantSettled": "vault 허용 정산됨",
         "RewardEntryForfeitSettled": "rewards 몰수됨",
         "AutoDailyDeducted": "일일 대여료 지불됨",
         "AutoExtendBorrowerCapsChanged": "자동 연장 한도 업데이트됨",

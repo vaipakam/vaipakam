@@ -38,7 +38,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
   const rows: Receipt['rows'] = [
     {
       label: text('accept.rowReceive'),
-      value: amount(lending, f.received),
+      value: amount(lending, f.toVault),
       binding: true,
     },
     {
@@ -202,6 +202,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
     ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
     ...(r.lendingClass !== 'illiquid' && r.collateralClass !== 'illiquid' ? [text('accept.loseLiquidation')] : []),
     text('accept.loseLocked'),
+    text('accept.afterVault'),
     text(o.useFullTermInterest ? (o.allowsPartialRepay ? 'accept.loseFullTermPartial' : 'accept.loseFullTerm') : 'accept.loseProRata'),
     ...(cadence ? [format('accept.loseCadence', { cadence })] : []),
     text('accept.losePause'),

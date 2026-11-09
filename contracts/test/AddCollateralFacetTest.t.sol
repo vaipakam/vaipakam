@@ -145,7 +145,7 @@ contract AddCollateralFacetTest is Test {
         addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
-        vaultImpl = new VaipakamVaultImplementation();
+        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         // Cut all facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);

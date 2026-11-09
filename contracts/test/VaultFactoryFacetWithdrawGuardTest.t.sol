@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -92,7 +94,7 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower,
                 mockCollateralERC20,
                 uint256(0),
@@ -100,12 +102,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
                 free
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            free + 1
-        );
+            free + 1);
     }
 
     /// @notice Positive path — withdraw of exactly the free balance
@@ -138,12 +138,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         uint256 recipientBalBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
 
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            free
-        );
+            free);
 
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(borrower) - recipientBalBefore,
@@ -181,7 +179,7 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower,
                 mockCollateralERC20,
                 uint256(0),
@@ -189,12 +187,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
                 60 ether
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            60 ether + 1
-        );
+            60 ether + 1);
     }
 
     /// @notice Multi-lien accumulation — two independent liens on the
@@ -223,7 +219,7 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower,
                 mockCollateralERC20,
                 uint256(0),
@@ -231,12 +227,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
                 25 ether
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            26 ether
-        );
+            26 ether);
 
         // After the operator-equivalent release of the first 5-ether
         // lien (simulated by dropping the aggregate to 20), the
@@ -248,12 +242,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
             20 ether
         );
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            30 ether
-        );
+            30 ether);
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(proxy),
             20 ether,
@@ -284,7 +276,7 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower,
                 mockCollateralERC20,
                 uint256(0),
@@ -292,12 +284,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
                 uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            1
-        );
+            1);
 
         // Operator-equivalent release ⇒ aggregate back to 0.
         TestMutatorFacet(address(diamond)).setEncumberedRaw(
@@ -308,12 +298,10 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         );
 
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            12 ether
-        );
+            12 ether);
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(proxy),
             0,
@@ -329,11 +317,9 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         // before the guard.
         vm.prank(borrower);
         vm.expectRevert(VaultFactoryFacet.OnlyDiamondInternal.selector);
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower,
+        LibTestOutflow.withdrawERC20(address(diamond), borrower,
             mockCollateralERC20,
             borrower,
-            1 ether
-        );
+            1 ether);
     }
 }

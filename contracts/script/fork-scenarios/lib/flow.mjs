@@ -69,7 +69,7 @@ export const ABIS = {
   oracle: abi('OracleFacet'),
   nft: abi('VaipakamNFTFacet'),
   loupe: abi('DiamondLoupeFacet'),
-  forcedSale: abi('ForcedSaleFacet'),
+  forcedSale: abi('ForcedSalePreviewFacet'),
   // #1558 — the refinance payoff permit and its view.
   refinancePayoff: abi('RefinancePayoffFacet'),
 };

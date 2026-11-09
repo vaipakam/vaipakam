@@ -15,6 +15,8 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -1063,42 +1065,22 @@ contract PrecloseFacet is
         // there is nothing to return; the zero `collateralAssetType` must not
         // read as an ERC-20 leg.
         address exitingBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        // #3205 part 2 — one holder payout for any collateral kind (the asset
+        // type's ordinals are the outflow kind's).
         if (isErc20) {
-            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        exitingBorrowerHolder,
-                        loan.collateralAmount
-                    ),
-                    IVaipakamErrors.VaultWithdrawFailed.selector
-                );
-            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC721.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        loan.collateralTokenId,
-                        exitingBorrowerHolder
-                    ),
-                    IVaipakamErrors.VaultWithdrawFailed.selector
-                );
-            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        loan.collateralTokenId,
-                        loan.collateralQuantity,
-                        exitingBorrowerHolder
-                    ),
-                    IVaipakamErrors.VaultWithdrawFailed.selector
-                );
-            }
+            LibVaipakam.AssetType t = loan.collateralAssetType;
+            LibVaultOutflow.toPositionHolder(
+                loan.borrower,
+                uint8(t),
+                loan.collateralAsset,
+                t == LibVaipakam.AssetType.ERC20 ? 0 : loan.collateralTokenId,
+                t == LibVaipakam.AssetType.ERC20
+                    ? loan.collateralAmount
+                    : (t == LibVaipakam.AssetType.ERC721 ? 1 : loan.collateralQuantity),
+                loanId,
+                loan.borrowerTokenId,
+                OutflowReason.COLLATERAL_RELEASE
+            );
         }
 
         // #2795 — a borrower extra held on this open loan (a periodic forced

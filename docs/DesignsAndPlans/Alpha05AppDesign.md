@@ -613,7 +613,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   sale of that loan's lender position, not a request: the list counts it
   apart and the review blocks it, because buying a running loan has its own
   terms and is not this flow. A request is funded whole, at its smallest
-  amount and highest rate; matching is a later update.
+  amount and highest rate; matching is a later update. The amount less the
+  fee is paid into the borrower's own vault, credited as the borrower's
+  funds (RB-PAYOUT-ROUTE), never to the wallet: a borrower's receipt says
+  so, and its finish card measures that credit from the protocol's own
+  record of it, the fee share paid back to the sender beside it, the two
+  plus the rest of the fee adding up to the principal the loan recorded,
+  and offers the withdrawal.
 - **RB-LEND-POST** — Borrow and Lend post the reader's own offer through
   one shared flow (form, review, signing, measured outcome) whose side is
   the poster's: a borrower posts a request, a lender posts an offer. The
@@ -960,7 +966,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   card name that wallet, never the old one. A mode that could not be read is
   stated as unknown, never as the wallet route. A change to the route, or to
   a queued payment's delay, signer requirement or release wallet, reopens the
-  review.
+  review. Some payments never reach a wallet at all: the protocol credits a
+  loan claim to the current position holder's vault, and a new loan's net
+  principal to the borrower's vault, as that owner's own free funds, whatever
+  its mode. Such a flow names the vault as the destination and the mode as
+  delaying only the later withdrawal, measures the credit from the
+  protocol's own record of a movement into the reader's vault (one that
+  stayed in the reader's own vault included, never one into another vault,
+  for another loan, or of a class the protocol does not credit), states a
+  credit to a vault it could not read as unmeasured, and offers the
+  withdrawal on the finish card.
 - **RB-POSITION-CLAIM** — collecting a loan payout (LN-48, LN-49, LN-50)
   is one flow under RB-CLAIM, opened from the loan's page and from Claims.
   Each side is decided by its own rule (RB-ELIG), read against that side's
@@ -977,10 +992,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   collateral row, collateral the borrower added in another token, and a
   surplus held for the borrower. A row recorded at zero says so, and that
   collecting still closes the position. It states where the payout goes by
-  RB-PAYOUT-ROUTE (the wallet; a protected account's own-vault payout queued
-  for its delay, or kept in its vault while the account is locked or its
-  queue is full; a payment from another party's vault into a protected
-  wallet's vault), what past sellers of the
+  RB-PAYOUT-ROUTE (credited to the holder's own vault, whatever its mode;
+  a matching reward a claim-time match pays goes to the wallet, or where
+  protected mode routes it), what past sellers of the
   lender position take first (stated as unknown, with what it may take, when
   it could not be read), that collecting burns the position token,
   that collecting in fallback ends the fallback and the borrower's cure, and
@@ -1280,12 +1294,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   cancel it and where its return goes. The offer line is one shared helper,
   the same as Home's open offers. Each row opens the offer's own page
   (RB-OFFER-PAGE).
+- **RB-OFFER-GATE** — no part of the offer book is read before a wallet
+  connects (owner decision 2026-11-09): not the book on Offers, not an
+  offer's page, and not the offers or requests Borrow and Lend list for a
+  pair; the pair picker shows only once a wallet is connected on a served
+  network. Until then each of those pages says to connect a wallet, and a
+  wallet on a network the app does not serve is told to switch, with
+  nothing read for it on another network.
 - **RB-OFFER-BOOK** — the offer book (OFF-39, OFF-40, OFF-43) is on the
-  Offers page below the wallet's own offers and is read with or without a
-  wallet: every open offer the index files on the screen's network, newest
-  first, a page at a time ("Show older offers"), in two tabs (loans of a
-  token, NFT rentals), with a side filter and, when a wallet is connected,
-  a switch that hides its own offers. The filters apply to what has been
+  Offers page below the wallet's own offers and is read once a wallet is
+  connected (RB-OFFER-GATE): every open offer the index files on the
+  screen's network, newest first, a page at a time ("Show older offers"),
+  in two tabs (loans of a token, NFT rentals), with a side filter and a
+  switch that hides the wallet's own offers. The filters apply to what has been
   read so far, and the count line says how many that is and whether older
   offers remain. The index only names candidates: no row carries an action,
   and each opens the offer's page, which reads the chain. A lapsed offer the
@@ -1304,7 +1325,7 @@ above. Each resolves here, so a route reviewer needs no private file:
   a bounded interval while visible (RB-REFRESH). Advanced sorting and the
   remaining filters (asset, duration, amount, liquidity) are later work.
 - **RB-OFFER-PAGE** — an offer's page (`/offers/:id`, OFF-41, OFF-45) reads
-  it from the chain at one block, with or without a wallet: the stored
+  it from the chain at one block once a wallet is connected (RB-OFFER-GATE): the stored
   terms, the protocol's state, and the running loan a loan-sale or offset
   offer is tied to. The protocol keeps no count of offers and clears the
   terms of an offer cancelled with nothing filled, so an id with no stored
@@ -1426,6 +1447,77 @@ above. Each resolves here, so a route reviewer needs no private file:
   rollups the app serves keep no public queue, so nothing is said there.
   The list of networks is one rule (`publicQueue.ts`), and a test fails if
   a served network is not decided.
+- **RB-INBOX** — Alerts (ACC-54) lists the free inbox the protocol's index
+  keeps for the connected wallet on its network, newest first, a page at a
+  time: loans starting, repaid in part or in full, defaulted or liquidated,
+  nearing their due date, entering or leaving grace, and health crossing
+  1.5, 1.2 or 1.05; reward entries nearing or past their claim deadline. Each
+  row is one outcome sentence with its time and a link to the loan's page
+  (which reads the loan from the chain) or to Claims for a reward entry; a
+  row is a pointer, never a figure, and it is written as history: it says
+  how the loan or entry stood when the row was written, never that the state
+  still holds, and the page says to open the loan for where it stands now. A
+  reward entry past its claim window says its return has begun, not that it
+  is done. An answer for another network or wallet
+  is refused, a row whose shape cannot be read is counted and the count
+  stated, and a kind the app has no words for is shown and named, so nothing
+  is dropped in silence. A row the index wrote when its own check found an
+  outcome no event announced says so, with when it was found and that when
+  it happened is not known. A failed read is said, never shown as an empty
+  inbox. The header carries a bell beside its word, shown while a wallet is
+  connected on a served network and the build reads an index, with the
+  count of rows the index wrote after the newest one recorded as seen. The
+  index counts them over every row by its row id, which only grows in write
+  order, so a row stamped with an older block still counts even when it
+  sorts below the first page; a count taken from a page is never used. The
+  seen record is kept in this browser only and only moves forward; opening
+  the page records every row written so far as seen (as a notification
+  centre clears its count when opened), states how many were new, and
+  marks those it shows as New for the visit. When the latest count failed,
+  the bell says the alerts could not be read and shows no count, even with
+  an earlier count in hand. Telegram, push, health warnings and payment
+  reminders are set up below the inbox (RB-ALERT-CHANNELS).
+- **RB-ALERT-CHANNELS** — Alerts › Telegram, push and warnings (ACC-50,
+  ACC-52) sets up the alerts that reach a wallet outside the app. Every
+  change is a free signature over a plain message that names what it does,
+  taken from the one shared source the alert service rebuilds it from; the
+  service accepts each signed request once, and a repeat is refused with
+  "sign again". A settings save carries only the setting it changes, and an
+  absent setting keeps its stored value. The page states in one sentence
+  what the service stores (the wallet, the network, the settings and, once
+  linked, the Telegram chat id). The service does not report back what it
+  holds, so each card states what THIS browser has done, with its time, and
+  says a link or setting made on another device may exist. Telegram is
+  linked with a one-time code that lasts ten minutes, opened in the bot
+  through the service's link when it gives one (a link of any other shape is
+  not shown); the link is called proven only once a test alert reaches the
+  chat, and a test before the bot has the code says so. Unlinking states the
+  scope the service applied: every network for an ordinary wallet, this
+  network only for a smart account; a network whose protected mode holds
+  the chat names it and says the chat keeps every alert until the delay
+  ends, with the time the service gives, or says the delay has not started
+  because the chat has not yet been told. Those holds are kept apart from
+  the link's state, so a new code or a test alert never erases them; only a
+  later unlink answer replaces them (a one-network answer only that
+  network's). Push is offered only when the
+  service's current answer, read successfully, says it can send now; when
+  its answer covers the reminder sender only, the page says warnings may not
+  reach push; when it cannot send, push is not offered, the service's
+  reason and the sender it concerns are named, a setup reason is said to be
+  this deployment's configuration rather than an outage, and an earlier
+  switch-on made here is said to stay stored; when the service cannot be
+  asked, that is said and push is not offered. Push also needs the channel
+  subscription in the wallet's push app, and it stops by unsubscribing
+  there, which the page says. Health warnings are always on once a channel
+  is set up and have no off switch; the three lines (the service's 1.5, 1.2
+  and 1.05 unless changed) are fixed in Basic and editable in Advanced,
+  each above the next and the last above 1.0; a warning is not a promise
+  that anyone will act. Payment reminders switch off and on. Linking
+  Telegram and switching push on ask for the Terms first (ACC-15), and the
+  action asked for survives leaving the page mid-acceptance; switching
+  anything off never does. A declined signature sends nothing,
+  and every refusal has its own words and remedy. A build with no alert
+  service says Telegram and push alerts are not set up and sends nothing.
 
 ## 3. Companion specifications
 

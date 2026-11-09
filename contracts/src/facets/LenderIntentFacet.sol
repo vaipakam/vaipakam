@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -471,12 +473,13 @@ contract LenderIntentFacet is
         // withdraw below refreshes the lender's VPFI tier record itself
         // (#1820), so pulling VPFI out lowers their tier at once.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            account,
-            lendingAsset,
-            msg.sender,
-            amount
-        );
+        // The capital back to the account's own wallet, or to its controller
+        // once a replacement retired it (#3205 part 2: the owner classes).
+        if (msg.sender == account) {
+            LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, OutflowReason.WITHDRAW);
+        } else {
+            LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, msg.sender, OutflowReason.WITHDRAW);
+        }
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
         LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset);
         emit LenderIntentCapitalWithdrawn(

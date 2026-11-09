@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -32,6 +34,9 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
@@ -146,6 +151,104 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     // ─── depositVPFIToVault ─────────────────────────────────────────────────
 
+    /// @notice Codex #3387 r2 — a same-vault payout (the holder's claim of VPFI
+    ///         already in their own vault) changes no tracked ledger, so the
+    ///         holder's tier record sees no intermediate dip: the stake start,
+    ///         the day's minimum and close and the tracked balance are all
+    ///         unchanged, and only the depository credit (their free money)
+    ///         rises.
+    function test_sameVaultVpfiPayout_leavesTheTierRecordUntouched() public {
+        uint256 amount = 100 ether;
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), amount);
+        _facet().depositVPFIToVault(amount);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 2 days);
+
+        // A scaffolded loan whose lender position `borrower` holds.
+        uint256 loanId = 77_3387;
+        LibVaipakam.Loan memory l;
+        l.id = loanId;
+        l.lender = borrower;
+        l.lenderTokenId = 77_33871;
+        l.borrowerTokenId = 77_33872;
+        l.principalAsset = address(vpfiToken);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        vm.prank(address(diamond));
+        LibTestPositionNFT.core(address(diamond)).mint(borrower, l.lenderTokenId);
+
+        (uint40 start0, uint16 day0, uint120 close0, uint120 min0) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(borrower);
+        uint256 tracked0 = VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, address(vpfiToken), 0);
+        uint256 free0 = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, address(vpfiToken), 0);
+
+        // The holder payout of 40 VPFI from the holder's own vault.
+        vm.recordLogs();
+        vm.prank(address(diamond));
+        VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
+            borrower, uint8(VaultOutflowTypes.AssetKind.ERC20), address(vpfiToken), 0, 40 ether, address(0),
+            uint8(VaultOutflowTypes.OutflowClass.PositionHolder), loanId, l.lenderTokenId, OutflowReason.CLAIM
+        );
+
+        (uint40 start1, uint16 day1, uint120 close1, uint120 min1) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(borrower);
+        assertEq(start1, start0, "the stake start is unchanged");
+        assertEq(day1, day0, "no rollup ran");
+        assertEq(close1, close0, "the day's close is unchanged");
+        assertEq(min1, min0, "the day's minimum saw no dip");
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(borrower, address(vpfiToken), 0), tracked0,
+            "the tracked balance is unchanged"
+        );
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, address(vpfiToken), 0) - free0,
+            40 ether,
+            "only the free-money credit moved"
+        );
+        assertEq(_vpfiDebits(vm.getRecordedLogs()), 0, "no VaultVpfiDebited: nothing left the vault (Codex #3387 r4)");
+    }
+
+    /// @notice The counterpart: a holder payout of VPFI into ANOTHER owner's
+    ///         vault is a real outflow, so it still emits one VaultVpfiDebited
+    ///         for the paying vault, for the amount.
+    function test_crossVaultVpfiPayout_emitsTheRetentionDebit() public {
+        uint256 amount = 100 ether;
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), amount);
+        _facet().depositVPFIToVault(amount);
+        vm.stopPrank();
+
+        uint256 loanId = 77_3388;
+        LibVaipakam.Loan memory l;
+        l.id = loanId;
+        l.lender = borrower;
+        l.lenderTokenId = 77_33881;
+        l.borrowerTokenId = 77_33882;
+        l.principalAsset = address(vpfiToken);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        vm.prank(address(diamond));
+        LibTestPositionNFT.core(address(diamond)).mint(lender, l.lenderTokenId); // another owner holds it
+
+        vm.recordLogs();
+        vm.prank(address(diamond));
+        VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
+            borrower, uint8(VaultOutflowTypes.AssetKind.ERC20), address(vpfiToken), 0, 40 ether, address(0),
+            uint8(VaultOutflowTypes.OutflowClass.PositionHolder), loanId, l.lenderTokenId, OutflowReason.CLAIM
+        );
+        assertEq(_vpfiDebits(vm.getRecordedLogs()), 40 ether, "one retention debit, for what left the vault");
+    }
+
+    /// @dev Sum of the VaultVpfiDebited amounts in `logs`.
+    function _vpfiDebits(Vm.Log[] memory logs) internal pure returns (uint256 total) {
+        bytes32 topic = keccak256("VaultVpfiDebited(address,uint256,address)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) {
+                (uint256 amt,) = abi.decode(logs[i].data, (uint256, address));
+                total += amt;
+            }
+        }
+    }
+
     function testDepositVPFIToVaultHappyPath() public {
         uint256 amount = 100 ether;
         vm.prank(borrower);
@@ -255,9 +358,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         vm.recordLogs();
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, address(mockERC20), borrower, amount
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, address(mockERC20), borrower, amount);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 debitedTopic =
             keccak256("VaultVpfiDebited(address,uint256,address)");
@@ -997,10 +1098,13 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale still closed the loan");
         vm.clearMockedCalls();
 
+        uint256 ownedBefore = _owned(borrower, mockERC20);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        // #3205 part 2 — the claim pays the borrower's vault, as free money.
+        assertEq(IERC20(mockERC20).balanceOf(borrower), walletBefore, "the claim pays the vault, not the wallet");
         assertEq(
-            IERC20(mockERC20).balanceOf(borrower) - walletBefore,
+            _owned(borrower, mockERC20) - ownedBefore,
             5 ether,
             "the claim paid the held remainder"
         );
@@ -1162,6 +1266,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     {
         proceeds = _saleFloor(loanId) + extra;
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
+        _openSaleRoute(loanId);
         vm.prank(executor);
         PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId, proceeds);
     }
@@ -1453,8 +1558,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
 
         uint256 t0 = IERC20(mockERC20).balanceOf(treasuryRecipient);
-        uint256 l0 = IERC20(mockERC20).balanceOf(lender);
-        uint256 h0 = IERC20(mockERC20).balanceOf(borrower);
+        uint256 l0 = _owned(lender, mockERC20);
+        uint256 h0 = _owned(borrower, mockERC20);
 
         if (offerKeyed) {
             // The borrower's parallel-sale offer, accepted into this loan.
@@ -1472,18 +1577,19 @@ contract VPFIDiscountFacetTest is SetupTest {
                 saleOfferId, mockERC20, proceeds
             );
         } else {
+            _openSaleRoute(loanId);
             vm.prank(executor);
             PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId, proceeds);
         }
 
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale repaid the loan");
         treasuryGot = IERC20(mockERC20).balanceOf(treasuryRecipient) - t0;
-        holderGot = IERC20(mockERC20).balanceOf(borrower) - h0;
+        holderGot = _owned(borrower, mockERC20) - h0;
         // The lender's leg waits for the claim, as after a repayment; the
         // claim settles the loan (the borrower side has nothing left).
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
-        lenderGot = IERC20(mockERC20).balanceOf(lender) - l0;
+        lenderGot = _owned(lender, mockERC20) - l0;
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Settled), "the lender's claim settled it");
     }
 
@@ -1534,6 +1640,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 proceeds = pctx.lenderLeg + pctx.treasuryLeg + _SALE_EXTRA;
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
 
+        _openSaleRoute(loanId);
         vm.expectEmit(true, true, false, true, address(diamond));
         emit PrepayListingFacet.CollateralSaleProceedsSplit(
             loanId, 0, mockERC20, proceeds,
@@ -1837,6 +1944,16 @@ contract VPFIDiscountFacetTest is SetupTest {
             fee,
             _discountedFee(baseFee, 1000),
             "untracked-dust Full lender falls back to +10%, no underflow revert"
+        );
+    }
+
+    /// @dev The settlement completes the borrower position's
+    ///      PrepayCollateralListing route (#3318): a listing opens it, so a
+    ///      fixture that settles a sale directly opens it first.
+    function _openSaleRoute(uint256 loanId) internal {
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId,
+            LibPositionNFT.RouteReason.PrepayCollateralListing
         );
     }
 }

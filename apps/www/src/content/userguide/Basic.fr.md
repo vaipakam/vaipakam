@@ -671,6 +671,18 @@ surveille tes prêts toutes les cinq minutes et t'envoie un ping au
 moment où le score traverse une bande de danger. Aucun coût en gas ;
 rien ne se passe on-chain.
 
+<a id="alerts-inbox"></a>
+
+### La boîte des Alertes
+
+La page Alertes liste les alertes que l'index du protocole garde pour votre wallet sur le réseau où vous êtes, les plus récentes d'abord. C'est gratuit et il n'y a rien à souscrire. Une alerte est écrite quand un prêt démarre, est remboursé en partie ou en totalité, fait défaut ou est liquidé, approche de son échéance, entre dans son délai de grâce ou en sort, ou que sa santé passe sous 1,5, 1,2 ou 1,05, et quand une entrée de récompense approche de sa date limite de réclamation ou la dépasse. Chaque alerte ouvre le prêt, dont la page le lit sur la chaîne, ou Claims pour une récompense. La cloche à côté de votre wallet, en haut, compte les alertes arrivées depuis votre dernière ouverture de la page dans ce navigateur. Si l'index ne peut pas être lu, la page le dit au lieu d'afficher une boîte vide. Telegram, push, les alertes de santé et les rappels de paiement se configurent juste sous la boîte. Chaque alerte décrit la situation au moment où elle a été écrite ; ouvrez le prêt pour voir où il en est maintenant.
+
+<a id="alerts-channels"></a>
+
+### Telegram, push et alertes
+
+Sous la boîte, la page Alertes configure les alertes qui vous atteignent hors de l'application. Chaque changement est une signature gratuite dans votre portefeuille, pas une transaction. Pour lier Telegram, appuyez sur Lier Telegram, envoyez le code à usage unique au bot Vaipakam dans les dix minutes, puis envoyez une alerte de test : le lien fonctionne dès que ce message arrive dans votre discussion. Push n'est proposé que lorsque le service d'alertes dit pouvoir envoyer maintenant ; vous vous abonnez aussi au canal Vaipakam dans votre application push, et vous vous désabonnez là-bas pour arrêter. Les alertes de santé sont toujours actives dès que Telegram ou push est configuré, à une santé de 1,5, 1,2 et 1,05. Les rappels de paiement se désactivent et se réactivent. La page montre ce que ce navigateur a fait ; un lien ou un réglage fait sur un autre appareil peut exister.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Échelle de seuils
@@ -1400,13 +1412,13 @@ Offres liste chaque offre que vous avez créée sur le réseau auquel vous êtes
 
 ### Le carnet d'offres
 
-Sous vos offres, le carnet d'offres liste toutes les offres ouvertes du réseau, la plus récente d'abord, et vous pouvez le lire sans connecter de portefeuille. Des onglets séparent les prêts d'un jeton des locations de NFT, un filtre affiche les offres des prêteurs, les demandes des emprunteurs ou les deux, et une fois connecté vous pouvez masquer vos propres offres. Les offres plus anciennes se chargent avec « Afficher les offres plus anciennes » ; les filtres s'appliquent à ce qui a été lu, et la ligne de décompte indique combien. Le carnet vient de l'index du protocole, qui peut avoir quelques minutes de retard sur la chaîne ; il ne fait donc que vous signaler des offres : ouvrez-en une pour la voir telle que la chaîne la détient. Une offre dont l'échéance est passée est marquée expirée ; n'importe qui peut la nettoyer, et ce qu'elle bloquait revient à son créateur. Si l'index ne peut pas être lu, le carnet le dit au lieu d'afficher qu'il n'y a aucune offre.
+Sous vos offres, le carnet d'offres liste toutes les offres ouvertes du réseau, la plus récente d'abord ; il n'est lu qu'une fois un portefeuille connecté. Des onglets séparent les prêts d'un jeton des locations de NFT, un filtre affiche les offres des prêteurs, les demandes des emprunteurs ou les deux, et une fois connecté vous pouvez masquer vos propres offres. Les offres plus anciennes se chargent avec « Afficher les offres plus anciennes » ; les filtres s'appliquent à ce qui a été lu, et la ligne de décompte indique combien. Le carnet vient de l'index du protocole, qui peut avoir quelques minutes de retard sur la chaîne ; il ne fait donc que vous signaler des offres : ouvrez-en une pour la voir telle que la chaîne la détient. Une offre dont l'échéance est passée est marquée expirée ; n'importe qui peut la nettoyer, et ce qu'elle bloquait revient à son créateur. Si l'index ne peut pas être lu, le carnet le dit au lieu d'afficher qu'il n'y a aucune offre.
 
 <a id="offer-detail"></a>
 
 ### La page d'une offre
 
-Chaque offre a sa propre page, lue sur la chaîne qu'un portefeuille soit connecté ou non. Elle indique qui l'a publiée, le montant, ce qui est déjà pourvu, la garantie, la durée et quand l'offre expire. De là, vous pouvez prendre en entier une offre de prêt ouverte, avec la même revue et le même consentement que dans Emprunter et Prêter : emprunter sur l'offre d'un prêteur, ou financer la demande d'un emprunteur. Annuler et Nettoyer y fonctionnent comme sur vos offres. Les locations, les offres avec garantie NFT, les ventes d'un prêt en cours et les offres de clôture anticipée se prennent pour l'instant dans l'application actuelle, et la page y renvoie. Une offre n'est pas réservée pendant que vous l'examinez ; quelqu'un d'autre peut la prendre ou l'annuler avant vous.
+Chaque offre a sa propre page, lue sur la chaîne une fois un portefeuille connecté. Elle indique qui l'a publiée, le montant, ce qui est déjà pourvu, la garantie, la durée et quand l'offre expire. De là, vous pouvez prendre en entier une offre de prêt ouverte, avec la même revue et le même consentement que dans Emprunter et Prêter : emprunter sur l'offre d'un prêteur, ou financer la demande d'un emprunteur. Annuler et Nettoyer y fonctionnent comme sur vos offres. Les locations, les offres avec garantie NFT, les ventes d'un prêt en cours et les offres de clôture anticipée se prennent pour l'instant dans l'application actuelle, et la page y renvoie. Une offre n'est pas réservée pendant que vous l'examinez ; quelqu'un d'autre peut la prendre ou l'annuler avant vous.
 
 <a id="offer-cancel"></a>
 

@@ -11,6 +11,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -21,6 +22,7 @@ import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
+import {LibForcedSalePlan} from "../libraries/LibForcedSalePlan.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -106,7 +108,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
     ///         back to the borrower like the rest of the extra, so the
     ///         borrower's cost is the slippage on at most this much more
     ///         collateral. Owner decision 2026-10-25 (#2796).
-    uint256 public constant QUOTE_MARGIN_BPS = 200;
+    uint256 public constant QUOTE_MARGIN_BPS = LibForcedSalePlan.QUOTE_MARGIN_BPS;
 
     /// @notice The size of a forced sale, computed before anything moves.
     /// @param debt    `D`: what the sale must pay the lender.
@@ -240,125 +242,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         _;
     }
 
-    // ─── Views ──────────────────────────────────────────────────────────
-
-    /**
-     * @notice The size of the forced sale `kind` would make on `loanId` now:
-     *         the debt, the need, the collateral to sell, the floor every
-     *         route must deliver, whether that floor covers the need, and
-     *         the largest quote a sale accepts.
-     * @dev    A keeper builds its adapter calldata for an amount from `sell`
-     *         to `maxSell` and passes that amount with the call: an
-     *         aggregator quote encodes the sell amount, and a sale only ever
-     *         sells the amount it was quoted for. Quoting a little above
-     *         `sell` leaves room for the interest that accrues before the
-     *         block. A sale that will run needs a fresh price on both
-     *         assets; without one this reverts with the price reader's own
-     *         error, as the sale itself would (a default is the exception:
-     *         its unpriced pair takes the fallback, below). Returns an all-zero plan when no sale of this kind is
-     *         due now: the loan is not Active; periodic — nothing is owed,
-     *         or the settlement is not yet allowed (the period's grace is not
-     *         over, periodic interest is off, the loan has no cadence);
-     *         Health-Factor — the loan is healthy; default — its grace
-     *         period has not ended, or the default would take a route that
-     *         sells nothing ({LibDefaultRoute}: an unpriced pair entering
-     *         the fallback, an in-kind move, a refused default), so a caller
-     *         sends that default with no quote and an empty try-list. The
-     *         caller's other gates (the sequencer, the internal-match
-     *         window) still apply. A distrusted price reverts, as the
-     *         default itself would (#666).
-     */
-    function previewForcedSale(uint256 loanId, ForcedSaleKind kind)
-        external
-        view
-        returns (ForcedSalePlan memory plan)
-    {
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        if (!_due(loan, kind)) return plan;
-        uint256 debt = _debt(loan, kind);
-        if (debt == 0) return plan;
-        (plan, ) = _plan(loan, debt);
-    }
-
-    /**
-     * @notice The discounted liquidation of `loanId` as it would run now
-     *         ({RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted}):
-     *         whether it can, and if so the debt the liquidator pays and the
-     *         collateral it receives (#2697).
-     * @dev    Not a sale through this host: on the discount path the
-     *         liquidator buys the collateral with its own funds. It is
-     *         previewed here, beside {previewForcedSale}, so a keeper reads
-     *         the size of every forced close-out it can send from one facet.
-     *         The figures come from {LibDiscountedLiquidation}, the rule the
-     *         liquidation itself charges and seizes by, so a reader in the
-     *         same transaction (a flash-loan receiver) gets exactly the
-     *         liquidation's figures; read earlier, the debt can only have
-     *         grown by the block that settles. One exception: for a
-     *         collateral token that delivers less than it sends, the
-     *         recipient receives less than `seized`, and a liquidation that
-     *         first moves the collateral to a new borrower-NFT holder can
-     *         seize less (see {LibDiscountedLiquidation}), so `seized` is an
-     *         upper bound on what arrives.
-     *
-     *         `status` is the first check that fails, in the liquidation's
-     *         own order; the figures are filled only when it is `Ready`,
-     *         except the assets, which are always the loan's. Not checked
-     *         here because they depend on who calls: the caller's and
-     *         recipient's sanctions screens, and the liquidator's funds and
-     *         approval. A distrusted price reverts, as the liquidation
-     *         itself would (#666), and so does a Health Factor read that
-     *         cannot price the loan: `Unpriced` is the case where the Health
-     *         Factor was read but the seizure's own rate is unavailable.
-     */
-    function previewDiscountedLiquidation(uint256 loanId)
-        external
-        view
-        returns (LibDiscountedLiquidation.Preview memory p)
-    {
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        p.principalAsset = loan.principalAsset;
-        p.collateralAsset = loan.collateralAsset;
-        if (LibPausable.paused()) return p; // Status.Paused
-        if (!LibVaipakam.cfgDiscountPathEnabled()) {
-            p.status = LibDiscountedLiquidation.Status.Disabled;
-            return p;
-        }
-        if (loan.status != LibVaipakam.LoanStatus.Active) {
-            p.status = LibDiscountedLiquidation.Status.NotActive;
-            return p;
-        }
-        if (!OracleFacet(address(this)).sequencerHealthy()) {
-            p.status = LibDiscountedLiquidation.Status.SequencerUnhealthy;
-            return p;
-        }
-        if (RiskFacet(address(this)).calculateHealthFactor(loanId) >= LibVaipakam.HF_SCALE) {
-            p.status = LibDiscountedLiquidation.Status.Healthy;
-            return p;
-        }
-        // #2734 — the liquidation defers to an internal match inside the
-        // priority window; the preview asks the same rule.
-        (bool inWindow,,) = LibInternalMatchPriority.window(loanId, loan);
-        if (inWindow) {
-            p.status = LibDiscountedLiquidation.Status.InternalMatchWindow;
-            return p;
-        }
-        (p.tier, p.discountBps) = LibDiscountedLiquidation.discountFor(loan.collateralAsset);
-        if (p.tier == 0) {
-            p.status = LibDiscountedLiquidation.Status.Untiered;
-            return p;
-        }
-        uint256 debt = LibDiscountedLiquidation.debt(loan);
-        (bool priced, uint256 seized) = LibDiscountedLiquidation.seizure(loan, debt, p.discountBps);
-        if (!priced) {
-            p.status = LibDiscountedLiquidation.Status.Unpriced;
-            return p;
-        }
-        p.status = LibDiscountedLiquidation.Status.Ready;
-        p.debt = debt;
-        p.seized = seized;
-        p.surplus = loan.collateralAmount - seized;
-    }
-
     // ─── Mutators (Diamond-internal) ────────────────────────────────────
 
     /**
@@ -426,86 +309,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibDelivery.pushExact(asset, to, amount);
     }
 
-    // ─── Internals: size ────────────────────────────────────────────────
-
-    /// @dev Whether a sale of `kind` is due on `loan` now (the preview's
-    ///      gate; each caller enforces its own, stricter set).
-    function _due(LibVaipakam.Loan storage loan, ForcedSaleKind kind) private view returns (bool) {
-        if (loan.status != LibVaipakam.LoanStatus.Active) return false;
-        if (kind == ForcedSaleKind.TimeBasedDefault) {
-            // A default sells only on its sale route (#2796): the plan exists
-            // exactly when `triggerDefault` would sell, by the one rule both
-            // read. The unpriced fallback, the in-kind move and a refused
-            // default sell nothing, so they need no quote and no price here.
-            return block.timestamp >
-                LibLoanClock.maturity(loan) + LibVaipakam.gracePeriod(loan.durationDays) &&
-                loan.assetType == LibVaipakam.AssetType.ERC20 &&
-                LibDefaultRoute.erc20Route(loan) == LibDefaultRoute.Route.Sale;
-        }
-        if (kind == ForcedSaleKind.PeriodicSettlement) return true;
-        return RiskFacet(address(this)).calculateHealthFactor(loan.id) < LibVaipakam.HF_SCALE;
-    }
-
-    /// @dev `D` for `kind`. Periodic: the period's shortfall when its
-    ///      settlement is allowed, else 0. Terminal: the borrow balance net of
-    ///      interest already settled, plus the late fee — the figure every
-    ///      forced close-out of the whole loan settles.
-    function _debt(LibVaipakam.Loan storage loan, ForcedSaleKind kind) private view returns (uint256) {
-        if (kind == ForcedSaleKind.PeriodicSettlement) {
-            return LibPeriodicInterest.settleableShortfall(loan);
-        }
-        if (loan.status != LibVaipakam.LoanStatus.Active) return 0;
-        return LibEntitlement.currentBorrowBalance(loan) + LibVaipakam.calculateLateFee(loan.id);
-    }
-
-    /// @dev The plan for selling `loan`'s collateral to cover `debt`, and the
-    ///      oracle rate it was sized at.
-    function _plan(LibVaipakam.Loan storage loan, uint256 debt)
-        private
-        view
-        returns (ForcedSalePlan memory plan, LibFallback.Rate memory rate)
-    {
-        uint256 pledged = loan.collateralAmount;
-        // #3359 — the one floor rule, read by self-call so it exists once.
-        // Its cushion is measured against the whole loan's debt, never only
-        // what this sale covers: a periodic sale covers one period's
-        // shortfall, which says nothing about how well the loan is cushioned.
-        // A terminal sale's `debt` already is the whole balance plus the late
-        // fee, so the larger of the two serves every kind.
-        uint256 cap = SaleFloorFacet(address(this))
-            .saleFloorBps(
-                loan.collateralAsset,
-                loan.principalAsset,
-                pledged,
-                Math.max(debt, LibEntitlement.currentBorrowBalance(loan))
-            ).bps;
-        plan.floorBps = cap;
-        plan.debt = debt;
-        plan.need = debt
-            + Math.mulDiv(debt, LibVaipakam.cfgLiquidationHandlingFeeBps(), LibVaipakam.BASIS_POINTS, Math.Rounding.Ceil)
-            + Math.mulDiv(debt, _maxBonusBps(loan.collateralAsset), LibVaipakam.BASIS_POINTS, Math.Rounding.Ceil);
-        rate = LibFallback.oracleRate(address(this), loan.collateralAsset, loan.principalAsset);
-        (plan.covered, plan.sell, plan.floor) =
-            LibSaleSizing.sizeSaleAtRate(rate, plan.need, pledged, cap);
-        if (plan.covered) {
-            plan.maxSell = plan.sell + (plan.sell * QUOTE_MARGIN_BPS) / LibVaipakam.BASIS_POINTS;
-            if (plan.maxSell > pledged) plan.maxSell = pledged;
-        } else {
-            plan.sell = pledged;
-            plan.floor = LibSaleSizing.floorAtRate(rate, pledged, cap);
-            plan.maxSell = pledged;
-        }
-    }
-
-    /// @dev `bMax`: the protocol's largest keeper bonus, lowered by the
-    ///      collateral's own ceiling when one is set — the same two caps
-    ///      {LibEntitlement.liquidatorIncentiveBps} applies to the bonus paid.
-    function _maxBonusBps(address collateralAsset) private view returns (uint256 bps) {
-        bps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
-        uint256 assetCap = LibVaipakam.storageSlot().assetRiskParams[collateralAsset].liqBonusBps;
-        if (assetCap != 0 && bps > assetCap) bps = assetCap;
-    }
-
     // ─── Internals: sell ────────────────────────────────────────────────
 
     /// @dev The plan for `kind`, the quote check, and the pull: the lien falls
@@ -523,16 +326,16 @@ contract ForcedSaleFacet is IVaipakamErrors {
         j.loanId = loanId;
         j.kind = kind;
         j.keeper = keeper;
-        j.debt = _debt(loan, kind);
+        j.debt = LibForcedSalePlan.debtFor(loan, kind);
         if (j.debt == 0) revert ForcedSaleNotDue(loanId, uint8(kind));
-        (ForcedSalePlan memory plan, LibFallback.Rate memory rate) = _plan(loan, j.debt);
+        (ForcedSalePlan memory plan, LibFallback.Rate memory rate) = LibForcedSalePlan.planFor(loan, j.debt);
         if (quotedSell < plan.sell || quotedSell > plan.maxSell) {
             revert ForcedSaleQuoteOutOfRange(loanId, quotedSell, plan.sell, plan.maxSell);
         }
         j.need = plan.need;
         j.unsold = loan.collateralAmount - quotedSell;
         LibEncumbrance.decrementCollateralLien(loanId, quotedSell);
-        received = LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, quotedSell);
+        received = LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, quotedSell, loanId, OutflowReason.LIQUIDATION);
         j.minOut = LibSaleSizing.floorAtRate(rate, received, plan.floorBps);
     }
 
@@ -568,7 +371,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibEncumbrance.releaseCollateralLien(j.loanId);
         uint256 rest = j.unsold == 0
             ? 0
-            : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold);
+            : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold, j.loanId, OutflowReason.LIQUIDATION);
         loan.collateralAmount = alreadyHere + rest;
     }
 

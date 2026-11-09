@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -84,13 +86,9 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         if (amount == 0) return 0;
-        accrued = LibFacet.vaultWithdrawDelivered(
-            user,
-            asset,
-            LibVaipakam.storageSlot().treasury,
-            amount,
-            TreasuryTransferFailed.selector
-        );
+        // #3205 part 2 — the treasury class: the policy pays the configured
+        // treasury, and the vault checks it against the registry.
+        accrued = LibVaultOutflow.toTreasury(user, asset, amount, 0, OutflowReason.FEE);
         LibFacet.recordTreasuryAccrual(asset, accrued);
     }
 

@@ -627,6 +627,18 @@ service watches your loans every five minutes and pings you the
 moment the score crosses a danger band. There's no gas cost;
 nothing happens on-chain.
 
+<a id="alerts-inbox"></a>
+
+### The Alerts inbox
+
+The Alerts page lists the alerts the protocol's index keeps for your wallet on the network you are on, newest first. It is free and there is nothing to sign up for. An alert is written when a loan starts, is repaid in part or in full, defaults or is liquidated, nears its due date, enters or leaves its grace period, or its health falls below 1.5, 1.2 or 1.05, and when a reward entry nears or passes its claim deadline. Each alert opens the loan, whose page reads it from the chain, or Claims for a reward. The bell beside your wallet at the top counts the alerts that arrived since you last opened the page in this browser. If the index cannot be read, the page says so instead of showing an empty inbox. Telegram, push, health warnings and payment reminders are set up just below the inbox. Each alert says how things stood when it was written; open the loan to see where it stands now.
+
+<a id="alerts-channels"></a>
+
+### Telegram, push and warnings
+
+Under the inbox, the Alerts page sets up alerts that reach you outside the app. Each change is a free signature in your wallet, not a transaction. To link Telegram, press Link Telegram, send the one-time code to the Vaipakam bot within ten minutes, then send a test alert: the link counts as working once that message reaches your chat. Push is offered only when the alert service says it can send right now; you also subscribe to the Vaipakam channel in your push app, and unsubscribe there to stop. Health warnings are always on once Telegram or push is set up, at health 1.5, 1.2 and 1.05. Payment reminders can be switched off and on. The page shows what this browser has done; a link or setting made on another device may still exist.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder
@@ -1355,13 +1367,13 @@ Offers lists every offer you made on the network you are connected to, and every
 
 ### The offer book
 
-Below your offers, the offer book lists every open offer on the network, newest first, and you can read it without connecting a wallet. Tabs split loans of a token from NFT rentals, a filter shows lenders' offers, borrowers' requests or both, and once connected you can hide your own offers. Older offers load with Show older offers; the filters apply to what has been read, and the count line says how many that is. The book comes from the protocol's index, which can lag the chain by a few minutes, so it only points you at offers: open one to see it as the chain holds it. An offer past its expiry is tagged expired; anyone may clean it up, and what it locked returns to its creator. If the index cannot be read, the book says so instead of showing no offers.
+Below your offers, the offer book lists every open offer on the network, newest first; it is read only once you connect a wallet. Tabs split loans of a token from NFT rentals, a filter shows lenders' offers, borrowers' requests or both, and once connected you can hide your own offers. Older offers load with Show older offers; the filters apply to what has been read, and the count line says how many that is. The book comes from the protocol's index, which can lag the chain by a few minutes, so it only points you at offers: open one to see it as the chain holds it. An offer past its expiry is tagged expired; anyone may clean it up, and what it locked returns to its creator. If the index cannot be read, the book says so instead of showing no offers.
 
 <a id="offer-detail"></a>
 
 ### An offer's page
 
-Each offer has its own page, read from the chain whether or not a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
+Each offer has its own page, read from the chain once a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
 
 <a id="offer-cancel"></a>
 

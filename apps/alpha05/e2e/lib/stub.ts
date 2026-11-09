@@ -26,3 +26,44 @@ export async function setUnplacedLoans(count: number, capped: boolean): Promise<
   });
   if (!res.ok) throw new Error(`stub refused unplaced ${count}: ${res.status}`);
 }
+
+/** Add inbox rows for `recipient` that the fixture chain cannot produce by
+ *  itself (each row's `kind` and the fields it names; the stand-in stamps
+ *  the rest after every chain row). */
+export async function addNotifications(recipient: string, rows: Record<string, unknown>[]): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/notifications`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recipient, rows }) });
+  if (!res.ok) throw new Error(`stub refused notifications: ${res.status}`);
+}
+
+/** Remove every inbox row a spec added. */
+export async function resetNotifications(): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/notifications`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reset: true }) });
+  if (!res.ok) throw new Error(`stub refused notifications reset: ${res.status}`);
+}
+
+/** One request the stand-in alert service received, as sent. */
+export interface AgentRequest {
+  path: string;
+  body: Record<string, unknown>;
+}
+
+/** Drive the stand-in alert service: `reset` forgets everything; `push` sets
+ *  what `GET /push/status` answers; `handshake` marks a wallet's latest link
+ *  code as received by the bot; `next` forces the next answer on one path. */
+export async function controlAgent(control: {
+  reset?: true;
+  push?: 'available' | 'agent-only' | 'unavailable' | 'down';
+  handshake?: string;
+  next?: { path: string; status: number; body: Record<string, unknown> };
+  slow?: { path: string };
+}): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/agent`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
+  if (!res.ok) throw new Error(`stub refused agent control: ${res.status} ${await res.text()}`);
+}
+
+/** Every request the stand-in alert service received, and what it stored. */
+export async function agentState(): Promise<{ requests: AgentRequest[]; thresholds: Record<string, Record<string, unknown>>; linked: string[] }> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/agent`);
+  if (!res.ok) throw new Error(`stub refused agent state: ${res.status}`);
+  return res.json();
+}

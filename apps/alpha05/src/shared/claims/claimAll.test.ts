@@ -1,6 +1,6 @@
 import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeEventTopics, erc20Abi, parseAbi, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { ClaimFacetABI, DIAMOND_ABI_VIEM, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { ClaimFacetABI, DIAMOND_ABI_VIEM, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import type { LoanDetails } from '../positions/loanView';
 import {
   batchCalls,
@@ -29,6 +29,7 @@ type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
 const ME = '0x00000000000000000000000000000000000000aa' as Hex;
 const OTHER = '0x00000000000000000000000000000000000000bb' as Hex;
+const MY_VAULT = '0x00000000000000000000000000000000000000cc' as Hex;
 const WETH = '0x00000000000000000000000000000000000000e1' as Hex;
 const TLIQ = '0x00000000000000000000000000000000000000e2' as Hex;
 const VPFI = '0x00000000000000000000000000000000000000e3' as Hex;
@@ -233,6 +234,10 @@ function log(address: Hex, abi: Abi, eventName: string, args: Record<string, unk
   } as unknown as Log;
 }
 const transfer = (token: Hex, value: bigint) => log(token, erc20Abi as Abi, 'Transfer', { from: OTHER, to: ME, value });
+// A loan claim's payout: the protocol's record of it moving into the
+// claimant's vault (class 2, a position holder's payout).
+const credit = (ref: bigint, asset: Hex, delivered: bigint, tokenId = 0n) =>
+  log(DIAMOND, VaultOutflowFacetABI as Abi, 'VaultOutflow', { owner: OTHER, vault: OTHER, asset, tokenId, amount: delivered, delivered, to: MY_VAULT, class_: 2, reason: 1, ref });
 const claimed = (loanId: bigint, amount: bigint) => log(DIAMOND, ClaimFacetABI as Abi, 'LenderFundsClaimed', { loanId, claimant: ME, asset: WETH, amount, newBothClaimed: false });
 
 function review(send: ClaimAllLeg[], over: Partial<ClaimAllReview> = {}): ClaimAllReview {
@@ -255,20 +260,21 @@ describe('the finish card', () => {
     const r = review(list.legs);
     const logs = [
       claimed(7n, 100n),
-      transfer(WETH, 100n),
+      credit(7n, WETH, 100n),
       log(DIAMOND, LEG_EVENTS, 'RewardDeliveredToVault', { user: ME, amount: 5n, claimDayId: 3n }),
       log(DIAMOND, LEG_EVENTS, 'InteractionRewardsClaimed', { user: ME, fromDay: 1n, toDay: 2n, amount: 5n }),
       log(DIAMOND, LEG_EVENTS, 'LenderIntentCapitalWithdrawn', { owner: ME, lendingAsset: WETH, collateralAsset: TLIQ, amount: 40n, remainingCapital: 0n }),
       transfer(WETH, 40n),
     ];
-    const legs = measureClaimAll(r, logs, DIAMOND, ME, words, copy, true);
+    const legs = measureClaimAll(r, logs, DIAMOND, ME, MY_VAULT, words, copy, true);
     expect(legs.map((l) => `${l.status}:${l.label}`)).toEqual([
       'done:claimAll.legCollected{"what":"claimAll.loanLender{\\"id\\":\\"7\\"}"}',
       'not-done:claimAll.loanLender{"id":"8"}',
       'done:claimAll.legRewards{"what":"claimAll.rewards","amount":"5"}',
       'done:claimAll.legRewardsMore',
       `done:claimAll.legCollected{"what":"claimAll.intent{\\"lend\\":\\"e1\\",\\"collateral\\":\\"e2\\"}"}`,
-      'done:loanClaim.legArrived{"amount":"140"}',
+      'done:payout.legCredit{"what":"100"}',
+      'done:loanClaim.legArrived{"amount":"40"}',
     ]);
     expect(legs[1]!.status === 'not-done' && legs[1]!.reason).toBe('claimAll.skipped');
   });
@@ -279,9 +285,9 @@ describe('the finish card', () => {
       log(DIAMOND, LEG_EVENTS, 'RewardDeliveredToVault', { user: ME, amount: 5n, claimDayId: 3n }),
       log(DIAMOND, LEG_EVENTS, 'InteractionRewardsClaimed', { user: ME, fromDay: 1n, toDay: 2n, amount: 5n }),
     ];
-    const legs = measureClaimAll(review([rewards]), logs, DIAMOND, ME, words, copy, null);
+    const legs = measureClaimAll(review([rewards]), logs, DIAMOND, ME, MY_VAULT, words, copy, null);
     expect(legs.map((l) => `${l.status}:${l.label}`)).toEqual(['done:claimAll.legRewards{"what":"claimAll.rewards","amount":"5"}', 'unknown:claimAll.legRewardsRest']);
-    expect(measureClaimAll(review([rewards]), logs, DIAMOND, ME, words, copy, false).map((l) => l.status)).toEqual(['done']);
+    expect(measureClaimAll(review([rewards]), logs, DIAMOND, ME, MY_VAULT, words, copy, false).map((l) => l.status)).toEqual(['done']);
     expect(remainderAfter(null, 10n)).toBeNull();
     expect(remainderAfter({ kind: 'none' }, 10n)).toBe(false);
     expect(remainderAfter({ kind: 'exact', amount: 1n, fromDay: 3n, toDay: 4n, atBlock: 9n }, 10n)).toBeNull();
@@ -289,7 +295,7 @@ describe('the finish card', () => {
   });
 
   it('flags a token that did not all arrive', () => {
-    const legs = measureClaimAll(review(list.legs.slice(0, 1)), [claimed(7n, 100n), transfer(WETH, 60n)], DIAMOND, ME, words, copy, null);
+    const legs = measureClaimAll(review(list.legs.slice(0, 1)), [claimed(7n, 100n), credit(7n, WETH, 60n)], DIAMOND, ME, MY_VAULT, words, copy, null);
     expect(legs.at(-1)!.status).toBe('unknown');
   });
 
@@ -307,12 +313,14 @@ describe('the finish card', () => {
     expect(receipt.prompts).toBe(1);
   });
 
-  it('reads a queued payout’s new delay or secondary signer as a changed review', () => {
+  it('credits a loan claim to the vault whatever the protected mode, and reads a queued payout’s new delay or secondary signer as a changed review', () => {
     const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
-    const a = claimAllList(inputs({ protection: guard }), copy, 1);
-    expect(a.legs[0]!.route).toBe('queued');
-    const b = claimAllList(inputs({ protection: { ...guard, delaySeconds: 7200 } }), copy, 1);
-    const c = claimAllList(inputs({ protection: { ...guard, requireCosign: true } }), copy, 1);
+    const intents = { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active: false }], complete: true };
+    const a = claimAllList(inputs({ protection: guard, intents }), copy, 1);
+    expect(a.legs.map((l) => l.route)).toEqual(['credit', 'queued']);
+    expect(claimAllList(inputs({ protection: null }), copy, 1).legs[0]!.route).toBe('credit');
+    const b = claimAllList(inputs({ protection: { ...guard, delaySeconds: 7200 }, intents }), copy, 1);
+    const c = claimAllList(inputs({ protection: { ...guard, requireCosign: true }, intents }), copy, 1);
     const at = (l: typeof a) => review(l.legs, { list: l });
     expect(claimAllChanged(at(a), at(a), copy)).toBeNull();
     expect(claimAllChanged(at(a), at(b), copy)).toBe('claimAll.changed');
@@ -322,16 +330,16 @@ describe('the finish card', () => {
   it('states each destination in full when payouts land in different places', () => {
     const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
     const l = claimAllList(inputs({ protection: guard, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true } }), copy, 1);
-    // A protected payee's payroll is paid into its vault.
-    expect(l.legs.map((x) => x.route)).toEqual(['queued', 'vault']);
+    // A loan claim is credited to the vault; a protected payee's payroll is
+    // paid into its vault.
+    expect(l.legs.map((x) => x.route)).toEqual(['credit', 'vault']);
     const rows = claimAllReceipt(review(l.legs, { list: l }), copy, { symbol: words.symbol, nft: words.nft }).rows.filter((x) => x.label.startsWith('claimAll.rowToFor'));
     expect(rows.map((x) => x.label)).toEqual([
       'claimAll.rowToFor{"what":"claimAll.loanLender{\\"id\\":\\"7\\"}"}',
       'claimAll.rowToFor{"what":"claimAll.payroll{\\"id\\":\\"2\\"}"}',
     ]);
-    expect(rows[0]!.value).toMatchObject({ kind: 'text' });
-    expect(JSON.stringify(rows[0]!.value)).toContain('1 h');
-    expect(rows[1]!.value).not.toEqual({ kind: 'text', text: 'loanClaim.toWallet' });
+    expect(rows[0]!.value).toEqual({ kind: 'text', text: 'payout.toCredit' });
+    expect(rows[1]!.value).toEqual({ kind: 'text', text: 'payout.toVault' });
     expect(claimAllList(inputs({ protection: null, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true } }), copy, 1).legs.at(-1)!.route).toBe(
       'unknown',
     );
@@ -358,20 +366,15 @@ describe('the finish card', () => {
       copy,
       1,
     );
-    const PAYOUT = VaultPayoutFacetABI as Abi;
-    const logs = [
-      claimed(7n, 0n),
-      claimed(8n, 0n),
-      log(DIAMOND, PAYOUT, 'PayoutQueued', { account: ME, id: 1n, asset: NFT, kind: 2, tokenId: 5n, amount: 5n, recipient: ME, releaseAt: 99n }),
-      log(DIAMOND, PAYOUT, 'PaymentCreditedToVault', { account: ME, asset: NFT, tokenId: 5n, amount: 2n, received: 2n }),
-    ];
+    const logs = [claimed(7n, 0n), claimed(8n, 0n), credit(7n, NFT, 5n, 5n), credit(8n, NFT, 2n, 5n)];
     const w = { ...words, nft: (p: { amount: bigint }) => `${p.amount} units` };
-    const nft = measureClaimAll(review(l.legs, { list: l }), logs, DIAMOND, ME, w, copy, null)
+    const nft = measureClaimAll(review(l.legs, { list: l }), logs, DIAMOND, ME, MY_VAULT, w, copy, null)
       .map((x) => `${x.status}:${x.label}`)
       .filter((x) => x.includes('units'));
-    expect(nft).toHaveLength(2);
-    expect(nft[0]).toMatch(/^done:payout\.legQueued\{"what":"5 units"/);
-    expect(nft[1]).toBe('done:payout.legVault{"what":"2 units"}');
+    expect(nft).toEqual(['done:payout.legCredit{"what":"7 units"}']);
+    // Short of what the two loans promised: said, never read as done.
+    const short = measureClaimAll(review(l.legs, { list: l }), logs.slice(0, 3), DIAMOND, ME, MY_VAULT, w, copy, null).filter((x) => x.label.includes('units'));
+    expect(short.map((x) => x.status)).toEqual(['not-done']);
   });
 
   it('reads a selected standing offer starting to lend again as a changed review', () => {
@@ -381,24 +384,18 @@ describe('the finish card', () => {
     expect(claimAllChanged(review(a.legs, { list: a }), review(b.legs, { list: b }), copy)).toBe('claimAll.changed');
   });
 
-  it('puts each NFT of one collection only where its own routing record says', () => {
+  it('credits each NFT of one collection only from its own record', () => {
     const NFT = '0x00000000000000000000000000000000000000f1' as Hex;
     const nftLane = (tokenId: bigint) => ({ kind: 'rentalReturn' as const, asset: NFT, assetType: 1, tokenId, amount: 1n });
     const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
     const l = claimAllList(inputs({ protection: guard, loans: { paused: false, rows: [loanRow(7n, { lanes: [nftLane(11n), nftLane(12n)] })], complete: true } }), copy, 1);
-    const PAYOUT = VaultPayoutFacetABI as Abi;
-    const logs = [
-      claimed(7n, 0n),
-      log(DIAMOND, PAYOUT, 'PayoutQueued', { account: ME, id: 1n, asset: NFT, kind: 1, tokenId: 11n, amount: 1n, recipient: ME, releaseAt: 99n }),
-      log(DIAMOND, PAYOUT, 'PaymentCreditedToVault', { account: ME, asset: NFT, tokenId: 12n, amount: 1n, received: 1n }),
-    ];
+    // Only token 11 was credited: token 12 is not read as arrived from it.
+    const logs = [claimed(7n, 0n), credit(7n, NFT, 1n, 11n)];
     const w = { ...words, nft: (p: { tokenId: bigint }) => `nft${p.tokenId}` };
-    const legs = measureClaimAll(review(l.legs, { list: l }), logs, DIAMOND, ME, w, copy, null)
+    const legs = measureClaimAll(review(l.legs, { list: l }), logs, DIAMOND, ME, MY_VAULT, w, copy, null)
       .map((x) => `${x.status}:${x.label}`)
       .filter((x) => x.includes('nft1'));
-    expect(legs).toHaveLength(2);
-    expect(legs[0]).toMatch(/^done:payout\.legQueued\{"what":"nft11"/);
-    expect(legs[1]).toBe('done:payout.legVault{"what":"nft12"}');
+    expect(legs).toEqual(['done:payout.legCredit{"what":"nft11"}', 'not-done:payout.legCredit{"what":"nft12"}']);
   });
 
   it('refuses to send nothing, and a batch whose dry run could not run', () => {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
@@ -227,13 +229,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
         // #2440 — the borrower chose this repayment, so a short arrival is
         // refused: the sale never spends the Diamond's other balance.
-        LibFacet.vaultWithdrawExact(
-            loan.borrower,
-            loan.collateralAsset,
-            address(this),
-            collateralSwapAmount,
-            VaultWithdrawFailed.selector
-        );
+        LibVaultOutflow.toDiamondExact(loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP);
 
         (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =
             LibSwap.swapWithFailoverUpTo(
