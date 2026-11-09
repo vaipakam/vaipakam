@@ -1718,7 +1718,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   a time, and the rental book steps aside while either is. The review
   states that the rent for the whole term and the buffer move from the
   wallet into the renter's own vault now and stay there while the request
-  is open, the buffer share the request fixes at posting, that the term
+  is open, the buffer share at today's setting (the request keeps the
+  setting in force when it lands, and the review states that a change in
+  between is refused under an exact approval, taken under an earlier one,
+  and stated in the outcome, so neither the buffer nor the total is shown
+  as bound), that the term
   runs from when an owner takes it and that taking it starts the rental at
   once with no further step from the renter, and what closing late or a
   default does. A shortfall is said before any wallet step; a token that

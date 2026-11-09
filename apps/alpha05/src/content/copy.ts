@@ -3310,7 +3310,7 @@ export const copy = {
     nftMissing: B('{{nft}}, which does not exist yet'),
     use: B("The right to use it from when an owner takes the request; it stays in the owner's vault"),
     term: B('{{days}} days from when an owner takes it, plus any time the protocol is paused'),
-    buffer: B('{{amount}}, {{rate}}% of the rent, fixed by this request now'),
+    buffer: B("{{amount}}, {{rate}}% of the rent at today's setting"),
     positions: B('Once an owner takes it, you hold the renter position NFT and the owner the owner position NFT'),
     noTokenYet: A('No NFT #{{id}} exists in this collection yet. An owner can take your request only once it exists.'),
     blockOwnToken: A('This wallet already holds NFT #{{id}}, so nobody else can take a request to rent it.'),
@@ -3328,6 +3328,9 @@ export const copy = {
     loseOpen: A('The request never lapses: it stays open until an owner takes it or you cancel it.'),
     loseLapse: A('When the request lapses no owner can take it, but the rent and buffer stay in your vault until you, or anyone, closes it; they then return only to your wallet.'),
     loseStart: A('An owner who takes the request starts the rental at once, with no further step from you, on exactly these terms.'),
+    loseBufferRace: A(
+      "The protocol takes the buffer setting in force when your request lands, and the request keeps it from then on. The app re-reads it just before sending, but governance could still change it in between. A higher buffer is then refused where your wallet approves exactly this amount, and taken where an earlier approval of yours already covers it. A lower one costs you less. The outcome states what moved.",
+    ),
     dryRunRefused: A('The protocol would refuse the request now: {{reason}}'),
     stoppedAfterApproval: A('The request was not sent: {{reason}}'),
     termsNewer: A('A newer Terms of Service version is in force; accept it before posting a request.'),

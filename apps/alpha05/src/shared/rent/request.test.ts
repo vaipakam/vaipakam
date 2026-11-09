@@ -91,13 +91,18 @@ describe('requestChangedBetween', () => {
 });
 
 describe('requestReceipt', () => {
-  it('moves the rent and buffer out now, binds the buffer the request fixes, and states the start and the consequences', () => {
+  it('moves the rent and buffer out now, shows the buffer at today's setting, and states the start and the consequences', () => {
     const receipt = requestReceipt(review(), null, copy);
-    expect(receipt.rows[0]).toMatchObject({ label: 'rent.rowPay', value: { kind: 'amount', amount: 21_000_000n }, movesOut: true, binding: true });
-    expect(receipt.rows.find((x) => x.label === 'rent.rowBuffer')).toMatchObject({ value: { text: 'rentRequest.buffer' }, binding: true });
+    expect(receipt.rows[0]).toMatchObject({ label: 'rent.rowPay', value: { kind: 'amount', amount: 21_000_000n }, movesOut: true, binding: false });
+    expect(receipt.rows.find((x) => x.label === 'rent.rowBuffer')).toMatchObject({ value: { text: 'rentRequest.buffer' }, binding: false });
     expect(receipt.rows.find((x) => x.label === 'rent.rowTerm')?.value).toMatchObject({ text: 'rentRequest.term' });
     expect(receipt.consequences).toContain('rentRequest.loseOpen');
     expect(receipt.consequences).toContain('rentRequest.loseStart');
+    // The buffer is the setting in force when the request lands: stated, and
+    // neither it nor the total is shown as bound by the request.
+    expect(receipt.consequences).toContain('rentRequest.loseBufferRace');
+    expect(receipt.rows.find((x) => x.label === 'rent.rowBuffer')?.binding).toBe(false);
+    expect(receipt.rows.find((x) => x.label === 'rent.rowPay')?.binding).toBe(false);
     expect(receipt.prompts).toBe(2);
   });
   it('says when the token does not exist yet, and when the request lapses', () => {

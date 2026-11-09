@@ -32,13 +32,16 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
   const note = requestTokenNote(r);
 
   const rows: Receipt['rows'] = [
-    { label: text('rent.rowPay'), value: amount(cost.total), binding: true, movesOut: true },
+    // The rent is bound by the request; the buffer is the protocol's setting
+    // when the request lands, so the total and the buffer are today's figures
+    // (rentRequest.loseBufferRace states the race).
+    { label: text('rent.rowPay'), value: amount(cost.total), binding: false, movesOut: true },
     textRow('rentRequest.rowNft', note === 'no-token' ? format('rentRequest.nftMissing', { nft }) : nft, true),
     textRow('rent.rowUse', text('rentRequest.use'), true),
     { label: text('rent.rowDailyFee'), value: amount(cost.dailyFee), binding: true },
     textRow('rent.rowTerm', format('rentRequest.term', { days: d.days.toString() }), true),
     { label: text('rent.rowRent'), value: amount(cost.rent), binding: true },
-    textRow('rent.rowBuffer', format('rentRequest.buffer', { rate: formatBps(cost.bufferBps), amount: exact(cost.buffer) }), true),
+    textRow('rent.rowBuffer', format('rentRequest.buffer', { rate: formatBps(cost.bufferBps), amount: exact(cost.buffer) }), false),
     textRow('rent.rowRule', text(d.fullTerm ? 'rent.ruleFullTerm' : 'rent.ruleProRata'), true),
     textRow('rent.rowBack', text(d.fullTerm ? 'rent.backFullTerm' : 'rent.backProRata'), true),
     // Not bound by the request: the protocol reads the grace period from the
@@ -67,6 +70,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     text('rentRequest.loseCancel'),
     text(d.expiresAt === 0n ? 'rentRequest.loseOpen' : 'rentRequest.loseLapse'),
     text('rentRequest.loseStart'),
+    text('rentRequest.loseBufferRace'),
     text('rent.loseNotYours'),
     text('rent.loseNoAutoClose'),
     text('rent.loseLate'),
