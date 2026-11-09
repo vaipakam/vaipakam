@@ -16,6 +16,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -282,18 +283,24 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         assertFalse(claimed, "and has not claimed it yet");
         assertEq(_plBal(weth, address(diamond)), f.diamondWeth0, "the curing repayment moved nothing through the Diamond");
 
-        uint256 wallet0 = _plBal(weth, plBorrower);
+        uint256 owned0 = _owned(plBorrower, weth); // #3387: the claim credits the vault
         vm.prank(plBorrower);
         ClaimFacet(address(diamond)).claimAsBorrower(f.a);
 
-        assertEq(_plBal(weth, plBorrower) - wallet0, c, "the claim pays exactly collateralAmount");
+        assertEq(_owned(plBorrower, weth) - owned0, c, "the claim pays exactly collateralAmount");
         assertEq(_plLien(f.a), 0, "and releases the lien");
         assertEq(
             MetricsFacet(address(diamond)).getEncumbered(plBorrower, weth, 0),
             0,
             "nothing stays encumbered"
         );
-        assertEq(_plBal(weth, _plVault(plBorrower)), 0, "the vault keeps none of the loan's collateral");
+        // #3387: the claim leaves the collateral in the borrower's own vault as
+        // free money, so the vault's whole balance is the borrower's free credit.
+        assertEq(
+            _plBal(weth, _plVault(plBorrower)),
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(plBorrower, weth, 0),
+            "the vault keeps none of the loan's collateral: all of it is the borrower's free money"
+        );
         assertEq(_plBal(weth, address(diamond)), f.diamondWeth0, "the Diamond was never a waypoint");
     }
 
@@ -348,11 +355,11 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         assertEq(_plBal(weth, address(diamond)), f.diamondWeth0, "the curing repayment moved nothing through the Diamond");
         _plAssertPledge(f.a, c);
 
-        uint256 wallet0 = _plBal(weth, plBorrower);
+        uint256 owned0 = _owned(plBorrower, weth); // #3387: the claim credits the vault
         vm.prank(plBorrower);
         ClaimFacet(address(diamond)).claimAsBorrower(f.a);
         assertEq(
-            _plBal(weth, plBorrower) - wallet0,
+            _owned(plBorrower, weth) - owned0,
             c,
             "the claim pays out every unit: the two lossy legs stranded none"
         );

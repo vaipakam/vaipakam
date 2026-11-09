@@ -326,7 +326,8 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     ///         drops to (0, 0).
     function test_G5_dispose_reachedThroughClaimAsLender() public {
         _fcEnter();
-        uint256 lender0 = _bal(lender);
+        // #3387: the claim credits the lender's vault, so read wallet + free vault money.
+        uint256 lender0 = _owned(lender, mockCollateralERC20);
         uint256 treasury0 = _bal(treasury);
 
         vm.expectCall(
@@ -342,7 +343,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        assertEq(_bal(lender) - lender0, lenderCol, "the lender is paid their slice");
+        assertEq(_owned(lender, mockCollateralERC20) - lender0, lenderCol, "the lender is paid their slice");
         assertEq(_bal(treasury) - treasury0, treasuryCol, "treasury slice paid");
         assertEq(_bal(_borrowerVault()), borrowerCol, "the borrower slice stays in the borrower's vault");
         assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond is never a waypoint");

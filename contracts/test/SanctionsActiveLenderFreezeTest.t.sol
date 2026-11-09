@@ -202,12 +202,14 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         _installOracle();
         _scaffoldActiveLoan();
         _fundActorVault(borrower, mockERC20, AMOUNT);
+        // #3387: the lender share of an open loan's payment credits the holder's vault.
+        uint256 owned0 = _owned(holder, mockERC20);
 
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderFromVault(
             LOAN_ID, borrower, mockERC20, AMOUNT
         );
 
-        assertEq(ERC20Mock(mockERC20).balanceOf(holder), AMOUNT, "clean holder paid from vault");
+        assertEq(_owned(holder, mockERC20) - owned0, AMOUNT, "clean holder paid from vault");
         assertEq(_lenderVaultBal(), 0, "nothing parked");
     }
 
