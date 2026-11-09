@@ -1,4 +1,4 @@
-## Thread — alpha05 can be installed as an app (PR #<n>)
+## Thread — alpha05 can be installed as an app (PR #3465)
 
 The new app can now be installed to a phone's home screen or a computer's
 app list. It carries a manifest with its name, icons and four shortcuts:
