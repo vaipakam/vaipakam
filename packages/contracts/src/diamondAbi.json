@@ -14,6 +14,7 @@
 {"type":"error","name":"AmountMustBePositive","inputs":[]},
 {"type":"error","name":"AonRequiresSingleValueAmount","inputs":[]},
 {"type":"error","name":"AssetPaused","inputs":[{"name":"asset","type":"address","internalType":"address"}]},
+{"type":"error","name":"AttributionCapAboveCeiling","inputs":[{"name":"chainId","type":"uint32","internalType":"uint32"},{"name":"cap","type":"uint256","internalType":"uint256"},{"name":"ceiling","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"AttributionCapUnderLiveKeeperBps","inputs":[{"name":"chainId","type":"uint32","internalType":"uint32"},{"name":"bps","type":"uint16","internalType":"uint16"}]},
 {"type":"error","name":"BaseChainIdNotSet","inputs":[]},
 {"type":"error","name":"BroadcastClockDivergence","inputs":[{"name":"dayId","type":"uint256","internalType":"uint256"}]},

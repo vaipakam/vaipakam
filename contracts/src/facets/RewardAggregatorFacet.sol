@@ -1019,7 +1019,9 @@ contract RewardAggregatorFacet is
     event ChainDailyAttributionCapSet(uint32 indexed chainId, uint256 cap);
 
     /// @notice #2047 — set the ONE Base-side ceiling on the recycled credit Base
-    ///         attributes to `chainId` per day (VPFI wei; 0 = uncapped). The
+    ///         attributes to `chainId` per day (VPFI wei; 0 = only the protocol
+    ///         ceiling, `LibVpfiRecycle.DAY_ATTRIBUTION_CEILING`, the VPFI hard
+    ///         supply cap, which also bounds any value set here). The
     ///         mirror supplies both terms of the attribution clamp, so without
     ///         this a mirror holding accumulated headroom could compress it into
     ///         one day and accelerate its own keeper earmark. A chain's keeper
@@ -1037,11 +1039,15 @@ contract RewardAggregatorFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint16 live = s.chainKeeperAllocateBps[chainId];
         if (cap == 0 && live != 0) revert IVaipakamErrors.AttributionCapUnderLiveKeeperBps(chainId, live);
+        if (cap > LibVpfiRecycle.DAY_ATTRIBUTION_CEILING) {
+            revert IVaipakamErrors.AttributionCapAboveCeiling(chainId, cap, LibVpfiRecycle.DAY_ATTRIBUTION_CEILING);
+        }
         s.chainDailyAttributionCap[chainId] = cap;
         emit ChainDailyAttributionCapSet(chainId, cap);
     }
 
-    /// @notice #2047 — `chainId`'s per-day attribution ceiling (0 = uncapped).
+    /// @notice #2047 — `chainId`'s per-day attribution ceiling (0 = none set:
+    ///         only the protocol ceiling, the VPFI hard supply cap, applies).
     function getChainDailyAttributionCap(uint32 chainId) external view returns (uint256) {
         return LibVaipakam.storageSlot().chainDailyAttributionCap[chainId];
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {Test} from "forge-std/Test.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -288,8 +289,11 @@ contract MeshLedgerInvariant is Test {
         // an unarmed chain in the same campaign.
         // #2047 — a keeper bps can only be armed behind a per-day attribution
         // cap; set it far above anything the handler reports so the campaign's
-        // figures are what they were.
-        RewardAggregatorFacet(address(diamond)).setChainDailyAttributionCap(CHAIN_ARB, type(uint128).max);
+        // figures are what they were. The protocol ceiling is the highest
+        // value the setter takes (#2045).
+        RewardAggregatorFacet(address(diamond)).setChainDailyAttributionCap(
+            CHAIN_ARB, LibVpfiRecycle.DAY_ATTRIBUTION_CEILING
+        );
         RewardAggregatorFacet(address(diamond)).setChainKeeperAllocateBps(
             CHAIN_ARB, 2_500
         );

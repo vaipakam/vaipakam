@@ -7,6 +7,7 @@ import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {VPFI_TOTAL_SUPPLY_CAP} from "../interfaces/IVPFIToken.sol";
 
 /**
  * @title  LibVpfiRecycle
@@ -1581,6 +1582,16 @@ library LibVpfiRecycle {
         emit ChainRecycledReported(sourceChainId, dayId, cumulative, forDayReported, 0);
     }
 
+    /// @notice #2045 — the most recycled credit Base attributes to any one
+    ///         chain for one day: every VPFI that can ever exist (the token's
+    ///         hard supply cap). No honest day comes near it, and what a day
+    ///         names above it is not lost: it joins the chain's backlog and
+    ///         drips on later days, like anything a Base-set ceiling trims. It
+    ///         exists so that no chain-supplied figure can size a day without
+    ///         bound: the day's fold sums every counted chain's credit, and the
+    ///         absorption average sums thirty days of those folds.
+    uint256 internal constant DAY_ATTRIBUTION_CEILING = VPFI_TOTAL_SUPPLY_CAP;
+
     /// @notice #2645 — attribute `sourceChainId`'s held day figure to `dayId`.
     ///         Called by the finalization, once per chain it COUNTS, and by
     ///         nothing else: the day credit of a report the day did not count
@@ -1605,10 +1616,10 @@ library LibVpfiRecycle {
             // strand its excess forever, since an honest chain never re-claims
             // it), the allocation MIX and TIMING are bounded from Base's side,
             // and the mirror supplies neither the backlog's size nor its pace.
-            // An unset ceiling (0, the deploy default) is the pre-#2047 rule
-            // exactly — and drains any backlog left by a ceiling that was later
-            // cleared; a huge ceiling is a no-op by construction. The keeper
-            // bps cannot be armed for a chain until a ceiling exists.
+            // An unset ceiling (0, the deploy default) leaves only the protocol
+            // ceiling below, which no honest day approaches, and drains any
+            // backlog left by a ceiling that was later cleared. The keeper bps
+            // cannot be armed for a chain until a ceiling exists.
             // Saturating at `headroom` BEFORE adding: the backlog is bounded by
             // an earlier headroom, which a mirror-supplied cumulative can set
             // near 2^256, so `claimed + backlog` would overflow and revert the
@@ -1616,8 +1627,15 @@ library LibVpfiRecycle {
             // min, so the subtraction cannot underflow.
             uint256 backlog = s.chainAttributionBacklog[sourceChainId];
             uint256 want = backlog >= headroom - claimed ? headroom : claimed + backlog;
+            // #2045 — the protocol ceiling bounds every chain's day whatever
+            // the chain reports and whether or not Base set a ceiling for it:
+            // no figure the chain supplies may size the day, because the day's
+            // fold (and the absorption average it feeds) sums these figures,
+            // and a mirror reporting a near-2^256 cumulative AND day credit
+            // overflowed that sum and wedged every chain's finalization.
             uint256 cap = s.chainDailyAttributionCap[sourceChainId];
-            accepted = (cap != 0 && want > cap) ? cap : want;
+            if (cap == 0 || cap > DAY_ATTRIBUTION_CEILING) cap = DAY_ATTRIBUTION_CEILING;
+            accepted = want > cap ? cap : want;
             s.chainAttributionBacklog[sourceChainId] = want - accepted;
         }
 
