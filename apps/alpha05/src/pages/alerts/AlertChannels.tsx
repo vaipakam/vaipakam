@@ -96,10 +96,13 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
     } else if (answer.action === 'unlink') {
       setCode(null);
       const telegram = { state: 'unlinked' as const, at, scope: answer.scope, pending: answer.pending };
-      // A wallet-wide unlink cleared every network's link for this wallet.
+      // A wallet-wide unlink cleared every network's link for this wallet;
+      // every network protected mode still holds is kept on every record,
+      // including networks this app does not serve, so each one is named
+      // wherever the record is shown.
       const chains = answer.scope === 'wallet' ? SUPPORTED_CHAINS.map((c) => c.chainId) : [chain.chainId];
       for (const id of chains) {
-        const next = writeKnown(id, account, { telegram: { ...telegram, pending: answer.pending.filter((p) => p.chainId === id) } });
+        const next = writeKnown(id, account, { telegram });
         if (id === chain.chainId) setKnown(next);
       }
     } else if (typeof a !== 'string') {
@@ -303,7 +306,7 @@ function telegramLine(tg: KnownAlerts['telegram'], chain: SupportedChain, nowS: 
   if (!tg) return format('alertChannels.telegramNone', { chain: chain.name });
   if (tg.state === 'confirmed') return format('alertChannels.telegramConfirmed', { time: formatUtc(tg.at) });
   if (tg.state === 'code') return format(tg.expiresAt > nowS ? 'alertChannels.telegramCodeHere' : 'alertChannels.telegramCodeOld', { time: formatUtc(tg.at) });
-  if (tg.scope === 'wallet') return format('alertChannels.telegramUnlinkedWallet', { time: formatUtc(tg.at) });
+  if (tg.scope === 'wallet') return format(tg.pending.length > 0 ? 'alertChannels.telegramUnlinkedWalletHeld' : 'alertChannels.telegramUnlinkedWallet', { time: formatUtc(tg.at) });
   return text('alertChannels.telegramUnlinkedChain') + ' ' + format('alertChannels.unlinkedAt', { chain: chain.name, time: formatUtc(tg.at) });
 }
 
@@ -383,7 +386,10 @@ function runWords(run: Exclude<AlertRun, { phase: 'idle' }>, chain: SupportedCha
       }
       if (a.action === 'link') return ['ok', text('alertChannels.doneLink')];
       if (a.action === 'test-alert') return ['ok', text('alertChannels.doneTest')];
-      if (a.action === 'unlink') return ['ok', a.scope === 'wallet' ? text('alertChannels.doneUnlinkWallet') : format('alertChannels.doneUnlinkChain', { chain: chain.name })];
+      if (a.action === 'unlink') {
+        if (a.pending.length > 0) return ['ok', text(a.scope === 'wallet' ? 'alertChannels.doneUnlinkWalletHeld' : 'alertChannels.doneUnlinkChainHeld')];
+        return ['ok', a.scope === 'wallet' ? text('alertChannels.doneUnlinkWallet') : format('alertChannels.doneUnlinkChain', { chain: chain.name })];
+      }
       return ['ok', text(a.push === 'kept' ? 'alertChannels.doneSaveKept' : 'alertChannels.doneSave')];
     }
   }

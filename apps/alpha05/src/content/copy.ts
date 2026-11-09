@@ -1561,6 +1561,7 @@ export const copy = {
     telegramCodeOld: B('A link code issued here at {{time}} has expired; if you sent it in time, send a test.'),
     telegramConfirmed: B('Linked: a test alert from here reached the chat at {{time}}.'),
     telegramUnlinkedWallet: B('Unlinked from here at {{time}}, for this wallet on every network.'),
+    telegramUnlinkedWalletHeld: A('Unlinked from here at {{time}}, for this wallet on every network except those protected mode holds, named below.'),
     telegramUnlinkedChain: B('A smart-account wallet unlinks one network at a time.'),
     unlinkedAt: B('Unlinked on {{chain}} from here at {{time}}.'),
     unlinkPending: A(
@@ -1632,6 +1633,8 @@ export const copy = {
     doneTest: B('A test alert was sent to the linked chat; check Telegram.'),
     doneUnlinkWallet: B('Telegram alerts are disconnected for this wallet on every network.'),
     doneUnlinkChain: B('Telegram alerts are disconnected on {{chain}} only.'),
+    doneUnlinkWalletHeld: A('Unlinked on every network except where protected mode keeps the chat receiving alerts, named below.'),
+    doneUnlinkChainHeld: A('Unlink asked, but protected mode keeps the chat receiving alerts here for now, as said below.'),
     doneSave: B('Saved.'),
     doneSaveKept: B('Saved. Push can’t send right now; your earlier switch-on is kept.'),
     whySummary: B('How Telegram, push and warnings work'),

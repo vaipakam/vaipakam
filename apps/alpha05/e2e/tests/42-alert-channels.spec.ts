@@ -84,6 +84,14 @@ test('Telegram is linked with a code, proven by a test alert, and unlinked, each
   expect((await agentState()).linked).not.toContain(me.toLowerCase());
 
   // Protected mode holds a chat; an unreadable protection check changes nothing.
+  // An ordinary wallet's unlink that protected mode holds on another network:
+  // that network is named here too, and nothing claims every network is off.
+  await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'wallet', pending: [{ chain_id: 421614, effective_at: 1_800_000_000 }] } } });
+  await page.getByTestId('alert-telegram-unlink').click();
+  await expect(page.getByTestId('alert-run')).toContainText('Unlinked on every network except where protected mode keeps the chat receiving alerts', { timeout: 30_000 });
+  await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Arbitrum Sepolia');
+  await expect(page.getByTestId('alert-telegram-state')).toContainText('except those protected mode holds, named below');
+
   // The service names each held network as { chain_id, effective_at }.
   await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'chain', pending: [{ chain_id: 84532, effective_at: 1_800_000_000 }] } } });
   await page.getByTestId('alert-telegram-unlink').click();
