@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
@@ -8,6 +8,7 @@ import { markSeen, readSeen } from '../../shared/inbox/seen';
 import { inboxReason, useInbox, useInboxNewer } from '../../shared/inbox/useInbox';
 import { formatUtc } from '../../shared/ui/format';
 import { AlertChannels } from './AlertChannels';
+import { PaidPush } from './PaidPush';
 
 /**
  * Alerts (#3180, ACC-54; RB-INBOX): the free inbox the protocol's index keeps
@@ -123,7 +124,13 @@ export function AlertsPage() {
           <WhyLink summaryKey="inbox.whySummary" detailKey="inbox.why" />
         </section>
       )}
-      {chain && account && <AlertChannels key={identity ?? ''} chain={chain} account={account} />}
+      {chain && account && (
+        // One key for the pair: a new wallet or network starts both cards afresh.
+        <Fragment key={identity ?? ''}>
+          <AlertChannels chain={chain} account={account} />
+          <PaidPush chain={chain} account={account} />
+        </Fragment>
+      )}
     </main>
   );
 }

@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {VaultBeacon} from "../../src/VaultBeacon.sol";
 import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -94,6 +96,7 @@ contract HandoverGateTest is Test {
     VaultBeacon internal vaultBeacon;
     /// @dev #3272 — the protocol registry, deployed as DeployDiamond leaves it.
     ProtocolRegistry internal protocolRegistry;
+    PriceGuard internal priceGuard;
 
     HandoverGate internal gate;
 
@@ -403,13 +406,13 @@ contract HandoverGateTest is Test {
     function test_PlanListsRequiredSlotsOnAnEmptyArtifact() public {
         vm.chainId(421614); // a mirror
         HandoverPlan.Target[] memory m = HandoverPlan.read("{}");
-        assertEq(m.length, 11, "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry + vault beacon + position NFT + protocol registry");
+        assertEq(m.length, 12, "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry + vault beacon + position NFT + protocol registry + price guard");
         for (uint256 i; i < m.length; ++i) {
             assertTrue(m[i].required && m[i].addr == address(0), "every listed slot is a required gap");
         }
         vm.chainId(84532); // canonical
         HandoverPlan.Target[] memory c = HandoverPlan.read("{}");
-        assertEq(c.length, 11, "canonical: 4 shared + buyback receiver, return receiver, feed registry, vault beacon, position NFT, protocol registry, token");
+        assertEq(c.length, 12, "canonical: 4 shared + buyback receiver, return receiver, feed registry, vault beacon, position NFT, protocol registry, price guard, token");
     }
 
     /// @notice #2880 — the handover rotates the feed registry's veto from the
@@ -467,6 +470,21 @@ contract HandoverGateTest is Test {
         protocolRegistry.setGuardian(stranger);
         (failures,) = gate.evaluate(inp, _logs());
         _assertContains(failures, "protocolRegistry: guardian() is");
+    }
+
+    /// @notice #3272 — the handover moves the PriceGuard's guardian to the
+    ///         Pauser Safe and its ownership to the Timelock, and a wrong
+    ///         guardian fails the gate.
+    function test_PriceGuard_GuardianRotated_WrongGuardianFails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        assertEq(priceGuard.guardian(), pauserSafe, "rotated by the handover");
+        assertEq(priceGuard.owner(), address(timelock), "owned by the Timelock");
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertNoFailures(failures);
+        vm.prank(address(timelock));
+        priceGuard.setGuardian(stranger);
+        (failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "priceGuard: guardian() is");
     }
 
     /// @notice #3204 — the plan derives the guardian flag for a found
@@ -578,6 +596,18 @@ contract HandoverGateTest is Test {
         protocolRegistry = new ProtocolRegistry(
             admin, admin, 3 days, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
         );
+        priceGuard = PriceGuard(
+            ArtifactDeploy.deploy(
+                type(PriceGuard).name,
+                abi.encode(
+                    admin,
+                    admin,
+                    PriceGuard.Identity(address(840), bytes32("usd"), address(0), 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE),
+                    uint64(0),
+                    new PriceGuard.Change[](0)
+                )
+            )
+        );
         vaultBeacon = new VaultBeacon(
             admin, address(diamond), admin, address(new VaipakamVaultImplementation(address(0), address(protocolRegistry)))
         );
@@ -618,6 +648,7 @@ contract HandoverGateTest is Test {
         _accept(address(feedRegistry), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(vaultBeacon), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(protocolRegistry), abi.encodeWithSignature("acceptOwnership()"));
+        _accept(address(priceGuard), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.adapterOnDeployer) _accept(address(swapAdapter), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipCctAccept) {
             _accept(address(cctRegistry), abi.encodeWithSignature("acceptAdminRole(address)", address(vpfiToken)));
@@ -639,7 +670,7 @@ contract HandoverGateTest is Test {
     }
 
     function _targets() internal view returns (HandoverPlan.Target[] memory t) {
-        t = new HandoverPlan.Target[](8);
+        t = new HandoverPlan.Target[](9);
         t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
         t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink, true, false);
         t[2] = HandoverPlan.Target(
@@ -656,6 +687,7 @@ contract HandoverGateTest is Test {
         t[7] = HandoverPlan.Target(
             "protocolRegistry", address(protocolRegistry), HandoverPlan.OwnableKind.OpenZeppelin, true, true
         );
+        t[8] = HandoverPlan.Target("priceGuard", address(priceGuard), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
     }
 
     function _accept(address target, bytes memory data) internal {

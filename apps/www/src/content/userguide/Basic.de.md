@@ -683,6 +683,12 @@ Die Seite Alerts listet die Hinweise, die der Index des Protokolls für deine Wa
 
 Unter dem Posteingang richtet die Seite Alerts Hinweise ein, die dich außerhalb der App erreichen. Jede Änderung ist eine kostenlose Signatur in deiner Wallet, keine Transaktion. Um Telegram zu verbinden, tippe auf Telegram verbinden, sende den Einmalcode innerhalb von zehn Minuten an den Vaipakam-Bot und sende dann eine Testnachricht: Die Verbindung gilt als funktionierend, sobald diese Nachricht deinen Chat erreicht. Push wird nur angeboten, wenn der Hinweisdienst sagt, dass er gerade senden kann; zusätzlich abonnierst du den Vaipakam-Kanal in deiner Push-App und kündigst ihn dort, um Push zu beenden. Gesundheitswarnungen sind immer an, sobald Telegram oder Push eingerichtet ist, bei Gesundheit 1,5, 1,2 und 1,05. Zahlungserinnerungen lassen sich aus- und einschalten. Die Seite zeigt, was dieser Browser getan hat; eine Verbindung oder Einstellung von einem anderen Gerät kann trotzdem bestehen.
 
+<a id="alerts-paid-push"></a>
+
+### Kostenpflichtige Push-Hinweise
+
+In manchen Netzwerken berechnet der Hinweisdienst für Push-Hinweise zu einem Kredit eine kleine Gebühr in VPFI. Er kann sie dir nur berechnen, wenn du vorher on-chain zustimmst, und höchstens bis zu dem Betrag, dem du zugestimmt hast. Der Bereich Kostenpflichtige Push-Hinweise zeigt die Gebühr in diesem Netzwerk und ob der Dienst hier berechnet. Die Gebühr wird aus freiem VPFI in deinem Tresor genommen, höchstens einmal pro Kreditseite, wenn der erste kostenpflichtige Push-Hinweis zu diesem Kredit gesendet wird; eine bereits berechnete Gebühr wird nicht erstattet, und Telegram-Hinweise sind kostenlos. Eine Gebührenerhöhung innerhalb deiner Obergrenze wird ohne erneute Nachfrage berechnet. Du kannst die Zustimmung jederzeit zurückziehen.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Schwellen-Leiter
@@ -1250,7 +1256,7 @@ Unter dem Zinssatz zeigt die App auf beiden Formularen, dem Angebot eines Verlei
 
 ### Netzwerke mit öffentlicher Warteschlange
 
-Auf Ethereum und BNB Chain (und dem BNB Testnet) wartet eine gesendete Transaktion in einer öffentlichen Warteschlange, bevor sie aufgenommen wird, und wer diese Warteschlange beobachtet, auch Bots, kann sie sehen und zuerst handeln: ein Angebot annehmen, bevor Ihre Stornierung ankommt, oder auf einen Kredit reagieren, bevor Ihre Rückzahlung ankommt. Auf diesen Netzwerken sagt die Prüfung beim Einstellen, Annehmen oder Stornieren eines Angebots, beim Zurückzahlen und beim Nachlegen von Sicherheiten das deshalb, bevor sich Ihre Wallet öffnet. Manche Wallets können eine Transaktion stattdessen privat senden; sehen Sie in den Netzwerk- oder Sicherheitseinstellungen Ihrer Wallet nach. Die App kann diesen Weg nicht für Sie wählen, und der übliche Weg ändert nur, wer die Transaktion sieht, bevor sie ankommt. Base, Arbitrum und Optimism haben keine öffentliche Warteschlange, dort wird nichts angezeigt.
+Auf Ethereum, BNB Chain und Polygon (und dem BNB Testnet sowie Polygon Amoy) wartet eine gesendete Transaktion in einer öffentlichen Warteschlange, bevor sie aufgenommen wird, und wer diese Warteschlange beobachtet, auch Bots, kann sie sehen und zuerst handeln: ein Angebot annehmen, bevor Ihre Stornierung ankommt, oder auf einen Kredit reagieren, bevor Ihre Rückzahlung ankommt. Auf diesen Netzwerken sagt die Prüfung beim Einstellen, Annehmen oder Stornieren eines Angebots, beim Zurückzahlen und beim Nachlegen von Sicherheiten das deshalb, bevor sich Ihre Wallet öffnet. Manche Wallets können eine Transaktion stattdessen privat senden; sehen Sie in den Netzwerk- oder Sicherheitseinstellungen Ihrer Wallet nach. Die App kann diesen Weg nicht für Sie wählen, und der übliche Weg ändert nur, wer die Transaktion sieht, bevor sie ankommt. Base, Arbitrum und Optimism haben keine öffentliche Warteschlange, dort wird nichts angezeigt.
 
 <a id="lend-offer-parts"></a>
 
@@ -1441,3 +1447,11 @@ Jedes Konto beginnt auf der niedrigsten Risikostufe, nur Blue-Chip-Assets, und n
 ### Die Abfrage der Nutzungsbedingungen
 
 Wo eine Version der Nutzungsbedingungen gilt, bittet dich die App, sie vor einer Aktion zu akzeptieren, die etwas Neues beginnt, etwa das Einschalten des Gebührenrabatts, und nennt die Aktion, die gefragt hat. Sie zeigt die Version, einen Fingerabdruck ihres Textes und einen Link zu genau dieser Version, deren Text sich nie ändert. Das Akzeptieren ist eine Bestätigung in der Wallet und bewegt keine Mittel. Kann die App nicht lesen, ob du akzeptiert hast, sagt sie das und lässt dich es erneut versuchen, statt es als Nein zu werten. Zurückzahlen, Forderungen einlösen, eigene Assets abheben, eigene Angebote stornieren und eine Zustimmung ausschalten werden nie aufgehalten.
+
+<a id="settings"></a>
+
+### Einstellungen
+
+Die Einstellungen findest du unten im Menü. Modus, Design und Sprache brauchen keine Wallet und bleiben in diesem Browser. Das Design folgt deinem Gerät, bis du eines wählst, und eine noch nicht übersetzte Sprache zeigt Englisch, bis sie übersetzt ist. Mit verbundener Wallet zeigen die Einstellungen, welche Version der Nutzungsbedingungen du in diesem Netzwerk akzeptiert hast oder dass eine Version gilt, die du noch nicht akzeptiert hast; du wirst bei der ersten Aktion gefragt, die sie braucht, nie dort. Die Einstellung zum Gebührenrabatt ist dieselbe wie auf der Startseite. Die Einstellungen sagen auch, was dieser Browser für die App speichert, dass nichts Geheimes gespeichert wird und dass die App keine Fehlerberichte oder Diagnosedaten sendet. Die Einstellungen können außerdem die Datensätze der App in diesem Browser als Datei herunterladen oder alles löschen, was diese Website hier speichert. Vor dem Löschen sagen sie, wie viele Einträge entfernt werden; das Löschen trennt deine Wallet, setzt Modus, Design und Sprache zurück und zeigt danach, was entfernt wurde. Deine Positionen on-chain, deine Hinweiseinstellungen beim Hinweisdienst, die Marketing-Website und deine Wallet-App bleiben unberührt.
+
+Die Einstellungen zeigen außerdem in Worten deine Risikostufe in diesem Netzwerk, ob dieses Netzwerk sie durchsetzt und ob der strenge Modus an ist. Haben neue Risikobedingungen deine Stufe außer Kraft gesetzt, kannst du sie dort mit einem Wallet-Schritt erneut bestätigen. Um deine Stufe anzuheben oder zu senken oder den strengen Modus ein- oder auszuschalten, wechsle in den **Advanced**-Modus: Jede Änderung ist eine Wallet-Bestätigung mit eigenem Beleg und bewegt keine Mittel. Das Senken wirkt sofort und schließt Paare oberhalb der neuen Stufe für neue Angebote und Anfragen, auch für deine eigenen offenen; bestehende Kredite sind nicht betroffen. Das Anheben kann die Wartezeit des Protokolls abwarten, und die App zeigt, ab wann es zählt.

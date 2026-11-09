@@ -670,6 +670,12 @@ La página Alertas muestra los avisos que el índice del protocolo guarda para t
 
 Debajo de la bandeja, la página Alertas configura los avisos que te llegan fuera de la app. Cada cambio es una firma gratuita en tu billetera, no una transacción. Para vincular Telegram, pulsa Vincular Telegram, envía el código de un solo uso al bot de Vaipakam en diez minutos y luego envía una alerta de prueba: el vínculo funciona cuando ese mensaje llega a tu chat. Push solo se ofrece cuando el servicio de alertas dice que puede enviar ahora; además te suscribes al canal de Vaipakam en tu app de push y cancelas la suscripción allí para detenerlo. Los avisos de salud están siempre activos una vez configurado Telegram o push, con salud 1,5, 1,2 y 1,05. Los recordatorios de pago se pueden desactivar y activar. La página muestra lo que ha hecho este navegador; puede existir un vínculo o ajuste hecho en otro dispositivo.
 
+<a id="alerts-paid-push"></a>
+
+### Avisos push de pago
+
+En algunas redes, el servicio de alertas cobra una pequeña comisión en VPFI por los avisos push sobre un préstamo. Solo puede cobrarte si antes aceptas en la cadena, y como mucho lo máximo que aceptaste pagar. La sección Avisos push de pago muestra la comisión en esta red y si el servicio cobra aquí. La comisión se toma del VPFI libre de tu bóveda, como mucho una vez por lado del préstamo, cuando se envía el primer aviso push de pago sobre ese préstamo; una comisión ya cobrada no se devuelve, y los avisos de Telegram son gratis. Una subida de la comisión dentro de tu tope se cobra sin volver a preguntarte. Puedes retirar la aceptación en cualquier momento.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Escalera de umbrales
@@ -1228,7 +1234,7 @@ Bajo la tasa, en los dos formularios de publicación, la oferta de un prestamist
 
 ### Redes con cola pública
 
-En Ethereum y BNB Chain (y BNB Testnet), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
+En Ethereum, BNB Chain y Polygon (y BNB Testnet y Polygon Amoy), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
 
 <a id="lend-offer-parts"></a>
 
@@ -1419,3 +1425,11 @@ Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y s
 ### El aviso de los Términos
 
 Cuando hay una versión de los Términos del servicio vigente, la app te pide aceptarla antes de una acción que inicia algo nuevo, como activar el descuento en comisiones, y nombra la acción que lo pidió. Muestra la versión, una huella de su texto y un enlace a esa versión exacta, cuyo texto nunca cambia. Aceptar es una confirmación en la wallet y no mueve fondos. Si la app no puede leer si aceptaste, lo dice y te deja reintentar en lugar de tomarlo como un no. Repagar, cobrar, retirar tus propios activos, cancelar tus propias ofertas y desactivar un consentimiento nunca se bloquean.
+
+<a id="settings"></a>
+
+### Ajustes
+
+Ajustes está al pie del menú. El modo, el tema y el idioma no necesitan billetera y se quedan en este navegador. El tema sigue a tu dispositivo hasta que eliges uno, y un idioma aún sin traducir muestra inglés hasta que se traduzca. Con una billetera conectada, Ajustes muestra qué versión de los Términos de servicio aceptaste en esta red, o que hay una versión en vigor aún no aceptada; se te pide en la primera acción que la necesite, nunca ahí. El ajuste del descuento de comisiones es el mismo que en Inicio. Ajustes también dice qué guarda este navegador para la app, que no se guarda nada secreto y que la app no envía informes de errores ni diagnósticos. Ajustes también puede descargar en un archivo los registros de la app en este navegador, o borrar todo lo que este sitio guarda aquí. Antes de borrar, dice cuántos elementos se eliminarán; borrar desconecta tu billetera, devuelve el modo, el tema y el idioma a sus valores por defecto y luego muestra lo que se eliminó. Tus posiciones en la cadena, tus ajustes de alertas en el servicio de alertas, el sitio informativo y tu app de billetera no se ven afectados.
+
+Ajustes también muestra en palabras tu nivel de riesgo en esta red, si esta red lo aplica y si el modo estricto está activado. Si nuevos términos de riesgo hicieron que tu nivel dejara de contar, puedes confirmarlo de nuevo ahí con un paso en la billetera. Para subir o bajar tu nivel, o activar o desactivar el modo estricto, cambia al modo Avanzado: cada cambio es una confirmación en la billetera con su propio recibo y no mueve fondos. Bajar surte efecto al instante y cierra los pares por encima del nuevo nivel a nuevas ofertas y solicitudes, incluidas las tuyas abiertas; los préstamos que ya tienes no se ven afectados. Subir puede esperar el periodo del protocolo, y la app muestra cuándo cuenta.

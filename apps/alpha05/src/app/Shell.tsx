@@ -200,6 +200,13 @@ export function Shell() {
                 {advancedNav.map(navLink)}
               </div>
             )}
+            {/* Settings is reached from the panel's foot on every width, as
+                apps put their settings: it holds no Basic money action, so
+                it is not a primary destination (rulebook §4). */}
+            <NavLink to="/settings" onClick={closeMenu} data-testid="nav-settings">
+              <PlaceIcon place="/settings" />
+              <span>{text('settings.title')}</span>
+            </NavLink>
           </nav>
           <div className="controls">
             <div className="segment" role="group" aria-label="Mode">

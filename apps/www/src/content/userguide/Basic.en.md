@@ -639,6 +639,12 @@ The Alerts page lists the alerts the protocol's index keeps for your wallet on t
 
 Under the inbox, the Alerts page sets up alerts that reach you outside the app. Each change is a free signature in your wallet, not a transaction. To link Telegram, press Link Telegram, send the one-time code to the Vaipakam bot within ten minutes, then send a test alert: the link counts as working once that message reaches your chat. Push is offered only when the alert service says it can send right now; you also subscribe to the Vaipakam channel in your push app, and unsubscribe there to stop. Health warnings are always on once Telegram or push is set up, at health 1.5, 1.2 and 1.05. Payment reminders can be switched off and on. The page shows what this browser has done; a link or setting made on another device may still exist.
 
+<a id="alerts-paid-push"></a>
+
+### Paid push alerts
+
+On some networks the alert service charges a small fee in VPFI for push alerts about a loan. It can charge you only if you agree first, on chain, and only up to the most you agreed to pay. The Paid push alerts section shows the fee on this network and whether the service charges here. The fee is taken from free VPFI in your vault, at most once per loan side, when the first paid push alert about that loan is sent; a fee already charged is not refunded, and Telegram alerts are free. A fee rise within your cap is charged without asking again. You can withdraw the agreement at any time.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder
@@ -1201,7 +1207,7 @@ Under the rate on both posting forms, a lender's offer and a borrower's request,
 
 ### Networks with a public queue
 
-On Ethereum and BNB Chain (and BNB Testnet), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
+On Ethereum, BNB Chain and Polygon (and BNB Testnet and Polygon Amoy), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
 
 <a id="lend-offer-parts"></a>
 
@@ -1400,3 +1406,11 @@ confirmation and moves no funds. If the app cannot read whether you
 accepted, it says so and lets you try again instead of treating it
 as a no. Repaying, claiming, withdrawing your own assets, cancelling
 your own offers and turning a consent off are never held back.
+
+<a id="settings"></a>
+
+### Settings
+
+Settings is at the foot of the menu. Mode, theme and language need no wallet and stay in this browser. The theme follows your device until you choose one, and a language not translated yet shows English until it is. With a wallet connected, Settings shows which Terms of Service version you accepted on this network, or that a version is in force and not accepted yet; you are asked at the first action that needs it, never there. The fee-discount setting is the same one as on Home. Settings also says what this browser keeps for the app, that nothing secret is stored, and that the app sends no error reports or diagnostics. Settings can also download the app's records in this browser as a file, or erase everything this site keeps here. Before you erase, it says how many items will go; erasing disconnects your wallet, resets mode, theme and language, and then shows what was removed. Your positions on chain, your alert settings with the alert service, the marketing site and your wallet app are not affected.
+
+Settings also shows your risk level on this network in words, whether this network enforces it, and whether strict mode is on. If new risk terms stopped your level from counting, you can confirm it again there in one wallet step. To raise or lower your level, or to turn strict mode on or off, switch to **Advanced** mode: each change is one wallet confirmation with its own receipt, and moves no funds. Lowering takes effect at once and closes pairs above the new level to new offers and requests, your own open ones included; loans you already have are not affected. Raising can wait out the protocol's period, and the app shows when it counts.

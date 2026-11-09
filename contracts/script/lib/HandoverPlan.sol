@@ -148,7 +148,7 @@ library HandoverPlan {
     ///      The canonical token does since #937.
     function read(string memory json) internal view returns (Target[] memory targets) {
         bool canonical = isCanonical();
-        Target[] memory all = new Target[](14);
+        Target[] memory all = new Target[](15);
         uint256 n;
         n = _slot(all, n, "ccipMessenger", readOptional(json, "ccipMessenger"), OwnableKind.OpenZeppelin, true, true);
         n = _slot(all, n, "vpfiTokenPool", readOptional(json, "vpfiTokenPool"), OwnableKind.Chainlink, true, false);
@@ -208,6 +208,12 @@ library HandoverPlan {
         // may cancel a pending change and remove a set member (stop-only),
         // so it is the Pauser Safe.
         n = _slot(all, n, "protocolRegistry", readOptional(json, "protocolRegistry"), OwnableKind.OpenZeppelin, true, true);
+        // #3272 — the price guard: the one price source the Diamond and the
+        // vaults read. Its owner proposes every config change under the
+        // guard's delay, so it moves to the Timelock; its guardian may cancel
+        // a pending change and stop a secondary source (stop-only), so it is
+        // the Pauser Safe.
+        n = _slot(all, n, "priceGuard", readOptional(json, "priceGuard"), OwnableKind.OpenZeppelin, true, true);
         // Canonical VPFI only: on a mirror the local ERC-20 IS `vpfiMirror`,
         // already listed above.
         if (canonical) {

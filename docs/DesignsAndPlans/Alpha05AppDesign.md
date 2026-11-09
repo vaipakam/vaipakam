@@ -1435,7 +1435,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   market moves.
 - **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
   public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
-  so it can be seen before mainnet; #3357), the review of a write that a
+  so it can be seen before mainnet; #3357; Polygon PoS and Polygon Amoy,
+  listed before the app serves them, #3445), the review of a write that a
   watcher could act on first says so before the wallet opens: posting,
   taking or cancelling an offer, repaying in full or in part, and adding
   collateral. It names the exposure (anyone watching, bots included, can
@@ -1518,6 +1519,84 @@ above. Each resolves here, so a route reviewer needs no private file:
   anything off never does. A declined signature sends nothing,
   and every refusal has its own words and remedy. A build with no alert
   service says Telegram and push alerts are not set up and sends nothing.
+- **RB-PAID-PUSH** — Alerts › Paid push alerts (ACC-53) is the wallet's
+  on-chain agreement to pay for push alerts the alert service charges for.
+  The card states the fee per loan side the protocol holds on THIS network,
+  in VPFI, and that it is taken from free vault VPFI at most once per loan
+  side on the first paid push alert, is not refunded once charged, and that
+  Telegram is free. Whether the service charges here comes from its push
+  status answer; when that answer cannot be read, that is said and agreeing
+  is not offered. The stored cap is shown with the contract's own word on
+  whether it covers the fee now; the protection is stated against the CAP (a
+  fee rise within it is charged without a new agreement), and a cap at the
+  protocol's ceiling is said to accept any fee governance can set. Free
+  vault VPFI below the fee is warned; an unread figure is "could not be
+  read", never zero. Agreeing is offered only where the service charges, at
+  or above the fee and within the ceiling, never to a wallet the sanctions
+  screen flags; Basic agrees at the fee now, Advanced types a cap. Agreeing
+  asks for the Terms first (ACC-15), and reads them again right before the
+  wallet opens, so a version published during the review, or a wallet
+  switched to, stops it; withdrawing is offered whenever a cap
+  is stored, whatever the Terms, a pause or the service say. The review and
+  the protocol's dry run come before the wallet, and the fee is read again
+  right before it opens (RB-REVIEW). The finish card names the cap the
+  transaction's record stores, and says a mined agreement sets the cap only.
+  On a deployment without the consent record, nothing is offered and the
+  card says whether the deployment can still charge the fee.
+
+- **RB-SETTINGS** — Settings (ACC-06, ACC-13, ACC-14, ACC-15 status,
+  ACC-35, ACC-61) is reached from the navigation's foot on every width; it
+  holds no money action, so it is not a primary destination. Mode, theme and
+  language need no wallet, apply at once and persist in this browser; the
+  theme follows the device until chosen and says which it is following; the
+  language picker offers the ten languages, says when the one chosen is not
+  translated yet and so shows English, and the document's own language
+  stays English until it is. For a connected wallet the page shows the
+  Terms state on its network: none in force; accepted, with the version and
+  the text's fingerprint; or in force and not accepted, which is asked at
+  the first action that needs it and never here, while repaying, claiming
+  and withdrawing never need it; a read that failed says it could not
+  confirm, which is not "not accepted". The fee-discount consent is the same
+  setting as on Home (RW-07). The page says what this browser keeps for the
+  app, that nothing secret is stored and that this build sends no
+  diagnostics.
+- **RB-DATA-RIGHTS** — Your data (ACC-55) needs no wallet and no Terms. It
+  states what this browser keeps for the app (its own records, the wallet
+  connection's items, this tab's items, the site's databases or that they
+  cannot be listed, and the shared language cookie) and how many items an
+  erasure would remove, before the reader confirms. The download carries
+  the app's own records only, names the wallet addresses in them, and counts
+  without copying the wallet connection's session material. Erasure ends
+  every wallet connection first so nothing is written back, then sweeps this
+  site's storage, databases and the shared language cookie at every scope,
+  writes back only the wallet libraries' "disconnected" markers (for every
+  connector that was connected or already marked, so the reload's automatic
+  reconnection cannot reconnect a wallet that still authorises the site),
+  and reloads so each preference visibly resets. Every step reports what it
+  removed, kept and could not, each refusal with its reason; nothing is
+  claimed that was not measured, and the report survives the reload in that
+  tab. When the browser will not keep the report for the reload, the page
+  does not reload: it shows the report and says why. The confirmation says what erasure does not reach: the chain, the
+  alert service's records, the marketing site and the wallet app.
+- **RB-RISK-SETTINGS** — Settings › Risk access (ACC-33) states, for the
+  connected wallet on its network and from one block's reads, the level
+  that counts in words, and why it differs from the level chosen: a raise
+  still in its waiting period, with the time it counts, or new risk terms,
+  under which it counts as blue-chip until confirmed. It says whether this
+  network enforces levels at all; where it does not, the page and every
+  receipt say a change is saved and counts only if the check is switched on.
+  Strict mode is stated as on, off, or switched off and still applying until
+  a stated time. A level stopped by new risk terms is confirmed in one step
+  in either mode; changing the level or strict mode is Advanced. Each change
+  is one signed transaction through RB-CONFIDENCE (what counts now and after,
+  its reach, when it counts, no funds moved); a level change names the change
+  counter and terms version it was read with, so a write from elsewhere or
+  new terms refuse it and change nothing. A raise still waiting is never
+  offered again; lowering says pairs above the new level close to new offers
+  and requests, the wallet's own open ones included, and that open loans are
+  not affected; switching strict mode off says it is a check removed and
+  when it stops applying. Per-pair agreements and acknowledgements stay in
+  the flows that need them (RB-RISK-STEP).
 
 ## 3. Companion specifications
 

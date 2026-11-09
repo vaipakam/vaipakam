@@ -26,6 +26,8 @@ Two private channels — pick either:
 
 **Do not** open a public GitHub Issue for security-sensitive reports.
 
+**No bug bounty.** Vaipakam does not run a bug bounty programme and pays no rewards for reports. The scope list below says which code a private report should be about; it is not a reward scope. Any claim of a Vaipakam bounty, payout or reward is not from us.
+
 We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-scope:
 
 - any facet under [`contracts/src/facets/`](contracts/src/facets/)

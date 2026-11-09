@@ -365,6 +365,8 @@ const AGENT_ROUTES = { '/link/telegram': 'POST', '/telegram/test': 'POST', '/unl
 function freshAgent() {
   return {
     push: 'available',
+    /** The networks the stand-in says it bills paid push on. */
+    billed: [],
     requests: [],
     used: new Set(),
     codes: new Map(),
@@ -462,6 +464,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       // { reset }, { push: 'available' | 'agent-only' | 'unavailable' | 'down' },
+      // { billed: [chainId, ...] } (the networks push status says it bills),
       // { handshake: wallet } (the bot received that wallet's latest code),
       // { next: { path, status, body } } (the next request to that path gets it).
       // { slow: { path } } (the next request to that path is answered SLOW_ANSWER_MS later).
@@ -473,6 +476,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         agent.push = body.push;
+      }
+      if (body.billed !== undefined) {
+        if (!Array.isArray(body.billed) || !body.billed.every((n) => Number.isSafeInteger(n))) {
+          json(res, 400, { error: 'billed must be a list of chain ids' });
+          return;
+        }
+        agent.billed = body.billed;
       }
       if (typeof body.handshake === 'string') {
         const w = body.handshake.toLowerCase();
@@ -497,8 +507,8 @@ const server = http.createServer(async (req, res) => {
         res,
         200,
         agent.push === 'unavailable'
-          ? { available: false, reason: 'signer-unset', rail: 'agent', scope: 'service', billedChainIds: [] }
-          : { available: true, channel, scope: agent.push === 'agent-only' ? 'agent' : 'service', billedChainIds: [] },
+          ? { available: false, reason: 'signer-unset', rail: 'agent', scope: 'service', billedChainIds: agent.billed }
+          : { available: true, channel, scope: agent.push === 'agent-only' ? 'agent' : 'service', billedChainIds: agent.billed },
       );
       return;
     }

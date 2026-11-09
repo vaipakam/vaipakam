@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {PriceGuardDeployment} from "../lib/PriceGuardDeployment.sol";
 import {DeployDiamond} from "../DeployDiamond.s.sol";
 import {DeployTestnetMocks} from "../DeployTestnetMocks.s.sol";
 import {FeedRegistryDeployment} from "../lib/FeedRegistryDeployment.sol";
@@ -92,6 +93,7 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
 
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        setPriceGuardInputs(vm.envOr("PAUSER_ADDRESS", address(0)), PriceGuardDeployment.fromEnv());
         runWith(vm.addr(adminKey), vm.envAddress("TREASURY_ADDRESS"), deployerKey);
         // The feed registry the mock rig registers its feeds in (#2880), by
         // the same path the deploy scripts take.
