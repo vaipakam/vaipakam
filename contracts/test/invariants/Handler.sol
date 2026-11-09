@@ -72,6 +72,8 @@ contract Handler is Test {
     /// @dev #3241 — loans a periodic settlement sold collateral from. That sale is the one path
     ///      that lowers an Active loan's collateral, so the monotonicity suite skips these.
     mapping(uint256 => bool) public ghostPeriodicSold;
+    /// @dev #3241 — the loan an offset offer was posted to close (0 for an ordinary offer).
+    mapping(uint256 => uint256) public ghostOffsetOf;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -221,7 +223,7 @@ contract Handler is Test {
         // sign as the borrower (view-only) before the pranked external call so
         // the try/catch still observes the protocol-level accept outcome.
         LibAcceptTerms.AcceptTerms memory t =
-            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
+            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, ghostOffsetOf[offerId]);
         bytes memory sig =
             LibAcceptTestSigner.sign(diamond, t, base.borrowerPkAt(borrowerSeed));
         vm.prank(borrower);
@@ -312,6 +314,33 @@ contract Handler is Test {
 
         vm.prank(L.borrower);
         try PrecloseFacet(diamond).precloseDirect(loanId) {} catch {}
+    }
+
+    /// @notice #3241 — the borrower of an active loan starts the preclose offset: it posts a lender
+    ///         offer from its own principal (escrowed in its own vault, so nothing crosses
+    ///         parties). When another borrower accepts that offer, the original loan closes in the
+    ///         same transaction and its lender is paid. The offer joins the open lender offers,
+    ///         so `acceptLenderOffer` is what completes it.
+    function offsetLoan(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        callCount["offsetLoan"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        uint256 maturity = uint256(L.startTime) + L.durationDays * 1 days;
+        if (maturity <= block.timestamp + 1 days) return;
+        durationDays = bound(durationDays, 1, (maturity - block.timestamp) / 1 days);
+        rateBps = bound(rateBps, 100, 2000);
+
+        vm.prank(L.borrower);
+        try PrecloseFacet(diamond).offsetWithNewOffer(
+            loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset
+        ) returns (uint256 offerId) {
+            lenderOfferIds.push(offerId);
+            ghostOffsetOf[offerId] = loanId;
+        } catch {}
     }
 
     /// @notice The lender of an active loan sells the position into a standing

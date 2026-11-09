@@ -101,6 +101,9 @@ contract LoanLedgerHandler is Test {
         /// @dev #3241 — a periodic settlement sold this loan's collateral: the borrower's
         ///      collateral became principal asset, so its principal-asset bound is read in value.
         bool hadPeriodicSale;
+        /// @dev #3241 — closed by a preclose offset. Its lender may be paid the interest the
+        ///      original term would still have earned, past what has accrued so far.
+        bool offsetClosed;
         int256[2] dLender;
         int256[2] dBorrower;
         int256[2] dDiamond;
@@ -117,6 +120,7 @@ contract LoanLedgerHandler is Test {
     uint256 public acceptViolations;
     uint256 public interestViolations;
     uint256 public periodicViolations;
+    uint256 public offsetViolations;
     string public firstViolation;
 
     // ── Coverage counters: how often each per-action check actually ran ──
@@ -128,6 +132,7 @@ contract LoanLedgerHandler is Test {
     uint256 public saleLanded;
     uint256 public periodicStamped;
     uint256 public periodicSold;
+    uint256 public offsetLanded;
 
     /// @dev Set only while a periodic-interest sale is booked: the one action the market may trade in.
     bool internal marketOpen;
@@ -167,9 +172,22 @@ contract LoanLedgerHandler is Test {
 
     function acceptLenderOffer(uint256 borrowerSeed, uint256 offerIdx) external {
         uint256 n = inner.loanIdsLength();
+        uint256 offsetOf = _pickedOffsetLoan(offerIdx);
         Snap memory before = _snap();
         inner.acceptLenderOffer(borrowerSeed, offerIdx);
-        _afterAccept(n, before, true);
+        if (offsetOf != 0 && inner.loanIdsLength() != n) {
+            _afterOffsetAccept(n, offsetOf, before);
+        } else {
+            _afterAccept(n, before, true);
+        }
+    }
+
+    /// @notice #3241: the borrower starts the preclose offset by posting a lender offer from its
+    ///         own principal. The escrow is wallet -> own vault, so nothing may move.
+    function offsetLoan(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        Snap memory before = _snap();
+        inner.offsetLoan(loanIdx, rateBps, durationDays);
+        _requireNoMovement(before, "offsetLoan");
     }
 
     function acceptBorrowerOffer(uint256 lenderSeed, uint256 offerIdx) external {
@@ -388,6 +406,11 @@ contract LoanLedgerHandler is Test {
         return (b.dLender[a], b.dBorrower[a], b.dDiamond[a], b.dCaller[a]);
     }
 
+    /// @notice Whether a preclose offset closed a booked loan, and the loan's original due time.
+    function loanOffset(uint256 loanId) external view returns (bool closed, uint256 dueTime) {
+        return (books[loanId].offsetClosed, books[loanId].dueTime);
+    }
+
     /// @notice A booked loan's cumulative market delta in asset `a`, and whether a periodic
     ///         settlement ever sold its collateral.
     function loanMarket(uint256 loanId, uint256 a) external view returns (int256 dMarket, bool hadPeriodicSale) {
@@ -477,6 +500,13 @@ contract LoanLedgerHandler is Test {
             return;
         }
         uint256 loanId = inner.loanIdAt(lenBefore);
+        _register(loanId);
+        int256[2] memory dB = _book(loanId, before, "accept");
+        _checkAccept(loanId, dB, borrowerAccepted);
+    }
+
+    /// @dev Opens the book of a newly originated loan.
+    function _register(uint256 loanId) internal {
         LibVaipakam.Loan memory L = _loan(loanId);
         LoanBook storage b = books[loanId];
         b.known = true;
@@ -488,9 +518,12 @@ contract LoanLedgerHandler is Test {
         b.dueTime = uint256(L.startTime) + L.durationDays * 1 days;
         b.collateralIn = L.collateralAmount;
         bookedLoanIds.push(loanId);
+    }
 
-        int256[2] memory dB = _book(loanId, before, "accept");
-
+    /// @dev The origination checks on a loan's accept booking; `dB` is the borrower's delta.
+    function _checkAccept(uint256 loanId, int256[2] memory dB, bool borrowerAccepted) internal {
+        LibVaipakam.Loan memory L = _loan(loanId);
+        LoanBook storage b = books[loanId];
         // Origination (spec "Treasury Fees" and the matcher kickback): the borrower is charged
         // a Loan Initiation Fee F of 0.2% of the principal, 1% of F (S) goes to whoever
         // completed the match -- on a direct accept, the acceptor -- and the Diamond keeps F - S.
@@ -529,6 +562,80 @@ contract LoanLedgerHandler is Test {
             acceptViolations++;
             _flag("accept: collateral crossed between parties at origination");
         }
+    }
+
+    /// @dev The original loan an offset offer was posted to close, replaying the inner handler's
+    ///      pick over the open lender offers; 0 when the picked offer is an ordinary one.
+    function _pickedOffsetLoan(uint256 offerIdx) internal view returns (uint256 loanId) {
+        uint256 len = inner.lenderOfferIdsLength();
+        if (len == 0) return 0;
+        loanId = inner.ghostOffsetOf(inner.lenderOfferIds(_boundView(offerIdx, 0, len - 1)));
+        if (!books[loanId].known) return 0;
+    }
+
+    /// @dev #3241: accepting an offset offer is ONE action over TWO loans. It opens the new loan
+    ///      (the offsetting borrower A lends to the acceptor C) and closes the original one (A
+    ///      pays its lender side L the payoff, and the Diamond the treasury cut). A is a party
+    ///      to both, so its delta is split. The new loan takes the origination A's offer defines:
+    ///      the lender side moves exactly the principal, C's delta is C's own, and the Diamond
+    ///      keeps the rest of C's charge (so its LIF is checked as on any accept). Everything
+    ///      else A moved, and the rest of the Diamond's delta, belongs to the original loan.
+    function _afterOffsetAccept(uint256 lenBefore, uint256 oldLoanId, Snap memory before) internal {
+        uint256 newLoanId = inner.loanIdAt(lenBefore);
+        _register(newLoanId);
+        LoanBook storage b1 = books[oldLoanId];
+        LoanBook storage b2 = books[newLoanId];
+        bookedActions++;
+        b1.lastActionTs = block.timestamp;
+        b2.lastActionTs = block.timestamp;
+        if (b2.lender != b1.borrower) {
+            offsetViolations++;
+            _flag("offset: the new loan's lender is not the original loan's borrower");
+        }
+        Snap memory s = _snap();
+        int256[2] memory dC;
+        for (uint256 a = 0; a < 2; a++) {
+            int256 dA;
+            for (uint256 i = 0; i < 6; i++) {
+                int256 d = _delta(s.actor[i][a], before.actor[i][a]);
+                if (actors[i] == b2.borrower) {
+                    dC[a] = d;
+                } else if (actors[i] == b2.lender) {
+                    dA = d;
+                } else if (actors[i] == b1.lender || b1.lenderSide[actors[i]]) {
+                    b1.dLender[a] += d;
+                } else if (d != 0) {
+                    isolationViolations++;
+                    _flag("offset accept: a non-party's holdings moved");
+                }
+            }
+            int256 aNew = a == USDC ? -int256(b2.principal0) : int256(0);
+            int256 diamondNew = -(aNew + dC[a]);
+            b2.dLender[a] += aNew;
+            b2.dBorrower[a] += dC[a];
+            b2.dDiamond[a] += diamondNew;
+            b1.dBorrower[a] += dA - aNew;
+            b1.dDiamond[a] += _delta(s.diamond[a], before.diamond[a]) - diamondNew;
+            b1.dCaller[a] += _delta(s.caller[a], before.caller[a]);
+            if (s.market[a] != before.market[a]) {
+                isolationViolations++;
+                _flag("offset accept: the market traded outside a periodic sale");
+            }
+            if (s.outside[a] != before.outside[a]) {
+                perimeterViolations++;
+                _flag("offset accept: tokens crossed the tracked perimeter");
+            }
+        }
+        _checkAccept(newLoanId, dC, true);
+
+        if (_loan(oldLoanId).status != LibVaipakam.LoanStatus.Repaid) {
+            offsetViolations++;
+            _flag("offset accept: the offset offer was taken but the original loan did not close");
+            return;
+        }
+        b1.offsetClosed = true;
+        b1.hadPartial = true; // closed by the offset, not by an on-time repayment
+        offsetLanded++;
     }
 
     /// @dev Books the change since `before` against `loanId`, flags isolation and perimeter
