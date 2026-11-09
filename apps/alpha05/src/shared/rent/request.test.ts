@@ -91,7 +91,7 @@ describe('requestChangedBetween', () => {
 });
 
 describe('requestReceipt', () => {
-  it('moves the rent and buffer out now, shows the buffer at today's setting, and states the start and the consequences', () => {
+  it('moves the rent and buffer out now, shows the buffer at today’s setting, and states the start and the consequences', () => {
     const receipt = requestReceipt(review(), null, copy);
     expect(receipt.rows[0]).toMatchObject({ label: 'rent.rowPay', value: { kind: 'amount', amount: 21_000_000n }, movesOut: true, binding: false });
     expect(receipt.rows.find((x) => x.label === 'rent.rowBuffer')).toMatchObject({ value: { text: 'rentRequest.buffer' }, binding: false });
