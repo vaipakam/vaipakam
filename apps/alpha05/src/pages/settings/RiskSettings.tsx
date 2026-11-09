@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -91,22 +91,29 @@ export function RiskSettings({ chain, own }: { chain: SupportedChain; own: OwnSt
 
   // Opening a change reads the settings again, so the receipt stands on a
   // read taken now, never on the page's last poll.
+  // Each opening is one generation: a read that answers after its review
+  // was closed, or after another change was opened, is dropped, so an
+  // abandoned read never replaces the change the reader chose last.
+  const generation = useRef(0);
   const open = (change: RiskChange) => {
     if (tx.phase.kind !== 'idle') tx.reset();
     setReviewed(null);
     setLoadError(null);
     tx.review();
+    const mine = ++generation.current;
+    const live = () => mounted.current && generation.current === mine;
     void own.read((c) => readRiskSettings(c, diamond, account)).then(
       ({ value }) => {
-        if (mounted.current) setReviewed({ change, settings: value, readAt: Date.now(), identity });
+        if (live()) setReviewed({ change, settings: value, readAt: Date.now(), identity });
       },
       (e: unknown) => {
-        if (mounted.current) setLoadError(refusalFromError(e).reason);
+        if (live()) setLoadError(refusalFromError(e).reason);
       },
     );
   };
 
   const close = () => {
+    generation.current += 1;
     const k = tx.phase.kind;
     if (k === 'review' || k === 'measured' || k === 'failed' || k === 'superseded') tx.reset();
     setReviewed(null);
