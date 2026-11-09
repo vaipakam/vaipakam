@@ -8,6 +8,8 @@ import {
     DeployDiamondFailingVerificationProbe
 } from "./DeployDiamondVerificationProbes.sol";
 import {Deployments} from "../../script/lib/Deployments.sol";
+import {PriceGuardDeployment} from "../../script/lib/PriceGuardDeployment.sol";
+import {TestnetChains} from "../../src/compliance/TestnetChains.sol";
 import {ARTIFACT_SCRATCH_PREFIX} from "../../script/lib/ArtifactRoot.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
@@ -87,6 +89,10 @@ contract DeployArtifactCompletenessTest is Test {
     /// @dev Distinct from the deployer so `runWith` takes the handover branch —
     ///      the topology every testnet and mainnet deploy actually uses.
     address internal constant ADMIN_FOR_HANDOVER = address(0xA11CE);
+
+    /// @dev #3272 — the feed registry's guardian on a production chain, which
+    ///      must differ from the admin.
+    address internal constant PAUSER_SAFE = address(0x5AFE);
 
     /// @dev Scratch artifact roots live under `deployments/` because
     ///      `foundry.toml#fs_permissions` grants read-write on that subtree and
@@ -187,6 +193,7 @@ contract DeployArtifactCompletenessTest is Test {
         require(ADMIN_FOR_HANDOVER != deployer, "test: admin must differ from deployer");
         DeployDiamond script = new DeployDiamond();
         script.setArtifactRootOverride(root);
+        _namePriceGuardInputs(script);
         script.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
         diamond = script.diamond();
 
@@ -204,6 +211,22 @@ contract DeployArtifactCompletenessTest is Test {
         artifactJson = vm.readFile(artifactPath);
 
         vm.removeDir(root, true);
+    }
+
+    /// @dev #3272 — a production chain's deploy builds the feed registry with
+    ///      the Pauser Safe as its guardian and a PriceGuard that starts
+    ///      complete, so it refuses without them. Named as script state, never
+    ///      through the env (the process env is shared with parallel tests).
+    ///      The guard checks only that WETH and the ETH/USD feed have code.
+    function _namePriceGuardInputs(DeployDiamond script) internal {
+        if (TestnetChains.isTestnet(block.chainid)) return;
+        PriceGuardDeployment.Inputs memory i;
+        i.delay = PriceGuardDeployment.PRODUCTION_DEFAULT_DELAY;
+        i.weth = address(0xC0FFEE01);
+        i.ethUsdFeed = address(0xC0FFEE02);
+        vm.etch(i.weth, hex"00");
+        vm.etch(i.ethUsdFeed, hex"00");
+        script.setPriceGuardInputs(PAUSER_SAFE, i);
     }
 
     /// @dev TRUE when `needle` is the value of some key under `.facets`.

@@ -3,6 +3,10 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {VaultBeacon} from "../../src/VaultBeacon.sol";
+import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
+import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {DiamondInterfacesInit} from "../../src/DiamondInterfacesInit.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
@@ -400,6 +404,35 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         (address impl, ) = beacon.versionOf(1);
         assertGt(impl.code.length, 0, "vault impl has no code");
         assertEq(beacon.implementation(), impl, "the beacon does not resolve to version 1");
+    }
+
+    /// @notice #3272 — Step 5c-ii builds the PriceGuard on the chain's feed
+    ///         registry and seeds it as the registry's `PRICE_GUARD` pointer,
+    ///         the one write that does not wait. Owner and guardian are the
+    ///         admin until the handover; the identity is retail USD keyed by
+    ///         the feed registry's own denominators.
+    function test_DeployedDiamond_PriceGuardSeededInTheRegistry() public {
+        vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
+        DeployDiamond script = new DeployDiamond();
+        script.runWith(ADMIN_FOR_HANDOVER, TREASURY, DEPLOYER_KEY);
+        ProtocolRegistry registry = ProtocolRegistry(script.protocolRegistry());
+        PriceGuard guard = PriceGuard(script.priceGuard());
+        VaipakamFeedRegistry feeds = VaipakamFeedRegistry(script.feedRegistry());
+
+        assertGt(address(guard).code.length, 0, "no guard");
+        assertEq(registry.requirePointer(RegistryKeys.PRICE_GUARD), address(guard), "pointer not seeded");
+        (, uint256 pendingAt) = registry.pendingPointer(RegistryKeys.PRICE_GUARD);
+        assertEq(pendingAt, 0, "nothing waits");
+
+        assertEq(guard.owner(), ADMIN_FOR_HANDOVER, "owner");
+        assertEq(guard.guardian(), ADMIN_FOR_HANDOVER, "guardian");
+        assertEq(guard.feedRegistry(), address(feeds), "feed source");
+        assertEq(feeds.owner(), ADMIN_FOR_HANDOVER, "feed registry owner");
+        assertEq(guard.NUMERAIRE_DENOMINATOR(), feeds.USD(), "numeraire");
+        assertEq(guard.ETH_DENOMINATOR(), feeds.ETH(), "eth");
+        assertEq(guard.NUMERAIRE_SYMBOL(), bytes32("usd"), "symbol");
+        assertTrue(guard.padIsNumeraire(), "retail has no pivot");
+        assertEq(guard.delay(), 0, "a testnet starts with no delay");
     }
 
     /// @notice #1566 slice 4 PR A — a fresh deploy binds a

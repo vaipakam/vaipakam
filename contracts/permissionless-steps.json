@@ -445,6 +445,10 @@
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
     },
+    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
+      "class": "user",
+      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
+    },
     "ProtocolRegistry.executeAdd(bytes32,address)": {
       "class": "user",
       "why": "governance applies a change it proposed through the Timelock once the registry's own delay has passed; a change nobody executes leaves the current entry in place"

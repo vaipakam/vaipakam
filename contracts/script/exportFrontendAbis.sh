@@ -424,6 +424,10 @@ FACETS=(
   # delayed endpoints the Diamond and every vault share; the governance page
   # reads its pending changes and the indexer decodes its events.
   "ProtocolRegistry"
+  # #3272 — the PriceGuard (standalone; NOT a diamond facet). The one price
+  # source the Diamond and every vault read; the governance page reads its
+  # pending config changes and the indexer decodes its events.
+  "PriceGuard"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined
