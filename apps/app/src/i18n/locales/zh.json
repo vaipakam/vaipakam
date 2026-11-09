@@ -3358,7 +3358,22 @@
       "minOfferValue": "最小报价",
       "minOfferValueHint": "发布报价或修改其金额时，报价本金必须达到的最低价值。仅适用于有价格的流动性代币；NFT 和非流动性代币绝不会因其价值而被拒绝。来自现有贷款的报价不受限制。提高该值不会关闭任何未结报价。",
       "maxOpenOffers": "每个钱包的未结报价数",
-      "maxOpenOffersHint": "一个钱包同时可持有的未结报价上限，所有类型的报价都计算在内。已过期的报价在被取消之前仍计入。降低该值不会关闭任何未结报价。来自现有贷款的报价不受限制。"
+      "maxOpenOffersHint": "一个钱包同时可持有的未结报价上限，所有类型的报价都计算在内。已过期的报价在被取消之前仍计入。降低该值不会关闭任何未结报价。来自现有贷款的报价不受限制。",
+      "priceGuard": "价格守卫",
+      "priceGuardHint": "协议使用的每个价格都来自这个合约。此行以下的设置属于它，而非协议：协议只读取它们，无法更改。",
+      "priceGuardDelay": "价格守卫变更等待期",
+      "priceGuardDelayHint": "对价格守卫设置的拟议变更在任何人可以应用之前需等待的时间，以便先审查并可取消。在测试网上可以为零，此时变更立即生效。",
+      "priceGuardOwner": "价格守卫所有者",
+      "priceGuardOwnerHint": "可以提议更改价格守卫的设置。变更仍需等待上面的等待期。",
+      "priceGuardGuardian": "价格守卫监护人",
+      "priceGuardGuardianHint": "可以取消拟议的变更，并可立即让某个次级价格来源不再计入。不能进行变更，也不能缩短等待时间。",
+      "protocolRegistry": "协议注册表",
+      "protocolRegistryHint": "指定价格守卫的注册表。它在协议设置时记录一次。将其指向另一个守卫是注册表自身的延迟变更，且协议会拒绝以其他参考货币计价的守卫。",
+      "feedRegistryPrimaryKeyHint": "向注册表查询代币主要价格时使用的键：价格锚的键。除非价格守卫是以单独的锚构建的（该锚随后会换算为参考货币），否则就是参考货币自身的键。",
+      "numeraireHint": "衡量所有价值所用的货币。它在构建价格守卫时固定并只记录一次，因此在本次部署中无法切换。",
+      "numeraireDenominator": "参考货币注册表键",
+      "numeraireDenominatorHint": "价格源注册表识别参考货币所用的键。",
+      "numeraireFeedHint": "以参考货币为 ETH 定价的 Chainlink 价格源。"
     },
     "forcedClose": {
       "title": "这笔贷款已逾期",

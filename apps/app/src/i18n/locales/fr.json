@@ -3358,7 +3358,22 @@
       "minOfferValue": "Offre minimale",
       "minOfferValueHint": "Le montant minimal que doit valoir le principal d’une offre lorsqu’elle est publiée ou que son montant est modifié. Cela ne s’applique qu’à un jeton liquide doté d’un prix ; les NFT et les jetons illiquides ne sont jamais refusés pour leur valeur. Les offres issues d’un prêt existant en sont exemptées. L’augmenter ne ferme aucune offre ouverte.",
       "maxOpenOffers": "Offres ouvertes par portefeuille",
-      "maxOpenOffersHint": "Le nombre maximal d’offres qu’un portefeuille peut avoir ouvertes en même temps, tous types d’offres confondus. Une offre expirée compte jusqu’à son annulation. Le baisser ne ferme aucune offre ouverte. Les offres issues d’un prêt existant en sont exemptées."
+      "maxOpenOffersHint": "Le nombre maximal d’offres qu’un portefeuille peut avoir ouvertes en même temps, tous types d’offres confondus. Une offre expirée compte jusqu’à son annulation. Le baisser ne ferme aucune offre ouverte. Les offres issues d’un prêt existant en sont exemptées.",
+      "priceGuard": "Garde des prix",
+      "priceGuardHint": "Le contrat d’où vient chaque prix utilisé par le protocole. Les réglages sous cette ligne sont les siens, pas ceux du protocole : le protocole les lit et ne peut pas les modifier.",
+      "priceGuardDelay": "Délai de modification de la garde des prix",
+      "priceGuardDelayHint": "Combien de temps une modification proposée des réglages de la garde des prix attend avant que quiconque puisse l’appliquer, afin qu’elle puisse d’abord être examinée et annulée. Il peut être nul sur un réseau de test, où une modification s’applique aussitôt.",
+      "priceGuardOwner": "Propriétaire de la garde des prix",
+      "priceGuardOwnerHint": "Peut proposer une modification des réglages de la garde des prix. La modification attend toujours le délai ci-dessus.",
+      "priceGuardGuardian": "Gardien de la garde des prix",
+      "priceGuardGuardianHint": "Peut annuler une modification proposée, et peut faire cesser immédiatement la prise en compte d’une source de prix secondaire. Ne peut ni faire une modification ni raccourcir l’attente.",
+      "protocolRegistry": "Registre du protocole",
+      "protocolRegistryHint": "Le registre qui désigne la garde des prix. Il est enregistré une seule fois, à la mise en place du protocole. Le faire pointer vers une autre garde est une modification différée du registre lui-même, et le protocole refuse une garde qui cote dans une autre devise de référence.",
+      "feedRegistryPrimaryKeyHint": "La clé sous laquelle le registre est interrogé pour le prix principal d’un jeton : la clé de l’ancre de prix. C’est la clé propre de la devise de référence, sauf si la garde des prix a été créée avec une ancre distincte, ensuite convertie dans la devise de référence.",
+      "numeraireHint": "La devise dans laquelle chaque valeur est mesurée. Elle est fixée à la création de la garde des prix et enregistrée une seule fois, elle ne peut donc pas être changée sur ce déploiement.",
+      "numeraireDenominator": "Clé de registre de la devise de référence",
+      "numeraireDenominatorHint": "La clé sous laquelle le registre des flux de prix connaît la devise de référence.",
+      "numeraireFeedHint": "Le flux Chainlink qui cote l’ETH dans la devise de référence."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

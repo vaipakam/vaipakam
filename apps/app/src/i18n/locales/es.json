@@ -3358,7 +3358,22 @@
       "minOfferValue": "Oferta mínima",
       "minOfferValueHint": "Lo mínimo que debe valer el principal de una oferta cuando se publica o se cambia su importe. Solo se aplica a un token líquido con precio; los NFT y los tokens ilíquidos nunca se rechazan por su valor. Las ofertas que provienen de un préstamo existente están exentas. Subirlo no cierra ninguna oferta abierta.",
       "maxOpenOffers": "Ofertas abiertas por billetera",
-      "maxOpenOffersHint": "El número máximo de ofertas que una billetera puede tener abiertas a la vez, contando todos los tipos de oferta. Una oferta vencida cuenta hasta que se cancela. Bajarlo no cierra ninguna oferta abierta. Las ofertas que provienen de un préstamo existente están exentas."
+      "maxOpenOffersHint": "El número máximo de ofertas que una billetera puede tener abiertas a la vez, contando todos los tipos de oferta. Una oferta vencida cuenta hasta que se cancela. Bajarlo no cierra ninguna oferta abierta. Las ofertas que provienen de un préstamo existente están exentas.",
+      "priceGuard": "Guardián de precios",
+      "priceGuardHint": "El contrato del que procede cada precio que usa el protocolo. Los ajustes debajo de esta fila son suyos, no del protocolo: el protocolo los lee y no puede cambiarlos.",
+      "priceGuardDelay": "Plazo de cambio del guardián de precios",
+      "priceGuardDelayHint": "Cuánto espera un cambio propuesto en los ajustes del guardián de precios antes de que cualquiera pueda aplicarlo, para que pueda revisarse y cancelarse antes. Puede ser cero en una red de prueba, donde un cambio se aplica al instante.",
+      "priceGuardOwner": "Propietario del guardián de precios",
+      "priceGuardOwnerHint": "Puede proponer un cambio en los ajustes del guardián de precios. El cambio sigue esperando el plazo de arriba.",
+      "priceGuardGuardian": "Guardián del guardián de precios",
+      "priceGuardGuardianHint": "Puede cancelar un cambio propuesto y puede hacer que una fuente de precios secundaria deje de contar al instante. No puede hacer un cambio ni acortar la espera.",
+      "protocolRegistry": "Registro del protocolo",
+      "protocolRegistryHint": "El registro que nombra al guardián de precios. Se registra una sola vez, al configurar el protocolo. Apuntarlo a otro guardián es un cambio diferido del propio registro, y el protocolo rechaza un guardián que cotice en otra moneda de referencia.",
+      "feedRegistryPrimaryKeyHint": "La clave con la que se consulta al registro el precio principal de un token: la clave del ancla de precios. Es la clave propia de la moneda de referencia, salvo que el guardián de precios se haya creado con un ancla aparte, que luego se convierte a la moneda de referencia.",
+      "numeraireHint": "La moneda en la que se mide cada valor. Se fija al crear el guardián de precios y se registra una sola vez, así que no puede cambiarse en este despliegue.",
+      "numeraireDenominator": "Clave de registro de la moneda de referencia",
+      "numeraireDenominatorHint": "La clave con la que el registro de feeds de precios conoce la moneda de referencia.",
+      "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

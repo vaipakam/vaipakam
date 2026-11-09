@@ -3358,7 +3358,22 @@
       "minOfferValue": "Kleinstes Angebot",
       "minOfferValueHint": "Der Mindestwert, den der Kapitalbetrag eines Angebots haben muss, wenn es eingestellt oder sein Betrag geändert wird. Das gilt nur für einen liquiden Token mit Preis; NFTs und illiquide Token werden nie wegen ihres Werts abgelehnt. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen. Eine Erhöhung schließt kein offenes Angebot.",
       "maxOpenOffers": "Offene Angebote pro Wallet",
-      "maxOpenOffersHint": "Die Höchstzahl an Angeboten, die eine Wallet gleichzeitig offen haben darf, alle Angebotsarten zusammengezählt. Ein abgelaufenes Angebot zählt, bis es storniert wird. Eine Senkung schließt kein offenes Angebot. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen."
+      "maxOpenOffersHint": "Die Höchstzahl an Angeboten, die eine Wallet gleichzeitig offen haben darf, alle Angebotsarten zusammengezählt. Ein abgelaufenes Angebot zählt, bis es storniert wird. Eine Senkung schließt kein offenes Angebot. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen.",
+      "priceGuard": "Preiswächter",
+      "priceGuardHint": "Der Vertrag, aus dem jeder Preis stammt, den das Protokoll verwendet. Die Einstellungen unter dieser Zeile sind seine, nicht die des Protokolls: Das Protokoll liest sie und kann sie nicht ändern.",
+      "priceGuardDelay": "Änderungsfrist des Preiswächters",
+      "priceGuardDelayHint": "Wie lange eine vorgeschlagene Änderung der Einstellungen des Preiswächters wartet, bevor jemand sie anwenden darf, damit sie vorher geprüft und abgebrochen werden kann. Auf einem Testnetz kann sie null sein; dort gilt eine Änderung sofort.",
+      "priceGuardOwner": "Eigentümer des Preiswächters",
+      "priceGuardOwnerHint": "Darf eine Änderung der Einstellungen des Preiswächters vorschlagen. Die Änderung wartet trotzdem die Frist oben ab.",
+      "priceGuardGuardian": "Guardian des Preiswächters",
+      "priceGuardGuardianHint": "Darf eine vorgeschlagene Änderung abbrechen und eine sekundäre Preisquelle sofort aus der Wertung nehmen. Darf keine Änderung vornehmen und die Wartezeit nicht verkürzen.",
+      "protocolRegistry": "Protokoll-Registry",
+      "protocolRegistryHint": "Die Registry, die den Preiswächter benennt. Sie wird einmal erfasst, wenn das Protokoll eingerichtet wird. Sie auf einen anderen Wächter zu richten, ist eine verzögerte Änderung der Registry selbst, und das Protokoll lehnt einen Wächter ab, der in einer anderen Referenzwährung bewertet.",
+      "feedRegistryPrimaryKeyHint": "Der Schlüssel, unter dem die Registry nach dem Hauptpreis eines Tokens gefragt wird: der Schlüssel des Preisankers. Es ist der eigene Schlüssel der Referenzwährung, außer der Preiswächter wurde mit einem eigenen Anker gebaut, der dann in die Referenzwährung umgerechnet wird.",
+      "numeraireHint": "Die Währung, in der jeder Wert gemessen wird. Sie wird beim Bau des Preiswächters festgelegt und einmal erfasst, kann auf diesem Deployment also nicht gewechselt werden.",
+      "numeraireDenominator": "Registry-Schlüssel der Referenzwährung",
+      "numeraireDenominatorHint": "Der Schlüssel, unter dem die Preisfeed-Registry die Referenzwährung kennt.",
+      "numeraireFeedHint": "Der Chainlink-Feed, der ETH in der Referenzwährung bepreist."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",
