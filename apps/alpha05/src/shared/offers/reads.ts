@@ -101,6 +101,10 @@ export function storedOfferFrom(raw: Raw): StoredOffer {
     interestRateBps: raw.interestRateBps as bigint,
     interestRateBpsMax: raw.interestRateBpsMax as bigint,
     collateralAmount: raw.collateralAmount as bigint,
+    // A zero ceiling is the protocol's single-amount form (it collapses to
+    // the floor), so it is stored as the floor.
+    collateralAmountMax: (raw.collateralAmountMax as bigint) === 0n ? (raw.collateralAmount as bigint) : (raw.collateralAmountMax as bigint),
+    collateralAmountFilled: raw.collateralAmountFilled as bigint,
     durationDays: raw.durationDays as bigint,
     tokenId: raw.tokenId as bigint,
     collateralTokenId: raw.collateralTokenId as bigint,
@@ -169,12 +173,13 @@ export async function readPreview(client: PublicClient, diamond: Hex, offerId: b
   );
 }
 
-export async function readLinkedLoanId(client: PublicClient, diamond: Hex, offerId: bigint): Promise<bigint> {
+export async function readLinkedLoanId(client: PublicClient, diamond: Hex, offerId: bigint, b?: AtBlock): Promise<bigint> {
   return (await client.readContract({
     address: diamond,
     abi: OFFER_CANCEL,
     functionName: 'getOfferLinkedLoanId',
     args: [offerId],
+    ...at(b),
   })) as bigint;
 }
 

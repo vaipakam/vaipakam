@@ -381,6 +381,13 @@ export interface Deployment {
    *  permissionless, this is just OUR reference deployment. */
   flashLoanLiquidator?: HexAddress;
 
+  /** #3361 — the keeper backup runner (`KeeperBackupUpkeep`) Chainlink
+   *  Automation drives on this chain. It runs a permissionless upkeep step
+   *  only after our own keeper has left it undone past a set lag, and every
+   *  step ships switched off. Absent on a chain that has not run
+   *  `DeployKeeperBackupUpkeep`. */
+  keeperBackupUpkeep?: HexAddress;
+
   /** #1566 slice 4 PR A — the `RewardCustodyHolder` bound to this Diamond:
    *  the dedicated custody address for delivered reward funding. Absent on
    *  a chain that predates the holder and has not yet run

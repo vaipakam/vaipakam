@@ -76,8 +76,10 @@ async function fetchTrackedAssets(env: Env, chainId: number): Promise<Address[]>
   return snapshotAssets((rows.results ?? []).map((r) => r.asset), chainId);
 }
 
-/** Keep only well-formed, non-zero addresses, deduplicated case-insensitively. */
-export function snapshotAssets(values: readonly string[], chainId: number): Address[] {
+/** Keep only well-formed, non-zero addresses, deduplicated case-insensitively.
+ *  `pass` names the pass in the count line (the price checkpoint pass applies
+ *  the same rule to its own asset list, #3384). */
+export function snapshotAssets(values: readonly string[], chainId: number, pass: string = 'dailyOracle'): Address[] {
   const kept = new Set<Address>();
   let dropped = 0;
   for (const v of values) {
@@ -86,7 +88,7 @@ export function snapshotAssets(values: readonly string[], chainId: number): Addr
     else dropped += 1;
   }
   if (dropped > 0) {
-    console.log(`[dailyOracle] chain=${chainId} skipped ${dropped} non-address asset value(s) (stub placeholders or NFT loans)`);
+    console.log(`[${pass}] chain=${chainId} skipped ${dropped} non-address asset value(s) (stub placeholders or NFT loans)`);
   }
   return [...kept];
 }

@@ -1714,6 +1714,33 @@ contract NFTPrepayListingFacetTest is SetupTest {
         _fillAndAssertSettled(lendingToken);
     }
 
+    /// @notice #3336 — a listing whose borrower position moved can never fill,
+    ///         so anyone may clear it at once, fixed-price or Dutch, with no
+    ///         grace or auction window to wait for. It moves nothing.
+    function test_cancelExpiredPrepayListing_movedPosition_anyoneClearsAtOnce() public {
+        _postThenHandOver(false);
+        assertLt(block.timestamp, _graceEnd(), "well before grace ends");
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "orderHash cleared"
+        );
+        assertEq(mockExecutor.clearCallCount(), 1, "clearOrder called");
+    }
+
+    function test_cancelExpiredPrepayListing_movedPosition_dutchAnyoneClearsAtOnce() public {
+        _postThenHandOver(true);
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "orderHash cleared before the auction ends"
+        );
+    }
+
     // ─── #1144 (S10 Invariant B): syncPrepaySaleListing ─────────────────
 
     /// @dev Post a clean loan-keyed listing (no fee legs) and return its

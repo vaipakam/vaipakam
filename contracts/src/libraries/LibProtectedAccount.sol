@@ -406,6 +406,7 @@ library LibProtectedAccount {
             delivered: 0
         });
         s.pendingPayoutIds[account].add(id);
+        s.openPayoutIds.add(id);
         s.pendingPayoutEarmark[account][asset][tokenId] += amount;
         emit PayoutQueued(account, id, asset, kind, tokenId, amount, recipient, releaseAt);
     }
@@ -420,6 +421,7 @@ library LibProtectedAccount {
         if (p.state != ROW_QUEUED) revert RowNotQueued(id);
         p.state = ROW_CANCELLED;
         s.pendingPayoutIds[p.user].remove(id);
+        s.openPayoutIds.remove(id);
         s.pendingPayoutEarmark[p.user][p.asset][p.tokenId] -= p.amount;
         LibDepositoryLedger.credit(p.user, p.asset, p.tokenId, p.amount);
         emit PayoutCancelled(p.user, id, by);
@@ -440,6 +442,7 @@ library LibProtectedAccount {
         if (a.requireCosign && !p.cosigned) revert CosignRequired(id);
         p.state = ROW_RELEASED;
         s.pendingPayoutIds[p.user].remove(id);
+        s.openPayoutIds.remove(id);
         s.pendingPayoutEarmark[p.user][p.asset][p.tokenId] -= p.amount;
         bindRelease(p.user, p.asset, p.tokenId, p.amount, p.recipient);
     }

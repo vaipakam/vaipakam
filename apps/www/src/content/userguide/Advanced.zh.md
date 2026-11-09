@@ -1896,6 +1896,18 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
+<a id="rate-check"></a>
+
+### 将你的利率与近期贷款比较
+
+两个发布表单都会针对相同的出借资产、抵押资产和期限读取索引的 `/loans/recent`（排除出借人出售用的报价），并只保留过去 30 天内开始、且带有索引账本可证实的约定利率的贷款（条款未确认的贷款不计入）。比较基准是这些利率的中位数，笔数为偶数时取中间两个中较低的一个，因此不会在两个约定利率之间凭空生成利率。偏离超过 5 个百分点（500 bps）的利率会给出注明方向的提醒：远低于基准的出借人或远高于基准的借款人，发布的是利率变动时最先被接走的报价；反方向时，报价可能无人接受。在该范围内则显示一条注明中位数和笔数的说明。一次读取覆盖最新的 100 笔贷款；达到上限时，说明会指出只读取了最新的部分。未限定在所请求币对和期限的索引应答会被拒绝而不作比较，NFT 抵押品不作比较，读取失败时也会说明。它从不阻止审核。 索引尚未确认条款的该币对贷款不属于任何期限；索引会统计其数量（`unplaced`），表单在比较旁注明该数量，因此“没有已确认的贷款”绝不会掩盖期限未知的贷款。
+
+<a id="public-queue"></a>
+
+### 有公开队列的网络
+
+在以太坊和 BNB Chain（以及 BNB Testnet）上，你发送的交易在被打包前会在公开队列中等待，任何观察该队列的人（包括机器人）都能看到它并抢先行动：在你的取消到达前接走报价，或在你的还款到达前对贷款采取行动。因此在这些网络上，发布、接受或取消报价，还款以及追加抵押品的审核会在钱包打开前说明这一点。有些钱包可以改为私下发送交易；请查看钱包的网络或安全设置。应用无法替你选择这条路径，按常规方式发送只会改变交易到达前谁能看到它。Base、Arbitrum 和 Optimism 没有公开队列，因此不会显示任何内容。 这些网络是应用中的一条规则（以太坊 1、BNB Chain 56、BNB Testnet 97），若应用支持的某个网络未被判定，测试就会失败。提示显示在审核中、最后一次复核和钱包之前，且仅针对以下操作：发布、接受或取消报价，全额和部分还款，以及追加抵押品。帮助不点名任何私下发送服务，因为协议无法核实钱包走了哪条路径，而两条路径上交易的效果相同。
+
 <a id="lend-offer-parts"></a>
 
 ### Lend：分部分出借的报价
@@ -2057,6 +2069,18 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 ### 你的报价
 
 列表是 `getUserOffersPaginated(wallet)`（按创建者的索引，会保留已取消的 id）与 `getUserPositionOffersPaginated(wallet)`（钱包持有其仓位代币的报价）的并集，通过逐位对应作答的 `MetricsDashboardFacet.getOffersWithState` 以每批至多 250 个读取。每一行都与所查询的 id 对应：未成交即取消的报价其记录已删除，视图返回 id 0 和推导出的“已取消”状态，该行不显示条款，而不是重建条款。部分成交后取消的报价保留记录并设置 `accepted`，读作已成交。筛选计数基于已读取的行；若任一索引未能读到末尾，页面会说明列表可能不完整。
+
+<a id="offer-book"></a>
+
+### 报价簿
+
+报价簿读取索引器的 `GET /offers/active?chainId&limit=50&before=<offerId>`，按报价 id 从新到旧排列，通过 `nextBefore` 分页。索引器会把已失效的报价保留为 `active`（链上的到期是惰性判定的），因此 `expiresAt` 已过的行会标记为已过期。`isSaleVehicle`、`isOffsetVehicle` 和 `refinanceTargetLoanId`（null = 未读取）标记报价类型，`positionFlow.movedSinceOpened` 标记已移动的绑定仓位（#3205）。每个字段都精确解析；解析失败的行计为未读。标签页取自 `assetType`（0 = ERC-20 贷款，否则为租赁），方向取自 `offerType`。查询由推送通道失效，并在可见期间每 60 秒重新读取；索引故障会如实说明，绝不显示为空报价簿。
+
+<a id="offer-detail"></a>
+
+### 报价页面
+
+`/offers/:id` 在同一区块读取 `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)` 和 `getOfferLinkedLoanId(id)`，连接钱包时经由钱包，否则经由只读代理。创建者为零表示记录已被删除（未成交任何部分即取消）或从未写入；协议不保存报价数量，因此页面不说明是哪一种。非零的关联贷款标记贷款出售（借款人报价）或抵销（出借人报价）；借款人报价的 `refinanceTargetLoanId` 标记再融资请求。接受时使用共享的 `acceptOffer` 流程（签名的 `AcceptTerms`、精确授权、试运行、实测结果），并使用独立的存储键；取消和清理使用共享的 `cancelOffer` 流程。租赁、NFT 抵押、贷款出售和抵销会链接到当前应用。
 
 <a id="offer-cancel"></a>
 

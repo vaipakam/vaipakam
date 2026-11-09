@@ -556,6 +556,35 @@ contract ProtectedVaultTest is Test {
         assertEq(_depo().freeHolding(user, K20, address(token), 0), 10 ether);
     }
 
+    /// @dev #3361 — the global open-payout set holds exactly the queued ids:
+    ///      a queue adds, a cancel, a release and a lock's cancel-all remove.
+    function testOpenPayoutSetTracksQueueCancelReleaseAndLock() public {
+        _deposit20(100 ether);
+        _enable();
+        _addSigner(s1);
+        uint256 a = _queue(10 ether, user);
+        uint256 b = _queue(10 ether, user);
+        uint256 c = _queue(10 ether, user);
+        assertEq(_pay().getOpenPayoutCount(), 3);
+        uint256[] memory page = _pay().getOpenPayoutIds(1, 5);
+        assertEq(page.length, 2, "a page stops at the end of the set");
+        assertEq(_pay().getOpenPayoutIds(3, 5).length, 0, "an offset past the end is empty");
+
+        vm.prank(user);
+        _pay().cancelPayout(a);
+        assertEq(_pay().getOpenPayoutCount(), 2);
+
+        vm.warp(block.timestamp + DELAY);
+        _pay().releasePayout(b);
+        uint256[] memory open = _pay().getOpenPayoutIds(0, 10);
+        assertEq(open.length, 1);
+        assertEq(open[0], c);
+
+        vm.prank(s1);
+        _prot().lockVault(user);
+        assertEq(_pay().getOpenPayoutCount(), 0, "a lock's cancel-all empties it");
+    }
+
     // ─── Signers, co-sign and the lock ───────────────────────────────────
 
     function testSignerNeedsItsOwnAcceptance() public {

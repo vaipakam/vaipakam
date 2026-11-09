@@ -1179,6 +1179,18 @@ When no request fits, you can post your own lending offer for your two tokens: t
 
 Unless you set parts in Advanced mode, one borrower takes the whole amount, or nobody does, and must lock exactly the collateral you set. The form shows how much of the lending token your wallet holds. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows. The offer stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, means an early repayment does not lower what you earn; pro-rata pays you only for the time the loan is open. You can also let the borrower repay part early. The form shows what the borrower would owe you at the due date if they took the offer now. In Advanced mode an offer can also be lent in parts, carry a fill mode, pay interest on a schedule and take the Full fee tariff.
 
+<a id="rate-check"></a>
+
+### Checking your rate against recent loans
+
+Under the rate on both posting forms, a lender's offer and a borrower's request, the app shows the middle rate of loans that started on the same pair and term in the last 30 days, and how many there were. If your rate is more than five points away, it warns you and says which way it cuts: a lender far under the market, or a borrower far over it, posts the offer taken first when rates move; the other way, the offer may sit untaken. It only warns, and you can still post. When there are no recent loans to compare with, when the collateral is an NFT, or when the protocol's index cannot be read, the form says so instead of staying silent.
+
+<a id="public-queue"></a>
+
+### Networks with a public queue
+
+On Ethereum and BNB Chain (and BNB Testnet), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts (Advanced)
@@ -1337,7 +1349,19 @@ While the protocol is paused, the Vault page says so at the top: withdrawals are
 
 ### Your offers
 
-Offers lists every offer you made on the network you are connected to, and every offer whose position token you hold now, newest first. Each shows the state the protocol reports: open, filled, sold, expired or cancelled, and the filters above the list count each state. A borrowing request reads as sold when its collateral was sold through its marketplace listing before anyone accepted it: no loan opened, and the sale's proceeds went to the creator's vault. An open offer keeps what it lends or pledges in your vault until it is filled or cancelled; an expired one keeps it there until it is cleaned up. When the protocol cancels an offer that nothing filled, it clears the offer's terms, so the page shows only its number and state. If another wallet holds the position token of an offer you made, you can still cancel it and its return comes to you; if you hold one that another wallet made, only that wallet can cancel it before it expires. The offer book is still in the current app, and the page links to it.
+Offers lists every offer you made on the network you are connected to, and every offer whose position token you hold now, newest first. Each shows the state the protocol reports: open, filled, sold, expired or cancelled, and the filters above the list count each state. A borrowing request reads as sold when its collateral was sold through its marketplace listing before anyone accepted it: no loan opened, and the sale's proceeds went to the creator's vault. An open offer keeps what it lends or pledges in your vault until it is filled or cancelled; an expired one keeps it there until it is cleaned up. When the protocol cancels an offer that nothing filled, it clears the offer's terms, so the page shows only its number and state. If another wallet holds the position token of an offer you made, you can still cancel it and its return comes to you; if you hold one that another wallet made, only that wallet can cancel it before it expires. Below your offers is the offer book, described next.
+
+<a id="offer-book"></a>
+
+### The offer book
+
+Below your offers, the offer book lists every open offer on the network, newest first, and you can read it without connecting a wallet. Tabs split loans of a token from NFT rentals, a filter shows lenders' offers, borrowers' requests or both, and once connected you can hide your own offers. Older offers load with Show older offers; the filters apply to what has been read, and the count line says how many that is. The book comes from the protocol's index, which can lag the chain by a few minutes, so it only points you at offers: open one to see it as the chain holds it. An offer past its expiry is tagged expired; anyone may clean it up, and what it locked returns to its creator. If the index cannot be read, the book says so instead of showing no offers.
+
+<a id="offer-detail"></a>
+
+### An offer's page
+
+Each offer has its own page, read from the chain whether or not a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
 
 <a id="offer-cancel"></a>
 

@@ -545,6 +545,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       ) : (
         <ActionFlow
           tx={tx}
+          publicQueue
           identity={identity}
           reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
           receipt={review ? acceptReceipt(review, meta, copy) : null}

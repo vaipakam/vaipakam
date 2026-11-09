@@ -949,7 +949,9 @@ contract NFTPrepayListingFacet is
     // ─── Permissionless entry: cancelExpiredPrepayListing ───────────────
 
     /// @notice Permissionless cleanup of a listing whose grace
-    ///         window has expired without a fill.
+    ///         window has expired without a fill, or (#3336), at any
+    ///         time, of a listing whose borrower position has moved
+    ///         since it was posted.
     /// @dev    Three rationale points worth keeping in mind:
     ///
     ///         1. **Lock liveness.** The borrower-position NFT
@@ -996,6 +998,16 @@ contract NFTPrepayListingFacet is
         bytes32 orderHash = s.prepayListingOrderHash[loanId];
         if (orderHash == bytes32(0)) {
             revert PrepayListingNotFound(loanId);
+        }
+
+        // #3336 — a listing whose borrower position moved since it was posted
+        // (or whose route another flow replaced) can never fill
+        // (`LibPositionNFT.completeRoute` refuses it), so anyone may clear it
+        // at once, with no window to wait for. Like every cancel here it moves
+        // nothing: the collateral stays in the loan's vault under its lien.
+        if (LibPositionNFT.routeIsDead(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing)) {
+            _cancel(s, loan, loanId, orderHash, CancelReason.PositionMoved);
+            return;
         }
 
         // Round-5 Block B (#309) post-merge polish — Codex P2 (mode-
@@ -1367,23 +1379,13 @@ contract NFTPrepayListingFacet is
         delete s.prepayListingExecutor[loanId];
         IListingExecutorRecorder(pinnedExecutor).clearOrder(orderHash);
 
-        // T-086 step 7 — vault-side cleanup. ERC721 explicitly
-        // revokes the per-token approval; ERC1155 leaves the
-        // operator approval in place — `revokeListingOrderHash`
-        // is the authoritative safety primitive (orderHash
-        // binding invalidated → vault.isValidSignature returns
-        // INVALID → no fill regardless of operator approval
-        // state). Matches the standard Seaport ERC1155 conduit
-        // pattern.
-        //
-        // T-086 Round-6 / Block D (#345) — body extracted into
-        // `LibPrepayListingWiring.unwire` so the new sibling facet
-        // `NFTPrepayListingAtomicFacet`'s mandatory auto-clear
-        // step (§17.11 step 0(f) of the Round-6 design doc) can
-        // call the SAME cleanup. v1 behavior preserved byte-for-
-        // byte: silently no-ops for the unset-vault case; ERC721-
-        // only operator-approval revoke; both asset types get the
-        // orderHash binding revoke.
+        // T-086 step 7 — vault-side cleanup, shared with every teardown
+        // (`LibPrepayListingWiring.unwire`, also run by the atomic sibling's
+        // auto-clear and by the #3336 moved-position cancel above). #3205
+        // part 2: an ERC-721 listing holds no approval between transactions
+        // (the conduit is granted only inside a fill), and an ERC-1155 lot
+        // comes back from its listing escrow, whose conduit approval is
+        // revoked; both revoke the vault's ERC-1271 binding for `orderHash`.
         LibPrepayListingWiring.unwire(s, loan, orderHash);
 
         emit PrepayListingCanceled(loanId, msg.sender, orderHash, reason);

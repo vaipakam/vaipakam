@@ -1478,7 +1478,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function getVaultPayoutFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](14);
         selectors[0] = VaultPayoutFacet.applyPayoutGate.selector;
         selectors[1] = VaultPayoutFacet.cancelPayout.selector;
         selectors[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -1492,6 +1492,9 @@ contract HelperTest {
         selectors[10] = VaultPayoutFacet.requestCode.selector;
         // #3173 — when the escape opens under the current pause.
         selectors[11] = VaultPayoutFacet.escapeOpensAt.selector;
+        // #3361 — the global open-payout set, for the keepers.
+        selectors[12] = VaultPayoutFacet.getOpenPayoutCount.selector;
+        selectors[13] = VaultPayoutFacet.getOpenPayoutIds.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

@@ -14,6 +14,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -130,8 +131,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      * @param offerId The offer ID to cancel.
      */
     /// @dev #3205 — whether `offerId` is an offset or lender-sale vehicle whose
-    ///      route on its position is dead ({LibPositionNFT.routeIsDead}). False
-    ///      for every other offer.
+    ///      route on its position is dead ({LibPositionNFT.routeIsDead}), or
+    ///      (#3336) a refinance request whose position moved since it was
+    ///      recorded. False for every other offer.
     function _vehicleRouteDead(LibVaipakam.Storage storage s, uint256 offerId) private view returns (bool) {
         uint256 loanId = s.offsetOfferToLoanId[offerId];
         if (loanId != 0) {
@@ -141,6 +143,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (loanId != 0) {
             return LibPositionNFT.routeIsDead(s.loans[loanId].lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
         }
+        // #3336 — a refinance request is dead once it is no longer its loan's
+        // recorded request on an unmoved position: the borrower position moved
+        // since it was recorded, or a later request displaced it. Either way
+        // it can never be taken ({LibRefinanceRequest.assertTakeable}).
+        loanId = s.offers[offerId].refinanceTargetLoanId;
+        if (loanId != 0) return !LibRefinanceRequest.unmoved(s, loanId, offerId);
         return false;
     }
 
@@ -161,6 +169,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // refund still goes to `offer.creator`, whose protected payout gate
         // queues it to the controller.
         address creator = offer.creator;
+        bool routeDead = _vehicleRouteDead(s, offerId);
         // #3205 — and anyone against an offset or sale vehicle whose route is
         // dead: the position it is bound to moved (or its route was closed),
         // so it can never complete, and only its creator could otherwise
@@ -169,7 +178,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (
             LibProtectedAccount.manager(creator) != msg.sender
                 && !LibVaipakam.isOfferExpired(offer)
-                && !_vehicleRouteDead(s, offerId)
+                && !routeDead
         ) {
             revert NotCreatorOrNotExpired(creator, offer.expiresAt);
         }
@@ -209,11 +218,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // cannot grief anyone, and an offer whose expiry falls inside the
         // window would otherwise be "expired but uncleanable" until the
         // window separately elapsed.
+        //
+        // #3336 — a vehicle whose route is dead bypasses it for the same
+        // reason: no accept or match can bind it any more, so there is no
+        // race to protect, and the position's new holder should not wait.
         if (
             offer.amountFilled == 0
             && offer.createdAt != 0
             && block.timestamp < uint256(offer.createdAt) + LibVaipakam.MIN_OFFER_CANCEL_DELAY
             && !LibVaipakam.isOfferExpired(offer)
+            && !routeDead
         ) {
             revert CancelCooldownActive();
         }

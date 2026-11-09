@@ -28,6 +28,7 @@ import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibOneTxSwapFill} from "./helpers/LibOneTxSwapFill.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 /**
  * @title SwapToRepayIntentFacetTest
@@ -644,6 +645,34 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL, "the whole collateral is back in the vault");
         assertEq(_lien(), LOAN_COLLATERAL, "and the whole of it is pledged again");
         assertEq(collateralAsset.balanceOf(address(diamond)), 0, "nothing left in custody");
+    }
+
+    /// @dev #3336 — once the borrower position moves, the committed order can
+    ///      never fill, so anyone may cancel it at once, before its deadline.
+    ///      Before the move a stranger must wait for the deadline and its
+    ///      cancel grace. The cancel moves nothing to the cleaner and leaves
+    ///      nothing in the Diamond; the collateral stays pledged to the loan.
+    function test_CancelExpired_MovedPosition_AnyoneCancelsAtOnce() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        address cleaner = makeAddr("intentCleaner");
+
+        vm.prank(cleaner);
+        vm.expectRevert(SwapToRepayIntentFacet.IntentNotPastCancelGrace.selector);
+        SwapToRepayIntentFacet(address(diamond)).cancelExpiredIntent(LOAN_ID);
+
+        LibTestPositionNFT.move(address(diamond), LOAN_ID * 2, makeAddr("intentNewHolder"));
+        assertLt(block.timestamp, params.deadline, "still before the order's deadline");
+
+        vm.prank(cleaner);
+        SwapToRepayIntentFacet(address(diamond)).cancelExpiredIntent(LOAN_ID);
+
+        vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentNoCommit.selector, LOAN_ID));
+        SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID); // the commit is gone
+        assertEq(collateralAsset.balanceOf(cleaner), 0, "the cleaner receives nothing");
+        assertEq(collateralAsset.balanceOf(address(diamond)), 0, "nothing left in custody");
+        assertEq(_lien(), LOAN_COLLATERAL, "the whole collateral is still pledged to the loan");
     }
 
     /// @dev When even the whole collateral, at the slippage floor, cannot

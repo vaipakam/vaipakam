@@ -2540,6 +2540,18 @@ A lending offer is `createOffer` with `offerType` 0, ERC-20 on both legs, sent f
 
 Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0 unless Advanced sets another (next section), `periodicInterestCadence` 0 unless Advanced sets a schedule, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff unless Advanced chooses it. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
 
+<a id="rate-check"></a>
+
+### Checking your rate against recent loans
+
+Both posting forms read the index's `/loans/recent` for the same lending asset, collateral asset and term, with lender-sale vehicles excluded, and keep the loans that started in the last 30 days and carry an agreed rate the index's ledger backs (a loan whose terms are not confirmed is left out). The comparison is the median of those rates, the lower of the two middles for an even count, so no rate is invented between two agreed ones. A rate more than 5 percentage points (500 bps) from it is a warning that names the direction: a lender far under, or a borrower far over, posts the offer taken first when rates move; the other way, the offer may sit untaken. Within that band it is a note with the median and the count. One read covers the newest 100 loans; when it reaches that cap, the note says only the latest were read. An index answer not scoped to the pair and term asked for is refused rather than compared, NFT collateral is not compared, and a read that fails says so. It never blocks the review. Loans on the pair whose terms the index has not confirmed belong to no term; the index counts them (`unplaced`) and the form states that count beside the comparison, so "no confirmed loans" never hides loans of unknown term.
+
+<a id="public-queue"></a>
+
+### Networks with a public queue
+
+On Ethereum and BNB Chain (and BNB Testnet), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there. The networks are one rule in the app (Ethereum 1, BNB Chain 56, BNB Testnet 97), and a test fails if a network the app serves is not decided. The notice is shown in the review, before the last re-check and the wallet, for these writes only: posting, taking or cancelling an offer, full and partial repayment, and adding collateral. Its help names no private sending service, because the protocol cannot verify which route a wallet used, and the transaction's effect is the same on either route.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts
@@ -2701,6 +2713,18 @@ The notice reads, at one block, `paused`, `VaultPayoutFacet.isEscapeOpen`, `esca
 ### Your offers
 
 The list is the union of `getUserOffersPaginated(wallet)` (the per-creator index, which keeps a cancelled id) and `getUserPositionOffersPaginated(wallet)` (the offers whose position token the wallet holds), read in batches of at most 250 through `MetricsDashboardFacet.getOffersWithState`, which answers position for position. Each row is matched to the id it asked for: an offer cancelled with nothing filled has its record deleted, so the view reports id 0 with the derived state Cancelled, and the row shows no terms rather than rebuilt ones. An offer cancelled after a partial fill keeps its record with `accepted` set, and reads as filled. The filter counts are taken over the rows read; if either index could not be read to its end, the page says the list may be incomplete.
+
+<a id="offer-book"></a>
+
+### The offer book
+
+The book reads the indexer's `GET /offers/active?chainId&limit=50&before=<offerId>`, newest first by offer id, paged by `nextBefore`. The indexer keeps a lapsed offer `active` (expiry is lazy on-chain), so a row whose `expiresAt` has passed is tagged expired. `isSaleVehicle`, `isOffsetVehicle` and `refinanceTargetLoanId` (null = not read) tag the kind, and `positionFlow.movedSinceOpened` a moved bound position (#3205). Every field is parsed exactly; a row that fails is counted as unread. The tab is `assetType` (0 = an ERC-20 loan, otherwise a rental), the side `offerType`. The query is invalidated by the push rail and re-read every 60 s while visible; an index failure is stated, never an empty book.
+
+<a id="offer-detail"></a>
+
+### An offer's page
+
+`/offers/:id` reads, at one block, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` and `getOfferLinkedLoanId(id)`, through the wallet when one is connected and the read-only proxy otherwise. A zero creator means the record was deleted (a cancel with nothing filled) or never written; the protocol keeps no offer count, so the page does not say which. A non-zero linked loan marks a loan sale (a borrower offer) or an offset (a lender offer); a borrower offer's `refinanceTargetLoanId` marks a refinance request. Taking runs the shared `acceptOffer` flow (signed `AcceptTerms`, exact approval, dry run, measured outcome) under its own store key; cancel and clean-up run the shared `cancelOffer` flow. Rentals, NFT collateral, loan sales and offsets link the current app.
 
 <a id="offer-cancel"></a>
 

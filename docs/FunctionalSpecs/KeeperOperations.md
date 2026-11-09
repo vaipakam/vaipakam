@@ -1037,6 +1037,25 @@ serves. Each ships switched off behind its own flag.
   forgotten.
 - The duty ships switched off behind its own flag and pays only gas.
 
+## Writing hourly price checkpoints for the forced-sale floor
+
+- The tighter forced-sale floor counts a pair as calm only when its oracle
+  rate now is close to its rate at both of the last two hourly checkpoints.
+  Anyone may write a checkpoint; until someone does, every forced sale uses
+  the full slippage allowance. The keeper writes them so the floor can work.
+- Twice an hour, on each chain whose Diamond carries the floor, the keeper
+  records the hour's checkpoint for every asset that is a token leg of an
+  active loan, has none for the current hour yet, and has an oracle price
+  that reads. It simulates first and sends a bounded batch per transaction;
+  the second run in the hour sends only what the first left.
+- An asset whose price does not read is not sent. A missed hour can only
+  return a sale to the full allowance for the next two hours, never make a
+  floor tighter. A checkpoint stores only the oracle's own reading and moves
+  no value. Each run reports the hour, what was already recorded, what it
+  recorded, what landed in the next hour, what another caller recorded first
+  and what had no price.
+- The duty ships switched off behind its own flag and pays only gas.
+
 ## Moving held reward claim days on to payment
 
 - A reward claim day that one call could not settle is held in a staging
@@ -1103,6 +1122,57 @@ sending a recorded step fails there too. A recorded gap passes: what this
 prevents is an unrecorded one. A deployed switch being off still means the
 step is not being driven on that deployment, as the activation rules below
 state.
+
+## A backup runner on an outside automation network
+
+The keeper runs on one machine, so a step can stay undone while that machine
+is down, out of gas or stuck. A second runner, driven by Chainlink Automation
+(owner choice, November 8), covers that gap for a set of steps. It is a
+backup, not a second keeper:
+
+- It acts only on steps the protocol itself says are due right now. It keeps
+  no rule of its own about when a step is due; it asks the protocol by trying
+  the step in a way whose effects are always undone.
+- It waits. A due step is first noted, and is run only if it is still due
+  after a delay set per step (one hour by default, and at most half an hour for the grace auto-listing, whose own window can be one hour) and within a set window after that. The runner takes the noted steps whose window closes first first, so a full queue still reaches each one in time.
+  If the keeper runs the step meanwhile, the backup does nothing and lets the
+  note go. A noted step is checked again on every look until it is run or let
+  go, however far the backup's scan of loans, offers and days has moved on. A
+  step that recurs waits the full delay every time.
+- It finds reward-day steps on recent days and on older days alike, because a
+  day's lapse becomes possible only long after the day itself.
+- It covers only steps anyone may call that need nothing computed off-chain
+  and can be found from on-chain reads: daily rental deductions, expired
+  listing and intent teardowns, the grace auto-listing of NFT collateral, a
+  past-grace default that needs no sale, a periodic-interest stamp that needs
+  no sale, the reward-day close where the chain charges no fee for it, the
+  lapses and skips of finished reward days, the recycling of a skipped day's
+  value while a recycle still moves some, the vault-code changes whose
+  delay has passed, and the release of a protected account's held payout once
+  its delay is over. Value of a skipped day that sits beyond spent transport
+  records waits for the keeper, which first moves the day's reading point
+  past them; the backup cannot tell when that move is needed.
+- To find held payouts without knowing whose they are, the protocol keeps one
+  list of every payout still waiting, across all accounts: a payout joins it
+  when it is held back and leaves it when it is released or cancelled. A
+  payout still in its delay, on a locked account, waiting for a co-signer or
+  addressed to a screened-out recipient is not due, so the backup leaves it.
+  The owner can still cancel a held payout during its delay, exactly as
+  before; the backup only adds its own wait after the delay ends.
+- It does not cover liquidations or matching, which stay open to anyone;
+  anything that needs a swap route, a price quote or a cross-chain fee;
+  steps found only from event history; the irreversible reward-day finalize;
+  or lending treasury capital.
+- It holds no funds, attaches no value to any call, and can call nothing but
+  the steps it lists. Tokens a step pays it, such as a matcher's bonus, can
+  go only to the treasury fixed when it was deployed, and anyone may send
+  them there.
+- Every step starts switched off and is switched on by the owner one at a
+  time, as each keeper duty ships disarmed. Registering it with the network
+  and funding it are owner decisions per chain.
+- Each time it notes a step as due, and each time it runs one, it says so
+  publicly, so operators can see from its records alone that the keeper was
+  late.
 
 ## Releasing protected payouts and applying matured protected-mode changes
 
@@ -1305,9 +1375,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, and vault-beacon upkeep must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, and the hourly price checkpoints must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, and vault-beacon upkeep ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, and the hourly price checkpoints ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

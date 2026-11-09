@@ -19,6 +19,14 @@ import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
+import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
+import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {LenderIntentFacet} from "../../src/facets/LenderIntentFacet.sol";
+import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {ConsolidationFacet} from "../../src/facets/ConsolidationFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
@@ -36,6 +44,8 @@ import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {OfferBookFacet} from "../../src/facets/OfferBookFacet.sol";
 import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
+import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
 import {SaleFloorFacet} from "../../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
@@ -79,6 +89,10 @@ contract InvariantBase is Test {
     uint256[3] public borrowerPks;
 
     uint256 public constant MINT_AMOUNT = 1_000_000 ether;
+    /// @dev #3241: the working venue's principal-asset float (it pays sale proceeds from it).
+    uint256 public constant VENUE_FLOAT = 100_000_000 ether;
+    /// @dev #3241: the venue at adapter index 1, which fills at the oracle's prices.
+    MockSwapAdapter public workingVenue;
 
     function deploy() public {
         owner = address(this);
@@ -122,6 +136,26 @@ contract InvariantBase is Test {
         failingVenue.setShouldRevert(true);
         AdminFacet(address(diamond)).addSwapAdapter(address(failingVenue));
 
+        // #3241: a second venue that WORKS, at adapter index 1, trading at the oracle's prices
+        // ($1 USDC, $2,000 WETH) from its own float. Only the periodic-interest settlement names
+        // it (`workingAdapterCalls()`); the default and the HF liquidation keep naming index 0,
+        // so their in-kind fallback path is unchanged. The ledger tracks this venue as the
+        // market: it may take collateral and pay principal asset, nothing else.
+        workingVenue = new MockSwapAdapter("invariant-working-venue");
+        workingVenue.setTokenPrice(mockUsdc, 1e8);
+        workingVenue.setTokenPrice(mockWeth, 2000e8);
+        workingVenue.setRestrictedTo(address(diamond));
+        ERC20Mock(mockUsdc).mint(address(workingVenue), VENUE_FLOAT);
+        AdminFacet(address(diamond)).addSwapAdapter(address(workingVenue));
+
+        // #3241: periodic interest on, with the finer-cadence threshold at its floor ($1,000), so
+        // the handler's offers ($100 to $10,000, at most 365 days) may carry a monthly cadence.
+        // Nothing becomes mandatory: the Annual floor binds only past 365 days.
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(
+            LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR
+        );
+
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
         RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300);
         RiskFacet(address(diamond)).updateRiskParams(mockWeth, 8000, 300);
@@ -153,7 +187,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](39);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -273,6 +307,71 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
+        });
+        // #3241 - the handlers drive the direct preclose, so the borrower's
+        // early close-out route must be cut too (its try/catch would
+        // otherwise hide every attempt as FunctionDoesNotExist).
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(PrecloseFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseFacetSelectors()
+        });
+        // ...and the preclose consolidates both sides to their current
+        // holders by a self-call into ConsolidationFacet.
+        cuts[30] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ConsolidationFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConsolidationFacetSelectors()
+        });
+
+        // #3241 - the handlers drive the lender's direct sale. Both sale
+        // facets are one behaviour (their opening checks run through
+        // SaleExitVerdictFacet), a sold loan's interest pays the seller's
+        // claim first (SellerClaimFacet), the sale's solvency check runs in
+        // RiskPreviewFacet, and the buy offer's intent exposure is released
+        // through LenderIntentFacet.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()
+        });
+        cuts[32] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()
+        });
+        cuts[33] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
+        });
+        cuts[34] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SellerClaimFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSellerClaimFacetSelectors()
+        });
+        cuts[35] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        cuts[36] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderIntentFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderIntentFacetSelectors()
+        });
+        // #3241 - the handlers drive the periodic-interest settlement
+        // (RepayPeriodicFacet, which sells through ForcedSaleFacet), and the
+        // base switches the feature on through NumeraireConfigFacet.
+        cuts[37] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RepayPeriodicFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRepayPeriodicFacetSelectors()
+        });
+        cuts[38] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireConfigFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireConfigFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

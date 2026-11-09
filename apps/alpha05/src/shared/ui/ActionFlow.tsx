@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
+import { hasPublicQueue } from '../../chain/publicQueue';
+import { WhyLink } from '../help/WhyLink';
 import { useTxStore } from '../tx/txStore';
 import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
@@ -69,6 +71,11 @@ export interface ActionFlowProps {
    *  consent checkbox, a blocker stated in place), rendered under the
    *  receipt; confirming is withheld until `ready`. */
   gate?: { node: ReactNode; ready: boolean };
+  /** The write is one a watcher of a public queue could act on first
+   *  (posting, taking or cancelling an offer, repaying, adding collateral;
+   *  #3357, RB-PUBLIC-QUEUE): on a network that holds sent transactions in
+   *  a public queue, the review says so before the wallet opens. */
+  publicQueue?: boolean;
 }
 
 /**
@@ -79,7 +86,7 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, publicQueue }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
@@ -215,6 +222,14 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
             <Notice tone="warn" tier="A">
               {text('flow.identityChanged')}
             </Notice>
+          )}
+          {publicQueue && hasPublicQueue(Number(reviewedFor.split(':')[0])) && (
+            <div data-testid="flow-public-queue">
+              <Notice tone="warn" tier="A">
+                {format('flow.publicQueue', { chain: getSupportedChain(Number(reviewedFor.split(':')[0]))?.name ?? reviewedFor.split(':')[0]! })}
+              </Notice>
+              <WhyLink summaryKey="flow.publicQueueWhySummary" detailKey="flow.publicQueueWhy" />
+            </div>
           )}
           {receipt !== null && gate?.node}
           {checking && (

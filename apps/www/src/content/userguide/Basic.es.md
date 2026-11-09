@@ -1206,6 +1206,18 @@ Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo p
 
 Salvo que fije partes en el modo avanzado, un solo prestatario toma todo el importe, o nadie, y debe bloquear exactamente la garantía que usted fija. El formulario muestra cuánto del token prestado tiene su billetera. Cada cifra se lee exactamente como la escribe: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red. La oferta sigue abierta hasta que se acepte o se cancele, o durante los días que elija, hasta un año. Los intereses de plazo completo, la opción habitual, significan que un reembolso anticipado no reduce lo que usted gana; a prorrata se le paga solo por el tiempo que el préstamo está abierto. También puede permitir que el prestatario reembolse una parte antes. El formulario muestra lo que el prestatario le debería en la fecha de vencimiento si aceptara la oferta ahora. En el modo avanzado una oferta también puede prestarse en partes, llevar un modo de ejecución, pagar intereses según un calendario y tomar la tarifa de comisión Full.
 
+<a id="rate-check"></a>
+
+### Comparar tu tasa con préstamos recientes
+
+Bajo la tasa, en los dos formularios de publicación, la oferta de un prestamista y la solicitud de un prestatario, la app muestra la tasa media de los préstamos que empezaron con el mismo par y el mismo plazo en los últimos 30 días, y cuántos fueron. Si tu tasa se aleja más de cinco puntos, te avisa y dice en qué sentido: un prestamista muy por debajo del mercado, o un prestatario muy por encima, publica la oferta que se toma primero cuando las tasas se mueven; en el otro sentido, la oferta puede quedarse sin tomar. Solo avisa; puedes publicar igualmente. Si no hay préstamos recientes con los que comparar, si la garantía es un NFT o si no se puede leer el índice del protocolo, el formulario lo dice en lugar de callar.
+
+<a id="public-queue"></a>
+
+### Redes con cola pública
+
+En Ethereum y BNB Chain (y BNB Testnet), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Una oferta en partes (Avanzado)
@@ -1364,7 +1376,19 @@ Mientras el protocolo está en pausa, la página Bóveda lo dice arriba: los ret
 
 ### Tus ofertas
 
-Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada oferta cuyo token de posición tienes ahora, la más reciente primero. Cada una muestra el estado que informa el protocolo: abierta, completada, vendida, vencida o cancelada, y los filtros sobre la lista cuentan cada estado. Una solicitud de préstamo figura como vendida cuando su garantía se vendió mediante su anuncio en el mercado antes de que alguien la aceptara: no se abrió ningún préstamo y lo obtenido en la venta fue a la bóveda de quien la creó. Una oferta abierta mantiene en tu bóveda lo que presta o compromete hasta que se completa o se cancela; una vencida lo mantiene ahí hasta que alguien la limpia. Cuando el protocolo cancela una oferta que nada completó, borra sus condiciones, así que la página muestra solo su número y su estado. Si otra billetera tiene el token de posición de una oferta que creaste, aún puedes cancelarla y la devolución llega a ti; si tienes una que creó otra billetera, solo esa billetera puede cancelarla antes de que venza. El libro de ofertas sigue en la app actual, y la página enlaza a él.
+Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada oferta cuyo token de posición tienes ahora, la más reciente primero. Cada una muestra el estado que informa el protocolo: abierta, completada, vendida, vencida o cancelada, y los filtros sobre la lista cuentan cada estado. Una solicitud de préstamo figura como vendida cuando su garantía se vendió mediante su anuncio en el mercado antes de que alguien la aceptara: no se abrió ningún préstamo y lo obtenido en la venta fue a la bóveda de quien la creó. Una oferta abierta mantiene en tu bóveda lo que presta o compromete hasta que se completa o se cancela; una vencida lo mantiene ahí hasta que alguien la limpia. Cuando el protocolo cancela una oferta que nada completó, borra sus condiciones, así que la página muestra solo su número y su estado. Si otra billetera tiene el token de posición de una oferta que creaste, aún puedes cancelarla y la devolución llega a ti; si tienes una que creó otra billetera, solo esa billetera puede cancelarla antes de que venza. Debajo de tus ofertas está el libro de ofertas, que se describe a continuación.
+
+<a id="offer-book"></a>
+
+### El libro de ofertas
+
+Debajo de tus ofertas, el libro de ofertas muestra todas las ofertas abiertas de la red, de la más nueva a la más antigua, y puedes leerlo sin conectar una billetera. Las pestañas separan los préstamos de un token de los alquileres de NFT, un filtro muestra las ofertas de prestamistas, las solicitudes de prestatarios o ambas, y una vez conectado puedes ocultar tus propias ofertas. Las ofertas más antiguas se cargan con «Mostrar ofertas anteriores»; los filtros se aplican a lo leído, y la línea de recuento dice cuánto es. El libro viene del índice del protocolo, que puede ir unos minutos por detrás de la cadena, así que solo te señala ofertas: abre una para verla tal como la guarda la cadena. Una oferta pasada su vencimiento se marca como vencida; cualquiera puede limpiarla, y lo que bloqueaba vuelve a su creador. Si el índice no se puede leer, el libro lo dice en lugar de mostrar que no hay ofertas.
+
+<a id="offer-detail"></a>
+
+### La página de una oferta
+
+Cada oferta tiene su propia página, leída de la cadena haya o no una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes.
 
 <a id="offer-cancel"></a>
 

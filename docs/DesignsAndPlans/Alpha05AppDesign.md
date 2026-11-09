@@ -1278,8 +1278,56 @@ above. Each resolves here, so a route reviewer needs no private file:
   cleared its terms and shows only its number and state, never rebuilt
   terms. An offer held by one wallet but created by another says who may
   cancel it and where its return goes. The offer line is one shared helper,
-  the same as Home's open offers. The offer book comes in a later slice; the
-  page says so and links the current app for it.
+  the same as Home's open offers. Each row opens the offer's own page
+  (RB-OFFER-PAGE).
+- **RB-OFFER-BOOK** — the offer book (OFF-39, OFF-40, OFF-43) is on the
+  Offers page below the wallet's own offers and is read with or without a
+  wallet: every open offer the index files on the screen's network, newest
+  first, a page at a time ("Show older offers"), in two tabs (loans of a
+  token, NFT rentals), with a side filter and, when a wallet is connected,
+  a switch that hides its own offers. The filters apply to what has been
+  read so far, and the count line says how many that is and whether older
+  offers remain. The index only names candidates: no row carries an action,
+  and each opens the offer's page, which reads the chain. A lapsed offer the
+  index still files as open is tagged expired, with anyone allowed to clean
+  it up; a refinance request, a loan sale, an offset and an offer whose
+  bound position moved are tagged by kind, and a request the index has not
+  read as refinance or not says it may be one. A borrower request's
+  collateral reads as its range when it has one, and as "at least" its
+  floor when the index has not read the ceiling, never as the floor alone;
+  an ERC-1155 leg, rented or pledged, states its unit count.
+  A row the index returned in
+  a shape the app cannot read is counted as unread, never dropped silently;
+  a failed read is a degraded-source warning ("nothing here means no
+  offers"), and a failed re-read behind a list already shown says the list
+  may be out of date. The book refreshes on the index's push signal and on
+  a bounded interval while visible (RB-REFRESH). Advanced sorting and the
+  remaining filters (asset, duration, amount, liquidity) are later work.
+- **RB-OFFER-PAGE** — an offer's page (`/offers/:id`, OFF-41, OFF-45) reads
+  it from the chain at one block, with or without a wallet: the stored
+  terms, the protocol's state, and the running loan a loan-sale or offset
+  offer is tied to. The protocol keeps no count of offers and clears the
+  terms of an offer cancelled with nothing filled, so an id with no stored
+  terms says exactly that: cancelled, or never posted, and the protocol does
+  not say which. The page states the side, the creator, the amount (a range
+  when it has one), what is already filled, the collateral asked for or
+  pledged (a request's range when it has one, and what of it is already
+  committed to loans), the term and when the offer lapses, and what a refinance
+  request, loan sale or offset would do. What the reader may do follows
+  from that read: take an open loan offer of a token against token
+  collateral whole, through the same acceptance flow and Terms gate as
+  Borrow and Lend (OFF-50, kept in its own store so a review in flight on
+  another page never shows here, and one review at a time); cancel their
+  own open offer, or clean up an expired one whoever created it, through
+  RB-OFFER-CANCEL; or, for a rental, an NFT-collateral offer, a loan sale or
+  an offset, be told it is taken in the current app for now, with a link.
+  An ended offer says how it ended and offers nothing. A take, cancel or
+  clean-up that is open or in flight keeps its panel, finish card included,
+  after its own transaction changes the offer, even when a cancel cleared
+  the terms, and a take whose offer the creator cancels under the review
+  keeps its panel and its Close. Without a wallet the page asks for one at the action, never
+  before reading, and a failed re-read behind terms already shown says the
+  terms are the earlier read and may be out of date.
 - **RB-OFFER-CANCEL** — cancelling an offer (OFF-48) or cleaning up an
   expired one (OFF-49) is one flow, keyed by the offer, opened from its row.
   The review is read at one block: the offer, the protocol's state for it,
@@ -1342,6 +1390,42 @@ above. Each resolves here, so a route reviewer needs no private file:
   promise the other party more than its side recovers: a default or a
   liquidation can recover less than is owed. A standing whose latest read
   failed is unknown, even with an earlier answer in hand.
+- **RB-RATE-CHECK** — the rate warning before posting (#3357, OFF-15) sits
+  under the rate on both posting forms, a lender's offer and a borrower's
+  request. It compares the typed rate with the middle rate of loans that
+  started on the same pair and term in the last 30 days, read from the
+  index (the lower of the two middles for an even count, so no rate is
+  invented). Only agreed rates the index's ledger backs count, and loans a
+  lender sale opens are left out, since a sale is not a fresh rate. Loans
+  on the pair whose terms the index has not confirmed belong to no term;
+  the index counts them and the form states that count beside the
+  comparison, so "no confirmed loans" never hides loans of unknown term. More
+  than five points either way is a warning that says which way it cuts: a
+  lender far under the market or a borrower far over it is the offer taken
+  first when rates move; the other way the offer may sit untaken. Within
+  five points it is a note with the middle rate and the count. No loans to
+  compare, NFT collateral, and an index that cannot be read each say so, so
+  a missing comparison never reads as a clean one, and an index answer not
+  scoped to the pair and term asked for is refused rather than compared.
+  When the read reached its sample cap the note says only the latest loans
+  were read. It warns and never blocks: the review still opens. An offer's
+  expiry defaults to 7 days; choosing "until taken or cancelled" is
+  explicit and shows a note that such an offer keeps its rate as the
+  market moves.
+- **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
+  public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
+  so it can be seen before mainnet; #3357), the review of a write that a
+  watcher could act on first says so before the wallet opens: posting,
+  taking or cancelling an offer, repaying in full or in part, and adding
+  collateral. It names the exposure (anyone watching, bots included, can
+  see the transaction and act first, such as taking an offer before its
+  cancel lands) and its help says some wallets can send privately, that
+  neither the protocol nor the app can choose that route, and that the
+  usual route changes only who sees the transaction before it lands. No
+  private sending service is named or set by the app. The single-sequencer
+  rollups the app serves keep no public queue, so nothing is said there.
+  The list of networks is one rule (`publicQueue.ts`), and a test fails if
+  a served network is not decided.
 
 ## 3. Companion specifications
 

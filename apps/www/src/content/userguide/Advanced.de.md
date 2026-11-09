@@ -2351,6 +2351,18 @@ Ein Kreditangebot ist `createOffer` mit `offerType` 0, ERC-20 auf beiden Seiten,
 
 Ohne Teile ist ein Kreditangebot ein Einzelwert-Angebot: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (die eine Sicherheit, die ein Kreditnehmer sperren muss), `fillMode` 0, sofern Advanced keinen anderen setzt (nächster Abschnitt), `periodicInterestCadence` 0, sofern Advanced keinen Plan setzt, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, und kein Full-Tarif, sofern Advanced ihn nicht wählt. Beträge werden exakt in Basiseinheiten geparst, und der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung vom neuesten Block aus festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true und `allowsPartialRepay` false.
 
+<a id="rate-check"></a>
+
+### Ihren Zinssatz mit aktuellen Krediten vergleichen
+
+Beide Formulare lesen `/loans/recent` des Index für dasselbe Verleih-Asset, dasselbe Sicherheiten-Asset und dieselbe Laufzeit, ohne Verkaufsvehikel von Verleihern, und behalten die Kredite, die in den letzten 30 Tagen begonnen haben und einen vereinbarten Zinssatz tragen, den das Ledger des Index belegt (ein Kredit mit unbestätigten Bedingungen bleibt außen vor). Verglichen wird mit dem Median dieser Sätze, bei gerader Anzahl dem kleineren der beiden mittleren, damit kein Satz zwischen zwei vereinbarten erfunden wird. Ein Satz mehr als 5 Prozentpunkte (500 bps) davon entfernt ist eine Warnung mit Richtung: Ein Verleiher weit darunter oder ein Kreditnehmer weit darüber stellt das Angebot ein, das zuerst angenommen wird, wenn sich die Zinsen bewegen; in die andere Richtung bleibt es womöglich liegen. Innerhalb dieser Spanne ist es ein Hinweis mit Median und Anzahl. Ein Lesevorgang umfasst die neuesten 100 Kredite; erreicht er diese Grenze, sagt der Hinweis, dass nur die neuesten gelesen wurden. Eine Index-Antwort, die nicht auf das angefragte Paar und die Laufzeit beschränkt ist, wird abgelehnt statt verglichen, NFT-Sicherheiten werden nicht verglichen, und ein fehlgeschlagener Lesevorgang sagt das. Die Prüfung blockiert nie. Kredite auf dem Paar, deren Bedingungen der Index nicht bestätigt hat, gehören zu keiner Laufzeit; der Index zählt sie (`unplaced`), und das Formular nennt diese Zahl neben dem Vergleich, damit „keine bestätigten Kredite“ nie Kredite unbekannter Laufzeit verdeckt.
+
+<a id="public-queue"></a>
+
+### Netzwerke mit öffentlicher Warteschlange
+
+Auf Ethereum und BNB Chain (und dem BNB Testnet) wartet eine gesendete Transaktion in einer öffentlichen Warteschlange, bevor sie aufgenommen wird, und wer diese Warteschlange beobachtet, auch Bots, kann sie sehen und zuerst handeln: ein Angebot annehmen, bevor Ihre Stornierung ankommt, oder auf einen Kredit reagieren, bevor Ihre Rückzahlung ankommt. Auf diesen Netzwerken sagt die Prüfung beim Einstellen, Annehmen oder Stornieren eines Angebots, beim Zurückzahlen und beim Nachlegen von Sicherheiten das deshalb, bevor sich Ihre Wallet öffnet. Manche Wallets können eine Transaktion stattdessen privat senden; sehen Sie in den Netzwerk- oder Sicherheitseinstellungen Ihrer Wallet nach. Die App kann diesen Weg nicht für Sie wählen, und der übliche Weg ändert nur, wer die Transaktion sieht, bevor sie ankommt. Base, Arbitrum und Optimism haben keine öffentliche Warteschlange, dort wird nichts angezeigt. Die Netzwerke sind eine Regel in der App (Ethereum 1, BNB Chain 56, BNB Testnet 97), und ein Test schlägt fehl, wenn ein Netzwerk, das die App bedient, nicht entschieden ist. Der Hinweis erscheint in der Prüfung, vor der letzten Nachprüfung und der Wallet, nur für diese Vorgänge: Angebot einstellen, annehmen oder stornieren, volle und teilweise Rückzahlung und Sicherheiten nachlegen. Die Hilfe nennt keinen privaten Sendedienst, weil das Protokoll nicht prüfen kann, welchen Weg eine Wallet genommen hat, und die Wirkung der Transaktion auf beiden Wegen dieselbe ist.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Ein Angebot in Teilen
@@ -2512,6 +2524,18 @@ Der Hinweis liest in einem Block `paused`, `VaultPayoutFacet.isEscapeOpen`, `esc
 ### Ihre Angebote
 
 Die Liste ist die Vereinigung von `getUserOffersPaginated(wallet)` (dem Index je Ersteller, der eine stornierte ID behält) und `getUserPositionOffersPaginated(wallet)` (den Angeboten, deren Positions-Token die Wallet hält), gelesen in Stapeln von höchstens 250 über `MetricsDashboardFacet.getOffersWithState`, das Position für Position antwortet. Jede Zeile wird der ID zugeordnet, nach der gefragt wurde: Bei einem ohne Erfüllung stornierten Angebot ist der Datensatz gelöscht, die Ansicht meldet ID 0 mit dem abgeleiteten Status Storniert, und die Zeile zeigt keine Bedingungen statt rekonstruierter. Ein nach teilweiser Erfüllung storniertes Angebot behält seinen Datensatz mit gesetztem `accepted` und gilt als erfüllt. Die Filterzahlen werden über die gelesenen Zeilen gebildet; konnte einer der Indizes nicht bis zum Ende gelesen werden, sagt die Seite, dass die Liste unvollständig sein kann.
+
+<a id="offer-book"></a>
+
+### Das Orderbuch
+
+Das Buch liest `GET /offers/active?chainId&limit=50&before=<offerId>` des Indexers, das neueste zuerst nach Angebots-ID, seitenweise über `nextBefore`. Der Indexer behält ein verfallenes Angebot als `active` (der Ablauf ist on-chain träge), daher wird eine Zeile, deren `expiresAt` verstrichen ist, als abgelaufen markiert. `isSaleVehicle`, `isOffsetVehicle` und `refinanceTargetLoanId` (null = nicht gelesen) markieren die Art, `positionFlow.movedSinceOpened` eine bewegte gebundene Position (#3205). Jedes Feld wird exakt geparst; eine Zeile, die scheitert, zählt als ungelesen. Der Reiter ist `assetType` (0 = ein ERC-20-Kredit, sonst eine Miete), die Seite `offerType`. Die Abfrage wird durch die Push-Schiene invalidiert und alle 60 s neu gelesen, solange sie sichtbar ist; ein Indexfehler wird genannt, nie ein leeres Buch.
+
+<a id="offer-detail"></a>
+
+### Die Seite eines Angebots
+
+`/offers/:id` liest an einem Block `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` und `getOfferLinkedLoanId(id)`, über die Wallet, wenn eine verbunden ist, sonst über den Nur-Lese-Proxy. Ein Ersteller null bedeutet, dass der Datensatz gelöscht (eine Stornierung ohne Füllung) oder nie geschrieben wurde; das Protokoll führt keine Angebotszahl, daher sagt die Seite nicht, welches von beiden. Ein verknüpfter Kredit ungleich null markiert einen Kreditverkauf (ein Angebot eines Kreditnehmers) oder einen Offset (ein Angebot eines Kreditgebers); `refinanceTargetLoanId` eines Kreditnehmer-Angebots markiert eine Refinanzierungsanfrage. Die Annahme läuft über den gemeinsamen `acceptOffer`-Ablauf (signierte `AcceptTerms`, exakte Freigabe, Probelauf, gemessenes Ergebnis) unter einem eigenen Speicherschlüssel; Stornieren und Aufräumen laufen über den gemeinsamen `cancelOffer`-Ablauf. Mieten, NFT-Sicherheiten, Kreditverkäufe und Offsets verlinken die aktuelle App.
 
 <a id="offer-cancel"></a>
 

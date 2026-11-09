@@ -92,6 +92,11 @@
       "reason": "Owner withdrawal of the standalone keeper liquidator's own balance. Not protocol custody and books nothing in the protocol; keeper code is owned by the keeper work."
     },
     {
+      "site": "src/keeper/KeeperBackupUpkeep.sol:KeeperBackupUpkeep.sweep",
+      "moves": 1,
+      "reason": "The keeper backup runner sends a token a backed step paid it (a matcher bonus) to the treasury fixed at its deployment. It books nothing: the backup holds no accounting, and the treasury receives whatever the transfer delivers."
+    },
+    {
       "site": "src/libraries/LibKeeperReward.sol:LibKeeperReward._safeTransfer",
       "moves": 1,
       "reason": "Low-level VPFI keeper-reward transfer; its caller takes the recipient's balance delta as the success signal. Keeper rewards are owned by the keeper work, outside #2440's scope."

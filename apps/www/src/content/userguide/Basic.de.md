@@ -1228,6 +1228,18 @@ Passt keine Anfrage, können Sie für Ihre zwei Token ein eigenes Kreditangebot 
 
 Sofern Sie im Advanced-Modus keine Teile festlegen, übernimmt ein Kreditnehmer den ganzen Betrag, oder niemand, und muss genau die Sicherheit sperren, die Sie festlegen. Das Formular zeigt, wie viel des verliehenen Tokens Ihre Wallet hält. Jede Zahl wird genau so gelesen, wie Sie sie eingeben: Mehr Nachkommastellen, als der Token hat, werden abgelehnt, nie gerundet, und der Zinssatz reicht bis 100 % pro Jahr mit zwei Nachkommastellen. Die angebotenen Laufzeiten enden bei der längsten, die das Netzwerk erlaubt. Das Angebot bleibt offen, bis es angenommen oder storniert wird, oder für die Zahl von Tagen, die Sie wählen, höchstens ein Jahr. Zinsen für die volle Laufzeit, die übliche Wahl, bedeuten, dass eine vorzeitige Rückzahlung Ihren Ertrag nicht senkt; anteilige Zinsen zahlen Ihnen nur die Zeit, in der der Kredit läuft. Sie können dem Kreditnehmer auch Teilrückzahlungen erlauben. Das Formular zeigt, was der Kreditnehmer Ihnen am Fälligkeitsdatum schulden würde, wenn er das Angebot jetzt annähme. Im Advanced-Modus kann ein Angebot auch in Teilen verliehen werden, einen Ausführungsmodus tragen, Zinsen nach Plan zahlen und den Full-Gebührentarif nehmen.
 
+<a id="rate-check"></a>
+
+### Ihren Zinssatz mit aktuellen Krediten vergleichen
+
+Unter dem Zinssatz zeigt die App auf beiden Formularen, dem Angebot eines Verleihers und der Anfrage eines Kreditnehmers, den mittleren Zinssatz der Kredite, die in den letzten 30 Tagen mit demselben Paar und derselben Laufzeit begonnen haben, und wie viele es waren. Liegt Ihr Satz mehr als fünf Prozentpunkte daneben, warnt die App und sagt, in welche Richtung das wirkt: Ein Verleiher weit unter dem Markt oder ein Kreditnehmer weit darüber stellt das Angebot ein, das zuerst angenommen wird, wenn sich die Zinsen bewegen; in die andere Richtung bleibt das Angebot womöglich liegen. Es ist nur eine Warnung, Sie können trotzdem posten. Gibt es keine aktuellen Kredite zum Vergleich, ist die Sicherheit ein NFT oder kann der Index des Protokolls nicht gelesen werden, sagt das Formular das, statt zu schweigen.
+
+<a id="public-queue"></a>
+
+### Netzwerke mit öffentlicher Warteschlange
+
+Auf Ethereum und BNB Chain (und dem BNB Testnet) wartet eine gesendete Transaktion in einer öffentlichen Warteschlange, bevor sie aufgenommen wird, und wer diese Warteschlange beobachtet, auch Bots, kann sie sehen und zuerst handeln: ein Angebot annehmen, bevor Ihre Stornierung ankommt, oder auf einen Kredit reagieren, bevor Ihre Rückzahlung ankommt. Auf diesen Netzwerken sagt die Prüfung beim Einstellen, Annehmen oder Stornieren eines Angebots, beim Zurückzahlen und beim Nachlegen von Sicherheiten das deshalb, bevor sich Ihre Wallet öffnet. Manche Wallets können eine Transaktion stattdessen privat senden; sehen Sie in den Netzwerk- oder Sicherheitseinstellungen Ihrer Wallet nach. Die App kann diesen Weg nicht für Sie wählen, und der übliche Weg ändert nur, wer die Transaktion sieht, bevor sie ankommt. Base, Arbitrum und Optimism haben keine öffentliche Warteschlange, dort wird nichts angezeigt.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Ein Angebot in Teilen (Erweitert)
@@ -1386,7 +1398,19 @@ Solange das Protokoll pausiert ist, sagt die Tresor-Seite das oben: Abhebungen s
 
 ### Ihre Angebote
 
-Angebote listet jedes Angebot, das Sie im verbundenen Netzwerk erstellt haben, und jedes Angebot, dessen Positions-Token Sie gerade halten, das neueste zuerst. Jedes zeigt den Status, den das Protokoll meldet: offen, erfüllt, verkauft, abgelaufen oder storniert, und die Filter über der Liste zählen jeden Status. Eine Kreditanfrage gilt als verkauft, wenn ihre Sicherheit über ihr Marktplatz-Angebot verkauft wurde, bevor jemand sie angenommen hat: Es wurde kein Kredit eröffnet, und der Verkaufserlös ging in den Vault ihres Erstellers. Ein offenes Angebot hält, was es verleiht oder verpfändet, in Ihrem Vault, bis es erfüllt oder storniert wird; ein abgelaufenes hält es dort, bis es aufgeräumt wird. Storniert das Protokoll ein Angebot, das noch nichts erfüllt hat, löscht es dessen Bedingungen, daher zeigt die Seite nur Nummer und Status. Hält eine andere Wallet den Positions-Token eines Angebots, das Sie erstellt haben, können Sie es trotzdem stornieren, und die Rückgabe geht an Sie; halten Sie eines, das eine andere Wallet erstellt hat, kann nur diese es vor Ablauf stornieren. Das Orderbuch ist noch in der aktuellen App, und die Seite verlinkt dorthin.
+Angebote listet jedes Angebot, das Sie im verbundenen Netzwerk erstellt haben, und jedes Angebot, dessen Positions-Token Sie gerade halten, das neueste zuerst. Jedes zeigt den Status, den das Protokoll meldet: offen, erfüllt, verkauft, abgelaufen oder storniert, und die Filter über der Liste zählen jeden Status. Eine Kreditanfrage gilt als verkauft, wenn ihre Sicherheit über ihr Marktplatz-Angebot verkauft wurde, bevor jemand sie angenommen hat: Es wurde kein Kredit eröffnet, und der Verkaufserlös ging in den Vault ihres Erstellers. Ein offenes Angebot hält, was es verleiht oder verpfändet, in Ihrem Vault, bis es erfüllt oder storniert wird; ein abgelaufenes hält es dort, bis es aufgeräumt wird. Storniert das Protokoll ein Angebot, das noch nichts erfüllt hat, löscht es dessen Bedingungen, daher zeigt die Seite nur Nummer und Status. Hält eine andere Wallet den Positions-Token eines Angebots, das Sie erstellt haben, können Sie es trotzdem stornieren, und die Rückgabe geht an Sie; halten Sie eines, das eine andere Wallet erstellt hat, kann nur diese es vor Ablauf stornieren. Unter Ihren Angeboten folgt das Orderbuch, das als Nächstes beschrieben wird.
+
+<a id="offer-book"></a>
+
+### Das Orderbuch
+
+Unter Ihren Angeboten listet das Orderbuch jedes offene Angebot im Netzwerk, das neueste zuerst, und Sie können es lesen, ohne eine Wallet zu verbinden. Reiter trennen Kredite eines Tokens von NFT-Mieten, ein Filter zeigt Angebote von Kreditgebern, Anfragen von Kreditnehmern oder beides, und nach dem Verbinden können Sie Ihre eigenen Angebote ausblenden. Ältere Angebote laden mit „Ältere Angebote anzeigen“; die Filter gelten für das bisher Gelesene, und die Zählzeile sagt, wie viel das ist. Das Buch stammt aus dem Index des Protokolls, der der Chain einige Minuten hinterherhinken kann; es weist Sie also nur auf Angebote hin: Öffnen Sie eines, um es so zu sehen, wie die Chain es hält. Ein Angebot nach seinem Ablauf ist als abgelaufen markiert; jeder darf es aufräumen, und was es gesperrt hat, geht an seinen Ersteller zurück. Kann der Index nicht gelesen werden, sagt das Buch das, statt keine Angebote zu zeigen.
+
+<a id="offer-detail"></a>
+
+### Die Seite eines Angebots
+
+Jedes Angebot hat seine eigene Seite, die aus der Chain gelesen wird, ob eine Wallet verbunden ist oder nicht. Sie zeigt, wer es eingestellt hat, den Betrag, was bereits gefüllt ist, die Sicherheit, die Laufzeit und wann das Angebot verfällt. Von dort können Sie ein offenes Kreditangebot ganz annehmen, über dieselbe Prüfung und Zustimmung wie bei Leihen und Verleihen: von einem Angebot eines Kreditgebers leihen oder die Anfrage eines Kreditnehmers finanzieren. Stornieren und Aufräumen funktionieren dort wie bei Ihren Angeboten. Mieten, Angebote mit NFT-Sicherheit, Verkäufe eines laufenden Kredits und Angebote zur vorzeitigen Schließung werden vorerst in der aktuellen App angenommen, und die Seite verlinkt dorthin. Ein Angebot ist nicht reserviert, während Sie es prüfen; jemand anderes kann es zuerst annehmen oder stornieren.
 
 <a id="offer-cancel"></a>
 

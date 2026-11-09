@@ -2054,6 +2054,18 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 0(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
 
+<a id="rate-check"></a>
+
+### 최근 대출과 금리 비교하기
+
+두 게시 양식은 같은 대출 자산, 같은 담보 자산, 같은 기간에 대해 인덱스의 `/loans/recent`를 읽고(대출자 매각용 오퍼는 제외), 최근 30일 안에 시작되었고 인덱스 원장이 뒷받침하는 합의 금리를 가진 대출만 남깁니다(조건이 확인되지 않은 대출은 제외). 비교 기준은 그 금리들의 중앙값이며, 건수가 짝수이면 가운데 두 값 중 낮은 값을 써서 합의된 두 금리 사이에 없는 금리를 만들지 않습니다. 기준에서 5%포인트(500 bps)보다 더 떨어진 금리는 방향을 알려 주는 경고가 됩니다. 훨씬 낮은 대출자나 훨씬 높은 차입자는 금리가 움직일 때 가장 먼저 체결되는 오퍼를 내고, 반대 방향이면 오퍼가 체결되지 않고 남을 수 있습니다. 그 범위 안에서는 중앙값과 건수를 보여 주는 안내입니다. 한 번의 읽기는 최신 100건까지이며, 그 한도에 닿으면 최신 건만 읽었다고 안내합니다. 요청한 페어와 기간으로 한정되지 않은 인덱스 응답은 비교하지 않고 거부하며, NFT 담보는 비교하지 않고, 읽기에 실패하면 그렇다고 알려 줍니다. 검토를 막지는 않습니다. 인덱스가 조건을 확인하지 않은 이 페어의 대출은 어느 기간에도 속하지 않습니다. 인덱스가 그 수(`unplaced`)를 세고 양식은 비교 옆에 그 수를 밝히므로, "확인된 대출 없음"이 기간을 알 수 없는 대출을 가리지 않습니다.
+
+<a id="public-queue"></a>
+
+### 공개 대기열이 있는 네트워크
+
+Ethereum과 BNB Chain(및 BNB Testnet)에서는 보낸 트랜잭션이 포함되기 전에 공개 대기열에서 기다리며, 그 대기열을 지켜보는 누구든, 봇을 포함해, 그것을 보고 먼저 행동할 수 있습니다. 취소가 도착하기 전에 오퍼를 가져가거나 상환이 도착하기 전에 대출에 손을 쓰는 식입니다. 그래서 이런 네트워크에서는 오퍼 게시·수락·취소, 상환, 담보 추가의 검토가 지갑이 열리기 전에 이를 알려 줍니다. 트랜잭션을 비공개로 보낼 수 있는 지갑도 있으니 지갑의 네트워크 또는 보안 설정을 확인하세요. 앱이 그 경로를 대신 고를 수는 없으며, 평소대로 보내도 바뀌는 것은 도착하기 전에 누가 트랜잭션을 볼 수 있는지뿐입니다. Base, Arbitrum, Optimism에는 공개 대기열이 없어 아무것도 표시되지 않습니다. 대상 네트워크는 앱 안의 한 가지 규칙입니다(Ethereum 1, BNB Chain 56, BNB Testnet 97). 앱이 지원하는 네트워크가 판정되지 않으면 테스트가 실패합니다. 알림은 검토 안에서, 마지막 재확인과 지갑 이전에, 다음 작업에만 표시됩니다: 오퍼 게시·수락·취소, 전액 및 일부 상환, 담보 추가. 도움말은 비공개 전송 서비스를 이름으로 언급하지 않습니다. 지갑이 어떤 경로를 썼는지 프로토콜이 확인할 수 없고, 어느 경로든 트랜잭션의 효과는 같기 때문입니다.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: 부분으로 빌려주는 오퍼
@@ -2215,6 +2227,18 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 ### 내 오퍼
 
 목록은 `getUserOffersPaginated(wallet)`(취소된 ID도 남기는 생성자별 인덱스)과 `getUserPositionOffersPaginated(wallet)`(지갑이 포지션 토큰을 가진 오퍼)의 합집합이며, 위치별로 답하는 `MetricsDashboardFacet.getOffersWithState`를 통해 최대 250개씩 읽습니다. 각 행은 요청한 ID에 맞춰집니다. 아무것도 체결되지 않고 취소된 오퍼는 레코드가 삭제되어 뷰가 ID 0과 파생 상태 취소를 보고하므로, 행은 재구성한 조건 대신 아무 조건도 보여 주지 않습니다. 부분 체결 후 취소된 오퍼는 `accepted`가 설정된 채 레코드를 유지하며 체결로 읽힙니다. 필터 개수는 읽은 행을 기준으로 세며, 어느 인덱스든 끝까지 읽지 못했다면 페이지가 목록이 불완전할 수 있다고 알립니다.
+
+<a id="offer-book"></a>
+
+### 오퍼 북
+
+오퍼 북은 인덱서의 `GET /offers/active?chainId&limit=50&before=<offerId>`를 읽으며, 오퍼 ID 기준 최신순이고 `nextBefore`로 페이지를 넘깁니다. 인덱서는 만료된 오퍼를 `active`로 유지하므로(체인에서 만료는 지연 처리됨) `expiresAt`이 지난 행에는 만료 태그를 붙입니다. `isSaleVehicle`, `isOffsetVehicle`, `refinanceTargetLoanId`(null = 읽지 않음)가 종류를, `positionFlow.movedSinceOpened`가 이동한 연결 포지션을 표시합니다(#3205). 모든 필드는 정확히 파싱하며, 실패한 행은 읽지 못한 것으로 셉니다. 탭은 `assetType`(0 = ERC-20 대출, 그 외는 임대), 쪽은 `offerType`입니다. 쿼리는 푸시 레일로 무효화되고 보이는 동안 60초마다 다시 읽습니다. 인덱스 장애는 그대로 알리며, 빈 오퍼 북으로 보여 주지 않습니다.
+
+<a id="offer-detail"></a>
+
+### 오퍼 페이지
+
+`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 지갑이 연결되어 있으면 지갑을, 아니면 읽기 전용 프록시를 거칩니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다.
 
 <a id="offer-cancel"></a>
 

@@ -221,6 +221,29 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         return LibVaipakam.storageSlot().pendingPayoutIds[account].values();
     }
 
+    /// @notice #3361 — how many payouts are queued now, across all accounts.
+    function getOpenPayoutCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().openPayoutIds.length();
+    }
+
+    /**
+     * @notice #3361 — up to `limit` queued payout ids, across all accounts,
+     *         from position `offset` of the open set. The set's order is not
+     *         stable: a release or cancel moves the last id into the freed
+     *         position, so a reader paging through it may see an id twice or
+     *         miss one that moved. A keeper re-reads each row
+     *         ({getPendingPayout}) before acting, and pages again later.
+     * @return ids The ids; shorter than `limit` at the end of the set.
+     */
+    function getOpenPayoutIds(uint256 offset, uint256 limit) external view returns (uint256[] memory ids) {
+        EnumerableSet.UintSet storage open = LibVaipakam.storageSlot().openPayoutIds;
+        uint256 len = open.length();
+        if (offset >= len) return new uint256[](0);
+        uint256 end = len - offset < limit ? len : offset + limit;
+        ids = new uint256[](end - offset);
+        for (uint256 i; i < ids.length; i++) ids[i] = open.at(offset + i);
+    }
+
     /// @notice What `account`'s queued payouts hold back of `asset` / `tokenId`.
     function getPayoutEarmark(address account, address asset, uint256 tokenId) external view returns (uint256) {
         return LibVaipakam.storageSlot().pendingPayoutEarmark[account][asset][tokenId];

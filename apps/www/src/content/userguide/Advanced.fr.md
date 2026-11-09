@@ -2361,6 +2361,18 @@ Une offre de prêt est un `createOffer` avec `offerType` 0, ERC-20 des deux côt
 
 Sans parts, une offre de prêt est à valeur unique : `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (l'unique garantie qu'un emprunteur doit bloquer), `fillMode` 0 sauf si Advanced en fixe un autre (section suivante), `periodicInterestCadence` 0 sauf si Advanced fixe un échéancier, `allowsPrepayListing` et `allowsParallelSale` à false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` à true, et aucun tarif Full sauf si Advanced le choisit. Les montants sont convertis exactement en unités de base et le taux est d'au plus 10 000 bps. `durationDays` est plafonné par le maximum configuré lu dans `getProtocolConfigBundle`. `expiresAt` vaut 0 (ouverte jusqu'à l'annulation) ou une heure fixée depuis le dernier bloc à l'ouverture de la vérification, au plus `MAX_OFFER_EXPIRY_HORIZON` (365 jours) plus tard. `useFullTermInterest` vaut true par défaut et `allowsPartialRepay` false.
 
+<a id="rate-check"></a>
+
+### Comparer votre taux aux prêts récents
+
+Les deux formulaires lisent `/loans/recent` de l'index pour le même actif prêté, le même actif de garantie et la même durée, sans les véhicules de vente des prêteurs, et gardent les prêts ouverts au cours des 30 derniers jours portant un taux convenu que le registre de l'index atteste (un prêt aux conditions non confirmées est écarté). La comparaison porte sur la médiane de ces taux, la plus basse des deux valeurs centrales pour un nombre pair, afin de ne jamais inventer un taux entre deux taux convenus. Un taux à plus de 5 points de pourcentage (500 bps) donne un avertissement qui indique le sens : un prêteur très en dessous, ou un emprunteur très au-dessus, publie l'offre prise en premier quand les taux bougent ; dans l'autre sens, l'offre risque de rester sans preneur. Dans cette marge, c'est une note avec la médiane et le nombre. Une lecture couvre les 100 prêts les plus récents ; si elle atteint cette limite, la note dit que seuls les derniers ont été lus. Une réponse de l'index non limitée à la paire et à la durée demandées est refusée au lieu d'être comparée, une garantie NFT n'est pas comparée, et une lecture en échec le signale. Cela ne bloque jamais la revue. Les prêts de la paire dont l'index n'a pas confirmé les conditions n'appartiennent à aucune durée ; l'index les compte (`unplaced`) et le formulaire indique ce nombre à côté de la comparaison, pour que « aucun prêt confirmé » ne masque jamais des prêts de durée inconnue.
+
+<a id="public-queue"></a>
+
+### Réseaux à file d'attente publique
+
+Sur Ethereum et BNB Chain (et BNB Testnet), une transaction envoyée attend dans une file publique avant d'être incluse, et quiconque observe cette file, robots compris, peut la voir et agir avant vous : prendre une offre avant que votre annulation n'arrive, ou agir sur un prêt avant votre remboursement. Sur ces réseaux, la revue de la publication, de la prise ou de l'annulation d'une offre, du remboursement et de l'ajout de garantie le signale donc avant l'ouverture de votre portefeuille. Certains portefeuilles peuvent envoyer une transaction en privé ; regardez dans leurs réglages de réseau ou de sécurité. L'application ne peut pas choisir cette voie pour vous, et l'envoi habituel ne change que qui peut voir la transaction avant qu'elle n'arrive. Base, Arbitrum et Optimism n'ont pas de file publique : rien n'y est affiché. Les réseaux forment une seule règle dans l'application (Ethereum 1, BNB Chain 56, BNB Testnet 97), et un test échoue si un réseau servi par l'application n'est pas tranché. L'avis apparaît dans la revue, avant la dernière revérification et le portefeuille, pour ces opérations seulement : publier, prendre ou annuler une offre, remboursement total ou partiel, et ajout de garantie. L'aide ne nomme aucun service d'envoi privé, car le protocole ne peut pas vérifier la voie utilisée par un portefeuille, et l'effet de la transaction est le même par l'une ou l'autre voie.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend : Une offre en parts
@@ -2522,6 +2534,18 @@ L'avis lit, dans un même bloc, `paused`, `VaultPayoutFacet.isEscapeOpen`, `esca
 ### Vos offres
 
 La liste est l'union de `getUserOffersPaginated(wallet)` (l'index par créateur, qui garde un id annulé) et de `getUserPositionOffersPaginated(wallet)` (les offres dont le portefeuille détient le jeton de position), lues par lots d'au plus 250 via `MetricsDashboardFacet.getOffersWithState`, qui répond position par position. Chaque ligne est associée à l'id demandé : une offre annulée sans exécution a son enregistrement supprimé, la vue rapporte donc l'id 0 avec l'état dérivé Annulée, et la ligne n'affiche aucune condition plutôt que des conditions reconstruites. Une offre annulée après une exécution partielle garde son enregistrement avec `accepted` positionné et se lit comme exécutée. Les compteurs des filtres portent sur les lignes lues ; si l'un des index n'a pas pu être lu jusqu'au bout, la page dit que la liste peut être incomplète.
+
+<a id="offer-book"></a>
+
+### Le carnet d'offres
+
+Le carnet lit `GET /offers/active?chainId&limit=50&before=<offerId>` de l'indexeur, la plus récente d'abord par identifiant d'offre, paginé par `nextBefore`. L'indexeur garde `active` une offre échue (l'expiration est paresseuse sur la chaîne), donc une ligne dont le `expiresAt` est passé est marquée expirée. `isSaleVehicle`, `isOffsetVehicle` et `refinanceTargetLoanId` (null = non lu) marquent le type, et `positionFlow.movedSinceOpened` une position liée qui a bougé (#3205). Chaque champ est analysé exactement ; une ligne qui échoue est comptée comme non lue. L'onglet est `assetType` (0 = un prêt ERC-20, sinon une location), le côté `offerType`. La requête est invalidée par le canal push et relue toutes les 60 s tant qu'elle est visible ; une panne de l'index est signalée, jamais un carnet vide.
+
+<a id="offer-detail"></a>
+
+### La page d'une offre
+
+`/offers/:id` lit, à un même bloc, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` et `getOfferLinkedLoanId(id)`, via le portefeuille s'il est connecté, sinon via le proxy en lecture seule. Un créateur nul signifie que l'enregistrement a été supprimé (une annulation sans rien de pourvu) ou jamais écrit ; le protocole ne tient aucun compte des offres, donc la page ne dit pas lequel. Un prêt lié non nul marque une vente de prêt (offre d'emprunteur) ou une compensation (offre de prêteur) ; le `refinanceTargetLoanId` d'une offre d'emprunteur marque une demande de refinancement. La prise exécute le flux partagé `acceptOffer` (`AcceptTerms` signés, approbation exacte, simulation, résultat mesuré) sous sa propre clé de stockage ; l'annulation et le nettoyage exécutent le flux partagé `cancelOffer`. Les locations, la garantie NFT, les ventes de prêt et les compensations renvoient à l'application actuelle.
 
 <a id="offer-cancel"></a>
 

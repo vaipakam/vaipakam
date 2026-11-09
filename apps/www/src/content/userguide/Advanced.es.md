@@ -2341,6 +2341,18 @@ Una oferta de préstamo es `createOffer` con `offerType` 0, ERC-20 en ambos lado
 
 Sin partes, una oferta de préstamo es de valor único: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (la única garantía que un prestatario debe bloquear), `fillMode` 0 salvo que Advanced fije otro (sección siguiente), `periodicInterestCadence` 0 salvo que Advanced fije un calendario, `allowsPrepayListing` y `allowsParallelSale` en false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` en true, y sin tarifa Full salvo que Advanced la elija. Los importes se convierten exactamente a unidades base y la tasa es como máximo 10.000 bps. `durationDays` está limitado por el máximo configurado leído de `getProtocolConfigBundle`. `expiresAt` es 0 (abierta hasta cancelarla) o una hora fijada desde el último bloque al abrirse la revisión, como mucho `MAX_OFFER_EXPIRY_HORIZON` (365 días) después. `useFullTermInterest` es true por defecto y `allowsPartialRepay` false.
 
+<a id="rate-check"></a>
+
+### Comparar tu tasa con préstamos recientes
+
+Los dos formularios leen `/loans/recent` del índice para el mismo activo prestado, el mismo activo de garantía y el mismo plazo, sin los vehículos de venta de prestamistas, y se quedan con los préstamos que empezaron en los últimos 30 días y tienen una tasa acordada que respalda el registro del índice (un préstamo con términos no confirmados queda fuera). La comparación es la mediana de esas tasas, la menor de las dos centrales si el número es par, para no inventar una tasa entre dos acordadas. Una tasa a más de 5 puntos porcentuales (500 bps) es un aviso que indica el sentido: un prestamista muy por debajo, o un prestatario muy por encima, publica la oferta que se toma primero cuando las tasas se mueven; en el otro sentido, la oferta puede quedarse sin tomar. Dentro de ese margen es una nota con la mediana y el número. Una lectura cubre los 100 préstamos más recientes; si llega a ese límite, la nota dice que solo se leyeron los últimos. Una respuesta del índice que no se limite al par y plazo pedidos se rechaza en vez de compararse, la garantía NFT no se compara y una lectura fallida lo dice. Nunca bloquea la revisión. Los préstamos del par cuyos términos el índice no ha confirmado no pertenecen a ningún plazo; el índice los cuenta (`unplaced`) y el formulario indica ese número junto a la comparación, para que «ningún préstamo confirmado» nunca oculte préstamos de plazo desconocido.
+
+<a id="public-queue"></a>
+
+### Redes con cola pública
+
+En Ethereum y BNB Chain (y BNB Testnet), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada. Las redes son una sola regla en la app (Ethereum 1, BNB Chain 56, BNB Testnet 97), y una prueba falla si una red que la app atiende no está decidida. El aviso aparece en la revisión, antes de la última comprobación y de la billetera, solo para estas operaciones: publicar, tomar o cancelar una oferta, pago total y parcial, y añadir garantía. La ayuda no nombra ningún servicio de envío privado, porque el protocolo no puede verificar qué ruta usó una billetera, y el efecto de la transacción es el mismo por cualquier ruta.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Una oferta en partes
@@ -2502,6 +2514,18 @@ El aviso lee, en un mismo bloque, `paused`, `VaultPayoutFacet.isEscapeOpen`, `es
 ### Tus ofertas
 
 La lista es la unión de `getUserOffersPaginated(wallet)` (el índice por creador, que conserva un id cancelado) y `getUserPositionOffersPaginated(wallet)` (las ofertas cuyo token de posición tiene la billetera), leídas en lotes de como máximo 250 mediante `MetricsDashboardFacet.getOffersWithState`, que responde posición por posición. Cada fila se asocia al id que se pidió: una oferta cancelada sin nada completado tiene su registro borrado, así que la vista informa id 0 con el estado derivado Cancelada, y la fila no muestra condiciones en lugar de reconstruirlas. Una oferta cancelada tras un llenado parcial conserva su registro con `accepted` activado y se lee como completada. Los recuentos de los filtros se calculan sobre las filas leídas; si alguno de los índices no pudo leerse hasta el final, la página dice que la lista puede estar incompleta.
+
+<a id="offer-book"></a>
+
+### El libro de ofertas
+
+El libro lee `GET /offers/active?chainId&limit=50&before=<offerId>` del indexador, de la más nueva a la más antigua por id de oferta, paginado con `nextBefore`. El indexador mantiene `active` una oferta caducada (el vencimiento es perezoso en la cadena), así que una fila cuyo `expiresAt` ya pasó se marca como vencida. `isSaleVehicle`, `isOffsetVehicle` y `refinanceTargetLoanId` (null = no leído) marcan el tipo, y `positionFlow.movedSinceOpened` una posición vinculada que se movió (#3205). Cada campo se analiza con exactitud; una fila que falla se cuenta como no leída. La pestaña es `assetType` (0 = un préstamo ERC-20; si no, un alquiler) y el lado, `offerType`. La consulta se invalida con el canal push y se vuelve a leer cada 60 s mientras está visible; un fallo del índice se indica, nunca un libro vacío.
+
+<a id="offer-detail"></a>
+
+### La página de una oferta
+
+`/offers/:id` lee, en un mismo bloque, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` y `getOfferLinkedLoanId(id)`, a través de la billetera cuando hay una conectada y del proxy de solo lectura en otro caso. Un creador cero significa que el registro se borró (una cancelación sin nada cubierto) o nunca se escribió; el protocolo no lleva un recuento de ofertas, así que la página no dice cuál de los dos. Un préstamo vinculado distinto de cero marca una venta de préstamo (oferta de prestatario) o una compensación (oferta de prestamista); el `refinanceTargetLoanId` de una oferta de prestatario marca una solicitud de refinanciación. Tomarla ejecuta el flujo compartido `acceptOffer` (`AcceptTerms` firmados, aprobación exacta, simulación, resultado medido) con su propia clave de almacenamiento; cancelar y limpiar ejecutan el flujo compartido `cancelOffer`. Los alquileres, la garantía NFT, las ventas de préstamos y las compensaciones enlazan a la app actual.
 
 <a id="offer-cancel"></a>
 

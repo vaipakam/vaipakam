@@ -15,7 +15,6 @@ import { isRanged } from './postModel';
 import { TARIFF_KEYS } from './postCopy';
 import type { PostReview } from './postReview';
 
-
 /**
  * OFF-14 — the schedule rows, for either side. Interest at repayment is one
  * bound line. A schedule states each period's interest as the protocol

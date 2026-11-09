@@ -3,6 +3,7 @@ import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { ClaimsPage } from '../pages/claims/ClaimsPage';
 import { HomePage } from '../pages/home/HomePage';
 import { LendPage } from '../pages/lend/LendPage';
+import { OfferPage } from '../pages/offers/OfferPage';
 import { OffersPage } from '../pages/offers/OffersPage';
 import { PositionPage } from '../pages/position/PositionPage';
 import { PositionsPage } from '../pages/positions/PositionsPage';
@@ -25,4 +26,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/claims': ClaimsPage,
   '/vault': VaultPage,
   '/offers': OffersPage,
+  '/offers/:id': OfferPage,
 };

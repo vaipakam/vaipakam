@@ -1224,6 +1224,18 @@ Si aucune demande ne convient, vous pouvez publier votre propre offre de prêt p
 
 Sauf si vous fixez des parts en mode avancé, un seul emprunteur prend tout le montant, ou personne, et doit bloquer exactement la garantie que vous fixez. Le formulaire indique combien du jeton prêté votre portefeuille détient. Chaque chiffre est lu exactement comme vous le saisissez : plus de décimales que le jeton n'en a sont refusées, jamais arrondies, et le taux va jusqu'à 100 % par an avec deux décimales. Les durées proposées s'arrêtent à la plus longue que le réseau autorise. L'offre reste ouverte jusqu'à son acceptation ou son annulation, ou pendant le nombre de jours que vous choisissez, jusqu'à un an. Les intérêts sur toute la durée, le choix habituel, signifient qu'un remboursement anticipé ne réduit pas ce que vous gagnez ; au prorata, vous n'êtes payé que pour le temps où le prêt est ouvert. Vous pouvez aussi permettre à l'emprunteur de rembourser une partie en avance. Le formulaire montre ce que l'emprunteur vous devrait à l'échéance s'il acceptait l'offre maintenant. En mode avancé, une offre peut aussi être prêtée en parts, porter un mode d'exécution, payer les intérêts selon un échéancier et prendre le tarif de frais Full.
 
+<a id="rate-check"></a>
+
+### Comparer votre taux aux prêts récents
+
+Sous le taux, sur les deux formulaires de publication, l'offre d'un prêteur et la demande d'un emprunteur, l'application affiche le taux médian des prêts ouverts sur la même paire et la même durée au cours des 30 derniers jours, et leur nombre. Si votre taux s'en écarte de plus de cinq points, elle vous avertit et indique dans quel sens : un prêteur très en dessous du marché, ou un emprunteur très au-dessus, publie l'offre prise en premier quand les taux bougent ; dans l'autre sens, l'offre risque de rester sans preneur. Ce n'est qu'un avertissement, vous pouvez quand même publier. S'il n'y a aucun prêt récent à comparer, si la garantie est un NFT ou si l'index du protocole ne peut pas être lu, le formulaire le dit au lieu de se taire.
+
+<a id="public-queue"></a>
+
+### Réseaux à file d'attente publique
+
+Sur Ethereum et BNB Chain (et BNB Testnet), une transaction envoyée attend dans une file publique avant d'être incluse, et quiconque observe cette file, robots compris, peut la voir et agir avant vous : prendre une offre avant que votre annulation n'arrive, ou agir sur un prêt avant votre remboursement. Sur ces réseaux, la revue de la publication, de la prise ou de l'annulation d'une offre, du remboursement et de l'ajout de garantie le signale donc avant l'ouverture de votre portefeuille. Certains portefeuilles peuvent envoyer une transaction en privé ; regardez dans leurs réglages de réseau ou de sécurité. L'application ne peut pas choisir cette voie pour vous, et l'envoi habituel ne change que qui peut voir la transaction avant qu'elle n'arrive. Base, Arbitrum et Optimism n'ont pas de file publique : rien n'y est affiché.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend : Une offre en parts (Avancé)
@@ -1382,7 +1394,19 @@ Tant que le protocole est en pause, la page Coffre l'indique en haut : les retra
 
 ### Vos offres
 
-Offres liste chaque offre que vous avez créée sur le réseau auquel vous êtes connecté, et chaque offre dont vous détenez le jeton de position, la plus récente d'abord. Chacune affiche l'état que rapporte le protocole : ouverte, exécutée, vendue, expirée ou annulée, et les filtres au-dessus de la liste comptent chaque état. Une demande d'emprunt apparaît comme vendue quand sa garantie a été vendue par son annonce sur la place de marché avant que quiconque l'accepte : aucun prêt n'a été ouvert, et le produit de la vente est allé dans le coffre de son créateur. Une offre ouverte garde dans votre coffre ce qu'elle prête ou engage jusqu'à ce qu'elle soit exécutée ou annulée ; une offre expirée l'y garde jusqu'à ce qu'elle soit nettoyée. Quand le protocole annule une offre que rien n'a exécutée, il efface ses conditions, donc la page n'affiche que son numéro et son état. Si un autre portefeuille détient le jeton de position d'une offre que vous avez créée, vous pouvez toujours l'annuler et le retour vous revient ; si vous détenez celui d'une offre créée par un autre portefeuille, seul celui-ci peut l'annuler avant son expiration. Le carnet d'offres est encore dans l'application actuelle, et la page y renvoie.
+Offres liste chaque offre que vous avez créée sur le réseau auquel vous êtes connecté, et chaque offre dont vous détenez le jeton de position, la plus récente d'abord. Chacune affiche l'état que rapporte le protocole : ouverte, exécutée, vendue, expirée ou annulée, et les filtres au-dessus de la liste comptent chaque état. Une demande d'emprunt apparaît comme vendue quand sa garantie a été vendue par son annonce sur la place de marché avant que quiconque l'accepte : aucun prêt n'a été ouvert, et le produit de la vente est allé dans le coffre de son créateur. Une offre ouverte garde dans votre coffre ce qu'elle prête ou engage jusqu'à ce qu'elle soit exécutée ou annulée ; une offre expirée l'y garde jusqu'à ce qu'elle soit nettoyée. Quand le protocole annule une offre que rien n'a exécutée, il efface ses conditions, donc la page n'affiche que son numéro et son état. Si un autre portefeuille détient le jeton de position d'une offre que vous avez créée, vous pouvez toujours l'annuler et le retour vous revient ; si vous détenez celui d'une offre créée par un autre portefeuille, seul celui-ci peut l'annuler avant son expiration. Sous vos offres se trouve le carnet d'offres, décrit ci-dessous.
+
+<a id="offer-book"></a>
+
+### Le carnet d'offres
+
+Sous vos offres, le carnet d'offres liste toutes les offres ouvertes du réseau, la plus récente d'abord, et vous pouvez le lire sans connecter de portefeuille. Des onglets séparent les prêts d'un jeton des locations de NFT, un filtre affiche les offres des prêteurs, les demandes des emprunteurs ou les deux, et une fois connecté vous pouvez masquer vos propres offres. Les offres plus anciennes se chargent avec « Afficher les offres plus anciennes » ; les filtres s'appliquent à ce qui a été lu, et la ligne de décompte indique combien. Le carnet vient de l'index du protocole, qui peut avoir quelques minutes de retard sur la chaîne ; il ne fait donc que vous signaler des offres : ouvrez-en une pour la voir telle que la chaîne la détient. Une offre dont l'échéance est passée est marquée expirée ; n'importe qui peut la nettoyer, et ce qu'elle bloquait revient à son créateur. Si l'index ne peut pas être lu, le carnet le dit au lieu d'afficher qu'il n'y a aucune offre.
+
+<a id="offer-detail"></a>
+
+### La page d'une offre
+
+Chaque offre a sa propre page, lue sur la chaîne qu'un portefeuille soit connecté ou non. Elle indique qui l'a publiée, le montant, ce qui est déjà pourvu, la garantie, la durée et quand l'offre expire. De là, vous pouvez prendre en entier une offre de prêt ouverte, avec la même revue et le même consentement que dans Emprunter et Prêter : emprunter sur l'offre d'un prêteur, ou financer la demande d'un emprunteur. Annuler et Nettoyer y fonctionnent comme sur vos offres. Les locations, les offres avec garantie NFT, les ventes d'un prêt en cours et les offres de clôture anticipée se prennent pour l'instant dans l'application actuelle, et la page y renvoie. Une offre n'est pas réservée pendant que vous l'examinez ; quelqu'un d'autre peut la prendre ou l'annuler avant vous.
 
 <a id="offer-cancel"></a>
 

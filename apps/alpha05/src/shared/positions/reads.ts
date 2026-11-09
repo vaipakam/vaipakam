@@ -254,6 +254,8 @@ export interface OpenOffer {
   interestRateBpsMax: bigint;
   durationDays: bigint;
   tokenId: bigint;
+  /** An ERC-1155 rental's unit count (1 or 0 for an ERC-721). */
+  quantity: bigint;
   /** A rental's fee asset; `amount` is then the daily fee in it. */
   prepayAsset: Hex;
   /** The collateral leg a borrower offer locks in the creator's vault. */
