@@ -1147,10 +1147,18 @@ backup, not a second keeper:
   past-grace default that needs no sale, a periodic-interest stamp that needs
   no sale, the reward-day close where the chain charges no fee for it, the
   lapses and skips of finished reward days, the recycling of a skipped day's
-  value while a recycle still moves some, and the vault-code changes whose
-  delay has passed. Value of a skipped day that sits beyond spent transport
+  value while a recycle still moves some, the vault-code changes whose
+  delay has passed, and the release of a protected account's held payout once
+  its delay is over. Value of a skipped day that sits beyond spent transport
   records waits for the keeper, which first moves the day's reading point
   past them; the backup cannot tell when that move is needed.
+- To find held payouts without knowing whose they are, the protocol keeps one
+  list of every payout still waiting, across all accounts: a payout joins it
+  when it is held back and leaves it when it is released or cancelled. A
+  payout still in its delay, on a locked account, waiting for a co-signer or
+  addressed to a screened-out recipient is not due, so the backup leaves it.
+  The owner can still cancel a held payout during its delay, exactly as
+  before; the backup only adds its own wait after the delay ends.
 - It does not cover liquidations or matching, which stay open to anyone;
   anything that needs a swap route, a price quote or a cross-chain fee;
   steps found only from event history; the irreversible reward-day finalize;

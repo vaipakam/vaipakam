@@ -42,29 +42,32 @@ step's due rule, and ships with every step switched off.
   weeks after the day);
 - each loan step for one page of the active-loan list (default 10 loans);
 - the stale-sale-listing teardown for the linked loan of each offer in one
-  page of the active-offer list.
+  page of the active-offer list;
+- the release of each queued protected-account payout in one page of the
+  Diamond's open-payout set (#3361 part 2).
 
-The note queue and these four kinds of candidate (the days split into
-recent and older) are six parts that share the check's gas. Everything moves
-on one clock, the block number; a round is six blocks, one per part. The
-part that goes first moves on every block, so each part leads one check in
-six. A paged list (the loans, the offers, the older days) is read one page
-per round: round r reads page `r % pages`. The first (step, argument) pair
-inside a part moves on by one each time the part comes back to the same
-arguments: every round for an unpaged part, and every visit to the same page
-for a paged one (round r starts page `r % pages` at `r / pages`). So a probe
-that is costly or runs out of its gas (a close whose frontier is far behind,
-a default with a long consolidation scan) cannot starve the rest: every pair
-of every page leads its part in turn, within pages × pairs rounds.
+The note queue and these five kinds of candidate (the days split into
+recent and older) are seven parts that share the check's gas. Everything
+moves on one clock, the block number; a round is seven blocks, one per part.
+The part that goes first moves on every block, so each part leads one check
+in seven. A paged list (the loans, the offers, the older days, the payouts)
+is read one page per round: round r reads page `r % pages`. The first (step,
+argument) pair inside a part moves on by one each time the part comes back
+to the same arguments: every round for an unpaged part, and every visit to
+the same page for a paged one (round r starts page `r % pages` at
+`r / pages`). So a probe that is costly or runs out of its gas (a close
+whose frontier is far behind, a default with a long consolidation scan)
+cannot starve the rest: every pair of every page leads its part in turn,
+within pages × pairs rounds.
 
 Two clocks would break this. Moving the start on every block instead of
 every round locks it to the part order: a part reached only while it leads
 would see starts from one residue class, and with ten loans and seven loan
-steps, every odd pair would never go first. Choosing the page by time while
-the start moves by blocks does the same across pages: a page can come back
-only on rounds whose start falls in one residue class (140 loans in 14 pages
-of 10, 70 pairs a page, and the page returning every 350 rounds, revisits
-the same start for ever). So there is no time-based rotation setting.
+steps, most pairs would never go first. Choosing the page by time while the
+start moves by blocks does the same across pages: a page can come back only
+on rounds whose start falls in one residue class (140 loans in 14 pages of
+10, 70 pairs a page, and the page returning every 350 rounds, revisits the
+same start for ever). So there is no time-based rotation setting.
 
 Whether a candidate is due is the protocol's answer, not ours. The contract
 calls the step from a self-call (`probe`) that always reverts with the
@@ -144,6 +147,26 @@ found from on-chain reads.
 | 11 | `recycleSkippedDayValue` | recent days, non-zero only | rewardDeliveryConflict |
 | 12 | VaultBeacon `executeCurrentVersion` | the beacon | vaultBeaconUpkeep |
 | 13 | VaultBeacon `executeRevoke` | the beacon | vaultBeaconUpkeep |
+| 14 | `releasePayout(id)` | the Diamond's open-payout set | the payout-release pass |
+
+**Payout releases (step 14).** A protected account's withdrawals and the
+protocol payouts to it wait out the account's delay as queued rows, and
+`releasePayout` pays a row once the delay is over; it is permissionless.
+Rows are per account, so the Diamond now also keeps one set of every queued
+payout id (`getOpenPayoutCount`, `getOpenPayoutIds`), written in the same
+three places as the per-account list: a queue adds the id, and a cancel or a
+release removes it. The backup pages through that set like the loan list. The
+probe answers whether a release would succeed now, so a row still in its
+delay, one on a locked account, one waiting for a co-sign and one whose
+recipient is screened out are all not due. One case succeeds without paying:
+a row whose destination left the allowlist is cancelled by the release (the
+asset stays in the vault), which is what the protocol does for any caller.
+The backup adds its lag to the payout's delay, and the owner can still cancel
+during the delay as before. The set's order changes as rows leave it, so a
+page can repeat or skip an id; a skipped id is reached on a later round.
+A Diamond refreshed in place across this change starts the set empty, so
+rows queued before the refresh are not listed; it reaches the testnets only
+at the next fresh deploy.
 
 Two limits worth stating plainly:
 
@@ -166,10 +189,10 @@ Two limits worth stating plainly:
   every sale, liquidation, match and buyback fill. Liquidations and matching
   are left to open competition on purpose.
 - **Steps whose items are found only from event logs**: the protected-account
-  releases and changes, pins, reward staging, buyback expiry, sanctions
-  refresh, tier pushes. A small read added to the protected-account facets
-  would admit the delayed releases; that is Raaj's "add releases too" option,
-  coordinated with the thread working in those facets.
+  setting changes, pins, reward staging, buyback expiry, sanctions refresh,
+  tier pushes. The delayed payout releases were in this list until the
+  open-payout set above made them findable on-chain; the position-NFT holder
+  unlocks follow once the PositionNFT core carries its pending-holder set.
 - **`finalizeDay`**: it cannot be undone, and our keeper holds it on facts it
   reads from other chains.
 - **`backstopFill`**: it lends treasury capital.
@@ -229,5 +252,9 @@ note dropped, a noted loan revisited after the page moved on, a stale note resta
 recorded with its selector, the forwarder gate, no run without a ready note,
 the run cap, the no-sale default with a paid bonus swept to the treasury,
 day zero, the recent day window and the history pages, the recycle rule, the offer-linked teardown,
-the beacon steps, a loan page that moves with the round and never with time, and every pair of every page
-leading its part within pages × pairs rounds.
+the beacon steps, a loan page that moves with the round and never with time, every pair of every page
+leading its part within pages × pairs rounds, a matured payout released from the
+open-payout set after the lag while one still in its delay is left alone, and
+the payout page moving with the round. `contracts/test/ProtectedVaultTest.t.sol` checks
+that the Diamond's open-payout set follows a queue, a cancel, a release and a
+lock's cancel-all.

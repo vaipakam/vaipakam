@@ -22,6 +22,8 @@ interface IBackupDiamondReads {
     function getOfferLinkedLoanId(uint256 offerId) external view returns (uint256);
     function getInteractionCurrentDay() external view returns (uint256 day, bool active);
     function getVaultBeacon() external view returns (address);
+    function getOpenPayoutCount() external view returns (uint256);
+    function getOpenPayoutIds(uint256 offset, uint256 limit) external view returns (uint256[] memory);
 }
 
 /// @dev The step entry points, by signature only. `AdapterCall` mirrors
@@ -47,6 +49,7 @@ interface IBackupSteps {
     function recycleSkippedDayValue(uint256 dayId) external returns (uint256 recycled);
     function executeCurrentVersion() external;
     function executeRevoke() external;
+    function releasePayout(uint256 id) external returns (uint256 delivered);
 }
 
 /**
@@ -64,15 +67,16 @@ interface IBackupSteps {
  *         of the active-loan list, per active offer's linked loan in a page of
  *         the active-offer list, per day for the most recent closed days AND a
  *         page of every older day (a lapse becomes possible only weeks after
- *         its day), and the VaultBeacon's two proposal executes. These parts
- *         and the note queue share the check's gas. Everything moves on one
- *         clock, the block number. The part that goes first moves on every
- *         block; a round is one block per part. A paged part reads page
- *         `round % pages`, and the first (step, argument) pair inside a part
- *         moves on by one each time it comes back to the same arguments (each
- *         round, or each visit to the same page). So every pair of every page
- *         leads its part in turn: a pair whose probe is costly cannot starve
- *         the rest. Whether a candidate is due is decided by the protocol
+ *         its day), per queued protected-account payout in a page of the
+ *         Diamond's open-payout set, and the VaultBeacon's two proposal
+ *         executes. These parts and the note queue share the check's gas.
+ *         Everything moves on one clock, the block number. The part that goes
+ *         first moves on every block; a round is one block per part. A paged
+ *         part reads page `round % pages`, and the first (step, argument) pair
+ *         inside a part moves on by one each time it comes back to the same
+ *         arguments (each round, or each visit to the same page). So every
+ *         pair of every page leads its part in turn: a pair whose probe is
+ *         costly cannot starve the rest. Whether a candidate is due is decided by the protocol
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
@@ -143,10 +147,11 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         SkipConflictedDay, // 10 per day
         RecycleSkippedDayValue, // 11 per day, due only while it returns > 0
         BeaconExecuteCurrentVersion, // 12 once
-        BeaconExecuteRevoke // 13 once
+        BeaconExecuteRevoke, // 13 once
+        ReleasePayout // 14 per queued payout: releasePayout(id)
     }
 
-    uint8 public constant STEP_COUNT = 14;
+    uint8 public constant STEP_COUNT = 15;
     uint256 private constant FIRST_LOAN_STEP = 0;
     uint256 private constant LAST_LOAN_STEP = 6;
     uint256 private constant FIRST_DAY_STEP = 7;
@@ -190,7 +195,11 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     uint8 public constant MAX_PENDING = 64;
     uint8 public constant MAX_RUNS_PER_PERFORM = 4;
     /// @dev The parts of a check that share its gas: see `checkUpkeep`.
-    uint256 private constant PARTS = 6;
+    uint256 private constant PARTS = 7;
+    /// @dev The lists `_window` pages through.
+    uint256 private constant SOURCE_LOANS = 0;
+    uint256 private constant SOURCE_OFFERS = 1;
+    uint256 private constant SOURCE_PAYOUTS = 2;
     /// @notice Gas kept back in a check after the last probe, so the encoding
     ///         of the result never runs out.
     uint256 public constant CHECK_GAS_RESERVE = 300_000;
@@ -215,7 +224,8 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     uint32[STEP_COUNT] public lagSecOf;
     /// @notice How long after the lag a note stays good for running.
     uint32 public actWindowSec = 1 hours;
-    /// @notice Active loans (and active offers) probed per check.
+    /// @notice Active loans (and active offers, and queued payouts) probed per
+    ///         check.
     uint16 public loanWindow = 10;
     /// @notice Closed days probed per check, counting back from yesterday.
     uint16 public dayWindow = 7;
@@ -385,11 +395,12 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         // dropped) once probed, so they cannot hold the gas for long.
         (n, runs) = _scanReady(actions, n, runs, mask);
 
-        // Six parts share the rest of the gas: the other notes, the beacon,
-        // the recent days, the older days, the loans and the offers. The part
-        // that goes first moves on every block, so a part whose probes are
+        // Seven parts share the rest of the gas: the other notes, the beacon,
+        // the recent days, the older days, the loans, the offers and the
+        // queued payouts. The part that goes first moves on every block, so a
+        // part whose probes are
         // costly, or run out of their gas, cannot starve the others: each
-        // part leads one check in six.
+        // part leads one check in seven.
         uint256 first = block.number % PARTS;
         for (uint256 k; k < PARTS && !_full(n, runs); k++) {
             (n, runs) = _scanPart((first + k) % PARTS, actions, n, runs, mask);
@@ -485,7 +496,11 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         } else if (part == 4) {
             firstStep = FIRST_LOAN_STEP;
             lastStep = LAST_LOAN_STEP;
-            if (_anyIn(mask, firstStep, lastStep)) (args, seed) = _window(true);
+            if (_anyIn(mask, firstStep, lastStep)) (args, seed) = _window(SOURCE_LOANS);
+        } else if (part == 6) {
+            firstStep = uint8(Step.ReleasePayout);
+            lastStep = firstStep;
+            if (_on(mask, uint8(firstStep))) (args, seed) = _window(SOURCE_PAYOUTS);
         } else {
             firstStep = uint8(Step.TeardownStaleSaleListing);
             lastStep = firstStep;
@@ -629,7 +644,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     ///      (zero for an offer with none): a sale listing that outlived its
     ///      loan is reached from the offer.
     function _offerLinkedLoans() internal view returns (uint256[] memory out, uint256 seed) {
-        (out, seed) = _window(false);
+        (out, seed) = _window(SOURCE_OFFERS);
         for (uint256 i; i < out.length; i++) out[i] = IBackupDiamondReads(diamond).getOfferLinkedLoanId(out[i]);
     }
 
@@ -692,16 +707,22 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         return n >= MAX_ACTIONS || runs >= runsPerPerform || gasleft() < uint256(probeGas) + CHECK_GAS_RESERVE;
     }
 
-    /// @dev The page of the active-loan (or active-offer) list this check
-    ///      reads (`_page`), wrapping at the end, and the seed of its start.
-    function _window(bool loans) internal view returns (uint256[] memory ids, uint256 seed) {
+    /// @dev The page of the active-loan, active-offer or open-payout list
+    ///      this check reads (`_page`), wrapping at the end, and the seed of
+    ///      its start. The open-payout set reorders as rows leave it, so a page
+    ///      can repeat or skip an id; a skipped id is reached on a later round.
+    function _window(uint256 source) internal view returns (uint256[] memory ids, uint256 seed) {
         IBackupDiamondReads d = IBackupDiamondReads(diamond);
-        uint256 count = loans ? d.getActiveLoansCount() : d.getActiveOffersCount();
+        uint256 count = source == SOURCE_LOANS
+            ? d.getActiveLoansCount()
+            : source == SOURCE_OFFERS ? d.getActiveOffersCount() : d.getOpenPayoutCount();
         if (count == 0) return (new uint256[](0), _cycle());
         uint256 page;
         (page, seed) = _page((count + loanWindow - 1) / loanWindow);
         uint256 offset = page * loanWindow;
-        ids = loans ? d.getActiveLoansPaginated(offset, loanWindow) : d.getActiveOffersPaginated(offset, loanWindow);
+        if (source == SOURCE_LOANS) ids = d.getActiveLoansPaginated(offset, loanWindow);
+        else if (source == SOURCE_OFFERS) ids = d.getActiveOffersPaginated(offset, loanWindow);
+        else ids = d.getOpenPayoutIds(offset, loanWindow);
     }
 
     /// @dev The call a (step, argument) makes. The only place a call is built.
@@ -724,6 +745,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         else if (s == Step.LapseShortCompensatedDay) data = abi.encodeCall(IBackupSteps.lapseShortCompensatedDay, (arg));
         else if (s == Step.SkipConflictedDay) data = abi.encodeCall(IBackupSteps.skipConflictedDay, (arg));
         else if (s == Step.RecycleSkippedDayValue) data = abi.encodeCall(IBackupSteps.recycleSkippedDayValue, (arg));
+        else if (s == Step.ReleasePayout) data = abi.encodeCall(IBackupSteps.releasePayout, (arg));
         else {
             // The beacon steps. A Diamond with no beacon has nothing to run:
             // the call goes to the Diamond, which refuses an unknown selector.
