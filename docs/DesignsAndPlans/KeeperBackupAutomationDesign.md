@@ -44,13 +44,15 @@ step's due rule, and ships with every step switched off.
 - the stale-sale-listing teardown for the linked loan of each offer in one
   page of the active-offer list;
 - the release of each queued protected-account payout in one page of the
-  Diamond's open-payout set (#3361 part 2).
+  Diamond's open-payout set (#3361 part 2);
+- the cancel of each offer in one page of the active-offer list whose route
+  is dead (#3417).
 
-The note queue and these five kinds of candidate (the days split into
-recent and older) are seven parts that share the check's gas. Everything
-moves on one clock, the block number; a round is seven blocks, one per part.
+The note queue and these six kinds of candidate (the days split into
+recent and older) are eight parts that share the check's gas. Everything
+moves on one clock, the block number; a round is eight blocks, one per part.
 The part that goes first moves on every block, so each part leads one check
-in seven. A paged list (the loans, the offers, the older days, the payouts)
+in eight. A paged list (the loans, the offers, the older days, the payouts)
 is read one page per round: round r reads page `r % pages`. The first (step,
 argument) pair inside a part moves on by one each time the part comes back
 to the same arguments: every round for an unpaged part, and every visit to
@@ -73,9 +75,17 @@ Whether a candidate is due is the protocol's answer, not ours. The contract
 calls the step from a self-call (`probe`) that always reverts with the
 result, so the step's effects are undone and only "it would succeed" is kept.
 This is why the backup cannot drift from the protocol's rules: it has none of
-its own. One step needs an extra rule: `recycleSkippedDayValue` succeeds with
-zero once nothing is left, so it is due only while its probe returns a
-non-zero amount.
+its own. Two steps need more than the probe's success:
+
+- `recycleSkippedDayValue` succeeds with zero once nothing is left, so it is
+  due only while its probe returns a non-zero amount.
+- `cancelOffer` succeeds for more offers than the backup backs: anyone may
+  clear an expired offer (#195), and no keeper is owed that. So the offer
+  cancel is due only while the Diamond's own `isOfferRouteDead` says the
+  offer's route is dead (#3336), the read our keeper's teardown pass makes.
+  The perform reads it again before it runs, and drops a note it no longer
+  holds for. A Diamond without the read backs no offer cancel: the read
+  reverts and counts as not dead.
 
 **Waiting.** A due candidate is first noted, in a cheap transaction: it
 joins a bounded queue (at most 64) with the time it was seen. The queue is
@@ -148,6 +158,16 @@ found from on-chain reads.
 | 12 | VaultBeacon `executeCurrentVersion` | the beacon | vaultBeaconUpkeep |
 | 13 | VaultBeacon `executeRevoke` | the beacon | vaultBeaconUpkeep |
 | 14 | `releasePayout(id)` | the Diamond's open-payout set | the payout-release pass |
+| 15 | `cancelOffer(id)`, only while `isOfferRouteDead(id)` | active offers | expiredTeardown (moved-route cancels) |
+
+**Moved positions (#3417).** Since #3336 a prepay listing or a swap-to-repay
+intent whose borrower position moved can be cleared by anyone at once, through
+the same `cancelExpiredPrepayListing` and `cancelExpiredIntent` calls steps 1
+and 2 make. The probe asks those calls, so steps 1 and 2 already back the
+moved case with no change. A vehicle offer (a preclose offset, a lender-sale
+listing or a refinance request) is cleared through `cancelOffer`, which the
+backup did not call; step 15 adds it, behind the dead-route read above. Each
+cancel refunds the offer's creator, and the backup gains nothing from it.
 
 **Payout releases (step 14).** A protected account's withdrawals and the
 protocol payouts to it wait out the account's delay as queued rows, and
@@ -255,6 +275,9 @@ day zero, the recent day window and the history pages, the recycle rule, the off
 the beacon steps, a loan page that moves with the round and never with time, every pair of every page
 leading its part within pages × pairs rounds, a matured payout released from the
 open-payout set after the lag while one still in its delay is left alone, and
-the payout page moving with the round. `contracts/test/ProtectedVaultTest.t.sol` checks
+the payout page moving with the round, a dead-route offer cancelled after
+the lag while a merely expired one is left, a run dropped once the route is
+no longer reported dead, and a Diamond without the read backing no offer
+cancel. `contracts/test/ProtectedVaultTest.t.sol` checks
 that the Diamond's open-payout set follows a queue, a cancel, a release and a
 lock's cancel-all.
