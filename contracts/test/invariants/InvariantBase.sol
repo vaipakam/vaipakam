@@ -57,6 +57,7 @@ import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
+import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 
 /**
  * @title InvariantBase
@@ -96,6 +97,10 @@ contract InvariantBase is Test {
     uint256 public constant VENUE_FLOAT = 100_000_000 ether;
     /// @dev #3241: the venue at adapter index 1, which fills at the oracle's prices.
     MockSwapAdapter public workingVenue;
+    /// @dev #3241: a rentable (ERC-4907) NFT. Lender `i` owns tokens `i * 1000 + 1` to
+    ///      `i * 1000 + RENTAL_TOKENS_PER_LENDER`; the oracle reads it as illiquid.
+    address public mockNft;
+    uint256 public constant RENTAL_TOKENS_PER_LENDER = 5;
 
     function deploy() public {
         owner = address(this);
@@ -112,6 +117,13 @@ contract InvariantBase is Test {
             ERC20Mock(mockUsdc).mint(borrowers[i], MINT_AMOUNT);
             ERC20Mock(mockWeth).mint(lenders[i], MINT_AMOUNT);
             ERC20Mock(mockWeth).mint(borrowers[i], MINT_AMOUNT);
+        }
+
+        mockNft = address(new MockRentableNFT721());
+        for (uint256 i = 0; i < 3; i++) {
+            for (uint256 t = 1; t <= RENTAL_TOKENS_PER_LENDER; t++) {
+                MockRentableNFT721(mockNft).mint(lenders[i], i * 1000 + t);
+            }
         }
 
         DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
@@ -406,6 +418,7 @@ contract InvariantBase is Test {
     function _mockOracle() internal {
         _mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
         _mockLiquidity(mockWeth, LibVaipakam.LiquidityStatus.Liquid);
+        _mockLiquidity(mockNft, LibVaipakam.LiquidityStatus.Illiquid);
         _mockPrice(mockUsdc, 1e8, 8);
         _mockPrice(mockWeth, 2000e8, 8);
 
@@ -455,6 +468,8 @@ contract InvariantBase is Test {
         ERC20(mockWeth).approve(address(diamond), type(uint256).max);
         ERC20(mockUsdc).approve(vault, type(uint256).max);
         ERC20(mockWeth).approve(vault, type(uint256).max);
+        MockRentableNFT721(mockNft).setApprovalForAll(address(diamond), true);
+        MockRentableNFT721(mockNft).setApprovalForAll(vault, true);
         vm.stopPrank();
     }
 

@@ -12,6 +12,7 @@ import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 
 /**
  * @title  LoanLedgerHandler
@@ -106,6 +107,18 @@ contract LoanLedgerHandler is Test {
         /// @dev #3241 — closed by a preclose offset. Its lender may be paid the interest the
         ///      original term would still have earned, past what has accrued so far.
         bool offsetClosed;
+        /// @dev #3241 — an NFT rental: the principal is the daily fee, paid from a USDC
+        ///      prepayment (rent for the whole term plus the buffer) the renter holds in its own
+        ///      vault. `rentOwed` is set when the rental closes on time: the fee times every day
+        ///      used, any part of a day counting as a whole day, never past the term.
+        bool isRental;
+        uint256 tokenId;
+        uint256 termDays;
+        uint256 prepay;
+        uint256 rentOwed;
+        bool rentOwedSet;
+        bool renterSettledChecked;
+        bool lenderSettledChecked;
         int256[2] dLender;
         int256[2] dBorrower;
         int256[2] dDiamond;
@@ -124,6 +137,7 @@ contract LoanLedgerHandler is Test {
     uint256 public periodicViolations;
     uint256 public offsetViolations;
     uint256 public refinanceViolations;
+    uint256 public rentalViolations;
     string public firstViolation;
 
     // ── Coverage counters: how often each per-action check actually ran ──
@@ -137,6 +151,9 @@ contract LoanLedgerHandler is Test {
     uint256 public periodicSold;
     uint256 public offsetLanded;
     uint256 public refinanceLanded;
+    uint256 public rentalsOpened;
+    uint256 public rentDeductions;
+    uint256 public rentalChecks;
 
     /// @dev Set only while a periodic-interest sale is booked: the one action the market may trade in.
     bool internal marketOpen;
@@ -156,6 +173,7 @@ contract LoanLedgerHandler is Test {
         for (uint256 i = 0; i < 6; i++) {
             vaults[i] = VaultFactoryFacet(diamond).getUserVaultAddress(actors[i]);
         }
+        inner.enableRentals();
     }
 
     // ── Wrapped actions ────────────────────────────────────────────────
@@ -228,6 +246,57 @@ contract LoanLedgerHandler is Test {
         _afterRefinanceAccept(n, refinanceOf, pre, before, logs);
     }
 
+    /// @notice #3241: a lender lists an NFT for rent. The NFT moves into its own vault, and no
+    ///         token balance may move.
+    function createRentalOffer(uint256 s, uint256 t, uint256 fee, uint256 d) external {
+        Snap memory before = _snap();
+        inner.createRentalOffer(s, t, fee, d);
+        _requireNoMovement(before, "createRentalOffer");
+    }
+
+    /// @notice #3241: a borrower rents a listed NFT. Its prepayment moves wallet -> own vault and
+    ///         nothing crosses parties: a rental charges no Loan Initiation Fee, and the lender
+    ///         is paid only as the rent is earned.
+    function acceptRentalOffer(uint256 borrowerSeed, uint256 offerIdx) external {
+        uint256 n = inner.loanIdsLength();
+        Snap memory before = _snap();
+        inner.acceptRentalOffer(borrowerSeed, offerIdx);
+        if (inner.loanIdsLength() == n) {
+            _requireNoMovement(before, "acceptRentalOffer (no loan)");
+            return;
+        }
+        uint256 loanId = inner.loanIdAt(n);
+        _register(loanId);
+        _book(loanId, before, "acceptRentalOffer");
+        LoanBook storage b = books[loanId];
+        rentalsOpened++;
+        for (uint256 a = 0; a < 2; a++) {
+            if (b.dLender[a] != 0 || b.dBorrower[a] != 0 || b.dDiamond[a] != 0 || b.dCaller[a] != 0) {
+                rentalViolations++;
+                _flag("acceptRentalOffer: value crossed between parties when the rental opened");
+            }
+        }
+    }
+
+    /// @notice #3241: the daily rent deduction pays the lender side at most one day's fee and
+    ///         takes at most that from the renter.
+    function autoDeductDaily(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        uint256 lastBefore = _loan(loanId).lastDeductTime;
+        Snap memory before = _snap();
+        inner.autoDeductDaily(loanIdx);
+        int256[2] memory dB = _book(loanId, before, "autoDeductDaily");
+        if (_loan(loanId).lastDeductTime == lastBefore) return; // nothing deducted
+        rentDeductions++;
+        LoanBook storage b = books[loanId];
+        int256 fee = int256(b.principal0);
+        if (dB[USDC] < -fee || dB[WETH] != 0) {
+            rentalViolations++;
+            _flag(string.concat("autoDeductDaily: renter charged ", vm.toString(-dB[USDC]), " for one day of ", vm.toString(fee)));
+        }
+    }
+
     /// @notice #3241: the borrower asks to refinance a loan. Consenting to the rate cap, posting
     ///         the request on the loan's own collateral and attaching the payoff permit move
     ///         nothing.
@@ -244,7 +313,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.repay(loanIdx);
         int256[2] memory dB = _book(loanId, before, "repay");
-        _checkExactInterest(loanId, pre, dB);
+        _checkExactInterest(loanId, pre, dB, false);
     }
 
     /// @notice #3241: a direct preclose closes the loan early. Booked like a repayment; when it
@@ -258,7 +327,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.precloseDirect(loanIdx);
         int256[2] memory dB = _book(loanId, before, "precloseDirect");
-        _checkExactInterest(loanId, pre, dB);
+        _checkExactInterest(loanId, pre, dB, true);
         if (wasActive && _loan(loanId).status != LibVaipakam.LoanStatus.Active) precloseLanded++;
     }
 
@@ -403,6 +472,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.claimAsLender(loanIdx);
         _book(loanId, before, "claimAsLender");
+        _checkRentalSettled(loanId);
     }
 
     function claimAsBorrower(uint256 loanIdx) external {
@@ -411,6 +481,7 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.claimAsBorrower(loanIdx);
         _book(loanId, before, "claimAsBorrower");
+        _checkRentalSettled(loanId);
     }
 
     /// @notice Time passes; no balance may move.
@@ -557,6 +628,12 @@ contract LoanLedgerHandler is Test {
         b.startTime = L.startTime;
         b.dueTime = uint256(L.startTime) + L.durationDays * 1 days;
         b.collateralIn = L.collateralAmount;
+        if (L.assetType != LibVaipakam.AssetType.ERC20) {
+            b.isRental = true;
+            b.tokenId = L.tokenId;
+            b.termDays = L.durationDays;
+            b.prepay = L.prepayAmount + L.bufferAmount;
+        }
         bookedLoanIds.push(loanId);
     }
 
@@ -769,7 +846,7 @@ contract LoanLedgerHandler is Test {
                 dBOld[a] = _delta(s.actor[i][a], before.actor[i][a]) - dB2[a];
             }
         }
-        _checkExactInterest(oldLoanId, pre, dBOld);
+        _checkExactInterest(oldLoanId, pre, dBOld, false);
         refinanceLanded++;
     }
 
@@ -830,8 +907,15 @@ contract LoanLedgerHandler is Test {
 
     /// @dev Spec "Interest Formula": a loan closed by one on-time full repayment with no earlier
     ///      partial pays `floor(P x rate x elapsed / (365 days x 10_000))`, to the second.
-    function _checkExactInterest(uint256 loanId, LibVaipakam.Loan memory pre, int256[2] memory dB) internal {
+    ///      `directClose` marks a direct preclose, which a rental settles on its own rule.
+    function _checkExactInterest(uint256 loanId, LibVaipakam.Loan memory pre, int256[2] memory dB, bool directClose)
+        internal
+    {
         LoanBook storage b = books[loanId];
+        if (b.isRental) {
+            _recordRentOwed(loanId, pre, directClose);
+            return;
+        }
         if (b.hadPartial) return;
         if (pre.status != LibVaipakam.LoanStatus.Active) return;
         if (_loan(loanId).status != LibVaipakam.LoanStatus.Repaid) return;
@@ -854,5 +938,67 @@ contract LoanLedgerHandler is Test {
                 )
             );
         }
+    }
+
+    /// @dev Spec "NFT Rental Outcome": a rental returned on time owes the fee for every day used,
+    ///      any part of a day counting as a whole day (at least one), never past the term. A
+    ///      direct preclose is the spec's Option 1, "the full interest that would have been due
+    ///      for the original agreed loan term": it owes the fee for every day of the term.
+    function _recordRentOwed(uint256 loanId, LibVaipakam.Loan memory pre, bool directClose) internal {
+        LoanBook storage b = books[loanId];
+        if (pre.status != LibVaipakam.LoanStatus.Active) return;
+        if (_loan(loanId).status != LibVaipakam.LoanStatus.Repaid) return;
+        if (block.timestamp > b.dueTime) return; // a late fee may apply; bounded elsewhere
+        if (pre.useFullTermInterest) return;
+        uint256 elapsed = block.timestamp - b.startTime;
+        uint256 daysUsed = (elapsed + 1 days - 1) / 1 days;
+        if (daysUsed == 0) daysUsed = 1;
+        if (daysUsed > b.termDays || directClose) daysUsed = b.termDays;
+        b.rentOwed = b.principal0 * daysUsed;
+        b.rentOwedSet = true;
+        _checkRentalSettled(loanId);
+    }
+
+    /// @dev Once a rental that closed on time has paid out a side's claim, that side's net is
+    ///      exact: the renter has paid exactly the rent owed (the rest of its prepayment, the
+    ///      buffer included, is back with it), and the lender side has received that rent less
+    ///      the treasury's share (rounded once per deduction, so within one wei a day). Each side
+    ///      is checked once, when its claim is first seen paid.
+    function _checkRentalSettled(uint256 loanId) internal {
+        LoanBook storage b = books[loanId];
+        if (!b.rentOwedSet) return;
+        (,, bool borrowerClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, false);
+        (,, bool lenderClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, true);
+        int256 owed = int256(b.rentOwed);
+        if (borrowerClaimed && !b.renterSettledChecked) {
+            b.renterSettledChecked = true;
+            rentalChecks++;
+            if (b.dBorrower[USDC] != -owed) {
+                rentalViolations++;
+                _flag(string.concat("rental: renter paid ", vm.toString(-b.dBorrower[USDC]), ", rent owed ", vm.toString(owed)));
+            }
+        }
+        if (lenderClaimed && !b.lenderSettledChecked) {
+            b.lenderSettledChecked = true;
+            rentalChecks++;
+            uint256 bps = _loan(loanId).treasuryFeeBpsAtInit;
+            int256 hi = owed - int256((b.rentOwed * bps) / BPS);
+            int256 lo = owed - int256((b.rentOwed * bps + BPS - 1) / BPS) - int256(b.termDays);
+            if (b.dLender[USDC] > hi || b.dLender[USDC] < lo) {
+                rentalViolations++;
+                _flag(string.concat("rental: lender received ", vm.toString(b.dLender[USDC]), ", rent less the treasury share is ", vm.toString(hi)));
+            }
+        }
+    }
+
+    /// @notice A booked loan's rental terms: whether it is a rental, the rented token, the
+    ///         prepayment (whole-term rent plus buffer), and its two parties.
+    function loanRental(uint256 loanId)
+        external
+        view
+        returns (bool isRental, uint256 tokenId, uint256 prepay, address lender, address borrower)
+    {
+        LoanBook storage b = books[loanId];
+        return (b.isRental, b.tokenId, b.prepay, b.lender, b.borrower);
     }
 }
