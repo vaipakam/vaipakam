@@ -236,14 +236,39 @@ contract SellerInterestClaimTest is SetupTest {
         (,, LibVaipakam.SellerInterestClaim[] memory claims) = _ledger(loanId);
         assertEq(claims.length, 0, "every claim closed at the terminal");
 
-        uint256 buyerBefore = ERC20(mockERC20).balanceOf(buyer);
+        uint256 buyerBefore = _owned(buyer, mockERC20);
         vm.prank(buyer);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
-        assertGe(ERC20(mockERC20).balanceOf(buyer) - buyerBefore, PRINCIPAL, "the holder keeps the principal and the rest");
+        assertGe(_owned(buyer, mockERC20) - buyerBefore, PRINCIPAL, "the holder keeps the principal and the rest");
 
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(SellerClaimFacet.NothingToClaimAsSeller.selector, loanId, lender));
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
+    }
+
+    /// @dev Codex #3387 r1 — the holder's claim runs the terminal split and
+    ///      pays a prior seller who is neither the stored lender (the buyer)
+    ///      nor the borrower: the split authorizes that seller's exact share
+    ///      before it pays (the seller-claim list is closed first). The share
+    ///      waits in the seller's vault; the seller claims it.
+    function test_fullRepay_holderClaimRunsTheSplit_paysThePriorSeller() public {
+        uint256 loanId = _openLoan();
+        _skip(10 days);
+        uint256 sellerGross = _accrual(PRINCIPAL, 10 days);
+        address buyer = _sell(loanId, lender, "buyer1");
+        _skip(5 days);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        vm.prank(buyer);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        uint256 held = SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, lender, mockERC20);
+        assertApproxEqAbs(held, _net(loanId, sellerGross), 2, "the prior seller's net share waits in its vault");
+
+        uint256 before = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
+        assertEq(ERC20(mockERC20).balanceOf(lender) - before, held, "the seller withdraws it");
     }
 
     // ─── The bound ───────────────────────────────────────────────────────────
@@ -478,10 +503,10 @@ contract SellerInterestClaimTest is SetupTest {
         (, uint256 shownAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(shown, shownAmount, "both claim views agree");
 
-        uint256 before = ERC20(mockERC20).balanceOf(buyer);
+        uint256 before = _owned(buyer, mockERC20);
         vm.prank(buyer);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
-        assertEq(ERC20(mockERC20).balanceOf(buyer) - before, shown, "the holder is paid what they were shown");
+        assertEq(_owned(buyer, mockERC20) - before, shown, "the holder is paid what they were shown");
     }
 
     /// @dev A holder who got the position by plain transfer has no vault. The

@@ -35,6 +35,7 @@ import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol"
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 
 /**
  * @title  T092AutoLifecycleIntegrationTest
@@ -504,6 +505,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     ///      entitlement as needed before extending.
     function _setupExtendableLoan() internal returns (uint256 loanId) {
         loanId = _buildActiveLoan();
+        // #3205 part 2 — the net principal landed in the borrower's vault as
+        // free money; the borrower withdraws it, as the app does, so the
+        // extension reserve is the only principal asset the vault holds.
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         // Both sides opt into auto-extend within a wide rate / expiry band.
         uint64 farExpiry = uint64(block.timestamp + 400 days);
@@ -1705,6 +1710,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     ///         refuses the extension rather than paying out of other balance.
     function test_2814_extension_refusedWhenTheReserveFallsShort() public {
         uint256 loanId = _buildActiveLoan();
+        // #3205 part 2 — the delivered principal sits in the borrower's vault
+        // as free money, which an extension charge may draw on; the borrower
+        // withdraws it, as the app does, so the 1-wei reserve is all there is.
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
         _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);

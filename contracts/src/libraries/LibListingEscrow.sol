@@ -32,7 +32,8 @@ library LibListingEscrow {
         view
         returns (address)
     {
-        if (assetType != LibVaipakam.AssetType.ERC1155) return vault;
+        // No vault yet means no offerer (a read never reverts for it).
+        if (assetType != LibVaipakam.AssetType.ERC1155 || vault == address(0)) return vault;
         return VaipakamVaultImplementation(vault).listingEscrowAddress(listingKey);
     }
 

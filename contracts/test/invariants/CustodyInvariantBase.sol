@@ -22,6 +22,8 @@ import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
 import {MockLopFill} from "../mocks/MockLopFill.sol";
 import {CustodyHandler, CustodyWiring, CUSTODY_INTENT_CANCEL_GRACE} from "./CustodyHandler.sol";
+import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
+import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 
 /**
  * @title  CustodyInvariantBase
@@ -159,6 +161,9 @@ abstract contract CustodyInvariantBase is SetupTest {
         ic.setIntentAuctionSecondsBounds(60, 600);
         ic.setIntentCancelGraceSeconds(CUSTODY_INTENT_CANCEL_GRACE);
         ic.setFusionLimitOrderProtocol(address(lopFill));
+        // #3205 part 2 — the vault grants the order protocol only as a member
+        // of the registry's SWAP_ADAPTERS set.
+        LibTestVaultBeacon.registryOf(address(diamond)).setMember(RegistryKeys.SWAP_ADAPTERS, address(lopFill), true);
     }
 
     function _deployCustodyBackstop() private {

@@ -7,10 +7,18 @@ import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 interface ITreasuryRead {
     function getTreasury() external view returns (address);
     function getBackstopVault() external view returns (address);
+    function getSwapAdapters() external view returns (address[] memory);
 }
 
 /// @title  MockProtocolRegistry
-/// @notice #3205 part 2 — a stand-in for the Timelock-owned protocol registry
+/// @notice TEST CONVENIENCE ONLY — it must never back a deploy. It mirrors
+///         the Diamond's own configuration (the treasury, the backstop, the
+///         order protocol and swap adapters), so it agrees with the Diamond
+///         by construction and cannot show the property the real registry
+///         exists for: the vault refusing a spender the Diamond configured
+///         but the registry does not list. That property is tested against a
+///         real ProtocolRegistry (VaultOutflowPolicyTest, LaunchTest).
+///         Originally: #3205 part 2 — a stand-in for the Timelock-owned protocol registry
 ///         the vault reads (`IProtocolRegistryReader`), until that contract
 ///         lands. Anyone may set it: tests only. `requirePointer` reverts for
 ///         an unset key, as the real registry does, except TREASURY: unset,
@@ -78,7 +86,21 @@ contract MockProtocolRegistry is IProtocolRegistryReader {
     }
 
     function isMember(bytes32 setKey, address who) external view returns (bool) {
-        return _isMember[setKey][who];
+        if (_isMember[setKey][who]) return true;
+        // SWAP_ADAPTERS also answers from the Diamond's own swap adapters (on
+        // a real chain the same change writes both; #3391 seeds them at
+        // construction). Not the 1inch order protocol: its grant is opened
+        // inside a fill, under the Diamond's fill lock, where this read back
+        // into the Diamond is refused, so a suite registers it with
+        // {setMember} where it configures it.
+        if (setKey == RegistryKeys.SWAP_ADAPTERS && diamond != address(0) && who != address(0)) {
+            try ITreasuryRead(diamond).getSwapAdapters() returns (address[] memory list) {
+                for (uint256 i; i < list.length; ++i) {
+                    if (list[i] == who) return true;
+                }
+            } catch {}
+        }
+        return false;
     }
 
     function members(bytes32 setKey) external view returns (address[] memory) {

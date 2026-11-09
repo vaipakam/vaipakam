@@ -448,6 +448,9 @@ contract VaipakamVaultImplementation is
         returns (address escrow)
     {
         if (key == bytes32(0)) revert ZeroOutflow();
+        // The escrow's conduit approval is a spender right the vault causes,
+        // so it passes the same registry rule as every grant.
+        _requireRegistrySpender(VaultOutflowTypes.GrantClass.Conduit, conduit);
         escrow = listingEscrowAddress(key);
         if (escrow.code.length == 0) {
             escrow = address(new ListingEscrow{salt: key}());
@@ -504,12 +507,8 @@ contract VaipakamVaultImplementation is
      */
     function grantAllowance(VaultOutflowTypes.Grant calldata g) external onlyDiamond {
         if (_openGrant.spender != address(0)) revert GrantOpen(_openGrant.ref);
-        bytes32 set = g.class_ == VaultOutflowTypes.GrantClass.Conduit
-            ? RegistryKeys.CONDUITS
-            : RegistryKeys.SWAP_ADAPTERS;
-        if (
-            g.spender == address(0) || g.kind == VaultOutflowTypes.AssetKind.ERC1155 || !_inRegistrySet(set, g.spender)
-        ) revert GrantRefused(g.class_, g.spender);
+        if (g.kind == VaultOutflowTypes.AssetKind.ERC1155) revert GrantRefused(g.class_, g.spender);
+        _requireRegistrySpender(g.class_, g.spender);
         _openGrant = OpenGrant({kind: g.kind, asset: g.asset, tokenId: g.tokenId, amount: g.amount, spender: g.spender, ref: g.ref});
         _grantOpenedThisTx = true;
         if (g.kind == VaultOutflowTypes.AssetKind.ERC20) {
@@ -630,6 +629,16 @@ contract VaipakamVaultImplementation is
 
     /// @dev Whether `who` is in the registry set `setKey`; false when the
     ///      registry is unset or the read fails.
+    /// @dev THE rule for every spender right this vault grants or causes (a
+    ///      just-in-time allowance, a listing escrow's conduit approval): the
+    ///      spender must be a member of the registry set its class names
+    ///      (CONDUITS for a marketplace conduit, SWAP_ADAPTERS for an order
+    ///      taker). No approval path may skip it.
+    function _requireRegistrySpender(VaultOutflowTypes.GrantClass c, address spender) private view {
+        bytes32 set = c == VaultOutflowTypes.GrantClass.Conduit ? RegistryKeys.CONDUITS : RegistryKeys.SWAP_ADAPTERS;
+        if (spender == address(0) || !_inRegistrySet(set, spender)) revert GrantRefused(c, spender);
+    }
+
     function _inRegistrySet(bytes32 setKey, address who) private view returns (bool) {
         if (REGISTRY == address(0)) return false;
         try IProtocolRegistryReader(REGISTRY).isMember(setKey, who) returns (bool m) {

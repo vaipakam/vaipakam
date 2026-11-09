@@ -9,6 +9,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
@@ -302,8 +303,10 @@ contract VaultOutflowPolicyTest is SetupTest {
 
         // The address the vault predicts is where it creates the escrow.
         address predicted = VaipakamVaultImplementation(v).listingEscrowAddress(key);
+        address conduit = makeAddr("conduit");
+        registry.setMember(RegistryKeys.CONDUITS, conduit, true);
         vm.prank(address(diamond));
-        address escrow = VaipakamVaultImplementation(v).openListingEscrow(key, address(coll), makeAddr("conduit"));
+        address escrow = VaipakamVaultImplementation(v).openListingEscrow(key, address(coll), conduit);
         assertEq(escrow, predicted, "CREATE2: the order can name the escrow before it exists");
 
         // The lot moves into exactly that escrow, and nowhere else.
@@ -318,6 +321,129 @@ contract VaultOutflowPolicyTest is SetupTest {
         uint256 returned = VaipakamVaultImplementation(v).closeListingEscrow(key, address(coll), 7);
         assertEq(returned, 2, "the whole lot came back");
         assertEq(coll.balanceOf(v, 7), 3);
+    }
+
+    /// @notice Codex #3387 r1 — every spender right the vault grants or causes
+    ///         passes ONE registry rule: a conduit outside CONDUITS is refused
+    ///         for an ERC-721 listing grant and for an ERC-1155 listing
+    ///         escrow alike, whoever asked for it.
+    function test_aConduitOutsideTheRegistryIsRefusedForEveryListingKind() public {
+        address rogue = makeAddr("rogueConduit");
+        address v = _vault(alice);
+        // ERC-721 listing grant.
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamVaultImplementation.GrantRefused.selector, VaultOutflowTypes.GrantClass.Conduit, rogue)
+        );
+        vm.prank(address(diamond));
+        VaultOutflowFacet(address(diamond)).vaultGrant(
+            alice,
+            VaultOutflowTypes.Grant({
+                kind: VaultOutflowTypes.AssetKind.ERC721,
+                asset: address(token),
+                tokenId: 1,
+                amount: 1,
+                spender: rogue,
+                class_: VaultOutflowTypes.GrantClass.Conduit,
+                ref: 5
+            })
+        );
+        // ERC-1155 listing escrow.
+        ERC1155Mock coll = ERC1155Mock(deployCode("ERC1155Mock.sol:ERC1155Mock"));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamVaultImplementation.GrantRefused.selector, VaultOutflowTypes.GrantClass.Conduit, rogue)
+        );
+        vm.prank(address(diamond));
+        VaipakamVaultImplementation(v).openListingEscrow(keccak256("rogue-listing"), address(coll), rogue);
+    }
+
+    /// @notice Codex #3387 r1 — ONE free-balance rule for the policy and the
+    ///         depository: 12 tracked units, a 10-unit lien, the 10 liened
+    ///         units moved into this vault's own listing escrow, leaves the
+    ///         owner 2 withdrawable (not 0).
+    function test_anEscrowedLotDoesNotHideTheOwnersOtherFreeUnits() public {
+        ERC1155Mock coll = ERC1155Mock(deployCode("ERC1155Mock.sol:ERC1155Mock"));
+        coll.mint(alice, 7, 12);
+        vm.startPrank(alice);
+        coll.setApprovalForAll(address(diamond), true);
+        VaultDepositoryFacet(address(diamond)).depositToVault(uint8(LibVaipakam.AssetType.ERC1155), address(coll), 7, 12);
+        vm.stopPrank();
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(alice, address(coll), 7, 10);
+
+        address v = _vault(alice);
+        bytes32 key = keccak256("liened-listing");
+        address conduit = makeAddr("conduit1155");
+        registry.setMember(RegistryKeys.CONDUITS, conduit, true);
+        vm.prank(address(diamond));
+        address escrow = VaipakamVaultImplementation(v).openListingEscrow(key, address(coll), conduit);
+        VaultOutflowTypes.Outflow memory o = _outflow(VaultOutflowTypes.OutflowClass.ListingEscrow, escrow, 10);
+        o.kind = VaultOutflowTypes.AssetKind.ERC1155;
+        o.asset = address(coll);
+        o.tokenId = 7;
+        o.positionToken = uint256(key);
+        vm.prank(address(diamond));
+        VaipakamVaultImplementation(v).transferOut(o);
+        assertEq(coll.balanceOf(v, 7), 2, "fixture: 2 units left in the vault, 10 in the escrow");
+
+        uint8 k1155 = uint8(LibVaipakam.AssetType.ERC1155);
+        assertEq(VaultDepositoryFacet(address(diamond)).withdrawableNow(alice, k1155, address(coll), 7), 2, "2 withdrawable");
+        vm.prank(alice);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(alice, k1155, address(coll), 7, 2, alice);
+        assertEq(coll.balanceOf(alice, 7), 2, "and the owner withdraws them");
+    }
+
+    /// @notice The property the registry exists for, on a REAL
+    ///         ProtocolRegistry (not the test mirror): an order protocol the
+    ///         Diamond is configured with, but that the registry does not list
+    ///         in SWAP_ADAPTERS, is refused at the vault's grant. A member the
+    ///         registry was built with is accepted.
+    function test_aRealRegistryRefusesAnOrderProtocolTheDiamondConfiguredButItDoesNotList() public {
+        address lop = makeAddr("configuredLop");
+        address listed = makeAddr("listedAdapter");
+        IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(lop);
+
+        bytes32[] memory keys = new bytes32[](1);
+        address[] memory values = new address[](1);
+        keys[0] = RegistryKeys.TREASURY;
+        values[0] = address(diamond);
+        bytes32[] memory sets = new bytes32[](1);
+        address[] memory members = new address[](1);
+        sets[0] = RegistryKeys.SWAP_ADAPTERS;
+        members[0] = listed;
+        address real = deployCode(
+            "ProtocolRegistry.sol:ProtocolRegistry",
+            abi.encode(address(this), address(this), uint256(3 days), keys, values, sets, members)
+        );
+        address impl = deployCode(
+            "VaipakamVaultImplementation.sol:VaipakamVaultImplementation",
+            abi.encode(address(LibTestPositionNFT.core(address(diamond))), real)
+        );
+        address beacon = deployCode(
+            "VaultBeacon.sol:VaultBeacon", abi.encode(address(this), address(diamond), address(this), impl)
+        );
+        address v = deployCode(
+            "BeaconProxy.sol:BeaconProxy",
+            abi.encode(beacon, abi.encodeCall(VaipakamVaultImplementation.initialize, (address(diamond), alice)))
+        );
+
+        VaultOutflowTypes.Grant memory g = VaultOutflowTypes.Grant({
+            kind: VaultOutflowTypes.AssetKind.ERC20,
+            asset: address(token),
+            tokenId: 0,
+            amount: 1 ether,
+            spender: lop,
+            class_: VaultOutflowTypes.GrantClass.OrderTaker,
+            ref: 1
+        });
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamVaultImplementation.GrantRefused.selector, VaultOutflowTypes.GrantClass.OrderTaker, lop)
+        );
+        vm.prank(address(diamond));
+        VaipakamVaultImplementation(v).grantAllowance(g);
+
+        g.spender = listed;
+        vm.prank(address(diamond));
+        VaipakamVaultImplementation(v).grantAllowance(g);
+        assertEq(token.allowance(v, listed), 1 ether, "a listed adapter is granted");
     }
 
     // ─── Claim custody: reserved until the claim ─────────────────────────

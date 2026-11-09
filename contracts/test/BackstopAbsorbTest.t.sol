@@ -7,6 +7,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -330,7 +331,8 @@ contract BackstopAbsorbTest is SetupTest {
         address borrower_ = makeAddr("borrower7");
         _fallbackOptedIn(lender_, borrower_);
 
-        uint256 ownerCashBefore = IERC20(mockERC20).balanceOf(lender_);
+        uint256 ownerCashBefore = _owned(lender_, mockERC20);
+        uint256 ownerWalletBefore = IERC20(mockERC20).balanceOf(lender_);
         uint256 treasuryColBefore =
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20);
         address bsVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(vault);
@@ -343,7 +345,10 @@ contract BackstopAbsorbTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         // Lender (NFT owner) paid cash = lenderPrincipalDue.
-        assertEq(IERC20(mockERC20).balanceOf(lender_) - ownerCashBefore, DUE, "cash to owner");
+        // #3205 part 2 — the cash is a holder payout: it lands in the owner's
+        // vault as free money, not in the wallet.
+        assertEq(_owned(lender_, mockERC20) - ownerCashBefore, DUE, "cash to owner");
+        assertEq(IERC20(mockERC20).balanceOf(lender_), ownerWalletBefore, "into the owner's vault, not the wallet");
         // Backstop warehouses the lender collateral slice.
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(bsVault) - bsColBefore,
@@ -378,6 +383,31 @@ contract BackstopAbsorbTest is SetupTest {
             st == LibVaipakam.LoanStatus.Defaulted || st == LibVaipakam.LoanStatus.Settled,
             "loan terminal"
         );
+    }
+
+    /// @notice Codex #3387 r1 — a backstop buyout whose loan carries a prior
+    ///         seller's claim (the seller is neither the stored lender nor the
+    ///         borrower) settles: the split authorizes the seller's exact share
+    ///         before it pays, so the outflow policy never reads the
+    ///         seller-claim list the split has already closed.
+    function test_absorb_withAPriorSellerClaim_settles() public {
+        address lender_ = makeAddr("lender3387");
+        address borrower_ = makeAddr("borrower3387");
+        address priorSeller = makeAddr("priorSeller3387");
+        _fallbackOptedIn(lender_, borrower_);
+        TestMutatorFacet(address(diamond)).pushSellerClaimRaw(LOAN, priorSeller, 1 ether);
+
+        vm.prank(owner);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
+
+        LibVaipakam.LoanStatus st = LoanFacet(address(diamond)).getLoanDetails(LOAN).status;
+        assertTrue(
+            st == LibVaipakam.LoanStatus.Defaulted || st == LibVaipakam.LoanStatus.Settled,
+            "the buyout settled with a prior seller on the loan"
+        );
+        (,,, LibVaipakam.SellerInterestClaim[] memory claims) =
+            SellerClaimFacet(address(diamond)).getInterestLedger(LOAN);
+        assertEq(claims.length, 0, "the seller's claim closed at the buyout");
     }
 
     /// @dev Codex #1122-rework r2 P1 #3 — a lender holder confirmed flagged AFTER a
@@ -649,11 +679,13 @@ contract BackstopAbsorbTest is SetupTest {
         vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
         BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL + 1);
 
-        // Exact warehoused amount sweeps to the recipient.
-        address gov = makeAddr("gov");
+        // Exact warehoused amount sweeps to the treasury, the only payee
+        // (#3205 part 2: the sweep names no recipient).
+        address treasury_ = AdminFacet(address(diamond)).getTreasury();
+        uint256 treasuryBefore = IERC20(mockCollateralERC20).balanceOf(treasury_);
         vm.prank(owner);
         BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
-        assertEq(IERC20(mockCollateralERC20).balanceOf(gov), LENDER_COL, "swept to gov");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(treasury_) - treasuryBefore, LENDER_COL, "swept to the treasury");
     }
 
     function test_withdrawAbsorbToTreasury_returnsCash() public {

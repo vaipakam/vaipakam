@@ -134,8 +134,10 @@ contract ForcedSaleTerminalTest is SetupTest {
         vm.warp(startTs + 90 days + LibVaipakam.gracePeriod(90) + 1);
     }
 
+    /// @dev What `who` owns of `token`: its balance plus, since #3205 part 2,
+    ///      the free money credited to its vault (a vault address carries none).
     function _bal(address token, address who) internal view returns (uint256) {
-        return IERC20(token).balanceOf(who);
+        return _owned(who, token);
     }
 
     function _vaultOf(address who) internal view returns (address) {

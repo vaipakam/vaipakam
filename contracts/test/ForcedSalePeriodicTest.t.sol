@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -127,8 +128,10 @@ contract ForcedSalePeriodicTest is SetupTest {
         RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(LOAN, sellQuote, _calls());
     }
 
+    /// @dev What `who` owns: its balance plus, since #3205 part 2, the free
+    ///      money credited to its vault (a vault address carries none).
     function _bal(address who) internal view returns (uint256) {
-        return IERC20(mockERC20).balanceOf(who);
+        return _owned(who, mockERC20);
     }
 
     function _vaultOf(address who) internal view returns (address) {
@@ -326,7 +329,8 @@ contract ForcedSalePeriodicTest is SetupTest {
         uint256 d = p.debt;
         uint256 extra = p.sell - (d * 300) / 10_000 - d - (d * 200) / 10_000;
         address vault = _vaultOf(borrower);
-        uint256 vault0 = _bal(vault);
+        uint256 vault0 = IERC20(mockERC20).balanceOf(vault);
+        uint256 free0 = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0);
         _walletRefuses(borrower);
         _settle();
 
@@ -439,7 +443,8 @@ contract ForcedSalePeriodicTest is SetupTest {
         (address incoming, uint256 offerId) = _incomingBorrowerOffer();
 
         address vault = _vaultOf(borrower);
-        uint256 vault0 = _bal(vault);
+        uint256 vault0 = IERC20(mockERC20).balanceOf(vault);
+        uint256 free0 = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0);
         vm.expectEmit(true, true, true, true, address(diamond));
         emit LibCloseoutFreeze.BorrowerHeldExtraPaid(LOAN, borrower, mockERC20, held);
         vm.prank(borrower);
@@ -447,7 +452,15 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         assertEq(LoanFacet(address(diamond)).getLoanDetails(LOAN).borrower, incoming);
         assertEq(_held(), 0, "the held row is spent");
-        assertEq(vault0 - _bal(vault), held, "paid out of the exiting holder's vault");
+        // #3205 part 2 — the extra is paid to the exiting holder's vault, the
+        // vault it was held in: nothing moves, and it becomes the holder's
+        // free money there.
+        assertEq(IERC20(mockERC20).balanceOf(vault), vault0, "it stays in the exiting holder's vault");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0) - free0,
+            held,
+            "now as the exiting holder's free money"
+        );
     }
 
     /// @dev When what leaves the exiting holder's vault on a handover is VPFI

@@ -11,6 +11,7 @@ import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
@@ -420,9 +421,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
             }
             o.to = VaipakamVaultImplementation(s.userVaipakamVaults[user]).listingEscrowAddress(bytes32(o.positionToken));
         } else if (c == VaultOutflowTypes.OutflowClass.SellerClaim) {
-            // The vault of a prior seller recorded on THIS loan (#1209); the
-            // caller names the seller, the vault is that seller's own.
-            if (!_isRecordedSeller(s, o.ref, o.to)) revert OutflowRecipientInvalid(c, o.to);
+            // A prior seller of THIS loan (#1209), paid exactly what the
+            // seller-claim settlement authorized for it in this transaction
+            // (LibSellerPayAuth, single-use). Never checked against the
+            // loan's seller-claim list: the terminal split deletes it before
+            // it pays. The vault is that seller's own.
+            LibSellerPayAuth.consume(o.ref, o.to, o.amount);
             o.to = s.userVaipakamVaults[o.to];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else {
@@ -435,16 +439,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
     /// @dev The lien guard: the amount must be free (balance, capped by the
     ///      tracked ledger so unsolicited dust never counts, less the active
     ///      liens on it). Terminal paths release their lien before paying.
-    function _assertFree(address user, address proxy, VaultOutflowTypes.Outflow memory o) private view {
-        uint256 tracked = LibVaipakam.trackedHolding(user, o.asset, o.tokenId);
-        // The raw-balance cap guards ERC-20 balance drift (a rebase, a fee):
-        // the lien must never cover tokens that are no longer there. NFTs do
-        // not drift, and an ERC-1155 lot moved into this vault's own listing
-        // escrow is still this vault's and still under its lien: capping at
-        // the vault's raw balance would count that lot twice and refuse
-        // another loan's release of the same id (#3387 review).
-        uint256 raw = o.kind == VaultOutflowTypes.AssetKind.ERC20 ? IERC20(o.asset).balanceOf(proxy) : tracked;
-        uint256 free = LibEncumbrance.freeBalance(user, o.asset, o.tokenId, tracked < raw ? tracked : raw);
+    function _assertFree(address user, address, VaultOutflowTypes.Outflow memory o) private view {
+        // THE vault free-balance rule (LibEncumbrance.vaultFree), shared with
+        // the depository's withdrawal gate.
+        uint256 free = LibEncumbrance.vaultFree(user, o.kind == VaultOutflowTypes.AssetKind.ERC20, o.asset, o.tokenId);
         if (o.amount > free) revert WithdrawWouldUnderflowLien(user, o.asset, o.tokenId, o.amount, free);
     }
 
@@ -502,19 +500,6 @@ contract VaultOutflowFacet is IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protectedAccount[recipient].enabled) return address(0);
         return s.userVaipakamVaults[recipient];
-    }
-
-    function _isRecordedSeller(LibVaipakam.Storage storage s, uint256 loanId, address who)
-        private
-        view
-        returns (bool)
-    {
-        if (who == address(0)) return false;
-        LibVaipakam.SellerInterestClaim[] storage claims = s.sellerInterestClaims[loanId];
-        for (uint256 i; i < claims.length; ++i) {
-            if (claims[i].seller == who) return true;
-        }
-        return false;
     }
 
     function _isSwapAdapter(LibVaipakam.Storage storage s, address who) private view returns (bool) {

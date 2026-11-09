@@ -420,15 +420,16 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @notice What of `asset` / `tokenId` in `user`'s vault is not held by a
-    ///         lien or an earmark: the tracked holding (never more than the
-    ///         vault holds) minus liens minus earmark. It counts balances the
+    ///         lien or an earmark: the tracked holding (for an ERC-20, never
+    ///         more than the vault holds) minus liens minus earmark. It counts balances the
     ///         protocol keeps there for a loan, offer or claim without a lien,
     ///         so it is an upper bound, not what the owner may withdraw (that
     ///         is {withdrawableNow}).
     function freeHolding(address user, uint8 kind, address asset, uint256 tokenId) public view returns (uint256) {
-        uint256 tracked = LibVaipakam.trackedHolding(user, asset, tokenId);
-        uint256 held = _chainHolding(user, kind, asset, tokenId);
-        return LibEncumbrance.freeBalance(user, asset, tokenId, tracked < held ? tracked : held);
+        // THE vault free-balance rule, shared with the outflow policy
+        // (#3205 part 2): an ERC-20 capped at the vault's balance, an NFT at
+        // its tracked holding (an escrowed listing lot is still the vault's).
+        return LibEncumbrance.vaultFree(user, kind == uint8(LibVaipakam.AssetType.ERC20), asset, tokenId);
     }
 
     /// @notice What of `asset` / `tokenId` sits in `user`'s vault outside the

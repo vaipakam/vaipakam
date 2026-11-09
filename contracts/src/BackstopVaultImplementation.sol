@@ -51,6 +51,19 @@ interface IBackstopDiamond {
         uint256 fillAmount
     ) external returns (uint256 loanId);
 
+    /// @dev #3205 part 2 — a claim credits the holder's Vaipakam vault; the
+    ///      backstop withdraws that credit to itself before forwarding it.
+    function getDepositoryHolding(address user, address asset, uint256 tokenId) external view returns (uint256);
+
+    function withdrawFromVault(
+        address account,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address recipient
+    ) external returns (uint256 queuedId);
+
     function claimAsLenderWithRetry(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata retryCalls
@@ -227,7 +240,16 @@ contract BackstopVaultImplementation is
         uint256 collateralBefore = distinctCollateral
             ? IERC20(collateralAsset).balanceOf(address(this))
             : 0;
+        // #3205 part 2 — the claim pays the backstop's Vaipakam vault as free
+        // money (every holder's claim lands in its vault). Withdraw exactly
+        // what this claim credited, per asset, to this contract, then forward
+        // what arrived as before.
+        uint256 pCredit0 = IBackstopDiamond(diamond).getDepositoryHolding(address(this), principalAsset, 0);
+        uint256 cCredit0 =
+            distinctCollateral ? IBackstopDiamond(diamond).getDepositoryHolding(address(this), collateralAsset, 0) : 0;
         IBackstopDiamond(diamond).claimAsLenderWithRetry(loanId, retryCalls);
+        _withdrawCredit(principalAsset, pCredit0);
+        if (distinctCollateral) _withdrawCredit(collateralAsset, cCredit0);
         uint256 principalReceived =
             IERC20(principalAsset).balanceOf(address(this)) - principalBefore;
         if (principalReceived > 0) {
@@ -246,6 +268,15 @@ contract BackstopVaultImplementation is
                     collateralReceived
                 );
             }
+        }
+    }
+
+    /// @dev Withdraw to this contract what the claim just credited to its
+    ///      Vaipakam vault for `asset` (the rise above `before`).
+    function _withdrawCredit(address asset, uint256 before) private {
+        uint256 nowHeld = IBackstopDiamond(diamond).getDepositoryHolding(address(this), asset, 0);
+        if (nowHeld > before) {
+            IBackstopDiamond(diamond).withdrawFromVault(address(this), 0, asset, 0, nowHeld - before, address(this));
         }
     }
 
