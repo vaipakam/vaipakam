@@ -4,6 +4,7 @@ import { useOwnStateClient } from '../../chain/ownRail';
 import { RewardsWidget } from '../../shared/claims/RewardsWidget';
 import { FeeDiscountConsent } from '../../shared/consent/FeeDiscountConsent';
 import { useCopy } from '../../shared/copy/useCopy';
+import { TierSection } from '../../shared/rewards/TierSection';
 import { VpfiVault } from '../../shared/rewards/VpfiVault';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 
@@ -14,8 +15,9 @@ import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotic
  * interaction rewards: what a claim made now pays, the claim, the soonest
  * removal and any held balance (the shared widget Home and Claims show).
  * Then the VPFI in the wallet's own vault, with its deposit and withdrawal,
- * and the fee-discount consent that decides whether that VPFI changes any
- * fee. Rewards are usage rebates, never yield (RL-6).
+ * the fee-discount tier the protocol applies now with the table of tiers
+ * (RW-08..RW-10), and the fee-discount consent that decides whether that
+ * VPFI changes any fee. Rewards are usage rebates, never yield (RL-6).
  */
 export function RewardsPage() {
   const { text } = useCopy();
@@ -41,6 +43,7 @@ export function RewardsPage() {
           <FrozenNotice state={frozen} />
           <RewardsWidget onRewards />
           <VpfiVault chain={served.chain} own={served.own} />
+          <TierSection chain={served.chain} own={served.own} />
           <FeeDiscountConsent />
         </>
       )}

@@ -2650,3 +2650,9 @@ La página lee el token con `getVPFIToken`; la dirección cero significa que el 
 ### Recompensas: riesgos de mover VPFI
 
 El nivel no es tu saldo de hoy. Es cero hasta que tu tenencia continua actual alcance el número mínimo de días; después sigue un promedio de tus saldos de cierre diarios ponderado hacia los días recientes; y queda limitado al nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Son dos miradas atrás distintas. Retirar parte de tu VPFI contado baja el saldo mínimo de ese día, que es el que lee el límite, y retirarlo todo reinicia tu tiempo de tenencia. Un aumento no lo reinicia. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere. El VPFI en tu bóveda no es garantía. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
+
+<a id="rewards-tier"></a>
+
+### Recompensas: el nivel de descuento en comisiones
+
+En un mismo bloque, la tarjeta lee `getVPFIDiscountConsent`, `isCanonicalVpfiChain` y `getEffectiveDiscount`, que devuelve el nivel y el descuento que aplica el cálculo de comisiones: cero con el consentimiento desactivado, limitado al 50 % y, en otras redes, la copia enviada desde la red de origen. En la red de origen también lee `getTrackedVPFIDiscountTier`, el nivel que da solo el VPFI contado, y dice cuándo el nivel efectivo es menor. El protocolo no informa qué regla de tenencia lo frena, y los ajustes de las reglas aún no tienen vista de lectura, así que no se muestra ninguna de las dos cosas. La tabla lee `getVpfiTierThresholds`, `getVpfiTierDiscountBps` y `getFeesConfig` en un mismo bloque. Los niveles 1 a 3 empiezan en su umbral y el nivel 4 por encima del suyo. Cada comisión es la comisión de lista por uno menos el descuento limitado, calculada con exactitud. La tabla se muestra solo en la red de origen, donde se fijan los niveles.

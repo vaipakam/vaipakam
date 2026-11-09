@@ -2858,3 +2858,9 @@ The page reads the token with `getVPFIToken`; the zero address means VPFI is not
 ### Rewards: Risks of Moving VPFI
 
 The tier is not today's balance. It is zero until your current continuous holding has lasted the minimum number of days; it then follows a recency-weighted average of your daily closing balances; and it is clamped to the lowest tier you held on any day of your current holding, looking back at most 30 days. These are two separate look-backs. Withdrawing part of your counted VPFI lowers that day's lowest balance, which the clamp reads, and withdrawing all of it restarts your holding time. A top-up does not restart it. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released. VPFI in your vault is not collateral. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.
+
+<a id="rewards-tier"></a>
+
+### Rewards: Your Fee-Discount Tier
+
+At one block the card reads `getVPFIDiscountConsent`, `isCanonicalVpfiChain` and `getEffectiveDiscount`, which returns the tier and discount the fee path applies: zero while consent is off, capped at 50%, and on other networks the copy sent from the home network. On the home network it also reads `getTrackedVPFIDiscountTier`, the tier the counted VPFI alone gives, and says when the effective tier is lower. The protocol does not report which holding rule holds it down, and the rules' settings have no read view yet, so neither is shown. The table reads `getVpfiTierThresholds`, `getVpfiTierDiscountBps` and `getFeesConfig` at one block. Tiers 1 to 3 start at their threshold and tier 4 above its own. Each fee is the list fee times one minus the capped discount, computed exactly. The table is shown on the home network only, where tiers are set.

@@ -1492,3 +1492,9 @@ Rewards, in the menu, shows your rewards on this network, your VPFI and your fee
 ### Rewards: Risks of Moving VPFI
 
 Your tier is not your balance today. It is zero until your current holding has lasted a minimum number of days. It then follows an average of your daily holdings that weights recent days more. Separately, it never exceeds the lowest tier you held on any day of your current holding, looking back at most 30 days. So a deposit raises your tier only with time, and a brief top-up does not lift it. Withdrawing part of your counted VPFI can lower your tier, and withdrawing all of it restarts your holding time from your next deposit. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released, and a protected account's withdrawal waits its delay first. VPFI in your vault is not collateral and backs no loan. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.
+
+<a id="rewards-tier"></a>
+
+### Rewards: Your Fee-Discount Tier
+
+Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown.

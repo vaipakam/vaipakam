@@ -1805,6 +1805,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   when the flag is unread they say that. No VPFI pause exists apart from the protocol's,
   so only that one is named. Nothing on the page buys, sells, prices or
   stakes VPFI, and its copy follows RL-6.
+- **RB-REWARDS-TIER** — The Rewards page's tier card and tier table (RW-08,
+  RW-09, RW-10), shown on a network with VPFI set up. The card states the
+  tier and discount the protocol's own fee path applies now
+  (`getEffectiveDiscount`), never one worked out by the app: none while the
+  consent is off; on VPFI's home network, beside the tier the counted VPFI
+  alone would give, with one line when the holding rules hold the effective
+  tier below it; elsewhere, the copy sent from the home network, or that
+  none applies when none was sent or it lapsed. Which holding rule holds a
+  tier down, and the rules' settings, are not stated: the protocol reports
+  neither (#3459); Advanced says the settings cannot be read yet, and the
+  help names the three look-backs. The table is shown on the home network
+  only, where tiers are set: for each tier, its VPFI band with the
+  protocol's exact boundaries (tiers 1 to 3 start at their figure, tier 4
+  above its own, every digit shown), its discount after the 50% cap, and
+  the loan initiation fee and the fee on interest with that discount,
+  computed exactly from the live settings read at one block. Copy follows
+  RL-6.
 
 ## 3. Companion specifications
 

@@ -1511,3 +1511,9 @@ Recompensas, en el menú, muestra tus recompensas en esta red, tu VPFI y tu cons
 ### Recompensas: riesgos de mover VPFI
 
 Tu nivel no es tu saldo de hoy. Es cero hasta que tu tenencia actual haya durado un número mínimo de días. Después sigue un promedio de tus saldos diarios que da más peso a los días recientes. Aparte, nunca supera el nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Así que un depósito sube tu nivel solo con el tiempo, y un aumento breve no lo eleva. Retirar parte de tu VPFI contado puede bajar tu nivel, y retirarlo todo reinicia tu tiempo de tenencia desde tu próximo depósito. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere, y el retiro de una cuenta protegida espera antes su plazo. El VPFI en tu bóveda no es garantía y no respalda ningún préstamo. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
+
+<a id="rewards-tier"></a>
+
+### Recompensas: tu nivel de descuento en comisiones
+
+Debajo de tu VPFI, la página muestra el nivel de descuento que el protocolo aplica ahora a tus comisiones, leído del propio protocolo, y cuánto les quita. Mientras tu consentimiento al descuento en comisiones esté desactivado, no se aplica ningún nivel. Una tenencia nueva cuenta del todo solo con el tiempo, así que la página dice cuándo las reglas de tenencia mantienen tu nivel por debajo del que daría solo tu VPFI contado. En la red de origen del VPFI, una tabla muestra cada nivel: el VPFI contado que requiere, su descuento, y la comisión de inicio del préstamo y la comisión sobre los intereses ganados con ese descuento, calculadas con los ajustes actuales de la red. Cada nivel empieza en su cifra, salvo el más alto, que empieza justo por encima. Ningún descuento supera nunca la mitad de una comisión. En otras redes la página muestra el nivel enviado desde la red de origen, y la tabla no se muestra.
