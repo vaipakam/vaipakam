@@ -144,20 +144,26 @@ test('a wallet without the amount is told the shortfall and cannot confirm, unti
   expect(flags.sentTransactions).toBe(0);
 });
 
-test('without a wallet the requests are listed, and funding one or posting an offer asks for a wallet', async ({ launchWallet }) => {
+test('without a wallet no request is read and Lend asks for one; once it connects the requests are listed', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   const offerId = await postBorrowRequest(sc, { borrower: 'borrower', principalWeth: '0.04', collateralTliq: '200', rateBps: 610, days: 10 });
   const { page } = await launchWallet('visitor', { preAuthorized: false });
   await page.goto('/lend');
-  await expect(page.getByText('Connect a wallet to see what funding each request would do and to fund one.')).toBeVisible();
+  await expect(page.getByText('Connect a wallet to see the requests open for a pair and to fund one.')).toBeVisible();
+  // Nothing about the book is read or offered before a wallet connects,
+  // and posting an offer needs a wallet too.
+  await expect(page.getByTestId('pick-lending')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Requests you can fund' })).toHaveCount(0);
+  await expect(page.getByTestId('lend-offer-open')).toHaveCount(0);
+  await fitsWidth(page);
+
+  // The wallet control settles after the page; connect once it offers to.
+  await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  await connectWallet(page);
   await pickPair(page, WETH, tliq);
   const row = page.getByRole('region', { name: 'Requests you can fund' }).locator(`[data-offer-id="${offerId}"]`);
   await expect(row).toContainText(`Request #${offerId}: lend 0.04`, { timeout: 60_000 });
-  await expect(row).toContainText('Connect a wallet to fund it.');
-  await expect(row.getByRole('button', { name: 'Fund this request' })).toHaveCount(0);
-  // Posting an offer needs a wallet too: no button is offered without one.
-  await expect(page.getByTestId('lend-offer-open')).toHaveCount(0);
   await page.getByTestId('pick-collateral').locator('select').selectOption(WETH);
   await expect(page.getByText('What you lend and the collateral you accept must be different tokens.')).toBeVisible();
   await fitsWidth(page);

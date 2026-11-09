@@ -1361,13 +1361,13 @@ Offers lists every offer you made on the network you are connected to, and every
 
 ### The offer book
 
-Below your offers, the offer book lists every open offer on the network, newest first, and you can read it without connecting a wallet. Tabs split loans of a token from NFT rentals, a filter shows lenders' offers, borrowers' requests or both, and once connected you can hide your own offers. Older offers load with Show older offers; the filters apply to what has been read, and the count line says how many that is. The book comes from the protocol's index, which can lag the chain by a few minutes, so it only points you at offers: open one to see it as the chain holds it. An offer past its expiry is tagged expired; anyone may clean it up, and what it locked returns to its creator. If the index cannot be read, the book says so instead of showing no offers.
+Below your offers, the offer book lists every open offer on the network, newest first; it is read only once you connect a wallet. Tabs split loans of a token from NFT rentals, a filter shows lenders' offers, borrowers' requests or both, and once connected you can hide your own offers. Older offers load with Show older offers; the filters apply to what has been read, and the count line says how many that is. The book comes from the protocol's index, which can lag the chain by a few minutes, so it only points you at offers: open one to see it as the chain holds it. An offer past its expiry is tagged expired; anyone may clean it up, and what it locked returns to its creator. If the index cannot be read, the book says so instead of showing no offers.
 
 <a id="offer-detail"></a>
 
 ### An offer's page
 
-Each offer has its own page, read from the chain whether or not a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
+Each offer has its own page, read from the chain once a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
 
 <a id="offer-cancel"></a>
 
