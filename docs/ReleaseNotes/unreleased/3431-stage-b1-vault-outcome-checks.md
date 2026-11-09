@@ -9,5 +9,5 @@ A new `swapOut` lets a vault sell at most a stated amount through a swap adapter
 The backstop vault is now provisioned by the deploy itself, before the vault code, because the vault code fixes its address. The deploy records it as `backstopVault`. Design: `docs/DesignsAndPlans/VaultOutflowPolicyDesign.md` (Stage B1 build notes).
 
 > Caveat: a listing's payment legs are not yet checked by the vault. They are bound to the owner's signed terms in Stage B3; until then the platform builds them and the marketplace zone checks them at fill.
-> Caveat: a forced sale still moves the lot through the platform within the transaction; it moves onto `swapOut` once the vault reads the price guard (#3268).
+> Caveat: until #3268, `swapOut`'s floor and its adapter are the platform's choice; the vault enforces the floor it is given but cannot judge that it is fair. Nothing calls `swapOut` yet, and a faulty platform module could already move value through the in-transaction pass a forced sale uses, so it adds no new exposure. From #3268 the vault checks the floor against the price guard itself, and the forced sale moves onto `swapOut`.
 > Caveat: the price guard address is zero in the vault code until the price guard (#3447) is built by the deploy.

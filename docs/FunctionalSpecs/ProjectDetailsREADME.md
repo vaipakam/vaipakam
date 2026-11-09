@@ -562,7 +562,12 @@ and the loan or offer it belongs to.
   holder) must receive at least the stated floor; the vault measures both
   sides and refuses otherwise. A forced sale still passes through the
   platform within the transaction until the vault can read the price guard
-  itself (#3268).
+  itself (#3268). Until then the floor and the adapter are the platform's
+  choice: the vault enforces the floor it is given but cannot judge that it
+  is fair. Nothing uses this swap yet, and a faulty platform module could
+  already move value through that in-transaction pass, so it adds no new
+  exposure. From #3268 the vault checks the floor against the price guard
+  itself.
 - **A share that cannot follow its holder yet** (an NFT rental, a loan in
   fallback, a sanctioned current holder, a live listing) is parked in the
   vault of that side's party as the loan records it, and is never counted as

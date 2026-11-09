@@ -752,7 +752,7 @@ checks what actually happens instead.
    constructor takes one record: the treasury, the backstop vault, Seaport,
    the 1inch order protocol, the listing conduit and its Seaport conduit
    key, and the price guard (#3447, read from #3268 on). They are
-   immutables, readable through `vaultConstants()`. The vault reads no
+   immutables, readable through `vaultEndpoints()`. The vault reads no
    registry. Changing any of them means new vault code through the
    VaultBeacon, which is the Timelock's, the same as any other vault code
    change. A Diamond setting that differs from the vault's constant fails
@@ -797,8 +797,14 @@ checks what actually happens instead.
    for itself (its own owner, or the vault of a position's current holder).
    The forced sale still moves the lot to the Diamond and sells there
    (class DiamondTransient). Moving it onto `swapOut` needs the vault to
-   know the floor, which is the price guard's job from #3268. That is the
-   stated residual.
+   know the floor, which is the price guard's job from #3268.
+
+   **The stated residual.** Until #3268, the floor (`minOut`) and the
+   adapter are the platform's choice: the vault enforces whatever floor it
+   is given, but it cannot judge that the floor is fair. Nothing calls
+   `swapOut` yet. A faulty platform module could already move value through
+   the DiamondTransient class, so `swapOut` adds no new exposure. From
+   #3268 the vault checks the floor against the price guard itself.
 7. **The swap-to-repay order still pays the Diamond.** Its receiver is the
    Diamond, which repays the loan inside the fill's post-hook. B1 keeps that
    and states it: the vault checks that it is the maker, and the order's
