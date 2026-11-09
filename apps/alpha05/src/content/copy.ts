@@ -3327,7 +3327,6 @@ export const copy = {
     noActions: B('No actions'),
     sideLender: B('your lender side'),
     sideBorrower: B('your borrower side'),
-    sideBoth: B('either side'),
     sideAccount: B('your account'),
     actCompleteSale: B('Finish a sale of your lender position once a buyer has taken it'),
     actCompleteOffset: B('Finish an early close of your loan once a new lender has taken it'),

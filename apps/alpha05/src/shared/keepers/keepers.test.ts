@@ -9,6 +9,9 @@ const settings = (over: Partial<KeeperSettings> = {}): KeeperSettings => ({ acce
 const copy = { text: (k: string) => k, format: (k: string, v: Record<string, string>) => `${k}:${Object.values(v).join(',')}` };
 
 describe('the keeper actions', () => {
+  it('label the extension as the borrower side’s: the protocol checks that bit for the borrower only', () => {
+    expect(KEEPER_ACTIONS.find((a) => a.bit === 0x20)?.side).toBe('borrower');
+  });
   it('match the protocol bits, without the retired one', () => {
     expect(ALL_ACTIONS).toBe(0x1ef);
     expect(KEEPER_ACTIONS.some((a) => a.bit === 0x10)).toBe(false);

@@ -5,7 +5,8 @@
  * taken away, the keeper is removed and access turned off, each in one
  * signed step with its receipt and a measured outcome. With Terms in force,
  * giving a keeper a permission asks for them first and taking one away never
- * does. Each test runs inside a snapshot it reverts. Runs on the desktop and
+ * does. While the protocol is paused, the approved keepers stay listed and
+ * no change is offered. Each test runs inside a snapshot it reverts. Runs on the desktop and
  * the phone.
  */
 import { keccak256, toHex, type Hex } from 'viem';
@@ -133,6 +134,30 @@ test('with Terms in force, giving a keeper a permission asks for them first; rem
     await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
     await dialog.getByRole('button', { name: 'Continue: Giving a keeper a permission' }).click();
     await expect(flow.locator('.receipt')).toContainText("Change a keeper's actions", { timeout: 60_000 });
+    await fitsWidth(page);
+  });
+});
+
+test('while the protocol is paused, the approved keepers stay listed and no change is offered', async ({ launchWallet }) => {
+  test.setTimeout(180_000);
+  const keeper = accountFor('visitor').address;
+  await inSnapshot(async () => {
+    const sc = scenario({ borrower: 'freshBorrower' });
+    await sc.diamondWrite('borrower', 'setKeeperAccess', [true]);
+    await sc.diamondWrite('borrower', 'approveKeeper', [keeper, 0x20]);
+    await sc.diamondWrite('admin', 'pause');
+    const { page } = await launchWallet('freshBorrower');
+    await page.goto('/settings');
+    await connectWallet(page);
+    const section = page.getByTestId('settings-keepers');
+    await expect(section.getByTestId('settings-keepers-state')).toHaveAttribute('data-count', '1', { timeout: 60_000 });
+    await expect(section).toContainText('The protocol is paused', { timeout: 60_000 });
+    const row = section.getByTestId('settings-keeper-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toHaveAttribute('data-keeper', keeper.toLowerCase());
+    await expect(row).toContainText('Extend a loan within the limits both sides agreed');
+    await expect(section.getByTestId('settings-keeper-revoke')).toHaveCount(0);
+    await expect(section.getByTestId('settings-keepers-access')).toHaveCount(0);
     await fitsWidth(page);
   });
 });

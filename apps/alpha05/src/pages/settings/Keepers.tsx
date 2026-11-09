@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -42,7 +42,7 @@ import { Notice } from '../../shared/ui/Notice';
 
 type Hex = `0x${string}`;
 
-const SIDE_KEY = { lender: 'keepers.sideLender', borrower: 'keepers.sideBorrower', both: 'keepers.sideBoth', account: 'keepers.sideAccount' } as const;
+const SIDE_KEY = { lender: 'keepers.sideLender', borrower: 'keepers.sideBorrower', account: 'keepers.sideAccount' } as const;
 
 interface Reviewed {
   change: KeeperChange;
@@ -80,6 +80,9 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
   /** The change waiting on a Terms acceptance before its review opens. */
   const [pending, setPending] = useStoredValue<KeeperChange>('settings.keepers:pending');
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Which opening read is current: a read for a review since cancelled or
+   *  replaced is dropped, never shown under the newer one. */
+  const openSeq = useRef(0);
 
   const tx = useTrackedTx({
     key: 'settings.keepers',
@@ -119,12 +122,14 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
     setReviewed(null);
     setLoadError(null);
     tx.review();
+    const seq = ++openSeq.current;
+    const live = () => mounted.current && seq === openSeq.current;
     void own.read((c) => readKeeperSettings(c, diamond, account)).then(
       ({ value }) => {
-        if (mounted.current) setReviewed({ change, settings: value, readAt: Date.now(), identity });
+        if (live()) setReviewed({ change, settings: value, readAt: Date.now(), identity });
       },
       (e: unknown) => {
-        if (mounted.current) setLoadError(refusalFromError(e).reason);
+        if (live()) setLoadError(refusalFromError(e).reason);
       },
     );
   };
@@ -139,6 +144,7 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
   };
 
   const close = () => {
+    openSeq.current++;
     const k = tx.phase.kind;
     if (k === 'review' || k === 'measured' || k === 'failed' || k === 'superseded') tx.reset();
     setReviewed(null);
@@ -207,8 +213,8 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
           {text('keepers.paused')}
         </Notice>
       )}
-      {s !== null && !paused && !flowOpen && !termsOpen && (
-        <KeeperControls s={s} advanced={isAdvanced} network={network} chainName={chain.name} onChoose={choose} />
+      {s !== null && !flowOpen && !termsOpen && (
+        <KeeperControls s={s} advanced={isAdvanced} paused={paused} network={network} chainName={chain.name} onChoose={choose} />
       )}
       {termsOpen && termsGate.session && (
         <TermsPrompt
@@ -262,16 +268,20 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
 }
 
 /** The switch, each approved keeper with its actions, and adding one.
- *  Taking away is offered in either mode; giving is Advanced. */
+ *  Taking away is offered in either mode; giving is Advanced. Under the
+ *  protocol's pause the approved keepers are still listed, with no change
+ *  offered: the pause closes changes, not reads. */
 function KeeperControls({
   s,
   advanced,
+  paused,
   network,
   chainName,
   onChoose,
 }: {
   s: KeeperSettings;
   advanced: boolean;
+  paused: boolean;
   network: Hex | null;
   chainName: string;
   onChoose: (c: KeeperChange) => void;
@@ -280,7 +290,7 @@ function KeeperControls({
   const { text, format } = copy;
   return (
     <>
-      {(s.access || advanced) && (
+      {!paused && (s.access || advanced) && (
         <p className="actions">
           <button type="button" className="btn" onClick={() => onChoose({ kind: 'access', on: !s.access })} data-testid="settings-keepers-access">
             {text(s.access ? 'keepers.turnOff' : 'keepers.turnOn')}
@@ -293,19 +303,21 @@ function KeeperControls({
             <li key={k.keeper} data-keeper={k.keeper.toLowerCase()} data-actions={k.actions} data-testid="settings-keeper-row">
               <p className="tier-a">{keeperName(k.keeper, network, chainName, copy)}</p>
               <p className="tier-b">{actionsLine(k.actions, copy)}</p>
-              {advanced && <ActionPicker initial={k.actions} submitKey="keepers.saveActions" onSubmit={(actions) => onChoose({ kind: 'actions', keeper: k.keeper, actions })} />}
-              <p className="actions">
-                <button type="button" className="btn" onClick={() => onChoose({ kind: 'revoke', keeper: k.keeper })} data-testid="settings-keeper-revoke">
-                  {text('keepers.revoke')}
-                </button>
-              </p>
+              {advanced && !paused && <ActionPicker initial={k.actions} submitKey="keepers.saveActions" onSubmit={(actions) => onChoose({ kind: 'actions', keeper: k.keeper, actions })} />}
+              {!paused && (
+                <p className="actions">
+                  <button type="button" className="btn" onClick={() => onChoose({ kind: 'revoke', keeper: k.keeper })} data-testid="settings-keeper-revoke">
+                    {text('keepers.revoke')}
+                  </button>
+                </p>
+              )}
             </li>
           ))}
         </ul>
       )}
-      {advanced && s.keepers.length < MAX_KEEPERS && <AddKeeper s={s} network={network} chainName={chainName} onChoose={onChoose} />}
-      {advanced && s.keepers.length >= MAX_KEEPERS && <p className="tier-b">{format('keepers.fullNote', { max: String(MAX_KEEPERS) })}</p>}
-      {!advanced && <p className="tier-b">{text('keepers.basicPointer')}</p>}
+      {!paused && advanced && s.keepers.length < MAX_KEEPERS && <AddKeeper s={s} network={network} chainName={chainName} onChoose={onChoose} />}
+      {!paused && advanced && s.keepers.length >= MAX_KEEPERS && <p className="tier-b">{format('keepers.fullNote', { max: String(MAX_KEEPERS) })}</p>}
+      {!paused && !advanced && <p className="tier-b">{text('keepers.basicPointer')}</p>}
     </>
   );
 }

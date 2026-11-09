@@ -23,7 +23,7 @@ export const PROFILE_ABI = ProfileFacetABI as Abi;
 export const MAX_KEEPERS = 5;
 
 /** Whose side an action drives. */
-export type ActionSide = 'lender' | 'borrower' | 'both' | 'account';
+export type ActionSide = 'lender' | 'borrower' | 'account';
 
 /** Where an action reaches: `loan` only on a loan or offer that names the
  *  keeper, `account` across the wallet once the switch is on. */
@@ -38,7 +38,9 @@ export const KEEPER_ACTIONS: readonly { bit: number; side: ActionSide; scope: Ac
   { bit: 1 << 1, side: 'borrower', scope: 'loan', key: 'keepers.actCompleteOffset' },
   { bit: 1 << 2, side: 'lender', scope: 'loan', key: 'keepers.actStartSale' },
   { bit: 1 << 3, side: 'borrower', scope: 'loan', key: 'keepers.actStartPreclose' },
-  { bit: 1 << 5, side: 'both', scope: 'loan', key: 'keepers.actExtend' },
+  // The protocol checks this bit on the borrower side only; the lender
+  // consents to an extension through its own per-loan limits instead.
+  { bit: 1 << 5, side: 'borrower', scope: 'loan', key: 'keepers.actExtend' },
   { bit: 1 << 6, side: 'lender', scope: 'account', key: 'keepers.actSignedFill' },
   { bit: 1 << 7, side: 'lender', scope: 'account', key: 'keepers.actAutoRoll' },
   { bit: 1 << 8, side: 'account', scope: 'account', key: 'keepers.actLock' },
