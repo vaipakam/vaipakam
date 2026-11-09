@@ -96,7 +96,11 @@ by `script/lib/PriceGuardDeployment.sol`:
   denominators.
 - The entries come from the deploy settings the oracle's configure step reads:
   `WETH_ADDRESS`, `ETH_USD_FEED`, `SEQUENCER_UPTIME_FEED` and the
-  `VPFI_STABLE_FEED_SYMBOLS` references, chain-prefixed first.
+  `VPFI_STABLE_FEED_SYMBOLS` references, chain-prefixed first. The deploy's
+  operator entry reads them once and hands them to the deploy body as named
+  inputs, with the Pauser Safe (`PAUSER_ADDRESS`) that guards a new feed
+  registry on a production chain. The body reads no settings of its own, so a
+  test names its inputs without touching settings other tests share.
 - On a production chain the feed registry, WETH and the ETH/USD feed are
   required, each with code, so the guard starts complete. On a testnet a
   missing entry is left for the configure step; a mock rig's feeds and WETH

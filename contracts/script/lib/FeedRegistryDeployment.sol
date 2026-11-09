@@ -59,7 +59,12 @@ library FeedRegistryDeployment {
     ///         and distinct from the admin on a production chain; the admin on
     ///         a testnet without one.
     function guardianFor(address admin) internal view returns (address guardian) {
-        guardian = VM.envOr("PAUSER_ADDRESS", address(0));
+        return guardianFor(admin, VM.envOr("PAUSER_ADDRESS", address(0)));
+    }
+
+    /// @notice The same rule for a named candidate (zero = none named).
+    function guardianFor(address admin, address candidate) internal view returns (address guardian) {
+        guardian = candidate;
         if (!TestnetChains.isTestnet(block.chainid)) {
             require(
                 guardian != address(0) && guardian != admin,
@@ -87,14 +92,16 @@ library FeedRegistryDeployment {
     ///         broadcast (`DeployDiamond`): the recorded one, or a new one
     ///         created from its artifact. `created` says which; the caller
     ///         records a new one. It leaves the delay at the contract default:
-    ///         {deploy} sets a testnet's, with the admin's key.
-    function createOrReuse(address admin) internal returns (address reg, bool created) {
+    ///         {deploy} sets a testnet's, with the admin's key. `guardian` is
+    ///         the Pauser Safe the caller read from its config (zero = none),
+    ///         under the rule of {guardianFor}.
+    function createOrReuse(address admin, address guardian) internal returns (address reg, bool created) {
         reg = recordedFor(admin);
         if (reg != address(0)) {
             console.log("Reusing the recorded VaipakamFeedRegistry");
             return (reg, false);
         }
-        reg = ArtifactDeploy.deploy(type(VaipakamFeedRegistry).name, abi.encode(admin, guardianFor(admin)));
+        reg = ArtifactDeploy.deploy(type(VaipakamFeedRegistry).name, abi.encode(admin, guardianFor(admin, guardian)));
         created = true;
     }
 

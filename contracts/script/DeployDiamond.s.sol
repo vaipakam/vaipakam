@@ -149,6 +149,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
     address public priceGuard;
     address public feedRegistry;
     bool internal feedRegistryCreated;
+    /// @dev #3272 — the inputs {setPriceGuardInputs} names.
+    address internal _feedRegistryGuardian;
+    PriceGuardDeployment.Inputs internal _priceGuardInputs;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
     bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
@@ -178,7 +181,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
     function run() external virtual {
         address admin = vm.envAddress("ADMIN_ADDRESS");
         requireAdminIsKey(admin, vm.envOr("ADMIN_PRIVATE_KEY", uint256(0)));
+        setPriceGuardInputs(vm.envOr("PAUSER_ADDRESS", address(0)), PriceGuardDeployment.fromEnv());
         runWith(admin, vm.envAddress("TREASURY_ADDRESS"), vm.envUint("DEPLOYER_PRIVATE_KEY"));
+    }
+
+    /// @notice #3272 — the feed registry's guardian (the Pauser Safe; zero =
+    ///         none named) and the PriceGuard's inputs, which {run} reads from
+    ///         the env. Script state, not env, so {runWith} reads no env of
+    ///         its own (the #72 rule below) and an in-process deploy names
+    ///         them directly. Unset: a testnet guard with only the registry;
+    ///         a production chain refuses.
+    function setPriceGuardInputs(address feedRegistryGuardian, PriceGuardDeployment.Inputs memory inputs) public {
+        _feedRegistryGuardian = feedRegistryGuardian;
+        _priceGuardInputs = inputs;
     }
 
     /// @notice #947 — refuses an admin address that is not the address of
@@ -259,9 +274,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the PriceGuard built on it. Kept out of `runWith` so its frame
     ///      stays within the stack budget; the results land in storage.
     function _deployPriceGuard(address admin) internal {
-        (feedRegistry, feedRegistryCreated) = FeedRegistryDeployment.createOrReuse(admin);
+        (feedRegistry, feedRegistryCreated) = FeedRegistryDeployment.createOrReuse(admin, _feedRegistryGuardian);
         console.log("Feed registry:", feedRegistry);
-        priceGuard = PriceGuardDeployment.deploy(admin, feedRegistry);
+        priceGuard = PriceGuardDeployment.deploy(admin, feedRegistry, _priceGuardInputs);
     }
 
     function runWith(
