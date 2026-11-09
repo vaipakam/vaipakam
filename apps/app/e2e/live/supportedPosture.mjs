@@ -123,6 +123,8 @@ export const NOT_AFFECTING = Object.freeze({
   initLtvCapBpsAtInit: 'an LTV gate parameter, not read for an illiquid refinance',
   loanInitiationFeeBpsAtInit: 'a fee stamp; the settlement amounts it feeds are NOT VERIFIED by this drive',
   treasuryFeeBpsAtInit: 'a fee stamp; the settlement amounts it feeds are NOT VERIFIED by this drive',
+  liqDiscountTierAtInit: 'a discounted-liquidation stamp (#910), stamped only for liquid collateral; not read by a refinance of an illiquid loan',
+  liqDiscountBpsAtInit: 'a discounted-liquidation stamp (#910), stamped only for liquid collateral; not read by a refinance of an illiquid loan',
 });
 
 /**

@@ -278,6 +278,21 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().protocolCfg.discountPathEnabled = enabled;
     }
 
+    /// @notice #910 — write an asset's keeper tier directly, for tests that
+    ///         don't cut `ConfigFacet`.
+    function setKeeperTierRaw(address asset, uint8 tier) external {
+        LibVaipakam.storageSlot().keeperTier[asset] = tier;
+    }
+
+    /// @notice #910 — write the per-tier discount overrides directly, for
+    ///         tests that don't cut `ConfigFacet` (0 = library default).
+    function setTierLiqDiscountBpsRaw(uint16 tier1Bps, uint16 tier2Bps, uint16 tier3Bps) external {
+        LibVaipakam.ProtocolConfig storage cfg = LibVaipakam.storageSlot().protocolCfg;
+        cfg.tier1LiqDiscountBps = tier1Bps;
+        cfg.tier2LiqDiscountBps = tier2Bps;
+        cfg.tier3LiqDiscountBps = tier3Bps;
+    }
+
     /// @notice Flip `ProtocolConfig.depthTieredLtvEnabled` directly
     ///         for tests that don't cut `ConfigFacet` into the diamond.
     ///         MarketRateWidgetAndDepthTieredLTV.md §4.2 kill-switch

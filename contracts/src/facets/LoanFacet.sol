@@ -1230,7 +1230,36 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 if (tierCap < assetCap) assetCap = tierCap;
             }
             loan.initLtvCapBpsAtInit = uint16(assetCap);
+            _snapshotLiqDiscount(loan);
         }
+    }
+
+    /// @dev #910 / #3351 — stamp the discounted liquidation's tier and
+    ///      discount for this loan's whole life. The tier is the lower of
+    ///      the collateral's CLOSE-OUT depth tier and its keeper tier. The
+    ///      close-out read credits each pool's window-mean depth at the feed
+    ///      price and runs no check against the pool's current price, so a
+    ///      price pushed or depth pulled in the accept's own block cannot
+    ///      lower it (the admission read above can drop a pool whose price
+    ///      was pushed, and a lower tier is a WIDER discount). A tier of 0
+    ///      (no probe passes at close-out) stamps nothing, and the
+    ///      discounted route refuses such a loan: it closes that one route
+    ///      and never widens a discount.
+    ///
+    ///      The read is a plain call, so a revert inside it reverts the
+    ///      accept. It is deliberately NOT a swallowed staticcall: the read
+    ///      searches every pool, and a swallowed out-of-gas would let a
+    ///      caller's gas limit decide the stamp (a tight limit stamping 0
+    ///      would close the route for the loan's whole life), and would
+    ///      leave the accept only 1/64 of its gas for everything after the
+    ///      failed call, which makes gas estimation unreliable.
+    function _snapshotLiqDiscount(LibVaipakam.Loan storage loan) private {
+        uint8 tier = OracleFacet(address(this)).getCloseOutLiquidityTier(loan.collateralAsset);
+        if (tier == 0) return;
+        uint8 keeperTier = LibVaipakam.effectiveKeeperTier(loan.collateralAsset);
+        if (keeperTier < tier) tier = keeperTier;
+        loan.liqDiscountTierAtInit = tier;
+        loan.liqDiscountBpsAtInit = LibVaipakam.effectiveTierLiqDiscountBps(tier);
     }
 
     function _copyCollateralAssetFields(
