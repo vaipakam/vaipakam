@@ -150,6 +150,18 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         return false;
     }
 
+    /// @notice #3336 — whether anyone may cancel `offerId` because the route it
+    ///         is bound to is dead: an offset or lender-sale vehicle whose
+    ///         position moved (or whose route was closed), or a refinance
+    ///         request that moved or was displaced. The same rule
+    ///         {cancelOffer} applies, served so a keeper finds such offers
+    ///         without a simulation per offer. False for every other offer.
+    ///         Says nothing about the offer's other refusals (accepted,
+    ///         consumed by a sale, the protocol paused); the cancel decides.
+    function isOfferRouteDead(uint256 offerId) external view returns (bool) {
+        return _vehicleRouteDead(LibVaipakam.storageSlot(), offerId);
+    }
+
     function cancelOffer(uint256 offerId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];

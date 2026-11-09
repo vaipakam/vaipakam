@@ -163,7 +163,7 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -177,6 +177,8 @@ library FacetSelectors {
         s[10] = VaipakamNFTFacet.isPositionRetired.selector;
         s[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
+        // #3336 — the dead-route read the keeper's teardown sweep uses.
+        s[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
     }
 
     /// @notice Full external selector surface of {RiskPreviewFacet} (10) —

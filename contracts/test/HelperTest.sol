@@ -685,7 +685,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = OfferCancelFacet.cancelOffer.selector;
         selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
         selectors[2] = OfferCancelFacet.getOffer.selector;
@@ -694,6 +694,8 @@ contract HelperTest {
         selectors[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
         // #951 v2 — permissionless stale-sale-listing teardown.
         selectors[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
+        // #3336 — the dead-vehicle read the keeper's teardown sweep uses.
+        selectors[6] = OfferCancelFacet.isOfferRouteDead.selector;
         return selectors;
     }
 
@@ -889,7 +891,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -903,6 +905,7 @@ contract HelperTest {
         selectors[10] = VaipakamNFTFacet.isPositionRetired.selector;
         selectors[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         selectors[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
+        selectors[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
         return selectors;
     }
 

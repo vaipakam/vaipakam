@@ -172,8 +172,11 @@
       "why": "the user's own consent"
     },
     "OfferCancelFacet.cancelOffer(uint256)": {
-      "class": "user",
-      "why": "the creator cancels its own offer"
+      "class": "keeper",
+      "pass": "expiredTeardown",
+      "flag": "EXPIRED_TEARDOWN_ENABLED",
+      "evidence": "apps/keeper/src/expiredTeardown.ts",
+      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps"
     },
     "OfferCancelFacet.teardownStaleSaleListing(uint256)": {
       "class": "keeper",

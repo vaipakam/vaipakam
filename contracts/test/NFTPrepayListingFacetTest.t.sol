@@ -1667,7 +1667,21 @@ contract NFTPrepayListingFacetTest is SetupTest {
             );
         }
         newHolder = makeAddr("receivedPositionHolder");
+        // #3336 — the Diamond's dead-route read says live before the move and
+        // dead after it, the rule the cancel applies.
+        assertFalse(
+            VaipakamNFTFacet(address(diamond)).isPositionRouteDead(
+                BORROWER_TOKEN_ID, LibPositionNFT.RouteReason.PrepayCollateralListing
+            ),
+            "the listing's route is live before the move"
+        );
         LibTestPositionNFT.move(address(diamond), BORROWER_TOKEN_ID, newHolder);
+        assertTrue(
+            VaipakamNFTFacet(address(diamond)).isPositionRouteDead(
+                BORROWER_TOKEN_ID, LibPositionNFT.RouteReason.PrepayCollateralListing
+            ),
+            "the listing's route is dead once the position moved"
+        );
     }
 
     function _fillAndAssertSettled(ERC20Mock lendingToken) internal {

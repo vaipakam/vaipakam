@@ -333,6 +333,9 @@ contract RefinanceRequestGuardTest is SetupTest {
 
         assertEq(_live(loanId), 0, "the guard watches the record, which holds the cancelled R2");
         _acceptExpectingRevert(r1, _notRecorded(loanId, r1));
+        // #3336 — a displaced request is dead to the Diamond's read even with
+        // the position back with its creator: it is no longer the record.
+        assertTrue(OfferCancelFacet(address(diamond)).isOfferRouteDead(r1), "a displaced request reads dead");
     }
 
     /// A request posted before the record existed is never recorded, so it can
@@ -642,10 +645,14 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.prank(cleaner);
         vm.expectPartialRevert(OfferCancelFacet.NotCreatorOrNotExpired.selector);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
+        assertFalse(OfferCancelFacet(address(diamond)).isOfferRouteDead(offerId), "the request is live before the move");
 
         address newHolder = makeAddr("requestNewHolder");
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
+        // #3336 — the Diamond's dead-vehicle read now names it, the rule the
+        // cancel below applies.
+        assertTrue(OfferCancelFacet(address(diamond)).isOfferRouteDead(offerId), "the request is dead once the position moved");
 
         address loanVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
             LoanFacet(address(diamond)).getLoanDetails(loanId).borrower
