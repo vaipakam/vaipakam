@@ -279,7 +279,13 @@ contract PriceGuardConfigTest is Test {
         bytes32 up = bytes32(uint256(10 days));
         vm.expectRevert(abi.encodeWithSelector(PriceGuard.InvalidChange.selector, PriceGuard.Kind.Delay, bytes32(0), up));
         g.proposeChange(PriceGuard.Kind.Delay, bytes32(0), up);
-        g.proposeChange(PriceGuard.Kind.Delay, bytes32(0), bytes32(uint256(DELAY)));
+        // The delay is one entry: a subject would queue a second lowering.
+        bytes32 down = bytes32(uint256(DELAY));
+        vm.expectRevert(
+            abi.encodeWithSelector(PriceGuard.InvalidChange.selector, PriceGuard.Kind.Delay, bytes32(uint256(1)), down)
+        );
+        g.proposeChange(PriceGuard.Kind.Delay, bytes32(uint256(1)), down);
+        g.proposeChange(PriceGuard.Kind.Delay, bytes32(0), down);
         vm.stopPrank();
         (, uint256 at) = g.pendingChange(PriceGuard.Kind.Delay, bytes32(0));
         assertEq(at, block.timestamp + 7 days);

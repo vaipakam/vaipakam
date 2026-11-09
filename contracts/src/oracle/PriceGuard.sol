@@ -417,7 +417,8 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         if (p.executableAt != 0) revert ChangePending(kind, subject);
         if (kind == Kind.Delay) {
             uint256 d = uint256(value);
-            if (d >= delay) revert InvalidChange(kind, subject, value); // a raise is instant
+            // One delay, so one pending lowering; a raise is instant.
+            if (subject != bytes32(0) || d >= delay) revert InvalidChange(kind, subject, value);
             _checkDelay(uint64(d));
         } else {
             _validate(kind, subject, value);
