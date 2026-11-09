@@ -980,7 +980,8 @@ contract LoanLedgerHandler is Test {
     /// @dev Once a rental that closed on time has paid out a side's claim, that side's net is
     ///      exact: the renter has paid exactly the rent owed (the rest of its prepayment, the
     ///      buffer included, is back with it), and the lender side has received that rent less
-    ///      the treasury's share (rounded once per deduction, so within one wei a day). Each side
+    ///      the treasury's share (each payment floors its own share, so the lender may be up to
+    ///      one wei a payment above the single split). Each side
     ///      is checked once, when its claim is first seen paid.
     function _checkRentalSettled(uint256 loanId) internal {
         LoanBook storage b = books[loanId];
@@ -1000,11 +1001,14 @@ contract LoanLedgerHandler is Test {
             b.lenderSettledChecked = true;
             rentalChecks++;
             uint256 bps = _loan(loanId).treasuryFeeBpsAtInit;
-            int256 hi = owed - int256((b.rentOwed * bps) / BPS);
-            int256 lo = owed - int256((b.rentOwed * bps + BPS - 1) / BPS) - int256(b.termDays);
+            // Each payment (a daily deduction, or the close) floors its own treasury share, and
+            // a sum of floors is at most the floor of the sum and at most one wei a payment
+            // below it. A rental makes at most `termDays` payments.
+            int256 lo = owed - int256((b.rentOwed * bps) / BPS);
+            int256 hi = lo + int256(b.termDays);
             if (b.dLender[USDC] > hi || b.dLender[USDC] < lo) {
                 rentalViolations++;
-                _flag(string.concat("rental: lender received ", vm.toString(b.dLender[USDC]), ", rent less the treasury share is ", vm.toString(hi)));
+                _flag(string.concat("rental: lender received ", vm.toString(b.dLender[USDC]), ", rent less the treasury share is ", vm.toString(lo)));
             }
         }
     }

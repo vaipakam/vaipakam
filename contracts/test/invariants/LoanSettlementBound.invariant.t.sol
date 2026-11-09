@@ -416,8 +416,10 @@ contract LoanSettlementBoundInvariant is Test {
 
     function test_LedgerBooksARentalPaidByItsDeductions() public {
         // A 3-day rental whose every day is paid by the daily deduction: the third deduction
-        // closes it, and the ledger checks both sides against the whole term's rent.
-        ledger.createRentalOffer(0, 1, 7 ether, 3);
+        // closes it, and the ledger checks both sides against the whole term's rent. The fee
+        // does not divide by the treasury's share, so each deduction floors its share and the
+        // lender ends a few wei above the single split of the whole rent.
+        ledger.createRentalOffer(0, 1, 1 ether + 25, 3);
         ledger.acceptRentalOffer(1, 0);
         for (uint256 d = 0; d < 3; d++) {
             ledger.warp(1 days + 1);
