@@ -2588,3 +2588,15 @@ La revisión lee la oferta con `getOffer` (su `rentalBufferBpsAtCreate`), el ver
 ### Alquilar: riesgos
 
 Nunca eres dueño de un NFT alquilado, y tu derecho a usarlo termina con el alquiler. El alquiler y el margen se quedan en tu bóveda para el alquiler y no se pueden retirar mientras esté abierto. Un alquiler no se cierra solo al final de su plazo: ciérralo desde su página en la app actual, porque la nueva app aún no puede cerrar un alquiler. Cerrar durante el periodo de gracia cuesta un recargo por demora, tomado del margen; pasado ese periodo el alquiler entra en impago, el alquiler que queda en tu bóveda va al propietario y el margen al protocolo, y no recibes nada de vuelta. Con cobro por plazo completo se debe todo el plazo aunque cierres antes.
+
+<a id="rent-list"></a>
+
+### Alquilar: ofrecer tu NFT en alquiler
+
+El formulario lee el estándar de la colección con ERC-165 `supportsInterface` y el plazo más largo de `getProtocolConfigBundle`. La revisión lee el token con `ownerOf`, `getApproved` e `isApprovedForAll` (`balanceOf` para un ERC-1155), la clase del token de pago con `getAssetPriceStatus` y la prueba de liquidez, la parte de margen con `getRiskConfig`, el periodo de gracia con `getEffectiveGraceSeconds` y la parte del protocolo con `getTreasuryFeeBps`, y luego simula `createOffer` con `assetType` 1 o 2, `amount` y `amountMax` iguales a la tarifa diaria, todos los campos de garantía y de tipo a cero y `prepayAsset` el token de pago. Publicar registra `rentalBufferBpsAtCreate`; el resultado se lee del registro `OfferCreated` de la transacción y del propio registro `Transfer` (o `TransferSingle`) del NFT hacia la bóveda del propietario.
+
+<a id="rent-list-risks"></a>
+
+### Alquilar: riesgos de ofrecer
+
+El NFT se queda en tu bóveda mientras la oferta está abierta y mientras está alquilado, y no puedes retirarlo hasta que termine la oferta o el alquiler. Mientras nadie lo haya alquilado, puedes cancelar la oferta desde su página pasados sus primeros cinco minutos. Una vez alquilado, el arrendatario tiene el derecho a usar el NFT hasta que termine el alquiler, y no puedes retirárselo antes. Un alquiler no se cierra solo: lo cierra el arrendatario, o pasado el periodo de gracia cualquiera puede cerrarlo como impago; entonces el alquiler va a ti y el margen al protocolo. Una oferta que caduca deja el NFT en tu bóveda hasta que se cierra.

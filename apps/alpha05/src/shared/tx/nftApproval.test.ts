@@ -61,18 +61,37 @@ describe('the one-token approval', () => {
 });
 
 describe('an approval whose read-back fails', () => {
-  it('is stated as unverified with its transaction, never as not landed', async () => {
+  /** Fails the reads `failing` names (1 is the read before the prompt). */
+  const flakyAt = (failing: (n: number) => boolean) => {
     let calls = 0;
     const flaky = {
       account: WALLET,
       read: async <T>(fn: (c: never) => Promise<T>) => {
-        if (++calls > 1) throw new Error('rpc down');
+        if (failing(++calls)) throw new Error('rpc down');
         return { value: await fn(client as never), via: 'wallet' };
       },
     } as unknown as OwnStateClient;
+    return nftApproval({ own: flaky, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, tokenName: 'T #7', setStep: () => {} }, ASSET, 7n);
+  };
+  it('is put back before it throws, so no ending leaves it standing unstated', async () => {
+    states = [at(WALLET, null), at(WALLET, DIAMOND), at(WALLET, null)];
+    await expect(flakyAt((n) => n === 2).approve(null)).rejects.toMatchObject({
+      refusal: { code: 'NftApprovalUnverified', reason: 'nftApproval.unreadMined nftApproval.restored' },
+    });
+    expect(sent).toEqual([{ to: DIAMOND }, { to: NO_ADDRESS_HEX }]);
+  });
+  it('states a put-back it could not make, never as done', async () => {
     states = [at(WALLET, null)];
-    const ap = nftApproval({ own: flaky, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, tokenName: 'T #7', setStep: () => {} }, ASSET, 7n);
-    await expect(ap.approve(null)).rejects.toMatchObject({ refusal: { code: 'NftApprovalUnverified', reason: 'nftApproval.unread' } });
+    await expect(flakyAt((n) => n > 1).approve(null)).rejects.toMatchObject({
+      refusal: { code: 'NftApprovalUnverified', reason: 'nftApproval.unreadMined nftApproval.restoreFailed' },
+    });
+    expect(sent).toEqual([{ to: DIAMOND }]);
+  });
+  it('is stated as unverified with its transaction when its receipt never read, and nothing is sent over it', async () => {
+    states = [at(WALLET, null)];
+    vi.mocked(waitForTransactionReceipt).mockRejectedValueOnce(new Error('timeout'));
+    await expect(make().approve(null)).rejects.toMatchObject({ refusal: { code: 'NftApprovalUnverified', reason: 'nftApproval.unread' } });
+    expect(sent).toEqual([{ to: DIAMOND }]);
   });
 });
 

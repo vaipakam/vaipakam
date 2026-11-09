@@ -2608,3 +2608,15 @@ L'examen lit l'offre avec `getOffer` (son `rentalBufferBpsAtCreate`), le verdict
 ### Louer : risques
 
 Tu ne possèdes jamais un NFT loué, et ton droit de l'utiliser prend fin avec la location. Le loyer et la marge restent dans ton coffre pour la location et ne peuvent pas être retirés tant qu'elle est ouverte. Une location ne se clôture pas d'elle-même à la fin de sa durée : clôture-la depuis sa page dans l'application actuelle, car la nouvelle application ne peut pas encore clôturer une location. Clôturer pendant le délai de grâce coûte des frais de retard, pris sur la marge ; après ce délai la location fait défaut, le loyer restant dans ton coffre va au propriétaire et la marge au protocole, et rien ne te revient. Avec un loyer sur la durée complète, toute la durée est due même si tu clôtures plus tôt.
+
+<a id="rent-list"></a>
+
+### Louer : proposer votre NFT à la location
+
+Le formulaire lit le standard de la collection avec ERC-165 `supportsInterface` et la durée la plus longue avec `getProtocolConfigBundle`. L'examen lit le jeton avec `ownerOf`, `getApproved` et `isApprovedForAll` (`balanceOf` pour un ERC-1155), la classe du jeton de paiement avec `getAssetPriceStatus` et le test de liquidité, la part de marge avec `getRiskConfig`, le délai de grâce avec `getEffectiveGraceSeconds` et la part du protocole avec `getTreasuryFeeBps`, puis exécute `createOffer` à blanc avec `assetType` 1 ou 2, `amount` et `amountMax` égaux au tarif journalier, tous les champs de garantie et de taux à zéro et `prepayAsset` le jeton de paiement. La publication enregistre `rentalBufferBpsAtCreate` ; le résultat est lu dans le journal `OfferCreated` de la transaction et dans le propre journal `Transfer` (ou `TransferSingle`) du NFT vers le coffre du propriétaire.
+
+<a id="rent-list-risks"></a>
+
+### Louer : risques de la mise en location
+
+Le NFT reste dans ton coffre tant que l'offre est ouverte et tant qu'il est loué, et tu ne peux pas le retirer avant la fin de l'offre ou de la location. Tant que personne ne l'a loué, tu peux annuler l'offre depuis sa page après ses cinq premières minutes. Une fois loué, le locataire détient le droit d'utiliser le NFT jusqu'à la fin de la location, et tu ne peux pas le reprendre plus tôt. Une location ne se clôture pas d'elle-même : le locataire la clôture, ou après le délai de grâce n'importe qui peut la clôturer comme défaut ; le loyer te revient alors et la marge va au protocole. Une offre expirée garde le NFT dans ton coffre jusqu'à sa clôture.

@@ -504,6 +504,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   already done. While the action's own receipt is unknown the grant still
   stands, and the page says so beside the transaction. A take-back that did
   not land or could not be read is stated with what to do in the wallet.
+  An approval or grant that mined but could not be read back is put back
+  (or taken back) at once, before the flow stops, since nothing else holds
+  it to clean up; the stop states both. One whose receipt never read is
+  stated with its transaction and what to do in the wallet, never reset
+  while it may still be pending.
 - **RB-RANGE** — a ranged offer (OFF-10) is shown at both ends it can be
   taken at, never as one figure: what a direct taker gets (for a borrower's
   request, the smallest amount against the floor collateral, the rest of the
@@ -1691,6 +1696,21 @@ above. Each resolves here, so a route reviewer needs no private file:
   renter as the NFT's user (for an ERC-1155, the units rented out grew by
   the rental's quantity). A renter's request is not taken here yet, and
   says where it is.
+- **RB-RENT-LIST** — An owner lists an NFT for rent (NFT-01) on the Rent
+  page, behind the Terms gate. The form has no collateral or rate fields
+  and one daily fee, never a range. The review states that the NFT moves
+  from the wallet into the owner's own vault and stays there while the
+  listing is open and while it is rented, what a renter pays up front with
+  the buffer share the listing fixes at posting, what the owner receives
+  (the rent due less the protocol's share, named as today's figure fixed at
+  the rental's start) and what a default does; a token the wallet does not
+  hold, or too few units, is said before any wallet step. The approval is
+  the one ERC-721 token, or for an ERC-1155 the operator approval for this
+  listing alone, taken back afterwards whatever happens; the outcome is
+  measured (the listing recorded and the NFT in the owner's vault).
+  A click on review that cannot go on always says why: a field's own
+  error, a failed read of the network's longest term (stated with a
+  retry), or that a read the listing needs has not answered yet.
 
 ## 3. Companion specifications
 

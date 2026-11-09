@@ -2143,3 +2143,15 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 租用：风险
 
 你永远不会拥有租来的 NFT，使用它的权利随租期结束而结束。租金和缓冲金为这次租用留在你的金库中，租用未结束时不能提取。租用到期后不会自动结束：请在当前应用中它的页面结束，新应用暂时还不能结束租用。在宽限期内结束要从缓冲金中扣除逾期费；超过宽限期，租用即违约，你金库中剩余的租金归所有者，缓冲金归协议，你拿不回任何东西。按全期计租时，即使提前结束也要支付整个租期。
+
+<a id="rent-list"></a>
+
+### 租用：把你的 NFT 挂出出租
+
+表单用 ERC-165 `supportsInterface` 读取合集的标准，用 `getProtocolConfigBundle` 读取最长租期。确认页用 `ownerOf`、`getApproved` 和 `isApprovedForAll`（ERC-1155 用 `balanceOf`）读取代币，用 `getAssetPriceStatus` 和流动性检查读取支付代币的类别，用 `getRiskConfig` 读取缓冲金比例，用 `getEffectiveGraceSeconds` 读取宽限期，用 `getTreasuryFeeBps` 读取协议份额，然后试运行 `createOffer`：`assetType` 为 1 或 2，`amount` 和 `amountMax` 都等于日租金，所有抵押与利率字段为零，`prepayAsset` 为支付代币。发布会记录 `rentalBufferBpsAtCreate`；结果从交易的 `OfferCreated` 日志和 NFT 自身转入所有者金库的 `Transfer`（或 `TransferSingle`）日志读取。
+
+<a id="rent-list-risks"></a>
+
+### 租用：挂出出租的风险
+
+挂单开放期间和出租期间，NFT 都留在你的金库中，挂单或租用结束前不能提取。在无人租用时，你可以在挂单的头五分钟过后从其页面取消。出租后，租户在租期结束前拥有使用该 NFT 的权利，你不能提前收回。租用不会自动结束：由租户结束，或在宽限期过后任何人都可以按违约结束；届时租金归你，缓冲金归协议。已过期的挂单会把 NFT 留在你的金库中，直到它被关闭。
