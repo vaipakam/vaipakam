@@ -29,6 +29,7 @@ on:
       - 'contracts/foundry.toml'
       - 'contracts/remappings.txt'
       - '.github/workflows/alpha05-e2e.yml'
+      - '.github/actions/setup-foundry/**'
   push:
     branches: [main]
     paths:
@@ -45,6 +46,7 @@ on:
       - 'contracts/foundry.toml'
       - 'contracts/remappings.txt'
       - '.github/workflows/alpha05-e2e.yml'
+      - '.github/actions/setup-foundry/**'
   workflow_dispatch:
 
 permissions:
@@ -68,7 +70,7 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry (forge + anvil)
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        uses: ./.github/actions/setup-foundry  # cached + digest-pinned; see its header
         with:
           # PINNED by number, never `stable` (#1984, owner decision
           # 2026-10-28), in lockstep with app-e2e.yml and mainnet-gate.yml: a
