@@ -44,9 +44,15 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *         offers carry a monthly cadence), both accept directions, full and partial repayment,
  *         the direct preclose, collateral top-up, the lender's direct sale, the periodic-interest
  *         settlement, time-based default and HF liquidation (both name the failing venue, so
- *         they reach the in-kind fallback) and both claims. The preclose offset, refinance and
- *         rentals are not yet driven; #3241 tracks them, and the vault outflow seam (#3205) is
- *         where this check is meant to bind every one of them.
+ *         they reach the in-kind fallback), the preclose offset and both claims. An offset
+ *         accept is one action over two loans: the ledger gives the new loan exactly its
+ *         origination (so its LIF is checked as on any accept) and books every other movement
+ *         against the loan it closes, whose lender cap then runs to the end of the original
+ *         term (the offset pays the rest of the term's interest the new offer does not earn).
+ *         One offset accept is not driven: an acceptor that already holds the closing loan's
+ *         lender side, whose single delta cannot be split between its two roles.
+ *         Refinance and rentals are not yet driven; #3241 tracks them, and the vault outflow
+ *         seam (#3205) is where this check is meant to bind every one of them.
  *
  * @dev    Run: `forge test --match-path test/invariants/LoanSettlementBound.invariant.t.sol`
  *         (the `cifast` profile does not compile `test/invariants`).
@@ -76,6 +82,7 @@ contract LoanSettlementBoundInvariant is Test {
         assertEq(ledger.acceptViolations(), 0, why);
         assertEq(ledger.interestViolations(), 0, why);
         assertEq(ledger.periodicViolations(), 0, why);
+        assertEq(ledger.offsetViolations(), 0, why);
     }
 
     /// @notice S2-S6 over every booked loan.
@@ -115,6 +122,11 @@ contract LoanSettlementBoundInvariant is Test {
         {
             (int256 dL, int256 dB,,) = ledger.loanDeltas(loanId, USDC);
             uint256 elapsed = lastTs > startTime ? lastTs - startTime : 0;
+            // A preclose offset pays the original lender the interest the rest of the term would
+            // have earned beyond what the new offer pays (spec "Preclose", Option 3), so its cap
+            // runs to the end of the term rather than to the close.
+            (bool offsetClosed, uint256 dueTime) = ledger.loanOffset(loanId);
+            if (offsetClosed && dueTime > lastTs) elapsed = dueTime - startTime;
             // Floors only lower what is owed, and partials only lower the principal, so the
             // unfloored figure on the original principal bounds every settlement's sum. The
             // +1 allows the late fee to be rounded up in the protocol's favour.
@@ -150,6 +162,7 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("sold loans", ledger.saleLanded());
         console.log("periodic just-stamps", ledger.periodicStamped());
         console.log("periodic sales", ledger.periodicSold());
+        console.log("offset closes", ledger.offsetLanded());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -249,6 +262,27 @@ contract LoanSettlementBoundInvariant is Test {
         assertTrue(sold && dMw > 0, "market bought no collateral");
 
         ledger.repay(0);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksAnOffsetClose() public {
+        // Borrower 1 borrows from lender 1 for 60 days, then offsets: it posts a 20-day lender
+        // offer from its own principal, and borrower 2 takes it.
+        ledger.createBorrowerOffer(1, 1_000 ether, 60, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        uint256 oldLoanId = ledger.bookedLoanIds(0);
+        ledger.warp(5 days);
+        ledger.offsetLoan(0, 500, 20);
+        ledger.acceptLenderOffer(2, 0);
+        assertEq(ledger.offsetLanded(), 1, "offset did not close the original loan");
+        assertEq(ledger.bookedLoanCount(), 2, "the offsetting loan was not booked");
+        (bool closed,) = ledger.loanOffset(oldLoanId);
+        assertTrue(closed, "original loan not marked offset-closed");
+
         ledger.claimAsLender(0);
         ledger.claimAsBorrower(0);
 
