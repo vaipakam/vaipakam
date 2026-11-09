@@ -8,6 +8,7 @@ import { OfferPage } from '../pages/offers/OfferPage';
 import { OffersPage } from '../pages/offers/OffersPage';
 import { PositionPage } from '../pages/position/PositionPage';
 import { PositionsPage } from '../pages/positions/PositionsPage';
+import { RentPage } from '../pages/rent/RentPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
 import { VaultPage } from '../pages/vault/VaultPage';
 
@@ -31,4 +32,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/offers/:id': OfferPage,
   '/alerts': AlertsPage,
   '/settings': SettingsPage,
+  '/rent': RentPage,
 };
