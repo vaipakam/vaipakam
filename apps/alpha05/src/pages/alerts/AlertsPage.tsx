@@ -7,7 +7,7 @@ import { inboxTarget, type InboxRow } from '../../shared/inbox/inbox';
 import { markSeen, readSeen } from '../../shared/inbox/seen';
 import { inboxReason, useInbox, useInboxNewer } from '../../shared/inbox/useInbox';
 import { formatUtc } from '../../shared/ui/format';
-import { currentAppHref, PAGES } from '../../routes/pageMap';
+import { AlertChannels } from './AlertChannels';
 
 /**
  * Alerts (#3180, ACC-54; RB-INBOX): the free inbox the protocol's index keeps
@@ -16,8 +16,8 @@ import { currentAppHref, PAGES } from '../../routes/pageMap';
  * or to Claims for a reward entry. Rows newer than the last ones this page
  * showed in this browser are marked New, and opening the page records them
  * as seen. A failed read says so and is never shown as an empty inbox; rows
- * that could not be read are counted. Telegram and push alerts are still set
- * up in the current app, and the page says where.
+ * that could not be read are counted. Below the inbox, Telegram, push, health
+ * warnings and payment reminders are set up (`AlertChannels`, ACC-50/52).
  */
 export function AlertsPage() {
   const copy = useCopy();
@@ -67,8 +67,6 @@ export function AlertsPage() {
 
   const failed = !indexed || query.status === 'error';
   const reason = inboxReason(query.error, indexed, text);
-  const settings = PAGES.find((p) => p.path === '/alerts');
-  const channelsHref = settings ? currentAppHref(settings, {}) : null;
 
   return (
     <main className="page alerts" aria-labelledby="alerts-title">
@@ -125,14 +123,7 @@ export function AlertsPage() {
           <WhyLink summaryKey="inbox.whySummary" detailKey="inbox.why" />
         </section>
       )}
-      <p className="tier-b" data-testid="alerts-channels">
-        {text('inbox.channels')}{' '}
-        {channelsHref && (
-          <a href={channelsHref} target="_blank" rel="noreferrer">
-            {text('inbox.channelsLink')}
-          </a>
-        )}
-      </p>
+      {chain && account && <AlertChannels key={identity ?? ''} chain={chain} account={account} />}
     </main>
   );
 }

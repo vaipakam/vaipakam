@@ -45,6 +45,15 @@
 //    unreadable row), stamped after every chain row. Newest first, paged by
 //    the indexer's `block:log:id` cursor, with the `newerThan` count of rows
 //    written after an id; refused while the posture is `down`.
+//  - the alert service (the agent Worker, which alpha05 is pointed at here
+//    too): `GET /push/status`, `POST /link/telegram`, `POST /telegram/test`,
+//    `POST /unlink/telegram` and `PUT /thresholds`, answering as the agent
+//    does (codes, refusals and statuses), with each signed request accepted
+//    once. It does NOT verify signatures: it records every request
+//    (`GET /__stub/agent`), and the spec checks each signature against the
+//    shared message builders, which is the stronger claim. A spec drives
+//    the bot handshake, the push posture and one forced answer through
+//    `POST /__stub/agent`.
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
@@ -336,7 +345,7 @@ function cors(req, res) {
     res.setHeader('access-control-allow-origin', origin);
     res.setHeader('vary', 'origin');
   }
-  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
   res.setHeader('access-control-allow-headers', 'content-type');
   res.setHeader('cache-control', 'no-store');
 }
@@ -345,6 +354,25 @@ function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
 }
+
+/** The alert service's routes, by method. */
+const AGENT_ROUTES = { '/link/telegram': 'POST', '/telegram/test': 'POST', '/unlink/telegram': 'POST', '/thresholds': 'PUT' };
+
+function freshAgent() {
+  return {
+    push: 'available',
+    requests: [],
+    used: new Set(),
+    codes: new Map(),
+    linked: new Set(),
+    lastTest: new Map(),
+    thresholds: new Map(),
+    next: new Map(),
+  };
+}
+/** The alert service's state: every request, the issued codes, the linked
+ *  wallets, the stored settings and the push posture. */
+let agent = freshAgent();
 
 const server = http.createServer(async (req, res) => {
   cors(req, res);
@@ -369,6 +397,8 @@ const server = http.createServer(async (req, res) => {
           '/__stub/index-posture',
           '/__stub/unplaced',
           '/__stub/notifications',
+          '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
+          '/__stub/agent',
         ],
       });
       return;
@@ -419,6 +449,126 @@ const server = http.createServer(async (req, res) => {
         });
       }
       json(res, 200, { added: addedNotifications.length });
+      return;
+    }
+    if (url.pathname === '/__stub/agent') {
+      if (req.method === 'GET') {
+        json(res, 200, { requests: agent.requests, thresholds: Object.fromEntries(agent.thresholds), linked: [...agent.linked] });
+        return;
+      }
+      // { reset }, { push: 'available' | 'agent-only' | 'unavailable' | 'down' },
+      // { handshake: wallet } (the bot received that wallet's latest code),
+      // { next: { path, status, body } } (the next request to that path gets it).
+      const body = JSON.parse(await readBody(req));
+      if (body.reset === true) agent = freshAgent();
+      if (body.push !== undefined) {
+        if (!['available', 'agent-only', 'unavailable', 'down'].includes(body.push)) {
+          json(res, 400, { error: `unknown push posture ${String(body.push)}` });
+          return;
+        }
+        agent.push = body.push;
+      }
+      if (typeof body.handshake === 'string') {
+        const w = body.handshake.toLowerCase();
+        if (![...agent.codes.values()].includes(w)) {
+          json(res, 409, { error: 'no code was issued for that wallet' });
+          return;
+        }
+        agent.linked.add(w);
+      }
+      if (body.next !== undefined) agent.next.set(body.next.path, { status: body.next.status, body: body.next.body });
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === '/push/status' && req.method === 'GET') {
+      if (agent.push === 'down') {
+        json(res, 503, { error: 'e2e stand-in: alert service down' });
+        return;
+      }
+      const channel = '0x00000000000000000000000000000000000e2e01';
+      json(
+        res,
+        200,
+        agent.push === 'unavailable'
+          ? { available: false, reason: 'signer-unset', rail: 'agent', scope: 'service', billedChainIds: [] }
+          : { available: true, channel, scope: agent.push === 'agent-only' ? 'agent' : 'service', billedChainIds: [] },
+      );
+      return;
+    }
+    if (AGENT_ROUTES[url.pathname] === req.method) {
+      const raw = await readBody(req);
+      let body;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        json(res, 400, { error: 'invalid-json' });
+        return;
+      }
+      agent.requests.push({ path: url.pathname, body });
+      const forced = agent.next.get(url.pathname);
+      if (forced) {
+        agent.next.delete(url.pathname);
+        json(res, forced.status, forced.body);
+        return;
+      }
+      if (
+        typeof body.wallet !== 'string' ||
+        !/^0x[0-9a-fA-F]{40}$/.test(body.wallet) ||
+        typeof body.signature !== 'string' ||
+        !Number.isSafeInteger(body.issuedAt) ||
+        body.chain_id !== CHAIN_ID
+      ) {
+        json(res, 400, { error: 'invalid-payload' });
+        return;
+      }
+      // The agent's one-time ledger is keyed on the signed message; the
+      // signature stands in for it here (one message, one signature).
+      if (agent.used.has(body.signature)) {
+        json(res, 409, { error: 'request-already-used', reason: 'this signed request was already used — sign again' });
+        return;
+      }
+      agent.used.add(body.signature);
+      const w = body.wallet.toLowerCase();
+      if (url.pathname === '/link/telegram') {
+        const code = `E2E${String(agent.codes.size + 1).padStart(5, '0')}`;
+        agent.codes.set(code, w);
+        json(res, 200, { ok: true, code, bot_url: `https://t.me/vaipakam_e2e_bot?start=${code}` });
+        return;
+      }
+      if (url.pathname === '/telegram/test') {
+        if (!agent.linked.has(w)) {
+          json(res, 404, { error: 'not-linked' });
+          return;
+        }
+        const now = Math.floor(Date.now() / 1000);
+        if ((agent.lastTest.get(w) ?? 0) > now - 60) {
+          json(res, 429, { error: 'rate-limited' });
+          return;
+        }
+        agent.lastTest.set(w, now);
+        json(res, 200, { ok: true });
+        return;
+      }
+      if (url.pathname === '/unlink/telegram') {
+        agent.linked.delete(w);
+        json(res, 200, { ok: true, scope: 'wallet' });
+        return;
+      }
+      // PUT /thresholds
+      if (body.push_channel === 'subscribed' && agent.push !== 'available' && agent.push !== 'agent-only') {
+        const stored = agent.thresholds.get(w)?.push_channel === 'subscribed';
+        if (!stored) {
+          json(res, 409, { error: 'push-unavailable', push: 'unavailable' });
+          return;
+        }
+      }
+      const prev = agent.thresholds.get(w) ?? {};
+      const next = { ...prev };
+      for (const k of ['warn_hf', 'alert_hf', 'critical_hf', 'notify_maturity_approaching']) if (body[k] !== undefined) next[k] = body[k];
+      if (body.push_channel === 'subscribed') next.push_channel = 'subscribed';
+      agent.thresholds.set(w, next);
+      const push = body.push_channel !== 'subscribed' ? 'not-requested' : agent.push === 'available' || agent.push === 'agent-only' ? 'stored' : 'kept';
+      json(res, 200, { ok: true, push });
       return;
     }
     if (url.pathname === '/health/ingest') {

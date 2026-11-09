@@ -1,0 +1,160 @@
+import { describe, expect, it } from 'vitest';
+import { buildAlertSettingsMessage, buildTelegramLinkMessage, buildTelegramTestMessage, buildTelegramUnlinkMessage } from '@vaipakam/lib/alertsMessage';
+import { alertBody, alertMessage, alertRoute, bandsProblem, parseBand, parsePushStatus, readAlertAnswer } from './alerts';
+import { parseKnown, readKnown, writeKnown } from './known';
+
+const W = '0xAbCdEf0000000000000000000000000000000001' as const;
+const SIG = '0x1234' as const;
+
+describe('alert messages and bodies', () => {
+  it('signs the shared messages, byte for byte', () => {
+    expect(alertMessage('link', W, 84532, 100)).toBe(buildTelegramLinkMessage(W, 84532, 100));
+    expect(alertMessage('unlink', W, 84532, 100)).toBe(buildTelegramUnlinkMessage(W, 84532, 100));
+    expect(alertMessage('test-alert', W, 84532, 100)).toBe(buildTelegramTestMessage(W, 84532, 100));
+    const save = { dueDateReminders: false } as const;
+    expect(alertMessage({ save }, W, 84532, 100)).toBe(buildAlertSettingsMessage(W, 84532, save, 100));
+  });
+
+  it('routes each action', () => {
+    expect(alertRoute('link')).toEqual({ method: 'POST', path: '/link/telegram' });
+    expect(alertRoute('unlink')).toEqual({ method: 'POST', path: '/unlink/telegram' });
+    expect(alertRoute('test-alert')).toEqual({ method: 'POST', path: '/telegram/test' });
+    expect(alertRoute({ save: {} })).toEqual({ method: 'PUT', path: '/thresholds' });
+  });
+
+  it('sends only what a save changes', () => {
+    expect(alertBody('link', W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG });
+    expect(alertBody({ save: { dueDateReminders: false } }, W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, notify_maturity_approaching: false });
+    expect(alertBody({ save: { pushAlerts: true } }, W, 1, 2, SIG)).toEqual({ wallet: W, chain_id: 1, issuedAt: 2, signature: SIG, push_channel: 'subscribed' });
+    expect(alertBody({ save: { bands: { warnHf: 1.6, alertHf: 1.3, criticalHf: 1.1 } } }, W, 1, 2, SIG)).toEqual({
+      wallet: W,
+      chain_id: 1,
+      issuedAt: 2,
+      signature: SIG,
+      warn_hf: 1.6,
+      alert_hf: 1.3,
+      critical_hf: 1.1,
+    });
+  });
+});
+
+describe('bands', () => {
+  it('reads plain decimals only', () => {
+    expect(parseBand(' 1.5 ')).toBe(1.5);
+    expect(parseBand('1.0500')).toBe(1.05);
+    expect(parseBand('1e1')).toBeNaN();
+    expect(parseBand('')).toBeNaN();
+    expect(parseBand('-1')).toBeNaN();
+  });
+  it('refuses what the service refuses', () => {
+    expect(bandsProblem({ warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05 })).toBeNull();
+    expect(bandsProblem({ warnHf: Number.NaN, alertHf: 1.2, criticalHf: 1.05 })).toBe('not-numbers');
+    expect(bandsProblem({ warnHf: 1.2, alertHf: 1.2, criticalHf: 1.05 })).toBe('order');
+    expect(bandsProblem({ warnHf: 1.5, alertHf: 1.2, criticalHf: 1 })).toBe('floor');
+  });
+});
+
+describe('push status', () => {
+  const channel = '0x00000000000000000000000000000000000000aa';
+  it('reads the two shapes strictly', () => {
+    expect(parsePushStatus({ available: true, channel, scope: 'service', billedChainIds: [] })).toEqual({ kind: 'available', channel, scope: 'service', billedChainIds: [] });
+    expect(parsePushStatus({ available: false, reason: 'signer-unset', rail: 'keeper', scope: 'service', billedChainIds: [84532] })).toEqual({
+      kind: 'unavailable',
+      reason: 'signer-unset',
+      rail: 'keeper',
+      scope: 'service',
+      billedChainIds: [84532],
+    });
+    expect(parsePushStatus({ available: false, reason: 'x', scope: 'agent', billedChainIds: [] })).toMatchObject({ rail: null });
+  });
+  it('never reads an odd answer as available', () => {
+    expect(parsePushStatus(null)).toBeNull();
+    expect(parsePushStatus({ available: true, channel: 'nope', scope: 'service', billedChainIds: [] })).toBeNull();
+    expect(parsePushStatus({ available: true, channel, scope: 'all', billedChainIds: [] })).toBeNull();
+    expect(parsePushStatus({ available: true, channel, scope: 'service' })).toBeNull();
+    expect(parsePushStatus({ available: false, reason: 'x', rail: 'other', scope: 'agent', billedChainIds: [] })).toBeNull();
+    expect(parsePushStatus({ available: 'yes', channel, scope: 'service', billedChainIds: [] })).toBeNull();
+  });
+});
+
+describe('answers', () => {
+  it('reads a link code and only a real bot link', () => {
+    expect(readAlertAnswer('link', 200, { ok: true, code: 'ABCD2345', bot_url: 'https://t.me/vaipakam_bot?start=ABCD2345' })).toEqual({
+      ok: true,
+      action: 'link',
+      code: 'ABCD2345',
+      botUrl: 'https://t.me/vaipakam_bot?start=ABCD2345',
+    });
+    expect(readAlertAnswer('link', 200, { ok: true, code: 'ABCD2345', bot_url: 'https://evil.example/x' })).toMatchObject({ botUrl: null });
+    expect(readAlertAnswer('link', 200, { ok: true })).toEqual({ ok: false, problem: 'other', status: 200 });
+  });
+  it('reads an unlink’s scope and pending networks', () => {
+    expect(readAlertAnswer('unlink', 200, { ok: true, scope: 'chain', pending: [84532, 'x'] })).toEqual({ ok: true, action: 'unlink', scope: 'chain', pending: [84532] });
+    expect(readAlertAnswer('unlink', 200, { ok: true })).toEqual({ ok: false, problem: 'other', status: 200 });
+  });
+  it('reads a save’s push outcome, older services as stored', () => {
+    expect(readAlertAnswer({ save: { pushAlerts: true } }, 200, { ok: true, push: 'kept' })).toEqual({ ok: true, action: 'save', push: 'kept' });
+    expect(readAlertAnswer({ save: { pushAlerts: true } }, 200, { ok: true })).toEqual({ ok: true, action: 'save', push: 'stored' });
+    expect(readAlertAnswer({ save: { dueDateReminders: true } }, 200, { ok: true })).toEqual({ ok: true, action: 'save', push: 'not-requested' });
+  });
+  it('names each refusal', () => {
+    const cases: [Parameters<typeof readAlertAnswer>[0], number, Record<string, unknown> | null, string][] = [
+      ['link', 409, { error: 'request-already-used' }, 'used'],
+      [{ save: { pushAlerts: true } }, 409, { error: 'push-unavailable' }, 'push-unavailable'],
+      ['link', 503, { error: 'verification-unavailable' }, 'verify-down'],
+      [{ save: {} }, 503, { error: 'optout-unavailable' }, 'storage-pending'],
+      ['unlink', 503, { error: 'protection-unknown' }, 'protection-unknown'],
+      ['test-alert', 503, { error: 'bot-not-configured' }, 'bot-off'],
+      ['test-alert', 404, { error: 'not-linked' }, 'not-linked'],
+      ['test-alert', 429, { error: 'rate-limited' }, 'cooldown'],
+      ['link', 429, { error: 'rate-limited' }, 'busy'],
+      ['test-alert', 502, { error: 'send-failed' }, 'send-failed'],
+      [{ save: {} }, 400, { error: 'chain-not-configured' }, 'chain-not-watched'],
+      ['link', 401, { error: 'verification_failed' }, 'refused'],
+      ['link', 400, { error: 'verification_failed' }, 'refused'],
+      ['test-alert', 404, null, 'other'],
+      ['link', 500, null, 'other'],
+    ];
+    for (const [action, status, data, problem] of cases) expect(readAlertAnswer(action, status, data)).toEqual({ ok: false, problem, status });
+  });
+});
+
+describe('what this browser knows', () => {
+  function memory() {
+    const m = new Map<string, string>();
+    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
+  }
+  it('keeps one record per network and wallet, merged', () => {
+    const s = memory();
+    writeKnown(84532, W, { dueDate: { on: false, at: 5 } }, s);
+    writeKnown(84532, W.toLowerCase() as `0x${string}`, { telegram: { state: 'confirmed', at: 6 } }, s);
+    expect(readKnown(84532, W, s)).toEqual({ dueDate: { on: false, at: 5 }, telegram: { state: 'confirmed', at: 6 } });
+    expect(readKnown(97, W, s)).toEqual({});
+  });
+  it('drops a field it cannot read', () => {
+    expect(parseKnown({ telegram: { state: 'linked', at: 1 }, push: { at: 2, outcome: 'stored' }, bands: { warnHf: 'x' } })).toEqual({ push: { at: 2, outcome: 'stored' } });
+    expect(parseKnown('nope')).toEqual({});
+  });
+  it('works with no storage', () => {
+    expect(readKnown(1, W, null)).toEqual({});
+    expect(writeKnown(1, W, { dueDate: { on: true, at: 1 } }, null)).toEqual({ dueDate: { on: true, at: 1 } });
+  });
+});
+
+describe('issuedAt', () => {
+  it('never repeats a second, so a quick second request is not a repeat', async () => {
+    const { nextIssuedAt } = await import('./useAlertAction');
+    const a = nextIssuedAt(1_000_000_000_000);
+    const b = nextIssuedAt(1_000_000_000_500);
+    const c = nextIssuedAt(1_000_000_010_000);
+    expect(b).toBe(a + 1);
+    expect(c).toBe(1_000_000_010);
+  });
+  it('carries the last second across a reload through storage', async () => {
+    const { nextIssuedAt } = await import('./useAlertAction');
+    const m = new Map<string, string>([['alpha05.alerts.lastIssuedAt', '2000000000']]);
+    const store = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
+    expect(nextIssuedAt(1_500_000_000_000, store)).toBe(2_000_000_001);
+    expect(m.get('alpha05.alerts.lastIssuedAt')).toBe('2000000001');
+  });
+});
