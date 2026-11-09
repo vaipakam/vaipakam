@@ -765,9 +765,10 @@
       "evidence": "apps/keeper/src/keeper.ts"
     },
     "SaleFloorFacet.checkpointHourlyPrices(address[])": {
-      "class": "gap",
-      "issue": "#3359",
-      "why": "the hourly price checkpoints the forced-sale floor's calm test reads; until a keeper writes them every forced sale uses the full slippage cap, which is the behaviour before #3359"
+      "class": "keeper",
+      "pass": "priceCheckpoint",
+      "flag": "PRICE_CHECKPOINT_ENABLED",
+      "evidence": "apps/keeper/src/priceCheckpoint.ts"
     },
     "SanctionsClearanceAttestor.sendReply(bytes32,bytes)": {
       "class": "service",

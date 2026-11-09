@@ -285,6 +285,14 @@ interface BaseEnv {
    *  2500000). */
   KEEPER_FEE_RESERVE_LIQUIDATION_GAS?: string;
 
+  // Price checkpoint pass (#3384). `secret_text` like the flags above.
+  /** 'true' arms the price checkpoint pass (in addition to KEEPER_ENABLED):
+   *  twice an hour, per chain, `checkpointHourlyPrices` for the assets of
+   *  active ERC-20 loans not yet checkpointed this UTC hour, which the #3359
+   *  forced-sale floor's calm test reads. Permissionless; stores only the
+   *  oracle's own reading, moves no value and pays only gas. */
+  PRICE_CHECKPOINT_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -553,6 +561,7 @@ export const PLAIN_VAR_KEYS = [
   'KEEPER_FEE_BALANCE_ALERT_ENABLED',
   'KEEPER_FEE_RESERVE_LIQUIDATIONS',
   'KEEPER_FEE_RESERVE_LIQUIDATION_GAS',
+  'PRICE_CHECKPOINT_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -785,6 +794,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_FEE_BALANCE_ALERT_ENABLED: raw.KEEPER_FEE_BALANCE_ALERT_ENABLED,
     KEEPER_FEE_RESERVE_LIQUIDATIONS: raw.KEEPER_FEE_RESERVE_LIQUIDATIONS,
     KEEPER_FEE_RESERVE_LIQUIDATION_GAS: raw.KEEPER_FEE_RESERVE_LIQUIDATION_GAS,
+    PRICE_CHECKPOINT_ENABLED: raw.PRICE_CHECKPOINT_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

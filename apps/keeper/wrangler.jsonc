@@ -455,6 +455,13 @@
   //     LIQUIDATION_GAS gas (default 2500000) at the current fee, and a
   //     recovery message once it does. Read-only; sends no transaction.
   //     Ships unset.
+  //   - PRICE_CHECKPOINT_ENABLED — 'true' arms the #3384 price checkpoint
+  //     pass, at :11 and :41 each hour: checkpointHourlyPrices for the assets
+  //     of active ERC-20 loans with no checkpoint for the UTC hour and an
+  //     oracle price that reads. The #3359 forced-sale floor reads the last
+  //     two hours' checkpoints; without them every forced sale uses the full
+  //     slippage cap. Simulated first. Permissionless; moves no value and
+  //     pays only gas. Ships unset.
   //   - REWARD_STAGING_UPKEEP_ENABLED — 'true' arms the #3097 reward staging
   //     upkeep pass, hourly: prepareStagedDay / reserveStagedDay /
   //     resolveStagedDayPage for open staging records, reserveDomainPage /
