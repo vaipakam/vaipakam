@@ -161,26 +161,38 @@ export interface EraseReport {
    *  connection ended. Null when none was connected. */
   disconnected: boolean | null;
   removed: { app: number; connector: number; session: number; databases: number; langCookie: boolean };
-  /** What could not be removed, each with its own reason. */
-  refused: { what: 'local' | 'session' | 'database' | 'cookie'; name?: string; reason: string }[];
+  /** The wallet libraries' "disconnected" markers written back after the
+   *  sweep, so no wallet reconnects by itself on the reload. */
+  kept: number;
+  /** What could not be removed (or, for a marker, kept), each with its own
+   *  reason. */
+  refused: { what: 'local' | 'session' | 'database' | 'cookie' | 'marker'; name?: string; reason: string }[];
   databasesUnknown: boolean;
 }
 
 export interface EraseSteps extends Sources {
   disconnect: () => Promise<boolean | null>;
+  /** Writes back each wallet connector's "disconnected" marker the sweep
+   *  removed, for every connector that was connected or already marked:
+   *  without it the reload's automatic reconnection would reconnect a wallet
+   *  that still authorises this site. Returns how many were written and
+   *  read back. */
+  keepDisconnected: () => Promise<number>;
   deleteDatabase: (name: string) => Promise<void>;
   clearCookie: (name: string) => void;
 }
 
 /** Ordered teardown: end the wallet connection first (so the libraries do not
- *  write their records back), then sweep this site's storage, databases and
- *  the shared language cookie. Each step's failure is reported, never
- *  hidden, and the next step still runs. */
+ *  write their records back), then sweep this site's storage, write back only
+ *  the markers that keep wallets disconnected through the reload, then sweep
+ *  the databases and the shared language cookie. Each step's failure is
+ *  reported, never hidden, and the next step still runs. */
 export async function eraseAll(steps: EraseSteps, now: number = Date.now()): Promise<EraseReport> {
   const report: EraseReport = {
     at: now,
     disconnected: null,
     removed: { app: 0, connector: 0, session: 0, databases: 0, langCookie: false },
+    kept: 0,
     refused: [],
     databasesUnknown: false,
   };
@@ -199,6 +211,11 @@ export async function eraseAll(steps: EraseSteps, now: number = Date.now()): Pro
     if (local.length > 0) report.refused.push({ what: 'local', reason: `${local.length} item(s) were written back or would not go` });
   } catch (e) {
     report.refused.push({ what: 'local', reason: (e as Error).message || 'storage refused' });
+  }
+  try {
+    report.kept = await steps.keepDisconnected();
+  } catch (e) {
+    report.refused.push({ what: 'marker', reason: (e as Error).message || 'storage refused' });
   }
   try {
     const session = steps.session();

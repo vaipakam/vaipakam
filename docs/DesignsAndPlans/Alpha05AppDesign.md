@@ -1568,10 +1568,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   without copying the wallet connection's session material. Erasure ends
   every wallet connection first so nothing is written back, then sweeps this
   site's storage, databases and the shared language cookie at every scope,
+  writes back only the wallet libraries' "disconnected" markers (for every
+  connector that was connected or already marked, so the reload's automatic
+  reconnection cannot reconnect a wallet that still authorises the site),
   and reloads so each preference visibly resets. Every step reports what it
-  removed and what it could not, each refusal with its reason; nothing is
+  removed, kept and could not, each refusal with its reason; nothing is
   claimed that was not measured, and the report survives the reload in that
-  tab. The confirmation says what erasure does not reach: the chain, the
+  tab. When the browser will not keep the report for the reload, the page
+  does not reload: it shows the report and says why. The confirmation says what erasure does not reach: the chain, the
   alert service's records, the marketing site and the wallet app.
 
 ## 3. Companion specifications

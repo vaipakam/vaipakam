@@ -45,7 +45,10 @@ export function DataRights() {
   const [inv, setInv] = useState<Inventory | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [erasing, setErasing] = useState(false);
-  const [report] = useState<EraseReport | null>(readReport);
+  const [report, setReport] = useState<EraseReport | null>(readReport);
+  // Set when the browser would not keep the report for the reload: the page
+  // then stays, shows the report and says why it did not reload.
+  const [unsaved, setUnsaved] = useState(false);
 
   const refresh = () => {
     void takeInventory().then(setInv);
@@ -72,8 +75,33 @@ export function DataRights() {
   const erase = async () => {
     setErasing(true);
     const src = browserSources();
+    // Which connectors must stay disconnected through the reload: those
+    // connected now and those the libraries already mark as disconnected.
+    // The sweep removes their markers, and the reload's automatic
+    // reconnection would otherwise reconnect any wallet that still
+    // authorises this site.
+    const markerKey = (id: string) => `${id}.disconnected`;
+    const keep = new Set(getConnections(config).map((c) => c.connector.id));
+    for (const c of config.connectors) {
+      try {
+        if (await config.storage?.getItem(markerKey(c.id))) keep.add(c.id);
+      } catch {
+        // An unreadable marker is treated as absent; the connector is kept
+        // only if it is connected.
+      }
+    }
     const result = await eraseAll({
       ...src,
+      keepDisconnected: async () => {
+        if (!config.storage) throw new Error('the wallet libraries have no storage here');
+        let kept = 0;
+        for (const id of keep) {
+          await config.storage.setItem(markerKey(id), true);
+          if (await config.storage.getItem(markerKey(id))) kept++;
+          else throw new Error('the browser did not keep it');
+        }
+        return kept;
+      },
       disconnect: async () => {
         const before = getConnections(config);
         if (before.length === 0) return null;
@@ -92,7 +120,14 @@ export function DataRights() {
     try {
       window.sessionStorage.setItem(REPORT_KEY, JSON.stringify(result));
     } catch {
-      // The report is then shown for this moment only; the reload drops it.
+      // The report could not be kept for the reload, so the reload waits:
+      // the reader sees what was removed and what was refused first.
+      setReport(result);
+      setUnsaved(true);
+      setConfirming(false);
+      setErasing(false);
+      refresh();
+      return;
     }
     window.location.reload();
   };
@@ -102,6 +137,14 @@ export function DataRights() {
     <section className="home-section" aria-labelledby="settings-data" data-testid="settings-data">
       <h2 id="settings-data">{text('settings.dataTitle')}</h2>
       {report && <EraseOutcome report={report} />}
+      {unsaved && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="settings-data-unsaved">{text('settings.dataReportUnsaved')}</span>{' '}
+          <button type="button" className="btn" onClick={() => window.location.reload()} data-testid="settings-data-reload">
+            {text('settings.dataReloadNow')}
+          </button>
+        </Notice>
+      )}
       {inv === null && <p className="tier-b">{text('settings.dataReading')}</p>}
       {inv && (
         <>
@@ -164,11 +207,14 @@ function EraseOutcome({ report }: { report: EraseReport }) {
         })}{' '}
         {r.langCookie && `${text('settings.dataErasedCookie')} `}
         {report.disconnected === true && `${text('settings.dataErasedSignedOut')} `}
+        {report.kept > 0 && `${format('settings.dataErasedKept', { count: String(report.kept) })} `}
         {report.disconnected === false && `${text('settings.dataErasedStillConnected')} `}
         {report.databasesUnknown && `${text('settings.dataErasedDatabasesUnknown')} `}
         {report.refused.map((f, i) => (
           <span key={i} className="data-refused">
-            {format('settings.dataRefused', { what: text(`settings.dataWhat_${f.what}` as const), name: f.name ?? '', reason: f.reason })}{' '}
+            {f.what === 'marker'
+              ? format('settings.dataMarkerRefused', { reason: f.reason })
+              : format('settings.dataRefused', { what: text(`settings.dataWhat_${f.what}` as const), name: f.name ?? '', reason: f.reason })}{' '}
           </span>
         ))}
       </span>

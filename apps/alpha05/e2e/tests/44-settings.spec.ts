@@ -107,6 +107,26 @@ test('without a wallet: reached from the navigation; mode, theme and language ap
   await fitsWidth(page);
 });
 
+test('when the browser will not keep the report for the reload, the page stays and shows it', async ({ page }) => {
+  await page.goto('/settings');
+  await page.getByTestId('settings-theme-dark').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  // This tab's storage refuses the report alone.
+  await page.evaluate((key) => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k: string, v: string) {
+      if (k === key) throw new Error('refused');
+      return set.call(this, k, v);
+    };
+  }, 'alpha05.dataRights.report');
+  await erase(page);
+  await expect(page.getByTestId('settings-data-unsaved')).toContainText('would not keep the report through a reload, so the page did not reload');
+  await page.getByTestId('settings-data-reload').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light', { timeout: 30_000 });
+  await expect(page.getByTestId('settings-data-report')).toHaveCount(0);
+  await fitsWidth(page);
+});
+
 test('with a wallet: the Terms state on this network and the fee-discount setting', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
@@ -135,7 +155,13 @@ test('with a wallet: the Terms state on this network and the fee-discount settin
     expect(Number(body.notIncluded.walletConnectionItems)).toBeGreaterThan(0);
     await erase(page);
     await expect(page.getByTestId('settings-data-report')).toContainText('Your wallet was disconnected.');
+    await expect(page.getByTestId('settings-data-report')).toContainText('wallet marker(s) were written back so no wallet reconnects by itself');
     await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.');
+    // The wallet still authorises this site, yet a later load does not
+    // reconnect it: only the kept marker stands between them.
+    await page.reload();
+    await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.', { timeout: 30_000 });
+    expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => !k.endsWith('.disconnected')))).toEqual([]);
   } finally {
     await anvilRpc('evm_revert', [snapshot]);
     await anvilRpc('evm_mine');

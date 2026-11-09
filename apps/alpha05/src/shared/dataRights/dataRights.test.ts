@@ -74,6 +74,7 @@ describe('erasing', () => {
     return {
       ...sources({ databases: async () => ['A', 'B'], cookie: () => cookie }, local, session),
       disconnect: async () => true,
+      keepDisconnected: async () => 0,
       deleteDatabase: async () => undefined,
       clearCookie: () => {
         cookie = '';
@@ -103,6 +104,7 @@ describe('erasing', () => {
       at: 1_000,
       disconnected: true,
       removed: { app: 1, connector: 1, session: 1, databases: 2, langCookie: true },
+      kept: 0,
       refused: [],
       databasesUnknown: false,
     });
@@ -136,5 +138,36 @@ describe('erasing', () => {
     const report = await eraseAll(steps({ disconnect: async () => null, databases: async () => 'unknown' }));
     expect(report.disconnected).toBeNull();
     expect(report.databasesUnknown).toBe(true);
+  });
+  it('writes the disconnected markers back after the sweep, and says when it cannot', async () => {
+    const local = store({ 'app.theme': 'dark', 'wagmi.injected.disconnected': 'true' });
+    const seen: number[] = [];
+    const kept = await eraseAll(
+      steps(
+        {
+          keepDisconnected: async () => {
+            seen.push(local.length);
+            local.setItem('wagmi.injected.disconnected', 'true');
+            return 1;
+          },
+        },
+        local,
+      ),
+    );
+    // The sweep ran first: nothing was left when the markers were written.
+    expect(seen).toEqual([0]);
+    expect(kept.kept).toBe(1);
+    expect(kept.refused).toEqual([]);
+    expect([...local.map.keys()]).toEqual(['wagmi.injected.disconnected']);
+
+    const refused = await eraseAll(
+      steps({
+        keepDisconnected: async () => {
+          throw new Error('the browser did not keep it');
+        },
+      }),
+    );
+    expect(refused.kept).toBe(0);
+    expect(refused.refused).toEqual([{ what: 'marker', reason: 'the browser did not keep it' }]);
   });
 });

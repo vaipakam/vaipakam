@@ -1,4 +1,4 @@
-## Thread — alpha05 gets a Settings page (PR #<n>)
+## Thread — alpha05 gets a Settings page (PR #3451)
 
 The new app (alpha05) now has a Settings page, reached from the foot of the
 menu on every screen size.
@@ -25,9 +25,12 @@ items are counted in it but not copied out.
 
 Erase ends the wallet connection first, then removes everything this site
 keeps in the browser, including the language cookie shared with the other
-Vaipakam sites, and reloads so every preference visibly resets. The report
-of what was removed, and of anything the browser refused with its reason,
-stays on the page for that tab. Positions and history on chain, the alert
+Vaipakam sites. It writes back only the wallet libraries' markers that keep a
+wallet disconnected, so the reload cannot reconnect one that still trusts
+the site, and reloads so every preference visibly resets. The report of what
+was removed, and of anything the browser refused with its reason, stays on
+the page for that tab; if the browser will not keep it through the reload,
+the page stays and shows it instead. Positions and history on chain, the alert
 service's settings, the marketing site and the wallet app are not touched,
 and the confirmation says so.
 
