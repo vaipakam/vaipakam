@@ -78,6 +78,9 @@ export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; ren
   const all = pages.flatMap((p) => p.rows);
   const unread = pages.reduce((n, p) => n + p.unread, 0);
   const rows = all.filter((r) => inBook(r, { tab, side, hide: hideMine ? viewer : null }));
+  /** What this tab holds before the side and hide-mine filters: the book is
+   *  empty only when this is, otherwise the filters hide what there is. */
+  const inTab = all.filter((r) => inBook(r, { tab, side: 'all', hide: null })).length;
   const meta = useTokenMeta(all.flatMap((r) => [r.lendingAsset, r.collateralAsset, r.prepayAsset])).data;
   const failed = world.indexer.origin === null || book.status === 'error';
   const reason = world.indexer.origin === null ? text('offerBook.noIndex') : indexReason(book.error, text);
@@ -121,7 +124,12 @@ export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; ren
           </p>
           {/* "Nothing listed" only from a complete, current read with every
               record understood; otherwise the failure or unread notice stands. */}
-          {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && empty}
+          {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && inTab === 0 && empty}
+          {rows.length === 0 && inTab > 0 && (
+            <p className="tier-b" data-testid="offer-book-filtered">
+              {text('offerBook.filteredOut')}
+            </p>
+          )}
           {rows.length > 0 && (
             <ul className="rows offers-list" data-testid="offer-book-rows">
               {rows.map((r) => (

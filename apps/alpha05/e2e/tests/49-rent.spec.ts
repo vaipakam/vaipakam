@@ -115,6 +115,12 @@ test('an empty rental book offers the faucet; an owner lists an NFT and a renter
   await expect(row).toContainText(`Offer #${id}: rent out NFT #${tokenId} of vRENT`, { timeout: 60_000 });
   await expect(row).toContainText('a day, on a 5-day term');
   await expect(row).toContainText('None: a rental has no collateral and no ratio');
+  // A filter that hides the listing says so; it never claims an empty book.
+  await page.getByTestId('offer-book-side-borrower').click();
+  await expect(page.getByTestId('offer-book-filtered')).toBeVisible();
+  await expect(page.getByTestId('rent-empty')).toHaveCount(0);
+  await page.getByTestId('offer-book-side-lender').click();
+  await expect(row).toBeVisible();
   await fitsWidth(page);
   await page.getByTestId(`book-link-${id}`).click();
 

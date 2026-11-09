@@ -1817,6 +1817,7 @@ export const copy = {
     ),
   },
   offerBook: {
+    filteredOut: B('Nothing here matches the filters you chose; change them to see the rest.'),
     noCollateral: B('None: a rental has no collateral and no ratio'),
     rentTitle: B('NFTs for rent'),
     rentLead: B('Open rental listings and requests on {{chain}}, newest first, from the index.'),
