@@ -14,6 +14,8 @@ contract MockBackupDiamond {
     uint256[] public offers;
     uint256[] public payouts;
     mapping(uint256 => uint256) public linkedLoan;
+    mapping(uint256 => bool) public routeDead;
+    bool public noRouteRead;
     uint256 public today;
     bool public active;
     address public beacon;
@@ -43,6 +45,15 @@ contract MockBackupDiamond {
 
     function setLinked(uint256 offerId, uint256 loanId) external {
         linkedLoan[offerId] = loanId;
+    }
+
+    function setRouteDead(uint256 offerId, bool dead) external {
+        routeDead[offerId] = dead;
+    }
+
+    /// @dev A Diamond that predates the dead-route read (#3336).
+    function setNoRouteRead(bool missing) external {
+        noRouteRead = missing;
     }
 
     function setDay(uint256 day, bool active_) external {
@@ -100,6 +111,11 @@ contract MockBackupDiamond {
         return linkedLoan[offerId];
     }
 
+    function isOfferRouteDead(uint256 offerId) external view returns (bool) {
+        if (noRouteRead) revert NotDue();
+        return routeDead[offerId];
+    }
+
     function getInteractionCurrentDay() external view returns (uint256, bool) {
         return (today, active);
     }
@@ -134,6 +150,12 @@ contract MockBackupDiamond {
     }
 
     function teardownStaleSaleListing(uint256 id) external {
+        _run(id);
+    }
+
+    /// @dev Like the real cancel, it succeeds for more offers than have a dead
+    ///      route (an expired one too): the test marks it due either way.
+    function cancelOffer(uint256 id) external {
         _run(id);
     }
 
@@ -242,6 +264,9 @@ contract KeeperBackupUpkeepTest is Test {
     uint8 constant RECYCLE = uint8(KeeperBackupUpkeep.Step.RecycleSkippedDayValue);
     uint8 constant BEACON_CURRENT = uint8(KeeperBackupUpkeep.Step.BeaconExecuteCurrentVersion);
     uint8 constant RELEASE_PAYOUT = uint8(KeeperBackupUpkeep.Step.ReleasePayout);
+    uint8 constant CANCEL_DEAD = uint8(KeeperBackupUpkeep.Step.CancelDeadRouteOffer);
+    /// @dev `KeeperBackupUpkeep.PARTS`, private there: the blocks in a round.
+    uint256 constant PARTS = 8;
 
     function setUp() public {
         vm.warp(1_800_000_000);
@@ -301,14 +326,14 @@ contract KeeperBackupUpkeepTest is Test {
         vm.expectRevert();
         backup.setEnabledSteps(1);
         vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.StepsOutOfRange.selector, uint256(1) << 15));
-        backup.setEnabledSteps(uint256(1) << 15);
+        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.StepsOutOfRange.selector, uint256(1) << 16));
+        backup.setEnabledSteps(uint256(1) << 16);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setLag(AUTO_DEDUCT, 5 minutes);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setLag(AUTO_DEDUCT, 8 days);
-        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, uint8(15)));
-        backup.setLag(15, 1 hours);
+        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, uint8(16)));
+        backup.setLag(16, 1 hours);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setActWindow(29 minutes);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
@@ -546,7 +571,7 @@ contract KeeperBackupUpkeepTest is Test {
         // the noted loan runs.
         uint256 t = block.timestamp + 61 minutes;
         vm.warp(t);
-        vm.roll(block.number + 7); // one round of KeeperBackupUpkeep.PARTS
+        vm.roll(block.number + PARTS); // one round
         (, KeeperBackupUpkeep.Action[] memory b) = _check();
         bool run;
         for (uint256 i; i < b.length; i++) {
@@ -598,7 +623,7 @@ contract KeeperBackupUpkeepTest is Test {
         }
         diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
         bool found;
-        for (uint256 b = 1; b <= 7; b++) {
+        for (uint256 b = 1; b <= PARTS; b++) {
             vm.roll(b);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
@@ -619,7 +644,7 @@ contract KeeperBackupUpkeepTest is Test {
         for (uint256 id = 11; id <= 13; id++) diamond.setBurn(diamond.triggerDefault.selector, id, true);
         diamond.setDue(diamond.settlePeriodicInterest.selector, 13, true);
         bool found;
-        for (uint256 b = 1; b <= 160 && !found; b++) {
+        for (uint256 b = 1; b <= PARTS * 21 && !found; b++) { // 3 loans x 7 steps, a round each
             vm.roll(b);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
@@ -638,7 +663,7 @@ contract KeeperBackupUpkeepTest is Test {
     ///      leads would always be even, and the first loan's periodic stamp
     ///      (pair 5, after its own burning default) would never go first.
     function test_APartReachedOnlyWhileLeadingStillRotatesThroughEveryPair() public {
-        uint256 parts = 7; // KeeperBackupUpkeep.PARTS
+        uint256 parts = PARTS;
         uint256 loansPart = 4;
         vm.prank(owner);
         backup.setScan(10, 7, 3_000_000, 2);
@@ -785,7 +810,7 @@ contract KeeperBackupUpkeepTest is Test {
 
         // An old day (a lapse opens weeks after its day) is reached by the
         // history pages: from day 40 the older days are 0..32, five pages of
-        // seven, and the page moves on once per round of seven blocks.
+        // seven, and the page moves on once per round of PARTS blocks.
         diamond.setDay(40, true);
         diamond.setDue(diamond.closeDay.selector, 2, true);
         bool seen;
@@ -795,7 +820,7 @@ contract KeeperBackupUpkeepTest is Test {
         for (uint256 i; i < 5; i++) {
             (needed, a) = _check();
             if (needed && a[0].arg == 2) seen = true;
-            b += 7; // one round of KeeperBackupUpkeep.PARTS
+            b += PARTS; // one round
             vm.roll(b);
         }
         assertTrue(seen, "day 2 reached by the history window");
@@ -850,7 +875,7 @@ contract KeeperBackupUpkeepTest is Test {
         backup.setScan(1, 7, 1_500_000, 2);
         _arm(AUTO_DEDUCT);
         diamond.setDue(diamond.autoDeductDaily.selector, 13, true);
-        // One loan per page; the page moves once per round of seven blocks, and
+        // One loan per page; the page moves once per round of PARTS blocks, and
         // time alone moves nothing.
         (bool before,) = _check();
         uint256 t = block.timestamp;
@@ -867,7 +892,7 @@ contract KeeperBackupUpkeepTest is Test {
         for (uint256 i; i < 3; i++) {
             (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
             if (needed && a[0].arg == 13) seen = true;
-            b += 7; // one round of KeeperBackupUpkeep.PARTS
+            b += PARTS; // one round
             vm.roll(b);
         }
         assertTrue(seen);
@@ -882,7 +907,7 @@ contract KeeperBackupUpkeepTest is Test {
     ///      time does meanwhile. (A page chosen by time could return to page
     ///      three only on rounds whose start falls in one residue class.)
     function test_EveryPairOfEveryPageLeadsItsPart() public {
-        uint256 parts = 7; // KeeperBackupUpkeep.PARTS
+        uint256 parts = PARTS;
         uint256 loansPart = 4;
         uint256 pages = 3;
         uint256 pairsPerPage = 10 * 7; // ten loans, seven loan steps
@@ -903,7 +928,7 @@ contract KeeperBackupUpkeepTest is Test {
         uint256 t = block.timestamp;
         for (uint256 m; m < pages * pairsPerPage && !found; m++) {
             vm.roll(m * parts + loansPart);
-            t += 14 seconds; // a round of seven two-second blocks
+            t += 16 seconds; // a round of eight two-second blocks
             vm.warp(t);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
@@ -965,9 +990,82 @@ contract KeeperBackupUpkeepTest is Test {
             KeeperBackupUpkeep.Action[] memory a;
             (needed, a) = _check();
             if (needed && a[0].arg == 3) seen = true;
-            bn += 7; // one round of KeeperBackupUpkeep.PARTS
+            bn += PARTS; // one round
             vm.roll(bn);
         }
         assertTrue(seen);
+    }
+    // ── dead-route offer cancels (#3417) ──
+
+    function _twoOffers() internal {
+        diamond.setLoans(new uint256[](0));
+        uint256[] memory offers = new uint256[](2);
+        offers[0] = 70;
+        offers[1] = 71;
+        diamond.setOffers(offers);
+        // Both cancels would succeed (70 is merely expired), but only 71's
+        // route is dead.
+        diamond.setDue(diamond.cancelOffer.selector, 70, true);
+        diamond.setDue(diamond.cancelOffer.selector, 71, true);
+        diamond.setRouteDead(71, true);
+    }
+
+    function test_ADeadRouteOfferIsCancelledAfterTheLagAndAnExpiredOneIsLeft() public {
+        _arm(CANCEL_DEAD);
+        _twoOffers();
+        (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
+        assertTrue(needed);
+        assertEq(a.length, 1);
+        assertEq(uint8(a[0].mode), uint8(KeeperBackupUpkeep.Mode.Note));
+        assertEq(a[0].step, CANCEL_DEAD);
+        assertEq(a[0].arg, 71);
+        _perform(a);
+        vm.warp(block.timestamp + 61 minutes);
+        (needed, a) = _check();
+        assertTrue(needed);
+        assertEq(a.length, 1);
+        assertEq(uint8(a[0].mode), uint8(KeeperBackupUpkeep.Mode.Run));
+        vm.expectEmit(address(backup));
+        emit KeeperBackupUpkeep.BackupStepRun(CANCEL_DEAD, 71, true, bytes4(0));
+        _perform(a);
+        assertEq(diamond.runs(diamond.cancelOffer.selector, 71), 1);
+        assertEq(diamond.runs(diamond.cancelOffer.selector, 70), 0, "an offer that is only expired is not the backup's");
+    }
+
+    function test_ARunIsDroppedOnceTheOffersRouteIsNoLongerDead() public {
+        _arm(CANCEL_DEAD);
+        _twoOffers();
+        (, KeeperBackupUpkeep.Action[] memory a) = _check();
+        _perform(a);
+        vm.warp(block.timestamp + 61 minutes);
+        // The cancel would still succeed, but the Diamond no longer reports
+        // the route dead: the check drops the note instead of running it ...
+        diamond.setRouteDead(71, false);
+        (bool needed, KeeperBackupUpkeep.Action[] memory b) = _check();
+        assertTrue(needed);
+        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Drop));
+        // ... and a perform handed a run reads the route again and drops it.
+        vm.expectEmit(address(backup));
+        emit KeeperBackupUpkeep.BackupNoteDropped(CANCEL_DEAD, 71);
+        _perform(_one(KeeperBackupUpkeep.Mode.Run, CANCEL_DEAD, 71));
+        assertEq(diamond.runs(diamond.cancelOffer.selector, 71), 0);
+        assertEq(backup.firstSeenAt(CANCEL_DEAD, 71), 0);
+    }
+
+    function test_ADiamondWithoutTheRouteReadBacksNoOfferCancel() public {
+        _arm(CANCEL_DEAD);
+        _twoOffers();
+        diamond.setNoRouteRead(true);
+        (bool needed,) = _check();
+        assertFalse(needed);
+        assertFalse(backup.isDue(CANCEL_DEAD, 71));
+        assertFalse(backup.isDue(200, 71), "a step beyond the last is not due, and does not panic");
+    }
+
+    function test_TheOfferCancelIsOffWhileDisarmed() public {
+        _twoOffers();
+        _arm(TEARDOWN); // another offer-page step armed: still no cancel
+        (bool needed,) = _check();
+        assertFalse(needed);
     }
 }

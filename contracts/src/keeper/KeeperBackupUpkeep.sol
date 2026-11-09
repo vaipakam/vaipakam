@@ -24,6 +24,7 @@ interface IBackupDiamondReads {
     function getVaultBeacon() external view returns (address);
     function getOpenPayoutCount() external view returns (uint256);
     function getOpenPayoutIds(uint256 offset, uint256 limit) external view returns (uint256[] memory);
+    function isOfferRouteDead(uint256 offerId) external view returns (bool);
 }
 
 /// @dev The step entry points, by signature only. `AdapterCall` mirrors
@@ -50,6 +51,7 @@ interface IBackupSteps {
     function executeCurrentVersion() external;
     function executeRevoke() external;
     function releasePayout(uint256 id) external returns (uint256 delivered);
+    function cancelOffer(uint256 offerId) external;
 }
 
 /**
@@ -68,8 +70,9 @@ interface IBackupSteps {
  *         the active-offer list, per day for the most recent closed days AND a
  *         page of every older day (a lapse becomes possible only weeks after
  *         its day), per queued protected-account payout in a page of the
- *         Diamond's open-payout set, and the VaultBeacon's two proposal
- *         executes. These parts and the note queue share the check's gas.
+ *         Diamond's open-payout set, per active offer in a page of the
+ *         active-offer list (the cancel of a vehicle offer whose route is
+ *         dead), and the VaultBeacon's two proposal executes. These parts and the note queue share the check's gas.
  *         Everything moves on one clock, the block number. The part that goes
  *         first moves on every block; a round is one block per part. A paged
  *         part reads page `round % pages`, and the first (step, argument) pair
@@ -80,9 +83,16 @@ interface IBackupSteps {
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
- *         due rule, so the two cannot drift. The one exception is
- *         `recycleSkippedDayValue`, which succeeds with zero once there is
- *         nothing left: it is due only when its probe returns a non-zero amount.
+ *         due rule, so the two cannot drift. A prepay listing or an intent
+ *         whose borrower position moved is found the same way: since #3336
+ *         its cancel succeeds at once, so the probe of steps 1 and 2 says due.
+ *         Two steps need more than the probe's success.
+ *         `recycleSkippedDayValue` succeeds with zero once there is nothing
+ *         left: it is due only when its probe returns a non-zero amount. And
+ *         `cancelOffer` succeeds for more offers than the backup backs (any
+ *         expired offer, which no keeper is owed): it is due only while the
+ *         Diamond's own `isOfferRouteDead` says the offer's route is dead,
+ *         read again before it runs (`_backedNow`).
  *
  *         WAITING. A due candidate is first NOTED: it joins a bounded queue
  *         with its first-seen time, in a cheap transaction. The queue is
@@ -115,7 +125,9 @@ interface IBackupSteps {
  *         or page arguments computed off-chain, steps whose items are found only
  *         from event logs, `finalizeDay` (irreversible, and the keeper holds it
  *         on facts read from other chains), `backstopFill` (lends treasury
- *         capital) and steps that succeed without being due
+ *         capital), the cancel of an offer that is merely expired (anyone
+ *         may clear one, and no keeper is owed it) and steps that succeed
+ *         without being due
  *         (`advanceInterestFrontiers`, `refreshTierLtvCache`,
  *         `epochPruneTransportDayCursor`). See
  *         docs/DesignsAndPlans/KeeperBackupAutomationDesign.md.
@@ -148,10 +160,11 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         RecycleSkippedDayValue, // 11 per day, due only while it returns > 0
         BeaconExecuteCurrentVersion, // 12 once
         BeaconExecuteRevoke, // 13 once
-        ReleasePayout // 14 per queued payout: releasePayout(id)
+        ReleasePayout, // 14 per queued payout: releasePayout(id)
+        CancelDeadRouteOffer // 15 per active offer: cancelOffer(id), only while its route is dead
     }
 
-    uint8 public constant STEP_COUNT = 15;
+    uint8 public constant STEP_COUNT = 16;
     uint256 private constant FIRST_LOAN_STEP = 0;
     uint256 private constant LAST_LOAN_STEP = 6;
     uint256 private constant FIRST_DAY_STEP = 7;
@@ -195,7 +208,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     uint8 public constant MAX_PENDING = 64;
     uint8 public constant MAX_RUNS_PER_PERFORM = 4;
     /// @dev The parts of a check that share its gas: see `checkUpkeep`.
-    uint256 private constant PARTS = 7;
+    uint256 private constant PARTS = 8;
     /// @dev The lists `_window` pages through.
     uint256 private constant SOURCE_LOANS = 0;
     uint256 private constant SOURCE_OFFERS = 1;
@@ -225,7 +238,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     /// @notice How long after the lag a note stays good for running.
     uint32 public actWindowSec = 1 hours;
     /// @notice Active loans (and active offers, and queued payouts) probed per
-    ///         check.
+    ///         check, per part.
     uint16 public loanWindow = 10;
     /// @notice Closed days probed per check, counting back from yesterday.
     uint16 public dayWindow = 7;
@@ -353,6 +366,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
 
     /// @notice Whether a (step, argument) is due now, by the protocol's own rule.
     function isDue(uint8 step, uint256 arg) public returns (bool) {
+        if (!_backedNow(step, arg)) return false;
         try this.probe{gas: probeGas}(step, arg) {
             return false; // unreachable: probe always reverts
         } catch (bytes memory reason) {
@@ -395,12 +409,12 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         // dropped) once probed, so they cannot hold the gas for long.
         (n, runs) = _scanReady(actions, n, runs, mask);
 
-        // Seven parts share the rest of the gas: the other notes, the beacon,
-        // the recent days, the older days, the loans, the offers and the
-        // queued payouts. The part that goes first moves on every block, so a
-        // part whose probes are
-        // costly, or run out of their gas, cannot starve the others: each
-        // part leads one check in seven.
+        // Eight parts share the rest of the gas: the other notes, the beacon,
+        // the recent days, the older days, the loans, the offers' linked
+        // loans, the queued payouts and the offers themselves. The part that
+        // goes first moves on every block, so a part whose probes are costly,
+        // or run out of their gas, cannot starve the others: each part leads
+        // one check in eight.
         uint256 first = block.number % PARTS;
         for (uint256 k; k < PARTS && !_full(n, runs); k++) {
             (n, runs) = _scanPart((first + k) % PARTS, actions, n, runs, mask);
@@ -449,6 +463,12 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
                 emit BackupDueNoted(a.step, a.arg, uint64(block.timestamp));
             } else {
                 if (stage != Stage.Ready || runs >= runsPerPerform) continue;
+                if (!_backedNow(a.step, a.arg)) {
+                    // Due by the call, but no longer a case the backup backs.
+                    _removePending(key, slot);
+                    emit BackupNoteDropped(a.step, a.arg);
+                    continue;
+                }
                 runs++;
                 _removePending(key, slot);
                 (address target, bytes memory data) = _call(a.step, a.arg);
@@ -497,14 +517,18 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
             firstStep = FIRST_LOAN_STEP;
             lastStep = LAST_LOAN_STEP;
             if (_anyIn(mask, firstStep, lastStep)) (args, seed) = _window(SOURCE_LOANS);
+        } else if (part == 5) {
+            firstStep = uint8(Step.TeardownStaleSaleListing);
+            lastStep = firstStep;
+            if (_on(mask, uint8(firstStep))) (args, seed) = _offerLinkedLoans();
         } else if (part == 6) {
             firstStep = uint8(Step.ReleasePayout);
             lastStep = firstStep;
             if (_on(mask, uint8(firstStep))) (args, seed) = _window(SOURCE_PAYOUTS);
         } else {
-            firstStep = uint8(Step.TeardownStaleSaleListing);
+            firstStep = uint8(Step.CancelDeadRouteOffer);
             lastStep = firstStep;
-            if (_on(mask, uint8(firstStep))) (args, seed) = _offerLinkedLoans();
+            if (_on(mask, uint8(firstStep))) (args, seed) = _window(SOURCE_OFFERS);
         }
         // Only an offer can yield no candidate (no linked loan): day zero and
         // the beacon's argument are real zeros.
@@ -746,6 +770,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         else if (s == Step.SkipConflictedDay) data = abi.encodeCall(IBackupSteps.skipConflictedDay, (arg));
         else if (s == Step.RecycleSkippedDayValue) data = abi.encodeCall(IBackupSteps.recycleSkippedDayValue, (arg));
         else if (s == Step.ReleasePayout) data = abi.encodeCall(IBackupSteps.releasePayout, (arg));
+        else if (s == Step.CancelDeadRouteOffer) data = abi.encodeCall(IBackupSteps.cancelOffer, (arg));
         else {
             // The beacon steps. A Diamond with no beacon has nothing to run:
             // the call goes to the Diamond, which refuses an unknown selector.
@@ -754,6 +779,22 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
             data = s == Step.BeaconExecuteCurrentVersion
                 ? abi.encodeCall(IBackupSteps.executeCurrentVersion, ())
                 : abi.encodeCall(IBackupSteps.executeRevoke, ());
+        }
+    }
+
+    /// @dev Whether the backup backs this (step, argument) now, beyond the
+    ///      call succeeding. Only the offer cancel has such a condition:
+    ///      `cancelOffer` also lets anyone clear an expired offer, which no
+    ///      keeper is owed (#195), so the backup cancels only an offer whose
+    ///      route the Diamond reports dead (#3336), the same read our keeper
+    ///      makes. A Diamond without that read backs none: the read reverts
+    ///      and counts as not dead.
+    function _backedNow(uint8 step, uint256 arg) internal view returns (bool) {
+        if (step != uint8(Step.CancelDeadRouteOffer)) return true; // integers: `isDue` takes any step
+        try IBackupDiamondReads(diamond).isOfferRouteDead(arg) returns (bool dead) {
+            return dead;
+        } catch {
+            return false;
         }
     }
 
