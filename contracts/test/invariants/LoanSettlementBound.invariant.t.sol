@@ -36,9 +36,9 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *               exactly the interest the spec formula gives, rounded down once.
  *
  *         Paths covered are the shared handler's: offer posting, both accept directions, full and
- *         partial repayment, collateral top-up, time-based default (the rig has no working swap
+ *         partial repayment, the direct preclose, collateral top-up, time-based default (the rig has no working swap
  *         venue, so default reaches the in-kind fallback) and both claims. Periodic interest,
- *         preclose and offset, refinance, the lender sale, rentals and HF liquidation are not yet
+ *         the preclose offset, refinance, the lender sale, rentals and HF liquidation are not yet
  *         driven; #3241 tracks them, and the vault outflow seam (#3205) is where this check is
  *         meant to bind every one of them.
  *
@@ -126,6 +126,9 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("booked actions", ledger.bookedActions());
         console.log("accept checks", ledger.acceptChecks());
         console.log("exact-interest checks", ledger.interestChecks());
+        console.log("preclosed loans", ledger.precloseLanded());
+        console.log("liquidated loans", ledger.liquidationLanded());
+        console.log("sold loans", ledger.saleLanded());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -141,6 +144,23 @@ contract LoanSettlementBoundInvariant is Test {
         ledger.warp(10 days);
         ledger.repay(0);
         assertEq(ledger.interestChecks(), 1, "exact-interest check did not run");
+
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    /// @notice #3241: a direct preclose before the due time pays exactly the interest accrued to
+    ///         the second, and the books hold through both claims.
+    function test_LedgerBooksAPreclosedLoan() public {
+        ledger.createLenderOffer(0, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.acceptLenderOffer(0, 0);
+        ledger.warp(5 days);
+        ledger.precloseDirect(0);
+        assertEq(ledger.precloseLanded(), 1, "preclose did not land");
+        assertEq(ledger.interestChecks(), 1, "exact-interest check did not run on the preclose");
 
         ledger.claimAsLender(0);
         ledger.claimAsBorrower(0);
@@ -165,6 +185,43 @@ contract LoanSettlementBoundInvariant is Test {
         ledger.claimAsBorrower(0);
         (int256 dLw2,,,) = ledger.loanDeltas(loanId, WETH);
         assertGt(dLw2, dLw, "lender received no collateral from the default");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    /// @notice #3241: a Health-Factor liquidation reaches the in-kind fallback (the rig's one
+    ///         venue fails); the collateral bounds and the Diamond bound hold through both claims.
+    function test_LedgerBooksALiquidatedLoan() public {
+        ledger.createBorrowerOffer(1, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        ledger.warp(3 days);
+        ledger.triggerLiquidation(0);
+        assertEq(ledger.liquidationLanded(), 1, "liquidation did not land");
+        uint256 loanId = ledger.bookedLoanIds(0);
+        (int256 dLw,,,) = ledger.loanDeltas(loanId, WETH);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+        (int256 dLw2,,,) = ledger.loanDeltas(loanId, WETH);
+        assertGt(dLw2, dLw, "lender received no collateral from the liquidation");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    /// @notice #3241: a sold loan. The buyer pays the seller and becomes the lender; the loan is
+    ///         then repaid to the buyer, and the lender side as a whole stays within the bounds.
+    function test_LedgerBooksASoldLoan() public {
+        ledger.createBorrowerOffer(1, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        ledger.createLenderOffer(2, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.warp(3 days);
+        ledger.sellLoan(0, 0);
+        assertEq(ledger.saleLanded(), 1, "sale did not land");
+        ledger.warp(3 days);
+        ledger.repay(0);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
 
         invariant_PerActionChecksHold();
         invariant_NoLoanPaysOutMoreThanEnteredIt();

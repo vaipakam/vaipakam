@@ -15,8 +15,11 @@ import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
+import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
+import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
+import {RiskFacet} from "../../src/facets/RiskFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 
 /**
  * @title Handler
@@ -55,6 +58,12 @@ contract Handler is Test {
     // on internal storage reads.
     mapping(uint256 => bool) public ghostClaimedLender;
     mapping(uint256 => bool) public ghostClaimedBorrower;
+    /// @dev #3241 — loans an HF liquidation closed. A liquidation may close a
+    ///      loan at any time (its trigger is the health factor, not the
+    ///      clock), so the time-default suite skips these.
+    mapping(uint256 => bool) public ghostLiquidated;
+    /// @dev #3241 — loans whose lender position was sold at least once.
+    mapping(uint256 => bool) public ghostSold;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -281,6 +290,42 @@ contract Handler is Test {
         try RepayFacet(diamond).repayPartial(loanId, amount) {} catch {}
     }
 
+    /// @notice Borrower closes an active loan early through the direct
+    ///         preclose route (#3241): pays what is owed now, collateral
+    ///         released.
+    function precloseDirect(uint256 loanIdx) external {
+        callCount["precloseDirect"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+
+        vm.prank(L.borrower);
+        try PrecloseFacet(diamond).precloseDirect(loanId) {} catch {}
+    }
+
+    /// @notice The lender of an active loan sells the position into a standing
+    ///         lender offer (#3241, the direct early-withdrawal route). The
+    ///         buyer becomes the lender; the loan itself carries on.
+    function sellLoan(uint256 loanIdx, uint256 offerIdx) external {
+        callCount["sellLoan"]++;
+        if (loanIds.length == 0 || lenderOfferIds.length == 0) return;
+        uint256 loanId = loanIds[bound(loanIdx, 0, loanIds.length - 1)];
+        uint256 oIdx = bound(offerIdx, 0, lenderOfferIds.length - 1);
+        uint256 offerId = lenderOfferIds[oIdx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+
+        vm.prank(L.lender);
+        try EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, offerId) {
+            ghostSold[loanId] = true;
+            _popOfferAt(lenderOfferIds, oIdx);
+        } catch {}
+    }
+
     /// @notice Borrower tops up collateral on an active loan.
     function addCollateral(uint256 loanIdx, uint256 amount) external {
         callCount["addCollateral"]++;
@@ -319,6 +364,35 @@ contract Handler is Test {
 
         uint256 sellQuote = defaultQuote(diamond, loanId);
         try DefaultedFacet(diamond).triggerDefault(loanId, sellQuote, defaultAdapterCalls()) {} catch {}
+    }
+
+    /// @notice #3241 — a Health-Factor liquidation. The loan's health factor
+    ///         reads below 1 for this one call (every other read keeps the
+    ///         rig's healthy 2.0), and the rig's one venue fails, so the
+    ///         liquidation lands in the in-kind fallback. Permissionless: the
+    ///         handler calls it, as a keeper would.
+    function triggerLiquidation(uint256 loanIdx) external {
+        callCount["triggerLiquidation"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+
+        bytes memory hfCall = abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId);
+        vm.mockCall(diamond, hfCall, abi.encode(uint256(0.9e18)));
+        try this.quoteLiquidation(loanId) returns (uint256 sellQuote) {
+            try RiskFacet(diamond).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls()) {
+                ghostLiquidated[loanId] = true;
+            } catch {}
+        } catch {}
+        vm.mockCall(diamond, hfCall, abi.encode(uint256(2e18)));
+    }
+
+    /// @dev External so a quote that reverts is caught rather than failing the run.
+    function quoteLiquidation(uint256 loanId) external view returns (uint256) {
+        return liquidationQuote(diamond, loanId);
     }
 
     /// @notice Lender claims on a defaulted / fallback-pending loan.

@@ -19,6 +19,14 @@ import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
+import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
+import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {LenderIntentFacet} from "../../src/facets/LenderIntentFacet.sol";
+import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {ConsolidationFacet} from "../../src/facets/ConsolidationFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
@@ -152,7 +160,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](37);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -272,6 +280,58 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
+        });
+        // #3241 - the handlers drive the direct preclose, so the borrower's
+        // early close-out route must be cut too (its try/catch would
+        // otherwise hide every attempt as FunctionDoesNotExist).
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(PrecloseFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseFacetSelectors()
+        });
+        // ...and the preclose consolidates both sides to their current
+        // holders by a self-call into ConsolidationFacet.
+        cuts[30] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ConsolidationFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConsolidationFacetSelectors()
+        });
+
+        // #3241 - the handlers drive the lender's direct sale. Both sale
+        // facets are one behaviour (their opening checks run through
+        // SaleExitVerdictFacet), a sold loan's interest pays the seller's
+        // claim first (SellerClaimFacet), the sale's solvency check runs in
+        // RiskPreviewFacet, and the buy offer's intent exposure is released
+        // through LenderIntentFacet.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()
+        });
+        cuts[32] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()
+        });
+        cuts[33] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
+        });
+        cuts[34] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SellerClaimFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSellerClaimFacetSelectors()
+        });
+        cuts[35] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskPreviewFacetSelectors()
+        });
+        cuts[36] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderIntentFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderIntentFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

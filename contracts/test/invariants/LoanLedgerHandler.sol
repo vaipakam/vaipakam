@@ -88,6 +88,9 @@ contract LoanLedgerHandler is Test {
         uint256 collateralIn; // initial collateral plus every top-up
         uint256 lastActionTs;
         bool hadPartial;
+        /// @dev #3241 — every holder the lender position has had. A sale moves value between
+        ///      them (the buyer pays the seller), so the lender side is booked as one party.
+        mapping(address => bool) lenderSide;
         int256[2] dLender;
         int256[2] dBorrower;
         int256[2] dDiamond;
@@ -108,6 +111,9 @@ contract LoanLedgerHandler is Test {
     uint256 public acceptChecks;
     uint256 public interestChecks;
     uint256 public bookedActions;
+    uint256 public precloseLanded;
+    uint256 public liquidationLanded;
+    uint256 public saleLanded;
 
     constructor(InvariantBase _base) {
         base = _base;
@@ -164,6 +170,21 @@ contract LoanLedgerHandler is Test {
         _checkExactInterest(loanId, pre, dB);
     }
 
+    /// @notice #3241: a direct preclose closes the loan early. Booked like a repayment; when it
+    ///         closes a loan with no earlier partial before its due time, the interest it pays is
+    ///         checked exactly, the same as an on-time repayment.
+    function precloseDirect(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        LibVaipakam.Loan memory pre = _loan(loanId);
+        bool wasActive = pre.status == LibVaipakam.LoanStatus.Active;
+        Snap memory before = _snap();
+        inner.precloseDirect(loanIdx);
+        int256[2] memory dB = _book(loanId, before, "precloseDirect");
+        _checkExactInterest(loanId, pre, dB);
+        if (wasActive && _loan(loanId).status != LibVaipakam.LoanStatus.Active) precloseLanded++;
+    }
+
     function repayPartial(uint256 loanIdx, uint256 amount) external {
         (bool ok, uint256 loanId) = _pickLoan(loanIdx);
         if (!ok) return;
@@ -193,6 +214,37 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.triggerDefault(loanIdx);
         _book(loanId, before, "triggerDefault");
+    }
+
+    /// @notice #3241: a Health-Factor liquidation (in-kind fallback in this rig). Booked like a
+    ///         default; the after-every-call bounds then hold it to what entered the loan.
+    function triggerLiquidation(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        bool wasActive = _loan(loanId).status == LibVaipakam.LoanStatus.Active;
+        Snap memory before = _snap();
+        inner.triggerLiquidation(loanIdx);
+        _book(loanId, before, "triggerLiquidation");
+        if (wasActive && _loan(loanId).status != LibVaipakam.LoanStatus.Active) liquidationLanded++;
+    }
+
+    /// @notice #3241: the lender sells the position into a standing lender offer. The buyer
+    ///         joins the loan's lender side, so the price it pays the seller nets out inside it;
+    ///         what the side as a whole receives stays bounded by what entered the loan.
+    function sellLoan(uint256 loanIdx, uint256 offerIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        address lenderBefore = _loan(loanId).lender;
+        Snap memory before = _snap();
+        inner.sellLoan(loanIdx, offerIdx);
+        address lenderAfter = _loan(loanId).lender;
+        if (lenderAfter == lenderBefore) {
+            _requireNoMovement(before, "sellLoan (no sale)");
+            return;
+        }
+        books[loanId].lenderSide[lenderAfter] = true;
+        _book(loanId, before, "sellLoan");
+        saleLanded++;
     }
 
     function claimAsLender(uint256 loanIdx) external {
@@ -389,7 +441,7 @@ contract LoanLedgerHandler is Test {
         for (uint256 a = 0; a < 2; a++) {
             for (uint256 i = 0; i < 6; i++) {
                 int256 d = _delta(s.actor[i][a], before.actor[i][a]);
-                if (actors[i] == b.lender) {
+                if (actors[i] == b.lender || b.lenderSide[actors[i]]) {
                     b.dLender[a] += d;
                 } else if (actors[i] == b.borrower) {
                     b.dBorrower[a] += d;
@@ -416,6 +468,9 @@ contract LoanLedgerHandler is Test {
         if (pre.status != LibVaipakam.LoanStatus.Active) return;
         if (_loan(loanId).status != LibVaipakam.LoanStatus.Repaid) return;
         if (block.timestamp > b.dueTime) return; // a late fee may apply; bounded elsewhere
+        // A full-term-interest loan pays the whole term on an early preclose, not the accrual
+        // to the second. The shared handler never posts one; skip rather than misprice it.
+        if (pre.useFullTermInterest) return;
         interestChecks++;
         int256 paid = -dB[USDC];
         uint256 elapsed = block.timestamp - b.startTime;
