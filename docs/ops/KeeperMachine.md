@@ -450,6 +450,10 @@ journalctl -u vaipakam-keeper -f
    `EXPIRED_TEARDOWN_ENABLED` (`expiredTeardown`, hourly at :06),
    `VAULT_BEACON_UPKEEP_ENABLED` (`vaultBeaconUpkeep`, hourly at :26:
    applies VaultBeacon proposals, pins and pin-delay lowerings once due),
+   `PRICE_CHECKPOINT_ENABLED` (`priceCheckpoint`, at :11 and :41: writes
+   each UTC hour's price checkpoint for the assets of active ERC-20 loans,
+   which the #3359 forced-sale floor reads; while it is unarmed every forced
+   sale uses the full slippage cap),
    `REWARD_STAGING_UPKEEP_ENABLED` (`rewardStagingUpkeep`, hourly at :51:
    moves held reward claim days on to payment; its unwind step also needs
    `REWARD_STAGING_UNWIND_ENABLED`), and
