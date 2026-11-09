@@ -1,6 +1,6 @@
 # Release Notes — 2026-11-08
 
-The day's largest contract change moves position NFTs out of the Diamond. Each loan side is now one token on a separate, non-upgradeable contract, and the Diamond only mints, locks and reads the current owner. Alongside it, a shared, delayed registry now holds the protocol's endpoints, such as the treasury, swap adapters and marketplace conduits. Both reach a chain only by a fresh deploy.
+The day's largest contract change moves position NFTs out of the Diamond. Each loan side is now one token on a separate, non-upgradeable contract, and the Diamond only mints, locks and reads the current owner. Alongside it ships the foundation of a shared, delayed registry for the protocol's endpoints. A fresh deploy creates it empty: putting the treasury, swap adapters and marketplace conduits behind it is still pending, in the vault payout policy work (#3205 part 2). Both reach a chain only by a fresh deploy.
 
 The rest of the day covers:
 - **The new app:** loan actions from a loan's own page (repay in full or in part, add or take back collateral, the interest schedule), claims and Claim everything, seller interest, extension reserves, the protected-account payout queue, the Vault page (holdings, deposit, withdraw, the safety card and the pause escape route), the Offers page and the offer book. The website and the new app also return to indigo.
