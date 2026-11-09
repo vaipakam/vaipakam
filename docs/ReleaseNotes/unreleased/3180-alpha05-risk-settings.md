@@ -1,4 +1,4 @@
-## Thread — alpha05 Settings shows and changes your risk access (PR #<n>)
+## Thread — alpha05 Settings shows and changes your risk access (PR #3456)
 
 The new app's Settings page now has a Risk access section. It says, in
 words, which risk level counts for the connected wallet on its network, and
