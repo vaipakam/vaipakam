@@ -1,4 +1,4 @@
-## Thread — alpha05 reads the offer book only once a wallet connects (PR #<n>)
+## Thread — alpha05 reads the offer book only once a wallet connects (PR #3419)
 
 The new app (alpha05) no longer reads any part of the offer book before a
 wallet connects. This was an owner decision: the book, an offer's own page,
