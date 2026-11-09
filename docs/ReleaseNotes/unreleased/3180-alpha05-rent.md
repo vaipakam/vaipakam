@@ -1,4 +1,4 @@
-## Thread — alpha05 can rent an NFT (PR #<n>)
+## Thread — alpha05 can rent an NFT (PR #3466)
 
 The new app now has a Rent page. It shows the rental part of the offer
 book on the wallet's network, owners' listings first. When nothing is
