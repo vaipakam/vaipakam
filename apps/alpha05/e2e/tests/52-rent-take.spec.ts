@@ -120,11 +120,11 @@ test('an owner takes a renter’s request: a token not held is refused in the re
   await expect(receipt).toContainText('Moved from your wallet into your own vault');
   await expect(receipt).toContainText(`NFT #${tokenId} of vRENT`);
   await expect(receipt).toContainText('Renter');
-  await expect(receipt).toContainText('5 days from now');
+  await expect(receipt).toContainText('5 days of use from now');
   await expect(receipt).toContainText('Pro-rata: the renter pays for the days used');
   await expect(receipt).toContainText('Already in the renter’s vault');
   await expect(receipt).toContainText('fixed by the request');
-  await expect(receipt).toContainText('into your vault when the rental closes');
+  await expect(receipt).toContainText('into your vault daily as settled');
   await expect(receipt).toContainText('the buffer goes to the protocol');
   await expect(receipt).toContainText('None: a rental has no collateral and no health factor');
   await expect(receipt).toContainText('You cannot withdraw it while the rental is open');

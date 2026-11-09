@@ -9,8 +9,11 @@ owner's own vault and stays there until the rental ends, who the renter is
 and that the renter becomes the NFT's user at once, the term counted from
 now, the rent rule, the rent and buffer the renter already put in the
 renter's own vault (with the buffer share the request fixed), what the
-owner receives (the rent due, less the protocol's share, which this start
-fixes) and what a default does. A token the wallet does not hold, or too
+owner receives (the rent, less the protocol's share, which this start
+fixes, paid into the owner's vault as each finished day is settled, with
+the rest at close) and what a default does. Every rental term in the new
+app now reads as days of use: a pause moves only the late-fee and default
+dates, never the end of the renter's use. A token the wallet does not hold, or too
 few units, is said before any wallet step, and the review reads again on
 its own once that changes.
 

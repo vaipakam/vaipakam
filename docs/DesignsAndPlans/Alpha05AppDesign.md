@@ -1673,7 +1673,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   states when the browser cannot keep files or refused the worker. Data
   rights count and erase the saved files (RB-DATA-RIGHTS).
 - **RB-RENT** — Rent (NFT-02, NFT-03, NFT-04, NFT-38) uses rental words,
-  never a loan's. The Rent page lists the rentals tab of the offer book
+  never a loan's. Every rental term is stated as days of use: a pause moves
+  only the late-fee and default dates, never the end of the renter's use,
+  and the term says so. The Rent page lists the rentals tab of the offer book
   alone, owners' listings first; an empty book on a test network offers the
   faucet. A rental row and an offer page state "no collateral and no ratio",
   never a zero ratio. An owner's listing is rented from its offer page
@@ -1740,8 +1742,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   the rental ends, who the renter is and that the renter becomes its user
   at once, the term from now, the rent and buffer already in the renter's
   vault with the buffer share the request fixed, what the owner receives
-  (the rent due less the protocol's share, fixed at this start) and what a
-  default does; a token the wallet does not hold, or too few units, is said
+  (the rent less the protocol's share, fixed at this start, paid into the
+  owner's vault as each finished day is settled, the rest at close as a
+  claim) and what a default does; a token the wallet does not hold, or too few units, is said
   before any wallet step. The terms are signed, the approval is the one
   ERC-721 token (or for an ERC-1155 the operator approval for this rental
   alone, taken back afterwards whatever happens), and the acceptance is
