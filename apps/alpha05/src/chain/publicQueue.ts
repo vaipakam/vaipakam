@@ -7,10 +7,12 @@
  * Arbitrum, Optimism and their test networks) keep no public queue, so
  * nothing is said there. BNB Testnet is listed with BNB Chain because it
  * runs the same way, and it is where the notice can be seen before
- * mainnet. The app names no private sending service: it says what is
+ * mainnet. Polygon PoS (137) and its test network Amoy (80002) keep a
+ * public queue too (#3445); they are listed before the app serves them, so
+ * the notice is there the day either is added. The app names no private sending service: it says what is
  * exposed and points to the guide.
  */
-export const PUBLIC_QUEUE_CHAIN_IDS: ReadonlySet<number> = new Set([1, 56, 97]);
+export const PUBLIC_QUEUE_CHAIN_IDS: ReadonlySet<number> = new Set([1, 56, 97, 137, 80002]);
 
 /** Whether a transaction sent on `chainId` waits in a public queue. */
 export function hasPublicQueue(chainId: number): boolean {

@@ -1435,7 +1435,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   market moves.
 - **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
   public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
-  so it can be seen before mainnet; #3357), the review of a write that a
+  so it can be seen before mainnet; #3357; Polygon PoS and Polygon Amoy,
+  listed before the app serves them, #3445), the review of a write that a
   watcher could act on first says so before the wallet opens: posting,
   taking or cancelling an offer, repaying in full or in part, and adding
   collateral. It names the exposure (anyone watching, bots included, can

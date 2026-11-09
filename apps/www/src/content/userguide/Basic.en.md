@@ -1207,7 +1207,7 @@ Under the rate on both posting forms, a lender's offer and a borrower's request,
 
 ### Networks with a public queue
 
-On Ethereum and BNB Chain (and BNB Testnet), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
+On Ethereum, BNB Chain and Polygon (and BNB Testnet and Polygon Amoy), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
 
 <a id="lend-offer-parts"></a>
 
