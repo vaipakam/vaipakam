@@ -511,8 +511,10 @@ const server = http.createServer(async (req, res) => {
       const slowMs = agent.slow.get(url.pathname);
       if (slowMs !== undefined) {
         agent.slow.delete(url.pathname);
-        // Bounded: a test slows one answer by seconds, never more.
-        await new Promise((r) => setTimeout(r, Math.min(Math.max(Number(slowMs) || 0, 0), 30_000)));
+        // Bounded: a test slows one answer by seconds, never more; any
+        // other value is ignored.
+        const ms = Number(slowMs);
+        if (Number.isFinite(ms) && ms > 0 && ms <= 30_000) await new Promise((r) => setTimeout(r, ms));
       }
       const forced = agent.next.get(url.pathname);
       if (forced) {
