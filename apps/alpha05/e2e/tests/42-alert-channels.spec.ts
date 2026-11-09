@@ -142,7 +142,7 @@ test('push is offered only when the service can send; reminders and health lines
   await signedBy(off, me, (w, c, t) => buildAlertSettingsMessage(w, c, { dueDateReminders: false }, t));
   // A save still out when the page is left keeps going: back on Alerts the
   // card shows it out and offers no second action, then shows its outcome.
-  await controlAgent({ slow: { path: '/thresholds', ms: 6_000 } });
+  await controlAgent({ slow: { path: '/thresholds' } });
   await page.getByTestId('alert-due-toggle').click();
   await expect(page.getByTestId('alert-due-toggle')).toBeDisabled({ timeout: 10_000 });
   await page.getByRole('link', { name: 'Vaipakam home' }).click();

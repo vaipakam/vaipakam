@@ -55,7 +55,7 @@ export async function controlAgent(control: {
   push?: 'available' | 'agent-only' | 'unavailable' | 'down';
   handshake?: string;
   next?: { path: string; status: number; body: Record<string, unknown> };
-  slow?: { path: string; ms: number };
+  slow?: { path: string };
 }): Promise<void> {
   const res = await fetch(`${STUB_ORIGIN}/__stub/agent`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
   if (!res.ok) throw new Error(`stub refused agent control: ${res.status} ${await res.text()}`);

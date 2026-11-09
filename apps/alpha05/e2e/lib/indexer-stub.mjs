@@ -61,7 +61,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { createPublicClient, decodeEventLog, http as viemHttp, toEventSelector } from 'viem';
+
+/** How long a slowed agent answer waits (see the agent's `slow` control). */
+const SLOW_ANSWER_MS = 6_000;
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.ALPHA05_E2E_ANVIL_URL ?? 'http://127.0.0.1:8546';
@@ -368,7 +372,7 @@ function freshAgent() {
     lastTest: new Map(),
     thresholds: new Map(),
     next: new Map(),
-    slow: new Map(),
+    slow: new Set(),
   };
 }
 /** The alert service's state: every request, the issued codes, the linked
@@ -460,7 +464,7 @@ const server = http.createServer(async (req, res) => {
       // { reset }, { push: 'available' | 'agent-only' | 'unavailable' | 'down' },
       // { handshake: wallet } (the bot received that wallet's latest code),
       // { next: { path, status, body } } (the next request to that path gets it).
-      // { slow: { path, ms } } (the next request to that path is answered ms later).
+      // { slow: { path } } (the next request to that path is answered SLOW_ANSWER_MS later).
       const body = JSON.parse(await readBody(req));
       if (body.reset === true) agent = freshAgent();
       if (body.push !== undefined) {
@@ -479,7 +483,7 @@ const server = http.createServer(async (req, res) => {
         agent.linked.add(w);
       }
       if (body.next !== undefined) agent.next.set(body.next.path, { status: body.next.status, body: body.next.body });
-      if (body.slow !== undefined) agent.slow.set(body.slow.path, body.slow.ms);
+      if (body.slow !== undefined) agent.slow.add(body.slow.path);
       json(res, 200, { ok: true });
       return;
     }
@@ -508,13 +512,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       agent.requests.push({ path: url.pathname, body });
-      const slowMs = agent.slow.get(url.pathname);
-      if (slowMs !== undefined) {
-        agent.slow.delete(url.pathname);
-        // Bounded: a test slows one answer by seconds, never more; any
-        // other value is ignored.
-        const ms = Number(slowMs);
-        if (Number.isFinite(ms) && ms > 0 && ms <= 30_000) await new Promise((r) => setTimeout(r, ms));
+      if (agent.slow.delete(url.pathname)) {
+        // A fixed delay: the request names which answer to slow, never how long.
+        await new Promise((r) => setTimeout(r, SLOW_ANSWER_MS));
       }
       const forced = agent.next.get(url.pathname);
       if (forced) {
