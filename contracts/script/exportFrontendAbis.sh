@@ -349,6 +349,9 @@ FACETS=(
   # `DIAMOND_ABI` in the barrel; the keeper bot in `apps/keeper`
   # constructs calls to it directly by named ABI export.
   "FlashLoanLiquidator"
+  # #3361 — the standalone keeper backup runner Chainlink Automation drives.
+  # NOT a diamond facet; named ABI export only.
+  "KeeperBackupUpkeep"
   # #394 Lever B — standalone dual-factor risk-premium rate model
   # (an `IRateModel` registered via `RateModelFacet.setRateModel`). NOT a
   # diamond facet, so deliberately NOT spread into `DIAMOND_ABI` in the

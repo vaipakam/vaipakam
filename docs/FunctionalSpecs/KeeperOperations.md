@@ -1104,6 +1104,49 @@ prevents is an unrecorded one. A deployed switch being off still means the
 step is not being driven on that deployment, as the activation rules below
 state.
 
+## A backup runner on an outside automation network
+
+The keeper runs on one machine, so a step can stay undone while that machine
+is down, out of gas or stuck. A second runner, driven by Chainlink Automation
+(owner choice, November 8), covers that gap for a set of steps. It is a
+backup, not a second keeper:
+
+- It acts only on steps the protocol itself says are due right now. It keeps
+  no rule of its own about when a step is due; it asks the protocol by trying
+  the step in a way whose effects are always undone.
+- It waits. A due step is first noted, and is run only if it is still due
+  after a delay set per step (one hour by default, and at most half an hour for the grace auto-listing, whose own window can be one hour) and within a set window after that. The runner takes the noted steps whose window closes first first, so a full queue still reaches each one in time.
+  If the keeper runs the step meanwhile, the backup does nothing and lets the
+  note go. A noted step is checked again on every look until it is run or let
+  go, however far the backup's scan of loans, offers and days has moved on. A
+  step that recurs waits the full delay every time.
+- It finds reward-day steps on recent days and on older days alike, because a
+  day's lapse becomes possible only long after the day itself.
+- It covers only steps anyone may call that need nothing computed off-chain
+  and can be found from on-chain reads: daily rental deductions, expired
+  listing and intent teardowns, the grace auto-listing of NFT collateral, a
+  past-grace default that needs no sale, a periodic-interest stamp that needs
+  no sale, the reward-day close where the chain charges no fee for it, the
+  lapses and skips of finished reward days, the recycling of a skipped day's
+  value while a recycle still moves some, and the vault-code changes whose
+  delay has passed. Value of a skipped day that sits beyond spent transport
+  records waits for the keeper, which first moves the day's reading point
+  past them; the backup cannot tell when that move is needed.
+- It does not cover liquidations or matching, which stay open to anyone;
+  anything that needs a swap route, a price quote or a cross-chain fee;
+  steps found only from event history; the irreversible reward-day finalize;
+  or lending treasury capital.
+- It holds no funds, attaches no value to any call, and can call nothing but
+  the steps it lists. Tokens a step pays it, such as a matcher's bonus, can
+  go only to the treasury fixed when it was deployed, and anyone may send
+  them there.
+- Every step starts switched off and is switched on by the owner one at a
+  time, as each keeper duty ships disarmed. Registering it with the network
+  and funding it are owner decisions per chain.
+- Each time it notes a step as due, and each time it runs one, it says so
+  publicly, so operators can see from its records alone that the keeper was
+  late.
+
 ## Releasing protected payouts and applying matured protected-mode changes
 
 - When an account runs in protected account mode, a payout from its vault and

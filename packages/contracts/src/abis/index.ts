@@ -176,6 +176,9 @@ import RewardSweepWalkFacetABI from './RewardSweepWalkFacet.json';
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
 import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
+// #3361 — standalone keeper backup runner (Chainlink Automation). Named export
+// only; not part of the diamond's selector set.
+import KeeperBackupUpkeepABI from './KeeperBackupUpkeep.json';
 // #394 Lever B — standalone dual-factor risk-premium rate model (an
 // `IRateModel` registered via `RateModelFacet.setRateModel`). Named export only;
 // deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
@@ -327,6 +330,7 @@ export {
   RewardForfeitWalkFacetABI,
   RewardSweepWalkFacetABI,
   FlashLoanLiquidatorABI,
+  KeeperBackupUpkeepABI,
   RiskPremiumRateModelABI,
   TestnetSanctionsOverlayABI,
   SanctionsListABI,
