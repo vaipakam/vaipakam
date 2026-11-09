@@ -11,8 +11,9 @@
  * this build's list passes straight through, uncached. A listed file is kept
  * only when the answer is the file itself: a page sent in its place (the
  * host's fallback for a file it no longer has, as during a deploy) is passed
- * on but never stored, so a reload can still fetch the real file. On
- * activation it deletes every earlier build's store.
+ * on but never stored, so a reload can still fetch the real file. Storage is
+ * optional: a store that fails to open, read or write is treated as a miss.
+ * On activation it deletes every earlier build's store.
  */
 
 /** Every store this app's worker writes starts with this. */
@@ -47,18 +48,25 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET' || request.mode === 'navigate') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.search !== '' || !SHELL.has(url.pathname)) return;
+  // The copy is optional: a store that cannot be opened or read is a miss,
+  // and a copy that cannot be written is skipped, so storage never stops a file loading.
   event.respondWith(
-    caches.open(CACHE).then((cache) =>
-      cache.match(url.pathname).then(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.match(url.pathname))
+      .catch(() => undefined)
+      .then(
         (hit) =>
           hit ||
           fetch(request).then((response) => {
             const kind = (response.headers.get('content-type') || '').toLowerCase();
-            if (response.ok && response.type === 'basic' && kind !== '' && !kind.startsWith('text/html')) cache.put(url.pathname, response.clone());
+            if (response.ok && response.type === 'basic' && kind !== '' && !kind.startsWith('text/html')) {
+              const copy = response.clone();
+              caches.open(CACHE).then((cache) => cache.put(url.pathname, copy)).catch(() => undefined);
+            }
             return response;
           }),
       ),
-    ),
   );
 });
 `;

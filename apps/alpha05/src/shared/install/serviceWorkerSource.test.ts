@@ -5,7 +5,11 @@ import { SHELL_CACHE_PREFIX, serviceWorkerSource, shellFiles } from './serviceWo
 type Handler = (event: Record<string, unknown>) => void;
 
 /** Runs the generated worker against a stand-in for the worker's globals. */
-function boot(shell: string[], contentType: (url: string) => string = (u) => (u.endsWith('.css') ? 'text/css' : 'text/javascript')) {
+function boot(
+  shell: string[],
+  contentType: (url: string) => string = (u) => (u.endsWith('.css') ? 'text/css' : 'text/javascript'),
+  storage: 'works' | 'broken' = 'works',
+) {
   const handlers: Record<string, Handler> = {};
   const stores = new Map<string, Map<string, { body: string }>>([
     [`${SHELL_CACHE_PREFIX}old`, new Map()],
@@ -23,7 +27,10 @@ function boot(shell: string[], contentType: (url: string) => string = (u) => (u.
     skipWaiting: () => undefined,
     clients: { claim: async () => undefined },
   };
-  const caches = { keys: async () => [...stores.keys()], delete: async (k: string) => stores.delete(k), open: async (k: string) => store(k) };
+  const caches = { keys: async () => [...stores.keys()], delete: async (k: string) => stores.delete(k), open: async (k: string) => {
+    if (storage === 'broken') throw new Error('storage unavailable');
+    return store(k);
+  } };
   const fetch = async (r: { url: string }) => {
     fetched.push(r.url);
     const kind = contentType(r.url);
@@ -57,6 +64,11 @@ describe('the service worker', () => {
     expect(await w.request('https://app.example/assets/index-1.js')).toBe('net:https://app.example/assets/index-1.js');
     expect(w.fetched).toHaveLength(2);
     expect(w.stores.get(`${SHELL_CACHE_PREFIX}abc123`)?.size ?? 0).toBe(0);
+  });
+  it('goes to the network when the store cannot be opened', async () => {
+    const w = boot(shell, undefined, 'broken');
+    expect(await w.request('https://app.example/assets/index-1.js')).toBe('net:https://app.example/assets/index-1.js');
+    expect(w.fetched).toHaveLength(1);
   });
   it('never answers a page load, another origin, an unlisted file or a write', async () => {
     const w = boot(shell);
