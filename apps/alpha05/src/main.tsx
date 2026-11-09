@@ -13,6 +13,7 @@ import { WorldRailProvider } from './shared/reads/world/WorldRailContext';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TxStoreProvider } from './shared/tx/txStore';
 import { App } from './App';
+import { startInstall } from './shared/install/install';
 // i18n bootstrap: a side-effect import BEFORE the app renders so the
 // detection chain has resolved and <html lang>/dir are right by first paint.
 import './i18n';
@@ -41,6 +42,11 @@ window.addEventListener('vite:preloadError', (event) => {
   }
   window.location.reload();
 });
+
+// ACC-11: the browser's install offer fires once, early, so it is caught
+// before the first render; a production build also registers the worker
+// that keeps this build's files.
+startInstall();
 
 const queryClient = new QueryClient({
   defaultOptions: {

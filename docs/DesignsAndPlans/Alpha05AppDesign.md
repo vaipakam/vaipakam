@@ -1563,12 +1563,14 @@ above. Each resolves here, so a route reviewer needs no private file:
 - **RB-DATA-RIGHTS** — Your data (ACC-55) needs no wallet and no Terms. It
   states what this browser keeps for the app (its own records, the wallet
   connection's items, this tab's items, the site's databases or that they
-  cannot be listed, and the shared language cookie) and how many items an
-  erasure would remove, before the reader confirms. The download carries
+  cannot be listed, the shared language cookie, and the service worker's
+  saved copies of this build's files, counted file by file) and how many
+  items an erasure would remove, before the reader confirms. The download carries
   the app's own records only, names the wallet addresses in them, and counts
   without copying the wallet connection's session material. Erasure ends
   every wallet connection first so nothing is written back, then sweeps this
-  site's storage, databases and the shared language cookie at every scope,
+  site's storage, databases, saved-file stores and the shared language
+  cookie at every scope (saved files come back as the app is used),
   writes back only the wallet libraries' "disconnected" markers (for every
   connector that was connected or already marked, so the reload's automatic
   reconnection cannot reconnect a wallet that still authorises the site),
@@ -1645,6 +1647,22 @@ above. Each resolves here, so a route reviewer needs no private file:
   read again before the wallet opens and measured at the receipt's block.
   The protocol's pause closes every change, removing included, and is stated
   rather than offered.
+- **RB-INSTALL** — The app is installable (ACC-11): a manifest names it,
+  its icons (a maskable one among them) and four shortcuts (Offers,
+  Positions, Vault, Alerts). Settings › Install the app is Advanced. It
+  offers the browser's own install prompt only where the browser offered
+  one, and states the browser's answer; otherwise it says which case this
+  is (already installed, an iPhone or iPad with the Share route, or a
+  browser that has not offered it), never a button that does nothing. A
+  production build ships a service worker written from that build's output:
+  it keeps a copy of one of this build's hashed files once the page asks for
+  it, answers later requests for that file from the copy, deletes every
+  earlier build's store when it takes over, and lets everything else pass
+  uncached: a page load, any request to another origin (RPC, Workers), any
+  file not on the build's list. The section says what is kept on the device
+  and that pages and every figure are always read from the network, and
+  states when the browser cannot keep files or refused the worker. Data
+  rights count and erase the saved files (RB-DATA-RIGHTS).
 
 ## 3. Companion specifications
 
