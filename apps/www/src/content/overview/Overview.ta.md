@@ -182,7 +182,7 @@ layers built in ஆக உள்ளன:
 - **Pause switches.** ஒவ்வொரு contract-க்கும் emergency pause levers உள்ளன. ஏதாவது
   தவறாகத் தெரிந்தால் operator சில seconds-ல் new business-ஐ stop செய்ய முடியும்;
   அதே நேரத்தில் existing users தங்கள் positions-ஐ safely wind down செய்யலாம்.
-- **Mainnet முன் audit நிலுவையில் உள்ளது.** Mainnet launch-க்கு முன் third-party security review அவசியம். Audit reports மற்றும் bug bounty scope கிடைக்கும் போது வெளியிடப்படும்.
+- **Mainnet முன் audit நிலுவையில் உள்ளது.** Mainnet launch-க்கு முன் third-party security review அவசியம். Audit reports கிடைக்கும் போது வெளியிடப்படும். Bug bounty திட்டம் எதுவும் வழங்கப்படவில்லை.
 
 இருப்பினும், நீங்கள் எதற்கு sign செய்கிறீர்கள் என்பதை புரிந்துகொள்ள வேண்டும். ஒவ்வொரு
 loan-க்கும் முன் தோன்றும் combined **risk consent**-ஐ படியுங்கள் - அது
