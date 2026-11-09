@@ -41,7 +41,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/offers', name: 'Offers', tier: 'basic', rows: 'OFF my offers and the book', order: 8, built: true, nav: true, currentApp: '/offers' },
   { path: '/offers/:id', name: 'Offer', tier: 'basic', rows: 'OFF offer detail, accept, cancel, clean-up', order: 8, built: true, nav: false, currentApp: '/offers/:id' },
   { path: '/alerts', name: 'Alerts', tier: 'basic', rows: 'ACC alerts, Telegram, push', order: 9, built: true, nav: false, currentApp: '/settings' },
-  { path: '/settings', name: 'Settings', tier: 'basic', rows: 'ACC settings, consents, data rights', order: 10, built: false, nav: false, currentApp: '/settings' },
+  { path: '/settings', name: 'Settings', tier: 'basic', rows: 'ACC settings, consents, data rights', order: 10, built: true, nav: false, currentApp: '/settings' },
   { path: '/rent', name: 'Rent', tier: 'basic', rows: 'NFT rentals', order: 11, built: false, nav: true, currentApp: '/rent' },
   { path: '/rewards', name: 'Rewards', tier: 'basic', rows: 'RW VPFI, tiers, recycling', order: 12, built: false, nav: true, currentApp: '/vpfi' },
   { path: '/protection', name: 'Protection', tier: 'advanced', rows: 'ACC protected account mode', order: 13, built: false, nav: true, currentApp: '/vault/protection' },

@@ -1159,8 +1159,15 @@ backup, not a second keeper:
   no sale, the reward-day close where the chain charges no fee for it, the
   lapses and skips of finished reward days, the recycling of a skipped day's
   value while a recycle still moves some, the vault-code changes whose
-  delay has passed, and the release of a protected account's held payout once
-  its delay is over. Value of a skipped day that sits beyond spent transport
+  delay has passed, the release of a protected account's held payout once
+  its delay is over, and the cancel of an offset, lender-sale or refinance
+  offer whose position has moved (or, for a refinance request, that a later
+  request replaced). A collateral listing or a swap-to-repay intent whose
+  position moved is covered by the listing and intent teardowns, which the
+  protocol allows at once for a moved position. The backup cancels an offer
+  only while the protocol reports its route dead, never one that has merely
+  expired: anyone may clear an expired offer, and no keeper is owed that.
+  Value of a skipped day that sits beyond spent transport
   records waits for the keeper, which first moves the day's reading point
   past them; the backup cannot tell when that move is needed.
 - To find held payouts without knowing whose they are, the protocol keeps one

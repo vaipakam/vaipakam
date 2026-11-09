@@ -10,6 +10,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
@@ -264,10 +265,20 @@ contract TierExclusionTest is SetupTest {
         // minimum records only what the claim itself did.
         vm.warp(block.timestamp + 1 days);
         sanctions.setFlagged(holder, false);
+        uint256 walletBefore = collateralAsset.balanceOf(holder);
+        uint256 freeBefore =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(holder, address(collateralAsset), 0);
         vm.prank(holder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_ID);
 
-        assertEq(collateralAsset.balanceOf(holder), LOAN_COLLATERAL, "fixture: the holder was paid");
+        // Since #3387 a claim pays the holder's VAULT, credited as the
+        // holder's own free funds, not the holder's wallet.
+        assertEq(collateralAsset.balanceOf(holder), walletBefore, "fixture: the claim pays the vault, not the wallet");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(holder, address(collateralAsset), 0) - freeBefore,
+            LOAN_COLLATERAL,
+            "fixture: the holder's vault was credited the claim"
+        );
         (, , address bv, uint256 bVpfi) = _exclusion();
         assertEq(bv, address(0), "claimed and burned: nothing left charged");
         assertEq(bVpfi, 0, "claimed and burned: no amount left");

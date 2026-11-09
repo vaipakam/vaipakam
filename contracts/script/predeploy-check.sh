@@ -691,6 +691,28 @@ else
       name="$(basename "$f" .json)"
       # Allowlisted non-contract metadata files — intentionally not ABIs.
       case "$name" in _source|deployments) continue ;; esac
+      # The keeper bot's Diamond error set (exportAbis.sh) is the errors of
+      # the combined Diamond ABI, which the frontend check above holds to
+      # the compiled facets; compare it with those, as decode drift only.
+      if [ "$name" = "DiamondErrors" ]; then
+        local rel_e
+        rel_e="$(git -C "$dir" ls-files --full-name -- "$name.json" 2>/dev/null)"
+        [ -n "$rel_e" ] || continue
+        checked=$((checked + 1))
+        git -C "$dir" show "HEAD:$rel_e" >"$tmp_committed" 2>/dev/null || : >"$tmp_committed"
+        jq '[.[] | select(.type == "error")]' "$REPO_ROOT/packages/contracts/src/diamondAbi.json" >"$tmp_fresh"
+        if [ "$(abi_drift_kind "$tmp_committed" "$tmp_fresh")" != none ]; then
+          if [ "$hard" -eq 1 ]; then
+            echo "  ✗ $label — committed $name.json is stale vs the Diamond's errors" >&2
+            drift=$((drift + 1))
+          else
+            echo "  · $label — committed $name.json lists other errors than the Diamond" \
+              "(revert decoding only)"
+            decode_drift=$((decode_drift + 1))
+          fi
+        fi
+        continue
+      fi
       if ! fresh="$(forge inspect "$name" abi --json 2>/dev/null)"; then
         # No resolvable contract for this JSON. For a hard dir that is a
         # failure — a facet renamed/removed but its committed ABI left

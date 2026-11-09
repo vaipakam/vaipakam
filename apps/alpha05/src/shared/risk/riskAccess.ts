@@ -181,6 +181,8 @@ export const PLAN_SIGNATURES: Readonly<Record<'tier' | 'consent' | 'ack', string
   ack: 'setMidTierPairAck((address,uint8,uint256,address,uint8,uint256,address))',
 };
 
+export const STRICT_SIGNATURE = 'setRiskStrictMode(bool)';
+
 /** Where the step's pair comes from: the exact pair an acceptance of the
  *  offer is checked against (the protocol resolves it), or a pair the flow
  *  builds itself (a new request). */
@@ -244,6 +246,62 @@ export async function readRiskStatus(c: PublicClient, diamond: Hex, account: Hex
     pending,
     inEffect,
     gateOn,
+    chainNow: block.timestamp,
+    blockNumber: block.number,
+  };
+}
+
+/**
+ * ACC-33 — the wallet's own risk-access settings on this network, read in one
+ * block: the level it chose and the level that counts now, why they differ
+ * (a raise still in its waiting period, or a risk-terms change since), and
+ * strict mode with how long a switched-off strict mode still applies.
+ */
+export interface RiskSettings {
+  gateOn: boolean;
+  held: number;
+  effective: number;
+  stale: boolean;
+  unlockAt: bigint;
+  cooldown: bigint;
+  nonce: bigint;
+  termsVersion: bigint;
+  /** The strict-mode switch as the wallet last set it. */
+  strict: boolean;
+  /** When a switched-off strict mode stops applying (unix seconds; 0 when it
+   *  was never switched off, or switched on again since). */
+  strictUntil: bigint;
+  chainNow: bigint;
+  blockNumber: bigint;
+}
+
+export async function readRiskSettings(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<RiskSettings> {
+  const block = await c.getBlock(blockNumber === undefined ? { blockTag: 'latest' } : { blockNumber });
+  const at = { blockNumber: block.number };
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
+  const [gateOn, held, effective, tierVersion, termsVersion, unlockAt, cooldown, nonce, strict, strictUntil] = await Promise.all([
+    read<boolean>(CONFIG, 'getRiskAccessGateEnabled'),
+    read<number>(RISK_ACCESS, 'getVaultRiskTier', [account]),
+    read<number>(RISK_ACCESS, 'getEffectiveRiskTier', [account]),
+    read<bigint>(RISK_ACCESS, 'getVaultRiskTierVersion', [account]),
+    read<bigint>(RISK_ACCESS, 'getCurrentRiskTermsVersion'),
+    read<bigint>(RISK_ACCESS, 'getRiskTierUnlockAt', [account]),
+    read<bigint>(RISK_ACCESS, 'getRiskAccessUnlockCooldown'),
+    read<bigint>(RISK_ACCESS, 'getRiskTierMutationNonce', [account]),
+    read<boolean>(RISK_ACCESS, 'getRiskStrictMode', [account]),
+    read<bigint>(RISK_ACCESS, 'getStrictModeStrictUntil', [account]),
+  ]);
+  return {
+    gateOn,
+    held: Number(held),
+    effective: Number(effective),
+    stale: Number(held) > 0 && tierVersion < termsVersion,
+    unlockAt,
+    cooldown,
+    nonce,
+    termsVersion,
+    strict,
+    strictUntil: BigInt(strictUntil),
     chainNow: block.timestamp,
     blockNumber: block.number,
   };

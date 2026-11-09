@@ -55,7 +55,8 @@ shipped.
 - Third-party security audit completion (Diamond core, swap failover,
   secondary oracle quorum, cross-chain reward mesh, borrower LIF
   custody, LayerZero OApp surface).
-- Bug bounty program publication.
+- No bug bounty programme is offered. Whether to run one is decided
+  internally after the code freeze (owner, 2026-11-09).
 - `LZConfig.t.sol` + `GovernanceHandover.t.sol` +
   `LiquidationMinOutputInvariant.t.sol` +
   `SecondaryQuorumTest.t.sol` + `FeedOverride.t.sol` +

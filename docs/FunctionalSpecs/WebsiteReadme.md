@@ -283,7 +283,7 @@ Public-navigation requirements:
 - app-shell links to public-only experiences such as `NFT Verifier` should open in a new tab and use an external-link affordance so users understand they are leaving the connected-app shell
 - public-shell pages that sit below the fixed Navbar, including `Analytics`, `NFT Verifier`, `VPFI`, `Terms`, and `Privacy`, must include enough top clearance that their headings never render under the Navbar
 - public navigation must preserve the Vaipakam brand mark at its natural size across desktop widths; link spacing and right-cluster spacing should compress before the logo is allowed to shrink
-- the footer should expose `Terms`, `Privacy`, `Cookie settings`, and, once published, the public bug bounty program link
+- the footer should expose `Terms`, `Privacy`, and `Cookie settings`; no bug bounty programme is offered, so the footer carries no bounty link and no copy may imply one (owner, 2026-11-09)
 - footer resource links that describe deployed contracts should land directly on the Analytics transparency section (`/analytics#transparency`) rather than a generic dashboard top
 - landing-page security / trust cards should make high-level claims without repeating per-card `Verify on chain` links; the footer or transparency route remains the single verification path for contract artefacts
 
