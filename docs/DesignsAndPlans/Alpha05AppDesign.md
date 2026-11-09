@@ -1623,6 +1623,28 @@ above. Each resolves here, so a route reviewer needs no private file:
   says that anything relying on it refuses until approved again, and a
   Permit2 withdrawal leaves the token's own approval for Permit2, which other
   apps may use, unchanged.
+- **RB-KEEPERS** — Settings › Keepers (ACC-34) shows the wallet's keeper
+  settings on its network in one block: the master switch, each approved
+  keeper (at most five) and the actions it holds, each action with whose side
+  it drives and where it reaches. Everything starts off, and the section
+  states that a keeper acts only while access is on and it holds the action,
+  that a step on a loan also needs that loan or offer to name the keeper
+  while an account action (the signed fill, the auto-roll, the lock) does
+  not, and the receipt of a grant that adds an account action says so; that
+  a keeper never receives funds and
+  cannot claim, withdraw or transfer, that a position follows its current
+  holder's settings, and when the protocol has paused every keeper. This
+  app's keeper on a network is named only from the deployment record.
+  Turning access off and removing a keeper are offered in either mode;
+  turning access on, approving a keeper and changing its actions are
+  Advanced. Only a change that gives a keeper more (access on, a new keeper,
+  an action it did not hold) asks for the Terms where a version is in force;
+  taking a permission away never does. Each change is one
+  signed transaction through RB-CONFIDENCE, built from settings read when the
+  review opens, refused before the wallet where the protocol would refuse it,
+  read again before the wallet opens and measured at the receipt's block.
+  The protocol's pause closes every change, removing included, and is stated
+  rather than offered.
 
 ## 3. Companion specifications
 
