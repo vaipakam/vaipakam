@@ -690,6 +690,14 @@ export const copy = {
     reading: B('Reading what this would do…'),
     confirm: B('Confirm in wallet'),
     cancel: B('Cancel'),
+    publicQueue: A(
+      'On {{chain}}, a sent transaction waits in a public queue before it is included. Anyone watching it, bots included, can see this one and act first, such as taking an offer before its cancel lands or acting on a loan before a repayment does.',
+    ),
+    publicQueueWhySummary: B('How to send this out of public view'),
+    publicQueueWhy: C(
+      'Some wallets can send a transaction privately, straight to the parties that build blocks, instead of through the public queue; look in your wallet’s network or security settings for such an option. Neither the protocol nor this app can choose that route for you. Sending the usual way changes nothing about what this transaction does, only who can see it before it lands.',
+      'public-queue',
+    ),
     close: B('Close'),
     checking: B('Checking the latest state before your wallet opens…'),
     changed: A('{{what}} changed since this review opened. The review shows the new state: check it, then confirm again.'),

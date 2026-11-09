@@ -1230,6 +1230,12 @@ Sauf si vous fixez des parts en mode avancé, un seul emprunteur prend tout le m
 
 Sous le taux, sur les deux formulaires de publication, l'offre d'un prêteur et la demande d'un emprunteur, l'application affiche le taux médian des prêts ouverts sur la même paire et la même durée au cours des 30 derniers jours, et leur nombre. Si votre taux s'en écarte de plus de cinq points, elle vous avertit et indique dans quel sens : un prêteur très en dessous du marché, ou un emprunteur très au-dessus, publie l'offre prise en premier quand les taux bougent ; dans l'autre sens, l'offre risque de rester sans preneur. Ce n'est qu'un avertissement, vous pouvez quand même publier. S'il n'y a aucun prêt récent à comparer, si la garantie est un NFT ou si l'index du protocole ne peut pas être lu, le formulaire le dit au lieu de se taire.
 
+<a id="public-queue"></a>
+
+### Réseaux à file d'attente publique
+
+Sur Ethereum et BNB Chain (et BNB Testnet), une transaction envoyée attend dans une file publique avant d'être incluse, et quiconque observe cette file, robots compris, peut la voir et agir avant vous : prendre une offre avant que votre annulation n'arrive, ou agir sur un prêt avant votre remboursement. Sur ces réseaux, la revue de la publication, de la prise ou de l'annulation d'une offre, du remboursement et de l'ajout de garantie le signale donc avant l'ouverture de votre portefeuille. Certains portefeuilles peuvent envoyer une transaction en privé ; regardez dans leurs réglages de réseau ou de sécurité. L'application ne peut pas choisir cette voie pour vous, et l'envoi habituel ne change que qui peut voir la transaction avant qu'elle n'arrive. Base, Arbitrum et Optimism n'ont pas de file publique : rien n'y est affiché.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend : Une offre en parts (Avancé)

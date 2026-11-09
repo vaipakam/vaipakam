@@ -1212,6 +1212,12 @@ Salvo que fije partes en el modo avanzado, un solo prestatario toma todo el impo
 
 Bajo la tasa, en los dos formularios de publicación, la oferta de un prestamista y la solicitud de un prestatario, la app muestra la tasa media de los préstamos que empezaron con el mismo par y el mismo plazo en los últimos 30 días, y cuántos fueron. Si tu tasa se aleja más de cinco puntos, te avisa y dice en qué sentido: un prestamista muy por debajo del mercado, o un prestatario muy por encima, publica la oferta que se toma primero cuando las tasas se mueven; en el otro sentido, la oferta puede quedarse sin tomar. Solo avisa; puedes publicar igualmente. Si no hay préstamos recientes con los que comparar, si la garantía es un NFT o si no se puede leer el índice del protocolo, el formulario lo dice en lugar de callar.
 
+<a id="public-queue"></a>
+
+### Redes con cola pública
+
+En Ethereum y BNB Chain (y BNB Testnet), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Una oferta en partes (Avanzado)

@@ -8,7 +8,8 @@
 // signed. The verdicts themselves are covered by the CI-Anvil spec
 // (40-rate-check.spec.ts).
 // Usage: node e2e/live/rate-check-watch.cjs <address>  (screenshots go to
-// $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin)
+// $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin; $LIVE_COLLATERAL
+// picks the collateral token, so a pair with recent loans can be read)
 const { chromium, devices } = require('playwright');
 const { watchedPage, connect } = require('./watch-wallet.cjs');
 const ADDR = process.argv[2];
@@ -25,7 +26,8 @@ async function side(b, opts, label, which) {
   const lendOpts = await lending.locator('option').evaluateAll((os) => os.map((o) => o.value).filter((v) => /^0x/.test(v)));
   const collOpts = await collateral.locator('option').evaluateAll((os) => os.map((o) => o.value).filter((v) => /^0x/.test(v)));
   const l = lendOpts[0];
-  const c = collOpts.find((v) => v !== l);
+  const want = process.env.LIVE_COLLATERAL?.toLowerCase();
+  const c = (want && collOpts.find((v) => v.toLowerCase() === want)) || collOpts.find((v) => v !== l);
   await lending.selectOption(l);
   await collateral.selectOption(c);
   console.log(`===== ${label} ${which}: pair ${l} / ${c}`);

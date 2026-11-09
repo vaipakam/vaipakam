@@ -224,6 +224,7 @@ export function CancelOffer({ id, chain, own, onClose }: CancelOfferProps) {
       )}
       <ActionFlow
         tx={tx}
+        publicQueue
         identity={identity}
         reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
         receipt={review ? cancelReceipt(review, viewer, words, copy) : null}

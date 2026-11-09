@@ -525,6 +525,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       ) : (
         <ActionFlow
           tx={tx}
+          publicQueue
           identity={identity}
           reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
           receipt={review ? postReceipt(review, meta, copy, isAdvanced, settleKeeper) : null}

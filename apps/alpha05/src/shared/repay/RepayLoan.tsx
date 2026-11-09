@@ -303,6 +303,7 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
       )}
       <ActionFlow
         tx={tx}
+        publicQueue
         identity={identity}
         reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
         receipt={review ? repayReceipt(review, account, meta, copy) : null}
