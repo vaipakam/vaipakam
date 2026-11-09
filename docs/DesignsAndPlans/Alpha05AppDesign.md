@@ -1280,12 +1280,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   cancel it and where its return goes. The offer line is one shared helper,
   the same as Home's open offers. Each row opens the offer's own page
   (RB-OFFER-PAGE).
+- **RB-OFFER-GATE** — no part of the offer book is read before a wallet
+  connects (owner decision 2026-11-09): not the book on Offers, not an
+  offer's page, and not the offers or requests Borrow and Lend list for a
+  pair; the pair picker shows only once a wallet is connected on a served
+  network. Until then each of those pages says to connect a wallet, and a
+  wallet on a network the app does not serve is told to switch, with
+  nothing read for it on another network.
 - **RB-OFFER-BOOK** — the offer book (OFF-39, OFF-40, OFF-43) is on the
-  Offers page below the wallet's own offers and is read with or without a
-  wallet: every open offer the index files on the screen's network, newest
-  first, a page at a time ("Show older offers"), in two tabs (loans of a
-  token, NFT rentals), with a side filter and, when a wallet is connected,
-  a switch that hides its own offers. The filters apply to what has been
+  Offers page below the wallet's own offers and is read once a wallet is
+  connected (RB-OFFER-GATE): every open offer the index files on the
+  screen's network, newest first, a page at a time ("Show older offers"),
+  in two tabs (loans of a token, NFT rentals), with a side filter and a
+  switch that hides the wallet's own offers. The filters apply to what has been
   read so far, and the count line says how many that is and whether older
   offers remain. The index only names candidates: no row carries an action,
   and each opens the offer's page, which reads the chain. A lapsed offer the
@@ -1304,7 +1311,7 @@ above. Each resolves here, so a route reviewer needs no private file:
   a bounded interval while visible (RB-REFRESH). Advanced sorting and the
   remaining filters (asset, duration, amount, liquidity) are later work.
 - **RB-OFFER-PAGE** — an offer's page (`/offers/:id`, OFF-41, OFF-45) reads
-  it from the chain at one block, with or without a wallet: the stored
+  it from the chain at one block once a wallet is connected (RB-OFFER-GATE): the stored
   terms, the protocol's state, and the running loan a loan-sale or offset
   offer is tied to. The protocol keeps no count of offers and clears the
   terms of an offer cancelled with nothing filled, so an id with no stored

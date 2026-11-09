@@ -2347,13 +2347,13 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### オファーブック
 
-ブックはインデクサーの `GET /offers/active?chainId&limit=50&before=<offerId>` を読み、オファーIDの新しい順に `nextBefore` でページ送りします。インデクサーは期限切れのオファーを `active` のままにする（チェーン上の期限は遅延評価）ため、`expiresAt` を過ぎた行には期限切れのタグを付けます。`isSaleVehicle`、`isOffsetVehicle`、`refinanceTargetLoanId`（null = 未読）が種類を、`positionFlow.movedSinceOpened` が移動した紐付きポジションを示します（#3205）。各フィールドは厳密に解析し、失敗した行は未読として数えます。タブは `assetType`（0 = ERC-20 ローン、それ以外はレンタル）、サイドは `offerType` です。クエリはプッシュレールで無効化され、表示中は60秒ごとに再読み込みします。インデックスの障害はそのまま伝え、空のブックとしては表示しません。
+ブックはインデクサーの `GET /offers/active?chainId&limit=50&before=<offerId>` を読み、オファーIDの新しい順に `nextBefore` でページ送りします。インデクサーは期限切れのオファーを `active` のままにする（チェーン上の期限は遅延評価）ため、`expiresAt` を過ぎた行には期限切れのタグを付けます。`isSaleVehicle`、`isOffsetVehicle`、`refinanceTargetLoanId`（null = 未読）が種類を、`positionFlow.movedSinceOpened` が移動した紐付きポジションを示します（#3205）。各フィールドは厳密に解析し、失敗した行は未読として数えます。タブは `assetType`（0 = ERC-20 ローン、それ以外はレンタル）、サイドは `offerType` です。クエリはプッシュレールで無効化され、表示中は60秒ごとに再読み込みします。インデックスの障害はそのまま伝え、空のブックとしては表示しません。ブックは対応ネットワークでウォレットを接続した後にのみ要求し、それまではページが接続を求めます。
 
 <a id="offer-detail"></a>
 
 ### オファーのページ
 
-`/offers/:id` は1つのブロックで `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)`、`getOfferLinkedLoanId(id)` を読みます。ウォレット接続時はウォレット経由、それ以外は読み取り専用プロキシ経由です。作成者がゼロなら、記録が削除された（何も成立せずに取り消された）か、書かれたことがないかのどちらかです。プロトコルはオファー数を保持しないため、ページはどちらかを述べません。ゼロ以外の紐付きローンはローン売却（借り手のオファー）またはオフセット（貸し手のオファー）を示し、借り手のオファーの `refinanceTargetLoanId` は借り換えリクエストを示します。受けるときは共有の `acceptOffer` フロー（署名済み `AcceptTerms`、正確な承認、ドライラン、計測結果）を専用のストアキーで実行し、取り消しと片付けは共有の `cancelOffer` フローで行います。レンタル、NFT担保、ローン売却、オフセットは現在のアプリにリンクします。
+`/offers/:id` は1つのブロックで `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)`、`getOfferLinkedLoanId(id)` を読みます。接続したウォレット経由で読み、ウォレットを接続する前は何も読みません。作成者がゼロなら、記録が削除された（何も成立せずに取り消された）か、書かれたことがないかのどちらかです。プロトコルはオファー数を保持しないため、ページはどちらかを述べません。ゼロ以外の紐付きローンはローン売却（借り手のオファー）またはオフセット（貸し手のオファー）を示し、借り手のオファーの `refinanceTargetLoanId` は借り換えリクエストを示します。受けるときは共有の `acceptOffer` フロー（署名済み `AcceptTerms`、正確な承認、ドライラン、計測結果）を専用のストアキーで実行し、取り消しと片付けは共有の `cancelOffer` フローで行います。レンタル、NFT担保、ローン売却、オフセットは現在のアプリにリンクします。
 
 <a id="offer-cancel"></a>
 
