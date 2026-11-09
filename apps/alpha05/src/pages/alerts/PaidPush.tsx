@@ -71,7 +71,9 @@ export function PaidPush({ chain, account }: { chain: SupportedChain; account: H
   const termsGate = useTermsGate(`${CONSENT_KEY}.terms`, chain, own);
   const entry = useTxEntry(CONSENT_KEY);
   const [choice, setChoice] = useStoredValue<ConsentChoice>(`${CONSENT_KEY}:choice`);
-  const [follow, setFollow] = useState<bigint | null>(null);
+  // The cap chosen before the Terms prompt, kept with the prompt's session so
+  // a prompt restored after a remount still opens the agreement it was for.
+  const [follow, setFollow] = useStoredValue<bigint>(`${CONSENT_KEY}:follow:${chain.chainId}:${account.toLowerCase()}`);
   const [capInput, setCapInput] = useState('');
   const [capBad, setCapBad] = useState(false);
   const flowOpen = choice !== null || holdsFlow(entry.phase);

@@ -181,7 +181,7 @@ test('with Terms in force, agreeing asks for them first; withdrawing never does'
   const { page } = await launchWallet('freshBorrower');
   await openPaidPush(page);
   const card = page.getByTestId('paid-push');
-  await expect(card.getByTestId('paid-push-consent')).toContainText('does not cover the fee now, so no fee can be charged until you agree again', { timeout: 30_000 });
+  await expect(card.getByTestId('paid-push-consent')).toContainText('does not cover the fee now, so no fee can be charged at today’s fee. Your agreement stays stored', { timeout: 30_000 });
 
   // Withdrawing opens its review at once: no Terms asked.
   await card.getByTestId('paid-push-withdraw').click();
@@ -193,8 +193,17 @@ test('with Terms in force, agreeing asks for them first; withdrawing never does'
     .first()
     .click();
 
+  // Reached in-app, so going back and forward keeps the app's own state.
+  await page.getByRole('link', { name: 'Vaipakam home' }).click();
+  await page.getByTestId('inbox-bell').click();
+  await expect(page.getByTestId('paid-push-fee')).toContainText('The fee is 0.5 VPFI per loan side', { timeout: 60_000 });
   await card.getByTestId('paid-push-agree').click();
   const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+  await expect(dialog).toContainText('Agreeing to pay for push alerts needs the Terms of Service', { timeout: 30_000 });
+  // Leaving the page mid-acceptance keeps the agreement the prompt was for.
+  await page.goBack();
+  await expect(card).toHaveCount(0);
+  await page.goForward();
   await expect(dialog).toContainText('Agreeing to pay for push alerts needs the Terms of Service', { timeout: 30_000 });
   await dialog.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });

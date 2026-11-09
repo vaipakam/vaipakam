@@ -1667,7 +1667,9 @@ export const copy = {
     none: B('You have not agreed to pay, so no fee can be charged to you on {{chain}}.'),
     agreed: B('You agreed to pay up to {{cap}} VPFI per loan side.'),
     covers: B('The contract judges that this covers the fee now.'),
-    notCovers: A('The contract judges that this does not cover the fee now, so no fee can be charged until you agree again.'),
+    notCovers: A(
+      'The contract judges that this does not cover the fee now, so no fee can be charged at today’s fee. Your agreement stays stored: if the fee falls to your cap or below, it can be charged again without asking you. Withdraw it to stop every charge.',
+    ),
     atCeiling: A('{{ceiling}} VPFI is the protocol’s ceiling, so this agreement accepts any fee governance can set.'),
     rise: A('A fee rise within your cap is charged without asking you again; the cap is your protection.'),
     lowVpfi: A('Your vault holds {{free}} free VPFI, less than the fee, so a paid push alert would find nothing to charge.'),
