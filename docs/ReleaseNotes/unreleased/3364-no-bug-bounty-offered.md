@@ -1,4 +1,4 @@
-## Thread — No bug bounty is offered (PR #<n>)
+## Thread — No bug bounty is offered (PR #3452)
 
 The public website overview (all ten languages), the English whitepaper,
 SECURITY.md and the planning docs no longer mention or promise a bug bounty
