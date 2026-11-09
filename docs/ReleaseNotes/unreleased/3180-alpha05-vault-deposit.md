@@ -1,4 +1,4 @@
-# The next app can deposit into your vault
+## Thread — The next app can deposit into your vault (PR #3372)
 
 The next app's Vault page now takes a deposit: one token or NFT moved from the connected wallet into its own vault, outside any loan. The reader picks a suggested token or test collection, or pastes an address, and whether it is a token, an NFT or a multi-token collection is read from its contract. Then they type the amount, the NFT's token id, or the token id and how many. A Terms of Service version not yet accepted is asked for first, and the Terms are read again just before signing, so switching to a wallet that has not accepted them, or a version published meanwhile, sends the deposit back to the Terms prompt.
 

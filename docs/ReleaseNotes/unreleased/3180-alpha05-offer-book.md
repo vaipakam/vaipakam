@@ -1,4 +1,4 @@
-# The next app shows the offer book and lets you take an offer from it
+## Thread — The next app shows the offer book and lets you take an offer from it (PR #3390)
 
 The Offers page in the next app now carries the offer book under your own offers, readable with or without a wallet. It lists every open offer the protocol's index has recorded on the network, newest first. Older offers load a page at a time. Tabs split loans of a token from NFT rentals, a filter picks lenders' offers or borrowers' requests, and a connected wallet can hide its own offers. The count line says how many offers have been read so far and whether older ones remain, so a filter is never mistaken for the whole book.
 

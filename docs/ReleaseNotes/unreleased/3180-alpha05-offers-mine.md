@@ -1,4 +1,4 @@
-# The next app lists your offers and cancels them
+## Thread — The next app lists your offers and cancels them (PR #3382)
 
 The next app now has an Offers page. It lists every offer the connected wallet created, from the protocol's own record for that wallet, together with every offer whose position token the wallet holds now. Each shows the state the protocol reports: open, filled, sold, expired or cancelled. A borrowing request whose collateral sold through its marketplace listing before anyone accepted it reads as sold: no loan opened. Filters by state carry their counts. When the protocol cancels an offer that nothing filled, it clears the offer's terms, so the page shows only its number and state rather than rebuilding them. An offer held by one wallet but created by another says who may cancel it and where its return goes.
 

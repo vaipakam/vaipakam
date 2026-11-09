@@ -1,4 +1,4 @@
-# The next app collects interest owed from a position you sold
+## Thread — The next app collects interest owed from a position you sold (PR #3335)
 
 Claims in the next app now has an "Interest from positions you sold" section. A lender who sells a position keeps the interest they earned while holding it, and were not yet paid, as a claim on the loan. The section lists every loan where this wallet holds such a claim or has money waiting from one. It finds them in the index. When the index cannot list them, the section says so and never shows an empty list. A loan can then be looked up by its number, which reads the chain alone, so a seller can always reach their money.
 

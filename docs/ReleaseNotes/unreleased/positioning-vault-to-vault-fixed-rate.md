@@ -1,4 +1,4 @@
-## Thread — Vault-to-vault, fixed-rate positioning (PR #<n>)
+## Thread — Vault-to-vault, fixed-rate positioning (PR #3317)
 
 The website, the new app (alpha05), the whitepaper and the functional spec now
 describe Vaipakam as non-custodial, vault-to-vault lending and borrowing at a

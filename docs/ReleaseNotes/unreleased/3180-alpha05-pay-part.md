@@ -1,4 +1,4 @@
-# The next app pays part of a loan
+## Thread — The next app pays part of a loan (PR #3310)
 
 A running loan's page in the next app now offers its borrower a way to pay part of the loan. Only the holder of the borrower position may do this, so the action is shown to that holder alone. It is held, with the reason, when the loan's terms do not allow paying part (the lender's choice when the loan opened), once the grace period has ended, while a swap-to-repay order is pending, while a refinance request on the loan is live, and while an offset offer on the borrower position is live, because that offer was made for the loan as it stands. A loan in fallback can only be repaid in full, which cures it, and a rental cannot be paid in part on this page yet. The protocol pause never holds it.
 

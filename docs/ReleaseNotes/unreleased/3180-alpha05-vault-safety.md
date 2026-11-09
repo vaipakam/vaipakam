@@ -1,4 +1,4 @@
-# The next app's Vault page gets an account safety card
+## Thread — The next app's Vault page gets an account safety card (PR #3376)
 
 The next app's Vault page now has an Account safety card. It shows whether the wallet's account runs protected mode, its delay, and whether a secondary signer must approve each release. It also shows whether position NFTs are protected, how many payouts wait in the queue, the lock (since when and by whom), and every change still pending with its time. The account's own payout queue appears under the card. It is the same queue the Claims page shows.
 

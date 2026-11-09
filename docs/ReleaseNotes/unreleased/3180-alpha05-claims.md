@@ -1,4 +1,4 @@
-# The next app collects loan payouts
+## Thread — The next app collects loan payouts (PR #3324)
 
 The next app now has a Claims page, and an ended loan's page has a "Your payout" section. Once a loan is repaid, defaulted or matched, the holder of each position collects what the protocol recorded for that side: the lender's principal and interest, or what a default recovered, and the borrower's collateral back or what was left over. The payout belongs to whoever holds the position now, so a position bought from someone else pays its new holder. Each side is offered only to its holder, and its closed reason is stated: a pause, a loan still running or already settled, a loan in fallback (which pays the borrower only after the lender has collected or the loan is cured), or a side already collected or with nothing recorded.
 

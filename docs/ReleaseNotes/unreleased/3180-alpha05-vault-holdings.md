@@ -1,4 +1,4 @@
-# The next app shows what your vault holds and can create it
+## Thread — The next app shows what your vault holds and can create it (PR #3352)
 
 Until now the next app's Vault page only said it was not built yet and pointed to the current app. It now shows the connected wallet's own vault on its network: the full vault address with an explorer link, and that the vault is a contract kept for this wallet alone, with nothing pooled with anyone else's, which assets leave only by the protocol's rules.
 

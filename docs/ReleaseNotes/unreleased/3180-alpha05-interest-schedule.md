@@ -1,4 +1,4 @@
-# The next app shows a loan's interest schedule
+## Thread — The next app shows a loan's interest schedule (PR #3309)
 
 A running loan that pays interest on a schedule (every month, quarter, six months or year) now shows its current period on its page in the next app: when the period ends, when its grace period ends, the interest it owes, what has been paid toward it and what is still owed. Every figure is the protocol's own settlement preview. The interest for a period is figured on the principal and rate as they stand now, so the page says a partial repayment lowers it.
 

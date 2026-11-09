@@ -1,4 +1,4 @@
-# The next app takes collateral back from a loan
+## Thread — The next app takes collateral back from a loan (PR #3322)
 
 A running loan's page in the next app now offers its borrower a way to take back collateral above what the loan needs. Only the holder of the borrower position may do this, so the action is shown to that holder alone. It is held, with the reason, while the protocol is paused, while a swap-to-repay order on the borrower position is pending, while a refinance request for the loan stands, when the protocol does not price the collateral token now, and when nothing can be taken back because all the collateral is needed to keep the loan within the protocol's limits. A loan in fallback is not running, so nothing is taken back from it.
 

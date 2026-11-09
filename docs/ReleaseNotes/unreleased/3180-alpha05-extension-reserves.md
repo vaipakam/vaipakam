@@ -1,4 +1,4 @@
-# The next app lists extension reserves and takes them back
+## Thread — The next app lists extension reserves and takes them back (PR #3342)
 
 A borrower can set aside the loan's token in their own vault for the loan's extensions. An extension, the keeper's or the borrower's own, draws on that reserve first. The reserve stays the depositor's: it is locked only for those charges, and they can take back what is unused whatever the loan's state. Until now the next app only said that reserves were not on its Claims page yet, and pointed to the current app.
 

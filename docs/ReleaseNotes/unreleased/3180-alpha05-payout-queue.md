@@ -1,4 +1,4 @@
-# The next app shows and acts on the protected-account payout queue
+## Thread — The next app shows and acts on the protected-account payout queue (PR #3330)
 
 Claims in the next app now has a "Payouts waiting in your queue" section. When protected mode is on, everything leaving the account's vault for its wallet waits out the account's delay. The section lists each waiting payout in the order it falls due by the chain's clock. Each row leads with its request code, the same six characters every alert prints, so a message can be matched to a request. It states what the payout pays, where it goes (your wallet, the account's wallet, or an allowlisted address), when it can be released, and whether a secondary signer has approved it where the account requires that. The account's delay, whether the keeper service releases due payouts on this network (or that this is not known), and any pause are stated above the rows. A wallet without protected mode is told so. A list or row that could not be read is said so, never shown as empty.
 

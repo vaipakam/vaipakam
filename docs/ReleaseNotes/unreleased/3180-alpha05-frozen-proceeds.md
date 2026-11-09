@@ -1,4 +1,4 @@
-# The next app states payouts frozen for a flagged wallet
+## Thread — The next app states payouts frozen for a flagged wallet (PR #3341)
 
 When the sanctions screen flags a wallet, the protocol takes nothing it is owed and never stops a loan from closing. A repayment, a default or a liquidation still completes, and the other party receives what its side recovers. The flagged wallet's share is parked in a vault, locked, and released once the wallet is de-listed. The next app now says this wherever that money is.
 

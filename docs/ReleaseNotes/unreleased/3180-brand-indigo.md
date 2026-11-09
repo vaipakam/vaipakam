@@ -1,4 +1,4 @@
-# The website and the next app go back to indigo
+## Thread — The website and the next app go back to indigo (PR #3316)
 
 The website and the next connected app share one brand palette, and that palette is indigo again. It had been the logo's navy and green since 2026-11-05; the owner found the earlier indigo easier on the eyes. Buttons, links, the active navigation item, tinted chips and the keyboard focus ring take the indigo in both light and dark themes, from the one shared palette file, so the two surfaces still match. The logo keeps its own navy and green.
 

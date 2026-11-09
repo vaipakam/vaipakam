@@ -1,4 +1,4 @@
-# The next app states a pause and its escape route on the Vault page
+## Thread — The next app states a pause and its escape route on the Vault page (PR #3376)
 
 While the protocol is paused, the next app's Vault page now says so at the top. Withdrawals are closed, while full and partial repayment and adding collateral stay open. Under an administrative pause, the page also says when the pause's escape route opens. That time comes from the protocol itself, is counted down against the chain's clock, and is never assumed. An automatic pause, or a protocol not yet launched, schedules no escape route, and the page says none is scheduled.
 

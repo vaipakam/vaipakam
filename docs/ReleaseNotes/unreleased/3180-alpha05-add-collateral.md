@@ -1,4 +1,4 @@
-# The next app adds collateral to a loan
+## Thread — The next app adds collateral to a loan (PR #3314)
 
 A running loan's page in the next app now offers its borrower a way to add collateral. Only the holder of the borrower position may do this, so the action is shown to that holder alone. It is held, with the reason, while a swap-to-repay order on the borrower position is pending, when governance has paused the collateral token, and when the protocol does not price the collateral token now; the two token checks are read live, not from the loan's class when it opened. A rental has no collateral to add to. The protocol pause never holds a top-up, since a borrower can always lower their risk, and the review says so in every case.
 

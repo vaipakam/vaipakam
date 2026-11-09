@@ -1,4 +1,4 @@
-# The next app collects everything ready in one transaction
+## Thread — The next app collects everything ready in one transaction (PR #3343)
 
 Claims in the next app now opens with Claim everything. It lists every payout the connected wallet can collect right now, from the list the rulebook sets: loan payouts on ended loans whose position the wallet holds, interaction rewards when the rewards claim can complete (or a held reward the sanctions screen has released), the un-lent capital of the wallet's standing offers, free VPFI in its vault, and withdrawable payroll for a payee. Interest owed from a position the wallet sold is still collected on its own, and so is a lender claim on a loan in fallback, because that claim settles the fallback before it knows what it pays. A source or a loan that could not be read is named as left out rather than dropped.
 

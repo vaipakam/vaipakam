@@ -1,4 +1,4 @@
-# The next app repays a loan in full
+## Thread — The next app repays a loan in full (PR #3305)
 
 A running loan's page in the next app now offers to repay it in full. Anyone may repay a loan except its lender, so the action is shown to the borrower and to any other wallet, and left out for a reader who holds only the lender side. It is held, with the reason, once the grace period has ended (the loan then goes to default), while a swap-to-repay order is pending on the borrower position, and for a rental, which this page cannot repay yet. A lender's sale listing, a refinance request and the protocol pause never hold it. A loan in fallback stays repayable, since repaying cures it.
 

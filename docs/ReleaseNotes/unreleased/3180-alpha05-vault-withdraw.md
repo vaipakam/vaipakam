@@ -1,4 +1,4 @@
-# The next app can withdraw from your vault
+## Thread — The next app can withdraw from your vault (PR #3375)
 
 The next app's Vault page now takes a withdrawal: what is free in the connected wallet's own vault goes back to that wallet. Free means no loan, offer, claim, standing offer or queued payout holds it. The protocol's own figure decides, and the form shows that figure, reads it again each block and refuses more. Each asset with something free has a Withdraw button. An NFT the deposit record names only by its collection is withdrawn by typing its token id under that collection.
 
