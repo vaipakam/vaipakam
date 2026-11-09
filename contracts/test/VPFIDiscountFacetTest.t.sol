@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -996,10 +997,13 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale still closed the loan");
         vm.clearMockedCalls();
 
+        uint256 ownedBefore = _owned(borrower, mockERC20);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        // #3205 part 2 — the claim pays the borrower's vault, as free money.
+        assertEq(IERC20(mockERC20).balanceOf(borrower), walletBefore, "the claim pays the vault, not the wallet");
         assertEq(
-            IERC20(mockERC20).balanceOf(borrower) - walletBefore,
+            _owned(borrower, mockERC20) - ownedBefore,
             5 ether,
             "the claim paid the held remainder"
         );
@@ -1161,6 +1165,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     {
         proceeds = _saleFloor(loanId) + extra;
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
+        _openSaleRoute(loanId);
         vm.prank(executor);
         PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId, proceeds);
     }
@@ -1452,8 +1457,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
 
         uint256 t0 = IERC20(mockERC20).balanceOf(treasuryRecipient);
-        uint256 l0 = IERC20(mockERC20).balanceOf(lender);
-        uint256 h0 = IERC20(mockERC20).balanceOf(borrower);
+        uint256 l0 = _owned(lender, mockERC20);
+        uint256 h0 = _owned(borrower, mockERC20);
 
         if (offerKeyed) {
             // The borrower's parallel-sale offer, accepted into this loan.
@@ -1471,18 +1476,19 @@ contract VPFIDiscountFacetTest is SetupTest {
                 saleOfferId, mockERC20, proceeds
             );
         } else {
+            _openSaleRoute(loanId);
             vm.prank(executor);
             PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId, proceeds);
         }
 
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale repaid the loan");
         treasuryGot = IERC20(mockERC20).balanceOf(treasuryRecipient) - t0;
-        holderGot = IERC20(mockERC20).balanceOf(borrower) - h0;
+        holderGot = _owned(borrower, mockERC20) - h0;
         // The lender's leg waits for the claim, as after a repayment; the
         // claim settles the loan (the borrower side has nothing left).
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
-        lenderGot = IERC20(mockERC20).balanceOf(lender) - l0;
+        lenderGot = _owned(lender, mockERC20) - l0;
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Settled), "the lender's claim settled it");
     }
 
@@ -1533,6 +1539,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 proceeds = pctx.lenderLeg + pctx.treasuryLeg + _SALE_EXTRA;
         ERC20Mock(mockERC20).mint(address(diamond), proceeds);
 
+        _openSaleRoute(loanId);
         vm.expectEmit(true, true, false, true, address(diamond));
         emit PrepayListingFacet.CollateralSaleProceedsSplit(
             loanId, 0, mockERC20, proceeds,
@@ -1836,6 +1843,16 @@ contract VPFIDiscountFacetTest is SetupTest {
             fee,
             _discountedFee(baseFee, 1000),
             "untracked-dust Full lender falls back to +10%, no underflow revert"
+        );
+    }
+
+    /// @dev The settlement completes the borrower position's
+    ///      PrepayCollateralListing route (#3318): a listing opens it, so a
+    ///      fixture that settles a sale directly opens it first.
+    function _openSaleRoute(uint256 loanId) internal {
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId,
+            LibPositionNFT.RouteReason.PrepayCollateralListing
         );
     }
 }

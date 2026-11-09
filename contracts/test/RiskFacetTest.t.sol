@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -537,6 +538,7 @@ contract RiskFacetTest is Test {
 
         // Init vault factory with impl
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
@@ -3532,6 +3534,8 @@ contract RiskFacetTest is Test {
         // #3205 part 2 — the claim pays the lender's VAULT.
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
         uint256 lenderBefore = IERC20(mockERC20).balanceOf(lenderVault);
+        uint256 lenderWalletBefore = IERC20(mockERC20).balanceOf(lender);
+        uint256 lenderFreeBefore = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0);
         vm.prank(lender);
         // Phase 7a: auto-retry was removed from single-arg claimAsLender;
         // tests asserting retry success use the explicit overload that
@@ -3545,6 +3549,12 @@ contract RiskFacetTest is Test {
             IERC20(mockERC20).balanceOf(lenderVault) - lenderBefore,
             1030 ether,
             "lender principal-asset proceeds, in the lender's vault"
+        );
+        assertEq(IERC20(mockERC20).balanceOf(lender), lenderWalletBefore, "the retry pays the vault, not the wallet");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0) - lenderFreeBefore,
+            1030 ether,
+            "as the lender's free money"
         );
         assertEq(
             vaultCol0 - IERC20(mockCollateralERC20).balanceOf(borrowerVault),

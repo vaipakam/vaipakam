@@ -6,6 +6,7 @@ import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 
 interface ITreasuryRead {
     function getTreasury() external view returns (address);
+    function getBackstopVault() external view returns (address);
 }
 
 /// @title  MockProtocolRegistry
@@ -60,6 +61,13 @@ contract MockProtocolRegistry is IProtocolRegistryReader {
             } catch {
                 a = diamond;
             }
+        }
+        // BACKSTOP likewise answers with the Diamond's configured backstop
+        // account when unset (on a real chain the same change writes both).
+        if (a == address(0) && key == RegistryKeys.BACKSTOP && diamond != address(0)) {
+            try ITreasuryRead(diamond).getBackstopVault() returns (address b) {
+                a = b;
+            } catch {}
         }
     }
 

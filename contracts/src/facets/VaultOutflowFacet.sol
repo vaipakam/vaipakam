@@ -437,14 +437,13 @@ contract VaultOutflowFacet is IVaipakamErrors {
     ///      liens on it). Terminal paths release their lien before paying.
     function _assertFree(address user, address proxy, VaultOutflowTypes.Outflow memory o) private view {
         uint256 tracked = LibVaipakam.trackedHolding(user, o.asset, o.tokenId);
-        uint256 raw;
-        if (o.kind == VaultOutflowTypes.AssetKind.ERC20) {
-            raw = IERC20(o.asset).balanceOf(proxy);
-        } else if (o.kind == VaultOutflowTypes.AssetKind.ERC1155) {
-            raw = IERC1155(o.asset).balanceOf(proxy, o.tokenId);
-        } else {
-            raw = tracked;
-        }
+        // The raw-balance cap guards ERC-20 balance drift (a rebase, a fee):
+        // the lien must never cover tokens that are no longer there. NFTs do
+        // not drift, and an ERC-1155 lot moved into this vault's own listing
+        // escrow is still this vault's and still under its lien: capping at
+        // the vault's raw balance would count that lot twice and refuse
+        // another loan's release of the same id (#3387 review).
+        uint256 raw = o.kind == VaultOutflowTypes.AssetKind.ERC20 ? IERC20(o.asset).balanceOf(proxy) : tracked;
         uint256 free = LibEncumbrance.freeBalance(user, o.asset, o.tokenId, tracked < raw ? tracked : raw);
         if (o.amount > free) revert WithdrawWouldUnderflowLien(user, o.asset, o.tokenId, o.amount, free);
     }

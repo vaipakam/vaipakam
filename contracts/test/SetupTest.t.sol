@@ -42,6 +42,7 @@ import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet
 import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {IERC20 as IERC20Owned} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
@@ -440,6 +441,16 @@ contract SetupTest is Test {
     ///      stack limit in some compile units (#2876).
     function _applyDiamondCut(IDiamondCut.FacetCut[] memory cuts) private {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+    }
+
+    /// @dev #3205 part 2 — what `who` now owns of `token`: its wallet plus the
+    ///      free money credited to its vault. Claims, the lender share of an
+    ///      open loan's repayment and new principal land in the payee's vault
+    ///      as free money (withdrawable at once), while incentives still pay a
+    ///      wallet, so a "who received it" assertion reads both.
+    function _owned(address who, address token) internal view returns (uint256) {
+        return IERC20Owned(token).balanceOf(who)
+            + VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
     }
 
     function setupHelper() public {

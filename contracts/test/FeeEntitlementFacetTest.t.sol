@@ -1571,7 +1571,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // and avoids pinning the quoted amount.
         vm.expectCall(
             address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(holder, VaultOutflowTypes.AssetKind.ERC20, address(vpfiToken)))
+            abi.encodePacked(VaultOutflowFacet.vaultOutflowArgs.selector, abi.encode(holder, VaultOutflowTypes.AssetKind.ERC20, address(vpfiToken)))
         );
 
         uint256 holderVpfiBefore = vpfiToken.balanceOf(_vault(holder));

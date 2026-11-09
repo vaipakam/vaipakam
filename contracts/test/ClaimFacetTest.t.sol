@@ -461,6 +461,7 @@ contract ClaimFacetTest is Test {
         (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
 
         uint256 lenderBalBefore = IERC20(mockERC20).balanceOf(lender);
+        uint256 lenderFreeBefore = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0);
 
         vm.prank(lender);
         vm.expectEmit(true, true, false, true);
@@ -470,6 +471,11 @@ contract ClaimFacetTest is Test {
         // #3205 part 2 — the claim credits the lender's vault as free money
         // (nothing reaches the wallet yet); the lender withdraws it.
         assertEq(IERC20(mockERC20).balanceOf(lender), lenderBalBefore, "the claim pays the vault, not the wallet");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0) - lenderFreeBefore,
+            claimAmount,
+            "the lender's vault free balance rose by the claim"
+        );
         assertEq(_withdrawToWallet(lender, mockERC20, claimAmount), claimAmount, "and the lender withdraws it");
 
         // Claim marked as done
@@ -517,6 +523,8 @@ contract ClaimFacetTest is Test {
         (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
 
         uint256 borrowerBalBefore = IERC20(mockCollateralERC20).balanceOf(borrower);
+        uint256 borrowerFreeBefore =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0);
 
         vm.prank(borrower);
         vm.expectEmit(true, true, false, true);
@@ -524,6 +532,11 @@ contract ClaimFacetTest is Test {
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
         assertEq(IERC20(mockCollateralERC20).balanceOf(borrower), borrowerBalBefore, "the claim pays the vault, not the wallet");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0) - borrowerFreeBefore,
+            claimAmount,
+            "the borrower's vault free balance rose by the claim"
+        );
         assertEq(_withdrawToWallet(borrower, mockCollateralERC20, claimAmount), claimAmount, "and the borrower withdraws it");
 
         (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);

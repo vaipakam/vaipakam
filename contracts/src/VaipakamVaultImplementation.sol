@@ -406,6 +406,14 @@ contract VaipakamVaultImplementation is
     }
     OpenGrant private _openGrant;
 
+    /// @dev Set by {grantAllowance} for the rest of its transaction: within
+    ///      the transaction that opened a grant only the Diamond may close it,
+    ///      so a party reentering during the fill (a Seaport order's own
+    ///      recipient, say) cannot close it first and leave the Diamond's
+    ///      close nothing to book. Transient: no storage slot, gone at the end
+    ///      of the transaction, after which anyone may close a leftover grant.
+    bool private transient _grantOpenedThisTx;
+
     /// @dev #3205 part 2 — the listing escrows this vault created, by address:
     ///      the listing key each one serves (0 = not one of this vault's).
     mapping(address => bytes32) private _escrowKey;
@@ -503,6 +511,7 @@ contract VaipakamVaultImplementation is
             g.spender == address(0) || g.kind == VaultOutflowTypes.AssetKind.ERC1155 || !_inRegistrySet(set, g.spender)
         ) revert GrantRefused(g.class_, g.spender);
         _openGrant = OpenGrant({kind: g.kind, asset: g.asset, tokenId: g.tokenId, amount: g.amount, spender: g.spender, ref: g.ref});
+        _grantOpenedThisTx = true;
         if (g.kind == VaultOutflowTypes.AssetKind.ERC20) {
             IERC20(g.asset).forceApprove(g.spender, g.amount);
         } else {
@@ -513,8 +522,9 @@ contract VaipakamVaultImplementation is
 
     /**
      * @notice Close the open allowance, if any, and report what the spender
-     *         took. Anyone may call it: it can only reduce what the vault
-     *         exposes (§3.5 rule 2).
+     *         took. Within the transaction that opened it only the Diamond
+     *         may (it books what was taken); afterwards anyone may, since a
+     *         leftover grant can only be reduced (§3.5 rule 2).
      * @dev    Consumption is measured from the approval itself, never from the
      *         vault's balance, so a donation in the meantime cannot mask a
      *         spend. ERC-721: if the vault no longer owns the token the token
@@ -526,6 +536,7 @@ contract VaipakamVaultImplementation is
     function closeGrant() external returns (uint256 consumed) {
         OpenGrant memory g = _openGrant;
         if (g.spender == address(0)) return 0;
+        if (_grantOpenedThisTx && msg.sender != diamond) revert NotAuthorized();
         delete _openGrant;
         if (g.kind == VaultOutflowTypes.AssetKind.ERC20) {
             uint256 left = IERC20(g.asset).allowance(address(this), g.spender);

@@ -681,6 +681,30 @@ coordinator's approval of each.
     VaultOutflowFacet about 9,800, OfferMatchFacet 24,298, PrecloseFacet
     about 23,938, AutoLifecycleFacet 24,442 and EncumbranceMutateFacet 24,392.
     The last two are the next to split (#3385).
+12. **What the adversarial self-review changed** (before Codex round 1).
+    - **The free-balance check reads the tracked holding for NFTs.** An
+      ERC-1155 lot moved into this vault's own listing escrow is still this
+      vault's and still under its lien. Capping the check at the vault's raw
+      balance counted that lot twice and refused another loan's release of
+      the same token id while the listing was open. The raw-balance cap now
+      applies to ERC-20s only, where it guards balance drift.
+    - **Only the Diamond may close a grant in the transaction that opened
+      it.** A party reentering during a fill could otherwise close an
+      ERC-721 listing grant first, leaving the Diamond's close nothing to
+      book. A transient flag in the vault code enforces this. A grant left
+      from an earlier transaction may still be closed by anyone.
+    - **A caller-named recipient may never be the paying vault itself.**
+      Owner-allowlisted, incentive and liquidation-buyer outflows naming the
+      paying vault would have debited the ledger for tokens that never left.
+      They are refused. The derived classes keep the no-move self case,
+      which books both sides.
+    - **Stated limits.** The vault's own genuine-vault test compares code
+      hashes, and a BeaconProxy anyone deploys with a forged owner record
+      passes it. That isn't exploitable while layer 1 derives every such
+      payee from Diamond storage; CREATE2 vaults close it (#3393). And
+      because only one grant may be open at a time, two ERC-721 listings from
+      one vault can't be filled in a single Seaport batch. That is a denial
+      of service only, with no funds at risk.
 
 ## 9. Order of work
 

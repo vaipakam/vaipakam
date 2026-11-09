@@ -17,6 +17,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -326,6 +327,7 @@ contract RepayFacetTest is Test {
         // Init vault factory with impl
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         // vm.prank(address(diamond));
@@ -694,6 +696,11 @@ contract RepayFacetTest is Test {
             "current holder's vault receives the daily rental fee"
         );
         assertEq(ERC20Mock(mockERC20).balanceOf(newHolder), newHolderBefore, "nothing reaches the holder's wallet directly");
+        assertGt(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(newHolder, mockERC20, 0),
+            0,
+            "the fee is the holder's free money in its vault"
+        );
         assertEq(
             ERC20Mock(mockERC20).balanceOf(lender),
             storedLenderBefore,

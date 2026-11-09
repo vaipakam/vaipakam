@@ -220,10 +220,10 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         vm.expectRevert(abi.encodeWithSelector(VPFIDiscountFacet.VPFIEncumberedByActiveLoan.selector, d + 1, d));
         VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(d + 1);
 
-        uint256 wallet0 = _fcBal(vpfi, fcBorrower);
+        uint256 wallet0 = IERC20(vpfi).balanceOf(fcBorrower);
         vm.prank(fcBorrower);
         VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(d);
-        assertEq(_fcBal(vpfi, fcBorrower) - wallet0, d, "the free deposit is withdrawable");
+        assertEq(IERC20(vpfi).balanceOf(fcBorrower) - wallet0, d, "the free deposit is withdrawable");
         assertEq(_fcRow(id), FC_COLLATERAL, "the custody row is untouched");
         assertEq(_fcLien(id), FC_COLLATERAL, "and so is its lien");
     }
@@ -598,11 +598,12 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcRow(id), 0, "the row is spent");
         assertEq(_fcTracked(fcBorrower, vpfi), u + b, "the vault keeps the free deposit and the slice");
 
-        address sink = makeAddr("fcBackstopSweepSink");
+        // #3205 part 2 — the sweep pays only the treasury (no free `to`).
         vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
         BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l + 1);
+        uint256 treasuryBeforeSweep = IERC20(vpfi).balanceOf(treasuryEOA);
         BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l);
-        assertEq(_fcBal(vpfi, sink), l, "warehoused exactly the lender slice");
+        assertEq(IERC20(vpfi).balanceOf(treasuryEOA) - treasuryBeforeSweep, l, "warehoused exactly the lender slice, swept to the treasury");
     }
 
     // =====================================================================
@@ -1276,8 +1277,11 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         return VaultFactoryFacet(address(diamond)).getUserVaultAddress(who);
     }
 
+    /// @dev What `who` owns of `token`: its balance plus, since #3205 part 2,
+    ///      the free money a claim credited to its vault (a vault address has
+    ///      no such credit, so a vault read is its plain balance).
     function _fcBal(address token, address who) internal view returns (uint256) {
-        return IERC20(token).balanceOf(who);
+        return _owned(who, token);
     }
 
     function _fcLoan(uint256 loanId) internal view returns (LibVaipakam.Loan memory) {

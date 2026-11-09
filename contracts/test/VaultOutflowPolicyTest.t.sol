@@ -244,9 +244,23 @@ contract VaultOutflowPolicyTest is SetupTest {
         _grant(stranger, VaultOutflowTypes.GrantClass.OrderTaker, 1 ether);
     }
 
-    function test_anOpenGrantBlocksEveryOtherOutflow_andAnyoneClosesIt() public {
+    /// @notice One fill, one transaction: the grant exposes exactly its
+    ///         amount, every other outflow is refused while it is open, a
+    ///         party reentering during the fill cannot close it, and the
+    ///         Diamond's close measures what the spender took. Driven inside
+    ///         ONE call (an external self-call), so the transaction-scoped
+    ///         rule holds on every forge version (CLAUDE.md: transient storage
+    ///         does not survive between a test's top-level calls on forge 1.8+).
+    function test_anOpenGrantBlocksEveryOtherOutflow_andOnlyTheDiamondClosesItInItsTx() public {
         address taker = makeAddr("orderProtocol");
         registry.setMember(RegistryKeys.SWAP_ADAPTERS, taker, true);
+        this.oneFill(taker);
+        // After the fill the vault is open for outflows again.
+        _run(0, alice, _outflow(VaultOutflowTypes.OutflowClass.Owner, alice, 1 ether));
+    }
+
+    /// @dev The fill, as one transaction (called through `this`).
+    function oneFill(address taker) external {
         _grant(taker, VaultOutflowTypes.GrantClass.OrderTaker, 4 ether);
         address v = _vault(alice);
         assertEq(token.allowance(v, taker), 4 ether, "the exact amount is approved");
@@ -258,14 +272,16 @@ contract VaultOutflowPolicyTest is SetupTest {
         vm.prank(taker);
         token.transferFrom(v, taker, 3 ether);
 
-        // Anyone may close it: it can only reduce what the vault exposes.
+        // A reentering party cannot close the grant inside its transaction.
         vm.prank(stranger);
-        uint256 consumed = VaipakamVaultImplementation(v).closeGrant();
+        vm.expectRevert(VaipakamVaultImplementation.NotAuthorized.selector);
+        VaipakamVaultImplementation(v).closeGrant();
+
+        // The Diamond closes it and books what the spender took.
+        vm.prank(address(diamond));
+        uint256 consumed = VaultOutflowFacet(address(diamond)).vaultCloseGrant(alice);
         assertEq(consumed, 3 ether, "what the spender took, measured from the approval");
         assertEq(token.allowance(v, taker), 0, "nothing left standing");
-
-        // And the vault is open for outflows again.
-        _run(0, alice, _outflow(VaultOutflowTypes.OutflowClass.Owner, alice, 1 ether));
     }
 
     // ─── The ERC-1155 listing escrow ─────────────────────────────────────

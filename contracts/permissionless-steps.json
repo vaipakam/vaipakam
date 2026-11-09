@@ -283,6 +283,14 @@
       "class": "user",
       "why": "the borrower hands over its own loan"
     },
+    "PrepayListingFacet.executorCloseListingGrant(uint256,uint96)": {
+      "class": "gated",
+      "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender)"
+    },
+    "PrepayListingFacet.executorOpenListingGrant(uint256,uint96,address)": {
+      "class": "gated",
+      "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender); the vault then refuses a conduit outside the registry's CONDUITS set"
+    },
     "ProfileFacet.approveKeeper(address,uint16)": {
       "class": "user",
       "why": "the user's own keeper settings"
@@ -720,10 +728,10 @@
       "class": "user",
       "why": "the vault owner's own risk setting"
     },
-    "RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted(uint256,address,bytes)": {
+    "RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted(uint256,bytes)": {
       "class": "alternative",
       "of": "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])",
-      "why": "the flash-loan discount route; the keeper reaches it only through its own FlashLoanLiquidator (liquidateViaAaveV3 / liquidateViaBalancerV2), on the chains DISCOUNT_PATH_CHAIN_IDS lists, which ships empty (#2697)"
+      "why": "the flash-loan discount route; the keeper reaches it only through its own FlashLoanLiquidator (liquidateViaAaveV3 / liquidateViaBalancerV2), on the chains DISCOUNT_PATH_CHAIN_IDS lists, which ships empty (#2697); since #3205 part 2 the seized collateral pays only the liquidator that called (msg.sender), with no recipient argument"
     },
     "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",

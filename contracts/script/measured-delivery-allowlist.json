@@ -22,9 +22,9 @@
       "reason": "Vault primitive with no caller in src/: every deposit into a vault is a LibDelivery move by the Diamond straight to the vault's address. Owner-only."
     },
     {
-      "site": "src/VaipakamVaultImplementation.sol:VaipakamVaultImplementation.withdrawERC20",
+      "site": "src/VaipakamVaultImplementation.sol:VaipakamVaultImplementation.transferOut",
       "moves": 1,
-      "reason": "Vault primitive behind its Diamond-only gate. Its callers, VaultFactoryFacet.vaultWithdrawERC20 and the stuck-token recovery, measure what the recipient received and refuse a move that cost the vault more than it sent."
+      "reason": "The vault's single door out (#3205 part 2), callable only by the Diamond. Its one caller, the policy host VaultOutflowFacet (_transfer), measures the vault's balance and the recipient's balance around the call: it books what the recipient received and refuses a move that cost the vault more than it sent."
     },
     {
       "site": "src/adapters/AggregatorAdapterBase.sol:AggregatorAdapterBase._returnUnspent",
