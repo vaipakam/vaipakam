@@ -1772,7 +1772,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // transfer check and royalty). The token's metadata (tokenURI,
         // contractURI and their image / external_url configuration) is cut
         // to VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -1786,6 +1786,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = VaipakamNFTFacet.isPositionRetired.selector;
         s[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
+        // #3336 — the dead-route read the keeper's teardown sweep uses.
+        s[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -1964,7 +1966,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      separate facet — frontend and keeper-bot bindings
     ///      unaffected by the move.
     function _getOfferCancelSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = OfferCancelFacet.cancelOffer.selector;
         s[1] = OfferCancelFacet.getCompatibleOffers.selector;
         s[2] = OfferCancelFacet.getOffer.selector;
@@ -1973,6 +1975,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
         // #951 v2 — permissionless stale-sale-listing teardown.
         s[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
+        // #3336 — the dead-vehicle read the keeper's teardown sweep uses.
+        s[6] = OfferCancelFacet.isOfferRouteDead.selector;
     }
 
     /// @dev OfferMutateFacet — #193 in-place modification surface

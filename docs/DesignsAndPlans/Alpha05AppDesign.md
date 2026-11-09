@@ -1294,12 +1294,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   cancel it and where its return goes. The offer line is one shared helper,
   the same as Home's open offers. Each row opens the offer's own page
   (RB-OFFER-PAGE).
+- **RB-OFFER-GATE** — no part of the offer book is read before a wallet
+  connects (owner decision 2026-11-09): not the book on Offers, not an
+  offer's page, and not the offers or requests Borrow and Lend list for a
+  pair; the pair picker shows only once a wallet is connected on a served
+  network. Until then each of those pages says to connect a wallet, and a
+  wallet on a network the app does not serve is told to switch, with
+  nothing read for it on another network.
 - **RB-OFFER-BOOK** — the offer book (OFF-39, OFF-40, OFF-43) is on the
-  Offers page below the wallet's own offers and is read with or without a
-  wallet: every open offer the index files on the screen's network, newest
-  first, a page at a time ("Show older offers"), in two tabs (loans of a
-  token, NFT rentals), with a side filter and, when a wallet is connected,
-  a switch that hides its own offers. The filters apply to what has been
+  Offers page below the wallet's own offers and is read once a wallet is
+  connected (RB-OFFER-GATE): every open offer the index files on the
+  screen's network, newest first, a page at a time ("Show older offers"),
+  in two tabs (loans of a token, NFT rentals), with a side filter and a
+  switch that hides the wallet's own offers. The filters apply to what has been
   read so far, and the count line says how many that is and whether older
   offers remain. The index only names candidates: no row carries an action,
   and each opens the offer's page, which reads the chain. A lapsed offer the
@@ -1318,7 +1325,7 @@ above. Each resolves here, so a route reviewer needs no private file:
   a bounded interval while visible (RB-REFRESH). Advanced sorting and the
   remaining filters (asset, duration, amount, liquidity) are later work.
 - **RB-OFFER-PAGE** — an offer's page (`/offers/:id`, OFF-41, OFF-45) reads
-  it from the chain at one block, with or without a wallet: the stored
+  it from the chain at one block once a wallet is connected (RB-OFFER-GATE): the stored
   terms, the protocol's state, and the running loan a loan-sale or offset
   offer is tied to. The protocol keeps no count of offers and clears the
   terms of an offer cancelled with nothing filled, so an id with no stored
@@ -1440,6 +1447,37 @@ above. Each resolves here, so a route reviewer needs no private file:
   rollups the app serves keep no public queue, so nothing is said there.
   The list of networks is one rule (`publicQueue.ts`), and a test fails if
   a served network is not decided.
+- **RB-INBOX** — Alerts (ACC-54) lists the free inbox the protocol's index
+  keeps for the connected wallet on its network, newest first, a page at a
+  time: loans starting, repaid in part or in full, defaulted or liquidated,
+  nearing their due date, entering or leaving grace, and health crossing
+  1.5, 1.2 or 1.05; reward entries nearing or past their claim deadline. Each
+  row is one outcome sentence with its time and a link to the loan's page
+  (which reads the loan from the chain) or to Claims for a reward entry; a
+  row is a pointer, never a figure, and it is written as history: it says
+  how the loan or entry stood when the row was written, never that the state
+  still holds, and the page says to open the loan for where it stands now. A
+  reward entry past its claim window says its return has begun, not that it
+  is done. An answer for another network or wallet
+  is refused, a row whose shape cannot be read is counted and the count
+  stated, and a kind the app has no words for is shown and named, so nothing
+  is dropped in silence. A row the index wrote when its own check found an
+  outcome no event announced says so, with when it was found and that when
+  it happened is not known. A failed read is said, never shown as an empty
+  inbox. The header carries a bell beside its word, shown while a wallet is
+  connected on a served network and the build reads an index, with the
+  count of rows the index wrote after the newest one recorded as seen. The
+  index counts them over every row by its row id, which only grows in write
+  order, so a row stamped with an older block still counts even when it
+  sorts below the first page; a count taken from a page is never used. The
+  seen record is kept in this browser only and only moves forward; opening
+  the page records every row written so far as seen (as a notification
+  centre clears its count when opened), states how many were new, and
+  marks those it shows as New for the visit. When the latest count failed,
+  the bell says the alerts could not be read and shows no count, even with
+  an earlier count in hand. The
+  page says Telegram and push alerts are still set up in the current app
+  until that part is built here.
 
 ## 3. Companion specifications
 

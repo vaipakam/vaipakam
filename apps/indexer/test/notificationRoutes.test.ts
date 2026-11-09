@@ -57,6 +57,7 @@ function makeHarness() {
       body: (await res.json()) as {
         notifications: Array<{ id: number; kind: string; loanId: number; createdAt: number }>;
         nextBefore: string | null;
+        newerThan?: { id: number; count: number; capped: boolean; newestId: number };
       },
     };
   };
@@ -113,5 +114,24 @@ describe('GET /notifications/:addr', () => {
     expect(bad.status).toBe(400);
     const badCursor = await h.getFeed('&before=notacursor');
     expect(badCursor.status).toBe(400);
+  });
+
+  it('counts the rows written after an id, whatever block they are stamped with', async () => {
+    const h = makeHarness();
+    h.seed(ME, 'loan_matched', 1, 100); // id 1
+    h.seed(ME, 'loan_repaid', 2, 300); // id 2
+    h.seed(OTHER, 'loan_matched', 9, 400); // id 3, another wallet
+    h.seed(ME, 'grace_entered', 1, 50); // id 4: written later, older block
+    const { body } = await h.getFeed('&limit=1&newerThan=2');
+    expect(body.notifications.map((n) => n.loanId)).toEqual([2]);
+    expect(body.newerThan).toEqual({ id: 2, count: 1, capped: false, newestId: 4 });
+    expect((await h.getFeed('&newerThan=0', OTHER)).body.newerThan).toEqual({ id: 0, count: 1, capped: false, newestId: 3 });
+    expect((await h.getFeed()).body.newerThan).toBeUndefined();
+  });
+
+  it('refuses a newerThan that is not a whole number', async () => {
+    const h = makeHarness();
+    expect((await h.getFeed('&newerThan=-1')).status).toBe(400);
+    expect((await h.getFeed('&newerThan=1.5')).status).toBe(400);
   });
 });

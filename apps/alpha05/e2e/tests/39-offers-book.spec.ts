@@ -38,7 +38,7 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('without a wallet the book lists an open offer, and its page reads it from the chain and asks for a wallet to take it', async ({ launchWallet }) => {
+test('without a wallet neither the book nor an offer is read; once one connects the book lists the offer and its page reads it from the chain', async ({ launchWallet }) => {
   test.setTimeout(150_000);
   const sc = scenario();
   const offerId = await postLenderOffer(sc, { lender: 'lender', principalWeth: '0.07', collateralTliq: '350', rateBps: 610, days: 21 });
@@ -46,8 +46,25 @@ test('without a wallet the book lists an open offer, and its page reads it from 
   const lender = accountFor('lender').address;
 
   const { page, flags } = await launchWallet('visitor', { preAuthorized: false });
+  const bookReads: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/offers/active')) bookReads.push(r.url());
+  });
   await page.goto('/offers');
-  await expect(page.getByText('Connect a wallet to see the offers you made.')).toBeVisible();
+  await expect(page.getByText('Connect a wallet to see the offer book and the offers you made.')).toBeVisible();
+  await expect(page.getByTestId('offer-book')).toHaveCount(0);
+  // An offer's own page asks for a wallet too, and reads nothing.
+  await page.goto(`/offers/${id}`);
+  await expect(page.getByRole('heading', { level: 1, name: `Offer #${id}` })).toBeVisible();
+  await expect(page.getByTestId('offer-connect')).toHaveText('Connect a wallet to see this offer.');
+  await expect(page.getByTestId('offer-facts')).toHaveCount(0);
+  expect(bookReads).toEqual([]);
+  await fitsWidth(page);
+
+  await page.goto('/offers');
+  // The wallet control settles after the page; connect once it offers to.
+  await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  await connectWallet(page);
   const book = page.getByTestId('offer-book');
   const row = book.getByTestId(`book-row-${id}`);
   await expect(row).toContainText(`Offer #${id}: lend 0.07 WETH at 6.1% a year, on a 21-day term.`, { timeout: 60_000 });
@@ -76,9 +93,7 @@ test('without a wallet the book lists an open offer, and its page reads it from 
   await expect(facts).toContainText('350');
   await expect(facts).toContainText('21 days');
   await expect(facts).toContainText('Until it is filled or cancelled');
-  await expect(page.getByTestId('offer-action')).toContainText('Connect a wallet to take this offer.');
-  await expect(page.getByTestId('offer-page-take')).toHaveCount(0);
-  await expect(page.getByText(/Read from Base Sepolia/)).toBeVisible();
+  await expect(page.getByTestId('offer-connect')).toHaveCount(0);
   expect(flags.sentTransactions).toBe(0);
   await fitsWidth(page);
 });
@@ -153,6 +168,9 @@ test('with the index down, the book says it could not be read instead of showing
   await setIndexPosture('down');
   const { page } = await launchWallet('visitor', { preAuthorized: false });
   await page.goto('/offers');
+  // The wallet control settles after the page; connect once it offers to.
+  await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  await connectWallet(page);
   await expect(page.getByTestId('offer-book-failed')).toContainText('The offer book could not be read, so nothing here means no offers', { timeout: 60_000 });
   await expect(page.getByTestId('offer-book-rows')).toHaveCount(0);
   await expect(page.getByTestId('offer-book-count')).toHaveCount(0);

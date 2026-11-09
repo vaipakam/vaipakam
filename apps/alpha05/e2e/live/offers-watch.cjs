@@ -6,7 +6,10 @@
 // with their counts and every row under All, then the review of the first
 // Cancel or Clean up button it finds, left unsigned; then the offer book
 // (its count line and first rows) and the page of the book's first offer,
-// with what it offers the wallet, nothing clicked. Checks that nothing
+// with what it offers the wallet, nothing clicked. First, without
+// connecting, it opens Offers, an offer's page, Borrow and Lend and prints
+// their prompts and how many offer-book requests the pages made (RB-OFFER-GATE:
+// none). Checks that nothing
 // scrolls sideways and saves full-page screenshots per device.
 // Usage: node e2e/live/offers-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
@@ -76,8 +79,26 @@ async function session(b, opts, label) {
   console.log(`errors: ${JSON.stringify(errs)}`);
   await ctx.close();
 }
+/** RB-OFFER-GATE: before a wallet connects no page reads the offer book. */
+async function visitor(b, opts, label) {
+  const ctx = await b.newContext(opts);
+  const p = await ctx.newPage();
+  const book = [];
+  p.on('request', (r) => {
+    if (r.url().includes('/offers/active')) book.push(r.url());
+  });
+  for (const path of ['offers', 'offers/1', 'borrow', 'lend']) {
+    await p.goto(new URL(path, BASE).href, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(2000);
+    console.log(`===== visitor ${label} /${path}\n${await text(p.locator('main'))}`);
+  }
+  console.log(`visitor ${label}: offer-book requests before connecting = ${book.length}`);
+  await ctx.close();
+}
 (async () => {
   const b = await chromium.launch();
+  await visitor(b, { viewport: { width: 1280, height: 900 } }, 'desktop');
+  await visitor(b, { ...devices['Pixel 7'] }, 'phone');
   await session(b, { viewport: { width: 1280, height: 900 } }, 'desktop');
   await session(b, { ...devices['Pixel 7'] }, 'phone');
   await b.close();

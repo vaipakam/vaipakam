@@ -447,7 +447,7 @@ contract OfferFacetTest is Test {
         // #3205 — the facet's whole routed surface, as `HelperTest` cuts it:
         // `initializeNFT` records the PositionNFT core and the core calls
         // back `checkPositionTransfer` on every transfer.
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -461,6 +461,7 @@ contract OfferFacetTest is Test {
         selectors[10] = VaipakamNFTFacet.isPositionRetired.selector;
         selectors[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         selectors[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
+        selectors[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
         return selectors;
     }
 
