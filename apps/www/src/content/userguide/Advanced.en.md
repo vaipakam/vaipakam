@@ -2796,3 +2796,15 @@ The review reads the listing with `getOffer` (its `rentalBufferBpsAtCreate`), th
 ### Rent: Risks
 
 You never own a rented NFT, and your right to use it ends when the rental ends. The rent and buffer stay in your vault for the rental and cannot be withdrawn while it is open. A rental does not close by itself at the end of its term: close it from its page in the current app, since the next app cannot close a rental yet. Closing during the grace period costs a late fee, taken from the buffer; after the grace period the rental defaults, the rent left in your vault goes to the owner and the buffer to the protocol, and nothing comes back to you. With full-term rent the whole term is owed even if you close early.
+
+<a id="rent-list"></a>
+
+### Rent: Listing Your NFT for Rent
+
+The form reads the collection's standard with ERC-165 `supportsInterface` and the longest term from `getProtocolConfigBundle`. The review reads the token with `ownerOf`, `getApproved` and `isApprovedForAll` (`balanceOf` for an ERC-1155), the payment token's class from `getAssetPriceStatus` and the liquidity check, the buffer share from `getRiskConfig`, the grace period from `getEffectiveGraceSeconds` and the protocol's share from `getTreasuryFeeBps`, then dry-runs `createOffer` with `assetType` 1 or 2, `amount` and `amountMax` both the daily fee, every collateral and rate field zero and `prepayAsset` the payment token. Posting records `rentalBufferBpsAtCreate`; the outcome is read from the transaction's `OfferCreated` log and the NFT's own `Transfer` (or `TransferSingle`) log into the owner's vault.
+
+<a id="rent-list-risks"></a>
+
+### Rent: Risks of Listing
+
+The NFT stays in your vault while the listing is open and while it is rented, and you cannot withdraw it until the listing or the rental ends. While nobody has rented it, you can cancel the listing from its page after its first five minutes. Once rented, the renter holds the right to use the NFT until the rental ends, and you cannot take that right back early. A rental does not close by itself: the renter closes it, or after the grace period anyone can close it as a default; then the rent comes to you and the buffer goes to the protocol. A listing that lapses keeps the NFT in your vault until it is closed.

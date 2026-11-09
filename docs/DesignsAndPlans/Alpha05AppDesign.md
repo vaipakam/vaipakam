@@ -1691,6 +1691,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   renter as the NFT's user (for an ERC-1155, the units rented out grew by
   the rental's quantity). A renter's request is not taken here yet, and
   says where it is.
+- **RB-RENT-LIST** — An owner lists an NFT for rent (NFT-01) on the Rent
+  page, behind the Terms gate. The form has no collateral or rate fields
+  and one daily fee, never a range. The review states that the NFT moves
+  from the wallet into the owner's own vault and stays there while the
+  listing is open and while it is rented, what a renter pays up front with
+  the buffer share the listing fixes at posting, what the owner receives
+  (the rent due less the protocol's share, named as today's figure fixed at
+  the rental's start) and what a default does; a token the wallet does not
+  hold, or too few units, is said before any wallet step. The approval is
+  the one ERC-721 token, or for an ERC-1155 the operator approval for this
+  listing alone, taken back afterwards whatever happens; the outcome is
+  measured (the listing recorded and the NFT in the owner's vault).
 
 ## 3. Companion specifications
 

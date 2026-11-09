@@ -2301,3 +2301,15 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 ### 대여: 위험
 
 빌린 NFT는 절대 내 것이 되지 않으며, 쓸 권리는 대여가 끝나면 함께 끝납니다. 대여료와 버퍼는 대여를 위해 내 볼트에 머물고, 대여가 열려 있는 동안 출금할 수 없습니다. 대여는 기간이 끝나도 저절로 종료되지 않으니 현재 앱의 해당 페이지에서 종료하세요. 새 앱은 아직 대여를 종료할 수 없습니다. 유예 기간 중에 종료하면 버퍼에서 연체료를 뗍니다. 유예 기간이 지나면 대여는 디폴트되어 내 볼트에 남은 대여료는 소유자에게, 버퍼는 프로토콜로 가고 나에게는 아무것도 돌아오지 않습니다. 전체 기간 요금이면 일찍 종료해도 전체 기간을 냅니다.
+
+<a id="rent-list"></a>
+
+### 대여: 내 NFT를 대여로 내놓기
+
+양식은 컬렉션의 표준을 ERC-165 `supportsInterface`로, 최장 기간을 `getProtocolConfigBundle`로 읽습니다. 검토 화면은 토큰을 `ownerOf`, `getApproved`, `isApprovedForAll`(ERC-1155는 `balanceOf`)로, 지불 토큰의 분류를 `getAssetPriceStatus`와 유동성 검사로, 버퍼 비율을 `getRiskConfig`로, 유예 기간을 `getEffectiveGraceSeconds`로, 프로토콜 몫을 `getTreasuryFeeBps`로 읽은 뒤 `createOffer`를 시험 실행합니다. `assetType`은 1 또는 2, `amount`와 `amountMax`는 모두 일일 요금, 담보와 이자 칸은 모두 0, `prepayAsset`은 지불 토큰입니다. 게시는 `rentalBufferBpsAtCreate`를 기록하며, 결과는 트랜잭션의 `OfferCreated` 로그와 소유자 볼트로 가는 NFT 자체의 `Transfer`(또는 `TransferSingle`) 로그에서 읽습니다.
+
+<a id="rent-list-risks"></a>
+
+### 대여: 대여로 내놓을 때의 위험
+
+오퍼가 열려 있는 동안과 대여 중에는 NFT가 내 볼트에 머물며, 오퍼나 대여가 끝날 때까지 출금할 수 없습니다. 아무도 빌리지 않았다면 처음 5분이 지난 뒤 오퍼 페이지에서 취소할 수 있습니다. 대여된 뒤에는 대여가 끝날 때까지 대여자가 NFT를 쓸 권리를 가지며, 일찍 되찾을 수 없습니다. 대여는 저절로 종료되지 않습니다. 대여자가 종료하거나, 유예 기간이 지나면 누구나 디폴트로 종료할 수 있고, 그때 대여료는 나에게, 버퍼는 프로토콜로 갑니다. 만료된 오퍼는 닫힐 때까지 NFT를 내 볼트에 둡니다.

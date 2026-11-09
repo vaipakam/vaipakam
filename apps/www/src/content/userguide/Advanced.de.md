@@ -2598,3 +2598,15 @@ Die Prüfung liest das Angebot mit `getOffer` (sein `rentalBufferBpsAtCreate`), 
 ### Mieten: Risiken
 
 Ein gemietetes NFT gehört dir nie, und dein Nutzungsrecht endet mit der Miete. Miete und Puffer bleiben für die Miete in deinem Vault und können nicht abgehoben werden, solange sie offen ist. Eine Miete schließt sich am Ende ihrer Laufzeit nicht von selbst: Schließe sie auf ihrer Seite in der aktuellen App, denn die neue App kann eine Miete noch nicht schließen. Schließen in der Nachfrist kostet eine Verzugsgebühr aus dem Puffer; nach der Nachfrist fällt die Miete aus, die verbliebene Miete in deinem Vault geht an den Eigentümer, der Puffer an das Protokoll, und nichts kommt zu dir zurück. Bei Miete für die volle Laufzeit ist die ganze Laufzeit geschuldet, auch wenn du früher schließt.
+
+<a id="rent-list"></a>
+
+### Mieten: Ihr NFT zur Miete anbieten
+
+Das Formular liest den Standard der Sammlung mit ERC-165 `supportsInterface` und die längste Laufzeit aus `getProtocolConfigBundle`. Die Prüfung liest den Token mit `ownerOf`, `getApproved` und `isApprovedForAll` (`balanceOf` bei einem ERC-1155), die Klasse des Zahlungstokens aus `getAssetPriceStatus` und der Liquiditätsprüfung, den Pufferanteil aus `getRiskConfig`, die Nachfrist aus `getEffectiveGraceSeconds` und den Protokollanteil aus `getTreasuryFeeBps` und führt dann `createOffer` als Probelauf aus, mit `assetType` 1 oder 2, `amount` und `amountMax` beide gleich der Tagesgebühr, jedem Sicherheits- und Zinsfeld auf null und `prepayAsset` als Zahlungstoken. Das Einstellen speichert `rentalBufferBpsAtCreate`; das Ergebnis wird aus dem `OfferCreated`-Log der Transaktion und dem eigenen `Transfer`- (oder `TransferSingle`-)Log des NFTs in den Vault des Eigentümers gelesen.
+
+<a id="rent-list-risks"></a>
+
+### Mieten: Risiken des Anbietens
+
+Das NFT bleibt in deinem Vault, solange das Angebot offen ist und solange es vermietet ist, und du kannst es erst abheben, wenn Angebot oder Miete enden. Solange niemand es gemietet hat, kannst du das Angebot nach seinen ersten fünf Minuten auf seiner Seite stornieren. Ist es vermietet, hat der Mieter bis zum Ende der Miete das Nutzungsrecht, und du kannst es nicht vorzeitig zurücknehmen. Eine Miete schließt sich nicht von selbst: Der Mieter schließt sie, oder nach der Nachfrist kann jeder sie als Ausfall schließen; dann geht die Miete an dich und der Puffer an das Protokoll. Ein abgelaufenes Angebot lässt das NFT in deinem Vault, bis es geschlossen wird.
