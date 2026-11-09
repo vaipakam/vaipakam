@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -407,6 +411,11 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 wallet0 = _bal(col, lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        // #3205 part 2 — the claim credits the lender's vault as free money;
+        // the lender's own withdrawal then pays the wallet.
+        assertEq(_bal(col, lender), wallet0, "the claim pays the vault, not the wallet");
+        vm.prank(lender);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(lender, uint8(LibVaipakam.AssetType.ERC20), col, 0, claim, lender);
         assertEq(_bal(col, lender) - wallet0, _less(claim), "the claim paid (less the token's own fee)");
         assertEq(_tracked(lender, col), 0, "nothing is left on the books");
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
@@ -487,8 +496,11 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 wallet0 = _bal(mockERC20, lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertEq(_bal(mockERC20, lender), wallet0, "the claim pays the vault, not the wallet");
+        vm.prank(lender);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(lender, uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, claim, lender);
         assertEq(_bal(mockERC20, lender) - wallet0, claim, "the lender's claim paid in full");
-        assertEq(IERC721(mockNft721).ownerOf(1), lender, "and the NFT came home");
+        assertEq(IERC721(mockNft721).ownerOf(1), lVault, "and the NFT came home, to the lender's vault");
         assertEq(_tracked(lender, mockERC20), tracked0, "nothing is left on the books");
         assertEq(_bal(mockERC20, lVault), tracked0, "and nothing in the vault");
     }
@@ -831,7 +843,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockERC20, lender, 4 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, lender, 4 ether);
     }
 
     /// @notice The control: an ordinary token costs its sender exactly what
@@ -840,7 +852,7 @@ contract MeasuredDeliveryTest is SetupTest {
         ERC20Mock(mockERC20).mint(bVault, 10 ether);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
         vm.prank(address(diamond));
-        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockERC20, lender, 4 ether);
+        uint256 delivered = LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, lender, 4 ether);
         assertEq(delivered, 4 ether, "delivered in full");
         assertEq(_bal(mockERC20, bVault), 6 ether, "the vault lost what it sent");
     }
@@ -888,40 +900,26 @@ contract MeasuredDeliveryTest is SetupTest {
 
     // -- A move whose source is its recipient --------------------------------
 
-    /// @notice A vault-to-vault move between two positions one user holds
-    ///         (lender on one loan, borrower on another, as after a
-    ///         consolidation) cannot raise the vault's balance. It delivered
-    ///         everything the vault kept, which is the whole amount for an
-    ///         ordinary token: a measured rise of zero would book nothing and
-    ///         leave the moved tokens outside every ledger.
-    function test_SameVaultMove_DeliversWhatTheVaultKept() public {
-        ERC20Mock(mockERC20).mint(bVault, 10 ether);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
-
-        vm.prank(address(diamond));
-        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockERC20, bVault, 4 ether
-        );
-
-        assertEq(delivered, 4 ether, "the whole amount stayed where it was sent");
-        assertEq(_bal(mockERC20, bVault), 10 ether, "nothing left the vault");
-        assertEq(_tracked(borrower, mockERC20), 6 ether, "the caller credits the receiving record");
-    }
-
-    /// @notice The same move of a token that charges on transfer delivered the
-    ///         amount less the charge the vault paid, never more.
-    function test_SameVaultMove_ChargedTokenDeliversLessTheCharge() public {
+    /// @notice #3205 part 2 — an outflow whose recipient the CALLER names (an
+    ///         incentive payee here) may never be the paying vault itself:
+    ///         nothing would leave, yet the ledger would be debited. The
+    ///         policy refuses it. (A derived holder payout to the holder's own
+    ///         vault moves nothing and books both sides; VaultOutflowPolicyTest
+    ///         covers it.)
+    function test_SameVaultMove_RefusedForACallerNamedRecipient() public {
         ERC20Mock(mockERC20).mint(bVault, 10 ether);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
         _chargesFee(mockERC20, address(0));
 
         vm.prank(address(diamond));
-        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockERC20, bVault, 4 ether
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultOutflowFacet.OutflowRecipientInvalid.selector, VaultOutflowTypes.OutflowClass.Incentive, bVault
+            )
         );
-
-        assertEq(delivered, _less(4 ether), "the amount less the charge");
-        assertEq(_bal(mockERC20, bVault), 10 ether - (4 ether - _less(4 ether)), "the vault paid the charge");
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, bVault, 4 ether);
+        assertEq(_bal(mockERC20, bVault), 10 ether, "nothing left the vault");
+        assertEq(_tracked(borrower, mockERC20), 10 ether, "and nothing was debited");
     }
 
     /// @notice A wallet payment whose payer is also the payee (a lender-NFT

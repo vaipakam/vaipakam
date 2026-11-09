@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -104,11 +106,6 @@ contract RiskDiscountedLiquidationFacet is
     ///         per chain after audit sign-off. Independent of the
     ///         depth-tiered-LTV kill-switch.
     error DiscountPathDisabled();
-
-    /// @notice The collateral recipient is the zero address. The
-    ///         discount path must hand the seized collateral to a
-    ///         non-zero address so a typo can't burn the funds.
-    error ZeroRecipient();
 
     /// @notice The loan's collateral asset isn't tier-classified
     ///         (effective tier == 0 — neither the on-chain depth probe
@@ -216,13 +213,14 @@ contract RiskDiscountedLiquidationFacet is
      *
      * @param  loanId    The loan to liquidate. Must be `Active` with
      *                   `HF < 1e18`, collateral tier-classified.
-     * @param  recipient Where the seized collateral lands. Usually
-     *                   `msg.sender`; passing a different address
-     *                   enables relay / MEV-bot patterns (bot calls
-     *                   from a hot wallet, routes seizure elsewhere).
-     *                   Must be non-zero.
+     *         The seized collateral lands with `msg.sender`, the liquidator
+     *         that paid the debt in this same transaction, and nowhere else
+     *         (#3205 part 2, decided default 2026-11-08: the Liquidation
+     *         buyer class names no free recipient). A relay that wants the
+     *         collateral elsewhere moves it on itself, as the flash-loan
+     *         liquidator does.
      *
-     *         Note on the third `bytes` parameter: reserved for a
+     *         Note on the second `bytes` parameter: reserved for a
      *         future post-seizure callback (named `extraData` in the
      *         design doc). Ignored in v1; callers using flash-loans
      *         should structure the unwind around the
@@ -232,7 +230,6 @@ contract RiskDiscountedLiquidationFacet is
      */
     function triggerLiquidationDiscounted(
         uint256 loanId,
-        address recipient,
         bytes calldata /* extraData reserved for v2 */
     ) external nonReentrant whenNotPaused {
         // T-090 v1.1 (#389) §5.8 layer 2 — see `RiskFacet.triggerLiquidation`.
@@ -253,16 +250,6 @@ contract RiskDiscountedLiquidationFacet is
 
         // Master kill-switch — discount path off by default.
         if (!LibVaipakam.cfgDiscountPathEnabled()) revert DiscountPathDisabled();
-
-        // Recipient sanity — zero would burn the collateral.
-        if (recipient == address(0)) revert ZeroRecipient();
-
-        // #816 Tier-1 sanctions gate on the SEIZED-COLLATERAL recipient. The
-        // discounted path delivers the bought collateral to `recipient` (a
-        // caller-chosen address, not necessarily `msg.sender`), so screening
-        // only the caller would let a clean liquidator route fresh value to a
-        // flagged wallet. No fresh value may reach a sanctioned recipient.
-        LibVaipakam._assertNotSanctioned(recipient);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -317,7 +304,7 @@ contract RiskDiscountedLiquidationFacet is
             LibDiscountedLiquidation.discountFor(loan.collateralAsset);
         if (tier == 0) revert UntierableCollateral(loan.collateralAsset);
 
-        _settleDiscountedLiquidation(loanId, loan, recipient, tier, discountBps);
+        _settleDiscountedLiquidation(loanId, loan, msg.sender, tier, discountBps);
     }
 
     /**
@@ -436,13 +423,19 @@ contract RiskDiscountedLiquidationFacet is
             // #821 (Codex #832 r3 P1) — move-out-exempt so a borrower flagged
             // after init doesn't brick the discounted liquidation; the seized
             // collateral is pushed OUT to the already-screened `recipient`.
-            LibSanctionedLock.vaultWithdrawERC20MoveOut(
-                LibVaipakam.storageSlot(),
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            LibSanctionedLock.beginMoveOut(st, loan.borrower);
+            LibVaultOutflow.toLiquidationBuyer(
                 loan.borrower,
+                LibVaultOutflow.ERC20,
                 loan.collateralAsset,
+                0,
+                collateralSeized,
                 recipient,
-                collateralSeized
+                loanId,
+                OutflowReason.LIQUIDATION
             );
+            LibSanctionedLock.endMoveOut(st);
         }
         // Record borrower claim metadata — the surplus is in COLLATERAL
         // units (not principal), sits ENCUMBERED in the borrower's vault,

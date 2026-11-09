@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaultBeacon} from "../src/VaultBeacon.sol";
@@ -267,7 +270,7 @@ contract VaultFactoryFacetTest is Test {
 
         uint256 user1Before = ERC20(mockERC20).balanceOf(user1);
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user1, mockERC20, user1, 200 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user1, mockERC20, user1, 200 ether);
         assertEq(ERC20(mockERC20).balanceOf(user1) - user1Before, 200 ether);
         assertEq(ERC20(mockERC20).balanceOf(vault), 300 ether);
         // Counter was 500 after the deposit, ticks down to 300 after
@@ -287,7 +290,7 @@ contract VaultFactoryFacetTest is Test {
 
         uint256 user2Before = ERC20(mockERC20).balanceOf(user2);
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user1, mockERC20, user2, 100 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user1, mockERC20, user2, 100 ether);
         assertEq(ERC20(mockERC20).balanceOf(user2) - user2Before, 100 ether);
         assertEq(ERC20(mockERC20).balanceOf(vault), 0);
     }
@@ -307,7 +310,7 @@ contract VaultFactoryFacetTest is Test {
 
         // Withdraw NFT back to user1 via diamond facet
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC721(user1, mockNft721, 1, user1);
+        LibTestOutflow.withdrawERC721(address(diamond), user1, mockNft721, 1, user1);
         assertEq(IERC721(mockNft721).ownerOf(1), user1);
     }
 
@@ -539,18 +542,6 @@ contract VaultFactoryFacetTest is Test {
 
     // ─── vaultApproveNFT721 ─────────────────────────────────────────────────
 
-    function testVaultApproveNFT721() public {
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        // Transfer NFT directly to vault (vault must own the token to approve it)
-        vm.prank(user1);
-        IERC721(mockNft721).transferFrom(user1, vault, 2);
-        assertEq(IERC721(mockNft721).ownerOf(2), vault);
-
-        // Approve diamond as operator from vault's perspective
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultApproveNFT721(user1, mockNft721, 2);
-        // If no revert, the approval succeeded
-    }
 
     // ─── vaultDepositERC20 ───────────────────────────────────────────────────
 
@@ -671,7 +662,7 @@ contract VaultFactoryFacetTest is Test {
 
         uint256 user2Before = mock1155.balanceOf(user2, 1);
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC1155(user1, address(mock1155), 1, 60, user2);
+        LibTestOutflow.withdrawERC1155(address(diamond), user1, address(mock1155), 1, 60, user2);
         assertEq(mock1155.balanceOf(user2, 1) - user2Before, 60);
         assertEq(mock1155.balanceOf(vault, 1), 40);
     }
@@ -692,7 +683,7 @@ contract VaultFactoryFacetTest is Test {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 user1,
                 mockERC20,
                 uint256(0),
@@ -700,7 +691,7 @@ contract VaultFactoryFacetTest is Test {
                 uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user1, mockERC20, user2, 9999 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user1, mockERC20, user2, 9999 ether);
     }
 
     /// @dev Tests vaultDepositERC721 failure branch (ProxyCallFailed).
@@ -720,7 +711,7 @@ contract VaultFactoryFacetTest is Test {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 user1,
                 mockNft721,
                 uint256(999),
@@ -728,7 +719,7 @@ contract VaultFactoryFacetTest is Test {
                 uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC721(user1, mockNft721, 999, user1);
+        LibTestOutflow.withdrawERC721(address(diamond), user1, mockNft721, 999, user1);
     }
 
     /// @dev Tests vaultWithdrawERC1155 failure branch (ProxyCallFailed).
@@ -741,7 +732,7 @@ contract VaultFactoryFacetTest is Test {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 user1,
                 address(mock1155),
                 uint256(1),
@@ -749,7 +740,7 @@ contract VaultFactoryFacetTest is Test {
                 uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC1155(user1, address(mock1155), 1, 100, user2);
+        LibTestOutflow.withdrawERC1155(address(diamond), user1, address(mock1155), 1, 100, user2);
     }
 
     /// @dev T-051 — vaultDepositERC20 reverts at the safeTransferFrom
@@ -859,14 +850,6 @@ contract VaultFactoryFacetTest is Test {
         VaultFactoryFacet(address(diamond)).vaultDepositERC1155(user1, address(diamond), address(mock1155), 1, 100);
     }
 
-    /// @dev Tests vaultApproveNFT721 failure branch (ProxyCallFailed "Approve ERC721 failed").
-    ///      The vault proxy doesn't own the NFT tokenId, so approveERC721 fails.
-    function testVaultApproveNFT721RevertsWhenFails() public {
-        // Use a token ID that the vault doesn't own → approve will fail
-        vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Approve ERC721 failed"));
-        VaultFactoryFacet(address(diamond)).vaultApproveNFT721(user1, mockNft721, 999);
-    }
 
     // ─── Additional branch coverage ─────────────────────────────────────────
 
@@ -874,7 +857,7 @@ contract VaultFactoryFacetTest is Test {
     ///      construction, so nobody can become its owner by initializing it,
     ///      whatever path deployed it.
     function testVaultImplementationCannotBeInitializedDirectly() public {
-        VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
+        VaipakamVaultImplementation impl = new VaipakamVaultImplementation(address(0), address(0));
         vm.prank(user2);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(user2, address(impl));
@@ -900,14 +883,28 @@ contract VaultFactoryFacetTest is Test {
     // These call the vault proxy directly from an unauthorized address (user2)
     // to exercise the FALSE branch of each `require(msg.sender == DIAMOND || ...)`
 
-    /// @dev withdrawERC20 reverts when called by unauthorized address (not DIAMOND, not self).
-    function testVaultImplWithdrawERC20RevertsUnauthorized() public {
+    /// @dev #3205 part 2 — the vault's one door out refuses any caller but
+    ///      the Diamond, for every class.
+    function testVaultImplTransferOutRevertsUnauthorized() public {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         deal(mockERC20, vault, 100 ether);
 
         vm.prank(user2);
         vm.expectRevert(VaipakamVaultImplementation.NotAuthorized.selector);
-        VaipakamVaultImplementation(vault).withdrawERC20(mockERC20, user2, 50 ether);
+        VaipakamVaultImplementation(vault).transferOut(
+            VaultOutflowTypes.Outflow({
+                kind: VaultOutflowTypes.AssetKind.ERC20,
+                asset: mockERC20,
+                tokenId: 0,
+                amount: 50 ether,
+                to: user1,
+                class_: VaultOutflowTypes.OutflowClass.Owner,
+                ref: 0,
+                positionToken: 0,
+                reason: 0,
+                counterRef: 0
+            })
+        );
     }
 
     /// @dev depositERC721 reverts when called by unauthorized address.
@@ -919,14 +916,6 @@ contract VaultFactoryFacetTest is Test {
         VaipakamVaultImplementation(vault).depositERC721(mockNft721, 1);
     }
 
-    /// @dev withdrawERC721 reverts when called by unauthorized address.
-    function testVaultImplWithdrawERC721RevertsUnauthorized() public {
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-
-        vm.prank(user2);
-        vm.expectRevert(VaipakamVaultImplementation.NotAuthorized.selector);
-        VaipakamVaultImplementation(vault).withdrawERC721(mockNft721, 1, user2);
-    }
 
     /// @dev depositERC1155 reverts when called by unauthorized address.
     function testVaultImplDepositERC1155RevertsUnauthorized() public {
@@ -937,23 +926,7 @@ contract VaultFactoryFacetTest is Test {
         VaipakamVaultImplementation(vault).depositERC1155(mockNft721, 1, 10);
     }
 
-    /// @dev withdrawERC1155 reverts when called by unauthorized address.
-    function testVaultImplWithdrawERC1155RevertsUnauthorized() public {
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
 
-        vm.prank(user2);
-        vm.expectRevert(VaipakamVaultImplementation.NotAuthorized.selector);
-        VaipakamVaultImplementation(vault).withdrawERC1155(mockNft721, 1, 10, user2);
-    }
-
-    /// @dev approveERC721 reverts when called by unauthorized address.
-    function testVaultImplApproveERC721RevertsUnauthorized() public {
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-
-        vm.prank(user2);
-        vm.expectRevert(VaipakamVaultImplementation.NotAuthorized.selector);
-        VaipakamVaultImplementation(vault).approveERC721(mockNft721, 1);
-    }
 
     /// @dev setUser reverts when called by unauthorized address.
     function testVaultImplSetUserRevertsUnauthorized() public {
@@ -1075,7 +1048,7 @@ contract VaultFactoryFacetTest is Test {
     ///      Since _authorizeUpgrade is internal via onlyOwner, we test via upgradeToAndCall.
     function testVaultImplUpgradeRevertsNonOwner() public {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
+        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         vm.prank(user2);
         vm.expectRevert();

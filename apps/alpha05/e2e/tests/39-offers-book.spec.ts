@@ -115,7 +115,7 @@ test('a borrower takes an offer whole from its page, and the page reads it back 
 
   const review = page.locator(`.accept-offer[data-offer-id="${id}"]`);
   const receipt = review.locator('.receipt');
-  await expect(receipt).toContainText('You receive in your wallet', { timeout: 60_000 });
+  await expect(receipt).toContainText('Paid into your vault, yours to withdraw', { timeout: 60_000 });
   await expect(receipt).toContainText('You lock in your vault');
   await expect(receipt).toContainText('400');
   await fitsWidth(page);

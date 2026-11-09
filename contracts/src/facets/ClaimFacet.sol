@@ -8,6 +8,9 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
@@ -602,7 +605,15 @@ contract ClaimFacet is
             );
         }
         if (due > toSellers) {
-            LibFacet.vaultWithdrawExact(vault, p, nftOwner, due - toSellers, VaultWithdrawFailed.selector);
+            // #3205 part 2 (decided default) — the backstop vault pays the
+            // lender-position holder's VAULT, as any holder payout does.
+            LibDelivery.requireFull(
+                p,
+                due - toSellers,
+                LibVaultOutflow.toPositionHolder(
+                    vault, LibVaultOutflow.ERC20, p, 0, due - toSellers, loanId, loan.lenderTokenId, OutflowReason.BACKSTOP
+                )
+            );
         }
 
         // Release any heldForLender (prior partial-rescue proceeds) from the
@@ -618,16 +629,7 @@ contract ClaimFacet is
             // the clean current holder's backstop absorb. The stored party loses
             // custody to the (already-screened) NFT owner.
             LibSanctionedLock.beginMoveOut(s, loan.lender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.lender,
-                    p,
-                    nftOwner,
-                    held
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC20, p, 0, held, loanId, loan.lenderTokenId, OutflowReason.BACKSTOP);
             LibSanctionedLock.endMoveOut(s);
         }
 
@@ -1044,40 +1046,12 @@ contract ClaimFacet is
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             if (claim.amount > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        loan.lender,
-                        claim.asset,
-                        msg.sender,
-                        claim.amount
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC20, claim.asset, 0, claim.amount, loanId, loan.lenderTokenId, OutflowReason.CLAIM);
             }
         } else if (claim.assetType == LibVaipakam.AssetType.ERC721) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    loan.lender,
-                    claim.asset,
-                    claim.tokenId,
-                    msg.sender
-                ),
-                NFTTransferFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC721, claim.asset, claim.tokenId, 1, loanId, loan.lenderTokenId, OutflowReason.CLAIM);
         } else if (claim.assetType == LibVaipakam.AssetType.ERC1155) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    loan.lender,
-                    claim.asset,
-                    claim.tokenId,
-                    claim.quantity,
-                    msg.sender
-                ),
-                NFTTransferFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC1155, claim.asset, claim.tokenId, claim.quantity, loanId, loan.lenderTokenId, OutflowReason.CLAIM);
         }
 
         // If heldForLender funds exist from prior preclose top-ups, withdraw those too.
@@ -1087,42 +1061,14 @@ contract ClaimFacet is
             address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
                 ? loan.principalAsset
                 : loan.prepayAsset;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.lender,
-                    payAsset,
-                    msg.sender,
-                    held
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC20, payAsset, 0, held, loanId, loan.lenderTokenId, OutflowReason.CLAIM);
         }
 
         // For NFT rentals: return the vaulted rental NFT to the lender
         if (loan.assetType == LibVaipakam.AssetType.ERC721) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
-                    msg.sender
-                ),
-                VaultTransferFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC721, loan.principalAsset, loan.tokenId, 1, loanId, loan.lenderTokenId, OutflowReason.CLAIM);
         } else if (loan.assetType == LibVaipakam.AssetType.ERC1155) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
-                    loan.quantity,
-                    msg.sender
-                ),
-                VaultTransferFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.lender, LibVaultOutflow.ERC1155, loan.principalAsset, loan.tokenId, loan.quantity, loanId, loan.lenderTokenId, OutflowReason.CLAIM);
         }
         LibSanctionedLock.endMoveOut(s);
 
@@ -1375,7 +1321,7 @@ contract ClaimFacet is
 
         // Transfer claimable collateral from borrower's vault to claimant
         // (skipped when the collateral lane was already claimed, #2795).
-        if (payCollateral) _payCollateralLane(loan.borrower, claim);
+        if (payCollateral) _payCollateralLane(loan.borrower, claim, loanId, loan.borrowerTokenId);
 
         // #569 round-8 P2 (#578) — pay out the liened collateral the claim
         // row couldn't carry (captured above). The lien was released just
@@ -1385,16 +1331,7 @@ contract ClaimFacet is
         // borrower. Common case: extraLienedAmt == 0 (claim IS the liened
         // collateral) → no-op.
         if (extraLienedAmt > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    extraLienedAsset,
-                    msg.sender,
-                    extraLienedAmt
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC20, extraLienedAsset, 0, extraLienedAmt, loanId, loan.borrowerTokenId, OutflowReason.CLAIM);
         }
 
         // #954 (Codex #981 P2) — pay out the frozen swap-surplus principal. It was
@@ -1406,16 +1343,7 @@ contract ClaimFacet is
         // `releaseBorrowerProceeds` above, so the unstake guard permits it.
         if (surplusAmt > 0) {
             surplusClaim.claimed = true;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    surplusClaim.asset,
-                    msg.sender,
-                    surplusAmt
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC20, surplusClaim.asset, 0, surplusAmt, loanId, loan.borrowerTokenId, OutflowReason.CLAIM);
             // #954 (§2.3) — surface the frozen-surplus lane as its OWN event so
             // indexers / dashboards can distinguish the principal-surplus payout
             // from the collateral `BorrowerFundsClaimed` below (a claim can owe
@@ -1480,47 +1408,22 @@ contract ClaimFacet is
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
     /// @dev Pay the borrower claim's collateral lane (ERC-20, ERC-721 or
-    ///      ERC-1155) from `vaultOwner`'s vault to the caller, the verified
-    ///      borrower-position holder. Split out of {claimAsBorrower} so the
+    ///      ERC-1155) from `vaultOwner`'s vault to the VAULT of the verified
+    ///      borrower-position holder (#3205 part 2: a claim pays the holder's
+    ///      vault, from which the holder withdraws). Split out of {claimAsBorrower} so the
     ///      claim can skip a lane that was already claimed (#2795).
     function _payCollateralLane(
         address vaultOwner,
-        LibVaipakam.ClaimInfo storage claim
+        LibVaipakam.ClaimInfo storage claim,
+        uint256 loanId,
+        uint256 borrowerTokenId
     ) private {
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    vaultOwner,
-                    claim.asset,
-                    msg.sender,
-                    claim.amount
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(vaultOwner, LibVaultOutflow.ERC20, claim.asset, 0, claim.amount, loanId, borrowerTokenId, OutflowReason.CLAIM);
         } else if (claim.assetType == LibVaipakam.AssetType.ERC721) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    vaultOwner,
-                    claim.asset,
-                    claim.tokenId,
-                    msg.sender
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(vaultOwner, LibVaultOutflow.ERC721, claim.asset, claim.tokenId, 1, loanId, borrowerTokenId, OutflowReason.CLAIM);
         } else if (claim.assetType == LibVaipakam.AssetType.ERC1155) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    vaultOwner,
-                    claim.asset,
-                    claim.tokenId,
-                    claim.quantity,
-                    msg.sender
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toPositionHolder(vaultOwner, LibVaultOutflow.ERC1155, claim.asset, claim.tokenId, claim.quantity, loanId, borrowerTokenId, OutflowReason.CLAIM);
         }
     }
 

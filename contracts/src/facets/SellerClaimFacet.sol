@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -229,7 +232,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         LibEncumbrance.releaseActiveHeldPart(loanId, heldAt, reservedNet);
         s.heldForLender[loanId] = held - net;
         address asset = s.loans[loanId].principalAsset;
-        uint256 credited = LibSanctionedLock.depositLockedFromVault(s, heldAt, seller, loanId, asset, net);
+        uint256 credited = _payAuthorized(s, heldAt, seller, loanId, asset, net);
         _setAsideForSeller(s, loanId, seller, asset, credited);
         LibInterestLedger.holderPaid(s, s.loans[loanId], gross);
         emit SellerInterestPaid(loanId, seller, asset, gross, net, credited);
@@ -400,6 +403,24 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         LibSanctionedLock.mustFreezeParty(s, seller);
     }
 
+    /// @dev Pays `seller` exactly `amount` from `fromUser`'s vault into the
+    ///      seller's own, under an authorization written from the seller claim
+    ///      being paid (#3205 part 2): the outflow policy consumes it, so it
+    ///      never has to read the loan's seller-claim list, which the terminal
+    ///      split has already closed. Cleared after the payout.
+    function _payAuthorized(
+        LibVaipakam.Storage storage s,
+        address fromUser,
+        address seller,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) private returns (uint256 credited) {
+        LibSellerPayAuth.authorize(loanId, seller, amount);
+        credited = LibSanctionedLock.depositLockedFromVault(s, fromUser, seller, loanId, asset, amount);
+        LibSellerPayAuth.clear(loanId, seller);
+    }
+
     /// @dev Pays one closing seller claim its part `pay` of the recovery from
     ///      `fromUser`'s vault into the seller's own, reserved for
     ///      {claimAsSeller}, and records how the claim closed. Its own frame.
@@ -415,9 +436,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     ) private {
         uint256 credited;
         if (pay > 0) {
-            credited = LibSanctionedLock.depositLockedFromVault(
-                s, fromUser, claim.seller, loanId, asset, pay
-            );
+            credited = _payAuthorized(s, fromUser, claim.seller, loanId, asset, pay);
             _setAsideForSeller(s, loanId, claim.seller, asset, credited);
         }
         uint256 netOwed =
@@ -495,10 +514,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     function _withdraw(uint256 loanId, address seller, address asset) private returns (uint256 amount) {
         amount = LibEncumbrance.releaseSellerInterest(loanId, seller, asset);
         if (amount == 0) return 0;
-        LibFacet.crossFacetCall(
-            abi.encodeCall(VaultFactoryFacet.vaultWithdrawERC20, (seller, asset, seller, amount)),
-            bytes4(0)
-        );
+        LibVaultOutflow.toOwner(seller, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.SELLER_CLAIM);
         emit SellerInterestWithdrawn(loanId, seller, asset, amount);
     }
 }

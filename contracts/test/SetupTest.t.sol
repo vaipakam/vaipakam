@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -41,9 +42,11 @@ import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet
 import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {IERC20 as IERC20Owned} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -178,6 +181,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
@@ -322,6 +326,7 @@ contract SetupTest is Test {
     VaultDepositoryFacet vaultDepositoryFacet;
     OfferBookFacet offerBookFacet;
     SaleFloorFacet saleFloorFacet;
+    VaultOutflowFacet vaultOutflowFacet;
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
@@ -414,6 +419,7 @@ contract SetupTest is Test {
     NumeraireValueFacet numeraireValueFacet;
     NotificationFeeFacet notificationFeeFacet;
     ForcedSaleFacet forcedSaleFacet;
+    ForcedSalePreviewFacet forcedSalePreviewFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -435,6 +441,16 @@ contract SetupTest is Test {
     ///      stack limit in some compile units (#2876).
     function _applyDiamondCut(IDiamondCut.FacetCut[] memory cuts) private {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+    }
+
+    /// @dev #3205 part 2 — what `who` now owns of `token`: its wallet plus the
+    ///      free money credited to its vault. Claims, the lender share of an
+    ///      open loan's repayment and new principal land in the payee's vault
+    ///      as free money (withdrawable at once), while incentives still pay a
+    ///      wallet, so a "who received it" assertion reads both.
+    function _owned(address who, address token) internal view returns (uint256) {
+        return IERC20Owned(token).balanceOf(who)
+            + VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
     }
 
     function setupHelper() public {
@@ -494,6 +510,7 @@ contract SetupTest is Test {
         vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
         offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
         saleFloorFacet = SaleFloorFacet(ArtifactDeploy.deploy(type(SaleFloorFacet).name));
+        vaultOutflowFacet = VaultOutflowFacet(ArtifactDeploy.deploy(type(VaultOutflowFacet).name));
         repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
         repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         swapToRepayFacet = SwapToRepayFacet(ArtifactDeploy.deploy(type(SwapToRepayFacet).name));
@@ -577,6 +594,7 @@ contract SetupTest is Test {
         numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
         notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
+        forcedSalePreviewFacet = ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -589,7 +607,7 @@ contract SetupTest is Test {
         helperTest = new HelperTest();
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation();
+        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         // Cut facets into diamond. #229 closes the test-vs-prod drift
         // that #168 Track A narrowed: 28 → 37 cut[] entries, matching
@@ -614,7 +632,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](112);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](114);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1086,6 +1104,18 @@ contract SetupTest is Test {
             facetAddress: address(saleFloorFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSaleFloorFacetSelectors()
+        });
+        // #3205 part 2 — the one vault outflow policy host.
+        cuts[112] = IDiamondCut.FacetCut({
+            facetAddress: address(vaultOutflowFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaultOutflowFacetSelectors()
+        });
+        // #3205 part 2 — the forced-sale previews.
+        cuts[113] = IDiamondCut.FacetCut({
+            facetAddress: address(forcedSalePreviewFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getForcedSalePreviewFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
@@ -1668,9 +1698,7 @@ contract SetupTest is Test {
         uint256 diamond0 = ERC20(l.collateralAsset).balanceOf(address(diamond));
         vm.startPrank(address(diamond));
         EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(loanId);
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            l.borrower, l.collateralAsset, address(diamond), l.collateralAmount
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         FallbackCustodyFacet(address(diamond)).enterFallback(loanId);
         vm.stopPrank();
 

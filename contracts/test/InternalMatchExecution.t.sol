@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -334,13 +336,11 @@ contract InternalMatchExecutionTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower, mockCollateralERC20, uint256(0), uint256(1), uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockCollateralERC20, borrower, 1
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockCollateralERC20, borrower, 1);
 
         // Retrieval: the CURRENT borrower-position NFT holder (transferred
         // to `newHolder`) claims the residual via claimAsBorrower (now
@@ -350,12 +350,12 @@ contract InternalMatchExecutionTest is SetupTest {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
-        uint256 holderBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        uint256 holderBefore = _owned(newHolder, address(mockCollateralERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
 
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderBefore,
+            _owned(newHolder, address(mockCollateralERC20)) - holderBefore,
             400,
             "NFT holder claims the 400 residual"
         );
@@ -962,14 +962,14 @@ contract InternalMatchExecutionTest is SetupTest {
         // lender vault and treasury), then the lender's claim record
         // withdraws the lender slice to `msg.sender`.
         _mockLenderNft(LOAN_A, lender);
-        uint256 lenderBalBefore = IERC20(mockCollateralERC20).balanceOf(lender);
+        uint256 lenderBalBefore = _owned(lender, address(mockCollateralERC20));
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
         // Lender received the scaled residual: 8_500 * 7_000 / 10_000.
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(lender) - lenderBalBefore,
+            _owned(lender, address(mockCollateralERC20)) - lenderBalBefore,
             5_950,
             "lender claims the scaled partial-match residual"
         );
@@ -1000,7 +1000,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // no candidate hand-picked — the claim-time auto-dispatch finds
         // LOAN_B and FULLY matches A, then the claim pays out. Ownership is
         // checked before the auto-dispatch (EC-007), so mock the lender NFT.
-        uint256 lenderBefore = IERC20(mockERC20).balanceOf(lender);
+        uint256 lenderBefore = _owned(lender, address(mockERC20));
         _mockLenderNft(LOAN_A, lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
@@ -1020,14 +1020,17 @@ contract InternalMatchExecutionTest is SetupTest {
             "B matched, its lender side still pending"
         );
         assertEq(
-            IERC20(mockERC20).balanceOf(lender) - lenderBefore,
+            _owned(lender, address(mockERC20)) - lenderBefore,
             1000,
             "triggering lender gets proceeds + matcher incentive"
         );
+        // #3205 part 2 — the triggering lender holds the position, so its
+        // claim pays its own vault: the proceeds stay there, now as its free
+        // money (counted in `_owned` above), rather than leaving for a wallet.
         assertEq(
             IERC20(mockERC20).balanceOf(aLenderVault),
-            0,
-            "vault swept to the lender by the fall-through claim"
+            990,
+            "the proceeds stay in the lender's vault as its free money"
         );
     }
 
@@ -1167,13 +1170,13 @@ contract InternalMatchExecutionTest is SetupTest {
         address newHolder = makeAddr("newLenderHolder");
         _mockLenderNft(LOAN_A, newHolder);
 
-        uint256 holderBefore = IERC20(mockERC20).balanceOf(newHolder);
+        uint256 holderBefore = _owned(newHolder, address(mockERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
         // The CURRENT holder received the 990, drawn out of the stored
         // lender's vault (which is now empty), and the loan settled.
-        assertEq(IERC20(mockERC20).balanceOf(newHolder) - holderBefore, 990, "current holder claims matched proceeds");
+        assertEq(_owned(newHolder, address(mockERC20)) - holderBefore, 990, "current holder claims matched proceeds");
         assertEq(IERC20(mockERC20).balanceOf(lenderVault), 0, "stored lender vault drained to the holder by the claim");
         assertEq(
             uint8(_getLoan(LOAN_A).status),
@@ -1207,10 +1210,10 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(shown, 990, "the holder is shown the whole recovered principal");
 
         _mockLenderNft(LOAN_A, lender);
-        uint256 before = IERC20(mockERC20).balanceOf(lender);
+        uint256 before = _owned(lender, address(mockERC20));
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
-        assertEq(IERC20(mockERC20).balanceOf(lender) - before, 990, "and is paid exactly that");
+        assertEq(_owned(lender, address(mockERC20)) - before, 990, "and is paid exactly that");
         assertEq(
             SellerClaimFacet(address(diamond)).getSellerInterestHeld(LOAN_A, pastSeller, mockERC20),
             0,
@@ -1341,12 +1344,12 @@ contract InternalMatchExecutionTest is SetupTest {
         address newHolder = makeAddr("newLenderHolder");
         _mockLenderNft(LOAN_A, newHolder);
 
-        uint256 holderBefore = IERC20(mockERC20).balanceOf(newHolder);
+        uint256 holderBefore = _owned(newHolder, address(mockERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
         // 990 matched proceeds (claimed) + 10 matcher incentive = 1000 X.
-        assertEq(IERC20(mockERC20).balanceOf(newHolder) - holderBefore, 1000, "holder gets proceeds + matcher incentive");
+        assertEq(_owned(newHolder, address(mockERC20)) - holderBefore, 1000, "holder gets proceeds + matcher incentive");
         assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "claim-time match settles on the same claim");
     }
 
@@ -1409,9 +1412,9 @@ contract InternalMatchExecutionTest is SetupTest {
 
         // A.lender lends X, B.lender lends Y, C.lender lends Z — each holder
         // gets 990 of exactly their own leg's principal asset.
-        assertEq(IERC20(mockERC20).balanceOf(holderA), 990, "A holder gets 990 X");
-        assertEq(IERC20(mockCollateralERC20).balanceOf(holderB), 990, "B holder gets 990 Y");
-        assertEq(IERC20(mockY).balanceOf(holderC), 990, "C holder gets 990 Z");
+        assertEq(_owned(holderA, address(mockERC20)), 990, "A holder gets 990 X");
+        assertEq(_owned(holderB, address(mockCollateralERC20)), 990, "B holder gets 990 Y");
+        assertEq(_owned(holderC, address(mockY)), 990, "C holder gets 990 Z");
     }
 
     /// @notice #585 P1 (Codex round-2) — a loan PARTIALLY internally matched
@@ -1445,11 +1448,11 @@ contract InternalMatchExecutionTest is SetupTest {
         // A's lender holder claims the SUM: held (594) + lenderClaims (396) = 990 X.
         address holder = makeAddr("partialAccumHolder");
         _mockLenderNft(LOAN_A, holder);
-        uint256 balBefore = IERC20(mockERC20).balanceOf(holder);
+        uint256 balBefore = _owned(holder, address(mockERC20));
         vm.prank(holder);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
         assertEq(
-            IERC20(mockERC20).balanceOf(holder) - balBefore,
+            _owned(holder, address(mockERC20)) - balBefore,
             990,
             "holder claims partial + final proceeds (not just the final leg)"
         );
@@ -1494,11 +1497,11 @@ contract InternalMatchExecutionTest is SetupTest {
         // released atomically, proceeds paid to the holder.
         address newHolder = makeAddr("newVpfiLenderHolder");
         _mockLenderNft(LOAN_A, newHolder);
-        uint256 balBefore = IERC20(mockERC20).balanceOf(newHolder);
+        uint256 balBefore = _owned(newHolder, address(mockERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
-        assertEq(IERC20(mockERC20).balanceOf(newHolder) - balBefore, 990, "holder claims the VPFI proceeds");
+        assertEq(_owned(newHolder, address(mockERC20)) - balBefore, 990, "holder claims the VPFI proceeds");
         assertEq(
             TestMutatorFacet(address(diamond)).getEncumberedRaw(lender, mockERC20, 0),
             0,

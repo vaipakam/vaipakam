@@ -593,7 +593,6 @@ contract HandoverGateTest is Test {
         swapAdapter =
             new ZeroExAggregatorAdapter(t.adapterOnDeployer ? deployer : admin, makeAddr("allowanceHolder"), settlers);
         feedRegistry = new VaipakamFeedRegistry(admin, admin);
-        vaultBeacon = new VaultBeacon(admin, address(diamond), admin, address(new VaipakamVaultImplementation()));
         protocolRegistry = new ProtocolRegistry(
             admin, admin, 3 days, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
         );
@@ -608,6 +607,9 @@ contract HandoverGateTest is Test {
                     new PriceGuard.Change[](0)
                 )
             )
+        );
+        vaultBeacon = new VaultBeacon(
+            admin, address(diamond), admin, address(new VaipakamVaultImplementation(address(0), address(protocolRegistry)))
         );
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);

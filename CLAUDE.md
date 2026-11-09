@@ -207,6 +207,25 @@ runs half of it on old code:
   instead of paying it (never lost, but a silent change of route), so
   refresh PrepayListingFacet with ForcedSaleFacet too.
 
+- **ForcedSalePreviewFacet + ForcedSaleFacet (#3205 part 2).** The
+  forced-sale previews (`previewForcedSale`, `previewDiscountedLiquidation`)
+  moved off ForcedSaleFacet along its read / write seam, because it had
+  reached 11 bytes under EIP-170. **`previewForcedSale` is NOT on
+  ForcedSaleFacet any more.** Both size through the one rule in
+  `LibForcedSalePlan`, and `sellToNeed` refuses a quote outside it, so
+  refreshing one without the other shows keepers a plan the sale no longer
+  enforces (a silent divergence, not a revert). `RefreshAllFacetsInPlace` and
+  `RedeployFacets` carry both.
+
+- **VaultOutflowFacet + every facet that moves anything out of a vault
+  (#3205 part 2).** Every withdrawal, claim, fee, payout and grant reaches the
+  vault through a self-call to the one policy host (`LibVaultOutflow`), and
+  the vault's old withdraw and approve entries are gone. A caller refreshed
+  without the host reverts `FunctionDoesNotExist` on every movement (a hard
+  revert, never an unchecked one). It is a fresh-deploy change:
+  `RedeployFacets` refuses a Diamond that does not route
+  `vaultOutflowArgs` (`PredatesVaultOutflowPolicy`).
+
 - **SaleExitVerdictFacet + EarlyWithdrawalFacet + EarlyWithdrawalDirectFacet
   (#1841).** Both lender-exit entries run their opening checks through one
   self-call, `requireSaleExitOpen`, and carry no copy of those checks. An entry

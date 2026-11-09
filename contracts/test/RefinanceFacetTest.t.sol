@@ -226,8 +226,11 @@ contract RefinanceFacetTest is SetupTest {
         return VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
     }
 
+    /// @dev What `who` owns of the principal asset: its balance plus, since
+    ///      #3205 part 2, the free money credited to its vault (a vault
+    ///      address carries no such credit, so a vault read is its balance).
     function _bal(address who) internal view returns (uint256) {
-        return ERC20(mockERC20).balanceOf(who);
+        return _owned(who, mockERC20);
     }
 
     function _treasury() internal view returns (uint256) {
@@ -452,13 +455,13 @@ contract RefinanceFacetTest is SetupTest {
             "fresh-pledge request"
         );
         RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
-        uint256 walletBefore = ERC20(mockCollateralERC20).balanceOf(borrower);
+        uint256 walletBefore = _owned(borrower, mockCollateralERC20);
         uint256 oldLenderVaultBefore = _bal(_vault(lender));
 
         _accept();
 
         assertEq(
-            ERC20(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            _owned(borrower, mockCollateralERC20) - walletBefore,
             COLLATERAL,
             "old collateral returned to the borrower"
         );

@@ -6,7 +6,7 @@
 // Every figure the decision uses is a measurement, never a placeholder:
 //
 //   - The DEBT and the SEIZURE come from the Diamond's own preview
-//     (`ForcedSaleFacet.previewDiscountedLiquidation`), which reads the rule
+//     (`ForcedSalePreviewFacet.previewDiscountedLiquidation`), which reads the rule
 //     the liquidation itself charges and seizes by. The FlashLoanLiquidator
 //     reads that preview again inside the liquidating transaction and
 //     flash-borrows exactly its debt, so the keeper never sizes the flash
@@ -38,7 +38,7 @@
 // The decision is a pure function of injected reads (`planFlashLoanLiquidation`)
 // so it can be tested without a chain; keeper.ts supplies the reads.
 
-import { ForcedSaleFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
+import { ForcedSalePreviewFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import type { SwapVenueKind } from '@vaipakam/lib/swapRoutes';
 import type { Abi, Address, Hex, PublicClient } from 'viem';
@@ -77,7 +77,7 @@ export function discountedStatusReason(status: number): string {
   return name === undefined ? `unknown status ${status}` : (STATUS_REASON[name] ?? name);
 }
 
-/** `ForcedSaleFacet.previewDiscountedLiquidation`. */
+/** `ForcedSalePreviewFacet.previewDiscountedLiquidation`. */
 export interface DiscountedLiquidationPreview {
   status: number;
   principalAsset: Address;
@@ -98,7 +98,7 @@ export async function readDiscountedLiquidation(
 ): Promise<DiscountedLiquidationPreview> {
   return (await client.readContract({
     address: diamond,
-    abi: ForcedSaleFacetABI as Abi,
+    abi: ForcedSalePreviewFacetABI as Abi,
     functionName: 'previewDiscountedLiquidation',
     args: [loanId],
   })) as DiscountedLiquidationPreview;

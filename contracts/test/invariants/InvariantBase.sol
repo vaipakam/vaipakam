@@ -53,6 +53,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
+import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
@@ -408,6 +409,8 @@ contract InvariantBase is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
+        LibTestVaultBeacon.installDepository(address(diamond));
         // The payoff permit is pulled through Permit2; the mock moves tokens on the owner's
         // approval of it and holds nothing itself.
         RefinancePayoffPermitHelper.install();

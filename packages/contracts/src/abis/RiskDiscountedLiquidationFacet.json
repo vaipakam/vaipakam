@@ -9,11 +9,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "",
         "type": "bytes",
         "internalType": "bytes"
@@ -4737,11 +4732,6 @@
   {
     "type": "error",
     "name": "VpfiNotAllowedAsRentalPrepay",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroRecipient",
     "inputs": []
   }
 ]

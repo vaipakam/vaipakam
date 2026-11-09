@@ -5,6 +5,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -816,16 +818,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             );
         } else {
             uint256 refund = oldAmount - newAmount;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
-                    token,
-                    msg.sender,
-                    refund
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toOwner(msg.sender, LibVaultOutflow.ERC20, token, 0, refund, OutflowReason.OFFER_REFUND);
         }
     }
 

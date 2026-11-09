@@ -19,6 +19,30 @@
   },
   {
     "type": "function",
+    "name": "executorCloseListingGrant",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "consumed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "executorFinalizePrepaySale",
     "inputs": [
       {
@@ -30,6 +54,29 @@
         "name": "proceeds",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "executorOpenListingGrant",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],

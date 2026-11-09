@@ -159,6 +159,10 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   VPFIDepositedToVault: { label: 'VPFI deposited to vault', category: 'other', priority: 60 },
   VPFIWithdrawnFromVault: { label: 'VPFI withdrawn from vault', category: 'other', priority: 60 },
   VaultVpfiDebited: { label: 'VPFI spent from vault', category: 'other', priority: 50 },
+  // #3205 part 2 — every movement out of a vault, and a just-in-time
+  // allowance settling (what a fill's spender took).
+  VaultOutflow: { label: 'Moved out of vault', category: 'other', priority: 50 },
+  VaultGrantSettled: { label: 'Vault allowance settled', category: 'other', priority: 45 },
   // #1566 — a forfeited reward entry settled (shown on its owner's feed and
   // its loan's timeline).
   RewardEntryForfeitSettled: { label: 'Rewards forfeited', category: 'other', priority: 50 },

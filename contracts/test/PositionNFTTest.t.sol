@@ -271,6 +271,97 @@ contract PositionNFTTest is Test {
         }
     }
 
+    // ─── Pending sets (keeper reads) ─────────────────────────────────────
+
+    function _pendingUnlockHolders() internal view returns (address[] memory h) {
+        (h, ) = nft.pendingUnlocks(0, 100);
+    }
+
+    /// @notice Every path that opens or closes a pending unlock keeps the set
+    ///         in step: request adds; cancel, execute, re-lock and the
+    ///         Diamond's void remove.
+    function test_pendingUnlockSetFollowsEveryWriter() public {
+        address[3] memory who = [alice, bob, operator];
+        for (uint256 i; i < 3; ++i) {
+            vm.startPrank(who[i]);
+            nft.setLockDelay(1 days);
+            nft.lock();
+            nft.requestUnlock();
+            vm.stopPrank();
+        }
+        assertEq(nft.pendingUnlockCount(), 3);
+        (address[] memory h, uint256[] memory at) = nft.pendingUnlocks(1, 1);
+        assertEq(h.length, 1);
+        assertEq(at[0], block.timestamp + 1 days);
+        (h, ) = nft.pendingUnlocks(5, 10);
+        assertEq(h.length, 0, "past the end reads empty");
+        (h, ) = nft.pendingUnlocks(1, type(uint256).max);
+        assertEq(h.length, 2, "an overflowing limit stops at the end");
+
+        vm.prank(alice);
+        nft.cancelUnlock();
+        vm.prank(bob);
+        nft.lock(); // re-locking drops the pending unlock
+        vm.prank(address(diamond));
+        nft.voidPending(operator);
+        assertEq(nft.pendingUnlockCount(), 0);
+
+        vm.prank(alice);
+        nft.requestUnlock();
+        vm.warp(block.timestamp + 1 days);
+        nft.executeUnlock(alice);
+        assertEq(_pendingUnlockHolders().length, 0, "execute removes");
+    }
+
+    /// @notice An unlock with no delay applies at once and never enters the set.
+    function test_anImmediateUnlockIsNeverPending() public {
+        vm.startPrank(alice);
+        nft.lock();
+        nft.requestUnlock();
+        vm.stopPrank();
+        assertFalse(nft.isLocked(alice));
+        assertEq(nft.pendingUnlockCount(), 0);
+    }
+
+    /// @notice The pending lowering set: a lowering adds; its execution, a
+    ///         raise (the holder's or the Diamond's) and the Diamond's void
+    ///         remove.
+    function test_pendingDelayChangeSetFollowsEveryWriter() public {
+        vm.startPrank(alice);
+        nft.setLockDelay(3 days);
+        nft.setLockDelay(1 days);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        nft.setLockDelay(2 days);
+        nft.setLockDelay(0);
+        vm.stopPrank();
+        assertEq(nft.pendingDelayChangeCount(), 2);
+        (address[] memory h, uint256[] memory d, uint256[] memory at) = nft.pendingDelayChanges(0, 10);
+        assertEq(h.length, 2);
+        for (uint256 i; i < 2; ++i) {
+            if (h[i] == alice) {
+                assertEq(d[i], 1 days);
+                assertEq(at[i], block.timestamp + 3 days);
+            } else {
+                assertEq(h[i], bob);
+                assertEq(d[i], 0);
+            }
+        }
+        vm.prank(address(diamond));
+        nft.raiseLockDelay(bob, 3 days); // a raise drops bob's lowering
+        assertEq(nft.pendingDelayChangeCount(), 1);
+        vm.prank(address(diamond));
+        nft.voidPending(alice);
+        assertEq(nft.pendingDelayChangeCount(), 0);
+
+        vm.startPrank(alice);
+        nft.setLockDelay(0);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 3 days);
+        nft.executeLockDelay(alice);
+        assertEq(nft.pendingDelayChangeCount(), 0, "execute removes");
+    }
+
     // ─── Components ──────────────────────────────────────────────────────
 
     function test_componentChangeWaitsTheDelay_guardianCancels() public {

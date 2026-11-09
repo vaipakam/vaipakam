@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -176,13 +178,9 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
         _mockLtv(LOAN_A, 9_000);
         _mockLtv(LOAN_B, 9_000);
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encodeWithSelector(IVaipakamErrors.VaultTransferFailed.selector)
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
-        vm.expectRevert(IVaipakamErrors.VaultTransferFailed.selector);
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         vm.prank(address(diamond));
         RiskMatchLiquidationFacet(address(diamond)).attemptInternalMatchAutoDispatch(LOAN_A, matcher);
     }

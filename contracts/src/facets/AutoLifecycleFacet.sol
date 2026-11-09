@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -656,7 +658,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address asset = s.loans[loanId].principalAsset;
         // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
         LibEncumbrance.unlienExtendReserve(loanId, account, asset, amount);
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(account, asset, msg.sender, amount);
+        // The reserve back to the account's own wallet, or to its controller
+        // once a replacement retired it (#3205 part 2: the owner classes).
+        if (msg.sender == account) {
+            LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.WITHDRAW);
+        } else {
+            LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, asset, 0, amount, msg.sender, OutflowReason.WITHDRAW);
+        }
         emit ExtendReserveWithdrawn(loanId, account, asset, amount, s.extendReserve[loanId][account]);
     }
 
@@ -1192,13 +1200,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 loan.id, borrowerNftOwner, principalAsset, fromReserve, charge - fromReserve, reserved - fromReserve
             );
         }
-        LibFacet.vaultWithdrawExact(
-            borrowerNftOwner,
-            principalAsset,
-            address(this),
-            charge,
-            IVaipakamErrors.VaultWithdrawFailed.selector
-        );
+        LibVaultOutflow.toDiamondExact(borrowerNftOwner, principalAsset, charge, loan.id, OutflowReason.INTEREST);
         // 2. Forward treasury share + record accrual. #2440 — measured,
         //    accrued as it arrived (TreasuryFeeFacet).
         LibFacet.transferToTreasury(principalAsset, treasuryShare);

@@ -17,7 +17,7 @@
  *     keeper nothing; it is sent so the period accounting does not fall
  *     behind the calendar.
  *   - **Sale** — a positive shortfall. The sale is sized by the contract to
- *     need (`ForcedSaleFacet.previewForcedSale(loanId, PeriodicSettlement)`,
+ *     need (`ForcedSalePreviewFacet.previewForcedSale(loanId, PeriodicSettlement)`,
  *     #2795): the least collateral whose worst-case proceeds cover the
  *     shortfall plus the largest charges. The contract accepts a sale size
  *     anywhere from that `sell` to the plan's `maxSell` (#2796); the route

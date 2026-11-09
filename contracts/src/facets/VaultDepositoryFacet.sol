@@ -10,6 +10,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -22,17 +24,6 @@ interface IVaultRoutes {
     function vaultDepositERC721(address user, address from, address nftContract, uint256 tokenId) external;
     function vaultDepositERC1155(address user, address from, address nftContract, uint256 tokenId, uint256 amount)
         external;
-    function vaultWithdrawERC20(address user, address token, address recipient, uint256 amount)
-        external
-        returns (uint256 delivered);
-    function vaultWithdrawERC721(address user, address nftContract, uint256 tokenId, address recipient) external;
-    function vaultWithdrawERC1155(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external;
     function getOrCreateUserVault(address user) external returns (address proxy);
 }
 
@@ -65,6 +56,9 @@ interface IVaultRoutes {
  */
 contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     error AmountZero();
+    /// @dev #3205 part 2 — without protected mode a withdrawal pays only the
+    ///      account's own wallet.
+    error RecipientNotOwnWallet(address account, address recipient);
     error InvalidAssetKind(uint8 kind);
     error NotUntracked(address asset, uint256 tokenId);
     /// @notice #3204 — `account` has no vault to pin or unpin.
@@ -190,8 +184,10 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
      *         account, its controller. Bounded by {withdrawableNow}: the
      *         depository holding, never more than the free holding (tracked
      *         minus liens minus earmark). Anything a loan, offer, claim,
-     *         intent or reserve holds is refused. Without protected mode the asset is paid at once to
-     *         any `recipient`. With it, the payout is QUEUED: `recipient`
+     *         intent or reserve holds is refused. Without protected mode the asset is paid at once,
+     *         and only to the account's own wallet (#3205 part 2, owner decision 2026-11-06:
+     *         any other address needs protected mode's allowlist and its delay). With it, the
+     *         payout is QUEUED: `recipient`
      *         must be the manager wallet or an allowlisted destination, the
      *         account must not be locked, and the asset leaves after the delay
      *         through `VaultPayoutFacet.releasePayout`. Not pause-gated for a
@@ -234,14 +230,8 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
             emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, true);
             return queuedId;
         }
-        IVaultRoutes routes = IVaultRoutes(address(this));
-        if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
-            routes.vaultWithdrawERC20(account, asset, recipient, amount);
-        } else if (kind == uint8(LibVaipakam.AssetType.ERC721)) {
-            routes.vaultWithdrawERC721(account, asset, tokenId, recipient);
-        } else {
-            routes.vaultWithdrawERC1155(account, asset, tokenId, amount, recipient);
-        }
+        if (recipient != account) revert RecipientNotOwnWallet(account, recipient);
+        LibVaultOutflow.toOwner(account, kind, asset, tokenId, amount, OutflowReason.WITHDRAW);
         emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, false);
     }
 
@@ -430,15 +420,16 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @notice What of `asset` / `tokenId` in `user`'s vault is not held by a
-    ///         lien or an earmark: the tracked holding (never more than the
-    ///         vault holds) minus liens minus earmark. It counts balances the
+    ///         lien or an earmark: the tracked holding (for an ERC-20, never
+    ///         more than the vault holds) minus liens minus earmark. It counts balances the
     ///         protocol keeps there for a loan, offer or claim without a lien,
     ///         so it is an upper bound, not what the owner may withdraw (that
     ///         is {withdrawableNow}).
     function freeHolding(address user, uint8 kind, address asset, uint256 tokenId) public view returns (uint256) {
-        uint256 tracked = LibVaipakam.trackedHolding(user, asset, tokenId);
-        uint256 held = _chainHolding(user, kind, asset, tokenId);
-        return LibEncumbrance.freeBalance(user, asset, tokenId, tracked < held ? tracked : held);
+        // THE vault free-balance rule, shared with the outflow policy
+        // (#3205 part 2): an ERC-20 capped at the vault's balance, an NFT at
+        // its tracked holding (an escrowed listing lot is still the vault's).
+        return LibEncumbrance.vaultFree(user, kind == uint8(LibVaipakam.AssetType.ERC20), asset, tokenId);
     }
 
     /// @notice What of `asset` / `tokenId` sits in `user`'s vault outside the

@@ -456,7 +456,7 @@ contract NFTPrepayDutchListingFacet is
 
         orderHash = LibPrepayOrder.buildAndHashDutch(
             pctx,
-            vaultAddr,
+            pctx.borrowerVault, // the offerer (#3205 part 2)
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             p.startAskPrice,

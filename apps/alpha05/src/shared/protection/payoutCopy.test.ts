@@ -23,6 +23,18 @@ describe('payout copy', () => {
     expect(routedLeg({ kind: 'held', amount: 1n }, '1', on, copy)).toBe('payout.legHeldEither');
     expect(routedLeg({ kind: 'vault', amount: 1n }, '1', on, copy)).toBe('payout.legVault');
   });
+  it('names the vault for a credited payment, and the withdrawal delay only under protected mode', () => {
+    expect(routedDestination('credit', null, copy)).toBe('payout.toCredit');
+    expect(routeNotes('credit', { ...on, enabled: false }, copy)).toEqual(['payout.creditNote']);
+    expect(routeNotes('credit', null, copy)).toEqual(['payout.creditNote']);
+    expect(routeNotes('credit', on, copy)).toEqual(['payout.creditNote', 'payout.creditProtectedNote']);
+    expect(routedLeg({ kind: 'credit', amount: 1n }, '1', on, copy)).toBe('payout.legCredit');
+  });
+  it('names the expected place, not the wallet, when nothing landed for a credited payment', () => {
+    const p = { outcomes: [], wallet: 0n, expected: 5n, protection: null, what: (v: bigint) => `${v}`, exact: (v: bigint) => `${v}`, walletLeg: (w: string) => `wallet ${w}`, walletOther: () => 'other' };
+    expect(payoutLegs({ ...p, none: (w) => `vault ${w}` }, copy)).toEqual([{ status: 'not-done', label: 'vault 5', reason: 'other' }]);
+    expect(payoutLegs(p, copy)).toEqual([{ status: 'not-done', label: 'wallet 0', reason: 'other' }]);
+  });
   it('counts a delay or a secondary signer as a change only on a queued payment', () => {
     expect(routeChanged({ route: 'queued', protection: on }, { route: 'queued', protection: { ...on, delaySeconds: 1 } })).toBe(true);
     expect(routeChanged({ route: 'vault', protection: on }, { route: 'vault', protection: { ...on, delaySeconds: 1 } })).toBe(false);
