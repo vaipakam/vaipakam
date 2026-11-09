@@ -336,8 +336,8 @@ export function RentListForm({ side = 'list', formKey, chain, own, onReview, onC
       </FormField>
       {maxDays.state === 'failed' && (
         <Notice tone="warn" tier="A">
-          <span data-testid="rent-list-days-unread">{format('rentList.errDaysUnread', { reason: maxDays.error ?? 'no answer' })}</span>{' '}
-          <button type="button" className="btn" onClick={maxDays.refetch} data-testid="rent-list-days-retry">
+          <span data-testid={tid('days-unread')}>{format('rentList.errDaysUnread', { reason: maxDays.error ?? 'no answer' })}</span>{' '}
+          <button type="button" className="btn" onClick={maxDays.refetch} data-testid={tid('days-retry')}>
             {text('consent.retry')}
           </button>
         </Notice>
@@ -374,7 +374,7 @@ export function RentListForm({ side = 'list', formKey, chain, own, onReview, onC
 
       {stillReading && (
         <Notice tone="info" tier="A">
-          <span data-testid="rent-list-still-reading">{text('rentList.stillReading')}</span>
+          <span data-testid={tid('still-reading')}>{text('rentList.stillReading')}</span>
         </Notice>
       )}
       {opening !== null && (
