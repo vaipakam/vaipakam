@@ -1,9 +1,0 @@
-# The next app collects interest owed from a position you sold
-
-Claims in the next app now has an "Interest from positions you sold" section. A lender who sells a position keeps the interest they earned while holding it, and were not yet paid, as a claim on the loan. The section lists every loan where this wallet holds such a claim or has money waiting from one. It finds them in the index. When the index cannot list them, the section says so and never shows an empty list. A loan can then be looked up by its number, which reads the chain alone, so a seller can always reach their money.
-
-Each loan is read from the chain as the withdrawal reads it. It states what the wallet is owed, net of the loan's own fee on interest, and what already waits in the wallet's vault. While the loan runs, each interest payment pays the open claims first, oldest first. If nothing has reached the vault yet, the row says the claim is paid from later interest and offers no button. A loan in fallback waits. Once a loan has ended, withdrawing first splits what the lender side recovered: the holder's principal first, then each claim, oldest first. That split closes every open seller claim on the loan. In the loan's own token the review states the wallet's part exactly and what stays unpaid. In another token it states that the split pays by value when it runs.
-
-The review names every figure and where the payment lands: the wallet, or a protected account's queue or vault. It includes the protocol's own dry run, which the send runs again, and asks for one wallet prompt. The finish card is read from the transaction's own record: each claim the split closed (paid in full, or short with what stays unpaid), and each payment where it arrived. A withdrawal stays on screen until its card is closed. The note listing what Claims does not yet collect no longer names seller interest.
-
-Rulebook: `docs/DesignsAndPlans/Alpha05AppDesign.md` RB-SELLER-CLAIM. Epic #3180.

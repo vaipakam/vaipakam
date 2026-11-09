@@ -115,6 +115,16 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         return LibPositionNFT.routeOf(tokenId);
     }
 
+    /// @notice #3336 — whether the `reason` route bound to `tokenId` is dead:
+    ///         it is no longer the open route, or the position moved since it
+    ///         opened. The rule every permissionless teardown of a moved
+    ///         position applies ({LibPositionNFT.routeIsDead}), served so a
+    ///         keeper finds those flows without a simulation per flow; the
+    ///         teardown still decides.
+    function isPositionRouteDead(uint256 tokenId, LibPositionNFT.RouteReason reason) external view returns (bool) {
+        return LibPositionNFT.routeIsDead(tokenId, reason);
+    }
+
     // ==================== The core's transfer check ====================
 
     /**

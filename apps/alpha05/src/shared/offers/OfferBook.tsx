@@ -42,14 +42,15 @@ function indexReason(e: unknown, text: CopyAccess['text']): string {
 /**
  * The offer book (OFF-39, OFF-40, OFF-43): every open offer on the screen's
  * network, newest first, from the index (the world rail), in two tabs
- * (loans of a token, NFT rentals), with a side filter and, when a wallet is
- * connected, a switch that hides its own offers. Each row opens the offer's
+ * (loans of a token, NFT rentals), with a side filter and a switch that
+ * hides the connected wallet's own offers. It is rendered only once a wallet
+ * is connected on a served network (owner decision 2026-11-09). Each row opens the offer's
  * detail page, which reads it from the chain before anything is offered.
  * Older offers are read a page at a time with "Show more"; a filter applies
  * to what has been read so far, and the page says how many that is. A
  * failed read is a degraded-source warning, never an empty book.
  */
-export function OfferBook({ viewer }: { viewer: Hex | null }) {
+export function OfferBook({ viewer }: { viewer: Hex }) {
   const copy = useCopy();
   const { text, format } = copy;
   const world = useWorldRail();
@@ -95,12 +96,10 @@ export function OfferBook({ viewer }: { viewer: Hex | null }) {
           </button>
         ))}
       </div>
-      {viewer !== null && (
-        <label className="choice">
-          <input type="checkbox" checked={hideMine} onChange={(e) => setHideMine(e.target.checked)} data-testid="offer-book-hide-mine" />
-          <span>{text('offerBook.hideMine')}</span>
-        </label>
-      )}
+      <label className="choice">
+        <input type="checkbox" checked={hideMine} onChange={(e) => setHideMine(e.target.checked)} data-testid="offer-book-hide-mine" />
+        <span>{text('offerBook.hideMine')}</span>
+      </label>
       {failed && (
         <p className="tier-a" data-testid="offer-book-failed">
           {format(book.data ? 'offerBook.failedCached' : 'offerBook.failed', { reason })}
@@ -132,10 +131,10 @@ export function OfferBook({ viewer }: { viewer: Hex | null }) {
   );
 }
 
-function BookRowItem({ row: r, viewer, meta, copy, expired }: { row: BookRow; viewer: Hex | null; meta: TokenMetaMap | null; copy: CopyAccess; expired: boolean }) {
+function BookRowItem({ row: r, viewer, meta, copy, expired }: { row: BookRow; viewer: Hex; meta: TokenMetaMap | null; copy: CopyAccess; expired: boolean }) {
   const { text, format } = copy;
   const id = r.id.toString();
-  const mine = viewer !== null && r.creator.toLowerCase() === viewer.toLowerCase();
+  const mine = r.creator.toLowerCase() === viewer.toLowerCase();
   const lend = r.offerType === OFFER_TYPE_LENDER;
   const kind = KIND_KEY[r.kind];
   return (

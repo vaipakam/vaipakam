@@ -26,3 +26,17 @@ export async function setUnplacedLoans(count: number, capped: boolean): Promise<
   });
   if (!res.ok) throw new Error(`stub refused unplaced ${count}: ${res.status}`);
 }
+
+/** Add inbox rows for `recipient` that the fixture chain cannot produce by
+ *  itself (each row's `kind` and the fields it names; the stand-in stamps
+ *  the rest after every chain row). */
+export async function addNotifications(recipient: string, rows: Record<string, unknown>[]): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/notifications`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recipient, rows }) });
+  if (!res.ok) throw new Error(`stub refused notifications: ${res.status}`);
+}
+
+/** Remove every inbox row a spec added. */
+export async function resetNotifications(): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/notifications`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reset: true }) });
+  if (!res.ok) throw new Error(`stub refused notifications reset: ${res.status}`);
+}

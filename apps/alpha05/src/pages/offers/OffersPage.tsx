@@ -132,7 +132,9 @@ export function OffersPage() {
           )}
         </>
       )}
-      <OfferBook viewer={served && own ? own.account : null} />
+      {/* The book is read only once a wallet is connected on a served network
+          (owner decision 2026-11-09: no offer-book read before a wallet). */}
+      {served && own && <OfferBook viewer={own.account} />}
     </main>
   );
 }
