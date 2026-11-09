@@ -1,4 +1,4 @@
-## Thread — alpha05 Settings shows and changes your keeper permissions (PR #<n>)
+## Thread — alpha05 Settings shows and changes your keeper permissions (PR #3461)
 
 The new app's Settings page now has a Keepers section: the connected
 wallet's keeper settings on its network. It shows the master switch, each
