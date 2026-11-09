@@ -408,11 +408,14 @@ const server = http.createServer(async (req, res) => {
       }
       const head = Number(await anvil('eth_blockNumber'));
       const now = Math.floor(Date.now() / 1000);
+      // Added rows take ids above every chain row's (block × 10,000 + …) and
+      // within the 15 digits the route accepts for `newerThan`, as the
+      // index's own ids are: written after, so numbered after.
       for (const r of body.rows) {
         const seq = addedNotifications.length + 1;
         addedNotifications.push({
           recipient: body.recipient.toLowerCase(),
-          row: { id: 1_000_000_000_000_000 + seq, offerId: null, eventKind: null, data: null, createdAt: now, blockNumber: head, logIndex: 1_000_000 + seq, ...r },
+          row: { id: 900_000_000_000_000 + seq, offerId: null, eventKind: null, data: null, createdAt: now, blockNumber: head, logIndex: 1_000_000 + seq, ...r },
         });
       }
       json(res, 200, { added: addedNotifications.length });

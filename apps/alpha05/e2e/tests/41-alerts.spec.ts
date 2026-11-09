@@ -56,6 +56,7 @@ test('the inbox lists the wallet’s alerts, counts the new ones on the bell, an
     const bell = page.getByTestId('inbox-bell');
     await expect(bell).toBeVisible();
     await expect(bell).toHaveAttribute('data-unread', '0');
+    await expect(bell).toHaveAttribute('data-failed', 'false');
 
     // New alerts arrive while the wallet is elsewhere: the bell shows the
     // index's count of rows written since, the one this app cannot read included.
@@ -90,6 +91,9 @@ test('the inbox lists the wallet’s alerts, counts the new ones on the bell, an
     await expect(ended).toContainText('when it happened is not known.');
     await expect(list.locator('[data-alert="loan_repaid"]').filter({ hasText: `Loan #${id}` })).toHaveAttribute('data-fresh', 'false');
     await expect(bell).toHaveAttribute('data-unread', '0');
+    // Cleared by a fresh count from the index, not by a failed one.
+    await expect(bell).toHaveAttribute('data-failed', 'false');
+    await expect(bell).toHaveAccessibleName('Alerts');
     await fitsWidth(page);
 
     // A row opens its loan.
