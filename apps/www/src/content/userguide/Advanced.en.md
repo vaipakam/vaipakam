@@ -1576,6 +1576,12 @@ each, and on a band crossing in the unsafe direction fires
 once via the configured channels. There is no on-chain state
 and no gas. Alerts are advisory — they don't move funds.
 
+<a id="alerts-inbox"></a>
+
+### The Alerts inbox
+
+The Alerts page reads the index's inbox for the connected wallet on its network, newest first, fifty rows at a time. A row is written for the wallet holding the loan position when the row is written: loan started; partial and full repayment, including preclose, refinance, swap-to-repay and collateral-sale close-outs; default or liquidation; an internal-match close; a loan the index saw end without being able to tell how; the 7-day and 1-day due notices; grace entered and grace ended; and health below 1.5, 1.2 and 1.05. The health rows are written by the protocol's keeper, so they arrive only while it runs and only for loans health applies to. Reward-entry final notice and expiry rows go to the entry's owner. A row is a pointer, never a figure: the loan page reads the chain. An answer for another network or wallet is refused, rows that cannot be read are counted, and a kind the app does not know is shown by name. The header count is the rows whose index id is above the last one the page showed in this browser; ids only grow in write order, so a row stamped with an older block still counts. The seen mark lives in this browser only and only moves forward. Telegram and push, below, are still set up in the current app.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder

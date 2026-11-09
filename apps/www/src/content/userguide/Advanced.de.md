@@ -1431,6 +1431,12 @@ Loans und sendet bei einem Wechsel in ein unsichereres Band einmal
 über die konfigurierten Kanäle. Kein On-Chain-State, kein Gas.
 Alerts sind beratend — sie bewegen keine Mittel.
 
+<a id="alerts-inbox"></a>
+
+### Der Alerts-Posteingang
+
+Die Seite Alerts liest den Posteingang des Index für die verbundene Wallet in ihrem Netzwerk, die neuesten zuerst, fünfzig Zeilen pro Seite. Eine Zeile wird für die Wallet geschrieben, die die Kreditposition beim Schreiben hält: Kredit gestartet; Teil- und Vollrückzahlung, einschließlich vorzeitiger Schließung, Refinanzierung, Swap-to-Repay und Schließung durch Sicherheitenverkauf; Ausfall oder Liquidation; Schließung durch internen Abgleich; ein Kredit, dessen Ende der Index sah, ohne sagen zu können, wie; die Fälligkeitshinweise 7 Tage und 1 Tag vorher; Nachfrist begonnen und beendet; und Gesundheit unter 1,5, 1,2 und 1,05. Die Gesundheitszeilen schreibt der Keeper des Protokolls, sie kommen also nur, solange er läuft, und nur für Kredite, für die die Gesundheit gilt. Die Zeilen zur letzten Mahnung und zum Ablauf eines Belohnungseintrags gehen an dessen Inhaber. Eine Zeile ist ein Verweis, nie ein Betrag: die Kreditseite liest die Chain. Eine Antwort für ein anderes Netzwerk oder eine andere Wallet wird abgelehnt, unlesbare Zeilen werden gezählt, und eine unbekannte Art wird mit ihrem Namen gezeigt. Der Zähler im Kopf zählt die Zeilen, deren Index-ID über der letzten liegt, die die Seite in diesem Browser gezeigt hat; IDs wachsen nur in Schreibreihenfolge, also zählt auch eine Zeile mit älterem Block. Die Gesehen-Marke liegt nur in diesem Browser und bewegt sich nur vorwärts. Telegram und Push, unten, richtest du noch in der aktuellen App ein.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Schwellen-Leiter

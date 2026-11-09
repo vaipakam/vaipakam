@@ -1425,6 +1425,12 @@ en vivo de cada uno, y al cruzar una banda en dirección insegura
 dispara una vez vía los canales configurados. No hay estado
 on-chain ni gas. Las alertas son informativas —no mueven fondos.
 
+<a id="alerts-inbox"></a>
+
+### La bandeja de Alertas
+
+La página Alertas lee la bandeja del índice para la wallet conectada en su red, lo más reciente primero, cincuenta filas cada vez. Una fila se escribe para la wallet que tiene la posición del préstamo en el momento de escribirla: préstamo iniciado; devolución parcial y total, incluidos el cierre anticipado, la refinanciación, el swap-to-repay y el cierre por venta de la garantía; impago o liquidación; cierre por emparejamiento interno; un préstamo que el índice vio terminar sin poder decir cómo; los avisos de vencimiento a 7 días y a 1 día; entrada y fin del periodo de gracia; y salud por debajo de 1,5, 1,2 y 1,05. Las filas de salud las escribe el keeper del protocolo, así que solo llegan mientras funciona y solo para préstamos a los que se aplica la salud. Las filas de último aviso y caducidad de una entrada de recompensa van a su dueño. Una fila es un puntero, nunca una cifra: la página del préstamo lee la cadena. Se rechaza una respuesta para otra red u otra wallet, las filas ilegibles se cuentan y un tipo desconocido se muestra por su nombre. El contador de la cabecera son las filas cuyo id en el índice supera el último que la página mostró en este navegador; los ids solo crecen en orden de escritura, así que una fila con un bloque anterior también cuenta. La marca de visto vive solo en este navegador y solo avanza. Telegram y push, abajo, todavía se configuran en la app actual.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Escalera de umbrales

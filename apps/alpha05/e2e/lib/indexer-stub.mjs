@@ -33,7 +33,18 @@
 //    logs name, read back from the Diamond, filtered to the scope asked for
 //    and echoing that scope as the indexer does. The agreed rate is the
 //    loan's stored rate (the fixture never refinances a loan it reads here).
-//    Refused while the posture is `down`.
+//    Refused while the posture is `down`;
+//  - the indexer's `GET /notifications/:address?chainId&limit&before`, the
+//    wallet's inbox: a `loan_matched` row for both parties of every
+//    `LoanInitiated` and a `loan_repaid` row for both parties of every
+//    `LoanRepaid`, from the chain's logs (filed under the loan's parties, as
+//    the indexer files them under the position holders when no position has
+//    moved), with ids in chain order, plus any rows a spec adds through
+//    `POST /__stub/notifications` (kinds the fixture cannot reach by itself,
+//    such as health bands, reward deadlines, an unknown kind or an
+//    unreadable row), stamped after every chain row. Newest first, paged by
+//    the indexer's `block:log:id` cursor; refused while the posture is
+//    `down`.
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
@@ -41,7 +52,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http as viemHttp, toEventSelector } from 'viem';
+import { createPublicClient, decodeEventLog, http as viemHttp, toEventSelector } from 'viem';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.ALPHA05_E2E_ANVIL_URL ?? 'http://127.0.0.1:8546';
@@ -70,6 +81,7 @@ const ACTIVITY_TOPICS = new Map(
 );
 
 const LOAN_INITIATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanInitiated'));
+const LOAN_REPAID = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanRepaid'));
 const OFFER_CREATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'OfferCreated'));
 const chain = createPublicClient({ transport: viemHttp(ANVIL_URL) });
 
@@ -174,6 +186,62 @@ async function recentLoans(url) {
     // disclosure.
     unplaced,
   };
+}
+
+/** Inbox rows a spec added (`/__stub/notifications`), each for one wallet. */
+let addedNotifications = [];
+
+/** `/notifications/:address`: the wallet's inbox rows, newest first, one
+ *  page at a time on the indexer's (block, log, id) cursor. */
+async function notifications(url, address) {
+  const addr = address.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) return { status: 400, body: { error: 'bad-address' } };
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[LOAN_INITIATED, LOAN_REPAID]] }]);
+  const times = new Map();
+  const rows = [];
+  for (const l of logs) {
+    const block = Number(l.blockNumber);
+    if (!times.has(block)) times.set(block, Number((await anvil('eth_getBlockByNumber', [l.blockNumber, false])).timestamp));
+    const loanId = BigInt(l.topics[1]);
+    let kind;
+    let parties;
+    if (l.topics[0] === LOAN_INITIATED) {
+      const { args } = decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
+      kind = 'loan_matched';
+      parties = [args.lender, args.borrower];
+    } else {
+      const loan = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [loanId] });
+      kind = 'loan_repaid';
+      parties = [loan.lender, loan.borrower];
+    }
+    const logIndex = Number(l.logIndex);
+    parties.forEach((p, side) => {
+      if (p.toLowerCase() !== addr) return;
+      rows.push({
+        id: block * 10_000 + logIndex * 2 + side,
+        kind,
+        loanId: Number(loanId),
+        offerId: null,
+        eventKind: kind === 'loan_matched' ? 'LoanInitiated' : 'LoanRepaid',
+        data: null,
+        createdAt: times.get(block),
+        blockNumber: block,
+        logIndex,
+      });
+    });
+  }
+  for (const n of addedNotifications) if (n.recipient === addr) rows.push(n.row);
+  rows.sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex || b.id - a.id);
+  const before = url.searchParams.get('before');
+  let page = rows;
+  if (before) {
+    const [blk, li, id] = before.split(':').map(Number);
+    page = rows.filter((r) => r.blockNumber < blk || (r.blockNumber === blk && (r.logIndex < li || (r.logIndex === li && r.id < id))));
+  }
+  page = page.slice(0, limit);
+  const last = page.length === limit ? page[page.length - 1] : null;
+  return { status: 200, body: { chainId: CHAIN_ID, address: addr, notifications: page, nextBefore: last ? `${last.blockNumber}:${last.logIndex}:${last.id}` : null } };
 }
 
 /** The `/loans/recent` disclosure of loans whose terms the index has not
@@ -286,10 +354,12 @@ const server = http.createServer(async (req, res) => {
           '/activity (seller and reserve kinds)',
           '/offers/active',
           '/loans/recent',
+          '/notifications/:address',
           '/ws/chain/:chainId (503)',
           '/rpc/:chainId',
           '/__stub/index-posture',
           '/__stub/unplaced',
+          '/__stub/notifications',
         ],
       });
       return;
@@ -312,6 +382,31 @@ const server = http.createServer(async (req, res) => {
       }
       unplaced = { count: next.count, capped: next.capped };
       json(res, 200, { unplaced });
+      return;
+    }
+    if (url.pathname === '/__stub/notifications' && req.method === 'POST') {
+      // { recipient, rows: [partial row] } adds rows stamped after every chain
+      // row; { reset: true } removes every added row.
+      const body = JSON.parse(await readBody(req));
+      if (body.reset === true) {
+        addedNotifications = [];
+        json(res, 200, { added: 0 });
+        return;
+      }
+      if (typeof body.recipient !== 'string' || !Array.isArray(body.rows)) {
+        json(res, 400, { error: 'notifications needs { recipient, rows } or { reset: true }' });
+        return;
+      }
+      const head = Number(await anvil('eth_blockNumber'));
+      const now = Math.floor(Date.now() / 1000);
+      for (const r of body.rows) {
+        const seq = addedNotifications.length + 1;
+        addedNotifications.push({
+          recipient: body.recipient.toLowerCase(),
+          row: { id: 1_000_000_000_000_000 + seq, offerId: null, eventKind: null, data: null, createdAt: now, blockNumber: head, logIndex: 1_000_000 + seq, ...r },
+        });
+      }
+      json(res, 200, { added: addedNotifications.length });
       return;
     }
     if (url.pathname === '/health/ingest') {
@@ -345,6 +440,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await recentLoans(url));
+      return;
+    }
+    const inbox = url.pathname.match(/^\/notifications\/([^/]+)$/);
+    if (inbox && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const r = await notifications(url, inbox[1]);
+      json(res, r.status, r.body);
       return;
     }
     const rpc = url.pathname.match(/^\/rpc\/(\d+)$/);

@@ -671,6 +671,12 @@ beobachtet deine Loans alle fünf Minuten und pingt dich in dem
 Moment an, in dem der Score eine Gefahrenbande kreuzt. Es kostet
 kein Gas; nichts passiert on-chain.
 
+<a id="alerts-inbox"></a>
+
+### Der Alerts-Posteingang
+
+Die Seite Alerts listet die Hinweise, die der Index des Protokolls für deine Wallet im aktuellen Netzwerk führt, die neuesten zuerst. Sie ist kostenlos, und du musst dich für nichts anmelden. Ein Hinweis entsteht, wenn ein Kredit startet, teilweise oder vollständig zurückgezahlt wird, ausfällt oder liquidiert wird, sich seiner Fälligkeit nähert, in seine Nachfrist eintritt oder sie verlässt oder seine Gesundheit unter 1,5, 1,2 oder 1,05 fällt, und wenn sich ein Belohnungseintrag seiner Einlösefrist nähert oder sie überschreitet. Jeder Hinweis öffnet den Kredit, dessen Seite ihn von der Chain liest, oder bei einer Belohnung die Seite Claims. Die Glocke neben deiner Wallet oben zählt die Hinweise, die seit deinem letzten Öffnen der Seite in diesem Browser eingegangen sind. Kann der Index nicht gelesen werden, sagt die Seite das, statt einen leeren Posteingang zu zeigen. Telegram- und Push-Hinweise, unten beschrieben, richtest du noch in der aktuellen App ein.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Schwellen-Leiter
