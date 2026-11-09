@@ -40,8 +40,16 @@ function boot(
   /** What the worker answered with, or null when it let the browser go to the network. */
   const request = async (url: string, init: { method?: string; mode?: string } = {}) => {
     const answered: Promise<{ body: string }>[] = [];
-    handlers.fetch!({ request: { url, method: init.method ?? 'GET', mode: init.mode ?? 'cors' }, respondWith: (p: Promise<{ body: string }>) => answered.push(p) });
-    return answered.length === 0 ? null : (await answered[0]!).body;
+    const kept: Promise<unknown>[] = [];
+    handlers.fetch!({
+      request: { url, method: init.method ?? 'GET', mode: init.mode ?? 'cors' },
+      respondWith: (p: Promise<{ body: string }>) => answered.push(p),
+      waitUntil: (p: Promise<unknown>) => kept.push(p),
+    });
+    if (answered.length === 0) return null;
+    const body = (await answered[0]!).body;
+    await Promise.all(kept);
+    return body;
   };
   return { handlers, stores, fetched, request };
 }

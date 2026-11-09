@@ -62,7 +62,8 @@ self.addEventListener('fetch', (event) => {
             const kind = (response.headers.get('content-type') || '').toLowerCase();
             if (response.ok && response.type === 'basic' && kind !== '' && !kind.startsWith('text/html')) {
               const copy = response.clone();
-              caches.open(CACHE).then((cache) => cache.put(url.pathname, copy)).catch(() => undefined);
+              // Kept alive past the answer, so the copy is not cut off when the page goes.
+              event.waitUntil(caches.open(CACHE).then((cache) => cache.put(url.pathname, copy)).catch(() => undefined));
             }
             return response;
           }),

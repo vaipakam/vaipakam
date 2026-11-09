@@ -11,6 +11,7 @@
  * never a button that would do nothing.
  */
 import { useSyncExternalStore } from 'react';
+import { OWN_WORKER_PATH, removeForeignWorkers } from './foreignWorkers';
 
 interface InstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -62,10 +63,21 @@ export function startInstall(): void {
     return;
   }
   set({ worker: { kind: 'registering' } });
-  navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(
-    () => set({ worker: { kind: 'active' } }),
-    (e: unknown) => set({ worker: { kind: 'failed', reason: e instanceof Error && e.message ? e.message : 'the browser refused it' } }),
-  );
+  const container = navigator.serviceWorker;
+  // Foreign workers go first (foreignWorkers.ts); a failed check never stops
+  // this build's own worker being registered.
+  removeForeignWorkers(container, window.location.origin)
+    .then(
+      ({ found, removed }) => {
+        if (found > 0) console.warn(`[sw] removed ${removed} of ${found} service worker(s) this app did not install`);
+      },
+      (e: unknown) => console.warn('[sw] could not check for foreign service workers', e),
+    )
+    .then(() => container.register(OWN_WORKER_PATH, { scope: '/' }))
+    .then(
+      () => set({ worker: { kind: 'active' } }),
+      (e: unknown) => set({ worker: { kind: 'failed', reason: e instanceof Error && e.message ? e.message : 'the browser refused it' } }),
+    );
 }
 
 /** Opens the browser's own install prompt; the answer is the browser's. */

@@ -1659,7 +1659,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   it, answers later requests for that file from the copy, deletes every
   earlier build's store when it takes over, and lets everything else pass
   uncached: a page load, any request to another origin (RPC, Workers), any
-  file not on the build's list. The section says what is kept on the device
+  file not on the build's list. A file is kept only when the answer is that
+  file (never the host's HTML fallback), and a store that fails to open,
+  read or write is a miss, never a failed file. Before registering its own
+  worker, each load removes every other worker on this origin, one refusal
+  not stopping the rest. The section says what is kept on the device
   and that pages and every figure are always read from the network, and
   states when the browser cannot keep files or refused the worker. Data
   rights count and erase the saved files (RB-DATA-RIGHTS).
