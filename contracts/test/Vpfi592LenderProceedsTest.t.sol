@@ -140,13 +140,13 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         // paid out to the holder.
         address newHolder = makeAddr("newVpfiLenderHolder");
         _mockLenderNft(newHolder);
-        uint256 balBefore = IERC20(mockERC20).balanceOf(newHolder);
+        uint256 balBefore = _owned(newHolder, mockERC20); // #3387: claims credit the vault
 
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsLender(LOAN);
 
         assertEq(
-            IERC20(mockERC20).balanceOf(newHolder) - balBefore,
+            _owned(newHolder, mockERC20) - balBefore,
             PRINCIPAL,
             "current holder claims the VPFI proceeds"
         );
@@ -228,12 +228,12 @@ contract Vpfi592LenderProceedsTest is SetupTest {
 
         address newHolder = makeAddr("newInKindHolder");
         _mockLenderNft(newHolder);
-        uint256 balBefore = IERC20(mockERC20).balanceOf(newHolder);
+        uint256 balBefore = _owned(newHolder, mockERC20); // #3387: claims credit the vault
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsLender(LOAN);
 
         assertEq(
-            IERC20(mockERC20).balanceOf(newHolder) - balBefore,
+            _owned(newHolder, mockERC20) - balBefore,
             1000,
             "current holder claims the VPFI collateral"
         );
