@@ -39,6 +39,7 @@ import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {LibTestPayout} from "../helpers/LibTestPayout.sol";
 
 /**
  * @title PositiveFlowsGapFillers
@@ -113,6 +114,7 @@ contract PositiveFlowsGapFillers is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -197,6 +199,10 @@ contract PositiveFlowsGapFillers is Test {
 
         // Borrower wallet credit is principal minus the treasury share
         // (the matcher cut comes back to them as the signed-offer acceptor).
+        // #3205 part 2 — the net principal lands in the borrower's vault as
+        // free money (the matcher kickback still pays the wallet); the
+        // borrower withdraws it, as the app does.
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
         uint256 borrowerUsdcAfter = IERC20(mockUsdc).balanceOf(borrower);
         assertEq(
             borrowerUsdcAfter - borrowerUsdcBefore,

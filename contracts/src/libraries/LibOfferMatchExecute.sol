@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {RefinanceFacet} from "../facets/RefinanceFacet.sol";
@@ -483,16 +485,9 @@ library LibOfferMatchExecute {
                     : B.collateralAmountMax;
                 if (borrowerPulled > mr.reqCollateral) {
                     uint256 excess = borrowerPulled - mr.reqCollateral;
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC20.selector,
-                            B.creator,           // pull from borrower's vault
-                            B.collateralAsset,
-                            B.creator,           // refund to borrower's wallet
-                            excess
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
+                    // The unused collateral, from the borrower's vault back to
+                    // the borrower's own wallet.
+                    LibVaultOutflow.toOwner(B.creator, LibVaultOutflow.ERC20, B.collateralAsset, 0, excess, OutflowReason.OFFER_REFUND);
                 }
             }
         }
@@ -537,16 +532,7 @@ library LibOfferMatchExecute {
                 // in custody. Lender ERC-20 only — NFT / ERC1155 lender
                 // offers are single-fill (amount == amountMax) so this
                 // branch is unreachable for them in practice.
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        L.creator,
-                        L.lendingAsset,
-                        L.creator,
-                        lenderRemaining
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toOwner(L.creator, LibVaultOutflow.ERC20, L.lendingAsset, 0, lenderRemaining, OutflowReason.OFFER_REFUND);
             }
             L.accepted = true;
             // #3242 (Codex #3283 r1 P1) — the lender offer is terminal, so it
@@ -624,16 +610,9 @@ library LibOfferMatchExecute {
                         : bm.collateralAmountMax;
                     if (borrowerCollPulled > bm.collateralAmountFilled) {
                         uint256 collRefund = borrowerCollPulled - bm.collateralAmountFilled;
-                        LibFacet.crossFacetCall(
-                            abi.encodeWithSelector(
-                                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                                bm.creator,           // pull from borrower's vault
-                                bm.collateralAsset,
-                                bm.creator,           // refund to borrower's wallet
-                                collRefund
-                            ),
-                            VaultWithdrawFailed.selector
-                        );
+                        // The unused collateral, from the borrower's vault back
+                        // to the borrower's own wallet.
+                        LibVaultOutflow.toOwner(bm.creator, LibVaultOutflow.ERC20, bm.collateralAsset, 0, collRefund, OutflowReason.OFFER_REFUND);
                     }
                 }
                 bm.accepted = true;

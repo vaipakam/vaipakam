@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibRefinanceNetting} from "./LibRefinanceNetting.sol";
 
@@ -928,6 +929,27 @@ library LibEncumbrance {
             + s.pendingPayoutEarmark[user][asset][tokenId];
         if (tokenId == 0) enc += LibRefinanceNetting.parkedOf(user, asset);
         return rawBalance > enc ? rawBalance - enc : 0;
+    }
+
+    /// @notice THE free balance of a vault holding (#3205 part 2): what of
+    ///         `asset` / `tokenId` in `user`'s vault no lien, earmark or
+    ///         parked payoff holds. The one rule the vault outflow policy and
+    ///         the depository (its free holding, withdrawable amount and
+    ///         withdrawal gate) both read, so they cannot disagree. The holding
+    ///         is the tracked ledger; for an ERC-20 it is capped at what the
+    ///         vault actually holds, which guards balance drift (a rebase, a
+    ///         fee). An NFT does not drift, and an ERC-1155 lot moved into
+    ///         this vault's own listing escrow is still this vault's and still
+    ///         under its lien, so capping an NFT at the vault's raw balance
+    ///         would subtract that lot twice. Liens are subtracted once.
+    function vaultFree(address user, bool erc20, address asset, uint256 tokenId) internal view returns (uint256) {
+        uint256 held = LibVaipakam.trackedHolding(user, asset, tokenId);
+        if (erc20) {
+            address proxy = LibVaipakam.storageSlot().userVaipakamVaults[user];
+            uint256 raw = proxy == address(0) ? 0 : IERC20(asset).balanceOf(proxy);
+            if (raw < held) held = raw;
+        }
+        return freeBalance(user, asset, tokenId, held);
     }
 
     // ─── Internal ──────────────────────────────────────────────────────

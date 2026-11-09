@@ -59,7 +59,7 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   // approve exactly the collateral, send).
   const review = page.locator(`.accept-offer[data-offer-id="${offerId}"]`);
   const receipt = review.locator('.receipt');
-  await expect(receipt).toContainText('You receive in your wallet', { timeout: 60_000 });
+  await expect(receipt).toContainText('Paid into your vault, yours to withdraw', { timeout: 60_000 });
   await expect(receipt).toContainText('Loan initiation fee, taken from the amount');
   await expect(receipt).toContainText('You lock in your vault');
   // The protocol pays the sender a share of the fee; on a direct take that is the borrower.
@@ -94,24 +94,30 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
 
   const sent = flags.sentTransactions;
   const signed = flags.typedDataRequests.AcceptTerms ?? 0;
-  const balance = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [borrower] });
-  const before = await balance();
+  const balance = (who: Hex) => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [who] });
+  const before = await balance(borrower);
+  const vaultBefore = hasVault ? await balance(vault!) : 0n;
   await confirm.click();
   const finish = review.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText('with you as the borrower');
-  await expect(finish).toContainText('arrived in your wallet');
+  await expect(finish).toContainText('credited to your vault, free to withdraw');
+  await expect(finish).toContainText('of the fee paid back to you as the sender');
   await expect(finish).not.toContainText('previewed');
+  await expect(review.getByTestId('accept-withdraw')).toHaveAttribute('href', '/vault');
   await expect(finish).toContainText('locked in your vault');
   expect(flags.typedDataRequests.AcceptTerms ?? 0).toBe(signed + 1);
   expect(flags.sentTransactions).toBe(sent + 2);
 
-  // The chain agrees: the offer is taken, the wallet received the amount
-  // less the fee, and no approval is left standing.
+  // The chain agrees: the offer is taken, the borrower's new vault holds
+  // the amount less the fee, the wallet only the fee share paid back to the
+  // sender, and no approval is left standing.
   const offer = await sc.read<{ accepted: boolean }>('getOffer', [offerId]);
   expect(offer.accepted).toBe(true);
-  const received = (await balance()) - before;
-  expect(received > 0n && received < parseEther('0.4')).toBe(true);
+  const vaultAfter = await sc.read<Hex>('getUserVaultAddress', [borrower]);
+  expect((await balance(vaultAfter)) - vaultBefore).toBe(parseEther('0.3992'));
+  const feeBack = (await balance(borrower)) - before;
+  expect(feeBack > 0n && feeBack < parseEther('0.0008')).toBe(true);
   expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(0n);
   const next = finish.locator('a[href^="/positions/"]');
   await expect(next).toContainText(/Open loan #\d+/);

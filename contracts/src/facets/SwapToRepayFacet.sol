@@ -23,6 +23,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -305,7 +306,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibDelivery.requireFull(
             loan.collateralAsset,
             sellAmount,
-            LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, sellAmount)
+            LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, sellAmount, loanId, OutflowReason.SWAP)
         );
 
         (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =

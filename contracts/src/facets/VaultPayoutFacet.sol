@@ -7,6 +7,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -16,17 +18,6 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 ///      through exactly the code (lien guard, measured delivery, tracked
 ///      ledger) every other payout uses.
 interface IVaultWithdrawRoutes {
-    function vaultWithdrawERC20(address user, address token, address recipient, uint256 amount)
-        external
-        returns (uint256 delivered);
-    function vaultWithdrawERC721(address user, address nftContract, uint256 tokenId, address recipient) external;
-    function vaultWithdrawERC1155(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external;
 }
 
 /**
@@ -130,24 +121,21 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         }
         LibVaipakam.PendingPayout storage p = LibProtectedAccount.beginRelease(id);
         LibVaipakam.assertRecipientNotBarred(p.recipient);
-        delivered = _pay(p.kind, p.user, p.asset, p.tokenId, p.amount, p.recipient);
+        delivered = _pay(p.kind, p.user, p.asset, p.tokenId, p.amount, p.recipient, OutflowReason.PAYOUT_RELEASE);
         LibProtectedAccount.recordReleased(id, delivered);
     }
 
-    function _pay(uint8 kind, address user, address asset, uint256 tokenId, uint256 amount, address recipient)
+    /// @dev #3205 part 2 — through the one policy: the owner's own wallet is
+    ///      the Owner class; an allowlisted address or the controller of a
+    ///      retired account is OwnerAllowlisted (the policy re-checks the
+    ///      allowlist). The release this call pays is bound beforehand, so the
+    ///      payout gate lets exactly it through.
+    function _pay(uint8 kind, address user, address asset, uint256 tokenId, uint256 amount, address recipient, uint8 reason)
         private
         returns (uint256 delivered)
     {
-        IVaultWithdrawRoutes routes = IVaultWithdrawRoutes(address(this));
-        if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
-            return routes.vaultWithdrawERC20(user, asset, recipient, amount);
-        }
-        if (kind == uint8(LibVaipakam.AssetType.ERC721)) {
-            routes.vaultWithdrawERC721(user, asset, tokenId, recipient);
-            return 1;
-        }
-        routes.vaultWithdrawERC1155(user, asset, tokenId, amount, recipient);
-        return amount;
+        if (recipient == user) return LibVaultOutflow.toOwner(user, kind, asset, tokenId, amount, reason);
+        return LibVaultOutflow.toAllowlisted(user, kind, asset, tokenId, amount, recipient, reason);
     }
 
     /// @notice A secondary signer co-signs queued payout `id` (needed for its
@@ -204,7 +192,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         uint256 own = LibDepositoryLedger.holding(msg.sender, asset, tokenId);
         if (amount > own) revert LibProtectedAccount.AmountExceedsFree(amount, own);
         LibDepositoryLedger.debit(msg.sender, asset, tokenId, amount);
-        _pay(kind, msg.sender, asset, tokenId, amount, msg.sender);
+        _pay(kind, msg.sender, asset, tokenId, amount, msg.sender, OutflowReason.ESCAPE);
         emit EscapeWithdrawal(msg.sender, asset, tokenId, amount);
     }
 

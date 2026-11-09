@@ -24,6 +24,8 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @dev A second vault version: the same code and layout, plus a marker.
 contract VaultImplV2Marker is VaipakamVaultImplementation {
+    constructor() VaipakamVaultImplementation(address(0), address(0)) {}
+
     function versionMarker() external pure returns (uint256) {
         return 2;
     }
@@ -31,6 +33,8 @@ contract VaultImplV2Marker is VaipakamVaultImplementation {
 
 /// @dev A third version, so a pin can differ from the current one.
 contract VaultImplV3Marker is VaipakamVaultImplementation {
+    constructor() VaipakamVaultImplementation(address(0), address(0)) {}
+
     function versionMarker() external pure returns (uint256) {
         return 3;
     }
@@ -585,7 +589,7 @@ contract VaultBeaconTest is Test {
             if (id != 1) _setCurrent(id);
             vm.prank(alice);
             vm.expectRevert(VaipakamVaultImplementation.NotAuthorized.selector);
-            VaipakamVaultImplementation(vaultA).withdrawERC20(address(token), alice, 1);
+            VaipakamVaultImplementation(vaultA).closeListingEscrow(bytes32(uint256(1)), address(token), 0);
         }
         assertEq(VaipakamVaultImplementation(vaultA).vaultOwner(), alice);
     }

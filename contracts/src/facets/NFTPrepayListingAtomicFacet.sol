@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -326,7 +327,10 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         // field is identity-independent: the protocol legs derive from
         // principal/interest, `borrowerNftOwner` is already the holder
         // (`ownerOf`), so the floor/buffer validation above is unaffected.
-        pctx.borrowerVault = s.userVaipakamVaults[loan.borrower];
+        // #3205 part 2 — the order's offerer (the escrow for an ERC-1155).
+        pctx.borrowerVault = LibListingEscrow.offerer(
+            s.userVaipakamVaults[loan.borrower], loan.collateralAssetType, LibListingEscrow.key(false, loanId)
+        );
 
         // ── §17.11 STEP 1-5: lock + build counter-order + record +
         //    wire vault ─────────────────────────────────────────────
@@ -676,7 +680,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
         vaipakamOrderHash = LibPrepayOrder.buildAndHashMem(
             pctx,
-            s.userVaipakamVaults[loan.borrower],
+            pctx.borrowerVault,
             executor,
             CollateralListingExecutor(executor).seaport(),
             effectiveAsk,

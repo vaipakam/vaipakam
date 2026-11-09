@@ -114,7 +114,11 @@ abstract contract DiamondFacetNames {
     ///      step and its bounds, split off OfferCreateFacet for EIP-170).
     ///      110 → 111 with `SaleFloorFacet` (#3359 — the forced-sale floor
     ///      rule both forced sellers self-call, and its hourly checkpoints).
-    function cutFacetNames() internal pure returns (string[111] memory) {
+    ///      111 → 112 with `VaultOutflowFacet` (#3205 part 2 — the one vault
+    ///      outflow policy host).
+    ///      112 → 113 with `ForcedSalePreviewFacet` (#3205 part 2 — the
+    ///      forced-sale previews, split off ForcedSaleFacet).
+    function cutFacetNames() internal pure returns (string[113] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -264,6 +268,10 @@ abstract contract DiamondFacetNames {
             "OfferBookFacet",
             // The forced-sale floor rule (#3359).
             "SaleFloorFacet",
+            // The one vault outflow policy host (#3205 part 2).
+            "VaultOutflowFacet",
+            // The forced-sale previews (#3205 part 2, split off ForcedSaleFacet).
+            "ForcedSalePreviewFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

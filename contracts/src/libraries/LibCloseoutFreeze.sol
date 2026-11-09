@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
@@ -468,7 +470,13 @@ library LibCloseoutFreeze {
         address asset = row.asset;
         LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
         row.amount = 0;
-        paid = LibSanctionedLock.vaultWithdrawERC20MoveOut(s, loan.borrower, asset, to, amount);
+        // #3205 part 2 — to the exiting borrower-position holder's VAULT (the
+        // holder of the borrower token now, before the handover re-keys it).
+        LibSanctionedLock.beginMoveOut(s, loan.borrower);
+        paid = LibVaultOutflow.toPositionHolder(
+            loan.borrower, LibVaultOutflow.ERC20, asset, 0, amount, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE
+        );
+        LibSanctionedLock.endMoveOut(s);
         emit BorrowerHeldExtraPaid(loanId, to, asset, paid);
     }
 
@@ -674,13 +682,17 @@ library LibCloseoutFreeze {
         if (amount == 0) return;
         address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
+            // #3205 part 2 — to the current lender-position holder's VAULT,
+            // the counterparty of the paying side.
+            LibSanctionedLock.beginMoveOut(s, fromUser);
             LibDelivery.requireFull(
                 asset,
                 amount,
-                LibSanctionedLock.vaultWithdrawERC20MoveOut(
-                    s, fromUser, asset, lenderRecipient, amount
+                LibVaultOutflow.toCounterparty(
+                    fromUser, LibVaultOutflow.ERC20, asset, 0, amount, loanId, loan.lenderTokenId, OutflowReason.REPAYMENT
                 )
             );
+            LibSanctionedLock.endMoveOut(s);
             return;
         }
         LibDelivery.requireFull(

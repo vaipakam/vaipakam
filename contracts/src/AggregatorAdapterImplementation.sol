@@ -11,6 +11,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IPositionNFTSource} from "./interfaces/IPositionNFTSource.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
+import {LibHolderClaim} from "./libraries/LibHolderClaim.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
 
 /**
@@ -684,9 +685,11 @@ contract AggregatorAdapterImplementation is
             address(this)
         ) revert NotAdapterLoan();
         address lend = asset();
-        uint256 before = IERC20(lend).balanceOf(address(this));
-        IVaipakamIntentSurface(diamond).claimAsLenderWithRetry(loanId, retryCalls);
-        uint256 recovered = IERC20(lend).balanceOf(address(this)) - before;
+        // #3205 part 2 — the claim pays this adapter's Vaipakam vault as free
+        // money; the one holder-claim rule withdraws exactly that credit here
+        // (the lending asset, and in-kind collateral, which then sits in the
+        // adapter for {sweepToPrincipal}) and measures what arrived.
+        uint256 recovered = LibHolderClaim.claimAsLender(diamond, loanId, retryCalls).principal;
         if (recovered > 0) {
             // Re-commit is new lending — apply the SAME gates as `rollLoan`
             // (real-principal sanctions + mandatory-floor + #626 round-7 P2: the

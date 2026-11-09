@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -349,12 +351,7 @@ contract VPFIDiscountFacet is
         // Protected account mode: this withdrawal is paid now or queued,
         // never held in the vault as a success that moved nothing.
         LibProtectedAccount.requirePayoutRoom(msg.sender);
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            msg.sender,
-            vpfi,
-            msg.sender,
-            amount
-        );
+        LibVaultOutflow.toOwner(msg.sender, LibVaultOutflow.ERC20, vpfi, 0, amount, OutflowReason.WITHDRAW);
         // Taken from the depository holding first (a queued protected payout
         // that is cancelled is credited back, as for any withdrawal).
         LibDepositoryLedger.spend(msg.sender, vpfi, 0, amount);

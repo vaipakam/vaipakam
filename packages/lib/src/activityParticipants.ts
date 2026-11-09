@@ -141,6 +141,16 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // owner (`account`). Where a payout or a position transfer goes is the
   // owner's own choice of destination, classified below.
   ['VaultDeposited', ['account']],
+  // #3205 part 2 — every movement out of a vault: the vault's owner, and the
+  // recipient. A wallet recipient (the owner, an allowlisted address, a
+  // liquidator, an incentive payee) is a party. A VAULT recipient (a holder
+  // payout, claim custody, a matched leg) names a vault contract, which
+  // matches no wallet; attributing it to that vault's owner needs a
+  // vault→owner map the indexer does not keep yet (follow-up #3388).
+  ['VaultOutflow', ['owner', 'to']],
+  // A just-in-time allowance settled: the vault's owner. The spender is a
+  // registry adapter or conduit, a contract.
+  ['VaultGrantSettled', ['owner']],
   ['VaultWithdrawRequested', ['account']],
   ['UntrackedAdopted', ['account']],
   ['UntrackedDisowned', ['account']],
@@ -278,6 +288,11 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['LoanKeeperEnabled', { keeper: 'the keeper being permitted on the loan' }],
   ['OfferKeeperEnabled', { keeper: 'the keeper being permitted on the offer' }],
   ['SwapToRepayIntentForceCancelled', { source: 'the Diamond itself' }],
+  ['VaultOutflow', { vault: "the owner's own vault contract; the owner is a party" }],
+  ['VaultGrantSettled', {
+    vault: "the owner's own vault contract; the owner is a party",
+    spender: 'a registry swap adapter or marketplace conduit contract',
+  }],
   ['SwapToRepayIntentLotPulled', { vault: "the borrower's vault contract; the borrower is the row's actor" }],
   [
     'VaultVpfiDebited',

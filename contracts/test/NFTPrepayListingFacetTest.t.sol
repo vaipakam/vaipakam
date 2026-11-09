@@ -738,8 +738,10 @@ contract NFTPrepayListingFacetTest is SetupTest {
     // ─── 4a. Step-7 vault wiring (operator approval + ERC-1271) ─────────
 
     function test_post_wiresVaultOperatorApproval() public {
-        // Step 7: postPrepayListing must grant the conduit
-        // per-token approval on the collateral NFT via the vault.
+        // #3205 part 2 — posting a listing leaves NO standing approval: the
+        // conduit is approved only inside a fill (a just-in-time grant the
+        // executor opens and closes), so between transactions the vault
+        // exposes nothing.
         _scaffoldActiveLoan({allowsPrepay: true});
 
         // Pre: no approval.
@@ -754,11 +756,11 @@ contract NFTPrepayListingFacetTest is SetupTest {
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         , _emptyFeeLegs());
 
-        // Post: the configured conduit is approved for the token.
+        // Post: still no approval standing.
         assertEq(
             collateralNFT.getApproved(COLLATERAL_TOKEN_ID),
-            conduit,
-            "post: conduit has per-token approval"
+            address(0),
+            "post: no standing conduit approval"
         );
     }
 
@@ -900,12 +902,13 @@ contract NFTPrepayListingFacetTest is SetupTest {
             LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey
         , _emptyFeeLegs());
 
-        // Pre: everything is wired.
+        // Pre: everything is wired (no standing conduit approval since
+        // #3205 part 2: the conduit is approved only inside a fill).
         assertEq(
             NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
             derivedHash
         );
-        assertEq(collateralNFT.getApproved(COLLATERAL_TOKEN_ID), conduit);
+        assertEq(collateralNFT.getApproved(COLLATERAL_TOKEN_ID), address(0));
         assertEq(
             VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
             address(mockExecutor)

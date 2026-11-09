@@ -61,6 +61,7 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
   {
     const { page, flags, ctx } = await launchWallet('lender');
     const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] });
+    const freeBefore = await sc.read<bigint>('withdrawableNow', [lenderAddr, 0, WETH, 0n]);
     await page.goto(`/positions/${loanId}`);
     await connectWallet(page);
     const section = page.getByRole('region', { name: 'Your payout' });
@@ -74,7 +75,8 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
     await expect(receipt).toContainText('Your payout');
     // Principal and interest, less the treasury's cut of the interest.
     await expect(receipt).toContainText(/0\.05\d* WETH/);
-    await expect(receipt).toContainText('Your wallet');
+    await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
+    await expect(receipt).toContainText('Withdraw it to your wallet from your vault page whenever you choose.');
     await expect(receipt).toContainText('Collecting closes your side of the loan: the protocol burns your position token.');
     await expect(receipt).toContainText('If the protocol pauses before this confirms, it is refused and nothing moves.');
     await expect(receipt).toContainText('Wallet prompts: 1');
@@ -85,10 +87,14 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
     const finish = flow.locator('[data-phase="measured"]');
     await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
     await expect(finish).toContainText(`Payout collected from loan #${loanId}`);
-    await expect(finish).toContainText(/arrived in your wallet/);
+    await expect(finish).toContainText(/credited to your vault, free to withdraw/);
     await expect(finish).not.toContainText('Both sides have collected');
+    await expect(finish.getByRole('link', { name: 'Withdraw from your vault' })).toHaveAttribute('href', '/vault');
     expect(flags.sentTransactions).toBe(sent + 1);
-    expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] })).toBe(before + owedLender);
+    // The chain agrees: the payout is the lender's own in its vault, free to
+    // withdraw, and nothing reached the wallet.
+    expect((await sc.read<bigint>('withdrawableNow', [lenderAddr, 0, WETH, 0n])) - freeBefore).toBe(owedLender);
+    expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] })).toBe(before);
 
     // Closing the card leaves nothing to collect for this wallet: its
     // position token is burnt.
@@ -100,7 +106,7 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
   // The borrower, from Claims.
   {
     const { page, flags } = await launchWallet('borrower');
-    const before = await sc.pub.readContract({ address: collateralAsset, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] });
+    const freeBefore = await sc.read<bigint>('withdrawableNow', [borrowerAddr, 0, collateralAsset, 0n]);
     await page.goto('/claims');
     await connectWallet(page);
     // Every kind of payout Claims lists is on the page: nothing points elsewhere.
@@ -124,15 +130,15 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
     const finish = flow.locator('[data-phase="measured"]');
     await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
     await expect(finish).toContainText(`Payout collected from loan #${loanId}`);
-    await expect(finish).toContainText('1,500 tLIQ arrived in your wallet');
+    await expect(finish).toContainText('1,500 tLIQ credited to your vault, free to withdraw');
     await expect(finish).toContainText('Both sides have collected: the loan is settled');
     expect(flags.sentTransactions).toBe(sent + 1);
 
-    // The chain agrees: settled, and the collateral is back in the wallet.
+    // The chain agrees: settled, and the collateral is the borrower's own in
+    // its vault again, free to withdraw.
     const after = await sc.read<{ status: number }>('getLoanDetails', [loanId]);
     expect(Number(after.status)).toBe(3);
-    const balance = await sc.pub.readContract({ address: collateralAsset, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] });
-    expect(balance - before).toBe(1500n * 10n ** 18n);
+    expect((await sc.read<bigint>('withdrawableNow', [borrowerAddr, 0, collateralAsset, 0n])) - freeBefore).toBe(1500n * 10n ** 18n);
 
     // Leaving for Home and coming back within the app keeps the finish card,
     // though the burnt position no longer lists the payout.

@@ -21,6 +21,8 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {VaultBeacon} from "../src/VaultBeacon.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {IProtocolRegistryReader} from "../src/interfaces/IProtocolRegistryReader.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -59,6 +61,7 @@ import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -118,6 +121,7 @@ import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -139,7 +143,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     address internal vaultBeacon;
     /// @dev #3205 — the PositionNFT core deployed in step 5d.
     address internal positionNFT;
-    /// @dev #3272 — the ProtocolRegistry deployed in step 5c-ii.
+    /// @dev #3272 — the ProtocolRegistry deployed in step 5c-ii; #3205 part 2
+    ///      builds the vault code (5d) against it.
     address internal protocolRegistry;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
@@ -389,6 +394,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         OfferBookFacet offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
         // #3359 — the forced-sale floor rule and its hourly price checkpoints.
         SaleFloorFacet saleFloorFacet = SaleFloorFacet(ArtifactDeploy.deploy(type(SaleFloorFacet).name));
+        // #3205 part 2 — the one vault outflow policy host.
+        VaultOutflowFacet vaultOutflowFacet = VaultOutflowFacet(ArtifactDeploy.deploy(type(VaultOutflowFacet).name));
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
@@ -483,6 +490,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2795 - the forced-sale host: size a forced sale to the debt, sell it,
         // split the proceeds lender first. Self-called by RepayPeriodicFacet.
         ForcedSaleFacet forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
+        // #3205 part 2 — the forced-sale previews, split off ForcedSaleFacet.
+        ForcedSalePreviewFacet forcedSalePreviewFacet =
+            ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -531,7 +541,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](111);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](113);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -644,6 +654,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[108] = _buildCut(address(vaultDepositoryFacet), _getVaultDepositorySelectors());
         cuts[109] = _buildCut(address(offerBookFacet), _getOfferBookSelectors());
         cuts[110] = _buildCut(address(saleFloorFacet), _getSaleFloorSelectors());
+        cuts[111] = _buildCut(address(vaultOutflowFacet), _getVaultOutflowSelectors());
+        cuts[112] = _buildCut(address(forcedSalePreviewFacet), _getForcedSalePreviewSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1014,42 +1026,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         AdminFacet(diamond).setTreasury(treasury);
         console.log("Treasury set:", treasury);
 
-        // 5c. #3204 — the vault code and the VaultBeacon every vault resolves
-        // it through. The implementation's initializers must be disabled at
-        // construction (#905): checked from its Initializable slot, read-only,
-        // so a template anyone could initialize is never registered. The
-        // beacon is owned by `admin` (the Timelock takes it at handover), its
-        // guardian starts as `admin` until the operator sets the Pauser Safe,
-        // and version 1 is current from construction.
-        address vaultImpl = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name);
-        require(
-            uint256(vm.load(vaultImpl, _OZ_INITIALIZABLE_SLOT)) == type(uint64).max,
-            "DeployDiamond: the vault implementation's initializer can still be called"
-        );
-        vaultBeacon = ArtifactDeploy.deploy(
-            type(VaultBeacon).name,
-            abi.encode(admin, diamond, admin, vaultImpl)
-        );
-        VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
-        console.log("Vault beacon:", vaultBeacon);
-
-        // 5c-ii. #3272 — the ProtocolRegistry: the endpoints the Diamond and
-        // every vault must agree on, held where no facet can write. Owned by
-        // `admin` (the Timelock takes it at handover), guardian `admin` until
-        // the handover moves it to the Pauser Safe, and the minimum delay.
-        // It starts empty: the price guard (#3272) and the vault payout
-        // endpoints (#3205) add their pointers and set members (seeded here,
-        // without the delay, like the constructor's pointers) when they ship.
-        protocolRegistry = ArtifactDeploy.deploy(
-            type(ProtocolRegistry).name,
-            abi.encode(
-                admin, admin, uint256(3 days),
-                new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
-            )
-        );
-        console.log("Protocol registry:", protocolRegistry);
-
-        // 5d. #3205 — the PositionNFT core: the ownership record of every
+        // 5c. #3205 — the PositionNFT core (before the vault code, which reads
+        // it as an immutable; #3205 part 2): the ownership record of every
         // position, outside the Diamond. Not upgradeable; the Diamond is its
         // only minter. Owned by `admin` (the Timelock takes it at handover),
         // guardian `admin` until the operator sets the Pauser Safe (the
@@ -1063,6 +1041,48 @@ contract DeployDiamond is Script, ArtifactRootBase {
         );
         VaipakamNFTFacet(diamond).initializeNFT(positionNFT);
         console.log("PositionNFT:", positionNFT);
+
+        // 5c-ii. #3272 — the ProtocolRegistry: the endpoints the Diamond and
+        // every vault must agree on, held where no facet can write. Owned by
+        // `admin` (the Timelock takes it at handover), guardian `admin` until
+        // the handover moves it to the Pauser Safe, and the minimum delay.
+        //
+        // #3205 part 2 seeds, at construction (the only write that does not
+        // wait), every endpoint this deploy already knows: TREASURY = the
+        // treasury set in 5b, which every vault's treasury-class outflow pays
+        // and nothing else. The swap adapters, the 1inch order protocol, the
+        // listing conduits and the backstop are configured after this step,
+        // so each joins through the registry's delayed add; the launch
+        // readiness check (`vault registry seeded`) refuses until each the
+        // Diamond routes is in its set.
+        _deployProtocolRegistry(admin, treasury);
+        console.log("Protocol registry:", protocolRegistry);
+
+        // 5d. #3204 — the vault code and the VaultBeacon every vault resolves
+        // it through. The implementation's initializers must be disabled at
+        // construction (#905): checked from its Initializable slot, read-only,
+        // so a template anyone could initialize is never registered. The
+        // beacon is owned by `admin` (the Timelock takes it at handover), its
+        // guardian starts as `admin` until the operator sets the Pauser Safe,
+        // and version 1 is current from construction.
+        //
+        // #3205 part 2 — the vault code reads two contracts as immutables: the
+        // PositionNFT core (5c, a holder payout's payee) and the protocol
+        // registry (5c-ii: the treasury, backstop, swap adapters and conduits
+        // a vault may pay or approve).
+        address vaultImpl = ArtifactDeploy.deploy(
+            type(VaipakamVaultImplementation).name, abi.encode(positionNFT, protocolRegistry)
+        );
+        require(
+            uint256(vm.load(vaultImpl, _OZ_INITIALIZABLE_SLOT)) == type(uint64).max,
+            "DeployDiamond: the vault implementation's initializer can still be called"
+        );
+        vaultBeacon = ArtifactDeploy.deploy(
+            type(VaultBeacon).name,
+            abi.encode(admin, diamond, admin, vaultImpl)
+        );
+        VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
+        console.log("Vault beacon:", vaultBeacon);
 
         // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
         //     CONSTRUCTED BY THE DIAMOND ITSELF and bound once, here, while
@@ -1289,6 +1309,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("vaultDepositoryFacet", address(vaultDepositoryFacet));
         Deployments.writeFacet("offerBookFacet", address(offerBookFacet));
         Deployments.writeFacet("saleFloorFacet", address(saleFloorFacet));
+        Deployments.writeFacet("vaultOutflowFacet", address(vaultOutflowFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -1342,6 +1363,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rateModelFacet", address(rateModelFacet));
         Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
+        Deployments.writeFacet("forcedSalePreviewFacet", address(forcedSalePreviewFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -1450,6 +1472,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      from the one list of interfaces it advertises. The standard
     ///      EIP-2535 init route: the initializer runs by delegatecall in the
     ///      Diamond's storage and is never routed, so it adds no selector.
+    /// @dev Step 5c-ii, in its own frame (runWith is at the viaIR budget).
+    ///      Seeds TREASURY and refuses a registry that does not name it: an
+    ///      empty registry would leave every vault refusing every fee.
+    function _deployProtocolRegistry(address admin, address treasury) internal {
+        bytes32[] memory keys = new bytes32[](1);
+        address[] memory values = new address[](1);
+        keys[0] = RegistryKeys.TREASURY;
+        values[0] = treasury;
+        protocolRegistry = ArtifactDeploy.deploy(
+            type(ProtocolRegistry).name,
+            abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
+        );
+        require(
+            IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.TREASURY) == treasury,
+            "DeployDiamond: the protocol registry does not name the treasury"
+        );
+    }
+
     function _recordInterfaces(address diamond) internal {
         address interfacesInit = ArtifactDeploy.deploy(type(DiamondInterfacesInit).name);
         IDiamondCut(diamond).diamondCut(
@@ -1767,45 +1807,38 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](20);
         s[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.getVaultBeacon.selector;
         s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        s[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        s[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        s[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        s[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
+        s[4] = VaultFactoryFacet.vaultDepositERC721.selector;
+        s[5] = VaultFactoryFacet.vaultDepositERC1155.selector;
         // #902 — the one loan-keyed renter route (replaced vaultSetNFTUser
         // and vaultSetNFTUser1155).
-        s[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        s[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        s[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        s[13] = VaultFactoryFacet.getOfferAmount.selector;
-        s[14] = VaultFactoryFacet.getDiamondAddress.selector;
-        s[15] = VaultFactoryFacet.getUserVaultAddress.selector;
-        // #1566 S3e — the swap fill's counter-only outflow record (the LOP
-        // moves the lot).
-        s[16] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        s[17] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        s[6] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        s[7] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        s[8] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        s[9] = VaultFactoryFacet.getOfferAmount.selector;
+        s[10] = VaultFactoryFacet.getDiamondAddress.selector;
+        s[11] = VaultFactoryFacet.getUserVaultAddress.selector;
+        s[12] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
         // T-051 / T-054 — chokepoint deposit + counter-only companions.
         // `vaultDepositERC20From` is the third-party-payer variant
         // RepayFacet uses to pull repayment funds from the borrower
         // into the lender's vault; without this selector cut, every
         // ERC-20 loan repayment reverts with FunctionDoesNotExist.
-        s[18] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        s[19] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[20] = VaultFactoryFacet.getTrackedHolding.selector;
+        s[13] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        s[14] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        s[15] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[21] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[16] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[22] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[17] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[23] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        s[24] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        s[18] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[19] = VaultFactoryFacet.vaultDeliverERC20From.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -2500,6 +2533,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = SaleFloorFacet.getSaleFloorConfig.selector;
     }
 
+    /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
+    ///      outflow policy host, reached only by self-call.
+    function _getVaultOutflowSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = VaultOutflowFacet.vaultOutflow.selector;
+        s[1] = VaultOutflowFacet.vaultGrant.selector;
+        s[2] = VaultOutflowFacet.vaultCloseGrant.selector;
+
+        // The compact Owner-class entry (same policy, six scalars).
+        s[3] = VaultOutflowFacet.vaultOutflowToOwner.selector;
+        // The scalar entry every typed helper but the matched leg uses.
+        s[4] = VaultOutflowFacet.vaultOutflowArgs.selector;
+        // The compact Diamond-transient ERC-20 entry (forced sales, pulls).
+        s[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
+    }
+
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](11);
         s[0] = ClaimFacet.claimAsLender.selector;
@@ -2637,7 +2686,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      collateralListingExecutor gate), and the admin setter +
     ///      read-side for the executor address.
     function _getPrepayListingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](9);
         s[0] = PrepayListingFacet.getPrepayContext.selector;
         s[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
         s[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
@@ -2648,6 +2697,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = PrepayListingFacet.markOfferConsumedBySale.selector;
         s[5] = PrepayListingFacet.recordOfferSaleProceeds.selector;
         s[6] = PrepayListingFacet.assertOfferFillNotSanctioned.selector;
+        // #3205 part 2 — the fill's just-in-time ERC-721 grant hooks, called
+        // by the listing executor's authorizeOrder / validateOrder.
+        s[7] = PrepayListingFacet.executorOpenListingGrant.selector;
+        s[8] = PrepayListingFacet.executorCloseListingGrant.selector;
     }
 
     /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Hosts the
@@ -3669,6 +3722,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev #2795 - the forced-sale host. Returns the ONE list in
     ///      `FacetSelectors.forcedSale()`, which `RedeployFacets` also cuts.
+    /// @dev #3205 part 2 — the forced-sale previews (read / write split).
+    function _getForcedSalePreviewSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.forcedSalePreview();
+    }
+
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.forcedSale();
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 import {Vm} from "forge-std/Vm.sol";
@@ -251,9 +252,7 @@ contract FallbackPricedSplitTest is SetupTest {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
         vm.startPrank(address(diamond));
         EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(LOAN);
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            l.borrower, l.collateralAsset, address(diamond), l.collateralAmount
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         vm.expectRevert(refusal);
         FallbackCustodyFacet(address(diamond)).enterFallback(LOAN);
         vm.stopPrank();

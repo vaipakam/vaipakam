@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
@@ -184,16 +186,8 @@ library LibFeeEntitlement {
         // #1566 closure 2 — snapshot before the pull; the credit below is a
         // delta-checked operation that verifies the balance actually rose.
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
-        try
-            VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-                party,
-                vpfi,
-                address(this),
-                cStar
-            )
-        {
-            // pulled (the withdraw refreshed the party's tier record, #1820)
-        } catch {
+        // #3205 part 2 — Diamond-transient, onward to the recycle bucket.
+        if (!LibVaultOutflow.tryToDiamond(party, vpfi, cStar, loanId, OutflowReason.RECYCLE)) {
             revert FeeEntitlementFullOptInFailed(party);
         }
         LibVpfiRecycle.creditFullTariff(loanId, cStar, balanceBefore);

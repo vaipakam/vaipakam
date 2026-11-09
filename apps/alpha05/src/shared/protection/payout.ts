@@ -11,13 +11,14 @@
  * wallet without the mode is paid at once.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { ProtectedAccountFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { ProtectedAccountFacetABI, VaultOutflowFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
 const PROTECTED = ProtectedAccountFacetABI as Abi;
 const PAYOUT = VaultPayoutFacetABI as Abi;
+const OUTFLOW = VaultOutflowFacetABI as Abi;
 
 /** The parts of the account's mode a payment's route depends on. */
 export interface Protection {
@@ -66,13 +67,16 @@ export async function readProtection(c: PublicClient, diamond: Hex, account: Hex
 }
 
 /** Where a payment to `account` from `source`'s vault goes:
+ *  - `credit`: into the account's own vault, counted as its own free funds,
+ *    which it then withdraws (a loan claim, a new loan's principal: see
+ *    `CREDIT_CLASSES`); protected mode does not change it;
  *  - `wallet`: paid at once;
  *  - `queued`: the account's own vault, waiting out its delay (or kept in
  *    the vault if the queue turns out full; the outcome says which);
  *  - `held`: the account's own vault while it is locked;
  *  - `vault`: paid into the account's vault from another one;
  *  - `unknown`: the mode could not be read. */
-export type PayoutRoute = 'wallet' | 'queued' | 'held' | 'vault' | 'unknown';
+export type PayoutRoute = 'credit' | 'wallet' | 'queued' | 'held' | 'vault' | 'unknown';
 
 export function payoutRoute(protection: Protection | null, account: Hex, source: Hex): PayoutRoute {
   if (protection === null) return 'unknown';
@@ -90,7 +94,11 @@ export function payoutRoute(protection: Protection | null, account: Hex, source:
  *  not at all: the transfer itself says which). `tokenId` narrows it to one
  *  NFT of the collection. A queued payment names the wallet its release
  *  goes to: the account's own, or its controller's once it was retired. */
-export type PayoutOutcome = { kind: 'queued'; amount: bigint; releaseAt: bigint; recipient: Hex } | { kind: 'held'; amount: bigint } | { kind: 'vault'; amount: bigint };
+export type PayoutOutcome =
+  | { kind: 'queued'; amount: bigint; releaseAt: bigint; recipient: Hex }
+  | { kind: 'held'; amount: bigint }
+  | { kind: 'vault'; amount: bigint }
+  | { kind: 'credit'; amount: bigint };
 
 type Args = Record<string, bigint | number | string | undefined>;
 
@@ -115,4 +123,57 @@ export function payoutOutcomes(logs: readonly Log[], diamond: Hex, account: Hex,
   const credited = sum('PaymentCreditedToVault', 'received');
   if (credited) out.push({ kind: 'vault', amount: credited.total });
   return out;
+}
+
+/**
+ * The movements the protocol credits to the payee's vault as the payee's own
+ * free funds, by their class in its `VaultOutflow` record
+ * (`VaultOutflowFacet._credits`): a position holder's payout (every loan
+ * claim pays the current holder's vault), a counterparty's share, and a new
+ * loan's net principal into the borrower's vault. The payee withdraws it
+ * through its own withdrawal, and only that is subject to protected mode.
+ */
+export const CREDIT_CLASSES: readonly number[] = [
+  2, // PositionHolder
+  3, // Counterparty
+  14, // PrincipalToBorrower
+];
+
+/**
+ * What the transaction credited to `vault` of `asset`, from the Diamond's
+ * `VaultOutflow` records of a crediting class whose destination is that
+ * vault, as the protocol measured it arriving (`delivered`): one outcome, or
+ * none when nothing was credited. A payout from the payee's OWN vault (the
+ * payee is still the party the loan recorded) moves nothing and is recorded
+ * with the vault as its destination, so it counts here too. `tokenId`
+ * narrows it to one NFT of the collection; `ref` to one loan (or, for a new
+ * loan's principal, its offer).
+ */
+function creditEvents(logs: readonly Log[], diamond: Hex, vault: Hex, classes: readonly number[]): Args[] {
+  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
+  const events = parseEventLogs({ abi: OUTFLOW, logs: [...own], eventName: 'VaultOutflow', strict: false }) as unknown as { args: Args }[];
+  return events.map((e) => e.args).filter((a) => String(a.to).toLowerCase() === vault.toLowerCase() && classes.includes(Number(a.class_)));
+}
+
+/** Whether the transaction credited anything at all to `vault` (a finish
+ *  card then offers the withdrawal). */
+export function creditedTo(logs: readonly Log[], diamond: Hex, vault: Hex): boolean {
+  return creditEvents(logs, diamond, vault, CREDIT_CLASSES).some((a) => BigInt(a.delivered ?? 0n) > 0n);
+}
+
+export function vaultCredit(
+  logs: readonly Log[],
+  diamond: Hex,
+  vault: Hex,
+  asset: Hex,
+  filter: { tokenId?: bigint; ref?: readonly bigint[]; classes?: readonly number[] } = {},
+): PayoutOutcome | null {
+  const hits = creditEvents(logs, diamond, vault, filter.classes ?? CREDIT_CLASSES).filter(
+    (a) =>
+      String(a.asset).toLowerCase() === asset.toLowerCase() &&
+      (filter.tokenId === undefined || BigInt(a.tokenId ?? 0n) === filter.tokenId) &&
+      (filter.ref === undefined || filter.ref.includes(BigInt(a.ref ?? 0n))),
+  );
+  if (hits.length === 0) return null;
+  return { kind: 'credit', amount: hits.reduce((t, a) => t + BigInt(a.delivered ?? 0n), 0n) };
 }

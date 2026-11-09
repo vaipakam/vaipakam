@@ -10,6 +10,8 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -588,42 +590,14 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
             if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                 uint256 oldCol = oldLoan.collateralAmount;
                 if (oldCol > 0) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC20.selector,
-                            oldLoan.borrower,
-                            oldLoan.collateralAsset,
-                            currentBorrowerNftOwner,
-                            oldCol
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
+                    LibVaultOutflow.toPositionHolder(oldLoan.borrower, LibVaultOutflow.ERC20, oldLoan.collateralAsset, 0, oldCol, oldLoanId, oldLoan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
                     // #1820 — the withdraw refreshes the holder's tier record
                     // at the post-return balance.
                 }
             } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC721.selector,
-                        oldLoan.borrower,
-                        oldLoan.collateralAsset,
-                        oldLoan.collateralTokenId,
-                        currentBorrowerNftOwner
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toPositionHolder(oldLoan.borrower, LibVaultOutflow.ERC721, oldLoan.collateralAsset, oldLoan.collateralTokenId, 1, oldLoanId, oldLoan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
             } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                        oldLoan.borrower,
-                        oldLoan.collateralAsset,
-                        oldLoan.collateralTokenId,
-                        oldLoan.collateralQuantity,
-                        currentBorrowerNftOwner
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toPositionHolder(oldLoan.borrower, LibVaultOutflow.ERC1155, oldLoan.collateralAsset, oldLoan.collateralTokenId, oldLoan.collateralQuantity, oldLoanId, oldLoan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
             }
         }
 
@@ -756,13 +730,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         address oldLenderVault = LibFacet.getOrCreateVault(oldLoan.lender);
         // The net principal moves vault to vault: it never leaves the Diamond's
         // custody model.
-        LibFacet.vaultWithdrawExact(
-            newLender,
-            asset,
-            oldLenderVault,
-            net,
-            VaultWithdrawFailed.selector
-        );
+        LibDelivery.requireFull(asset, net, LibVaultOutflow.toClaimCustody(newLender, LibVaultOutflow.ERC20, asset, 0, net, oldLoanId, oldLoan.lenderTokenId, OutflowReason.REPAYMENT));
         if (borrowerToOldLender > 0) {
             LibDelivery.requireFull(
                 asset,
@@ -770,9 +738,9 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
                 LibDelivery.pushMeasured(asset, oldLenderVault, borrowerToOldLender)
             );
         }
-        // Both legs arrived in full, so the old lender's tracked balance ticks
-        // by the whole due.
-        LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, lenderDue);
+        // Both legs arrived in full. The policy booked the vault-to-vault leg
+        // (`net`); the Diamond-pushed leg is booked here.
+        if (borrowerToOldLender > 0) LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, borrowerToOldLender);
         LibSanctionedLock.end(s, oldLoan.lender, oldLoanId, asset, lenderDue);
 
         // The treasury's share, out of what the Diamond now holds (#2440: the

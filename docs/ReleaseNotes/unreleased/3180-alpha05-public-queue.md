@@ -1,4 +1,4 @@
-## Thread — The next app warns before signing on networks with a public queue (PR #3397)
+# The next app warns before signing on networks with a public queue
 
 On Ethereum, BNB Chain and BNB Testnet, a sent transaction waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first. Someone could take an offer before its cancel lands, or act on a loan before a repayment does.
 

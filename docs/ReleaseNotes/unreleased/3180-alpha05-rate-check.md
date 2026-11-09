@@ -1,4 +1,4 @@
-## Thread — The next app warns when an offer's rate is far from recent loans (PR #3394)
+# The next app warns when an offer's rate is far from recent loans
 
 Both posting forms in the next app, a lender's offer and a borrower's request, now show how the typed rate compares with recent loans. Under the rate field, the form reads from the index the loans that started on the same pair and term in the last 30 days and shows their middle rate and how many there were.
 

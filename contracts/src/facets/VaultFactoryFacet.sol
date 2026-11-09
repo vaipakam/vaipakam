@@ -20,17 +20,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
-/// @dev The payout gate's host (protected account mode), reached by self-call.
-interface IPayoutGate {
-    function applyPayoutGate(
-        address user,
-        uint8 kind,
-        address asset,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external returns (bool held);
-}
 
 /**
  * @title VaultFactoryFacet
@@ -62,83 +51,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         _;
     }
 
-    /// @notice #407 PR 4 (T-407-B, 2026-06-12) — raised by the vault
-    ///         withdraw guard when the requested withdraw amount
-    ///         exceeds the FREE balance (raw vault balance minus the
-    ///         active encumbrance sub-ledger for `(user, asset,
-    ///         tokenId)`). The encumbrance sub-ledger is fed by
-    ///         {LibEncumbrance.createCollateralLien} at loan-init and
-    ///         drained on every loan-lifecycle terminal — see
-    ///         `docs/DesignsAndPlans/PerLoanCollateralLien.md` §3.4 for
-    ///         the full rationale. The error fires when a release wire
-    ///         is missing or out of order on any of the loan-lifecycle
-    ///         terminal paths.
-    /// @dev    The `(user, asset, tokenId)` triple is the
-    ///         encumbrance-aggregate key; `requested` and `free` give
-    ///         the operator enough to pinpoint which lien is binding
-    ///         without an extra view-call.
-    error WithdrawWouldUnderflowLien(
-        address user,
-        address asset,
-        uint256 tokenId,
-        uint256 requested,
-        uint256 free
-    );
 
-    /// @dev    Extracted shared body — same shape as
-    ///         {_checkDiamondInternal} above. Keeps each call site to
-    ///         one function call so the guard cost stays small even
-    ///         when inlined three times (ERC20 / ERC721 / ERC1155 with-
-    ///         draw paths). Each withdraw site already has the proxy
-    ///         address in scope and a known asset shape, so this helper
-    ///         takes only the encumbrance-key triple + amount + the
-    ///         pre-computed raw balance.
-    function _assertWithdrawAllowed(
-        address user,
-        address asset,
-        uint256 tokenId,
-        uint256 amount,
-        uint256 rawBalance
-    ) private view {
-        uint256 free = LibEncumbrance.freeBalance(user, asset, tokenId, rawBalance);
-        if (amount > free) {
-            revert WithdrawWouldUnderflowLien(user, asset, tokenId, amount, free);
-        }
-    }
     using SafeERC20 for IERC20;
 
-    /// @dev Protected account mode — whether this payout must not be paid
-    ///      now (queued, or kept in a locked account's vault). Only an
-    ///      account with the mode on pays for the self-call into the gate's
-    ///      host (`VaultPayoutFacet.applyPayoutGate`, the rule in
-    ///      `LibProtectedAccount.gate`).
-    function _payoutHeld(
-        address user,
-        uint8 kind,
-        address asset,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) private returns (bool) {
-        if (!LibVaipakam.storageSlot().protectedAccount[user].enabled) return false;
-        return IPayoutGate(address(this)).applyPayoutGate(user, kind, asset, tokenId, amount, recipient);
-    }
 
-    /// @dev Protected account mode, the RECIPIENT side: where a payout from
-    ///      `user`'s vault to `recipient` must land instead of `recipient`'s
-    ///      wallet. A payment the protocol makes to a protected account's
-    ///      wallet from anywhere but that account's own vault is credited to
-    ///      its vault, so it leaves only through the delay; the source side
-    ///      ({_payoutHeld}) covers the account's own vault. Zero when the
-    ///      payout goes where it was addressed: `recipient` is `user`, or has
-    ///      the mode off. An account with the mode on always has a vault
-    ///      (enabling creates it).
-    function _protectedRecipientVault(address user, address recipient) private view returns (address) {
-        if (recipient == user) return address(0);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.protectedAccount[recipient].enabled) return address(0);
-        return s.userVaipakamVaults[recipient];
-    }
 
     /// @notice Emitted when a new user vault proxy is created.
     /// @param user The address of the user for whom the vault is created.
@@ -176,35 +92,6 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /// @custom:event-category informational/config
     event VaultBeaconSet(address indexed beacon);
 
-    /// @notice RL-2 (VpfiRecyclingLoopClosureDesign §6) — emitted whenever
-    ///         protocol-tracked VPFI leaves a user's vault through the
-    ///         tracked-balance decrement chokepoint,
-    ///         `LibVaipakam.recordVaultWithdraw`, through its two callers:
-    ///         {vaultWithdrawERC20} (wallet withdrawals, notification tariff
-    ///         pulls, fee pulls, and future perk spends all route through it)
-    ///         and, since #1566 S3e, {recordVaultOutflowERC20} (a
-    ///         swap-to-repay fill's lot, which the 1inch LOP moves itself). The RL-2 reward-retention ledger consumes this:
-    ///         debits spend reward-delivered VPFI FIRST, so without this
-    ///         event vault VPFI outflows would be invisible off-chain and
-    ///         `rewardRetained` would overstate loop closure.
-    /// @dev    VPFI-only by design — the loop-closure metric tracks the
-    ///         protocol token, not general vault traffic (other tokens keep
-    ///         their existing per-flow events). The ledger never consults
-    ///         `recipient` (ANY debit decrements); it is observability
-    ///         metadata distinguishing wallet withdrawals from
-    ///         treasury/fee destinations. Any further caller of
-    ///         `recordVaultWithdraw` MUST emit this event too.
-    /// @param user      Vault owner whose tracked VPFI decreased.
-    /// @param amount    VPFI wei debited from the tracked balance.
-    /// @param recipient Where the debited VPFI was sent (for a swap-to-repay
-    ///                  fill, the fill's taker; the LOP may deliver to a target
-    ///                  the taker names).
-    /// @custom:event-category state-change/vault-mutation
-    event VaultVpfiDebited(
-        address indexed user,
-        uint256 amount,
-        address recipient
-    );
 
     // Custom errors for better gas efficiency and clarity.
     error AlreadyInitialized();
@@ -612,153 +499,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (proxy == address(0)) revert NoVault();
     }
 
-    /**
-     * @notice Withdraws ERC-20 tokens from the specified user's vault to a recipient.
-     * @dev onlyDiamondInternal — cross-facet only. Forwards to
-     *      {VaipakamVaultImplementation.withdrawERC20}. Reverts
-     *      ProxyCallFailed("Withdraw ERC20 failed") on proxy revert.
-     *      Decrements `protocolTrackedVaultBalance[user][token]` so
-     *      the counter remains the symmetric mirror of all
-     *      protocol-side movements. Underflow reverts loudly if a
-     *      withdraw fires for more than was tracked — that's an
-     *      accounting bug somewhere upstream.
-     *
-     *      #2440 — the one place a vault's ERC-20 outflow is measured: the
-     *      vault always sends `amount` (its tracked balance falls by exactly
-     *      that), and the return value is what `recipient`'s balance actually
-     *      rose by, never more than `amount` ({LibDelivery.measured}). When
-     *      `recipient` is this same vault (two positions one user holds, as
-     *      after a consolidation), the balance cannot rise, and the return
-     *      value is what the vault kept: `amount` for an ordinary token. A token
-     *      that delivers less than it sends (a fee switched on after the token
-     *      entered, a rebase) makes the two differ. The withdraw itself never
-     *      refuses on that: a payout to a wallet books nothing, and refusing
-     *      it would trap the owner's funds. A caller that BOOKS the arrival
-     *      (the Diamond selling or forwarding it, a vault credited with it)
-     *      decides with the returned figure — a voluntary flow refuses a
-     *      short arrival, a forced close-out acts on it (see {LibDelivery}).
-     * @param user The user whose vault to withdraw from.
-     * @param token The ERC-20 token address.
-     * @param recipient The recipient address.
-     * @param amount The amount to withdraw.
-     * @return delivered What `recipient` received, capped at `amount`.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function vaultWithdrawERC20(
-        address user,
-        address token,
-        address recipient,
-        uint256 amount
-    ) external onlyDiamondInternal returns (uint256 delivered) {
-        address proxy = getOrCreateUserVault(user);
-        // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance guard. Block
-        // any withdraw whose amount would dip into the active lien
-        // aggregate for `(user, token, tokenId=0)`. Loan-lifecycle
-        // terminals release their lien BEFORE calling the withdraw
-        // selector (see RepayFacet / PrecloseFacet / RefinanceFacet /
-        // DefaultedFacet release wires), so legitimate post-close flows
-        // pass cleanly. A drifted release-wire path fails loud here.
-        //
-        // #569 Codex #572 round-2 P2 — cap the raw vault balance by the
-        // protocol-tracked balance before the lien subtraction.
-        // `balanceOf` includes UNSOLICITED dust (direct ERC-20 transfers
-        // the EVM can't reject); counting it as free would let a fully-
-        // encumbered user withdraw a dust-sized amount, and the post-
-        // withdraw `recordVaultWithdraw` decrement would then drive
-        // `protocolTrackedVaultBalance` BELOW the still-active lien —
-        // stranding/underflowing the eventual collateral return. The
-        // tracked counter excludes dust, so capping by it keeps free
-        // balance honest.
-        uint256 trackedBalance = LibVaipakam.trackedHolding(user, token, 0);
-        uint256 proxyBefore = IERC20(token).balanceOf(proxy);
-        uint256 rawForGuard = proxyBefore;
-        if (trackedBalance < rawForGuard) {
-            rawForGuard = trackedBalance;
-        }
-        _assertWithdrawAllowed(
-            user,
-            token,
-            /*tokenId=*/0,
-            amount,
-            rawForGuard
-        );
-        // Protected account mode — a payout to the owner's own wallet is
-        // queued (or, while the account is locked, kept in the vault) instead
-        // of paid; nothing moves and the tracked balance is unchanged until a
-        // release pays it through this same route.
-        if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC20), token, 0, amount, recipient)) {
-            return amount;
-        }
-        // A protected recipient's wallet is paid into its vault instead.
-        address creditTo = _protectedRecipientVault(user, recipient);
-        address dest = creditTo == address(0) ? recipient : creditTo;
-        uint256 recipientBefore = IERC20(token).balanceOf(dest);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.withdrawERC20.selector,
-                token,
-                dest,
-                amount
-            )
-        );
-        if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
-        // #2440 — the vault must lose no more than `amount`: the tracked
-        // balance below falls by exactly that, and a token charging its sender
-        // on top would take the excess from the holder's other positions.
-        LibDelivery.requireNoOverDebit(token, proxy, proxyBefore, amount);
-        delivered = LibDelivery.measured(token, proxy, dest, recipientBefore, amount);
-        LibVaipakam.recordVaultWithdraw(user, token, amount);
-        if (creditTo != address(0)) {
-            LibProtectedAccount.creditPayment(recipient, token, 0, amount, delivered);
-        }
-        // RL-2 — VPFI outflow observability for the reward-retention
-        // ledger. This and {recordVaultOutflowERC20} are the two
-        // recordVaultWithdraw callers and both emit it, so every tracked
-        // VPFI debit is covered (see the event natspec).
-        if (token == LibVaipakam.storageSlot().vpfiToken) {
-            emit VaultVpfiDebited(user, amount, recipient);
-        }
-    }
 
-    /**
-     * @notice #1566 S3e — record an outflow a third party performs on the vault's own approval:
-     *         the 1inch LOP taking a swap-to-repay intent's lot from `user`'s vault (the order's
-     *         maker) straight to the taker. The tracked balance, the lien guard and the RL-2 debit
-     *         event of {vaultWithdrawERC20}, without the token move, which the LOP makes right after.
-     * @dev    Diamond-internal: the swap pre-hook self-calls it, under the fill lock, after lowering
-     *         the loan's lien by `amount`, so the guard (the outflow may not dip into what is still
-     *         encumbered) reads the post-decrement lien. The vault is resolved by {_currentVault}:
-     *         an existing vault on a current implementation, with no sanctions screen (the full
-     *         swap-to-repay is a must-complete close-out).
-     *         COUNTER-ONLY: it records an outflow it does not perform, so it is sound only because
-     *         its one caller requires, in the same fill, that the vault's balance dropped by
-     *         exactly `amount` (the post-hook's check); a new caller must carry the same check.
-     * @param user      The vault's owner (`loan.borrower`).
-     * @param token     The ERC-20 the LOP takes.
-     * @param amount    The lot.
-     * @param recipient The fill's taker, named on the RL-2 event (the LOP delivers to the taker
-     *                  or to a target the taker names).
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function recordVaultOutflowERC20(
-        address user,
-        address token,
-        uint256 amount,
-        address recipient
-    ) external onlyDiamondInternal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = _currentVault(s, user);
-        uint256 trackedBalance = LibVaipakam.trackedHolding(user, token, 0);
-        uint256 rawForGuard = IERC20(token).balanceOf(proxy);
-        if (trackedBalance < rawForGuard) {
-            rawForGuard = trackedBalance;
-        }
-        _assertWithdrawAllowed(user, token, /*tokenId=*/0, amount, rawForGuard);
-        LibVaipakam.recordVaultWithdraw(user, token, amount);
-        if (token == s.vpfiToken) {
-            emit VaultVpfiDebited(user, amount, recipient);
-        }
-    }
 
     /**
      * @notice The tracked holding of `asset` / `tokenId` in `user`'s vault:
@@ -802,59 +543,6 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.recordVaultDeposit(user, nftContract, tokenId, 1);
     }
 
-    /**
-     * @notice Withdraws an ERC-721 NFT from the specified user's vault to a recipient.
-     * @dev Low-level call to the proxy's withdrawERC721 function.
-     *      Reverts on failure.
-     * @param user The user whose vault to withdraw from.
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     * @param recipient The recipient address.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function vaultWithdrawERC721(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        address recipient
-    ) external onlyDiamondInternal {
-        address proxy = getOrCreateUserVault(user);
-        // #407 PR 4 — encumbrance guard. For ERC721 the lien semantic
-        // is "this specific tokenId is locked" — any encumbrance > 0
-        // means a loan-lifecycle terminal hasn't released yet. We read
-        // the aggregate directly rather than calling
-        // `ownerOf(tokenId)` (which would revert on a non-existent
-        // tokenId and mask the legitimate `ProxyCallFailed` revert
-        // path the underlying proxy provides for the not-owned case).
-        //
-        // Depository vault — bounded by the tracked ledger: a token the
-        // protocol never put in this vault (one that arrived by a plain
-        // transfer) is not withdrawable until its owner adopts it.
-        _assertWithdrawAllowed(
-            user,
-            nftContract,
-            tokenId,
-            1,
-            LibVaipakam.trackedHolding(user, nftContract, tokenId)
-        );
-        if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC721), nftContract, tokenId, 1, recipient)) {
-            return;
-        }
-        address creditTo = _protectedRecipientVault(user, recipient);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.withdrawERC721.selector,
-                nftContract,
-                tokenId,
-                creditTo == address(0) ? recipient : creditTo
-            )
-        );
-        if (!success) revert ProxyCallFailed("Withdraw ERC721 failed");
-        LibVaipakam.recordVaultWithdraw(user, nftContract, tokenId, 1);
-        if (creditTo != address(0)) {
-            LibProtectedAccount.creditPayment(recipient, nftContract, tokenId, 1, 1);
-        }
-    }
 
     /**
      * @notice Deposits `amount` units of ERC-1155 `tokenId` from `from` into
@@ -883,81 +571,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.recordVaultDeposit(user, nftContract, tokenId, amount);
     }
 
-    /**
-     * @notice Withdraws ERC-1155 tokens from the specified user's vault to a recipient.
-     * @dev Low-level call to the proxy's withdrawERC1155 function.
-     *      Reverts on failure.
-     * @param user The user whose vault to withdraw from.
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     * @param amount The amount to withdraw.
-     * @param recipient The recipient address.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function vaultWithdrawERC1155(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external onlyDiamondInternal {
-        address proxy = getOrCreateUserVault(user);
-        // #407 PR 4 — encumbrance guard, keyed on the specific tokenId,
-        // over the tracked units (never more than the vault holds), so units
-        // that arrived outside the protocol stay out of reach until adopted.
-        uint256 units = IERC1155(nftContract).balanceOf(proxy, tokenId);
-        uint256 trackedUnits = LibVaipakam.trackedHolding(user, nftContract, tokenId);
-        _assertWithdrawAllowed(
-            user,
-            nftContract,
-            tokenId,
-            amount,
-            trackedUnits < units ? trackedUnits : units
-        );
-        if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC1155), nftContract, tokenId, amount, recipient)) {
-            return;
-        }
-        address creditTo = _protectedRecipientVault(user, recipient);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.withdrawERC1155.selector,
-                nftContract,
-                tokenId,
-                amount,
-                creditTo == address(0) ? recipient : creditTo
-            )
-        );
-        if (!success) revert ProxyCallFailed("Withdraw ERC1155 failed");
-        LibVaipakam.recordVaultWithdraw(user, nftContract, tokenId, amount);
-        if (creditTo != address(0)) {
-            LibProtectedAccount.creditPayment(recipient, nftContract, tokenId, amount, amount);
-        }
-    }
 
-    /**
-     * @notice Approves the user's vault as operator for an ERC-721 NFT (for rentals without holding).
-     * @dev Low-level call to the proxy's approveERC721 function (IERC721.approve).
-     *      Reverts on failure.
-     * @param user The user whose vault to approve from.
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function vaultApproveNFT721(
-        address user,
-        address nftContract,
-        uint256 tokenId
-    ) external onlyDiamondInternal {
-        address proxy = getOrCreateUserVault(user);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.approveERC721.selector,
-                nftContract,
-                tokenId
-            )
-        );
-        if (!success) revert ProxyCallFailed("Approve ERC721 failed");
-    }
 
     /**
      * @notice Assigns, updates or revokes the renter of loan `loanId`'s

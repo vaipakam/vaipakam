@@ -11,6 +11,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IPositionNFTSource} from "./interfaces/IPositionNFTSource.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
+import {LibHolderClaim} from "./libraries/LibHolderClaim.sol";
 import {LibDelivery} from "./libraries/LibDelivery.sol";
 
 /**
@@ -217,35 +218,18 @@ contract BackstopVaultImplementation is
             uint256 collateralRecovered
         )
     {
-        LibVaipakam.Loan memory loan = IBackstopDiamond(diamond).getLoanDetails(
-            loanId
-        );
-        principalAsset = loan.principalAsset;
-        collateralAsset = loan.collateralAsset;
-        uint256 principalBefore = IERC20(principalAsset).balanceOf(address(this));
-        bool distinctCollateral = collateralAsset != principalAsset;
-        uint256 collateralBefore = distinctCollateral
-            ? IERC20(collateralAsset).balanceOf(address(this))
-            : 0;
-        IBackstopDiamond(diamond).claimAsLenderWithRetry(loanId, retryCalls);
-        uint256 principalReceived =
-            IERC20(principalAsset).balanceOf(address(this)) - principalBefore;
-        if (principalReceived > 0) {
-            principalRecovered =
-                LibDelivery.pushMeasured(principalAsset, diamond, principalReceived);
+        // #3205 part 2 — the claim pays the backstop's Vaipakam vault; the one
+        // holder-claim rule withdraws exactly that credit here and measures it.
+        LibHolderClaim.Recovered memory r = LibHolderClaim.claimAsLender(diamond, loanId, retryCalls);
+        principalAsset = r.principalAsset;
+        collateralAsset = r.collateralAsset;
+        if (r.principal > 0) {
+            principalRecovered = LibDelivery.pushMeasured(principalAsset, diamond, r.principal);
         }
-        // Only forward the collateral leg when it is a DISTINCT token; a
-        // same-asset loan already counted the whole delta as `principalRecovered`.
-        if (distinctCollateral) {
-            uint256 collateralReceived =
-                IERC20(collateralAsset).balanceOf(address(this)) - collateralBefore;
-            if (collateralReceived > 0) {
-                collateralRecovered = LibDelivery.pushMeasured(
-                    collateralAsset,
-                    diamond,
-                    collateralReceived
-                );
-            }
+        // Only forward the collateral leg when it is a DISTINCT ERC-20; a
+        // same-asset loan already counted the whole delta as the principal.
+        if (r.collateral > 0 && r.collateralKind == uint8(LibVaipakam.AssetType.ERC20)) {
+            collateralRecovered = LibDelivery.pushMeasured(collateralAsset, diamond, r.collateral);
         }
     }
 

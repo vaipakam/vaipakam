@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
@@ -198,12 +199,18 @@ contract ProtectedVaultTest is Test {
         assertEq(_tracked(user, address(multi), 3), 4);
         assertEq(nft.ownerOf(7), v);
 
+        // #3205 part 2 — without protected mode a withdrawal pays only the
+        // owner's own wallet: another recipient is refused.
         vm.startPrank(user);
+        vm.expectRevert(abi.encodeWithSelector(VaultDepositoryFacet.RecipientNotOwnWallet.selector, user, friend));
         _depo().withdrawFromVault(user, K20, address(token), 0, 40 ether, friend);
+        uint256 walletBefore = token.balanceOf(user);
+        _depo().withdrawFromVault(user, K20, address(token), 0, 40 ether, user);
         _depo().withdrawFromVault(user, K721, address(nft), 7, 0, user);
         _depo().withdrawFromVault(user, K1155, address(multi), 3, 4, user);
         vm.stopPrank();
-        assertEq(token.balanceOf(friend), 40 ether);
+        assertEq(token.balanceOf(friend), 0, "nothing reached another address");
+        assertEq(token.balanceOf(user) - walletBefore, 40 ether, "the owner's own wallet received it");
         assertEq(_tracked(user, address(token), 0), 60 ether);
         assertEq(nft.ownerOf(7), user);
         assertEq(_tracked(user, address(nft), 7), 0);
@@ -528,12 +535,12 @@ contract ProtectedVaultTest is Test {
         _enable();
         // A settlement route paying the owner's own wallet is gated ...
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), user, 4 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user, address(token), user, 4 ether);
         assertEq(token.balanceOf(user), 990 ether);
         assertEq(_pay().getPendingPayoutIds(user).length, 1);
         // ... while a payment to a counterparty passes untouched.
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), friend, 1 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user, address(token), friend, 1 ether);
         assertEq(token.balanceOf(friend), 1 ether);
     }
 
@@ -618,7 +625,7 @@ contract ProtectedVaultTest is Test {
         _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, user);
         // A settlement payout to the owner is held in the vault, not refused.
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), user, 1 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user, address(token), user, 1 ether);
         assertEq(token.balanceOf(user), 990 ether);
 
         vm.prank(user);
@@ -1116,7 +1123,7 @@ contract ProtectedVaultTest is Test {
         _prot().lockVault(user);
         // A settlement paying the locked owner's wallet stays in the vault ...
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), user, 4 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user, address(token), user, 4 ether);
         // ... and is theirs to withdraw once unlocked.
         assertEq(_depo().getDepositoryHolding(user, address(token), 0), 4 ether);
         vm.prank(user);
@@ -1130,7 +1137,7 @@ contract ProtectedVaultTest is Test {
         _protocolPlaces20(user, 10 ether);
         _enable();
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user, address(token), user, 4 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), user, address(token), user, 4 ether);
         uint256 id = _pay().getPendingPayoutIds(user)[0];
         assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 0);
         vm.prank(user);
@@ -1156,7 +1163,7 @@ contract ProtectedVaultTest is Test {
         vm.expectEmit(address(diamond));
         emit LibProtectedAccount.PaymentCreditedToVault(user, address(token), 0, 5 ether, 5 ether);
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(friend, address(token), user, 5 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), friend, address(token), user, 5 ether);
         assertEq(token.balanceOf(user), 1_000 ether);
         assertEq(token.balanceOf(userVault), 5 ether);
         assertEq(_tracked(friend, address(token), 0), 0);
@@ -1172,7 +1179,7 @@ contract ProtectedVaultTest is Test {
         VaultFactoryFacet(address(diamond)).vaultDepositERC721(friend, friend, address(nft), 8);
         _enable();
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC721(friend, address(nft), 8, user);
+        LibTestOutflow.withdrawERC721(address(diamond), friend, address(nft), 8, user);
         assertEq(nft.ownerOf(8), _vault(user));
         assertEq(_tracked(user, address(nft), 8), 1);
         assertEq(_depo().withdrawableNow(user, K721, address(nft), 8), 1);

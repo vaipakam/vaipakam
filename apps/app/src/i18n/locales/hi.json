@@ -2709,6 +2709,8 @@
         "VPFIDepositedToVault": "VPFI vault में deposit हुआ",
         "VPFIWithdrawnFromVault": "VPFI vault से withdraw हुआ",
         "VaultVpfiDebited": "Vault से VPFI खर्च हुआ",
+        "VaultOutflow": "Vault से बाहर भेजा गया",
+        "VaultGrantSettled": "Vault अनुमति निपटाई गई",
         "RewardEntryForfeitSettled": "Rewards ज़ब्त हुए",
         "AutoDailyDeducted": "दैनिक किराया शुल्क चुकाया गया",
         "AutoExtendBorrowerCapsChanged": "स्वचालित विस्तार सीमाएँ अपडेट की गईं",

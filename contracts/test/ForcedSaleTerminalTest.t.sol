@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -126,15 +127,17 @@ contract ForcedSaleTerminalTest is SetupTest {
         view
         returns (ForcedSaleFacet.ForcedSalePlan memory)
     {
-        return ForcedSaleFacet(address(diamond)).previewForcedSale(LOAN, kind);
+        return ForcedSalePreviewFacet(address(diamond)).previewForcedSale(LOAN, kind);
     }
 
     function _pastGrace() internal {
         vm.warp(startTs + 90 days + LibVaipakam.gracePeriod(90) + 1);
     }
 
+    /// @dev What `who` owns of `token`: its balance plus, since #3205 part 2,
+    ///      the free money credited to its vault (a vault address carries none).
     function _bal(address token, address who) internal view returns (uint256) {
-        return IERC20(token).balanceOf(who);
+        return _owned(who, token);
     }
 
     function _vaultOf(address who) internal view returns (address) {

@@ -22,6 +22,7 @@ import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 import {LibSwap} from "../../src/libraries/LibSwap.sol";
 
 /**
@@ -421,7 +422,7 @@ contract Handler is Test {
         (,, uint256 graceEndsAt,,,,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
         if (graceEndsAt > block.timestamp) vm.warp(graceEndsAt);
 
-        uint256 sell = ForcedSaleFacet(diamond)
+        uint256 sell = ForcedSalePreviewFacet(diamond)
             .previewForcedSale(loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement).sell;
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
         calls[0] = LibSwap.AdapterCall({adapterIdx: 1, data: bytes("")});

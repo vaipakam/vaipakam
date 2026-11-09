@@ -113,6 +113,8 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 contract HelperTest {
 
@@ -929,36 +931,30 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](19);
         selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        selectors[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        selectors[15] = VaultFactoryFacet.getUserVaultAddress.selector;
+        selectors[4] = VaultFactoryFacet.vaultDepositERC721.selector;
+        selectors[5] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        selectors[6] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        selectors[7] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        selectors[8] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        selectors[9] = VaultFactoryFacet.getOfferAmount.selector;
+        selectors[10] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[11] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[16] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        selectors[17] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        selectors[18] = VaultFactoryFacet.getTrackedHolding.selector;
+        selectors[12] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[13] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[14] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        selectors[19] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[20] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        selectors[15] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[16] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        selectors[21] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        // #1566 S3e — the swap fill's counter-only outflow record.
-        selectors[22] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        selectors[23] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        selectors[17] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        selectors[18] = VaultFactoryFacet.vaultDeliverERC20From.selector;
         return selectors;
     }
 
@@ -1503,24 +1499,12 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function getVaultDepositoryFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](17);
-        selectors[0] = VaultDepositoryFacet.adoptUntracked.selector;
-        selectors[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
-        selectors[2] = VaultDepositoryFacet.adoptionDigest.selector;
-        selectors[3] = VaultDepositoryFacet.adoptionDomainSeparator.selector;
-        selectors[4] = VaultDepositoryFacet.adoptionNonce.selector;
-        selectors[5] = VaultDepositoryFacet.depositToVault.selector;
-        selectors[6] = VaultDepositoryFacet.disownUntracked.selector;
-        selectors[7] = VaultDepositoryFacet.freeHolding.selector;
-        selectors[8] = VaultDepositoryFacet.pinVaultVersion.selector;
-        selectors[9] = VaultDepositoryFacet.unpinVaultVersion.selector;
-        selectors[10] = VaultDepositoryFacet.untrackedHolding.selector;
-        selectors[11] = VaultDepositoryFacet.vaultBannedSource.selector;
-        selectors[12] = VaultDepositoryFacet.withdrawFromVault.selector;
-        selectors[13] = VaultDepositoryFacet.withdrawableNow.selector;
-        selectors[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
-        selectors[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
-        selectors[16] = VaultDepositoryFacet.getVaultOwner.selector;
+        return LibTestVaultBeacon.depositorySelectors();
+    }
+
+    /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2).
+    function getVaultOutflowFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        return LibTestVaultBeacon.outflowSelectors();
     }
 
     /// @dev Selectors for `OfferBookFacet` (#3242).
@@ -2791,6 +2775,12 @@ contract HelperTest {
         selectors = FacetSelectors.forcedSale();
     }
 
+    /// #3205 part 2 — the forced-sale previews. Mirrors
+    /// `DeployDiamond._getForcedSalePreviewSelectors`.
+    function getForcedSalePreviewFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.forcedSalePreview();
+    }
+
     /// #3359 - the forced-sale floor rule. Mirrors
     /// `DeployDiamond._getSaleFloorSelectors`.
     function getSaleFloorFacetSelectors() public pure returns (bytes4[] memory selectors) {
@@ -3107,37 +3097,31 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](20);
         selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        selectors[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        selectors[15] = VaultFactoryFacet.getUserVaultAddress.selector;
+        selectors[4] = VaultFactoryFacet.vaultDepositERC721.selector;
+        selectors[5] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        selectors[6] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        selectors[7] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        selectors[8] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        selectors[9] = VaultFactoryFacet.getOfferAmount.selector;
+        selectors[10] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[11] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[16] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        selectors[17] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        selectors[18] = VaultFactoryFacet.getTrackedHolding.selector;
+        selectors[12] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[13] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[14] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        selectors[19] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[20] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        selectors[15] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[16] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        selectors[21] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        // #1566 S3e — the swap fill's counter-only outflow record.
-        selectors[22] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        selectors[23] = VaultFactoryFacet.vaultDeliverERC20From.selector;
-        selectors[24] = VaultFactoryFacet.getDiamondAddress.selector;
+        selectors[17] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        selectors[18] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        selectors[19] = VaultFactoryFacet.getDiamondAddress.selector;
         return selectors;
     }
 
@@ -3230,7 +3214,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = PrepayListingFacet.getPrepayContext.selector;
         selectors[1] = PrepayListingFacet.executorFinalizePrepaySale.selector;
         selectors[2] = PrepayListingFacet.setCollateralListingExecutor.selector;
@@ -3240,6 +3224,9 @@ contract HelperTest {
         selectors[4] = PrepayListingFacet.markOfferConsumedBySale.selector;
         selectors[5] = PrepayListingFacet.recordOfferSaleProceeds.selector;
         selectors[6] = PrepayListingFacet.assertOfferFillNotSanctioned.selector;
+        // #3205 part 2 — the fill's just-in-time ERC-721 grant hooks.
+        selectors[7] = PrepayListingFacet.executorOpenListingGrant.selector;
+        selectors[8] = PrepayListingFacet.executorCloseListingGrant.selector;
         return selectors;
     }
 

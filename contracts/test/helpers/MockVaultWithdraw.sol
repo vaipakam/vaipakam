@@ -2,24 +2,36 @@
 pragma solidity ^0.8.29;
 
 import {Vm} from "forge-std/Vm.sol";
-import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {VaultOutflowFacet} from "../../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes} from "../../src/vault/VaultOutflowTypes.sol";
 
 /// @dev The switch {VaultWithdrawTestHook} reads. No facet routes it, so a
 ///      call reverts `FunctionDoesNotExist` until a test mocks it on the
 ///      Diamond.
 interface IVaultWithdrawTestSwitch {
     function vaultWithdrawDeliversAll() external view returns (bool);
+    /// @dev #3205 part 2 — per asset kind: 0 off, 1 stub (answer the amount,
+    ///      move nothing), 2 revert with {VaultOutflowStubFailure}.
+    function vaultOutflowStubMode(uint8 kind) external view returns (uint8);
+    /// @dev Per outflow class: true = revert with {VaultOutflowStubFailure}.
+    function vaultOutflowClassFails(uint8 class_) external view returns (bool);
 }
+
+/// @dev The revert a {MockVaultWithdraw.fails} stub raises.
+error VaultOutflowStubFailure(uint8 kind);
 
 /**
  * @title  VaultWithdrawTestHook
- * @notice Test-only stand-in for the Diamond's `vaultWithdrawERC20` route,
- *         installed by {MockVaultWithdraw.deliversAll}.
+ * @notice Test-only stand-in for the Diamond's vault outflow route
+ *         (`VaultOutflowFacet.vaultOutflow`, which replaced `vaultWithdrawERC20`
+ *         in #3205 part 2), installed by {MockVaultWithdraw.deliversAll}.
  *
- * @dev    Transparent by default: it delegates to the real VaultFactoryFacet.
+ * @dev    Transparent by default: it delegates to the real VaultOutflowFacet.
  *         While a test has mocked {IVaultWithdrawTestSwitch.vaultWithdrawDeliversAll}
- *         on the Diamond to return true, it instead moves nothing and answers
- *         that the recipient received all of `amount`.
+ *         on the Diamond to return true, an ERC-20 outflow instead moves
+ *         nothing and answers that the recipient received all of `amount`
+ *         (NFT outflows still run, as before: the old stub covered only the
+ *         ERC-20 route).
  *
  *         Why it exists (#2440): `vaultWithdrawERC20` now returns what the
  *         recipient received, and the protocol books that figure. Unit suites
@@ -58,16 +70,78 @@ contract VaultWithdrawTestHook {
         return true;
     }
 
-    /// @notice Runs AS the Diamond (delegatecalled by its fallback).
-    function vaultWithdrawERC20(address, address, address, uint256 amount)
+    /// @notice The compact Owner-class entry, stubbed by the same switches.
+    function vaultOutflowToOwner(address, uint8 kind, address, uint256, uint256 amount, uint8)
         external
         returns (uint256)
     {
+        if (_stubbed(VaultOutflowTypes.AssetKind(kind), VaultOutflowTypes.OutflowClass.Owner)) return amount;
+        (bool ok, bytes memory out) = REAL.delegatecall(msg.data);
+        assembly ("memory-safe") {
+            if iszero(ok) { revert(add(out, 0x20), mload(out)) }
+            return(add(out, 0x20), mload(out))
+        }
+    }
+
+    /// @dev Whether the switches stub an outflow of `kind` / `class_` (true),
+    ///      revert it, or let it run (false).
+    function _stubbed(VaultOutflowTypes.AssetKind kind, VaultOutflowTypes.OutflowClass class_) private view returns (bool) {
+        // A class selected to fail fails even under a delivers-all stub: the
+        // suite picks one leg to break among legs it otherwise stubs.
+        (bool hasC, bytes memory c) = address(this).staticcall(
+            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowClassFails.selector, uint8(class_))
+        );
+        if (hasC && c.length == 32 && abi.decode(c, (bool))) revert VaultOutflowStubFailure(uint8(kind));
         (bool on, bytes memory r) = address(this).staticcall(
             abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultWithdrawDeliversAll.selector)
         );
-        if (on && r.length == 32 && abi.decode(r, (bool))) return amount;
+        if (on && r.length == 32 && abi.decode(r, (bool)) && kind == VaultOutflowTypes.AssetKind.ERC20) return true;
+        (bool has, bytes memory m) = address(this).staticcall(
+            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowStubMode.selector, uint8(kind))
+        );
+        if (has && m.length == 32) {
+            uint8 mode = abi.decode(m, (uint8));
+            if (mode == 1) return true;
+            if (mode == 2) revert VaultOutflowStubFailure(uint8(kind));
+        }
+        return false;
+    }
 
+    /// @notice The scalar entry, stubbed by the same switches.
+    function vaultOutflowArgs(
+        address,
+        uint8 kind,
+        address,
+        uint256,
+        uint256 amount,
+        address,
+        uint8 class_,
+        uint256,
+        uint256,
+        uint8
+    ) external returns (uint256) {
+        if (_stubbed(VaultOutflowTypes.AssetKind(kind), VaultOutflowTypes.OutflowClass(class_))) return amount;
+        return _real();
+    }
+
+    /// @notice The compact Diamond-transient ERC-20 entry, stubbed likewise.
+    function vaultOutflowToDiamondERC20(address, address, uint256 amount, uint256, uint8) external returns (uint256) {
+        if (_stubbed(VaultOutflowTypes.AssetKind.ERC20, VaultOutflowTypes.OutflowClass.DiamondTransient)) return amount;
+        return _real();
+    }
+
+    /// @dev Forward the call unchanged to the real policy host.
+    function _real() private returns (uint256) {
+        (bool ok, bytes memory out) = REAL.delegatecall(msg.data);
+        assembly ("memory-safe") {
+            if iszero(ok) { revert(add(out, 0x20), mload(out)) }
+            return(add(out, 0x20), mload(out))
+        }
+    }
+
+    /// @notice Runs AS the Diamond (delegatecalled by its fallback).
+    function vaultOutflow(address, VaultOutflowTypes.Outflow calldata o) external returns (uint256) {
+        if (_stubbed(o.kind, o.class_)) return o.amount;
         (bool ok, bytes memory out) = REAL.delegatecall(msg.data);
         assembly ("memory-safe") {
             if iszero(ok) { revert(add(out, 0x20), mload(out)) }
@@ -97,7 +171,7 @@ library MockVaultWithdraw {
 
     uint256 private constant ADDRESS_MASK = type(uint160).max;
 
-    /// @notice Stub `vaultWithdrawERC20` on `diamond` until the next
+    /// @notice Stub the vault outflow route (ERC-20) on `diamond` until the next
     ///         `vm.clearMockedCalls()`: every call answers that all of the
     ///         requested amount arrived, and no tokens move.
     function deliversAll(address diamond) internal {
@@ -109,9 +183,61 @@ library MockVaultWithdraw {
         );
     }
 
+    /// @notice Stub every outflow of asset `kind` on `diamond`: it answers the
+    ///         amount and moves nothing (the old selector-wide mock of one
+    ///         `vaultWithdrawERC*` route). Off at the next `vm.clearMockedCalls()`.
+    function stubs(address diamond, VaultOutflowTypes.AssetKind kind) internal {
+        _install(diamond);
+        vm.mockCall(
+            diamond,
+            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowStubMode.selector, uint8(kind)),
+            abi.encode(uint8(1))
+        );
+    }
+
+    /// @notice Make every outflow of asset `kind` on `diamond` revert
+    ///         {VaultOutflowStubFailure} (the old selector-wide
+    ///         `vm.mockCallRevert` of one route).
+    function fails(address diamond, VaultOutflowTypes.AssetKind kind) internal {
+        _install(diamond);
+        vm.mockCall(
+            diamond,
+            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowStubMode.selector, uint8(kind)),
+            abi.encode(uint8(2))
+        );
+    }
+
+    /// @notice Make every outflow of class `class_` on `diamond` revert
+    ///         {VaultOutflowStubFailure} (the old recipient-matched revert: a
+    ///         derived class's recipient is resolved inside the policy, so a
+    ///         test selects the leg by class).
+    function failsClass(address diamond, VaultOutflowTypes.OutflowClass class_) internal {
+        _install(diamond);
+        vm.mockCall(
+            diamond,
+            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowClassFails.selector, uint8(class_)),
+            abi.encode(true)
+        );
+    }
+
+    /// @notice The calldata prefix of a vault outflow from `user`'s vault of
+    ///         `kind` / `asset` (for `vm.expectCall` and argument-matched
+    ///         mocks: the Outflow struct is static, so its fields encode in
+    ///         place and a prefix matches the leading ones).
+    function prefix(address user, VaultOutflowTypes.AssetKind kind, address asset) internal pure returns (bytes memory) {
+        return abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(user, kind, asset));
+    }
+
     function _install(address diamond) private {
+        _installFor(diamond, VaultOutflowFacet.vaultOutflowToOwner.selector);
+        _installFor(diamond, VaultOutflowFacet.vaultOutflow.selector);
+        _installFor(diamond, VaultOutflowFacet.vaultOutflowArgs.selector);
+        _installFor(diamond, VaultOutflowFacet.vaultOutflowToDiamondERC20.selector);
+    }
+
+    function _installFor(address diamond, bytes4 selector) private {
         bytes32 slot = keccak256(
-            abi.encode(VaultFactoryFacet.vaultWithdrawERC20.selector, DIAMOND_STORAGE_POSITION)
+            abi.encode(selector, DIAMOND_STORAGE_POSITION)
         );
         uint256 word = uint256(vm.load(diamond, slot));
         address current = address(uint160(word & ADDRESS_MASK));

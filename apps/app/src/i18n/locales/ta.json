@@ -2709,6 +2709,8 @@
         "VPFIDepositedToVault": "VPFI பெட்டகத்தில் வைப்பு செய்யப்பட்டது",
         "VPFIWithdrawnFromVault": "VPFI பெட்டகத்திலிருந்து மீளப்பெறப்பட்டது",
         "VaultVpfiDebited": "VPFI பெட்டகத்திலிருந்து செலவழிக்கப்பட்டது",
+        "VaultOutflow": "பெட்டகத்திலிருந்து வெளியே நகர்த்தப்பட்டது",
+        "VaultGrantSettled": "பெட்டக அனுமதி தீர்க்கப்பட்டது",
         "RewardEntryForfeitSettled": "வெகுமதிகள் இழக்கப்பட்டன",
         "AutoDailyDeducted": "தினசரி வாடகைக் கட்டணம் செலுத்தப்பட்டது",
         "AutoExtendBorrowerCapsChanged": "தானியங்கி நீட்டிப்பு வரம்புகள் புதுப்பிக்கப்பட்டன",
