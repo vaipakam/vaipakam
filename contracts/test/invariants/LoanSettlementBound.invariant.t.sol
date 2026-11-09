@@ -35,12 +35,18 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *               matcher share, the Diamond keeps the rest, and an on-time full repayment pays
  *               exactly the interest the spec formula gives, rounded down once.
  *
- *         Paths covered are the shared handler's: offer posting, both accept directions, full and
- *         partial repayment, the direct preclose, collateral top-up, time-based default (the rig has no working swap
- *         venue, so default reaches the in-kind fallback) and both claims. Periodic interest,
- *         the preclose offset, refinance, the lender sale, rentals and HF liquidation are not yet
- *         driven; #3241 tracks them, and the vault outflow seam (#3205) is where this check is
- *         meant to bind every one of them.
+ *         S8 -- a periodic-interest settlement whose period is paid moves nothing; one that sells
+ *               pays the lender side at most the shortfall and no collateral, and the market (the
+ *               rig's one working venue) buys at most the preview's `maxSell` and pays only
+ *               principal asset. Every bound above counts the market as a party.
+ *
+ *         Paths covered are the shared handler's: offer posting (about half the long, large
+ *         offers carry a monthly cadence), both accept directions, full and partial repayment,
+ *         the direct preclose, collateral top-up, the lender's direct sale, the periodic-interest
+ *         settlement, time-based default and HF liquidation (both name the failing venue, so
+ *         they reach the in-kind fallback) and both claims. The preclose offset, refinance and
+ *         rentals are not yet driven; #3241 tracks them, and the vault outflow seam (#3205) is
+ *         where this check is meant to bind every one of them.
  *
  * @dev    Run: `forge test --match-path test/invariants/LoanSettlementBound.invariant.t.sol`
  *         (the `cifast` profile does not compile `test/invariants`).
@@ -69,6 +75,7 @@ contract LoanSettlementBoundInvariant is Test {
         assertEq(ledger.perimeterViolations(), 0, why);
         assertEq(ledger.acceptViolations(), 0, why);
         assertEq(ledger.interestViolations(), 0, why);
+        assertEq(ledger.periodicViolations(), 0, why);
     }
 
     /// @notice S2-S6 over every booked loan.
@@ -86,10 +93,11 @@ contract LoanSettlementBoundInvariant is Test {
 
         for (uint256 a = 0; a < 2; a++) {
             (int256 dL, int256 dB, int256 dD, int256 dC) = ledger.loanDeltas(loanId, a);
+            (int256 dM,) = ledger.loanMarket(loanId, a);
             // S2
             assertGe(dD, 0, "S2: the Diamond paid a loan more than it took in");
-            // S3
-            assertEq(dL + dB + dD + dC, 0, "S3: a loan's booked deltas do not net to zero");
+            // S3 (the market counts as a party)
+            assertEq(dL + dB + dD + dC + dM, 0, "S3: a loan's booked deltas do not net to zero");
         }
 
         // S4 -- collateral
@@ -98,6 +106,8 @@ contract LoanSettlementBoundInvariant is Test {
             int256 posted = int256(collateralIn);
             assertLe(dL, posted, "S4: lender gained more collateral than was posted");
             assertLe(dC, posted, "S4: caller gained more collateral than was posted");
+            (int256 dM,) = ledger.loanMarket(loanId, WETH);
+            assertLe(dM, posted, "S4: the market bought more collateral than was posted");
             assertGe(dB, -posted, "S4: borrower lost more collateral than was posted");
         }
 
@@ -111,7 +121,16 @@ contract LoanSettlementBoundInvariant is Test {
             uint256 cap = (principal0 * rateBps * elapsed) / (YEAR * BPS)
                 + (principal0 * LATE_FEE_CAP_BPS) / BPS + 1;
             assertLe(dL, int256(cap), "S5: lender gained more than interest plus the late-fee cap");
-            assertLe(dB, int256(principal0), "S5: borrower netted more than the principal lent");
+            (, bool periodicSale) = ledger.loanMarket(loanId, USDC);
+            if (periodicSale) {
+                // A periodic sale turned some of the borrower's collateral into principal asset,
+                // so the bound is read in value: principal asset plus collateral at the rig's
+                // prices ($1 and $2,000).
+                (, int256 dBw,,) = ledger.loanDeltas(loanId, WETH);
+                assertLe(dB + dBw * 2000, int256(principal0), "S5: borrower netted more value than the principal lent");
+            } else {
+                assertLe(dB, int256(principal0), "S5: borrower netted more than the principal lent");
+            }
 
             LibVaipakam.Loan memory L = LoanFacet(address(base.diamond())).getLoanDetails(loanId);
             if (L.status == LibVaipakam.LoanStatus.Repaid) {
@@ -129,6 +148,8 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("preclosed loans", ledger.precloseLanded());
         console.log("liquidated loans", ledger.liquidationLanded());
         console.log("sold loans", ledger.saleLanded());
+        console.log("periodic just-stamps", ledger.periodicStamped());
+        console.log("periodic sales", ledger.periodicSold());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -211,6 +232,30 @@ contract LoanSettlementBoundInvariant is Test {
 
     /// @notice #3241: a sold loan. The buyer pays the seller and becomes the lender; the loan is
     ///         then repaid to the buyer, and the lender side as a whole stays within the bounds.
+    function test_LedgerBooksAPeriodicSale() public {
+        // Seed 3 -> lender 0, with the cadence bit set: a $5,000, 90-day monthly loan.
+        ledger.createLenderOffer(3, 5_000 ether, 90, 1_000, 10 ether);
+        ledger.acceptLenderOffer(0, 0);
+        uint256 loanId = ledger.bookedLoanIds(0);
+        assertEq(
+            uint8(LoanFacet(address(base.diamond())).getLoanDetails(loanId).periodicInterestCadence),
+            uint8(LibVaipakam.PeriodicInterestCadence.Monthly),
+            "offer did not carry the monthly cadence"
+        );
+
+        ledger.settlePeriodic(0);
+        assertEq(ledger.periodicSold(), 1, "periodic sale did not land");
+        (int256 dMw, bool sold) = ledger.loanMarket(loanId, WETH);
+        assertTrue(sold && dMw > 0, "market bought no collateral");
+
+        ledger.repay(0);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
     function test_LedgerBooksASoldLoan() public {
         ledger.createBorrowerOffer(1, 1_000 ether, 30, 1_000, 10 ether);
         ledger.acceptBorrowerOffer(1, 0);
