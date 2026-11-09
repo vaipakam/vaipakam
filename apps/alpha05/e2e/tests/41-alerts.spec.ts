@@ -1,5 +1,5 @@
 /**
- * Alerts (#3180, ACC-48, RB-INBOX): the wallet's free inbox from the index,
+ * Alerts (#3180, ACC-54, RB-INBOX): the wallet's free inbox from the index,
  * and the header's count of new alerts. A loan is opened and repaid inside a
  * snapshot, so the lender's inbox carries a "started" and a "repaid" row
  * read from the chain's own logs; the stand-in adds the kinds the fixture
@@ -78,14 +78,14 @@ test('the inbox lists the wallet’s alerts, counts the new ones on the bell, an
     await expect(page.getByTestId('alerts-fresh')).toHaveText('5 new since this page was last opened here.', { timeout: 30_000 });
     await expect(page.getByTestId('alerts-unreadable')).toHaveText('1 alerts could not be read and are not shown.');
     const critical = list.locator('[data-alert="hf_critical"]');
-    await expect(critical).toContainText(`Loan #${id}’s health fell below 1.05 and liquidation is close: add collateral or repay now.`);
+    await expect(critical).toContainText(`Loan #${id}’s health dipped below 1.05, close to the 1.0 liquidation line.`);
     await expect(critical).toHaveAttribute('data-fresh', 'true');
-    await expect(list.locator('[data-alert="reward_final_notice"]')).toContainText('Reward entry #4 is in its last notice period');
+    await expect(list.locator('[data-alert="reward_final_notice"]')).toContainText('Reward entry #4 entered its last notice period');
     await expect(list.locator('[data-alert="reward_final_notice"]').getByRole('link', { name: 'Open Claims' })).toHaveAttribute('href', '/claims');
     await expect(list.locator('[data-alert="offer_matched"]')).toContainText('An alert this app has no words for yet (offer_matched).');
     // An outcome the index's own check found says when it was found, not when it happened.
     const ended = list.locator('[data-alert="loan_ended"]');
-    await expect(ended).toContainText(`Loan #${id} has ended; the index could not tell how.`);
+    await expect(ended).toContainText(`Loan #${id} ended; the index could not tell how.`);
     await expect(ended).toContainText('Found by a check at');
     await expect(ended).toContainText('when it happened is not known.');
     await expect(list.locator('[data-alert="loan_repaid"]').filter({ hasText: `Loan #${id}` })).toHaveAttribute('data-fresh', 'false');

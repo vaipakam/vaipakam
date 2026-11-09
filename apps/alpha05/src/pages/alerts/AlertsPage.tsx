@@ -6,15 +6,11 @@ import { WhyLink } from '../../shared/help/WhyLink';
 import { inboxTarget, type InboxRow } from '../../shared/inbox/inbox';
 import { markSeen, readSeen } from '../../shared/inbox/seen';
 import { inboxReason, useInbox, useInboxNewer } from '../../shared/inbox/useInbox';
-import { Icon } from '../../shared/ui/Icon';
 import { formatUtc } from '../../shared/ui/format';
 import { currentAppHref, PAGES } from '../../routes/pageMap';
 
-/** Health and deadline rows ask something of the reader (RB-ICONS "act"). */
-const ACT_KINDS = new Set(['hf_alert', 'hf_critical', 'grace_entered', 'maturity_1d', 'reward_final_notice']);
-
 /**
- * Alerts (#3180, ACC-48; RB-INBOX): the free inbox the protocol's index keeps
+ * Alerts (#3180, ACC-54; RB-INBOX): the free inbox the protocol's index keeps
  * for the connected wallet on its network, newest first, each row a short
  * outcome with its time and a link to the loan (read from the chain there)
  * or to Claims for a reward entry. Rows newer than the last ones this page
@@ -136,14 +132,10 @@ function AlertRow({ row: r, fresh, copy }: { row: InboxRow; fresh: boolean; copy
   const id = r.loanId?.toString() ?? '';
   const line = r.kind === null ? format('inbox.unknownKind', { kind: r.rawKind }) : format(`inbox.${r.kind}` as CopyKey, { id, entry: r.entryId ?? '' });
   const to = inboxTarget(r);
-  const act = r.kind !== null && ACT_KINDS.has(r.kind);
   return (
     <li className="card alert-row" data-alert={r.rawKind} data-fresh={fresh} data-testid={`alert-${r.id}`}>
-      <p className={act ? 'notice-with-icon' : undefined}>
-        {act && <Icon meaning="act" />}
-        <span>
-          {fresh && <span className="alert-new">{text('inbox.newBadge')}</span>} {line}
-        </span>
+      <p>
+        {fresh && <span className="alert-new">{text('inbox.newBadge')}</span>} {line}
       </p>
       <p className="tier-b">
         {r.reconciled ? (

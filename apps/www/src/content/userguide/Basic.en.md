@@ -631,7 +631,7 @@ nothing happens on-chain.
 
 ### The Alerts inbox
 
-The Alerts page lists the alerts the protocol's index keeps for your wallet on the network you are on, newest first. It is free and there is nothing to sign up for. An alert is written when a loan starts, is repaid in part or in full, defaults or is liquidated, nears its due date, enters or leaves its grace period, or its health falls below 1.5, 1.2 or 1.05, and when a reward entry nears or passes its claim deadline. Each alert opens the loan, whose page reads it from the chain, or Claims for a reward. The bell beside your wallet at the top counts the alerts that arrived since you last opened the page in this browser. If the index cannot be read, the page says so instead of showing an empty inbox. Telegram and push alerts, described below, are still set up in the current app.
+The Alerts page lists the alerts the protocol's index keeps for your wallet on the network you are on, newest first. It is free and there is nothing to sign up for. An alert is written when a loan starts, is repaid in part or in full, defaults or is liquidated, nears its due date, enters or leaves its grace period, or its health falls below 1.5, 1.2 or 1.05, and when a reward entry nears or passes its claim deadline. Each alert opens the loan, whose page reads it from the chain, or Claims for a reward. The bell beside your wallet at the top counts the alerts that arrived since you last opened the page in this browser. If the index cannot be read, the page says so instead of showing an empty inbox. Telegram and push alerts, described below, are still set up in the current app. Each alert says how things stood when it was written; open the loan to see where it stands now.
 
 <a id="alerts.threshold-ladder"></a>
 

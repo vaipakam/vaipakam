@@ -1,5 +1,5 @@
 /**
- * The wallet's inbox (#3180 Alerts, ACC-48, RB-INBOX): the free, in-app
+ * The wallet's inbox (#3180 Alerts, ACC-54, RB-INBOX): the free, in-app
  * alerts the protocol's index keeps for a wallet on one network
  * (`GET /notifications/:address?chainId&limit&before`), newest first. The
  * index writes one row per recipient when a loan starts, is repaid in part

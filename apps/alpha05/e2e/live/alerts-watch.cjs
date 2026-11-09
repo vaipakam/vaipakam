@@ -1,4 +1,4 @@
-// Watch-only live review of Alerts (#3180, ACC-48, RB-INBOX; live tier, run
+// Watch-only live review of Alerts (#3180, ACC-54, RB-INBOX; live tier, run
 // after each deploy), through the shared watch-only wallet (watch-wallet.cjs).
 // The deployed build reads the deployed index's inbox for the watched wallet:
 // the page's rows (or its empty or failed line), the unreadable count, and the

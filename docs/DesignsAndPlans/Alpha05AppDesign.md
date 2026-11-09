@@ -1426,14 +1426,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   rollups the app serves keep no public queue, so nothing is said there.
   The list of networks is one rule (`publicQueue.ts`), and a test fails if
   a served network is not decided.
-- **RB-INBOX** — Alerts (ACC-48) lists the free inbox the protocol's index
+- **RB-INBOX** — Alerts (ACC-54) lists the free inbox the protocol's index
   keeps for the connected wallet on its network, newest first, a page at a
   time: loans starting, repaid in part or in full, defaulted or liquidated,
   nearing their due date, entering or leaving grace, and health crossing
   1.5, 1.2 or 1.05; reward entries nearing or past their claim deadline. Each
   row is one outcome sentence with its time and a link to the loan's page
   (which reads the loan from the chain) or to Claims for a reward entry; a
-  row is a pointer, never a figure. An answer for another network or wallet
+  row is a pointer, never a figure, and it is written as history: it says
+  how the loan or entry stood when the row was written, never that the state
+  still holds, and the page says to open the loan for where it stands now. A
+  reward entry past its claim window says its return has begun, not that it
+  is done. An answer for another network or wallet
   is refused, a row whose shape cannot be read is counted and the count
   stated, and a kind the app has no words for is shown and named, so nothing
   is dropped in silence. A row the index wrote when its own check found an
