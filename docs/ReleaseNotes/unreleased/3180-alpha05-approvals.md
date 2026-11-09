@@ -1,4 +1,4 @@
-## Thread — alpha05 Settings lists and withdraws your approvals (PR #<n>)
+## Thread — alpha05 Settings lists and withdraws your approvals (PR #3457)
 
 The new app's Settings page now has an Approvals section: the standing
 approvals the connected wallet gives the protocol on its network. A token
