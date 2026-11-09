@@ -368,6 +368,7 @@ function freshAgent() {
     lastTest: new Map(),
     thresholds: new Map(),
     next: new Map(),
+    slow: new Map(),
   };
 }
 /** The alert service's state: every request, the issued codes, the linked
@@ -459,6 +460,7 @@ const server = http.createServer(async (req, res) => {
       // { reset }, { push: 'available' | 'agent-only' | 'unavailable' | 'down' },
       // { handshake: wallet } (the bot received that wallet's latest code),
       // { next: { path, status, body } } (the next request to that path gets it).
+      // { slow: { path, ms } } (the next request to that path is answered ms later).
       const body = JSON.parse(await readBody(req));
       if (body.reset === true) agent = freshAgent();
       if (body.push !== undefined) {
@@ -477,6 +479,7 @@ const server = http.createServer(async (req, res) => {
         agent.linked.add(w);
       }
       if (body.next !== undefined) agent.next.set(body.next.path, { status: body.next.status, body: body.next.body });
+      if (body.slow !== undefined) agent.slow.set(body.slow.path, body.slow.ms);
       json(res, 200, { ok: true });
       return;
     }
@@ -505,6 +508,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       agent.requests.push({ path: url.pathname, body });
+      const slowMs = agent.slow.get(url.pathname);
+      if (slowMs !== undefined) {
+        agent.slow.delete(url.pathname);
+        await new Promise((r) => setTimeout(r, slowMs));
+      }
       const forced = agent.next.get(url.pathname);
       if (forced) {
         agent.next.delete(url.pathname);

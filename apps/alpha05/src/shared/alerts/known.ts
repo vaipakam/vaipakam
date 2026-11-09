@@ -9,7 +9,8 @@
  * browser refuses (a private window, storage switched off) leaves the page
  * working, with nothing remembered.
  */
-import { parsePendingRemoval, type PendingRemoval } from './alerts';
+import { SUPPORTED_CHAINS } from '../../chain/chains';
+import { parsePendingRemoval, type AlertAction, type AlertAnswer, type PendingRemoval } from './alerts';
 
 type Hex = `0x${string}`;
 
@@ -105,8 +106,79 @@ export function writeKnown(chainId: number, wallet: Hex, patch: Partial<KnownAle
     // it rather than into what storage still has.
     unsaved.set(k, next);
   }
+  snapshots.set(k, next);
+  notify();
   return next;
 }
+
+/** The record each mounted card shows, by key: kept until a write (from this
+ *  tab, or from another tab through the storage event) replaces it, so every
+ *  card on every page reads one value and an action that finishes while its
+ *  card is unmounted still reaches the card shown next. */
+const snapshots = new Map<string, KnownAlerts>();
+const listeners = new Set<() => void>();
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+export function subscribeKnown(listener: () => void): () => void {
+  if (listeners.size === 0 && typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
+  };
+}
+
+function onStorage(e: StorageEvent): void {
+  if (e.key === null || e.key.startsWith(PREFIX)) {
+    if (e.key === null) snapshots.clear();
+    else snapshots.delete(e.key);
+    notify();
+  }
+}
+
+export function knownSnapshot(chainId: number, wallet: Hex): KnownAlerts {
+  const k = key(chainId, wallet);
+  let v = snapshots.get(k);
+  if (!v) {
+    v = readKnown(chainId, wallet);
+    snapshots.set(k, v);
+  }
+  return v;
+}
+
+/** Record what the service did, for the wallet and network that signed,
+ *  whichever page is showing when the answer arrives. */
+export function recordAnswer(chainId: number, wallet: Hex, action: AlertAction, answer: AlertAnswer, at: number = Math.floor(Date.now() / 1000)): void {
+  if (!answer.ok) return;
+  if (answer.action === 'link') writeKnown(chainId, wallet, { telegram: { state: 'code', at, expiresAt: at + CODE_LIFETIME_S } });
+  else if (answer.action === 'test-alert') writeKnown(chainId, wallet, { telegram: { state: 'confirmed', at } });
+  else if (answer.action === 'unlink') {
+    const telegram = { state: 'unlinked' as const, at, scope: answer.scope };
+    // A wallet-wide unlink cleared every network's link for this wallet, and
+    // its answer names every hold protected mode keeps, including on
+    // networks this app does not serve: that list replaces the holds on
+    // every record. A one-network unlink speaks for this network only, so it
+    // replaces this network's hold and keeps the others.
+    const chains = answer.scope === 'wallet' ? SUPPORTED_CHAINS.map((c) => c.chainId) : [chainId];
+    for (const id of chains) {
+      const before = readKnown(id, wallet).held?.pending ?? [];
+      const pending = answer.scope === 'wallet' ? answer.pending : [...before.filter((p) => p.chainId !== chainId), ...answer.pending];
+      writeKnown(id, wallet, { telegram, held: { at, pending } });
+    }
+  } else if (typeof action !== 'string') {
+    const { bands, dueDateReminders, pushAlerts } = action.save;
+    writeKnown(chainId, wallet, {
+      ...(bands ? { bands: { ...bands, at } } : {}),
+      ...(dueDateReminders !== undefined ? { dueDate: { on: dueDateReminders, at } } : {}),
+      ...(pushAlerts && answer.push !== 'not-requested' ? { push: { at, outcome: answer.push } } : {}),
+    });
+  }
+}
+
+/** How long a Telegram link code lasts, as the service issues it. */
+export const CODE_LIFETIME_S = 600;
 
 function safeStorage(): Storage | null {
   try {

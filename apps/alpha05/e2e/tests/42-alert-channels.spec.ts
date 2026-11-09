@@ -140,8 +140,17 @@ test('push is offered only when the service can send; reminders and health lines
   expect(off.body).toMatchObject({ notify_maturity_approaching: false });
   expect(off.body).not.toHaveProperty('push_channel');
   await signedBy(off, me, (w, c, t) => buildAlertSettingsMessage(w, c, { dueDateReminders: false }, t));
+  // A save still out when the page is left keeps going: back on Alerts the
+  // card shows it out and offers no second action, then shows its outcome.
+  await controlAgent({ slow: { path: '/thresholds', ms: 6_000 } });
   await page.getByTestId('alert-due-toggle').click();
+  await expect(page.getByTestId('alert-due-toggle')).toBeDisabled({ timeout: 10_000 });
+  await page.getByRole('link', { name: 'Vaipakam home' }).click();
+  await page.getByTestId('inbox-bell').click();
+  await expect(page.getByTestId('alert-due-toggle')).toBeDisabled();
+  await expect(page.getByTestId('alert-telegram-unlink')).toBeDisabled();
   await expect(page.getByTestId('alert-due-state')).toContainText('Switched on from this browser at', { timeout: 30_000 });
+  await expect(page.getByTestId('alert-due-toggle')).toBeEnabled();
 
   // Health warnings: fixed lines in Basic, editable in Advanced.
   await expect(page.getByTestId('alert-health-bands')).toContainText('below 1.5, 1.2 and 1.05; liquidation is at 1.0.');

@@ -4,8 +4,9 @@ import { useMode } from '../../app/ModeContext';
 import { SUPPORTED_CHAINS, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { AGENT } from '../../shared/alerts/agentClient';
-import { bandsProblem, DEFAULT_BANDS, parseBand, parsePushStatus, pushChannelUrl, type AlertAction, type AlertAnswer, type Bands } from '../../shared/alerts/alerts';
-import { readKnown, writeKnown, type KnownAlerts } from '../../shared/alerts/known';
+import { bandsProblem, DEFAULT_BANDS, parseBand, parsePushStatus, pushChannelUrl, type AlertAction, type Bands } from '../../shared/alerts/alerts';
+import { type KnownAlerts } from '../../shared/alerts/known';
+import { useKnown } from '../../shared/alerts/useKnown';
 import { useAlertAction, type AlertRun } from '../../shared/alerts/useAlertAction';
 import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
@@ -19,8 +20,6 @@ import { useNow } from '../../shared/ui/useNow';
 
 type Hex = `0x${string}`;
 
-/** How long a Telegram link code lasts, as the service issues it. */
-const CODE_LIFETIME_S = 600;
 
 /** The sign-ups the Terms gate holds: linking Telegram and switching push on.
  *  Switching anything off is never gated (ACC-15). */
@@ -66,8 +65,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
   // transaction store beside the prompt's own session, so a reader who
   // leaves the page mid-acceptance comes back to the same action.
   const [follow, setFollow] = useStoredValue<GatedAction>(`alerts.channels.follow:${chain.chainId}:${account.toLowerCase()}`);
-  const [known, setKnown] = useState<KnownAlerts>(() => readKnown(chain.chainId, account));
-  const [code, setCode] = useState<{ code: string; botUrl: string | null; expiresAt: number } | null>(null);
+  const known = useKnown(chain.chainId, account);
   const action = useAlertAction(chain.chainId, account);
   const nowS = Math.floor(useNow(5_000) / 1000);
 
@@ -87,47 +85,10 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
   // query keeps its last answer, which must not stand beside "could not ask".
   const pushNow = push.status === 'success' ? push.data : null;
 
-  /** Record what the service did, for the wallet and network that signed. */
-  const record = (a: AlertAction, answer: AlertAnswer) => {
-    if (!answer.ok) return;
-    const at = Math.floor(Date.now() / 1000);
-    if (answer.action === 'link') {
-      setCode({ code: answer.code, botUrl: answer.botUrl, expiresAt: at + CODE_LIFETIME_S });
-      setKnown(writeKnown(chain.chainId, account, { telegram: { state: 'code', at, expiresAt: at + CODE_LIFETIME_S } }));
-    } else if (answer.action === 'test-alert') {
-      setCode(null);
-      setKnown(writeKnown(chain.chainId, account, { telegram: { state: 'confirmed', at } }));
-    } else if (answer.action === 'unlink') {
-      setCode(null);
-      const telegram = { state: 'unlinked' as const, at, scope: answer.scope };
-      // A wallet-wide unlink cleared every network's link for this wallet,
-      // and its answer names every hold protected mode keeps, including on
-      // networks this app does not serve: that list replaces the holds on
-      // every record. A one-network unlink speaks for this network only, so
-      // it replaces this network's hold and keeps the others.
-      const chains = answer.scope === 'wallet' ? SUPPORTED_CHAINS.map((c) => c.chainId) : [chain.chainId];
-      for (const id of chains) {
-        const before = readKnown(id, account).held?.pending ?? [];
-        const pending = answer.scope === 'wallet' ? answer.pending : [...before.filter((p) => p.chainId !== chain.chainId), ...answer.pending];
-        const next = writeKnown(id, account, { telegram, held: { at, pending } });
-        if (id === chain.chainId) setKnown(next);
-      }
-    } else if (typeof a !== 'string') {
-      const { bands, dueDateReminders, pushAlerts } = a.save;
-      setKnown(
-        writeKnown(chain.chainId, account, {
-          ...(bands ? { bands: { ...bands, at } } : {}),
-          ...(dueDateReminders !== undefined ? { dueDate: { on: dueDateReminders, at } } : {}),
-          ...(pushAlerts && answer.push !== 'not-requested' ? { push: { at, outcome: answer.push } } : {}),
-        }),
-      );
-    }
-  };
-
   const run = async (a: AlertAction) => {
-    const answer = await action.start(a);
-    if (answer) record(a, answer);
+    await action.start(a);
   };
+  const code = action.code;
 
   const gated = (g: GatedAction) => {
     if (terms.data?.kind === 'needed') {

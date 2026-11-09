@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { useConfig } from 'wagmi';
 import { signMessage } from 'wagmi/actions';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
 import { alertBody, alertMessage, alertRoute, readAlertAnswer, type AlertAction, type AlertAnswer } from './alerts';
+import { CODE_LIFETIME_S, recordAnswer } from './known';
 
 type Hex = `0x${string}`;
 
@@ -36,15 +37,24 @@ function browserStore(): IssuedStore {
   }
 }
 
+/** How far ahead of the clock a kept count may be and still be used. The
+ *  service refuses a request more than ten minutes from its own clock, so a
+ *  count further ahead (left by a clock that was fast and has since been
+ *  corrected) would make every request fail until real time caught up: it
+ *  is dropped instead, and the clock's second is used. */
+const MAX_AHEAD_S = 300;
+
 export function nextIssuedAt(nowMs: number = Date.now(), store: IssuedStore = browserStore()): number {
+  const nowS = Math.floor(nowMs / 1000);
+  const usable = (n: number) => (n > 0 && n <= nowS + MAX_AHEAD_S ? n : 0);
   let stored = 0;
   try {
     const n = Number(store?.getItem(ISSUED_KEY));
-    if (Number.isSafeInteger(n) && n > 0) stored = n;
+    if (Number.isSafeInteger(n)) stored = usable(n);
   } catch {
     // Storage that cannot be read leaves this page's own count.
   }
-  lastIssuedAt = Math.max(Math.floor(nowMs / 1000), lastIssuedAt + 1, stored + 1);
+  lastIssuedAt = Math.max(nowS, usable(lastIssuedAt) + 1, stored + 1);
   try {
     store?.setItem(ISSUED_KEY, String(lastIssuedAt));
   } catch {
@@ -64,59 +74,89 @@ function isUserRejection(e: unknown): boolean {
   return /reject|denied|cancel/i.test((e as Error)?.message ?? '');
 }
 
+/** A live Telegram link code. Held in this tab's memory only, never in
+ *  storage: it is a one-time secret that lasts ten minutes. */
+export interface LinkCode {
+  code: string;
+  botUrl: string | null;
+  expiresAt: number;
+}
+
+interface RunEntry {
+  run: AlertRun;
+  code: LinkCode | null;
+}
+
+const IDLE: RunEntry = { run: { phase: 'idle' }, code: null };
+/** Each wallet and network's action, outside any page: a card mounted while
+ *  an action is out shows it (and offers no second one), and the outcome of
+ *  an action that finishes while no card is mounted is what the next card
+ *  shows. */
+const runs = new Map<string, RunEntry>();
+const runListeners = new Set<() => void>();
+
+function setRun(identity: string, patch: Partial<RunEntry>): void {
+  runs.set(identity, { ...(runs.get(identity) ?? IDLE), ...patch });
+  for (const l of runListeners) l();
+}
+
+function subscribeRuns(listener: () => void): () => void {
+  runListeners.add(listener);
+  return () => runListeners.delete(listener);
+}
+
 /**
  * One signed alert action at a time for a wallet on one network (RB-ALERT-
- * CHANNELS): the wallet signs the action's message, the request is sent, and
- * the service's answer is read. An answer that arrives after the wallet or
- * network changed is not shown against the new identity; it is still
- * returned, so what the service did is recorded for the wallet that signed.
+ * CHANNELS): the wallet signs the action's message, the request is sent, the
+ * service's answer is read, and what it did is recorded for the wallet and
+ * network that signed, whichever page is showing by then.
  */
 export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient = AGENT) {
   const config = useConfig();
   const identity = `${chainId}:${wallet.toLowerCase()}`;
-  const [state, setState] = useState<{ identity: string; run: AlertRun }>({ identity, run: { phase: 'idle' } });
-  const current = useRef(identity);
-  useEffect(() => {
-    current.current = identity;
-  }, [identity]);
-  // A run started for another wallet or network is not this one's.
-  const run: AlertRun = state.identity === identity ? state.run : { phase: 'idle' };
-  const busy = run.phase === 'signing' || run.phase === 'sending';
+  const entry = useSyncExternalStore(
+    subscribeRuns,
+    () => runs.get(identity) ?? IDLE,
+    () => IDLE,
+  );
+  const busy = entry.run.phase === 'signing' || entry.run.phase === 'sending';
 
   const start = useCallback(
     async (action: AlertAction): Promise<AlertAnswer | null> => {
-      const startedAs = identity;
-      const settle = (next: AlertRun) => {
-        if (current.current === startedAs) setState({ identity: startedAs, run: next });
-      };
-      settle({ phase: 'signing', action });
+      const now = runs.get(identity)?.run.phase;
+      if (now === 'signing' || now === 'sending') return null;
+      setRun(identity, { run: { phase: 'signing', action } });
       const issuedAt = nextIssuedAt();
       let signature: Hex;
       try {
         signature = await signMessage(config, { account: wallet, message: alertMessage(action, wallet, chainId, issuedAt) });
       } catch (e) {
-        if (isUserRejection(e)) settle({ phase: 'declined', action });
-        else settle({ phase: 'unreachable', action, message: (e as Error).message });
+        setRun(identity, { run: isUserRejection(e) ? { phase: 'declined', action } : { phase: 'unreachable', action, message: (e as Error).message } });
         return null;
       }
-      settle({ phase: 'sending', action });
+      setRun(identity, { run: { phase: 'sending', action } });
       const route = alertRoute(action);
       try {
         const res = await client.request(route.method, route.path, alertBody(action, wallet, chainId, issuedAt, signature));
         const answer = readAlertAnswer(action, res.status, res.data);
-        // The answer is returned whoever is connected now, so the caller can
-        // record what the service did for the wallet that signed; only the
-        // run shown on the page is dropped.
-        settle({ phase: 'answered', action, answer });
+        const at = Math.floor(Date.now() / 1000);
+        recordAnswer(chainId, wallet, action, answer, at);
+        const code =
+          answer.ok && answer.action === 'link'
+            ? { code: answer.code, botUrl: answer.botUrl, expiresAt: at + CODE_LIFETIME_S }
+            : answer.ok && (answer.action === 'test-alert' || answer.action === 'unlink')
+              ? null
+              : (runs.get(identity)?.code ?? null);
+        setRun(identity, { run: { phase: 'answered', action, answer }, code });
         return answer;
       } catch (e) {
-        settle({ phase: 'unreachable', action, message: e instanceof AgentUnavailable ? e.message : (e as Error).message });
+        setRun(identity, { run: { phase: 'unreachable', action, message: e instanceof AgentUnavailable ? e.message : (e as Error).message } });
         return null;
       }
     },
     [config, client, wallet, chainId, identity],
   );
 
-  const reset = useCallback(() => setState({ identity: current.current, run: { phase: 'idle' } }), []);
-  return { run, busy, start, reset };
+  const reset = useCallback(() => setRun(identity, { run: { phase: 'idle' } }), [identity]);
+  return { run: entry.run, code: entry.code, busy, start, reset };
 }

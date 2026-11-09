@@ -197,9 +197,18 @@ describe('issuedAt', () => {
   });
   it('carries the last second across a reload through storage', async () => {
     const { nextIssuedAt } = await import('./useAlertAction');
-    const m = new Map<string, string>([['alpha05.alerts.lastIssuedAt', '2000000000']]);
+    const m = new Map<string, string>([['alpha05.alerts.lastIssuedAt', '1500000100']]);
     const store = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
-    expect(nextIssuedAt(1_500_000_000_000, store)).toBe(2_000_000_001);
-    expect(m.get('alpha05.alerts.lastIssuedAt')).toBe('2000000001');
+    expect(nextIssuedAt(1_500_000_000_000, store)).toBe(1_500_000_101);
+    expect(m.get('alpha05.alerts.lastIssuedAt')).toBe('1500000101');
+  });
+  it('drops a count left far ahead by a clock that was fast, so requests work again once it is corrected', async () => {
+    const { nextIssuedAt } = await import('./useAlertAction');
+    const m = new Map<string, string>([['alpha05.alerts.lastIssuedAt', '1600003600']]);
+    const store = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
+    // The fast clock's own count is an hour ahead of the corrected clock.
+    nextIssuedAt(1_600_003_600_000, store);
+    expect(nextIssuedAt(1_600_000_000_000, store)).toBe(1_600_000_000);
+    expect(nextIssuedAt(1_600_000_000_000, store)).toBe(1_600_000_001);
   });
 });
