@@ -107,9 +107,9 @@ contract RiskDiscountedLiquidationFacet is
     ///         depth-tiered-LTV kill-switch.
     error DiscountPathDisabled();
 
-    /// @notice The loan's collateral asset isn't tier-classified
-    ///         (effective tier == 0 — neither the on-chain depth probe
-    ///         nor the keeper-relayed tier qualifies it). The discount
+    /// @notice The loan's collateral asset wasn't tier-classified when the
+    ///         loan started (its stamped tier is 0: the collateral was
+    ///         illiquid, or thinner than every tier). The discount
     ///         math is per-tier; an unclassified collateral can't be
     ///         priced under this path. Use {RiskFacet.triggerLiquidation} for
     ///         Liquid-but-unclassified assets, or wait for time-based
@@ -191,8 +191,12 @@ contract RiskDiscountedLiquidationFacet is
      *         Interaction-rewards close marks the borrower as forfeit.
      *         Both NFTs flip to `LoanLiquidated`.
      *
-     *         Tier resolution:
-     *           `tier = OracleFacet.getEffectiveLiquidityTier(asset)`
+     *         Tier resolution (#910 / #3351):
+     *           the tier and discount STAMPED when the loan started
+     *           (`loan.liqDiscountTierAtInit` / `liqDiscountBpsAtInit`):
+     *           the lower of the collateral's close-out depth tier and its
+     *           keeper tier then. Nothing in the liquidation's block, no
+     *           later keeper-tier change and no discount retune moves it.
      *           Requires `tier ∈ {1, 2, 3}` — Tier 0 (unclassified)
      *           reverts `UntierableCollateral`. For Liquid-but-
      *           unclassified assets the right tool is
@@ -294,14 +298,13 @@ contract RiskDiscountedLiquidationFacet is
         // before settlement.
         _eagerConsolidateBothSides(loanId);
 
-        // Resolve per-tier discount. `getEffectiveLiquidityTier`
-        // returns 0 for unclassified assets — the discount math
-        // requires a classified tier so we reject up-front. The
-        // atomic-path is the alternative for Liquid-but-unclassified
-        // assets; time-based default for Illiquid.
+        // The discount stamped when the loan started (#910 / #3351), never
+        // the live tier. Tier 0 (the collateral was illiquid or thinner than
+        // every tier at the start) has no discount, so the route refuses it:
+        // the atomic path serves a liquid loan, the time-based default an
+        // illiquid one.
         // #2697 — one rule with the preview ({LibDiscountedLiquidation}).
-        (uint8 tier, uint16 discountBps) =
-            LibDiscountedLiquidation.discountFor(loan.collateralAsset);
+        (uint8 tier, uint16 discountBps) = LibDiscountedLiquidation.discountFor(loan);
         if (tier == 0) revert UntierableCollateral(loan.collateralAsset);
 
         _settleDiscountedLiquidation(loanId, loan, msg.sender, tier, discountBps);

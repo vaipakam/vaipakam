@@ -2345,6 +2345,20 @@ library LibVaipakam {
         // tail fields — zero on every existing loan.
         uint16 treasuryFeeBpsAtInit;
         uint16 loanInitiationFeeBpsAtInit;
+        // #910 / #3351 — the discounted liquidation's tier and discount,
+        // STAMPED at origination for liquid collateral and never re-read.
+        // The tier is the lower of the collateral's close-out depth tier
+        // (the window-mean depth valued at the feed price, which nothing in
+        // one block can move) and its keeper tier; the discount is that
+        // tier's discount at the time. A liquidator therefore cannot widen
+        // the discount by pushing a pool's price or pulling depth in the
+        // liquidation's own block, and neither a later keeper-tier change
+        // nor a discount retune re-prices an open loan. Tier `0` (illiquid
+        // or thinner than every tier at the start) means the discounted
+        // route refuses the loan. Append-only tail fields; they pack into
+        // the slot above.
+        uint8 liqDiscountTierAtInit;
+        uint16 liqDiscountBpsAtInit;
     }
 
     /**

@@ -4867,15 +4867,9 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        // Collateral classified Tier 3 (deepest, smallest discount).
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                OracleFacet.getEffectiveLiquidityTier.selector,
-                mockCollateralERC20
-            ),
-            abi.encode(uint8(3))
-        );
+        // Collateral stamped Tier 3 at the loan's start (deepest, smallest
+        // discount). #910 — the route reads the stamp, never the live tier.
+        _stampLiqDiscount(loanId, 3);
         // Both legs priced at $1.00 (8-decimal feed). collateralEquivalent
         // then computes 1:1 between principal and collateral (both 18-dec
         // tokens), and the per-tier 5% discount adds 5%.
@@ -4903,6 +4897,15 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
             abi.encode(true)
         );
+    }
+
+    /// @dev #910 — write the loan's stamped discount tier and that tier's
+    ///      library-default discount, as origination would have.
+    function _stampLiqDiscount(uint256 loanId, uint8 tier) internal {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        ln.liqDiscountTierAtInit = tier;
+        ln.liqDiscountBpsAtInit = LibVaipakam.tierLiqDiscountLibraryDefaultBps(tier);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, ln);
     }
 
     /// @dev Default-state kill-switch is `false`. The entry-point
@@ -4978,10 +4981,10 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev `getEffectiveLiquidityTier` returns 0 (unclassified) →
-    ///      `UntierableCollateral`. Per-tier discount math has no
-    ///      definition for unclassified assets; route falls back to
-    ///      atomic path or time-based default.
+    /// @dev A loan stamped tier 0 at its start (unclassified) →
+    ///      `UntierableCollateral`, even while the live tier reads 3.
+    ///      Per-tier discount math has no definition for unclassified
+    ///      assets; route falls back to atomic path or time-based default.
     function testTriggerLiquidationDiscounted_RevertsUntierableCollateral() public {
         uint256 loanId = createAndAcceptOffer();
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
@@ -4995,13 +4998,14 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
+        _stampLiqDiscount(loanId, 0);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.getEffectiveLiquidityTier.selector,
                 mockCollateralERC20
             ),
-            abi.encode(uint8(0))
+            abi.encode(uint8(3))
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -5288,11 +5292,7 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
 
         _mockDiscountPathHappy(loanId);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
-            abi.encode(uint8(0))
-        );
+        _stampLiqDiscount(loanId, 0);
         p = f.previewDiscountedLiquidation(loanId);
         assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Untiered), "untiered");
         assertEq(p.seized, 0, "no figures");
@@ -5319,6 +5319,120 @@ contract RiskFacetTest is Test {
             uint8(LibDiscountedLiquidation.Status.Paused),
             "paused"
         );
+        vm.clearMockedCalls();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #910 / #3351 — the discount is stamped at the loan's start
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Open a loan while the collateral's close-out tier reads
+    ///      `closeOutTier` and its keeper tier is `keeperTier`.
+    function _openWithTiers(uint8 closeOutTier, uint8 keeperTier) private returns (uint256 loanId) {
+        TestMutatorFacet(address(diamond)).setKeeperTierRaw(mockCollateralERC20, keeperTier);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getCloseOutLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(closeOutTier)
+        );
+        // The fixture's own mocks (the collateral reads Liquid) stay in
+        // place: clearing them here would open later cases illiquid.
+        loanId = createAndAcceptOffer();
+    }
+
+    /// @notice Origination stamps the lower of the close-out tier and the
+    ///         keeper tier, and that tier's discount at the time.
+    function test_910_originationStampsLowerOfCloseOutAndKeeperTier() public {
+        // The fixture always opens loan 1, so each case runs from one state.
+        uint256 snap = vm.snapshotState();
+        _assertStamp(3, 2, 2, "keeper tier is the lower");
+        vm.revertToState(snap);
+        _assertStamp(1, 3, 1, "close-out tier is the lower");
+        vm.revertToState(snap);
+        _assertStamp(0, 3, 0, "untiered at the start");
+    }
+
+    function _assertStamp(uint8 closeOutTier, uint8 keeperTier, uint8 want, string memory why) private {
+        uint256 loanId = _openWithTiers(closeOutTier, keeperTier);
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(ln.liqDiscountTierAtInit, want, why);
+        assertEq(ln.liqDiscountBpsAtInit, LibVaipakam.tierLiqDiscountLibraryDefaultBps(want), "that tier's discount");
+    }
+
+    /// @notice The admission read is NOT what is stamped: a deep pool whose
+    ///         price was pushed drops out of the admission tier, but the
+    ///         close-out tier (window-mean depth at the feed price) is what
+    ///         the discount is stamped from.
+    function test_910_stampIgnoresTheAdmissionTier() public {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(1))
+        );
+        uint256 loanId = _openWithTiers(3, 3);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).liqDiscountTierAtInit, 3, "close-out tier stamped");
+    }
+
+    /// @notice After the start, nothing moves the discount: not a live tier
+    ///         read at liquidation, not a keeper-tier change, not a retune of
+    ///         the discount table. The liquidation and its preview both
+    ///         charge the stamped figure.
+    function test_910_liveTierKeeperTierAndRetuneDoNotMoveTheDiscount() public {
+        uint256 loanId = _openWithTiers(3, 3);
+        uint16 stamped = LibVaipakam.tierLiqDiscountLibraryDefaultBps(3);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).liqDiscountBpsAtInit, stamped, "stamped");
+
+        TestMutatorFacet(address(diamond)).setKeeperTierRaw(mockCollateralERC20, 1);
+        TestMutatorFacet(address(diamond)).setTierLiqDiscountBpsRaw(1500, 1000, 800);
+
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector), abi.encode(true));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // The live tier reads collapse to 1 in the liquidation's own block.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(1))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getCloseOutLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(1))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockERC20),
+            abi.encode(OracleFacet.PriceStatus.Priced, uint256(1e8), uint8(8))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockCollateralERC20),
+            abi.encode(OracleFacet.PriceStatus.Priced, uint256(1e8), uint8(8))
+        );
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+
+        LibDiscountedLiquidation.Preview memory p =
+            ForcedSalePreviewFacet(address(diamond)).previewDiscountedLiquidation(loanId);
+        assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Ready), "ready");
+        assertEq(p.tier, 3, "stamped tier, not the live one");
+        assertEq(p.discountBps, stamped, "stamped discount, not the retuned one");
+
+        deal(mockERC20, address(this), 4000 ether);
+        IERC20(mockERC20).approve(address(diamond), 4000 ether);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RiskDiscountedLiquidationFacet.LiquidationDiscounted(
+            loanId, address(this), address(this), 3, stamped, p.debt, p.seized, p.surplus
+        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         vm.clearMockedCalls();
     }
 

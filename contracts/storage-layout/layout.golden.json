@@ -604,6 +604,8 @@
     "L|vaipakam@20[uint256]|25|18|uint16|loans[].retiredInterestRemainingDays",
     "L|vaipakam@20[uint256]|25|20|uint16|loans[].treasuryFeeBpsAtInit",
     "L|vaipakam@20[uint256]|25|22|uint16|loans[].loanInitiationFeeBpsAtInit",
+    "L|vaipakam@20[uint256]|25|24|uint8|loans[].liqDiscountTierAtInit",
+    "L|vaipakam@20[uint256]|25|25|uint16|loans[].liqDiscountBpsAtInit",
     "L|vaipakam@20[uint256]|25|8|uint16|loans[].initLtvCapBpsAtInit",
     "L|vaipakam@20[uint256]|2|0|address|loans[].lender",
     "L|vaipakam@20[uint256]|2|20|enum LibVaipakam.LiquidityStatus|loans[].principalLiquidity",

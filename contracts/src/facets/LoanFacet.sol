@@ -1230,7 +1230,30 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 if (tierCap < assetCap) assetCap = tierCap;
             }
             loan.initLtvCapBpsAtInit = uint16(assetCap);
+            _snapshotLiqDiscount(loan);
         }
+    }
+
+    /// @dev #910 / #3351 — stamp the discounted liquidation's tier and
+    ///      discount for this loan's whole life. The tier is the lower of
+    ///      the collateral's CLOSE-OUT depth tier and its keeper tier. The
+    ///      close-out read credits each pool's window-mean depth at the feed
+    ///      price and runs no check against the pool's current price, so a
+    ///      price pushed or depth pulled in the accept's own block cannot
+    ///      lower it (the admission read above can drop a pool whose price
+    ///      was pushed, and a lower tier is a WIDER discount). A failed read
+    ///      stamps tier 0, which the discounted route refuses: the failure
+    ///      closes that one route and never widens a discount.
+    function _snapshotLiqDiscount(LibVaipakam.Loan storage loan) private {
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(OracleFacet.getCloseOutLiquidityTier.selector, loan.collateralAsset)
+        );
+        uint8 tier = ok && ret.length >= 32 ? abi.decode(ret, (uint8)) : 0;
+        if (tier == 0) return;
+        uint8 keeperTier = LibVaipakam.effectiveKeeperTier(loan.collateralAsset);
+        if (keeperTier < tier) tier = keeperTier;
+        loan.liqDiscountTierAtInit = tier;
+        loan.liqDiscountBpsAtInit = LibVaipakam.effectiveTierLiqDiscountBps(tier);
     }
 
     function _copyCollateralAssetFields(

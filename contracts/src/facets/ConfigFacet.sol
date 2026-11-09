@@ -1619,6 +1619,10 @@ contract ConfigFacet is DiamondAccessControl {
      *         practice governance either writes all three non-zero
      *         (atomic override) or never calls this setter.
      *
+     *         #910 — a loan's discount is stamped when it starts
+     *         (`Loan.liqDiscountBpsAtInit`), so a change here applies to
+     *         loans opened after it and never re-prices an open loan.
+     *
      * @param  tier1Bps Discount for Tier 1 (thinnest qualifying tier).
      * @param  tier2Bps Discount for Tier 2.
      * @param  tier3Bps Discount for Tier 3 (deepest).
@@ -2044,6 +2048,9 @@ contract ConfigFacet is DiamondAccessControl {
     ///         bounded accordingly. The relay promotes one step at a time
     ///         on accumulated 0x/1inch confidence and demotes immediately
     ///         on observed degradation (the process is §4.4 step 5).
+    ///         #910 / #3351 — it reaches open loans only through the
+    ///         figures read live; the discounted liquidation's tier and
+    ///         discount are stamped at each loan's start and never move.
     /// @dev    KEEPER_ROLE-only (admin = DEFAULT_ADMIN_ROLE → governance
     ///         can rotate the keeper EOA). `tier == 0` is rejected — the
     ///         stored-zero default already reads as Tier 1, and demoting
