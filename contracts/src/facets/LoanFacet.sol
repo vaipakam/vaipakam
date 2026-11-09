@@ -1241,14 +1241,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     ///      price and runs no check against the pool's current price, so a
     ///      price pushed or depth pulled in the accept's own block cannot
     ///      lower it (the admission read above can drop a pool whose price
-    ///      was pushed, and a lower tier is a WIDER discount). A failed read
-    ///      stamps tier 0, which the discounted route refuses: the failure
-    ///      closes that one route and never widens a discount.
+    ///      was pushed, and a lower tier is a WIDER discount). A tier of 0
+    ///      (no probe passes at close-out) stamps nothing, and the
+    ///      discounted route refuses such a loan: it closes that one route
+    ///      and never widens a discount.
+    ///
+    ///      The read is a plain call, so a revert inside it reverts the
+    ///      accept. It is deliberately NOT a swallowed staticcall: the read
+    ///      searches every pool, and a swallowed out-of-gas would let a
+    ///      caller's gas limit decide the stamp (a tight limit stamping 0
+    ///      would close the route for the loan's whole life), and would
+    ///      leave the accept only 1/64 of its gas for everything after the
+    ///      failed call, which makes gas estimation unreliable.
     function _snapshotLiqDiscount(LibVaipakam.Loan storage loan) private {
-        (bool ok, bytes memory ret) = address(this).staticcall(
-            abi.encodeWithSelector(OracleFacet.getCloseOutLiquidityTier.selector, loan.collateralAsset)
-        );
-        uint8 tier = ok && ret.length >= 32 ? abi.decode(ret, (uint8)) : 0;
+        uint8 tier = OracleFacet(address(this)).getCloseOutLiquidityTier(loan.collateralAsset);
         if (tier == 0) return;
         uint8 keeperTier = LibVaipakam.effectiveKeeperTier(loan.collateralAsset);
         if (keeperTier < tier) tier = keeperTier;

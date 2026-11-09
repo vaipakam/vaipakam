@@ -428,7 +428,7 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -436,6 +436,9 @@ contract OfferFacetTest is Test {
         // LibRiskMath.minCollateralForLending) reads the collateral's effective
         // liquidity tier, so this bespoke diamond must cut the selector too.
         selectors[3] = OracleFacet.getEffectiveLiquidityTier.selector;
+        // #910 — a liquid loan's origination stamps its discounted-liquidation
+        // tier from the close-out read, and that read is not swallowed.
+        selectors[4] = OracleFacet.getCloseOutLiquidityTier.selector;
         return selectors;
     }
 
