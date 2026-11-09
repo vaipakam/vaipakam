@@ -30,6 +30,21 @@
 #   - Doesn't run forge build first. Assumes you've already run
 #     `forge build --skip test` in contracts/ since the last contract edit.
 #
+# It also writes `DiamondErrors.json`: every custom error the Diamond can
+# revert with (all facets and the Diamond proxy), taken from the combined
+# Diamond ABI `packages/contracts/src/diamondAbi.json`. A cross-facet call
+# passes the callee's revert straight through, so the errors the exported
+# facets happen to declare are not enough to name a revert. When #3387 moved
+# `previewForcedSale` to ForcedSalePreviewFacet, the bot lost
+# `ForcedSaleQuoteOutOfRange` and the swap failures, because only the old
+# ForcedSaleFacet had declared them. The combined ABI is the repository's
+# one record of the Diamond's surface, and predeploy-check holds it to the
+# compiled facets.
+#
+# And it removes any facet JSON (and its typed module) that the FACETS list
+# below no longer names, so a moved or renamed facet does not leave the bot
+# compiling against a stale ABI.
+#
 # What it DOES run besides `forge inspect`: the bot's own
 # `scripts/gen-typed-abis.mjs`, when the checkout has it, so the typed ABI
 # modules the bot compiles against match the JSON written here.
@@ -114,7 +129,34 @@ FACETS=(
   "AutoLifecycleFacet" # T-092 #518 — getAutoExtendBorrowerCaps / getAutoExtendLenderCaps / extendLoanInPlace (autoExtendDetector)
 )
 
+# The combined Diamond ABI the error set is read from (see the header).
+DIAMOND_ABI="$CONTRACTS_DIR/../packages/contracts/src/diamondAbi.json"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Error: jq not in PATH; it is needed to read $DIAMOND_ABI" >&2
+  exit 1
+fi
+if [ ! -f "$DIAMOND_ABI" ]; then
+  echo "Error: $DIAMOND_ABI not found; run exportFrontendAbis.sh first" >&2
+  exit 1
+fi
+
 echo "Exporting ABIs to $OUT_DIR"
+# Files the export owns besides the facets: the provenance stamp and the
+# Diamond's error set. Anything else in the directory is a facet ABI, and
+# one the list no longer names is removed with its typed module.
+for f in "$OUT_DIR"/*.json; do
+  [ -e "$f" ] || continue
+  name="$(basename "$f" .json)"
+  case "$name" in _source|DiamondErrors) continue ;; esac
+  keep=0
+  for facet in "${FACETS[@]}"; do
+    if [ "$facet" = "$name" ]; then keep=1; break; fi
+  done
+  if [ "$keep" -eq 0 ]; then
+    rm -f "$f" "$OUT_DIR/typed/$name.ts"
+    echo "  removed $name.json (no longer in FACETS)"
+  fi
+done
 for facet in "${FACETS[@]}"; do
   out="$OUT_DIR/$facet.json"
   # `--json` is required — recent foundry versions default to a
@@ -125,6 +167,13 @@ for facet in "${FACETS[@]}"; do
   fi
   echo "  $facet -> $out"
 done
+
+# Every error the Diamond can revert with (see the header).
+if ! jq '[.[] | select(.type == "error")]' "$DIAMOND_ABI" > "$OUT_DIR/DiamondErrors.json"; then
+  echo "Error: could not read the errors of $DIAMOND_ABI" >&2
+  exit 1
+fi
+echo "  Diamond errors -> $OUT_DIR/DiamondErrors.json"
 
 # Stamp the keeper-bot's abis dir with the monorepo commit hash so
 # auditors can correlate a published bot release with a specific

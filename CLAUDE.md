@@ -956,6 +956,17 @@ a message like `"Sync ABIs with vaipakam@<commit-hash>"`. The
 bot's CI runs `npm run check:abis`, which fails a sync whose typed
 modules were not regenerated.
 
+**The bot's revert names come from the whole Diamond, not from its
+facets.** The export also writes `src/abis/DiamondErrors.json`, every
+error in the combined Diamond ABI (`packages/contracts/src/diamondAbi.json`),
+and the bot's generator appends that set to each facet ABI. A cross-facet
+call passes the callee's revert straight through, so the errors the exported
+facets happen to declare are not enough. When #3387 moved
+`previewForcedSale` off ForcedSaleFacet, that union lost
+`ForcedSaleQuoteOutOfRange` and the swap failures. The export also removes a
+facet JSON (and its typed module) that `FACETS` no longer names, so a moved
+facet never leaves the bot compiling against a stale copy.
+
 **A failed bot typecheck after a sync is a real break, not noise.**
 Every Diamond call in the bot is typed by its facet's ABI, so the
 typecheck fails exactly where the bot calls a function whose name,
