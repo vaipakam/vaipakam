@@ -1420,3 +1420,15 @@ Settings also lists the standing approvals your wallet gives the protocol on thi
 Settings also shows whether keepers may act for your wallet on this network, and which keepers you approved. Everything starts off. A keeper acts only while keeper access is on and it holds the action; a step on a loan also needs that loan or offer to name the keeper. A keeper never receives your funds and cannot claim, withdraw or transfer anything. You can turn keeper access off or remove a keeper in one wallet confirmation in either mode; to turn access on, approve a keeper or change what it may do, switch to **Advanced** mode.
 
 You can also install the app on your phone or computer, so it opens from your home screen or app list with shortcuts to Offers, Positions, Vault and Alerts. Use your browser's Install app or Add to Home Screen option (on an iPhone or iPad: Safari, then Share, then Add to Home Screen), or, in **Advanced** mode, Install the app in Settings where your browser offers it. The app keeps copies of its own code files so it opens faster; your positions and every figure are always read from the network.
+
+<a id="rent-review"></a>
+
+### Rent: Renting an NFT
+
+Rent, in the menu, lists the NFTs owners have listed for rent on your network; when nothing is listed on a test network, it points you to the faucet for a test NFT and test tokens. A rental gives you the right to use an NFT for a set number of days, never the NFT itself: it stays in the owner's vault, which records you as its user until the rental ends. Open a listing and choose Rent this NFT. The review shows what moves from your wallet into your own vault: the daily fee for the whole term plus a buffer, a small share of the rent that the listing fixed when it was posted. It also shows the rent rule (pro-rata, the days you use with a part day counted as a whole day, or full term), what comes back when you close on time, the grace period and the late fee taken from the buffer. A rental has no collateral and no health factor. If your wallet holds less than the rent plus buffer, the review says so before any wallet step. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly that amount if needed, and to start the rental, which the app first tries as a dry run. Afterwards the app checks on the chain the rental it started, the payment into your vault and that you are now the NFT's user. Taking a renter's request and listing your own NFT for rent are done on the current app for now.
+
+<a id="rent-risks"></a>
+
+### Rent: Risks
+
+You never own a rented NFT, and your right to use it ends when the rental ends. The rent and buffer stay in your vault for the rental and cannot be withdrawn while it is open. A rental does not close by itself at the end of its term: close it from its page in the current app, since the next app cannot close a rental yet. Closing during the grace period costs a late fee, taken from the buffer; after the grace period the rental defaults, the rent left in your vault goes to the owner and the buffer to the protocol, and nothing comes back to you. With full-term rent the whole term is owed even if you close early.

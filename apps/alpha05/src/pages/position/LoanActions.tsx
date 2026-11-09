@@ -15,6 +15,10 @@ import { PartialRepay, partialKey } from '../../shared/repay/PartialRepay';
 import { RepayLoan, repayKey } from '../../shared/repay/RepayLoan';
 import { holdsFlow, useStoredValue, useTxEntry } from '../../shared/tx/txStore';
 import { useNow } from '../../shared/ui/useNow';
+import { PAGES, currentAppHref } from '../../routes/pageMap';
+
+/** The current app's page for this position: where a rental is closed until this app can (RB-RENT). */
+const CURRENT_POSITION = PAGES.find((p) => p.path === '/positions/:id');
 
 interface LoanActionsProps {
   loanId: bigint;
@@ -224,6 +228,14 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
           {!lenderOnly && verdict.state !== 'open' && (
             <p className={verdict.state === 'unknown' ? 'tier-a' : 'tier-b'} data-testid="repay-refusal" data-code={verdict.refusals[0]?.code}>
               {verdict.state === 'unknown' ? text('repay.unknown') : verdict.refusals[0]?.reason}
+              {verdict.state !== 'unknown' && verdict.refusals[0]?.code === 'RentalNotHere' && (
+                <>
+                  {' '}
+                  <a href={CURRENT_POSITION ? (currentAppHref(CURRENT_POSITION, { id: loanId.toString() }) ?? undefined) : undefined} target="_blank" rel="noreferrer" data-testid="rental-close-elsewhere">
+                    {text('vault.openCurrent')}
+                  </a>
+                </>
+              )}
             </p>
           )}
           {partialNote}

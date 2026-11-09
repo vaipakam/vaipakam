@@ -2784,3 +2784,15 @@ Approvals reads, at one block, each ERC-20's `allowance(wallet, Diamond)`, Permi
 Keepers reads, at one block, `getKeeperAccess`, `getApprovedKeepers` and `getKeeperActions` for each approved keeper (at most five). The actions are the protocol's bits. Finishing a lender-position sale (0x01), finishing an early close by offset (0x02), starting a lender-position sale (0x04), starting an early close (0x08) and extending within agreed limits (0x20) act on a loan only where the loan or offer also enables that keeper; filling standing lending offers that require a keeper (0x40), rolling repaid money back into standing offers (0x80) and locking a protected account (0x100) act for the whole account once access is on. Bit 0x10 is retired and refused. Changes send `setKeeperAccess`, `approveKeeper`, `setKeeperActions` or `revokeKeeper`; a change that gives a keeper more asks for the Terms where a version is in force, taking one away never does, and every change, removing included, is refused while the protocol is paused. This app's keeper is named from the deployment record.
 
 The app ships a web manifest (`/manifest.webmanifest`) with the four shortcuts and a maskable icon. In Settings › Install the app, the button appears only after the browser fires its `beforeinstallprompt` event, and it opens that prompt; otherwise the page names the case (installed, iOS, or not offered). A deployed build registers `/sw.js`, written from that build's output: it keeps a copy of one of the build's hashed `/assets/` files the first time the page fetches it, answers later requests for that file from the copy, deletes earlier builds' stores when it takes over, and never answers a navigation, a request to another origin or a file not on its list. Your data in this browser counts and erases those stores.
+
+<a id="rent-review"></a>
+
+### Rent: Renting an NFT
+
+The review reads the listing with `getOffer` (its `rentalBufferBpsAtCreate`), the protocol's verdict and daily fee from `previewAccept`, and `getRiskConfig` only for a listing that recorded no buffer. The total is `amount × durationDays` plus that share, rounded down as the protocol rounds it, and the dry run proves the two agree. The rental is `acceptOffer` with signed `AcceptTerms` naming the NFT as the acknowledged illiquid leg and no collateral leg; the user right is read back from the owner's vault at the receipt's block with `vaultGetNFTUserOf`, or `vaultGetNFTQuantity` for an ERC-1155.
+
+<a id="rent-risks"></a>
+
+### Rent: Risks
+
+You never own a rented NFT, and your right to use it ends when the rental ends. The rent and buffer stay in your vault for the rental and cannot be withdrawn while it is open. A rental does not close by itself at the end of its term: close it from its page in the current app, since the next app cannot close a rental yet. Closing during the grace period costs a late fee, taken from the buffer; after the grace period the rental defaults, the rent left in your vault goes to the owner and the buffer to the protocol, and nothing comes back to you. With full-term rent the whole term is owed even if you close early.
