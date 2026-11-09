@@ -1234,7 +1234,7 @@ Bajo la tasa, en los dos formularios de publicación, la oferta de un prestamist
 
 ### Redes con cola pública
 
-En Ethereum y BNB Chain (y BNB Testnet), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
+En Ethereum, BNB Chain y Polygon (y BNB Testnet y Polygon Amoy), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
 
 <a id="lend-offer-parts"></a>
 
