@@ -13,6 +13,7 @@ import { TermsPrompt } from '../../shared/terms/TermsPrompt';
 import { useTerms } from '../../shared/terms/useTerms';
 import { useTermsGate } from '../../shared/terms/useTermsGate';
 import { formatUtc, shortAddress } from '../../shared/ui/format';
+import { useStoredValue } from '../../shared/tx/txStore';
 import { Notice } from '../../shared/ui/Notice';
 import { useNow } from '../../shared/ui/useNow';
 
@@ -61,7 +62,10 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
   const own = useOwnStateClient();
   const terms = useTerms();
   const termsGate = useTermsGate('alerts.channels.terms', chain, own);
-  const [follow, setFollow] = useState<GatedAction | null>(null);
+  // The action the Terms prompt was opened for, kept in the app's
+  // transaction store beside the prompt's own session, so a reader who
+  // leaves the page mid-acceptance comes back to the same action.
+  const [follow, setFollow] = useStoredValue<GatedAction>(`alerts.channels.follow:${chain.chainId}:${account.toLowerCase()}`);
   const [known, setKnown] = useState<KnownAlerts>(() => readKnown(chain.chainId, account));
   const [code, setCode] = useState<{ code: string; botUrl: string | null; expiresAt: number } | null>(null);
   const action = useAlertAction(chain.chainId, account);
@@ -95,14 +99,17 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
       setKnown(writeKnown(chain.chainId, account, { telegram: { state: 'confirmed', at } }));
     } else if (answer.action === 'unlink') {
       setCode(null);
-      const telegram = { state: 'unlinked' as const, at, scope: answer.scope, pending: answer.pending };
-      // A wallet-wide unlink cleared every network's link for this wallet;
-      // every network protected mode still holds is kept on every record,
-      // including networks this app does not serve, so each one is named
-      // wherever the record is shown.
+      const telegram = { state: 'unlinked' as const, at, scope: answer.scope };
+      // A wallet-wide unlink cleared every network's link for this wallet,
+      // and its answer names every hold protected mode keeps, including on
+      // networks this app does not serve: that list replaces the holds on
+      // every record. A one-network unlink speaks for this network only, so
+      // it replaces this network's hold and keeps the others.
       const chains = answer.scope === 'wallet' ? SUPPORTED_CHAINS.map((c) => c.chainId) : [chain.chainId];
       for (const id of chains) {
-        const next = writeKnown(id, account, { telegram });
+        const before = readKnown(id, account).held?.pending ?? [];
+        const pending = answer.scope === 'wallet' ? answer.pending : [...before.filter((p) => p.chainId !== chain.chainId), ...answer.pending];
+        const next = writeKnown(id, account, { telegram, held: { at, pending } });
         if (id === chain.chainId) setKnown(next);
       }
     } else if (typeof a !== 'string') {
@@ -135,6 +142,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
 
   const codeLive = code !== null && code.expiresAt > nowS;
   const tg = known.telegram;
+  const held = known.held?.pending ?? [];
   const bands: Bands = known.bands ?? DEFAULT_BANDS;
 
   return (
@@ -193,11 +201,10 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
           </div>
         ) : (
           <p className="tier-b" data-testid="alert-telegram-state">
-            {telegramLine(tg, chain, nowS, copy)}
+            {telegramLine(tg, held.length > 0, chain, nowS, copy)}
           </p>
         )}
-        {tg?.state === 'unlinked' &&
-          tg.pending.map((p) => (
+        {held.map((p) => (
             <p key={p.chainId} className="tier-a" data-testid="alert-telegram-pending">
               {p.effectiveAt === null
                 ? format('alertChannels.unlinkPendingUntold', { chain: chainName(p.chainId) })
@@ -257,9 +264,11 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
         )}
         {pushNow?.kind === 'unavailable' && (
           <>
-            <p className="tier-b" data-testid="alert-push-unavailable">
-              {text('alertChannels.pushUnavailable')}
+            <p className="tier-b" data-testid="alert-push-unavailable" data-reason={pushNow.reason}>
+              {text('alertChannels.pushUnavailable')} {pushReason(pushNow.reason, copy)}
+              {pushNow.rail && ` ${text(pushNow.rail === 'agent' ? 'alertChannels.pushRailAgent' : 'alertChannels.pushRailKeeper')}`}
             </p>
+            {PUSH_SETUP_REASONS[pushNow.reason] && <p className="tier-b">{text('alertChannels.pushSetup')}</p>}
             {known.push && <p className="tier-b">{text('alertChannels.pushKept')}</p>}
           </>
         )}
@@ -298,15 +307,31 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
   );
 }
 
+/** The configuration problems the alert service names when push cannot be
+ *  offered (the service's own reason codes); each is a setting of this
+ *  deployment, said as such, never shown as a passing outage. */
+const PUSH_SETUP_REASONS: Readonly<Record<string, CopyKey>> = {
+  'signer-unset': 'alertChannels.pushReasonSignerUnset',
+  'signer-malformed': 'alertChannels.pushReasonSignerMalformed',
+  'signer-unsupported': 'alertChannels.pushReasonSignerUnsupported',
+  'channel-malformed': 'alertChannels.pushReasonChannelMalformed',
+  'channel-mismatch': 'alertChannels.pushReasonChannelMismatch',
+};
+
+function pushReason(reason: string, { text, format }: CopyAccess): string {
+  const key = PUSH_SETUP_REASONS[reason];
+  return key ? text(key) : format('alertChannels.pushReasonOther', { reason });
+}
+
 function chainName(id: number): string {
   return SUPPORTED_CHAINS.find((c) => c.chainId === id)?.name ?? `network ${id}`;
 }
 
-function telegramLine(tg: KnownAlerts['telegram'], chain: SupportedChain, nowS: number, { text, format }: CopyAccess): string {
+function telegramLine(tg: KnownAlerts['telegram'], holds: boolean, chain: SupportedChain, nowS: number, { text, format }: CopyAccess): string {
   if (!tg) return format('alertChannels.telegramNone', { chain: chain.name });
   if (tg.state === 'confirmed') return format('alertChannels.telegramConfirmed', { time: formatUtc(tg.at) });
   if (tg.state === 'code') return format(tg.expiresAt > nowS ? 'alertChannels.telegramCodeHere' : 'alertChannels.telegramCodeOld', { time: formatUtc(tg.at) });
-  if (tg.scope === 'wallet') return format(tg.pending.length > 0 ? 'alertChannels.telegramUnlinkedWalletHeld' : 'alertChannels.telegramUnlinkedWallet', { time: formatUtc(tg.at) });
+  if (tg.scope === 'wallet') return format(holds ? 'alertChannels.telegramUnlinkedWalletHeld' : 'alertChannels.telegramUnlinkedWallet', { time: formatUtc(tg.at) });
   return text('alertChannels.telegramUnlinkedChain') + ' ' + format('alertChannels.unlinkedAt', { chain: chain.name, time: formatUtc(tg.at) });
 }
 

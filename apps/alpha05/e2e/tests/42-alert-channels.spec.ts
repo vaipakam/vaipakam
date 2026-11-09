@@ -91,16 +91,25 @@ test('Telegram is linked with a code, proven by a test alert, and unlinked, each
   await expect(page.getByTestId('alert-run')).toContainText('Unlinked on every network except where protected mode keeps the chat receiving alerts', { timeout: 30_000 });
   await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Arbitrum Sepolia');
   await expect(page.getByTestId('alert-telegram-state')).toContainText('except those protected mode holds, named below');
+  // A new link code cancels no hold, so the held network stays named.
+  await page.getByTestId('alert-telegram-link').click();
+  await expect(page.getByTestId('alert-telegram-code')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Arbitrum Sepolia');
+  await page.reload();
+  await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Arbitrum Sepolia', { timeout: 30_000 });
 
   // The service names each held network as { chain_id, effective_at }.
   await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'chain', pending: [{ chain_id: 84532, effective_at: 1_800_000_000 }] } } });
   await page.getByTestId('alert-telegram-unlink').click();
-  await expect(page.getByTestId('alert-telegram-pending')).toContainText('Protected mode is on for Base Sepolia: that chat keeps every alert until Jan 15, 2027', {
+  // A one-network answer replaces this network's hold and keeps the others.
+  const heldHere = page.getByTestId('alert-telegram-pending').filter({ hasText: 'Base Sepolia' });
+  await expect(heldHere).toContainText('Protected mode is on for Base Sepolia: that chat keeps every alert until Jan 15, 2027', {
     timeout: 30_000,
   });
+  await expect(page.getByTestId('alert-telegram-pending').filter({ hasText: 'Arbitrum Sepolia' })).toHaveCount(1);
   await controlAgent({ next: { path: '/unlink/telegram', status: 200, body: { ok: true, scope: 'chain', pending: [{ chain_id: 84532, effective_at: null }] } } });
   await page.getByTestId('alert-telegram-unlink').click();
-  await expect(page.getByTestId('alert-telegram-pending')).toContainText('The protection delay starts only once the chat has been told', { timeout: 30_000 });
+  await expect(heldHere).toContainText('The protection delay starts only once the chat has been told', { timeout: 30_000 });
   await expect(page.getByTestId('alert-telegram-state')).toContainText('A smart-account wallet unlinks one network at a time.');
   await controlAgent({ next: { path: '/unlink/telegram', status: 503, body: { error: 'protection-unknown' } } });
   await page.getByTestId('alert-telegram-unlink').click();
@@ -165,6 +174,9 @@ test('push that cannot send is not offered, and a service that cannot be asked i
   await controlAgent({ push: 'unavailable' });
   await page.reload();
   await expect(page.getByTestId('alert-push-unavailable')).toContainText('Push alerts can’t be switched on right now.', { timeout: 30_000 });
+  // The service's reason is a setting of this deployment, and said as one.
+  await expect(page.getByTestId('alert-push-unavailable')).toContainText('This deployment has not been given the key that signs push alerts. This is the sender of payment reminders.');
+  await expect(page.getByTestId('alert-push')).toContainText('This is how this deployment is set up, not a passing outage.');
   await expect(page.getByTestId('alert-push-enable')).toHaveCount(0);
 
   await controlAgent({ push: 'down' });
@@ -205,8 +217,21 @@ test('with Terms in force, linking Telegram asks for them first; switching off n
     await expect(page.getByTestId('alert-due-state')).toContainText('Switched off from this browser at', { timeout: 30_000 });
     expect(flags.sentTransactions).toBe(0);
 
-    await page.getByTestId('alert-telegram-link').click();
+    // Leaving the page mid-acceptance keeps the action the prompt was for:
+    // back on Alerts it still asks for push, not for a Telegram link.
+    await page.getByRole('link', { name: 'Vaipakam home' }).click();
+    await page.getByTestId('inbox-bell').click();
+    await page.getByTestId('alert-push-enable').click();
     const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+    await expect(dialog).toContainText('Switching on push alerts needs the Terms of Service', { timeout: 30_000 });
+    await page.goBack();
+    await expect(page.getByTestId('alert-channels')).toHaveCount(0);
+    await page.goForward();
+    await expect(dialog).toContainText('Switching on push alerts needs the Terms of Service', { timeout: 30_000 });
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    await page.getByTestId('alert-telegram-link').click();
     await expect(dialog).toContainText('Linking Telegram alerts needs the Terms of Service', { timeout: 30_000 });
     expect((await agentState()).requests.filter((r) => r.path === '/link/telegram')).toHaveLength(0);
     await dialog.getByRole('button', { name: 'Confirm in wallet' }).click();

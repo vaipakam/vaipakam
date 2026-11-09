@@ -18,12 +18,17 @@ export type KnownTelegram =
   | { state: 'code'; at: number; expiresAt: number }
   /** A test alert reached the linked chat: the link is proven. */
   | { state: 'confirmed'; at: number }
-  /** The wallet unlinked; `pending` names the networks whose chat keeps
-   *  alerts until protected mode's delay has passed, and when it ends. */
-  | { state: 'unlinked'; at: number; scope: 'wallet' | 'chain'; pending: PendingRemoval[] };
+  /** The wallet unlinked, from this network or from every network. */
+  | { state: 'unlinked'; at: number; scope: 'wallet' | 'chain' };
 
 export interface KnownAlerts {
   telegram?: KnownTelegram;
+  /** The networks whose chat protected mode keeps receiving alerts after an
+   *  unlink, and when each hold ends, as the service last answered an
+   *  unlink. Kept apart from `telegram`: a new link code or a test alert
+   *  cancels no hold, so neither may erase it; only a later unlink answer,
+   *  which names the holds as they are then, replaces it. */
+  held?: { at: number; pending: PendingRemoval[] };
   bands?: { warnHf: number; alertHf: number; criticalHf: number; at: number };
   dueDate?: { on: boolean; at: number };
   /** Push was switched on from here; `kept` when the service could not send
@@ -51,12 +56,14 @@ export function parseKnown(raw: unknown): KnownAlerts {
   if (t && isNum(t.at)) {
     if (t.state === 'code' && isNum(t.expiresAt)) out.telegram = { state: 'code', at: t.at, expiresAt: t.expiresAt };
     else if (t.state === 'confirmed') out.telegram = { state: 'confirmed', at: t.at };
-    else if (t.state === 'unlinked' && (t.scope === 'wallet' || t.scope === 'chain') && Array.isArray(t.pending)) {
-      const pending = t.pending.map((p) =>
-        p && typeof p === 'object' ? parsePendingRemoval({ chain_id: (p as PendingRemoval).chainId, effective_at: (p as PendingRemoval).effectiveAt }) : null,
-      );
-      if (pending.every((p) => p !== null)) out.telegram = { state: 'unlinked', at: t.at, scope: t.scope, pending: pending as PendingRemoval[] };
-    }
+    else if (t.state === 'unlinked' && (t.scope === 'wallet' || t.scope === 'chain')) out.telegram = { state: 'unlinked', at: t.at, scope: t.scope };
+  }
+  const h = r.held as Record<string, unknown> | undefined;
+  if (h && isNum(h.at) && Array.isArray(h.pending)) {
+    const pending = h.pending.map((p) =>
+      p && typeof p === 'object' ? parsePendingRemoval({ chain_id: (p as PendingRemoval).chainId, effective_at: (p as PendingRemoval).effectiveAt }) : null,
+    );
+    if (pending.every((p) => p !== null)) out.held = { at: h.at, pending: pending as PendingRemoval[] };
   }
   const b = r.bands as Record<string, unknown> | undefined;
   if (b && isNum(b.warnHf) && isNum(b.alertHf) && isNum(b.criticalHf) && isNum(b.at)) out.bands = { warnHf: b.warnHf, alertHf: b.alertHf, criticalHf: b.criticalHf, at: b.at };
