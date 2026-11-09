@@ -20,6 +20,9 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
+import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {LibSwap} from "../../src/libraries/LibSwap.sol";
 
 /**
  * @title Handler
@@ -64,6 +67,13 @@ contract Handler is Test {
     mapping(uint256 => bool) public ghostLiquidated;
     /// @dev #3241 — loans whose lender position was sold at least once.
     mapping(uint256 => bool) public ghostSold;
+    /// @dev #3241 — periodic-interest periods settled per loan (a just-stamp or a sale).
+    mapping(uint256 => uint256) public ghostPeriodicSettled;
+    /// @dev #3241 — loans a periodic settlement sold collateral from. That sale is the one path
+    ///      that lowers an Active loan's collateral, so the monotonicity suite skips these.
+    mapping(uint256 => bool) public ghostPeriodicSold;
+    /// @dev #3241 — the loan an offset offer was posted to close (0 for an ordinary offer).
+    mapping(uint256 => uint256) public ghostOffsetOf;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -126,7 +136,7 @@ contract Handler is Test {
             amountMax: amount,
             interestRateBpsMax: rateBps,
             collateralAmountMax: collateralAmount,
-            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            periodicInterestCadence: _cadenceFor(lenderSeed, amount, durationDays),
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
@@ -180,7 +190,7 @@ contract Handler is Test {
             amountMax: amount,
             interestRateBpsMax: rateBps,
             collateralAmountMax: collateralAmount,
-            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            periodicInterestCadence: _cadenceFor(borrowerSeed, amount, durationDays),
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
@@ -213,7 +223,7 @@ contract Handler is Test {
         // sign as the borrower (view-only) before the pranked external call so
         // the try/catch still observes the protocol-level accept outcome.
         LibAcceptTerms.AcceptTerms memory t =
-            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
+            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, ghostOffsetOf[offerId]);
         bytes memory sig =
             LibAcceptTestSigner.sign(diamond, t, base.borrowerPkAt(borrowerSeed));
         vm.prank(borrower);
@@ -306,6 +316,33 @@ contract Handler is Test {
         try PrecloseFacet(diamond).precloseDirect(loanId) {} catch {}
     }
 
+    /// @notice #3241 — the borrower of an active loan starts the preclose offset: it posts a lender
+    ///         offer from its own principal (escrowed in its own vault, so nothing crosses
+    ///         parties). When another borrower accepts that offer, the original loan closes in the
+    ///         same transaction and its lender is paid. The offer joins the open lender offers,
+    ///         so `acceptLenderOffer` is what completes it.
+    function offsetLoan(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        callCount["offsetLoan"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        uint256 maturity = uint256(L.startTime) + L.durationDays * 1 days;
+        if (maturity <= block.timestamp + 1 days) return;
+        durationDays = bound(durationDays, 1, (maturity - block.timestamp) / 1 days);
+        rateBps = bound(rateBps, 100, 2000);
+
+        vm.prank(L.borrower);
+        try PrecloseFacet(diamond).offsetWithNewOffer(
+            loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset
+        ) returns (uint256 offerId) {
+            lenderOfferIds.push(offerId);
+            ghostOffsetOf[offerId] = loanId;
+        } catch {}
+    }
+
     /// @notice The lender of an active loan sells the position into a standing
     ///         lender offer (#3241, the direct early-withdrawal route). The
     ///         buyer becomes the lender; the loan itself carries on.
@@ -395,6 +432,34 @@ contract Handler is Test {
         return liquidationQuote(diamond, loanId);
     }
 
+    /// @notice #3241 — settle a periodic-interest period. Warps to the end of the period's grace
+    ///         if it is not there yet, then settles. With the period's interest already paid this
+    ///         only advances the checkpoint; otherwise it sells the least collateral that covers
+    ///         the shortfall through the working venue (adapter index 1), at the quantity the
+    ///         forced-sale preview sizes. Permissionless: the handler calls it, as a keeper would.
+    function settlePeriodic(uint256 loanIdx) external {
+        callCount["settlePeriodic"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        if (L.periodicInterestCadence == LibVaipakam.PeriodicInterestCadence.None) return;
+
+        (,, uint256 graceEndsAt,,,,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
+        if (graceEndsAt > block.timestamp) vm.warp(graceEndsAt);
+
+        uint256 sell = ForcedSaleFacet(diamond)
+            .previewForcedSale(loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement).sell;
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
+        calls[0] = LibSwap.AdapterCall({adapterIdx: 1, data: bytes("")});
+        try RepayPeriodicFacet(diamond).settlePeriodicInterest(loanId, sell, calls) {
+            ghostPeriodicSettled[loanId]++;
+            if (_getLoan(loanId).collateralAmount < L.collateralAmount) ghostPeriodicSold[loanId] = true;
+        } catch {}
+    }
+
     /// @notice Lender claims on a defaulted / fallback-pending loan.
     function claimAsLender(uint256 loanIdx) external {
         callCount["claimAsLender"]++;
@@ -453,6 +518,21 @@ contract Handler is Test {
     }
 
     // ── Internals ──────────────────────────────────────────────────────
+
+    /// @dev #3241 — about half the offers long enough for it, and at or above the $1,000
+    ///      finer-cadence threshold the base sets, carry a monthly cadence. The bit is a hash of
+    ///      the fuzzed inputs, not a slice of the seed: the fuzzer favours edge values (0, 1, the
+    ///      maximum), whose low bits barely vary, and a slice left the path almost never taken.
+    function _cadenceFor(uint256 seed, uint256 amount, uint256 durationDays)
+        internal
+        pure
+        returns (LibVaipakam.PeriodicInterestCadence)
+    {
+        if (durationDays > 30 && amount >= 1_000 ether && uint256(keccak256(abi.encode(seed, amount, durationDays))) % 2 == 1) {
+            return LibVaipakam.PeriodicInterestCadence.Monthly;
+        }
+        return LibVaipakam.PeriodicInterestCadence.None;
+    }
 
     function _getLoan(uint256 loanId) internal view returns (LibVaipakam.Loan memory L) {
         L = LoanFacet(diamond).getLoanDetails(loanId);
