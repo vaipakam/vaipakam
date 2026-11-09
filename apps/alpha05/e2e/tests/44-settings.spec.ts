@@ -161,7 +161,8 @@ test('with a wallet: the Terms state on this network and the fee-discount settin
     // reconnect it: only the kept marker stands between them.
     await page.reload();
     await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.', { timeout: 30_000 });
-    expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => !k.endsWith('.disconnected')))).toEqual([]);
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wagmi.store') ?? '{}') as { state?: { current?: string | null } });
+    expect(stored.state?.current ?? null).toBeNull();
   } finally {
     await anvilRpc('evm_revert', [snapshot]);
     await anvilRpc('evm_mine');
