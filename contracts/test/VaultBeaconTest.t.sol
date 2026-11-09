@@ -19,12 +19,13 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {VaultBeacon} from "../src/VaultBeacon.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @dev A second vault version: the same code and layout, plus a marker.
 contract VaultImplV2Marker is VaipakamVaultImplementation {
-    constructor() VaipakamVaultImplementation(address(0), address(0)) {}
+    constructor() VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none()) {}
 
     function versionMarker() external pure returns (uint256) {
         return 2;
@@ -33,7 +34,7 @@ contract VaultImplV2Marker is VaipakamVaultImplementation {
 
 /// @dev A third version, so a pin can differ from the current one.
 contract VaultImplV3Marker is VaipakamVaultImplementation {
-    constructor() VaipakamVaultImplementation(address(0), address(0)) {}
+    constructor() VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none()) {}
 
     function versionMarker() external pure returns (uint256) {
         return 3;

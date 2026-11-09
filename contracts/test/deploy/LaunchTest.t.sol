@@ -26,8 +26,6 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {LibLaunchReadiness} from "../../src/governance/LibLaunchReadiness.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
-import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
-import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 
 /// @dev Whoever owns the Diamond, read live: the route mocks below answer
@@ -503,19 +501,10 @@ contract LaunchTest is Test {
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
-    /// @dev #3205 part 2 — a swap adapter routed by the Diamond must also be a
-    ///      member of the protocol registry's SWAP_ADAPTERS, or every vault
-    ///      refuses it and the launch refuses (`vault registry seeded`). The
-    ///      deploy seeds only the treasury (#3391 seeds the adapters at
-    ///      construction), so an adapter added after deploy joins through the
-    ///      registry's real delayed add: proposed by its owner (admin, under
-    ///      the caller's prank), executed once the delay has passed.
+    /// @dev A swap adapter the Diamond routes (#3431: the vault reads no
+    ///      adapter list; a swap leaves a vault only through `swapOut`).
     function _addAdapter(address a) internal {
         AdminFacet(diamond).addSwapAdapter(a);
-        ProtocolRegistry r = ProtocolRegistry(address(LibTestVaultBeacon.registryOf(diamond)));
-        r.proposeAdd(RegistryKeys.SWAP_ADAPTERS, a);
-        vm.warp(block.timestamp + r.delay());
-        r.executeAdd(RegistryKeys.SWAP_ADAPTERS, a);
     }
 
     /// @dev Configure the four Diamond-side requirements, and the VPFI token

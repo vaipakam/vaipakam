@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
@@ -232,7 +233,7 @@ contract DefaultedFacetTest is Test {
         helperTest = new HelperTest();
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
+        vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);

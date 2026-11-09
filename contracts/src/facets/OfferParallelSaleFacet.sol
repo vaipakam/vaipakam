@@ -755,17 +755,7 @@ contract OfferParallelSaleFacet is
         // MUST be (collateralTokenId, collateralQuantity), AND the
         // quantity field MUST be `offer.collateralQuantity` (NOT
         // `offer.quantity` — that's the principal-side qty).
-        orderHash = LibPrepayOrder.buildAndHashOfferMem(
-            ctx,
-            offer.collateralAsset,
-            offer.collateralAssetType,
-            offer.collateralTokenId,
-            offer.collateralQuantity,
-            address(this),
-            loc.executor,
-            IListingExecutorRecorder(loc.executor).seaport(),
-            feeLegs
-        );
+        orderHash = _registerOfferOrder(offer, offerId, ctx, feeLegs, loc);
 
         // ── Effects (3 mirror-slot writes per §19.5 + §19.7d) ─────
         offer.parallelSaleOrderHash = orderHash;
@@ -774,10 +764,8 @@ contract OfferParallelSaleFacet is
 
         // ── Interactions (executor + vault) ───────────────────────
         IListingExecutorRecorder(loc.executor).recordOfferOrder(orderHash, ctx, feeLegs);
-        VaipakamVaultImplementation(loc.vaultAddr).registerListingOrderHash(
-            orderHash,
-            loc.executor
-        );
+        // #3431 — the vault registered the order from its terms when the
+        // builder hashed it, so there is no separate hash registration.
 
         // #3205 part 2 — no approval at listing time. An ERC-721 is approved
         // to the fill's conduit inside the fill (the executor's
@@ -785,6 +773,29 @@ contract OfferParallelSaleFacet is
         // this listing, the order's offerer and the only holder of the
         // conduit approval. Teardown brings it back.
         if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) _openEscrow(offer, offerId, loc.vaultAddr, loc.conduit);
+    }
+
+    /// @dev #3431 — build the offer-keyed listing order and have the vault
+    ///      register it from its terms (it computes the hash). Its own frame:
+    ///      {_recordAndWireOfferOrder} is at its stack budget.
+    function _registerOfferOrder(
+        LibVaipakam.Offer storage offer,
+        uint96 offerId,
+        OfferContext memory ctx,
+        FeeLeg[] calldata feeLegs,
+        _PostLocals memory loc
+    ) private returns (bytes32) {
+        return LibPrepayOrder.buildAndHashOfferMem(
+            ctx,
+            offer.collateralAsset,
+            offer.collateralAssetType,
+            offer.collateralTokenId,
+            offer.collateralQuantity,
+            LibPrepayOrder.offerLister(loc.vaultAddr, offerId),
+            loc.executor,
+            IListingExecutorRecorder(loc.executor).seaport(),
+            feeLegs
+        );
     }
 
     /// @dev #3205 part 2 — the listing's offerer: the vault for an ERC-721,

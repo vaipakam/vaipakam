@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
@@ -281,7 +282,7 @@ contract RiskFacetTest is Test {
         helperTest = new HelperTest();
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
+        vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
@@ -818,7 +819,7 @@ contract RiskFacetTest is Test {
     //     riskFacet = new RiskFacet(zeroExProxy);
 
     //     // Deploy vault impl
-    //     vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
+    //     vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
     //     // Cut facets
     //     IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);

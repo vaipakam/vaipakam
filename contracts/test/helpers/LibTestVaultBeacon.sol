@@ -6,7 +6,21 @@ import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation
 import {VaultBeacon} from "../../src/VaultBeacon.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibTestPositionNFT} from "./LibTestPositionNFT.sol";
-import {MockProtocolRegistry} from "../mocks/MockProtocolRegistry.sol";
+import {VaultOutflowTypes} from "../../src/vault/VaultOutflowTypes.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+/// @dev The Diamond reads the test-side endpoint sync makes (each optional:
+///      a hand-built suite Diamond may route none of them).
+interface IEndpointReads {
+    function getTreasury() external view returns (address);
+    function getBackstopVault() external view returns (address);
+    function getFusionLimitOrderProtocol() external view returns (address);
+    function getCollateralListingExecutor() external view returns (address);
+}
+
+interface IExecutorSeaport {
+    function seaport() external view returns (address);
+}
 import {VaultOutflowFacet} from "../../src/facets/VaultOutflowFacet.sol";
 import {VaultDepositoryFacet} from "../../src/facets/VaultDepositoryFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -20,22 +34,80 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 ///         builds its own Diamond. `owner` (the beacon's owner and guardian)
 ///         is usually the test contract itself.
 library LibTestVaultBeacon {
-    /// @dev #3205 part 2 — the vault code reads the PositionNFT core and the
-    ///      protocol registry as immutables, so both exist before it: the core
-    ///      is installed here (idempotently) and a {MockProtocolRegistry} is
-    ///      deployed for `diamond` (it answers TREASURY with the Diamond's own
-    ///      treasury; {registryOf} returns it for a test that sets more).
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    /// @dev #3205 part 2 / #3431 — the vault code fixes the PositionNFT core
+    ///      and its endpoints as immutables, so both exist before it: the core
+    ///      is installed here (idempotently) and the endpoints start as the
+    ///      test convention (the Diamond its own treasury, nothing else set).
+    ///      A suite that configures more calls {sync} (live Diamond reads) or
+    ///      {setEndpoints} afterwards.
     function install(address diamond, address owner) internal returns (VaultBeacon beacon) {
         address nft = address(LibTestPositionNFT.install(diamond, owner));
-        MockProtocolRegistry registry = new MockProtocolRegistry(diamond);
-        address impl = ArtifactDeploy.deploy(
-            type(VaipakamVaultImplementation).name, abi.encode(nft, address(registry))
-        );
+        VaultOutflowTypes.VaultEndpoints memory e;
+        e.treasury = diamond;
+        address impl = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name, abi.encode(nft, e));
         beacon = VaultBeacon(
             ArtifactDeploy.deploy(type(VaultBeacon).name, abi.encode(owner, diamond, owner, impl))
         );
         VaultFactoryFacet(diamond).initializeVaultBeacon(address(beacon));
         installOutflowPolicy(diamond);
+    }
+
+    /// @notice The endpoints the vault code of `diamond`'s current beacon fixes.
+    function endpointsOf(address diamond) internal view returns (VaultOutflowTypes.VaultEndpoints memory) {
+        return VaipakamVaultImplementation(_impl(diamond)).vaultEndpoints();
+    }
+
+    /// @notice TEST CONVENIENCE — replace the endpoints the current vault code
+    ///         fixes, in place: a fresh implementation is built with `e` and
+    ///         its code is etched over the current implementation's address,
+    ///         so every vault (a BeaconProxy) runs it at once. On a chain the
+    ///         same change is new vault code through the beacon's delay.
+    function setEndpoints(address diamond, VaultOutflowTypes.VaultEndpoints memory e) internal {
+        address impl = _impl(diamond);
+        address fresh = ArtifactDeploy.deploy(
+            type(VaipakamVaultImplementation).name,
+            abi.encode(VaipakamVaultImplementation(impl).POSITION_NFT(), e)
+        );
+        vm.etch(impl, fresh.code);
+    }
+
+    /// @notice TEST CONVENIENCE — bring the vault code's treasury, backstop,
+    ///         1inch order protocol and Seaport to what `diamond` is
+    ///         configured with now (each read only where the Diamond routes
+    ///         it); the conduit, its key and the price guard are kept.
+    function sync(address diamond) internal {
+        VaultOutflowTypes.VaultEndpoints memory e = endpointsOf(diamond);
+        try IEndpointReads(diamond).getTreasury() returns (address t) {
+            e.treasury = t;
+        } catch {}
+        try IEndpointReads(diamond).getBackstopVault() returns (address b) {
+            e.backstop = b;
+        } catch {}
+        try IEndpointReads(diamond).getFusionLimitOrderProtocol() returns (address lop) {
+            if (lop != address(0)) e.orderProtocol = lop;
+        } catch {}
+        try IEndpointReads(diamond).getCollateralListingExecutor() returns (address x) {
+            if (x != address(0)) {
+                try IExecutorSeaport(x).seaport() returns (address sp) {
+                    e.seaport = sp;
+                } catch {}
+            }
+        } catch {}
+        setEndpoints(diamond, e);
+    }
+
+    /// @notice TEST CONVENIENCE — set the vault code's listing conduit and key.
+    function setConduit(address diamond, address conduit, bytes32 conduitKey) internal {
+        VaultOutflowTypes.VaultEndpoints memory e = endpointsOf(diamond);
+        e.conduit = conduit;
+        e.conduitKey = conduitKey;
+        setEndpoints(diamond, e);
+    }
+
+    function _impl(address diamond) private view returns (address) {
+        return VaultBeacon(VaultFactoryFacet(diamond).getVaultBeacon()).implementation();
     }
 
     /// @notice #3205 part 2 — the vault moves value only at the call of the
@@ -113,9 +185,4 @@ library LibTestVaultBeacon {
         selectors[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
     }
 
-    /// @notice The registry the vault code of `diamond`'s current beacon reads.
-    function registryOf(address diamond) internal view returns (MockProtocolRegistry) {
-        address impl = VaultBeacon(VaultFactoryFacet(diamond).getVaultBeacon()).implementation();
-        return MockProtocolRegistry(VaipakamVaultImplementation(impl).REGISTRY());
-    }
 }

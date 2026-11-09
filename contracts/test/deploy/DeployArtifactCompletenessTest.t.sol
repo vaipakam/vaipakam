@@ -227,6 +227,13 @@ contract DeployArtifactCompletenessTest is Test {
         vm.etch(i.weth, hex"00");
         vm.etch(i.ethUsdFeed, hex"00");
         script.setPriceGuardInputs(PAUSER_SAFE, i);
+        // #3431 — a production chain's vault code fixes Seaport, the 1inch
+        // order protocol and the listing conduit, and the deploy refuses one
+        // without code. This test runs on no fork, so the canonical addresses
+        // get a byte of code.
+        vm.etch(0x0000000000000068F116a894984e2DB1123eB395, hex"00");
+        vm.etch(0x111111125421cA6dc452d289314280a0f8842A65, hex"00");
+        vm.etch(0x1E0049783F008A0085193E00003D00cd54003c71, hex"00");
     }
 
     /// @dev TRUE when `needle` is the value of some key under `.facets`.

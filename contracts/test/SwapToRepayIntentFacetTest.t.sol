@@ -27,7 +27,6 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibOneTxSwapFill} from "./helpers/LibOneTxSwapFill.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
-import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 /**
@@ -107,9 +106,9 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         IntentConfigFacet(address(diamond)).setIntentAuctionSecondsBounds(60, 600);
         IntentConfigFacet(address(diamond)).setIntentCancelGraceSeconds(86_400);
         IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(address(fusionLOP));
-        // #3205 part 2 — the vault grants the order protocol only as a member
-        // of the registry's SWAP_ADAPTERS set.
-        LibTestVaultBeacon.registryOf(address(diamond)).setMember(RegistryKeys.SWAP_ADAPTERS, address(fusionLOP), true);
+        // #3431 — the vault code fixes the 1inch order protocol it signs for
+        // and approves: bring it to the Diamond's (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
     }
 
     // ══════════════════════════════════════════════════════════════

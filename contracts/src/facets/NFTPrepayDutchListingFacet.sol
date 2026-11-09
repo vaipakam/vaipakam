@@ -456,7 +456,7 @@ contract NFTPrepayDutchListingFacet is
 
         orderHash = LibPrepayOrder.buildAndHashDutch(
             pctx,
-            pctx.borrowerVault, // the offerer (#3205 part 2)
+            LibPrepayOrder.loanLister(loanId), // the vault registers it (#3431)
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             p.startAskPrice,
@@ -491,7 +491,7 @@ contract NFTPrepayDutchListingFacet is
         // with the library's own `VaultNotDeployed` revert; keeping
         // the upfront check so the buildAndHashDutch call below sees
         // a non-zero offerer.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor), /* holderAuthenticated */ true);
+        LibPrepayListingWiring.wire(s, loan, conduit, /* holderAuthenticated */ true);
     }
 
     function _assertDutchSolvency(

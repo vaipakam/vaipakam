@@ -50,7 +50,7 @@ import {IOrderMixin} from
  * `takingAmount` are now passed through: the pre-hook records exactly
  * the committed lot leaving the vault for the taker, the post-hook
  * settles exactly what the taker delivered. Since S3e a swap order's
- * maker is the borrower's vault, whose ERC-1271 asks {isOrderValid}.
+ * maker is the borrower's vault, which signs for the order it hashed (#3431).
  *
  * Refresh together with `SwapToRepayIntentFacet` (one behaviour
  * across the commit and the hooks).
@@ -146,7 +146,7 @@ contract IntentDispatchFacet is
     /// @inheritdoc IERC1271
     /// @dev STATICCALL-safe — read-only. Answers for BUYBACK orders only
     ///      (#1566 S3e: a swap order's maker is the borrower's vault, which
-    ///      asks {isOrderValid}); 0xffffffff (invalid) for anything else,
+    ///      signs for it itself, #3431); 0xffffffff (invalid) for anything else,
     ///      so Fusion treats it as a non-matching signature.
     function isValidSignature(bytes32 orderHash, bytes calldata /* signature */)
         external
@@ -156,8 +156,9 @@ contract IntentDispatchFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32 kind = s.orderHashKind[orderHash];
-        // #1566 S3e — a swap-to-repay order's maker is the borrower's vault, which
-        // signs through {isOrderValid}; this Diamond signs for no swap order itself.
+        // #1566 S3e / #3431 — a swap-to-repay order's maker is the borrower's
+        // vault, which signs for the order it hashed; this Diamond signs for no
+        // swap order itself.
         // T-087 Sub 3.C — BUYBACK signature validation is ON only
         // for orderHashes whose Fusion order template was validated
         // through `commitBuybackIntentValidated` (Sub 3.B round-4 P1
@@ -175,17 +176,5 @@ contract IntentDispatchFacet is
             }
         }
         return bytes4(0xffffffff);
-    }
-
-    /// @notice #1566 S3e — the validator a borrower vault's ERC-1271 asks for a swap-to-repay
-    ///         order. The order's maker is the vault, which registered this Diamond as the order
-    ///         hash's validator at commit (the registry the Seaport listings use) and returns the
-    ///         ERC-1271 magic value iff this answers true: the hash is a live swap-to-repay commit
-    ///         AND the asking vault is that loan's borrower vault.
-    /// @dev    View; the vault calls it while the LOP checks the order's signature, before the fill
-    ///         window opens. During another fill's window the Diamond's entry point refuses it, so a
-    ///         nested fill reads as unsigned.
-    function isOrderValid(bytes32 orderHash) external view returns (bool) {
-        return LibSwapToRepayIntentSettlement.isOrderValidImpl(orderHash, msg.sender);
     }
 }

@@ -539,11 +539,30 @@ and the loan or offer it belongs to.
   position NFT at the moment of payment.
 - **A payout to a position's holder** reaches only the vault whose own
   record names that holder, read from the position-NFT contract.
-- **The treasury, the backstop, the swap adapters and the marketplace
-  conduits** are read from a registry the governance timelock owns, which no
-  platform code can write. A launch is refused until that registry names the
-  platform's treasury and carries every route the platform sells or lists
-  through, so an empty registry can never silently refuse every fee or fill.
+- **The treasury, the backstop, the marketplace (Seaport and its listing
+  conduit) and the 1inch order protocol** are fixed in the vault code itself
+  (#3431). A vault reads them from no registry and from no platform setting,
+  so changing one means new vault code, which waits the vault-code delay.
+  A launch is refused until the vault code's endpoints match the platform's
+  own settings, so a mismatch can never silently refuse every fee or fill.
+- **A vault signs only its own orders, and only for the marketplace that
+  asks** (#3431). A collateral listing or a swap-to-repay order is
+  registered on the vault from its terms: the vault checks it is the order's
+  seller or maker (or, for an ERC-1155 listing, that the seller is its own
+  escrow for that listing) and that the listing names its conduit, and it
+  works out the order's hash itself. Its contract signature answers only the
+  protocol the order was hashed for, so no other contract can read the
+  vault's answer as consent to anything else. Every teardown withdraws it.
+  The order's payment legs are bound to the owner's own signed terms from
+  #3379's owner-signed liens; until then the platform builds them and the
+  marketplace's zone checks them at fill.
+- **A swap out of a vault is judged by its result** (#3431). The vault sells
+  at most the stated amount through a swap adapter, in one call, and the
+  recipient (the vault, its owner, or the vault of a position's current
+  holder) must receive at least the stated floor; the vault measures both
+  sides and refuses otherwise. A forced sale still passes through the
+  platform within the transaction until the vault can read the price guard
+  itself (#3268).
 - **A share that cannot follow its holder yet** (an NFT rental, a loan in
   fallback, a sanctioned current holder, a live listing) is parked in the
   vault of that side's party as the loan records it, and is never counted as

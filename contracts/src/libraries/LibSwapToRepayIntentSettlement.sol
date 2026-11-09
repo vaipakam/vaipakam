@@ -28,8 +28,9 @@ import {LibPositionNFT} from "./LibPositionNFT.sol";
  *
  * Internal logic for the SWAP_TO_REPAY arm of the IntentDispatchFacet.
  * The bodies of the three 1inch LOP v4 hooks (`preInteraction`,
- * `postInteraction`, and `isValidSignature`, whose swap arm is since #1566
- * S3e {isOrderValidImpl}, the borrower vault's validator) that previously lived in
+ * `postInteraction`, and `isValidSignature`, whose swap arm has been the
+ * borrower vault's own since #1566 S3e, and needs no Diamond validator since
+ * #3431) that previously lived in
  * `SwapToRepayIntentFacet` move here so the same selectors can be
  * dispatched from `IntentDispatchFacet` for both order kinds
  * (SWAP_TO_REPAY and BUYBACK).
@@ -495,26 +496,6 @@ library LibSwapToRepayIntentSettlement {
             true,  /* borrowerClean */
             false  /* lenderForfeit */
         );
-    }
-
-    // ─── the vault's ERC-1271 validator ──────────────────────────────
-
-    /// @dev §5.7 #5, #1566 S3e — whether `askingVault` should sign for
-    ///      `orderHash`: the hash is a live swap-to-repay commit AND the asking
-    ///      vault is that loan's borrower vault (the order's maker). Pure
-    ///      read-only — no `tstore`, no state mutation.
-    function isOrderValidImpl(bytes32 orderHash, address askingVault) internal view returns (bool) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.orderHashKind[orderHash] != LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) return false;
-        uint256 loanId = s.orderHashToLoanId[orderHash];
-        if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash) return false;
-        // #3205 — a commit whose borrower position moved since, or whose
-        // route is no longer its own, reads invalid (as the hooks refuse it).
-        if (!LibPositionNFT.isUnmoved(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent)) {
-            return false;
-        }
-        address borrower = s.loans[loanId].borrower;
-        return askingVault != address(0) && askingVault == s.userVaipakamVaults[borrower];
     }
 
     /// @dev The transient slot holding the borrower vault's collateral balance

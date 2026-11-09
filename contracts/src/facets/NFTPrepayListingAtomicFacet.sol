@@ -680,7 +680,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
         vaipakamOrderHash = LibPrepayOrder.buildAndHashMem(
             pctx,
-            pctx.borrowerVault,
+            LibPrepayOrder.loanLister(loanId), // the vault registers it (#3431)
             executor,
             CollateralListingExecutor(executor).seaport(),
             effectiveAsk,
@@ -714,7 +714,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         );
 
         // STEP 5 — Wire the vault.
-        LibPrepayListingWiring.wire(s, loan, vaipakamOrderHash, conduit, executor, /* holderAuthenticated */ true);
+        LibPrepayListingWiring.wire(s, loan, conduit, /* holderAuthenticated */ true);
     }
 
     // (No internal helper needed — external calls to

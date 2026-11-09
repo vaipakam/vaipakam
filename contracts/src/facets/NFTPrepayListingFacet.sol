@@ -617,7 +617,7 @@ contract NFTPrepayListingFacet is
         if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
         orderHash = LibPrepayOrder.buildAndHash(
             pctx,
-            pctx.borrowerVault, // the offerer (#3205 part 2)
+            LibPrepayOrder.loanLister(loanId), // the vault registers it (#3431)
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             askPrice,
@@ -655,7 +655,7 @@ contract NFTPrepayListingFacet is
             PREPAY_MODE_FIXED_PRICE,
             feeLegs
         );
-        _wireVaultForListing(s, loan, orderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, conduit, /* holderAuthenticated */ true);
     }
 
     /// @dev Resolve a `conduitKey` to its deployed conduit address
@@ -813,7 +813,7 @@ contract NFTPrepayListingFacet is
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         newOrderHash = LibPrepayOrder.buildAndHash(
             pctx,
-            pctx.borrowerVault, // the offerer (#3205 part 2)
+            LibPrepayOrder.loanLister(loanId), // the vault registers it (#3431)
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             askPrice,
@@ -850,7 +850,7 @@ contract NFTPrepayListingFacet is
         // `LibPrepayListingWiring.wire` so both v1 post + update and
         // the new atomic-match facet stay in lock-step. v1 behavior
         // unchanged.
-        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor), /* holderAuthenticated */ true);
+        LibPrepayListingWiring.wire(s, loan, conduit, /* holderAuthenticated */ true);
     }
 
     // ─── Borrower entry: cancelPrepayListing ────────────────────────────
@@ -1389,28 +1389,6 @@ contract NFTPrepayListingFacet is
         LibPrepayListingWiring.unwire(s, loan, orderHash);
 
         emit PrepayListingCanceled(loanId, msg.sender, orderHash, reason);
-    }
-
-    /// @dev Shared helper for `postPrepayListing`'s vault wiring.
-    ///      Looks up the borrower's vault, grants the conduit
-    ///      approval (per-token for ERC721, operator-wide for
-    ///      ERC1155), and pins the orderHash → executor binding
-    ///      on the vault's ERC-1271 mapping.
-    function _wireVaultForListing(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        bytes32 orderHash,
-        address conduit,
-        address executor
-    ) private {
-        // T-086 Round-6 / Block D (#345) — body extracted into the
-        // shared `LibPrepayListingWiring` library so the new sibling
-        // facet `NFTPrepayListingAtomicFacet` can call the SAME
-        // wiring without duplicating the asset-type-aware approval
-        // grant + ERC-1271 binding logic. v1 behavior preserved
-        // byte-for-byte — the library's `wire` does exactly what the
-        // private body did before the refactor.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor, /* holderAuthenticated */ true);
     }
 
     /// @dev Read-only borrower-vault lookup. Reverts via

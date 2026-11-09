@@ -20,11 +20,12 @@ interface IVaultRegistryView {
 import {IERC4907} from "./interfaces/IERC4907.sol";
 import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol";
 import {VaultOutflowTypes} from "./vault/VaultOutflowTypes.sol";
 import {ListingEscrow} from "./vault/ListingEscrow.sol";
-import {IProtocolRegistryReader} from "./interfaces/IProtocolRegistryReader.sol";
-import {RegistryKeys} from "./governance/RegistryKeys.sol";
+import {ISwapAdapter} from "./interfaces/ISwapAdapter.sol";
+import {OrderComponents, ISeaportOrderHash} from "./seaport/ISeaportOrderHash.sol";
+import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {AddressLib, Address as LopAddress} from "@1inch/solidity-utils/contracts/libraries/AddressLib.sol";
 
 /// @dev The one PositionNFT read a vault makes: who holds a position now.
 interface IPositionHolderView {
@@ -74,10 +75,25 @@ contract VaipakamVaultImplementation is
     /// @notice The PositionNFT core (#3205): who holds each position. A holder
     ///         payout is checked against it, never against the Diamond's word.
     address public immutable POSITION_NFT;
-    /// @notice The Timelock-owned protocol registry: the treasury, backstop,
-    ///         swap adapters and marketplace conduits a vault may pay or
-    ///         approve. Zero leaves every registry class closed.
-    address public immutable REGISTRY;
+    /// @notice #3431 — the endpoints this vault code may pay or approve,
+    ///         fixed in the CODE (no registry, no Diamond write can move them).
+    ///         Changing one is new vault code through the VaultBeacon. A zero
+    ///         endpoint leaves its class closed.
+    /// @dev    TREASURY: the only treasury-class payee. BACKSTOP: the backstop
+    ///         vault contract (a backstop-class payee is the genuine vault
+    ///         whose owner record is it). SEAPORT / ORDER_PROTOCOL: the only
+    ///         callers this vault's ERC-1271 answers, each for the orders it
+    ///         hashed. CONDUIT / CONDUIT_KEY: the one listing conduit a vault
+    ///         or its escrow approves, and the key a listing must name.
+    ///         PRICE_GUARD: the standalone price guard (#3447), read from
+    ///         #3268 on.
+    address public immutable TREASURY;
+    address public immutable BACKSTOP;
+    address public immutable SEAPORT;
+    address public immutable ORDER_PROTOCOL;
+    address public immutable CONDUIT;
+    bytes32 public immutable CONDUIT_KEY;
+    address public immutable PRICE_GUARD;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -115,7 +131,10 @@ contract VaipakamVaultImplementation is
     ///         gas, never a setting.
     uint256 public constant MAX_CONCURRENT_RENTALS_1155 = 64;
 
-    /// @dev T-086 step 7 — Seaport prepay-collateral-listing support,
+    /// @dev RETIRED by #3431 (Stage B1): no longer written or read; the
+    ///      slot is kept so the layout stays append-only. Order hashes now
+    ///      live in {_orderVerifier}, keyed to the protocol that may ask.
+    ///      Former role: T-086 step 7 — Seaport prepay-collateral-listing support,
     ///      and since #1566 S3e the 1inch swap-to-repay order this vault
     ///      makes (validator = the Diamond's `isOrderValid`).
     ///      Maps a Seaport `orderHash` to the executor singleton
@@ -127,7 +146,7 @@ contract VaipakamVaultImplementation is
     ///      + the post-fill finalization). Consumed by this
     ///      contract's {isValidSignature} (ERC-1271) to delegate
     ///      Seaport's sign-time signature verification to the
-    ///      executor's {IListingExecutorValidator.isOrderValid}.
+    ///      executor's `isOrderValid`.
     ///
     ///      Per-vault scope: each per-user vault holds the
     ///      orderHash → executor bindings for ITS borrower's
@@ -196,15 +215,34 @@ contract VaipakamVaultImplementation is
      *      same transaction; `upgradeVaultImplementation` checks only that
      *      the new implementation has code, so a template deployed without
      *      that step was open to whoever called first.
-     *      #3205 part 2 — `positionNft` and `registry` are immutables of
-     *      the CODE, so every vault running this version reads the same two
-     *      contracts, and no Diamond write can redirect them.
+     *      #3205 part 2 / #3431 — `positionNft` and every endpoint are
+     *      immutables of the CODE, so every vault running this version reads
+     *      the same contracts, and no Diamond write can redirect them.
      * @custom:oz-upgrades-unsafe-allow constructor
      */
-    constructor(address positionNft, address registry) {
+    constructor(address positionNft, VaultOutflowTypes.VaultEndpoints memory e) {
         _disableInitializers();
         POSITION_NFT = positionNft;
-        REGISTRY = registry;
+        TREASURY = e.treasury;
+        BACKSTOP = e.backstop;
+        SEAPORT = e.seaport;
+        ORDER_PROTOCOL = e.orderProtocol;
+        CONDUIT = e.conduit;
+        CONDUIT_KEY = e.conduitKey;
+        PRICE_GUARD = e.priceGuard;
+    }
+
+    /// @notice #3431 — the endpoints fixed in this vault code, as one record.
+    function vaultEndpoints() external view returns (VaultOutflowTypes.VaultEndpoints memory) {
+        return VaultOutflowTypes.VaultEndpoints({
+            treasury: TREASURY,
+            backstop: BACKSTOP,
+            seaport: SEAPORT,
+            orderProtocol: ORDER_PROTOCOL,
+            conduit: CONDUIT,
+            conduitKey: CONDUIT_KEY,
+            priceGuard: PRICE_GUARD
+        });
     }
 
     /**
@@ -305,13 +343,25 @@ contract VaipakamVaultImplementation is
     // ─── T-086 step 7 — Seaport prepay-listing narrow entries ───────────
 
 
-    /// @notice Emitted when the diamond pins a Seaport `orderHash`
-    ///         to its recording executor for ERC-1271 delegation.
-    event ListingOrderHashRegistered(bytes32 indexed orderHash, address indexed executor);
+    /// @notice #3431 — this vault hashed an order it makes and will answer
+    ///         ERC-1271 for it, to `verifier` only (Seaport or the 1inch
+    ///         order protocol).
+    event OrderHashRegistered(bytes32 indexed orderHash, address indexed verifier);
 
-    /// @notice Emitted when the diamond clears an orderHash → executor
-    ///         binding (cancel / cancelExpired / post-fill).
+    /// @notice Emitted when the diamond clears an order hash (cancel /
+    ///         cancelExpired / post-fill / teardown).
     event ListingOrderHashRevoked(bytes32 indexed orderHash);
+
+    /// @dev #3431 — an order's terms name another maker or offerer than this
+    ///      vault (or one of its own listing escrows).
+    error OrderNotThisVaults(address maker);
+    /// @dev #3431 — a listing names another conduit key than the constant's.
+    error OrderConduitRefused(bytes32 conduitKey);
+    /// @dev #3431 — the protocol this order needs is not set in this code.
+    error OrderProtocolUnset();
+    /// @dev #3431 — {swapOut}'s adapter took more than offered, or delivered
+    ///      less than the floor; or the adapter is refused.
+    error SwapOutcomeRefused();
 
 
     /// @dev Caller-passed zero `orderHash` to a register / revoke.
@@ -319,36 +369,66 @@ contract VaipakamVaultImplementation is
     ///      sentinel the vault rejects.
     error ZeroOrderHash();
 
-    /// @dev Caller-passed zero `executor` to {registerListingOrderHash}.
-    error ZeroExecutor();
-
 
 
     /**
-     * @notice Pin a Seaport `orderHash → executor` binding so this
-     *         vault's ERC-1271 {isValidSignature} can delegate to
-     *         that executor's `isOrderValid` at sign-verification
-     *         time.
-     * @dev    Diamond-gated. Called by
-     *         `NFTPrepayListingFacet.postPrepayListing` and
-     *         `updatePrepayListing` immediately after the diamond
-     *         records the listing on the executor itself, so the
-     *         vault's mapping and the executor's `orderContext`
-     *         stay in lock-step; and (#1566 S3e) by the swap-to-repay
-     *         commit, with the Diamond itself as the validator.
+     * @notice #3431 — register a Seaport listing this vault (or one of its
+     *         listing escrows) offers, from its TERMS. The vault checks the
+     *         offerer and the conduit key and asks Seaport for the hash
+     *         itself, so it can only ever answer for an order of that shape.
+     * @dev    Diamond-gated. Stage B1 checks the offerer and the conduit;
+     *         the payment legs are checked against the owner's signed terms
+     *         from Stage B3 (the listing-hash rule). Until then the Diamond
+     *         builds them and the listing's zone checks them at fill.
+     * @param  c          The order components, `counter` included.
+     * @param  escrowKey  0 for an order this vault offers; the listing key
+     *                    when its offerer is this vault's escrow for it.
+     * @return orderHash  Seaport's hash of `c`.
      */
-    function registerListingOrderHash(bytes32 orderHash, address executor)
+    function registerSeaportOrder(OrderComponents calldata c, bytes32 escrowKey)
         external
         onlyDiamond
+        returns (bytes32 orderHash)
     {
-        if (orderHash == bytes32(0)) revert ZeroOrderHash();
-        if (executor == address(0)) revert ZeroExecutor();
-        _listingExecutor[orderHash] = executor;
-        emit ListingOrderHashRegistered(orderHash, executor);
+        address seaport = SEAPORT;
+        if (seaport == address(0)) revert OrderProtocolUnset();
+        address offerer = c.offerer;
+        if (escrowKey == bytes32(0) ? offerer != address(this) : offerer != listingEscrowAddress(escrowKey)) {
+            revert OrderNotThisVaults(offerer);
+        }
+        if (c.conduitKey != CONDUIT_KEY) revert OrderConduitRefused(c.conduitKey);
+        orderHash = ISeaportOrderHash(seaport).getOrderHash(c);
+        _recordOrder(orderHash, seaport);
     }
 
     /**
-     * @notice Clear the `orderHash → executor` binding so the
+     * @notice #3431 — register a 1inch limit order this vault makes (the
+     *         swap-to-repay order), from its TERMS: the vault checks it is the
+     *         maker and asks the order protocol for the hash itself.
+     * @dev    Diamond-gated. The receiver is the Diamond, which repays the
+     *         loan inside the fill's post-hook (stated in the design, B1 §7).
+     */
+    function registerLimitOrder(IOrderMixin.Order calldata o)
+        external
+        onlyDiamond
+        returns (bytes32 orderHash)
+    {
+        address lop = ORDER_PROTOCOL;
+        if (lop == address(0)) revert OrderProtocolUnset();
+        address maker = AddressLib.get(o.maker);
+        if (maker != address(this)) revert OrderNotThisVaults(maker);
+        orderHash = IOrderMixin(lop).hashOrder(o);
+        _recordOrder(orderHash, lop);
+    }
+
+    function _recordOrder(bytes32 orderHash, address verifier) private {
+        if (orderHash == bytes32(0)) revert ZeroOrderHash();
+        _orderVerifier[orderHash] = verifier;
+        emit OrderHashRegistered(orderHash, verifier);
+    }
+
+    /**
+     * @notice Clear an order hash so the
      *         vault's ERC-1271 stops returning the magic value
      *         for `orderHash` (sign-time verifications for any
      *         subsequent Seaport fill of this order will then
@@ -362,7 +442,7 @@ contract VaipakamVaultImplementation is
      */
     function revokeListingOrderHash(bytes32 orderHash) external onlyDiamond {
         if (orderHash == bytes32(0)) revert ZeroOrderHash();
-        delete _listingExecutor[orderHash];
+        delete _orderVerifier[orderHash];
         emit ListingOrderHashRevoked(orderHash);
     }
 
@@ -386,7 +466,7 @@ contract VaipakamVaultImplementation is
 
     /// @dev The destination is not one `class_` may reach.
     error OutflowDestinationRefused(VaultOutflowTypes.OutflowClass class_, address to);
-    /// @dev A grant names a spender outside its registry set, or an asset kind
+    /// @dev A grant names a spender other than its class's constant, or an asset kind
     ///      the vault never grants (ERC-1155).
     error GrantRefused(VaultOutflowTypes.GrantClass class_, address spender);
     /// @dev A just-in-time allowance is open: nothing else leaves until it closes.
@@ -417,6 +497,11 @@ contract VaipakamVaultImplementation is
     /// @dev #3205 part 2 — the listing escrows this vault created, by address:
     ///      the listing key each one serves (0 = not one of this vault's).
     mapping(address => bytes32) private _escrowKey;
+
+    /// @dev #3431 — the order hashes this vault computed from terms it was
+    ///      given, each with the one protocol whose ERC-1271 query it answers
+    ///      (Seaport or the 1inch order protocol). 0 = not one of its orders.
+    mapping(bytes32 => address) private _orderVerifier;
 
     event ListingEscrowOpened(bytes32 indexed key, address indexed escrow, address asset, address conduit);
     event ListingEscrowClosed(bytes32 indexed key, address indexed escrow, uint256 returned);
@@ -449,8 +534,8 @@ contract VaipakamVaultImplementation is
     {
         if (key == bytes32(0)) revert ZeroOutflow();
         // The escrow's conduit approval is a spender right the vault causes,
-        // so it passes the same registry rule as every grant.
-        _requireRegistrySpender(VaultOutflowTypes.GrantClass.Conduit, conduit);
+        // so it passes the same spender rule as every grant.
+        _requireSpender(VaultOutflowTypes.GrantClass.Conduit, conduit);
         escrow = listingEscrowAddress(key);
         if (escrow.code.length == 0) {
             escrow = address(new ListingEscrow{salt: key}());
@@ -485,6 +570,7 @@ contract VaipakamVaultImplementation is
      */
     function transferOut(VaultOutflowTypes.Outflow calldata o) external onlyDiamond {
         if (_openGrant.spender != address(0)) revert GrantOpen(_openGrant.ref);
+        if (_swapping) revert SwapOutcomeRefused();
         if (o.amount == 0 || o.to == address(0)) revert ZeroOutflow();
         if (!_destinationAllowed(o)) revert OutflowDestinationRefused(o.class_, o.to);
         if (o.kind == VaultOutflowTypes.AssetKind.ERC20) {
@@ -507,8 +593,9 @@ contract VaipakamVaultImplementation is
      */
     function grantAllowance(VaultOutflowTypes.Grant calldata g) external onlyDiamond {
         if (_openGrant.spender != address(0)) revert GrantOpen(_openGrant.ref);
+        if (_swapping) revert SwapOutcomeRefused();
         if (g.kind == VaultOutflowTypes.AssetKind.ERC1155) revert GrantRefused(g.class_, g.spender);
-        _requireRegistrySpender(g.class_, g.spender);
+        _requireSpender(g.class_, g.spender);
         _openGrant = OpenGrant({kind: g.kind, asset: g.asset, tokenId: g.tokenId, amount: g.amount, spender: g.spender, ref: g.ref});
         _grantOpenedThisTx = true;
         if (g.kind == VaultOutflowTypes.AssetKind.ERC20) {
@@ -549,6 +636,66 @@ contract VaipakamVaultImplementation is
         emit VaultGrantClosed(g.asset, g.spender, g.tokenId, consumed, g.ref);
     }
 
+    /// @notice #3431 — a swap out of this vault, as the vault measured it.
+    event VaultSwapOut(
+        address indexed assetIn,
+        address indexed assetOut,
+        address indexed to,
+        address adapter,
+        uint256 spent,
+        uint256 received,
+        uint256 ref
+    );
+
+    /// @dev #3431 — set for the length of a {swapOut}: no other outflow,
+    ///      grant or swap may run while the adapter holds an allowance.
+    bool private transient _swapping;
+
+    /**
+     * @notice #3431 — sell at most `w.maxIn` of one ERC-20 through an adapter
+     *         on the fixed swap interface, in one call, judged by its result.
+     * @dev    Diamond-gated. Refuses an adapter that is not a contract, this
+     *         vault, the Diamond or either asset. Measures this vault's input
+     *         balance and the recipient's output balance around the call, so
+     *         the adapter can take no more than `maxIn` and must deliver at
+     *         least `minOut`; the allowance is opened and closed inside the
+     *         call. Refused while a grant is open or another swap runs.
+     * @return spent    What the adapter took of `assetIn`.
+     * @return received What the recipient's `assetOut` balance rose by.
+     */
+    function swapOut(VaultOutflowTypes.SwapOut calldata w)
+        external
+        onlyDiamond
+        returns (uint256 spent, uint256 received)
+    {
+        if (_openGrant.spender != address(0)) revert GrantOpen(_openGrant.ref);
+        if (_swapping) revert SwapOutcomeRefused();
+        address adapter = w.adapter;
+        if (
+            w.maxIn == 0 || w.assetIn == w.assetOut || adapter.code.length == 0 || adapter == address(this)
+                || adapter == diamond || adapter == w.assetIn || adapter == w.assetOut
+        ) revert SwapOutcomeRefused();
+        address to = w.to;
+        if (to != address(this) && to != ownerWallet && !_isHolderVault(to, w.positionToken)) {
+            revert OutflowDestinationRefused(VaultOutflowTypes.OutflowClass.SwapAdapter, to);
+        }
+        IERC20 tokenIn = IERC20(w.assetIn);
+        uint256 inBefore = tokenIn.balanceOf(address(this));
+        uint256 outBefore = IERC20(w.assetOut).balanceOf(to);
+        _swapping = true;
+        tokenIn.forceApprove(adapter, w.maxIn);
+        ISwapAdapter(adapter).execute(w.assetIn, w.assetOut, w.maxIn, w.minOut, to, w.adapterData);
+        tokenIn.forceApprove(adapter, 0);
+        _swapping = false;
+        uint256 inAfter = tokenIn.balanceOf(address(this));
+        uint256 outAfter = IERC20(w.assetOut).balanceOf(to);
+        if (inAfter > inBefore || outAfter < outBefore) revert SwapOutcomeRefused();
+        spent = inBefore - inAfter;
+        received = outAfter - outBefore;
+        if (spent == 0 || spent > w.maxIn || received < w.minOut) revert SwapOutcomeRefused();
+        emit VaultSwapOut(w.assetIn, w.assetOut, to, adapter, spent, received, w.ref);
+    }
+
     /// @notice The open allowance, if any (`spender` 0 = none).
     function openGrant()
         external
@@ -570,12 +717,14 @@ contract VaipakamVaultImplementation is
         ) {
             return _isHolderVault(o.to, o.positionToken);
         }
-        if (c == VaultOutflowTypes.OutflowClass.Treasury) return o.to == _registryPointer(RegistryKeys.TREASURY);
+        if (c == VaultOutflowTypes.OutflowClass.Treasury) return TREASURY != address(0) && o.to == TREASURY;
         if (c == VaultOutflowTypes.OutflowClass.Backstop) {
-            address backstop = _registryPointer(RegistryKeys.BACKSTOP);
+            address backstop = BACKSTOP;
             return backstop != address(0) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultOwner() == backstop;
         }
-        if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) return _inRegistrySet(RegistryKeys.SWAP_ADAPTERS, o.to);
+        // #3431 — a swap leaves only through {swapOut}, judged by its result;
+        // a plain transfer to an adapter is never a destination.
+        if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) return false;
         if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) return o.to == diamond;
         // An escrow this vault created for the listing the outflow names
         // (`positionToken` carries the listing key for this class).
@@ -616,82 +765,47 @@ contract VaipakamVaultImplementation is
         return to == address(this) || (to.code.length != 0 && to.codehash == address(this).codehash);
     }
 
-    /// @dev The registry's pointer under `key`; 0 (no match possible) when the
-    ///      registry is unset or the read fails, so the class fails closed.
-    function _registryPointer(bytes32 key) private view returns (address) {
-        if (REGISTRY == address(0)) return address(0);
-        try IProtocolRegistryReader(REGISTRY).requirePointer(key) returns (address a) {
-            return a;
-        } catch {
-            return address(0);
-        }
-    }
-
-    /// @dev Whether `who` is in the registry set `setKey`; false when the
-    ///      registry is unset or the read fails.
     /// @dev THE rule for every spender right this vault grants or causes (a
     ///      just-in-time allowance, a listing escrow's conduit approval): the
-    ///      spender must be a member of the registry set its class names
-    ///      (CONDUITS for a marketplace conduit, SWAP_ADAPTERS for an order
-    ///      taker). No approval path may skip it.
-    function _requireRegistrySpender(VaultOutflowTypes.GrantClass c, address spender) private view {
-        bytes32 set = c == VaultOutflowTypes.GrantClass.Conduit ? RegistryKeys.CONDUITS : RegistryKeys.SWAP_ADAPTERS;
-        if (spender == address(0) || !_inRegistrySet(set, spender)) revert GrantRefused(c, spender);
-    }
-
-    function _inRegistrySet(bytes32 setKey, address who) private view returns (bool) {
-        if (REGISTRY == address(0)) return false;
-        try IProtocolRegistryReader(REGISTRY).isMember(setKey, who) returns (bool m) {
-            return m;
-        } catch {
-            return false;
-        }
+    ///      spender must be the constant its class names (#3431): CONDUIT for
+    ///      a marketplace conduit, ORDER_PROTOCOL for an order taker. No
+    ///      approval path may skip it.
+    function _requireSpender(VaultOutflowTypes.GrantClass c, address spender) private view {
+        address allowed = c == VaultOutflowTypes.GrantClass.Conduit ? CONDUIT : ORDER_PROTOCOL;
+        if (spender == address(0) || spender != allowed) revert GrantRefused(c, spender);
     }
 
     /**
-     * @notice ERC-1271 signature-verification callback used by
-     *         Seaport for orders whose `offerer` is this vault, and
-     *         (#1566 S3e) by the 1inch LOP for the swap-to-repay order
-     *         whose maker is this vault.
-     *         Delegates to the executor pinned at register time;
-     *         returns the magic value iff that executor still
-     *         considers the order valid (recorded, conduit in the
-     *         allow-list, loan still Active).
-     * @dev    The `signature` argument is intentionally ignored —
-     *         the vault doesn't sign with a private key. The
-     *         orderHash binding registered by the diamond is the
-     *         authoritative "we authorised an order with this
-     *         hash" record. Anything not in `_listingExecutor`
-     *         is rejected.
-     *
-     *         Why this lives on the vault (per design doc §4.3):
-     *         Seaport pulls offer items from the order's
-     *         `offerer` address. The vault holds the collateral
-     *         NFT, so the vault IS the offerer. Seaport calls
-     *         `offerer.isValidSignature(...)` per ERC-1271, so
-     *         the callback must live here, not on the executor.
-     *         The executor is the order's `zone` (which handles
-     *         the post-fill `validateOrder` content checks); the
-     *         offerer-and-zone are distinct roles in Seaport's
-     *         restricted-order model.
+     * @notice ERC-1271 signature-verification callback for the orders this
+     *         vault makes: a Seaport listing whose offerer is this vault or
+     *         one of its listing escrows, and (#1566 S3e) the 1inch
+     *         swap-to-repay order whose maker is this vault.
+     * @dev    #3431 — valid only for a hash this vault computed itself from
+     *         the order's terms ({registerSeaportOrder} /
+     *         {registerLimitOrder}), and only when the protocol it was hashed
+     *         for is the one asking: Seaport directly, or one of this vault's
+     *         own listing escrows on Seaport's behalf (the escrow answers
+     *         only Seaport), or the 1inch order protocol. Any other caller,
+     *         any other hash, and any revoked hash gets the invalid value.
+     *         The `signature` argument is ignored: the vault holds no key.
      */
     function isValidSignature(bytes32 hash, bytes calldata /* signature */)
         external
         view
         returns (bytes4)
     {
-        address exec = _listingExecutor[hash];
-        if (exec == address(0)) return 0xffffffff;
-        return IListingExecutorValidator(exec).isOrderValid(hash)
-            ? bytes4(0x1626ba7e)
-            : bytes4(0xffffffff);
+        address verifier = _orderVerifier[hash];
+        if (verifier == address(0)) return 0xffffffff;
+        if (msg.sender == verifier || (verifier == SEAPORT && _escrowKey[msg.sender] != bytes32(0))) {
+            return 0x1626ba7e;
+        }
+        return 0xffffffff;
     }
 
-    /// @notice Read-side view: which executor (if any) does this
-    ///         vault delegate ERC-1271 verification to for
-    ///         `orderHash`? Returns `address(0)` if no binding.
-    function getListingExecutor(bytes32 orderHash) external view returns (address) {
-        return _listingExecutor[orderHash];
+    /// @notice The protocol whose ERC-1271 query this vault answers for
+    ///         `orderHash` (Seaport or the 1inch order protocol); 0 if none.
+    function orderVerifier(bytes32 orderHash) external view returns (address) {
+        return _orderVerifier[orderHash];
     }
 
     /**
@@ -991,5 +1105,5 @@ contract VaipakamVaultImplementation is
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[43] private __gap;
+    uint256[42] private __gap;
 }

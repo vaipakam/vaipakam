@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultEndpoints} from "../helpers/LibTestVaultEndpoints.sol";
 import {VaultBeacon} from "../../src/VaultBeacon.sol";
 import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
@@ -609,7 +610,7 @@ contract HandoverGateTest is Test {
             )
         );
         vaultBeacon = new VaultBeacon(
-            admin, address(diamond), admin, address(new VaipakamVaultImplementation(address(0), address(protocolRegistry)))
+            admin, address(diamond), admin, address(new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none()))
         );
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
