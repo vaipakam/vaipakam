@@ -1,7 +1,8 @@
 /**
  * #3097 — the expired-teardown pass: the permissionless teardowns of a prepay
  * listing past grace, a stale lender-sale listing and an intent past its
- * cancel grace, run against a fake Diamond that applies the contract's own
+ * cancel grace, and (#3336) of any of those, or a vehicle offer, whose
+ * position moved, run against a fake Diamond that applies the contract's own
  * admission rules to each call.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +63,8 @@ interface Loan {
   listing: Hex;
   /** The intent's order deadline, or null with no commit. */
   intentDeadline: bigint | null;
+  /** #3336 — the borrower position moved since its listing or intent was posted. */
+  moved?: boolean;
 }
 
 interface Offer {
@@ -69,6 +72,8 @@ interface Offer {
   accepted: boolean;
   expiresAt: bigint;
   linkedLoanId: bigint;
+  /** #3336 — the Diamond reads its route as dead (`isOfferRouteDead`). */
+  dead?: boolean;
 }
 
 const loan = (over: Partial<Loan> = {}): Loan => ({
@@ -122,7 +127,14 @@ class FakeDiamond {
         return { deadline: l.intentDeadline, makerAmount: 1n };
       }
       case 'getLoanDetails':
-        return { status: this.loans.get(a[0])!.status };
+        return { status: this.loans.get(a[0])!.status, borrowerTokenId: BigInt(a[0]) * 2n };
+      case 'isPositionRouteDead': {
+        // The borrower position of loan N is token 2N.
+        const l = this.loans.get(BigInt(a[0]) / 2n)!;
+        return l.moved === true;
+      }
+      case 'isOfferRouteDead':
+        return this.offers.get(a[0])?.dead === true;
       case 'getActiveOffersCount':
         return BigInt(this.liveOffers().length);
       case 'getActiveOffersPaginated':
@@ -159,11 +171,12 @@ class FakeDiamond {
 
   /** The contract's checks for each teardown, in the parts the pass can meet. */
   private admit(functionName: string, loanId: bigint, caller: Address): () => void {
+    if (functionName === 'cancelOffer') return this.admitCancelOffer(loanId);
     const l = this.loans.get(loanId)!;
     switch (functionName) {
       case 'cancelExpiredPrepayListing':
         if (BigInt(l.listing) === 0n) throw revert('PrepayListingNotFound', [loanId]);
-        if (this.now <= l.graceEnd) throw revert('GraceNotExpired', [loanId, this.now, l.graceEnd]);
+        if (!l.moved && this.now <= l.graceEnd) throw revert('GraceNotExpired', [loanId, this.now, l.graceEnd]);
         return () => {
           this.lastLogs = [logOf('PrepayListingCanceled', { loanId, caller, orderHash: l.listing, reason: 1 })];
           l.listing = ZERO_HASH;
@@ -181,7 +194,7 @@ class FakeDiamond {
       case 'cancelExpiredIntent':
         if (this.paused) throw revert('EnforcedPause');
         if (l.intentDeadline === null) throw revert('IntentNoCommit', [loanId]);
-        if (this.now < l.intentDeadline + this.graceSec) throw revert('IntentNotPastCancelGrace');
+        if (!l.moved && this.now < l.intentDeadline + this.graceSec) throw revert('IntentNotPastCancelGrace');
         return () => {
           this.lastLogs = [logOf('SwapToRepayIntentCancelled', { loanId, orderHash: HASH, cancelledBy: caller })];
           l.intentDeadline = null;
@@ -189,6 +202,21 @@ class FakeDiamond {
       default:
         throw new Error(`unexpected call ${functionName}`);
     }
+  }
+
+  /** `cancelOffer` by a stranger: refused while paused, and unless the offer
+   *  is expired or its route is dead. */
+  private admitCancelOffer(offerId: bigint): () => void {
+    if (this.paused) throw revert('EnforcedPause');
+    const o = this.offers.get(offerId);
+    if (o === undefined) throw revert('NotCreatorOrNotExpired', [`0x${'0'.repeat(40)}`, 0n]);
+    const expired = o.expiresAt !== 0n && this.now >= o.expiresAt;
+    if (!o.dead && !expired) throw revert('NotCreatorOrNotExpired', [KEEPER, o.expiresAt]);
+    if (o.accepted) throw revert('OfferAlreadyAccepted');
+    return () => {
+      this.lastLogs = [logOf('OfferCanceled', { offerId, creator: KEEPER })];
+      this.offers.delete(offerId);
+    };
   }
 
   simulateContract = async ({ functionName, args, account }: { functionName: string; args: readonly unknown[]; account: { address: Address } }) => {
@@ -270,6 +298,13 @@ describe('teardownEvent', () => {
     expect(teardownEvent('sale', DIAMOND, 3n, [logOf('LoanSaleListingTornDown', { loanId: 3n, saleOfferId: 9n })])).toBe('loan 3 offer 9');
     expect(teardownEvent('prepay', DIAMOND, 1n, [intent]), 'another step\'s event').toBeNull();
   });
+
+  it('names a vehicle cancel from the OfferCanceled event for that offer only', () => {
+    const cancelled = logOf('OfferCanceled', { offerId: 9n, creator: KEEPER });
+    expect(teardownEvent('vehicle', DIAMOND, 9n, [cancelled])).toBe('offer 9');
+    expect(teardownEvent('vehicle', DIAMOND, 8n, [cancelled]), 'another offer').toBeNull();
+    expect(teardownEvent('sale', DIAMOND, 9n, [cancelled]), 'a sale teardown is its own event').toBeNull();
+  });
 });
 
 describe('a run', () => {
@@ -323,6 +358,61 @@ describe('a run', () => {
     expect(line).toContain('intent[due=1 torn-down=loan 4 order 0xabababab]');
   });
 
+  it('#3336: tears down a listing or intent whose position moved at once, and leaves the unmoved ones', async () => {
+    d.loans.set(1n, loan({ maturity: NOW - 60n, graceEnd: NOW + 3600n, listing: HASH, moved: true })); // in grace, moved: due
+    d.loans.set(2n, loan({ maturity: NOW - 60n, graceEnd: NOW + 3600n, listing: HASH })); // in grace, unmoved: the auto-list's
+    d.loans.set(3n, loan({ intentDeadline: NOW + 3600n, moved: true })); // before its deadline, moved: due
+    d.loans.set(4n, loan({ intentDeadline: NOW + 3600n })); // before its deadline, unmoved
+    d.loans.set(5n, loan({ moved: true })); // moved, but nothing to tear down
+    const r = await run();
+    const expected = ['cancelExpiredPrepayListing:1', 'cancelExpiredIntent:3'];
+    expect(d.sent).toEqual(expected);
+    expect(d.simulated, 'no simulation for a live route').toEqual(expected);
+    expect(r.steps.prepay).toMatchObject({ due: 1, torndown: ['loan 1 order 0xabababab'] });
+    expect(r.steps.intent).toMatchObject({ due: 1, torndown: ['loan 3 order 0xabababab'] });
+  });
+
+  it('#3336: cancels a vehicle offer whose route is dead, after the sale teardowns', async () => {
+    d.loans.set(1n, loan()); // live loan
+    d.loans.set(2n, loan()); // live loan, its sale listing expired and dead
+    d.offers.set(20n, sale(1n, { expiresAt: NOW + 3600n, dead: true })); // a sale inside its expiry, moved: a vehicle cancel
+    d.offers.set(21n, sale(1n, { offerType: 0, expiresAt: NOW + 3600n, dead: true })); // a preclose offset, moved
+    d.offers.set(22n, { offerType: 1, accepted: false, expiresAt: NOW + 3600n, linkedLoanId: 0n, dead: true }); // a refinance request, moved
+    d.offers.set(23n, sale(2n, { dead: true })); // expired and dead: the sale step's
+    d.offers.set(24n, sale(1n, { offerType: 0, expiresAt: NOW + 3600n })); // an offset whose route is live
+    const r = await run();
+    expect(d.sent).toEqual(['teardownStaleSaleListing:2', 'cancelOffer:20', 'cancelOffer:21', 'cancelOffer:22']);
+    expect(d.simulated.filter((x) => x === 'cancelOffer:24'), 'a live vehicle reaches no simulation').toEqual([]);
+    expect(r.steps.sale).toMatchObject({ due: 1, torndown: ['loan 2 offer 23'] });
+    expect(r.steps.vehicle).toMatchObject({ due: 3, torndown: ['offer 20', 'offer 21', 'offer 22'] });
+    expect(describeReport(r)).toContain('vehicle[due=3 torn-down=offer 20,offer 21,offer 22]');
+  });
+
+  it('#3336: a vehicle the contract no longer reads as dead is named as not yet, not refused', async () => {
+    d.loans.set(1n, loan());
+    d.offers.set(20n, sale(1n, { offerType: 0, expiresAt: NOW + 3600n, dead: true }));
+    const simulate = d.simulateContract;
+    vi.spyOn(d, 'simulateContract').mockImplementation(async (p) => {
+      if (p.functionName === 'cancelOffer') throw revert('NotCreatorOrNotExpired', [KEEPER, NOW + 3600n]);
+      return simulate(p);
+    });
+    const r = await run();
+    expect(d.sent).toEqual([]);
+    expect(r.steps.vehicle.notYet).toEqual([
+      'offer 20 (its position moved): the contract no longer reads its route as dead at the current block (or it is already gone)',
+    ]);
+    expect(r.refused.size).toBe(0);
+  });
+
+  it('#3336: says what it could not read of a moved route, and still works the rest', async () => {
+    d.loans.set(1n, pastGrace({ listing: HASH }));
+    d.loans.set(2n, loan({ intentDeadline: NOW + 3600n, moved: true }));
+    d.failing.add('isPositionRouteDead');
+    const r = await run();
+    expect(d.sent).toEqual(['cancelExpiredPrepayListing:1']);
+    expect(r.unread.get('moved')).toContain('1 listing(s) or intent(s)');
+  });
+
   it('sends nothing when the simulation reverts, and says why', async () => {
     d.loans.set(1n, pastGrace({ listing: HASH }));
     d.loans.set(2n, loan({ intentDeadline: NOW - GRACE_SEC }));
@@ -342,21 +432,23 @@ describe('a run', () => {
     expect(d.sent).toEqual([]);
     expect(r.steps.prepay.notYet).toEqual(['loan 1: its grace window has not ended at the current block']);
     expect(r.steps.sale.torndown).toEqual([]);
-    expect(r.refused.get('sale:3')).toBe('ExecutorNotSet');
+    expect(r.refused.get('sale:loan 3')).toBe('ExecutorNotSet');
     expect(r.steps.intent.gone).toEqual(['loan 2']);
-    expect(r.refused.has('intent:2'), 'a teardown someone else made is not a refusal').toBe(false);
+    expect(r.refused.has('intent:loan 2'), 'a teardown someone else made is not a refusal').toBe(false);
   });
 
-  it('a pause stops only the intent step, which goes last: the other two are allowed while paused', async () => {
+  it('a pause stops the vehicle and intent steps, which go last: the other two are allowed while paused', async () => {
     d.paused = true;
     d.loans.set(1n, pastGrace({ listing: HASH }));
     d.loans.set(2n, loan({ intentDeadline: 0n }));
     d.loans.set(3n, loan({ intentDeadline: 0n }));
     d.loans.set(4n, loan({ status: 2 }));
     d.offers.set(20n, sale(4n));
+    d.offers.set(21n, { offerType: 1, accepted: false, expiresAt: NOW + 3600n, linkedLoanId: 0n, dead: true });
     const r = await run();
     expect(d.sent).toEqual(['cancelExpiredPrepayListing:1', 'teardownStaleSaleListing:4']);
-    expect(d.simulated.filter((s) => s.startsWith('cancelExpiredIntent')), 'one refusal stops the step').toHaveLength(1);
+    expect(d.simulated.filter((s) => s.startsWith('cancelOffer')), 'one refusal stops the run').toHaveLength(1);
+    expect(d.simulated.filter((s) => s.startsWith('cancelExpiredIntent')), 'nothing after the pause').toHaveLength(0);
     expect(r.stopped).toBe('EnforcedPause');
   });
 
