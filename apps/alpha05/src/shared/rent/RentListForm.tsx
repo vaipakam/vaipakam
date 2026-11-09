@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -130,7 +130,13 @@ export function RentListForm({ side = 'list', formKey, chain, own, onReview, onC
   const ids = { nft: useId(), pay: useId() };
   const [stored, setStored] = useStoredValue<ListInput>(`${formKey}:input`);
   const input = stored ?? DEFAULT_INPUT;
-  const set = (patch: Partial<ListInput>) => setStored({ ...input, ...patch });
+  const queued = useRef(false);
+  // Any edit withdraws a click that was waiting on reads: it stands for the
+  // form as it was, never for one changed since.
+  const set = (patch: Partial<ListInput>) => {
+    queued.current = false;
+    setStored({ ...input, ...patch });
+  };
   const [touched, setTouched] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
 
@@ -191,10 +197,17 @@ export function RentListForm({ side = 'list', formKey, chain, own, onReview, onC
   // term limit's failed read (stated with a retry below the term), or, when
   // neither stands, that a read the listing needs has not answered yet.
   const fieldErrors = [nftError, tokenIdError, quantityError, payError, feeError, daysError, expiryError];
-  const stillReading = touched && !ready && maxDays.state !== 'failed' && fieldErrors.every((e) => e === null);
+  const waitingOnReads = !ready && maxDays.state !== 'failed' && fieldErrors.every((e) => e === null);
+  const stillReading = touched && waitingOnReads;
 
   const submit = async () => {
     setTouched(true);
+    // A click while only reads are outstanding is kept, and goes on by
+    // itself once they answer, so the page never needs a second click.
+    if (waitingOnReads) {
+      queued.current = true;
+      return;
+    }
     if (!ready || nft === null || payment === null || tokenId === null || quantity === null || !fee?.ok || !days?.ok) return;
     setOpening(null);
     try {
@@ -214,6 +227,14 @@ export function RentListForm({ side = 'list', formKey, chain, own, onReview, onC
       setOpening(refusalFromError(e).reason);
     }
   };
+
+  useEffect(() => {
+    if (!queued.current || !ready) return;
+    queued.current = false;
+    void submit();
+    // submit reads this render's values; `ready` turning true is the signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   return (
     <form

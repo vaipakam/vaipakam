@@ -95,7 +95,10 @@ test('a renter posts a request to rent: a shortfall is stated first, then the re
   await expect(receipt).toContainText(`NFT #${tokenId} of vRENT, which does not exist yet`);
   await expect(receipt).toContainText('5 days from when an owner takes it');
   await expect(receipt).toContainText('Pro-rata: you pay for the days you use');
-  await expect(receipt).toContainText('fixed by this request now');
+  // The buffer is today's setting; the request keeps the one in force when
+  // it lands, and the review states that race.
+  await expect(receipt).toContainText("of the rent at today's setting");
+  await expect(receipt).toContainText('The protocol takes the buffer setting in force when your request lands');
   await expect(receipt).toContainText('Unused rent and the whole buffer come back to you as a claim');
   await expect(receipt).toContainText('None: a rental has no collateral and no health factor');
   await expect(receipt).toContainText('starts the rental at once, with no further step from you');

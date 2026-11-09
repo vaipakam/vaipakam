@@ -1710,7 +1710,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   measured (the listing recorded and the NFT in the owner's vault).
   A click on review that cannot go on always says why: a field's own
   error, a failed read of the network's longest term (stated with a
-  retry), or that a read the listing needs has not answered yet.
+  retry), or that a read the listing needs has not answered yet, in which
+  case the click is kept and the review opens by itself once it answers
+  (any edit withdraws it).
 
 - **RB-RENT-REQUEST** — A renter posts a request to rent a named NFT
   (NFT-02) on the Rent page, behind the Terms gate, through the same form
