@@ -107,7 +107,8 @@ by `script/lib/PriceGuardDeployment.sol`:
   required, each with code, so the guard starts complete. On a testnet a
   missing entry is left for the configure step; a mock rig's feeds and WETH
   exist only after the Diamond, and the testnet's zero delay applies them at
-  once (part 2 moves the configure steps onto the guard).
+  once. The configure steps write the guard through
+  `script/lib/PriceGuardConfig.sol` (see below).
 - The owner and the guardian start as the admin; the handover moves them to
   the Timelock and the Pauser Safe.
 
@@ -115,14 +116,62 @@ WETH is a delayed entry, not part of the fixed identity: a testnet's WETH can
 be a mock created after the Diamond, and which token is WETH is routing config
 like a direct asset feed.
 
+## How the Diamond reads it (part 2)
+
+- **Found once, then through the registry.** `DeployDiamond` records the
+  protocol registry on the Diamond with `initializeProtocolRegistry`, one
+  time only, after the registry already names a guard. The Diamond records
+  the guard's numeraire symbol with it, because every numeraire-denominated
+  threshold it holds is in that unit. Each price read then resolves the guard
+  through the registry's `PRICE_GUARD` pointer at that moment, so a pointer
+  swap (delayed, cancellable by the guardian) is the only way the Diamond
+  changes guard.
+- **A guard in another numeraire is refused.** If the registry ever points at
+  a guard whose numeraire differs from the recorded one, every price read
+  reverts `PriceGuardNumeraireMismatch`, the status read included. A missing
+  or mismatched guard is a deploy defect, never "no price": reading it as
+  unavailable would hand a lender the whole collateral on a price nobody
+  looked up. Thresholds are never compared against prices in another unit.
+- **`OracleFacet` forwards.** Its price selectors keep their signatures and
+  their answers; the pricing code and its config left the Diamond. Removed
+  with them:
+  - the Diamond's pricing setters (feed registry, denominators, WETH, the ETH
+    feed, stable references, feed overrides, the sequencer feed, Pyth, the
+    secondary sources and their bounds, per-asset direct feeds, the PAD);
+  - their getters, since the console reads the same values from the guard;
+  - live numeraire switching (`setNumeraire`, `setNumeraireSwapEnabled`,
+    `setPredominantDenominator`) and the threshold resets it drove;
+  - the Diamond storage those setters wrote (the slots stay in the layout
+    under retired names, and nothing reads them).
+- **What `OracleAdminFacet` still sets.** Only what the Diamond's own
+  liquidity classification reads: the Uniswap V3 factory, the peer protocol
+  addresses and the tier reference assets.
+- **Scripts write the guard, never around it.** `PriceGuardConfig.ensure`
+  brings one entry to a wanted value: it does nothing when the entry already
+  holds it, proposes and executes in one run when the guard's delay is zero
+  (a testnet), and otherwise leaves the change pending and says so. The
+  launch readiness check reads the guard, so a chain whose entries are still
+  pending is refused until they are executed.
+- **No in-place crossing.** A Diamond from before the guard prices from its
+  own storage and records no registry. Every in-place refresh script refuses
+  it (`PredatesPriceGuard`, `script/lib/PriceGuardCrossing.sol`) before it
+  sends anything: the crossing is a fresh deploy, like every chain gets at
+  the next release.
+- **The protocol console reads the guard.** The shared knob reader reads the
+  Diamond's settings, then the guard's settings in a second batch at the same
+  block. The guard's settings are listed as eventless: the indexer hears only
+  the Diamond's events, so it refreshes them on its periodic snapshot, not on
+  a guard change. Listening for the guard's own change events, pending
+  changes included, is #3453.
+
 ## Build order
 
-1. **This PR.**
+1. **Part 1 (done, #3447).**
    - The `PriceGuard` contract, with its own test suite, ported from the
      pricing tests.
    - The deploy creates the guard and seeds it into the registry.
    - Nothing reads it yet.
-2. **The switch.**
+2. **Part 2, the switch (done).**
    - `OracleFacet` forwards to the guard.
    - The Diamond's pricing setters and storage are retired.
    - Tests and scripts configure the guard.

@@ -183,7 +183,15 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     // ─── Config ──────────────────────────────────────────────────────────
 
     address public feedRegistry;
-    /// @notice The chain's WETH, priced from the ETH anchor feed.
+    /// @notice The chain's WETH, priced from the ETH anchor feed. The
+    ///         Diamond's liquidity probe also routes over it.
+    /// @dev    It must be the chain's canonical bridged WETH9, never the
+    ///         wrapped native token where native gas is not ETH (WBNB on BNB
+    ///         Chain, WPOL on Polygon PoS): the guard prices it from the ETH
+    ///         feed without touching it, so a wrong token is mispriced as
+    ///         ETH. Nothing on-chain says which token is WETH9; the chain's
+    ///         official bridge registry is the source, and the launch
+    ///         readiness check compares this entry with the declared one.
     address public weth;
     address public ethNumeraireFeed;
     address public ethPadFeed;

@@ -383,24 +383,6 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().knownGlobalSet[day] = isSet;
     }
 
-    /// @notice Write the ETH/USD Chainlink feed address directly. Lets
-    ///         reward-cap coverage tests exercise the §4 per-user cap
-    ///         without cutting OracleAdminFacet into the harness.
-    function setEthUsdFeedRaw(address feed) external {
-        LibVaipakam.storageSlot().ethNumeraireFeed = feed;
-    }
-
-    /// @notice Test-only: stamp `s.wethContract` directly without going
-    ///         through `OracleAdminFacet.setWethContract` (which the
-    ///         minimal test fixtures don't cut). Used by
-    ///         `NotificationFeeTest` to exercise
-    ///         `LibNotificationFee`'s Phase 1 fallback path
-    ///         (ETH/USD via OracleFacet × fixed VPFI/ETH rate),
-    ///         which reads `s.wethContract`.
-    function setWethContractRaw(address weth) external {
-        LibVaipakam.storageSlot().wethContract = weth;
-    }
-
     /// @notice Write the admin-configurable per-user interaction-reward
     ///         cap override directly. Zero = fall back to default; the
     ///         uint256 max sentinel disables the cap entirely.

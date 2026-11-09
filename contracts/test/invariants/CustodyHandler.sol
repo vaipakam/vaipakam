@@ -29,6 +29,7 @@ import {MockLopFill} from "../mocks/MockLopFill.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
 import {LibFallbackCustody} from "../../src/libraries/LibFallbackCustody.sol";
 import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /// @dev The intent cancel grace the harness configures and the handler waits out on the
 ///      permissionless expired-cancel path. One constant, read by both, so they cannot disagree.
@@ -290,7 +291,7 @@ contract CustodyHandler is Test {
         bps = bound(bps, 9_500, 10_000);
         wethPrice8 = (uint256(1e8) * bps) / 10_000;
         vm.mockCall(
-            diamond,
+            LibTestPriceGuard.guardOf(diamond),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, weth),
             abi.encode(wethPrice8, uint8(8))
         );

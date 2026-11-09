@@ -73,6 +73,8 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @title EarlyWithdrawalFacetTest
@@ -125,7 +127,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset), abi.encode(status));
     }
     function mockPrice(address asset, uint256 price, uint8 dec) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
     }
 
     // ─── Test-only mutator helpers (layout-independent Loan/Offer setters) ───
@@ -6998,8 +7000,8 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_sale_unpriceableBlueChipLegRefusedEvenWithConsentGateOn() public {
         // Make the loan's existing collateral blue-chip by IDENTITY, which is
         // the whole mechanism: `_isBlueChip` short-circuits on
-        // `asset == s.wethContract` without reading liquidity at all.
-        TestMutatorFacet(address(diamond)).setWethContractRaw(mockCollateralERC20);
+        // `asset == weth` (the price guard's, #3272) without reading liquidity.
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockCollateralERC20);
         (uint8 before, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(
             before,

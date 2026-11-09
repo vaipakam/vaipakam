@@ -655,7 +655,7 @@ async function preNotifyChain(
       // class of two-moments answer. Pinning one read and not the other was
       // half a fix.
       blockNumber: head,
-    })) as readonly [string, bigint, number, boolean, boolean];
+    })) as readonly [string, bigint, number, boolean];
     // `preNotify` is already resolved against the library default on-chain, so
     // the guard here is only against a zero a malformed decode could produce.
     if (cfg[2] && Number(cfg[2]) > 0) preNotifyDays = Number(cfg[2]);

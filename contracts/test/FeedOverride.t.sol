@@ -2,17 +2,17 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
-import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
 
 /**
  * @title FeedOverrideTest
  * @notice Phase 3.1 hardening: per-feed `maxStaleness` override +
- *         `minValidAnswer` floor. Verifies that:
- *           - Only the owner can install or clear an override.
+ *         `minValidAnswer` floor, held by the price guard since #3272 part 2
+ *         (its owner-only, delayed change is the guard suite's). Verifies that:
  *           - A tighter override rejects a price that would pass the
  *             global two-tier defaults.
  *           - An override never loosens: a longer budget leaves the
@@ -36,23 +36,17 @@ contract FeedOverrideTest is SetupTest {
         // so we exercise the real OracleFacet + feed-override code path.
         vm.clearMockedCalls();
 
-        // #229 — OracleAdminFacet is now cut by `SetupTest.setupHelper()`
-        // (all 34 selectors, mirroring DeployDiamond). The prior local
-        // subset cut here would double-cut and revert. Dropped.
-
         vm.warp(1_000_000);
 
         asset = mockERC20;
         registry = makeAddr("feedRegistry");
-        usdDenominator = makeAddr("usdDenominator");
+        // #3272 part 2 - the guard keys feeds by its fixed USD denominator.
+        usdDenominator = LibTestPriceGuard.USD;
 
         // Fresh 8-decimal feed returning $1000 at the current block time.
         feed = new MockChainlinkAggregator(int256(1000e8), block.timestamp, 8);
 
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(registry);
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(
-            usdDenominator
-        );
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, registry);
 
         // Route every registry.getFeed(asset, usd) to our scriptable aggregator.
         vm.mockCall(
@@ -68,58 +62,11 @@ contract FeedOverrideTest is SetupTest {
 
     // ─── Admin gating ───────────────────────────────────────────────────────
 
-    function test_setFeedOverride_OnlyOwner() public {
-        vm.prank(attacker);
-        vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
-            30 minutes,
-            0
-        );
-    }
 
-    function test_setFeedOverride_RevertsOnZeroFeed() public {
-        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(0),
-            30 minutes,
-            0
-        );
-    }
 
     // ─── Storage roundtrip ──────────────────────────────────────────────────
 
-    function test_setFeedOverride_StoresAndReads() public {
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
-            30 minutes,
-            1e8
-        );
-        (uint40 s, int256 m) = OracleAdminFacet(address(diamond))
-            .getFeedOverride(address(feed));
-        assertEq(s, 30 minutes);
-        assertEq(m, 1e8);
-    }
 
-    function test_setFeedOverride_ClearOnMaxStalenessZero() public {
-        // Install first.
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
-            30 minutes,
-            1e8
-        );
-
-        // Clear — both fields reset regardless of the passed minValidAnswer.
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
-            0,
-            99e8
-        );
-        (uint40 s, int256 m) = OracleAdminFacet(address(diamond))
-            .getFeedOverride(address(feed));
-        assertEq(s, 0);
-        assertEq(m, 0);
-    }
 
     // ─── Runtime effect on getAssetPrice ────────────────────────────────────
 
@@ -136,11 +83,9 @@ contract FeedOverrideTest is SetupTest {
             .getAssetPrice(asset);
         assertEq(priceBefore, 1000e8);
 
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed),
             30 minutes,
-            0
-        );
+            0);
 
         vm.expectRevert(OracleFacet.StalePriceData.selector);
         OracleFacet(address(diamond)).getAssetPrice(asset);
@@ -156,42 +101,32 @@ contract FeedOverrideTest is SetupTest {
         vm.expectRevert(OracleFacet.StalePriceData.selector);
         OracleFacet(address(diamond)).getAssetPrice(asset);
 
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed),
             6 hours,
-            0
-        );
+            0);
 
         vm.expectRevert(OracleFacet.StalePriceData.selector);
         OracleFacet(address(diamond)).getAssetPrice(asset);
     }
 
     /// @dev #2742 — a budget above the outer default (25h) could never bind,
-    ///      so the setter refuses it rather than store what reads as a
+    ///      so the guard refuses it rather than store what reads as a
     ///      loosening. Exactly 25h is accepted.
-    function test_setFeedOverride_RefusesBudgetAboveOuterDefault() public {
+    function test_FeedOverride_RefusesBudgetAboveOuterDefault() public {
+        PriceGuard guard = PriceGuard(LibTestPriceGuard.guardOf(address(diamond)));
+        bytes32 subject = bytes32(uint256(uint160(address(feed))));
         vm.expectRevert(
             abi.encodeWithSelector(
-                IVaipakamErrors.ParameterOutOfRange.selector,
-                bytes32("feedMaxStaleness"),
-                uint256(25 hours + 1),
-                uint256(1),
-                uint256(25 hours)
+                PriceGuard.InvalidChange.selector,
+                PriceGuard.Kind.FeedMaxStaleness,
+                subject,
+                bytes32(uint256(25 hours + 1))
             )
         );
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
-            uint40(25 hours + 1),
-            0
-        );
+        guard.proposeChange(PriceGuard.Kind.FeedMaxStaleness, subject, bytes32(uint256(25 hours + 1)));
 
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
-            uint40(25 hours),
-            0
-        );
-        (uint40 m, ) = OracleAdminFacet(address(diamond)).getFeedOverride(address(feed));
-        assertEq(m, 25 hours, "25h stored");
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed), 25 hours, 0);
+        assertEq(guard.feedMaxStaleness(address(feed)), 25 hours, "25h stored");
     }
 
     /// @dev Min-valid-answer floor rejects a below-floor reading even
@@ -201,8 +136,7 @@ contract FeedOverrideTest is SetupTest {
         // Fresh feed but collapsed price ($0.01 when floor is $500).
         feed.setRound(int256(1e6), block.timestamp - 5 minutes);
 
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed),
             30 minutes,
             500e8 // $500 floor
         );
@@ -216,11 +150,9 @@ contract FeedOverrideTest is SetupTest {
     function test_MinValidAnswer_AcceptsAtFloor() public {
         feed.setRound(int256(500e8), block.timestamp - 5 minutes);
 
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed),
             30 minutes,
-            500e8
-        );
+            500e8);
 
         (uint256 price, ) = OracleFacet(address(diamond))
             .getAssetPrice(asset);
@@ -232,20 +164,16 @@ contract FeedOverrideTest is SetupTest {
         feed.setRound(int256(1000e8), block.timestamp - 90 minutes);
 
         // Install tightened override → reverts.
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed),
             30 minutes,
-            0
-        );
+            0);
         vm.expectRevert(OracleFacet.StalePriceData.selector);
         OracleFacet(address(diamond)).getAssetPrice(asset);
 
         // Clear — 90-minute-old price now passes the 2h global ceiling.
-        OracleAdminFacet(address(diamond)).setFeedOverride(
-            address(feed),
+        LibTestPriceGuard.setFeedOverride(address(diamond), address(feed),
             0,
-            0
-        );
+            0);
         (uint256 price, ) = OracleFacet(address(diamond))
             .getAssetPrice(asset);
         assertEq(price, 1000e8);

@@ -46,6 +46,7 @@ import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title Scenario4_IlliquidCollateral
@@ -90,7 +91,7 @@ contract Scenario4_IlliquidCollateral is Test {
     }
 
     function mockPrice(address asset, uint256 price, uint8 dec) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
     }
 
     function setUp() public {

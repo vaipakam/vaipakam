@@ -119,6 +119,7 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {liquidationQuote, forcedSaleQuote, forcedSalePlan} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 contract RiskFacetTest is Test {
     VaipakamDiamond diamond;
@@ -170,7 +171,7 @@ contract RiskFacetTest is Test {
         uint8 decimals
     ) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );
@@ -718,7 +719,7 @@ contract RiskFacetTest is Test {
 
         // Mock prices: $1 for simplicity
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockERC20
@@ -726,7 +727,7 @@ contract RiskFacetTest is Test {
             abi.encode(1e8, 8) // $1, 8 decimals
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -734,7 +735,7 @@ contract RiskFacetTest is Test {
             abi.encode(1e8, 8)
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockIlliquidERC20
@@ -1013,7 +1014,7 @@ contract RiskFacetTest is Test {
         // zero price by name instead of valuing the collateral at nothing
         // (`OracleFacet.getAssetPrice` refuses it too; the mock bypasses it).
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -2699,7 +2700,7 @@ contract RiskFacetTest is Test {
 
         // Mock borrow price to $0 → borrowValueUsd = 0 → should return type(uint256).max
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockERC20
@@ -3180,7 +3181,7 @@ contract RiskFacetTest is Test {
         // `tryGetAssetPrice` on this toolchain version, while
         // returning zero hits the same code path one layer in.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -3458,7 +3459,7 @@ contract RiskFacetTest is Test {
             abi.encode(true)
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockERC20
@@ -3503,7 +3504,7 @@ contract RiskFacetTest is Test {
             abi.encode(true)
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockERC20
@@ -3511,7 +3512,7 @@ contract RiskFacetTest is Test {
             abi.encode(uint256(1e8), uint8(8))
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -3713,7 +3714,7 @@ contract RiskFacetTest is Test {
 
         // Mock collateral price to 0 → refused by the valuation rule (#2419)
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4023,7 +4024,7 @@ contract RiskFacetTest is Test {
         // within the keeper's [0.95, 1.0) partial band.
         // HF formula: (1800 * 0.65 * 0.85) / 1000 = 994.5 / 1000 = 0.9945.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4122,7 +4123,7 @@ contract RiskFacetTest is Test {
     function testPartialLiq_LenderPayoutShort_Refused() public {
         uint256 loanId = createAndAcceptOffer();
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(0.65e8, 8)
         );
@@ -4169,7 +4170,7 @@ contract RiskFacetTest is Test {
         // Skip 10 days into the loan, then push HF below 1.
         vm.warp(uint256(loanBefore.startTime) + 10 days);
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4235,7 +4236,7 @@ contract RiskFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
         vm.warp(uint256(loan.startTime) + 10 days);
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(0.65e8, 8)
         );
@@ -4332,7 +4333,7 @@ contract RiskFacetTest is Test {
         // sub-day remainder the whole-day term can't represent).
         vm.warp(uint256(loanBefore.startTime) + 10 days + 12 hours);
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4395,7 +4396,7 @@ contract RiskFacetTest is Test {
         // Partial #1 — distress @ $0.65, 10% sweep, 5 days + 7h in (sub-day).
         vm.warp(uint256(loan0.startTime) + 5 days + 7 hours);
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4415,7 +4416,7 @@ contract RiskFacetTest is Test {
         // Drop price to $0.55 so HF dips below 1 on the reduced position,
         // then a further sub-day warp (10 days + 13h total elapsed).
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4457,7 +4458,7 @@ contract RiskFacetTest is Test {
         // the live term to ~5 days (the sub-7-day / 1-hour grace tier).
         vm.warp(uint256(loan0.startTime) + 25 days + 6 hours);
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4511,7 +4512,7 @@ contract RiskFacetTest is Test {
         uint256 loanId = createAndAcceptOffer();
 
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4570,7 +4571,7 @@ contract RiskFacetTest is Test {
 
         // Drop collateral price to $0.45 → HF ≈ 0.6885 (deeply distressed).
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4603,7 +4604,7 @@ contract RiskFacetTest is Test {
 
         // Drop collateral price to $0.65 → HF ≈ 0.994 (just below 1.0).
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4636,7 +4637,7 @@ contract RiskFacetTest is Test {
 
         // Put HF below 1 so we pass the entry gate.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4675,7 +4676,7 @@ contract RiskFacetTest is Test {
 
         // ── First partial: distress @ $0.65, 10% sweep ─────────────────
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -4718,7 +4719,7 @@ contract RiskFacetTest is Test {
         // For HF < 1: P < principal / (collateral * liqThreshold)
         //           = 811.9 / (1620 * 0.85) = $0.59.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -5333,7 +5334,7 @@ contract RiskFacetTest is Test {
     function _setupPartialSizing(uint256 collPriceE8) private returns (uint256 loanId) {
         loanId = createAndAcceptOffer();
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(collPriceE8, uint8(8))
         );

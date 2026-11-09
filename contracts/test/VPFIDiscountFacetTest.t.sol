@@ -37,6 +37,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
@@ -133,7 +134,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Mock the WETH oracle feed. SetupTest already mocks mockERC20 at
         // $1/8dec; we overlay a WETH feed at $2000/8dec.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(weth)),
             abi.encode(ETH_USD_PRICE, uint8(8))
         );

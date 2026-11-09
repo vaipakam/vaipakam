@@ -2,20 +2,20 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
-import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
 
 /// @title StalenessHybridTest
 /// @notice Covers the stablecoin-aware staleness hybrid in
-///         OracleFacet.getAssetPrice:
-///           - age <= ORACLE_VOLATILE_STALENESS              → accept
-///           - age <= ORACLE_STABLE_STALENESS AND feed
-///             reports ~ $1 (within ORACLE_PEG_TOLERANCE_BPS)
+///         the price guard, read through OracleFacet.getAssetPrice:
+///           - age <= VOLATILE_STALENESS                     → accept
+///           - age <= STABLE_STALENESS AND feed
+///             reports ~ $1 (within PEG_TOLERANCE_BPS)
 ///             AND decimals == 8                             → accept
-///           - age >  ORACLE_STABLE_STALENESS                → revert
+///           - age >  PriceGuard.STABLE_STALENESS              → revert
 ///           - age in stable window but off-peg              → revert
 ///           - age in stable window but decimals != 8        → revert
 contract StalenessHybridTest is SetupTest {
@@ -38,13 +38,13 @@ contract StalenessHybridTest is SetupTest {
 
         asset = mockERC20;
         registry = makeAddr("feedRegistry");
-        usdDenominator = makeAddr("usdDenominator");
+        // #3272 part 2 - the guard keys feeds by its fixed USD denominator.
+        usdDenominator = LibTestPriceGuard.USD;
 
         // 8-decimal stablecoin-style feed, fresh.
         feed = new MockChainlinkAggregator(int256(1e8), block.timestamp, 8);
 
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(registry);
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(usdDenominator);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, registry);
 
         // Route every registry.getFeed(asset, usd) to our scriptable aggregator.
         vm.mockCall(
@@ -64,7 +64,7 @@ contract StalenessHybridTest is SetupTest {
 
     function testJustUnderVolatileWindowAccepted() public {
         // 1 second inside the volatile window.
-        feed.setRound(int256(1e8), block.timestamp - (LibVaipakam.ORACLE_VOLATILE_STALENESS - 1));
+        feed.setRound(int256(1e8), block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).VOLATILE_STALENESS() - 1));
         (uint256 price, ) = OracleFacet(address(diamond)).getAssetPrice(asset);
         assertEq(price, 1e8);
     }
@@ -80,7 +80,7 @@ contract StalenessHybridTest is SetupTest {
 
     function testStalePegPriceJustBelowStableWindow() public {
         // 1s inside the stable window.
-        feed.setRound(int256(1e8), block.timestamp - (LibVaipakam.ORACLE_STABLE_STALENESS - 1));
+        feed.setRound(int256(1e8), block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() - 1));
         (uint256 price, ) = OracleFacet(address(diamond)).getAssetPrice(asset);
         assertEq(price, 1e8);
     }
@@ -113,7 +113,7 @@ contract StalenessHybridTest is SetupTest {
 
     function testBeyondStableWindowRejectedEvenAtPeg() public {
         // 1s past the stable ceiling with a perfect $1 reading — still stale.
-        feed.setRound(int256(1e8), block.timestamp - (LibVaipakam.ORACLE_STABLE_STALENESS + 1));
+        feed.setRound(int256(1e8), block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 1));
         vm.expectRevert(OracleFacet.StalePriceData.selector);
         OracleFacet(address(diamond)).getAssetPrice(asset);
     }

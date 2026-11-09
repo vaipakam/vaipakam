@@ -13,6 +13,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /// @title InteractionRewardCapTest
 /// @notice Coverage for the §4 per-user daily VPFI cap
@@ -65,7 +67,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
             block.timestamp,
             ETH_USD_DEC
         );
-        _mut().setEthUsdFeedRaw(address(ethNumeraireFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, address(ethNumeraireFeed));
 
         alice = makeAddr("alice");
         _facet().setInteractionLaunchTimestamp(block.timestamp);

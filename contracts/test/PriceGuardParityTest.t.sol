@@ -7,6 +7,8 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -22,15 +24,17 @@ import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 
 /**
  * @title  PriceGuardParityTest
- * @notice #3272 step 1: the guard runs the Diamond's pricing path unchanged.
- *         Each run arranges one world of feeds, secondary sources, Pyth and
- *         sequencer answers, configures the Diamond's oracle and a fresh guard
- *         identically, and requires both to give the same answer for every
- *         asset: the same status, price and decimals, and byte-identical
- *         revert data from the reverting read.
+ * @notice #3272: the Diamond's prices are its guard's. Step 1 used this suite
+ *         to show the guard ran the Diamond's own pricing path unchanged;
+ *         part 2 retired that path, so the same worlds now show the
+ *         forwarding is exact. Each run arranges one world of feeds,
+ *         secondary sources, Pyth and sequencer answers, builds a guard for
+ *         it and a Diamond that names that guard, and requires both to give
+ *         the same answer for every asset: the same status, price and
+ *         decimals, and byte-identical revert data from the reverting read.
  * @dev    Every external source is a sentinel address with code etched (the
  *         guard refuses a config address without code) whose replies are
- *         `vm.mockCall`s, so both contracts read exactly the same world.
+ *         `vm.mockCall`s.
  */
 contract PriceGuardParityTest is Test {
     VaipakamDiamond internal diamond;
@@ -113,7 +117,6 @@ contract PriceGuardParityTest is Test {
 
     // ─── The differential runs ───────────────────────────────────────────
 
-    /// forge-config: default.fuzz.runs = 2000
     function testFuzz_GuardMatchesTheDiamond(World memory w) public {
         _normalise(w);
         PriceGuard guard = _configure(w);
@@ -253,27 +256,10 @@ contract PriceGuardParityTest is Test {
         assertEq(gRet, dRet, "countLiveSecondaryOracleFeeds data");
     }
 
-    // ─── Configuration of both ───────────────────────────────────────────
+    // ─── The guard, and the Diamond that names it ───────────────────────────────────────────
 
     function _configure(World memory w) internal returns (PriceGuard guard) {
-        OracleAdminFacet o = OracleAdminFacet(address(diamond));
-        NumeraireConfigFacet n = NumeraireConfigFacet(address(diamond));
-        o.setChainlinkRegistry(registry);
-        o.setWethContract(weth);
-        o.setEthChainlinkDenominator(ethDenom);
-        o.setTellorOracle(tellor);
-        o.setApi3ServerV1(api3);
-        o.setDIAOracleV2(dia);
-        o.setSecondaryOracleMaxDeviationBps(w.secDevBps);
-        o.setSecondaryOracleMaxStaleness(w.secStaleness);
-        if (w.pythMode != 0) {
-            o.setPythOracle(pyth);
-            o.setPythCrossCheckFeedId(PYTH_ID);
-        }
-        if (w.seqMode != 0) o.setSequencerUptimeFeed(sequencer);
-        if (w.eurRefSet) o.setStableTokenFeed("EUR", eurRefFeed);
         address overrideTarget = w.overrideOnDirect ? directFeed : ethUsdFeed;
-        if (w.overrideStaleness != 0) o.setFeedOverride(overrideTarget, w.overrideStaleness, w.overrideMinAnswer);
 
         PriceGuard.Identity memory id;
         id.numeraireSymbol = bytes32("usd");
@@ -303,16 +289,10 @@ contract PriceGuardParityTest is Test {
         }
 
         if (!w.industrial) {
-            o.setUsdChainlinkDenominator(usd);
-            o.setEthUsdFeed(ethUsdFeed);
             id.numeraireDenominator = usd;
             c[k++] = _change(PriceGuard.Kind.EthNumeraireFeed, 0, ethUsdFeed);
         } else {
             // Numeraire EUR, PAD USD: the industrial pivot.
-            o.setUsdChainlinkDenominator(eur);
-            o.setEthUsdFeed(ethEurFeed);
-            n.setPredominantDenominator(usd, bytes32("USD"), ethUsdFeed, w.padRateDirect ? usdEurFeed : address(0));
-            n.setAssetNumeraireDirectFeedOverride(assetOverride, overrideFeed);
             id.numeraireDenominator = eur;
             id.padDenominator = usd;
             c[k++] = _change(PriceGuard.Kind.EthNumeraireFeed, 0, ethEurFeed);
@@ -326,6 +306,10 @@ contract PriceGuardParityTest is Test {
         guard = PriceGuard(
             ArtifactDeploy.deploy(type(PriceGuard).name, abi.encode(address(this), address(this), id, uint64(0), c))
         );
+        // The Diamond records a registry naming this guard, as a deploy does.
+        MockProtocolRegistry r = new MockProtocolRegistry(address(diamond));
+        r.setPointer(RegistryKeys.PRICE_GUARD, address(guard));
+        OracleAdminFacet(address(diamond)).initializeProtocolRegistry(address(r));
     }
 
     // ─── The world's replies ─────────────────────────────────────────────

@@ -20,6 +20,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /**
  * @title SanctionsOracleTest
@@ -455,7 +456,7 @@ contract SanctionsOracleTest is RiskFacetTest {
         // collateral value still above the debt, so the partial is mechanically
         // sound and the sanctions-gate behaviour under test is unchanged.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
