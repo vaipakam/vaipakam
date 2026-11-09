@@ -639,6 +639,12 @@ The Alerts page lists the alerts the protocol's index keeps for your wallet on t
 
 Under the inbox, the Alerts page sets up alerts that reach you outside the app. Each change is a free signature in your wallet, not a transaction. To link Telegram, press Link Telegram, send the one-time code to the Vaipakam bot within ten minutes, then send a test alert: the link counts as working once that message reaches your chat. Push is offered only when the alert service says it can send right now; you also subscribe to the Vaipakam channel in your push app, and unsubscribe there to stop. Health warnings are always on once Telegram or push is set up, at health 1.5, 1.2 and 1.05. Payment reminders can be switched off and on. The page shows what this browser has done; a link or setting made on another device may still exist.
 
+<a id="alerts-paid-push"></a>
+
+### Paid push alerts
+
+On some networks the alert service charges a small fee in VPFI for push alerts about a loan. It can charge you only if you agree first, on chain, and only up to the most you agreed to pay. The Paid push alerts section shows the fee on this network and whether the service charges here. The fee is taken from free VPFI in your vault, at most once per loan side, when the first paid push alert about that loan is sent; a fee already charged is not refunded, and Telegram alerts are free. A fee rise within your cap is charged without asking again. You can withdraw the agreement at any time.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder

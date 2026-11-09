@@ -683,6 +683,12 @@ La page Alertes liste les alertes que l'index du protocole garde pour votre wall
 
 Sous la boîte, la page Alertes configure les alertes qui vous atteignent hors de l'application. Chaque changement est une signature gratuite dans votre portefeuille, pas une transaction. Pour lier Telegram, appuyez sur Lier Telegram, envoyez le code à usage unique au bot Vaipakam dans les dix minutes, puis envoyez une alerte de test : le lien fonctionne dès que ce message arrive dans votre discussion. Push n'est proposé que lorsque le service d'alertes dit pouvoir envoyer maintenant ; vous vous abonnez aussi au canal Vaipakam dans votre application push, et vous vous désabonnez là-bas pour arrêter. Les alertes de santé sont toujours actives dès que Telegram ou push est configuré, à une santé de 1,5, 1,2 et 1,05. Les rappels de paiement se désactivent et se réactivent. La page montre ce que ce navigateur a fait ; un lien ou un réglage fait sur un autre appareil peut exister.
 
+<a id="alerts-paid-push"></a>
+
+### Alertes push payantes
+
+Sur certains réseaux, le service d'alertes facture de petits frais en VPFI pour les alertes push liées à un prêt. Il ne peut vous les facturer que si vous avez d'abord accepté sur la chaîne, et au plus à hauteur de ce que vous avez accepté de payer. La section Alertes push payantes indique les frais sur ce réseau et si le service les facture ici. Les frais sont pris sur le VPFI libre de votre coffre, au plus une fois par côté du prêt, lors de l'envoi de la première alerte push payante sur ce prêt ; des frais déjà facturés ne sont pas remboursés, et les alertes Telegram sont gratuites. Une hausse des frais dans la limite de votre plafond est facturée sans nouvelle demande. Vous pouvez retirer votre accord à tout moment.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Échelle de seuils

@@ -211,7 +211,7 @@ Protokoll hat mehrere eingebaute Schichten:
   der Operator neue Geschäfte in Sekunden stoppen kann, wenn etwas
   nicht stimmt, während bestehende Nutzer ihre Positionen sicher
   abwickeln können.
-- **Audit vor Mainnet ausstehend.** Vor dem Mainnet-Start ist eine Sicherheitsprüfung durch Dritte erforderlich. Audit-Berichte und Bug-Bounty-Umfang werden veröffentlicht, sobald sie verfügbar sind.
+- **Audit vor Mainnet ausstehend.** Vor dem Mainnet-Start ist eine Sicherheitsprüfung durch Dritte erforderlich. Audit-Berichte werden veröffentlicht, sobald sie verfügbar sind. Ein Bug-Bounty-Programm wird nicht angeboten.
 
 Sie sollten dennoch verstehen, worauf Sie sich einlassen. Lesen Sie
 die kombinierte **Risikozustimmung**, die vor jedem Kredit

@@ -32,7 +32,7 @@ e.g. `runtime-verification-2026`, `quantstamp-2026q3`.
   log) and the per-PR Codex review history. The `audits/` directory
   is reserved for engaged third-party (or formal internal-by-a-
   different-team) review.
-- **Bug bounties / pen-test reports** — those go in
+- **Pen-test reports** — those go in
   `docs/security/` (separate directory; not yet created).
 
 ## How findings link to fixes

@@ -201,7 +201,7 @@ el protocolo tiene varias capas integradas:
   operaciones en segundos si algo no parece bien, mientras los
   usuarios existentes pueden cerrar sus posiciones de forma
   segura.
-- **Auditoría pendiente antes de mainnet.** El lanzamiento en mainnet requiere una revisión de seguridad por terceros. Los informes de auditoría y el alcance del bug bounty se publicarán cuando estén disponibles.
+- **Auditoría pendiente antes de mainnet.** El lanzamiento en mainnet requiere una revisión de seguridad por terceros. Los informes de auditoría se publicarán cuando estén disponibles. No se ofrece ningún programa de bug bounty.
 
 Aún así deberías entender en qué te estás metiendo. Lee el
 **consentimiento de riesgos** combinado que aparece antes de cada

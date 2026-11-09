@@ -1443,6 +1443,12 @@ La page Alertes lit la boîte de l'index pour le wallet connecté sur son résea
 
 Chaque changement est une signature EIP-191 sur un message en clair qui nomme l'action, le portefeuille, le réseau et l'heure ; le service d'alertes accepte chaque demande signée une fois dans les dix minutes, et un enregistrement ne porte que le réglage qu'il change. Le service stocke le portefeuille, le réseau, les réglages et, une fois lié, l'identifiant de discussion Telegram ; il ne les renvoie pas, donc chaque carte indique ce que ce navigateur a fait. Le lien Telegram n'est prouvé que par une alerte de test qui arrive dans la discussion. Délier avec un portefeuille ordinaire efface tous les réseaux, un compte intelligent seulement le réseau signé, et un réseau en mode protégé garde la discussion jusqu'à la fin du délai de protection. Push n'est proposé que lorsque le statut du service dit que les deux expéditeurs peuvent envoyer sur un même canal ; s'il ne couvre que l'expéditeur des rappels, les alertes peuvent ne pas arriver par push. Les trois lignes de santé valent par défaut 1,5, 1,2 et 1,05 et se modifient ici, chacune au-dessus de la suivante et la dernière au-dessus de 1,0. Lier Telegram et activer push demandent d'abord les Conditions ; désactiver, jamais.
 
+<a id="alerts-paid-push"></a>
+
+### Alertes push payantes
+
+Votre accord est un plafond enregistré sur la chaîne : le maximum de VPFI que vous paierez par côté du prêt. La carte l'affiche avec l'avis du contrat lui-même sur la couverture des frais actuels. En mode Basique, vous acceptez les frais actuels ; en mode Avancé, vous saisissez un plafond entre les frais et la limite du protocole de 50 VPFI, et accepter la limite accepte tous les frais que la gouvernance peut fixer. L'accord n'est proposé que là où le service d'alertes dit facturer, jamais à un portefeuille signalé par le contrôle des sanctions, et demande d'abord les Conditions. La vérification et une simulation viennent d'abord, et les frais sont relus juste avant l'ouverture de votre portefeuille : s'ils ont changé, rien n'est envoyé. Le retrait remet le plafond à zéro et est proposé dès qu'un plafond est enregistré, même protocole en pause ou service d'alertes injoignable. Un déploiement sans registre d'accord ne propose ni l'un ni l'autre, et la carte dit s'il peut encore facturer les frais.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Échelle de seuils

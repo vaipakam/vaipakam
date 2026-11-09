@@ -1443,6 +1443,12 @@ Die Seite Alerts liest den Posteingang des Index für die verbundene Wallet in i
 
 Jede Änderung ist eine EIP-191-Signatur über eine Klartextnachricht, die Aktion, Wallet, Netzwerk und Zeit nennt; der Hinweisdienst nimmt jede signierte Anfrage einmal innerhalb von zehn Minuten an, und ein Speichern trägt nur die Einstellung, die es ändert. Der Dienst speichert Wallet, Netzwerk, Einstellungen und nach dem Verbinden die Telegram-Chat-ID; er meldet sie nicht zurück, daher nennt jede Karte, was dieser Browser getan hat. Die Telegram-Verbindung gilt erst als belegt, wenn eine Testnachricht den Chat erreicht. Trennen mit einer gewöhnlichen Wallet löscht alle Netzwerke, ein Smart Account nur das signierte Netzwerk, und in einem Netzwerk mit geschütztem Modus bleibt der Chat, bis die Schutzfrist abgelaufen ist. Push wird nur angeboten, wenn der Status des Dienstes sagt, dass beide Absender auf einem Kanal senden können; deckt er nur den Erinnerungsabsender ab, erreichen Warnungen Push womöglich nicht. Die drei Gesundheitslinien sind standardmäßig 1,5, 1,2 und 1,05 und lassen sich hier ändern, jede über der nächsten und die letzte über 1,0. Telegram verbinden und Push einschalten verlangen zuerst die Bedingungen; Ausschalten nie.
 
+<a id="alerts-paid-push"></a>
+
+### Kostenpflichtige Push-Hinweise
+
+Deine Zustimmung ist eine on-chain gespeicherte Obergrenze: das meiste VPFI, das du pro Kreditseite zahlst. Die Karte zeigt sie zusammen mit dem eigenen Urteil des Vertrags, ob sie die aktuelle Gebühr deckt. Im Basismodus stimmst du der aktuellen Gebühr zu; im Profimodus tippst du eine Obergrenze von der Gebühr bis zur Protokollgrenze von 50 VPFI, und wer der Grenze zustimmt, akzeptiert jede Gebühr, die die Governance festlegen kann. Zustimmen wird nur angeboten, wo der Hinweisdienst sagt, dass er berechnet, nie einer Wallet, die die Sanktionsprüfung markiert, und es fragt zuerst nach den Bedingungen. Zuerst kommen die Prüfung und ein Probelauf, und die Gebühr wird direkt vor dem Öffnen deiner Wallet erneut gelesen: Hat sie sich geändert, wird nichts gesendet. Zurückziehen setzt die Obergrenze auf null und wird angeboten, solange eine gespeichert ist, auch wenn das Protokoll pausiert ist oder der Hinweisdienst nicht erreichbar ist. Eine Bereitstellung ohne Zustimmungsdatensatz bietet beides nicht an, und die Karte sagt, ob sie die Gebühr trotzdem berechnen kann.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Schwellen-Leiter

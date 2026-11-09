@@ -683,6 +683,12 @@ Die Seite Alerts listet die Hinweise, die der Index des Protokolls für deine Wa
 
 Unter dem Posteingang richtet die Seite Alerts Hinweise ein, die dich außerhalb der App erreichen. Jede Änderung ist eine kostenlose Signatur in deiner Wallet, keine Transaktion. Um Telegram zu verbinden, tippe auf Telegram verbinden, sende den Einmalcode innerhalb von zehn Minuten an den Vaipakam-Bot und sende dann eine Testnachricht: Die Verbindung gilt als funktionierend, sobald diese Nachricht deinen Chat erreicht. Push wird nur angeboten, wenn der Hinweisdienst sagt, dass er gerade senden kann; zusätzlich abonnierst du den Vaipakam-Kanal in deiner Push-App und kündigst ihn dort, um Push zu beenden. Gesundheitswarnungen sind immer an, sobald Telegram oder Push eingerichtet ist, bei Gesundheit 1,5, 1,2 und 1,05. Zahlungserinnerungen lassen sich aus- und einschalten. Die Seite zeigt, was dieser Browser getan hat; eine Verbindung oder Einstellung von einem anderen Gerät kann trotzdem bestehen.
 
+<a id="alerts-paid-push"></a>
+
+### Kostenpflichtige Push-Hinweise
+
+In manchen Netzwerken berechnet der Hinweisdienst für Push-Hinweise zu einem Kredit eine kleine Gebühr in VPFI. Er kann sie dir nur berechnen, wenn du vorher on-chain zustimmst, und höchstens bis zu dem Betrag, dem du zugestimmt hast. Der Bereich Kostenpflichtige Push-Hinweise zeigt die Gebühr in diesem Netzwerk und ob der Dienst hier berechnet. Die Gebühr wird aus freiem VPFI in deinem Tresor genommen, höchstens einmal pro Kreditseite, wenn der erste kostenpflichtige Push-Hinweis zu diesem Kredit gesendet wird; eine bereits berechnete Gebühr wird nicht erstattet, und Telegram-Hinweise sind kostenlos. Eine Gebührenerhöhung innerhalb deiner Obergrenze wird ohne erneute Nachfrage berechnet. Du kannst die Zustimmung jederzeit zurückziehen.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Schwellen-Leiter

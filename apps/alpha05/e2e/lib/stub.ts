@@ -53,6 +53,7 @@ export interface AgentRequest {
 export async function controlAgent(control: {
   reset?: true;
   push?: 'available' | 'agent-only' | 'unavailable' | 'down';
+  billed?: number[];
   handshake?: string;
   next?: { path: string; status: number; body: Record<string, unknown> };
   slow?: { path: string };

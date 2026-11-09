@@ -1518,6 +1518,30 @@ above. Each resolves here, so a route reviewer needs no private file:
   anything off never does. A declined signature sends nothing,
   and every refusal has its own words and remedy. A build with no alert
   service says Telegram and push alerts are not set up and sends nothing.
+- **RB-PAID-PUSH** — Alerts › Paid push alerts (ACC-53) is the wallet's
+  on-chain agreement to pay for push alerts the alert service charges for.
+  The card states the fee per loan side the protocol holds on THIS network,
+  in VPFI, and that it is taken from free vault VPFI at most once per loan
+  side on the first paid push alert, is not refunded once charged, and that
+  Telegram is free. Whether the service charges here comes from its push
+  status answer; when that answer cannot be read, that is said and agreeing
+  is not offered. The stored cap is shown with the contract's own word on
+  whether it covers the fee now; the protection is stated against the CAP (a
+  fee rise within it is charged without a new agreement), and a cap at the
+  protocol's ceiling is said to accept any fee governance can set. Free
+  vault VPFI below the fee is warned; an unread figure is "could not be
+  read", never zero. Agreeing is offered only where the service charges, at
+  or above the fee and within the ceiling, never to a wallet the sanctions
+  screen flags; Basic agrees at the fee now, Advanced types a cap. Agreeing
+  asks for the Terms first (ACC-15), and reads them again right before the
+  wallet opens, so a version published during the review, or a wallet
+  switched to, stops it; withdrawing is offered whenever a cap
+  is stored, whatever the Terms, a pause or the service say. The review and
+  the protocol's dry run come before the wallet, and the fee is read again
+  right before it opens (RB-REVIEW). The finish card names the cap the
+  transaction's record stores, and says a mined agreement sets the cap only.
+  On a deployment without the consent record, nothing is offered and the
+  card says whether the deployment can still charge the fee.
 
 ## 3. Companion specifications
 

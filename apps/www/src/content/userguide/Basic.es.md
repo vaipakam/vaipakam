@@ -670,6 +670,12 @@ La página Alertas muestra los avisos que el índice del protocolo guarda para t
 
 Debajo de la bandeja, la página Alertas configura los avisos que te llegan fuera de la app. Cada cambio es una firma gratuita en tu billetera, no una transacción. Para vincular Telegram, pulsa Vincular Telegram, envía el código de un solo uso al bot de Vaipakam en diez minutos y luego envía una alerta de prueba: el vínculo funciona cuando ese mensaje llega a tu chat. Push solo se ofrece cuando el servicio de alertas dice que puede enviar ahora; además te suscribes al canal de Vaipakam en tu app de push y cancelas la suscripción allí para detenerlo. Los avisos de salud están siempre activos una vez configurado Telegram o push, con salud 1,5, 1,2 y 1,05. Los recordatorios de pago se pueden desactivar y activar. La página muestra lo que ha hecho este navegador; puede existir un vínculo o ajuste hecho en otro dispositivo.
 
+<a id="alerts-paid-push"></a>
+
+### Avisos push de pago
+
+En algunas redes, el servicio de alertas cobra una pequeña comisión en VPFI por los avisos push sobre un préstamo. Solo puede cobrarte si antes aceptas en la cadena, y como mucho lo máximo que aceptaste pagar. La sección Avisos push de pago muestra la comisión en esta red y si el servicio cobra aquí. La comisión se toma del VPFI libre de tu bóveda, como mucho una vez por lado del préstamo, cuando se envía el primer aviso push de pago sobre ese préstamo; una comisión ya cobrada no se devuelve, y los avisos de Telegram son gratis. Una subida de la comisión dentro de tu tope se cobra sin volver a preguntarte. Puedes retirar la aceptación en cualquier momento.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Escalera de umbrales
