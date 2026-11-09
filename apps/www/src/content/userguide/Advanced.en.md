@@ -2864,3 +2864,9 @@ The tier is not today's balance. It is zero until your current continuous holdin
 ### Rewards: Your Fee-Discount Tier
 
 At one block the card reads `getVPFIDiscountConsent`, `isCanonicalVpfiChain` and `getEffectiveDiscount`, which returns the tier and discount the fee path applies: zero while consent is off, capped at 50%, and on other networks the copy sent from the home network. On the home network it also reads `getTrackedVPFIDiscountTier`, the tier the counted VPFI alone gives, and says when the effective tier is lower. The protocol does not report which holding rule holds it down, and the rules' settings have no read view yet, so neither is shown. The table reads `getVpfiTierThresholds`, `getVpfiTierDiscountBps` and `getFeesConfig` at one block. Tiers 1 to 3 start at their threshold and tier 4 above its own. Each fee is the list fee times one minus the capped discount, computed exactly. The table is shown on the home network only, where tiers are set.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Rewards: Signing Instead of Approving
+
+At its own block the review reads whether Permit2 has code at its canonical address and the wallet's ERC-20 `allowance` to Permit2 for the VPFI token. Only when Permit2 is deployed and that allowance covers the amount is Sign instead of approve offered; otherwise Advanced says which of the two is missing. The wallet signs Permit2's `PermitTransferFrom` for the VPFI token and exactly the amount, with the Diamond as spender, a random nonce checked unused against `nonceBitmap`, and a deadline 30 minutes after the latest block. The app dry-runs `depositVPFIToVaultWithPermit` with the signature, then sends it; the protocol refuses a permit for any other token. The outcome is measured from `VPFIDepositedToVault`, which that entry emits in place of `VaultDeposited`, and from the token's transfer into the vault. Both routes count the VPFI for the tier the same way.

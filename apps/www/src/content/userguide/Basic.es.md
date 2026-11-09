@@ -1517,3 +1517,9 @@ Tu nivel no es tu saldo de hoy. Es cero hasta que tu tenencia actual haya durado
 ### Recompensas: tu nivel de descuento en comisiones
 
 Debajo de tu VPFI, la página muestra el nivel de descuento que el protocolo aplica ahora a tus comisiones, leído del propio protocolo, y cuánto les quita. Mientras tu consentimiento al descuento en comisiones esté desactivado, no se aplica ningún nivel. Una tenencia nueva cuenta del todo solo con el tiempo, así que la página dice cuándo las reglas de tenencia mantienen tu nivel por debajo del que daría solo tu VPFI contado. En la red de origen del VPFI, una tabla muestra cada nivel: el VPFI contado que requiere, su descuento, y la comisión de inicio del préstamo y la comisión sobre los intereses ganados con ese descuento, calculadas con los ajustes actuales de la red. Cada nivel empieza en su cifra, salvo el más alto, que empieza justo por encima. Ningún descuento supera nunca la mitad de una comisión. En otras redes la página muestra el nivel enviado desde la red de origen, y la tabla no se muestra.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Recompensas: firmar en lugar de aprobar
+
+Si tu billetera ya aprobó Permit2 para VPFI, un contrato compartido que muchas aplicaciones usan para mover tokens con una firma, la revisión del depósito de VPFI ofrece «Firmar en lugar de aprobar». Entonces firmas una transferencia única de exactamente el importe, válida 30 minutos, y envías el depósito: dos pasos en la billetera y ninguna aprobación al protocolo. La firma se puede usar una vez, solo en una transacción que envíe tu propia billetera y solo hacia tu propia bóveda; si no se usa, caduca. La aplicación nunca te pide aprobar Permit2 en sí, porque esa aprobación es indefinida y se comparte con otras aplicaciones. Sin ella, la revisión mantiene la aprobación habitual de exactamente el importe. En una red sin Permit2 no se ofrece esta opción.

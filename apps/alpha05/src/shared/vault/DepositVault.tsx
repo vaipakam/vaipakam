@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { erc20Abi, type Log } from "viem";
 import { useConfig } from "wagmi";
-import { writeContract } from "wagmi/actions";
+import { signTypedData, writeContract } from "wagmi/actions";
+import { useMode } from "../../app/ModeContext";
 import type { OwnStateClient } from "../../chain/ownRail";
 import type { SupportedChain } from "../../chain/chains";
 import { useCopy } from "../copy/useCopy";
@@ -47,16 +48,31 @@ import { ActionFlow, reviewIdentity, type Recheck } from "../ui/ActionFlow";
 import { FormField } from "../ui/FormField";
 import { Notice } from "../ui/Notice";
 import { readTerms, type TermsState } from "../terms/terms";
-import { shortAddress } from "../ui/format";
+import { formatSpan, shortAddress } from "../ui/format";
+import {
+  PERMIT_DEADLINE_SECONDS,
+  PERMIT_TRANSFER_TYPES,
+  permitCovers,
+  permitDomain,
+  permitMessage,
+  readPermitRoute,
+  unusedNonce,
+  type PermitTransfer,
+} from "../permit2/signatureTransfer";
 import {
   depositBlockers,
   depositCall,
   depositChanged,
   deposited,
   depositPromptCount,
+  depositRoute,
+  permitDepositCall,
   readDepositReview,
+  signOffered,
+  vpfiDeposited,
   type DepositDraft,
   type DepositReview,
+  type DepositRoute,
 } from "./deposit";
 import { depositName, depositReceipt } from "./depositReceipt";
 
@@ -472,6 +488,14 @@ function DepositFlow({
   const [review, setReview] = useStoredValue<DepositReview>(
     `${flowKey}:review`,
   );
+  // RW-03: how the deposit is funded, where signing is offered.
+  const [chosenRoute, setChosenRoute] = useStoredValue<DepositRoute>(
+    `${flowKey}:route`,
+  );
+  const route: DepositRoute = review
+    ? depositRoute(review, chosenRoute)
+    : "approve";
+  const { mode } = useMode();
   const [, setAsset] = useStoredValue<string>(`${flowKey}:asset`);
   const [, setAmountInput] = useStoredValue<string>(`${flowKey}:amount`);
   const [, setIdInput] = useStoredValue<string>(`${flowKey}:tokenId`);
@@ -559,6 +583,81 @@ function DepositFlow({
       }),
     );
 
+  /** RW-03: the VPFI deposit with a one-time signed transfer in place of
+   *  the approval. Nothing is approved, so nothing is put back; a signature
+   *  that goes unused lapses by itself and only this wallet can use it. */
+  const sendSigned = async (r: DepositReview): Promise<Hex> => {
+    const d = r.draft;
+    counter.current = { n: 0, total: depositPromptCount(r, "sign") };
+    approvalLeft.current = null;
+    grantLeft.current = null;
+    // Read again first, so a route closed since the review stops before any
+    // prompt; the nonce is one Permit2 has not burned for this wallet.
+    const now = await own
+      .read(async (c) => {
+        const block = await c.getBlock({ blockTag: "latest" });
+        const permit = await readPermitRoute(c, account, d.asset, block.number);
+        if (permitCovers(permit, d.amount) !== true) return null;
+        return { block, nonce: await unusedNonce(c, account) };
+      })
+      .then((x) => x.value);
+    if (now === null)
+      throw new StatedRefusal({
+        code: "PermitRouteClosed",
+        reason: text("vpfiPermit.gone"),
+        reopensAt: null,
+        remedy: null,
+      });
+    const permit: PermitTransfer = {
+      permitted: { token: d.asset, amount: d.amount },
+      nonce: now.nonce,
+      deadline: now.block.timestamp + BigInt(PERMIT_DEADLINE_SECONDS),
+    };
+    say(
+      format("vpfiPermit.stepSign", { amount: exact(d.asset, d.amount) }),
+    );
+    const signature = await signTypedData(config, {
+      account,
+      domain: permitDomain(chain.chainId),
+      types: PERMIT_TRANSFER_TYPES,
+      primaryType: "PermitTransferFrom",
+      message: permitMessage(permit, diamond),
+    });
+    const stop = (reason: string): never => {
+      throw new StatedRefusal({
+        code: "DepositStopped",
+        reason: `${reason} ${format("vpfiPermit.unused", { lapse: formatSpan(PERMIT_DEADLINE_SECONDS) })}`,
+        reopensAt: null,
+        remedy: null,
+      });
+    };
+    // The dry run with the real signature: the protocol's verdict on the
+    // whole deposit, the full-arrival check included.
+    const call = permitDepositCall(d.amount, permit, signature);
+    const dry = await askThrough(own, (c) =>
+      c.simulateContract({ address: diamond, ...call, account }),
+    );
+    if (dry.kind === "reverted")
+      return stop(
+        format("vaultDeposit.dryRunRefused", {
+          reason: refusalFromError(dry.error).reason,
+        }),
+      );
+    if (dry.kind === "unreadable")
+      return stop(format("flow.unreadable", { reason: dry.reason }));
+    say(text("vaultDeposit.stepSend"));
+    try {
+      return await writeContract(config, {
+        address: diamond,
+        ...call,
+        chainId: chain.chainId,
+        account,
+      });
+    } catch (e) {
+      return stop(refusalFromError(e).reason);
+    }
+  };
+
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -567,6 +666,7 @@ function DepositFlow({
     send: async () => {
       if (!review) throw new Error("no deposit under review");
       const r = review;
+      if (depositRoute(r, chosenRoute) === "sign") return sendSigned(r);
       const d = r.draft;
       counter.current = { n: 0, total: depositPromptCount(r) };
       approvalLeft.current = null;
@@ -765,7 +865,10 @@ function DepositFlow({
     // transfer clears its own approval).
     approvalLeft.current = null;
     const name = depositName(r, meta, copy);
-    const credited = deposited(logs, diamond, account, d);
+    // The signed route's entry names the deposit with its own event.
+    const credited =
+      deposited(logs, diamond, account, d) ??
+      (r.vpfi !== null ? vpfiDeposited(logs, diamond, account) : null);
     const creditLabel = format("vaultDeposit.legCredited", {
       what:
         d.standard === "erc20"
@@ -881,7 +984,8 @@ function DepositFlow({
     read: (before) =>
       readDepositReview(own, diamond, before.draft, before.identity),
     sameSubject: (a, b) => sameDraft(a.draft, b.draft),
-    changed: (before, next) => depositChanged(before, next, copy) !== null,
+    changed: (before, next) =>
+      depositChanged(before, next, copy, route) !== null,
     setReview,
     onChanged: () => undefined,
   });
@@ -953,7 +1057,7 @@ function DepositFlow({
         },
       };
     }
-    const what = depositChanged(review, next, copy);
+    const what = depositChanged(review, next, copy, route);
     if (current()) setReview(next);
     if (what !== null) return { kind: "changed", what };
     const blockers = depositBlockers(next, account, copy, shortText(next));
@@ -990,6 +1094,52 @@ function DepositFlow({
                 {b}
               </Notice>
             ))}
+            {signOffered(review) ? (
+              <fieldset
+                className="choice-group"
+                data-testid="vpfi-permit-route"
+              >
+                <legend>{text("vpfiPermit.legend")}</legend>
+                <label className="choice">
+                  <input
+                    type="radio"
+                    name={`${flowKey}-route`}
+                    checked={route === "approve"}
+                    onChange={() => setChosenRoute("approve")}
+                    data-testid="vpfi-permit-approve"
+                  />
+                  <span>
+                    {text("vpfiPermit.approve")}
+                    <span className="tier-b"> {text("vpfiPermit.approveHint")}</span>
+                  </span>
+                </label>
+                <label className="choice">
+                  <input
+                    type="radio"
+                    name={`${flowKey}-route`}
+                    checked={route === "sign"}
+                    onChange={() => setChosenRoute("sign")}
+                    data-testid="vpfi-permit-sign"
+                  />
+                  <span>
+                    {text("vpfiPermit.sign")}
+                    <span className="tier-b"> {text("vpfiPermit.signHint")}</span>
+                  </span>
+                </label>
+              </fieldset>
+            ) : mode === "advanced" &&
+              review.permit !== null &&
+              review.draft.standard === "erc20" ? (
+              <p className="tier-b" data-testid="vpfi-permit-off">
+                {text(
+                  !review.permit.deployed
+                    ? "vpfiPermit.noPermit2"
+                    : permitCovers(review.permit, review.draft.amount) === null
+                      ? "vpfiPermit.unread"
+                      : "vpfiPermit.noAllowance",
+                )}
+              </p>
+            ) : null}
             <WhyLink
               summaryKey="vaultDeposit.whySummary"
               detailKey="vaultDeposit.why"
@@ -1016,6 +1166,7 @@ function DepositFlow({
 
   const close = () => {
     setReview(null);
+    setChosenRoute(null);
     setAsset(null);
     setAmountInput(null);
     setIdInput(null);
@@ -1038,7 +1189,7 @@ function DepositFlow({
         tx={tx}
         identity={identity}
         reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-        receipt={review ? depositReceipt(review, meta, copy) : null}
+        receipt={review ? depositReceipt(review, meta, copy, route) : null}
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}

@@ -1822,6 +1822,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   the loan initiation fee and the fee on interest with that discount,
   computed exactly from the live settings read at one block. Copy follows
   RL-6.
+- **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
+  The deposit review offers "Sign instead of approve" only when the asset
+  is this network's VPFI, Permit2 has code at its canonical address, and the
+  wallet's own approval for Permit2 over VPFI already covers the amount,
+  all read at the review's block. The app never asks for that approval
+  itself: it is open-ended and shared with other apps, which is the
+  opposite of the exact one-off approval it would replace. The classic
+  approval of exactly the amount stays the default and is always
+  available; Advanced says which condition is missing when signing is not
+  offered. The wallet signs one `PermitTransferFrom` for exactly the
+  amount, with the Diamond as the only spender, a nonce checked unused
+  against Permit2's bitmap and a deadline 30 minutes from the latest block;
+  the receipt states what the signature allows, that only a transaction
+  this wallet sends can use it, and when it lapses. The signed call is
+  dry-run before it is sent, and the outcome is measured from the entry's
+  own `VPFIDepositedToVault` event and the token transfer into the vault.
+  The same Terms gate, pause, sanctions and protected-mode statements apply
+  as on the approval route.
 
 ## 3. Companion specifications
 

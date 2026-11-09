@@ -2478,3 +2478,9 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 ### リワード：手数料割引ティア
 
 カードは 1 つのブロックで `getVPFIDiscountConsent`、`isCanonicalVpfiChain`、`getEffectiveDiscount` を読みます。`getEffectiveDiscount` は手数料の計算が適用するティアと割引を返します：同意がオフならゼロ、上限は 50%、ほかのネットワークではホームネットワークから送られたコピーです。ホームネットワークでは `getTrackedVPFIDiscountTier`（計上済み VPFI だけで得られるティア）も読み、有効ティアがそれより低いときにそう示します。どの保有ルールが抑えているかはプロトコルが報告せず、ルールの設定にはまだ読み取り用のビューがないため、どちらも表示しません。表は 1 つのブロックで `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getFeesConfig` を読みます。ティア 1〜3 はそのしきい値から、ティア 4 は自身のしきい値を超えたところから始まります。各手数料は基本手数料に（1 − 上限適用後の割引）を掛けたもので、正確に計算されます。表はティアが決まるホームネットワークでのみ表示されます。
+
+<a id="rewards-vpfi-sign"></a>
+
+### リワード：承認の代わりに署名
+
+確認画面は自身のブロックで、Permit2 の正規アドレスにコードがあるかどうかと、VPFI トークンについてウォレットが Permit2 に与えた ERC-20 の `allowance` を読みます。Permit2 がデプロイされ、その allowance が金額を満たすときにだけ「承認の代わりに署名」が提示され、そうでなければ Advanced がどちらが欠けているかを示します。ウォレットは VPFI トークンとちょうどその金額について Permit2 の `PermitTransferFrom` に署名します。spender は Diamond、nonce は `nonceBitmap` で未使用を確認したランダム値、期限は最新ブロックの 30 分後です。アプリは署名付きで `depositVPFIToVaultWithPermit` を試行実行してから送信します。プロトコルは他のトークンの permit を拒否します。結果は、このエントリが `VaultDeposited` の代わりに発行する `VPFIDepositedToVault` と、保管庫へのトークン送金から測定します。どちらの経路でも VPFI は同じように等級に計上されます。

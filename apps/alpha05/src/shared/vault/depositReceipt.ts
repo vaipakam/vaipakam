@@ -12,7 +12,8 @@ import { figured, textValue, type Receipt, type ReceiptRow, type ReceiptText } f
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatSpan } from '../ui/format';
 import { vpfiDepositNotes } from '../rewards/vpfiNotes';
-import { depositPromptCount, withdrawRoute, type DepositReview } from './deposit';
+import { depositPromptCount, withdrawRoute, type DepositReview, type DepositRoute } from './deposit';
+import { PERMIT_DEADLINE_SECONDS } from '../permit2/signatureTransfer';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
@@ -27,7 +28,7 @@ export function depositName(r: DepositReview, meta: TokenMetaMap | null, copy: C
   return name;
 }
 
-export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy: Copy): Receipt {
+export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy: Copy, funding: DepositRoute = 'approve'): Receipt {
   const { text, format } = copy;
   const d = r.draft;
   const h = r.holding;
@@ -58,11 +59,14 @@ export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy
           : text('vaultDeposit.laterUnread');
   rows.push({ label: text('vaultDeposit.rowLater'), value: { kind: 'text', text: later }, binding: false });
 
+  const sign = funding === 'sign';
+  const lapse = formatSpan(PERMIT_DEADLINE_SECONDS);
   let approval: ReceiptText;
-  if (h.kind === 'erc20') approval = figured((x) => format(h.approvalSteps === 0 ? 'vaultDeposit.approvalCovers' : 'vaultDeposit.approvalNeeded', { amount: amountText(x) }));
+  if (sign) approval = figured((x) => format('vpfiPermit.approval', { amount: amountText(x), lapse }));
+  else if (h.kind === 'erc20') approval = figured((x) => format(h.approvalSteps === 0 ? 'vaultDeposit.approvalCovers' : 'vaultDeposit.approvalNeeded', { amount: amountText(x) }));
   else if (h.kind === 'erc721') approval = text(h.approvalSteps === 0 ? 'vaultDeposit.approvalNftCovers' : 'vaultDeposit.approvalNft');
   else approval = format(h.approvalSteps === 0 ? 'vaultDeposit.approvalOperatorKept' : 'vaultDeposit.approvalOperator', { collection: assetName(d.asset, meta) });
-  rows.push({ label: text('repay.rowApproval'), value: textValue(approval), binding: false, movesOut: h.approvalSteps > 0 });
+  rows.push({ label: text(sign ? 'vpfiPermit.row' : 'repay.rowApproval'), value: textValue(approval), binding: false, movesOut: sign || h.approvalSteps > 0 });
 
   const consequences: ReceiptText[] = [
     ...(route === 'wallet' ? [text('vaultDeposit.afterCounted')] : []),
@@ -75,10 +79,11 @@ export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy
     text('vaultDeposit.noScreening'),
     ...(r.paused === null ? [text('vaultDeposit.pauseUnread')] : []),
     ...(r.frozen === 'unknown' || r.frozen === 'outage' ? [text('vaultDeposit.screenUnread')] : []),
-    ...(h.kind === 'erc20' && h.approvalSteps > 0 ? [text('vaultDeposit.approvalBack')] : []),
+    ...(sign ? [format('vpfiPermit.after', { lapse }), text('vpfiPermit.kept')] : []),
+    ...(!sign && h.kind === 'erc20' && h.approvalSteps > 0 ? [text('vaultDeposit.approvalBack')] : []),
     ...(h.kind === 'erc721' && h.approvalSteps > 0 ? [text('vaultDeposit.approvalNftBack')] : []),
     ...(h.kind === 'erc1155' && h.approvalSteps > 0 ? [format('vaultDeposit.approvalOperatorBack', { collection: assetName(d.asset, meta) })] : []),
   ];
 
-  return { title: text('vaultDeposit.title'), rows, consequences, prompts: depositPromptCount(r), readAt: r.readAt };
+  return { title: text('vaultDeposit.title'), rows, consequences, prompts: depositPromptCount(r, funding), readAt: r.readAt };
 }

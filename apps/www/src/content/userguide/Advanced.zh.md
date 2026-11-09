@@ -2211,3 +2211,9 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 奖励：手续费折扣等级
 
 卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。在主网络上，它还读取 `getTrackedVPFIDiscountTier`（仅凭已计入 VPFI 得到的等级），并在有效等级更低时说明。协议不报告是哪条持有规则压低了等级，而这些规则的设置目前也没有读取视图，因此两者都不显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
+
+<a id="rewards-vpfi-sign"></a>
+
+### 奖励：以签名代替授权
+
+审核页在自己的区块读取 Permit2 的规范地址上是否有代码，以及钱包为 VPFI 代币授予 Permit2 的 ERC-20 `allowance`。只有当 Permit2 已部署且该 allowance 覆盖金额时，才提供“以签名代替授权”；否则 Advanced 会说明缺少的是哪一项。钱包为 VPFI 代币和恰好该金额签署 Permit2 的 `PermitTransferFrom`，spender 为 Diamond，nonce 为经 `nonceBitmap` 核实未用过的随机值，期限为最新区块之后 30 分钟。应用先带签名试运行 `depositVPFIToVaultWithPermit`，再发送；协议会拒绝针对任何其他代币的 permit。结果从该入口代替 `VaultDeposited` 发出的 `VPFIDepositedToVault`，以及代币转入金库的记录中测得。两条路径对 VPFI 计入等级的方式相同。

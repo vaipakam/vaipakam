@@ -2369,3 +2369,9 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 리워드: 수수료 할인 등급
 
 카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 홈 네트워크에서는 `getTrackedVPFIDiscountTier`(집계된 VPFI만으로 얻는 등급)도 읽고, 유효 등급이 더 낮을 때 이를 알려 줍니다. 어떤 보유 규칙이 낮추고 있는지는 프로토콜이 보고하지 않고, 규칙 설정에는 아직 읽기 뷰가 없으므로 둘 다 표시하지 않습니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
+
+<a id="rewards-vpfi-sign"></a>
+
+### 리워드: 승인 대신 서명
+
+검토 화면은 자체 블록에서 Permit2의 표준 주소에 코드가 있는지와, VPFI 토큰에 대해 지갑이 Permit2에 준 ERC-20 `allowance`를 읽습니다. Permit2가 배포되어 있고 그 allowance가 금액을 충족할 때만 "승인 대신 서명"이 제공되며, 그렇지 않으면 Advanced가 둘 중 무엇이 빠졌는지 알려 줍니다. 지갑은 VPFI 토큰과 정확히 그 금액에 대해 Permit2의 `PermitTransferFrom`에 서명합니다. spender는 Diamond, nonce는 `nonceBitmap`으로 미사용을 확인한 임의 값, 기한은 최신 블록 30분 뒤입니다. 앱은 서명과 함께 `depositVPFIToVaultWithPermit`를 시험 실행한 뒤 보냅니다. 프로토콜은 다른 토큰에 대한 permit을 거부합니다. 결과는 이 진입점이 `VaultDeposited` 대신 내보내는 `VPFIDepositedToVault`와 보관함으로의 토큰 전송으로 측정합니다. 두 경로 모두 VPFI를 등급에 같은 방식으로 반영합니다.

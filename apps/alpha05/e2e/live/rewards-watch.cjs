@@ -1,11 +1,13 @@
-// Watch-only live review of the Rewards page (#3180; RW-01, RW-02, RW-04,
-// RW-05, RW-06, RW-07; RB-REWARDS-VPFI; live tier, run after each deploy),
+// Watch-only live review of the Rewards page (#3180; RW-01..RW-10;
+// RB-REWARDS-VPFI, RB-REWARDS-TIER, RB-REWARDS-SIGN; live tier, run after
+// each deploy),
 // through the shared watch-only wallet (watch-wallet.cjs). The deployed build
 // opens Rewards for the watched wallet's network and prints the rewards
 // widget, the VPFI panel (whether VPFI is set up there, and the wallet's
 // VPFI in its wallet, counted, free, held and uncounted) and the consent. The
-// watch wallet cannot sign, so nothing is deposited or withdrawn; both are
-// covered by the CI-Anvil spec (53-rewards.spec.ts).
+// watch wallet cannot sign, so nothing is deposited or withdrawn, and the
+// signed deposit (RW-03) is never offered; all three are covered by the
+// CI-Anvil spec (53-rewards.spec.ts).
 // Usage: node e2e/live/rewards-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed
 // origin; $LIVE_CHAIN_ID picks the network, as in watch-wallet.cjs)

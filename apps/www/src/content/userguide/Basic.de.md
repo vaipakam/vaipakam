@@ -1539,3 +1539,9 @@ Ihre Stufe ist nicht Ihr heutiger Bestand. Sie ist null, bis Ihr aktueller Besta
 ### Belohnungen: Ihre Gebührenrabattstufe
 
 Unter Ihrem VPFI zeigt die Seite die Gebührenrabattstufe, die das Protokoll jetzt auf Ihre Gebühren anwendet, direkt aus dem Protokoll gelesen, und wie viel sie davon abzieht. Solange Ihre Zustimmung zum Gebührenrabatt ausgeschaltet ist, gilt keine Stufe. Ein neuer Bestand zählt erst mit der Zeit voll, daher sagt die Seite, wenn die Halteregeln Ihre Stufe unter dem halten, was Ihr gezähltes VPFI allein ergäbe. Im Heimatnetzwerk von VPFI zeigt eine Tabelle jede Stufe: das nötige gezählte VPFI, ihren Rabatt sowie die Kreditbearbeitungsgebühr und die Gebühr auf verdiente Zinsen mit diesem Rabatt, berechnet aus den aktuellen Einstellungen des Netzwerks. Jede Stufe beginnt bei ihrem Wert, außer der obersten, die knapp darüber beginnt. Kein Rabatt beträgt je mehr als die Hälfte einer Gebühr. In anderen Netzwerken zeigt die Seite die vom Heimatnetzwerk gesendete Stufe, und die Tabelle wird nicht gezeigt.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Belohnungen: Signieren statt Genehmigen
+
+Wenn Ihre Wallet Permit2 für VPFI bereits genehmigt hat, einen gemeinsamen Vertrag, über den viele Apps Token per Signatur bewegen, bietet die Prüfung der VPFI-Einzahlung „Signieren statt genehmigen“ an. Sie signieren dann eine einmalige Übertragung von genau dem Betrag, 30 Minuten gültig, und senden die Einzahlung: zwei Wallet-Schritte und keine Genehmigung an das Protokoll. Die Signatur kann einmal verwendet werden, nur von einer Transaktion, die Ihre eigene Wallet sendet, und nur in Ihren eigenen Tresor; ungenutzt verfällt sie. Die App bittet Sie nie, Permit2 selbst zu genehmigen, denn diese Genehmigung ist unbefristet und wird mit anderen Apps geteilt. Ohne sie bleibt die Prüfung bei der üblichen Genehmigung von genau dem Betrag. In einem Netzwerk ohne Permit2 wird die Wahl nicht angeboten.

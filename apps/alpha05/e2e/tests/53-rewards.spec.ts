@@ -1,5 +1,5 @@
 /**
- * Rewards (matrix RW-01, RW-02, RW-04..RW-10): one page for
+ * Rewards (matrix RW-01..RW-10): one page for
  * the wallet's rewards and its VPFI. On the fixture, which sets no VPFI
  * token, the page shows the rewards and the fee-discount consent and says
  * VPFI is not set up, with no deposit or withdrawal offered. With a VPFI
@@ -16,11 +16,14 @@
  * while the consent is off; with 200 counted and the consent on, tier 1 by
  * the counted VPFI but tier 0 by the holding rules, said in one line), and
  * the table states each tier's VPFI band with the protocol's boundaries,
- * its discount and both fees with it, from the live settings. Runs on the
- * desktop and the phone project; the
+ * its discount and both fees with it, from the live settings. Where the
+ * wallet has already approved Permit2 for VPFI (and only then), the deposit
+ * offers to sign instead of approve: one signature and one transaction, the
+ * receipt saying what the signature allows and for how long, and nothing
+ * approved to the protocol. Runs on the desktop and the phone project; the
  * chain is reverted after each test.
  */
-import { erc20Abi, parseEther, type Hex } from 'viem';
+import { erc20Abi, maxUint256, parseEther, type Hex } from 'viem';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
@@ -28,6 +31,7 @@ import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 const ZERO: Hex = '0x0000000000000000000000000000000000000000';
+const PERMIT2: Hex = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
 let snapshot: Hex;
 test.beforeEach(async () => {
@@ -209,5 +213,61 @@ test('the tier card states the tier the protocol applies, held down by the holdi
   await expect(now).toHaveAttribute('data-tier', '0');
   await expect(page.getByTestId('rewards-tier-held')).toHaveText('Your counted VPFI reaches tier 1, but the holding rules hold it at tier 0 for now.');
   await expect(now).toContainText('Tier 0 applies now');
+  await fitsWidth(page);
+});
+
+test('where the wallet has already approved Permit2 for VPFI, the deposit can be signed instead of approved: one signature, one transaction, no approval to the protocol', async ({ launchWallet }) => {
+  test.setTimeout(240_000);
+  const sc = scenario({ borrower: 'freshBorrower' });
+  const me = sc.address('borrower');
+  const token = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!;
+  await sc.diamondWrite('admin', 'setVPFIToken', [token]);
+  await sc.diamondWrite('admin', 'setCanonicalVPFIChain', [true]);
+  await sc.write('borrower', token, TOKEN_ABI, 'mint', [me, parseEther('10')]);
+  const symbol = await sc.pub.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' });
+
+  const { page, flags } = await launchWallet('freshBorrower');
+  await page.goto('/rewards');
+  await connectWallet(page);
+  await expect(page.getByTestId('rewards-vpfi')).toHaveAttribute('data-vpfi', 'available', { timeout: 60_000 });
+
+  // Without the wallet's own approval for Permit2, signing is not offered:
+  // the app never asks for that open-ended approval.
+  await page.getByTestId('rewards-vpfi-deposit').click();
+  await page.getByTestId('vault-deposit-amount').fill('4');
+  await page.getByTestId('vault-deposit-review').click();
+  const flow = page.getByTestId('vault-deposit-panel');
+  const receipt = flow.locator('.receipt');
+  await expect(receipt).toContainText('Deposited VPFI counts toward your fee-discount tier', { timeout: 60_000 });
+  await expect(flow.getByTestId('vpfi-permit-route')).toHaveCount(0);
+  await flow.getByTestId('vault-deposit-change').click();
+
+  // The standing approval for Permit2 a wallet acquires elsewhere, set here
+  // directly: the review now offers signing.
+  await sc.write('borrower', token, erc20Abi, 'approve', [PERMIT2, maxUint256]);
+  await page.getByTestId('vault-deposit-review').click();
+  const route = flow.getByTestId('vpfi-permit-route');
+  await expect(route).toBeVisible({ timeout: 60_000 });
+  await expect(flow.getByTestId('vpfi-permit-approve')).toBeChecked();
+  await flow.getByTestId('vpfi-permit-sign').check();
+  await expect(receipt).toContainText(`You sign a one-time transfer of exactly 4 ${symbol}, valid for 30 min`, { timeout: 60_000 });
+  await expect(receipt).toContainText('only in a transaction this wallet sends');
+  await expect(receipt).toContainText('Your wallet’s own approval for Permit2 over VPFI is left as it is.');
+  await fitsWidth(page);
+
+  const sent = flags.sentTransactions;
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const finish = flow.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
+  await expect(finish).toContainText(`Counted in your vault: 4 ${symbol}`);
+  await expect(finish).toContainText(`Left your wallet for your vault: 4 ${symbol}`);
+  expect(flags.permit2SignatureRequests).toBe(1);
+  expect(flags.typedDataRequests.PermitTransferFrom).toBe(1);
+  expect(flags.sentTransactions).toBe(sent + 1);
+  expect(await sc.read<bigint>('getTrackedVPFIBalance', [me])).toBe(parseEther('4'));
+  // Nothing was approved to the protocol on the way.
+  expect(await sc.pub.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [me, sc.diamond] })).toBe(0n);
+  await finish.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByTestId('rewards-vpfi-counted')).toHaveText(`4 ${symbol}`, { timeout: 60_000 });
   await fitsWidth(page);
 });
