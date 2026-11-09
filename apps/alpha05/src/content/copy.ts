@@ -1499,9 +1499,8 @@ export const copy = {
   },
   inbox: {
     title: B('Alerts'),
-    lead: B(
-      'What the protocol’s index has noted for this wallet on {{chain}}, newest first. Each alert says how a loan stood when it was written; open the loan for where it stands now.',
-    ),
+    lead: B('What the protocol’s index has noted for this wallet on {{chain}}, newest first.'),
+    history: B('Each alert shows how a loan stood when written; open the loan for where it stands now.'),
     connectPrompt: B('Connect a wallet to see its alerts.'),
     unsupportedChain: B('Switch to a supported network to see this wallet’s alerts there.'),
     reading: B('Reading this wallet’s alerts…'),
@@ -1537,7 +1536,7 @@ export const copy = {
     hf_alert: B('Loan #{{id}}’s health dipped below 1.2.'),
     hf_critical: B('Loan #{{id}}’s health dipped below 1.05, close to the 1.0 liquidation line.'),
     reward_final_notice: B('Reward entry #{{entry}} entered its last notice period before it can no longer be claimed.'),
-    reward_expired: B('Reward entry #{{entry}} reached the end of its claim window: it can no longer be claimed, and its return to the programme has begun.'),
+    reward_expired: B('Reward entry #{{entry}}’s claim window ended: no longer claimable, and its return to the programme has begun.'),
     unknownKind: B('An alert this app has no words for yet ({{kind}}).'),
     channels: B('Telegram and push alerts are still set up in the current app.'),
     channelsLink: B('Open its settings'),

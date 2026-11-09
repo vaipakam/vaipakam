@@ -72,6 +72,7 @@ export function AlertsPage() {
             {text('inbox.title')}
           </h2>
           <p className="tier-b">{format('inbox.lead', { chain: chain.name })}</p>
+          <p className="tier-b">{text('inbox.history')}</p>
           {failed && (
             <p className="tier-a" data-testid="alerts-failed">
               {format(query.data ? 'inbox.failedCached' : 'inbox.failed', { reason })}
