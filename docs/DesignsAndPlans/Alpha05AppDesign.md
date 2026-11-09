@@ -1543,6 +1543,41 @@ above. Each resolves here, so a route reviewer needs no private file:
   On a deployment without the consent record, nothing is offered and the
   card says whether the deployment can still charge the fee.
 
+- **RB-SETTINGS** — Settings (ACC-06, ACC-13, ACC-14, ACC-15 status,
+  ACC-35, ACC-61) is reached from the navigation's foot on every width; it
+  holds no money action, so it is not a primary destination. Mode, theme and
+  language need no wallet, apply at once and persist in this browser; the
+  theme follows the device until chosen and says which it is following; the
+  language picker offers the ten languages, says when the one chosen is not
+  translated yet and so shows English, and the document's own language
+  stays English until it is. For a connected wallet the page shows the
+  Terms state on its network: none in force; accepted, with the version and
+  the text's fingerprint; or in force and not accepted, which is asked at
+  the first action that needs it and never here, while repaying, claiming
+  and withdrawing never need it; a read that failed says it could not
+  confirm, which is not "not accepted". The fee-discount consent is the same
+  setting as on Home (RW-07). The page says what this browser keeps for the
+  app, that nothing secret is stored and that this build sends no
+  diagnostics.
+- **RB-DATA-RIGHTS** — Your data (ACC-55) needs no wallet and no Terms. It
+  states what this browser keeps for the app (its own records, the wallet
+  connection's items, this tab's items, the site's databases or that they
+  cannot be listed, and the shared language cookie) and how many items an
+  erasure would remove, before the reader confirms. The download carries
+  the app's own records only, names the wallet addresses in them, and counts
+  without copying the wallet connection's session material. Erasure ends
+  every wallet connection first so nothing is written back, then sweeps this
+  site's storage, databases and the shared language cookie at every scope,
+  writes back only the wallet libraries' "disconnected" markers (for every
+  connector that was connected or already marked, so the reload's automatic
+  reconnection cannot reconnect a wallet that still authorises the site),
+  and reloads so each preference visibly resets. Every step reports what it
+  removed, kept and could not, each refusal with its reason; nothing is
+  claimed that was not measured, and the report survives the reload in that
+  tab. When the browser will not keep the report for the reload, the page
+  does not reload: it shows the report and says why. The confirmation says what erasure does not reach: the chain, the
+  alert service's records, the marketing site and the wallet app.
+
 ## 3. Companion specifications
 
 ### 3.1 Deployment and service capabilities
