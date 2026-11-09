@@ -1,4 +1,4 @@
-## Thread — alpha05 can post a request to rent an NFT (PR #<n>)
+## Thread — alpha05 can post a request to rent an NFT (PR #3469)
 
 A renter can now ask to rent a named NFT on the new app's Rent page. The
 form is the listing form worded for the renter: the collection and the
