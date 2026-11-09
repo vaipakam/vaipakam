@@ -23,6 +23,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 /**
  * @title  LenderIntentCapitalTest
@@ -503,11 +504,11 @@ contract LenderIntentCapitalTest is SetupTest {
         );
 
         // The legitimate exit for the proceeds is the NFT claim → to wallet.
-        uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 walletBefore = _owned(lender, mockERC20);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         assertGt(
-            ERC20(mockERC20).balanceOf(lender),
+            _owned(lender, mockERC20),
             walletBefore,
             "proceeds claimed via NFT to wallet (the only path)"
         );
@@ -589,11 +590,8 @@ contract LenderIntentCapitalTest is SetupTest {
         uint256 lenderTok =
             LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
         address buyer = makeAddr("positionBuyer");
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSignature("ownerOf(uint256)", lenderTok),
-            abi.encode(buyer)
-        );
+        // The position's ownership lives in the PositionNFT core (#3318).
+        LibTestPositionNFT.mockHolder(address(diamond), lenderTok, buyer);
         // Even the original owner can't roll a sold position.
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentPositionTransferred.selector);
@@ -662,11 +660,11 @@ contract LenderIntentCapitalTest is SetupTest {
         );
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
 
-        uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 walletBefore = _owned(lender, mockERC20);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         assertGt(
-            ERC20(mockERC20).balanceOf(lender),
+            _owned(lender, mockERC20),
             walletBefore,
             "VPFI proceeds paid by the normal claim"
         );

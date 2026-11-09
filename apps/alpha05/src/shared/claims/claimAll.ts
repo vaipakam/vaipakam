@@ -39,7 +39,7 @@ import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { frozenRefusal, type FrozenState } from '../sanctions/posture';
 import type { LegOutcome } from '../tx/outcome';
 import { claimRecorded, surplusPaid } from './claimLog';
-import { nftLegs } from './claimOutcome';
+import { claimOutcomes, nftLegs, type ClaimantVault } from './claimOutcome';
 import { ASSET_ERC20, isFallback, type ClaimLane, type ClaimSide } from './loanClaim';
 import { laneLabel } from './loanClaimReceipt';
 import type { LoanClaimRows } from './loanClaimRows';
@@ -195,12 +195,13 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
         gaps.push({ kind: 'loan', why: 'own', loanId: r.loanId, side: r.side });
         continue;
       }
-      const source = r.side === 'lender' ? r.loan.lender : r.loan.borrower;
+      // A loan claim pays the holder's own vault, credited as its funds,
+      // whatever the protected mode.
       legs.push(
         leg(
           { kind: 'loan', loanId: r.loanId, side: r.side },
           r.lanes.map((l) => ({ asset: l.asset, assetType: l.assetType, tokenId: l.tokenId, amount: l.amount, lane: l.kind })),
-          payoutRoute(i.protection, i.account, source),
+          'credit',
         ),
       );
     }
@@ -600,7 +601,16 @@ export interface ClaimAllWords {
  * legs recorded paying. A rewards claim that leaves more is said
  * (`moreRewards`), so the remainder is offered again.
  */
-export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond: Hex, account: Hex, w: ClaimAllWords, copy: Copy, moreRewards: boolean | null): LegOutcome[] {
+export function measureClaimAll(
+  r: ClaimAllReview,
+  logs: readonly Log[],
+  diamond: Hex,
+  account: Hex,
+  vault: ClaimantVault,
+  w: ClaimAllWords,
+  copy: Copy,
+  moreRewards: boolean | null,
+): LegOutcome[] {
   const { text, format } = copy;
   const legs: LegOutcome[] = [];
   const expected = new Map<string, { asset: Hex; amount: bigint }>();
@@ -608,6 +618,12 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
     const k = lower(asset);
     expected.set(k, { asset: expected.get(k)?.asset ?? asset, amount: (expected.get(k)?.amount ?? 0n) + amount });
   };
+  // The loans this batch claimed: what they credited to the vault is
+  // measured with the rest.
+  const loans = r.send.flatMap((l) => (l.subject.kind === 'loan' ? [l.subject.loanId] : []));
+  // The tokens a loan claim paid: a token nothing landed for is then named
+  // as the vault credit it should have been.
+  const credited = new Set<string>();
   const nfts = new Map<string, LegPayout>();
   const addNft = (p: LegPayout) => {
     const k = `${lower(p.asset)}:${p.tokenId}`;
@@ -635,6 +651,7 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
     }
     legs.push({ status: 'done', label: format('claimAll.legCollected', { what: title }) });
     for (const p of rec.paid) add(p.asset, p.amount);
+    if (l.subject.kind === 'loan') for (const p of rec.paid) credited.add(lower(p.asset));
     if (l.subject.kind !== 'loan') continue;
     const loanId = l.subject.loanId;
     if (l.payouts.some((p) => p.lane === 'surplus') && surplusPaid(logs, diamond, loanId) === null)
@@ -643,10 +660,15 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
   }
   // Each NFT (collection and token id) measured once, against what every
   // collected payout of it promised, each destination with its own quantity.
-  for (const p of nfts.values()) legs.push(...nftLegs(logs, diamond, account, p, (n) => w.nft({ ...p, amount: n }), r.list.protection, copy));
+  for (const p of nfts.values()) legs.push(...nftLegs(logs, diamond, account, vault, loans, p, (n) => w.nft({ ...p, amount: n }), r.list.protection, copy));
   for (const { asset, amount } of expected.values()) {
     if (amount === 0n) continue;
-    const outcomes = payoutOutcomes(logs, diamond, account, asset);
+    // A credit to an unread vault is not measured: said, never read as none.
+    if (vault === null && loans.length > 0) {
+      legs.push({ status: 'unknown', label: format('payout.legCredit', { what: w.amount(asset, amount) }), reason: text('payout.vaultUnread') });
+      continue;
+    }
+    const outcomes = vault === null ? payoutOutcomes(logs, diamond, account, asset) : claimOutcomes(logs, diamond, account, vault, asset, loans);
     const wallet = moved(logs, asset, null, account);
     legs.push(
       ...payoutLegs(
@@ -659,6 +681,7 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
           exact: (v) => w.exact(asset, v),
           walletLeg: (what) => format('loanClaim.legArrived', { amount: what }),
           walletOther: (got, want) => format('loanClaim.arrivedOther', { amount: got, expected: want }),
+          none: credited.has(lower(asset)) ? (what) => format('payout.legCredit', { what }) : undefined,
         },
         copy,
       ),

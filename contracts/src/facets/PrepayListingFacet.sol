@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
+import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -145,10 +148,13 @@ contract PrepayListingFacet is
         // #306 architectural fix — borrower's per-user vault.
         // The diamond's `NFTPrepayListingFacet.postPrepayListing`
         // consumes this when constructing the canonical Seaport
-        // order shape (offerer = vault); the executor's zone
-        // callback re-verifies `params.offerer == borrowerVault`
-        // at fill time as defense-in-depth.
-        ctx.borrowerVault = s.userVaipakamVaults[loan.borrower];
+        // order shape; the executor's zone callback re-verifies
+        // `params.offerer == borrowerVault` at fill time as
+        // defense-in-depth. #3205 part 2 — the OFFERER: the vault for an
+        // ERC-721, the vault's escrow for this listing for an ERC-1155.
+        ctx.borrowerVault = LibListingEscrow.offerer(
+            s.userVaipakamVaults[loan.borrower], loan.collateralAssetType, LibListingEscrow.key(false, loanId)
+        );
     }
 
     // ─── Callback: executorFinalizePrepaySale ───────────────────────────
@@ -256,6 +262,60 @@ contract PrepayListingFacet is
         if (pinned == address(0) || msg.sender != pinned) {
             revert NotOfferExecutor(offerId, msg.sender);
         }
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    /// @dev #3205 part 2 — the listing's ERC-721, approved to the fill's
+    ///      conduit for this transaction only (§3.5). The vault checks the
+    ///      conduit against the registry's conduit set. ERC-1155 collateral
+    ///      never takes a vault approval: it lists through an escrow.
+    function executorOpenListingGrant(uint256 loanId, uint96 offerId, address conduit)
+        external
+        override
+        whenNotPaused
+    {
+        (address owner, address asset, uint256 tokenId, uint256 ref) = _listingGrantSubject(loanId, offerId);
+        if (owner == address(0)) return;
+        LibVaultOutflow.grant(
+            owner, LibVaultOutflow.ERC721, asset, tokenId, 1, conduit, VaultOutflowTypes.GrantClass.Conduit, ref
+        );
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    function executorCloseListingGrant(uint256 loanId, uint96 offerId)
+        external
+        override
+        returns (uint256 consumed)
+    {
+        (address owner,,,) = _listingGrantSubject(loanId, offerId);
+        if (owner == address(0)) return 0;
+        consumed = LibVaultOutflow.closeGrant(owner);
+    }
+
+    /// @dev The vault owner and the listed ERC-721 of exactly one listing, with
+    ///      the caller checked against the executor that listing names. A
+    ///      listing whose collateral is not an ERC-721 takes no vault grant:
+    ///      `owner` is 0.
+    function _listingGrantSubject(uint256 loanId, uint96 offerId)
+        private
+        view
+        returns (address owner, address asset, uint256 tokenId, uint256 ref)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if ((loanId == 0) == (offerId == 0)) revert NotExecutor(msg.sender, address(0));
+        if (loanId != 0) {
+            address expected = s.collateralListingExecutor;
+            if (expected == address(0)) revert ExecutorNotSet();
+            if (msg.sender != expected) revert NotExecutor(msg.sender, expected);
+            LibVaipakam.Loan storage loan = s.loans[loanId];
+            if (loan.collateralAssetType != LibVaipakam.AssetType.ERC721) return (address(0), address(0), 0, loanId);
+            return (loan.borrower, loan.collateralAsset, loan.collateralTokenId, loanId);
+        }
+        address pinned = s.offerPrepayListingExecutor[offerId];
+        if (pinned == address(0) || msg.sender != pinned) revert NotOfferExecutor(offerId, msg.sender);
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.collateralAssetType != LibVaipakam.AssetType.ERC721) return (address(0), address(0), 0, offerId);
+        return (offer.creator, offer.collateralAsset, offer.collateralTokenId, offerId);
     }
 
     /// @inheritdoc IVaipakamPrepayCallbacks
@@ -568,19 +628,18 @@ contract PrepayListingFacet is
 
         _closeSoldLoan(loan, offerId == 0);
 
-        // The sold collateral leaves the borrower's vault through the
-        // marketplace conduit, not through a vault withdrawal route, so its
-        // outflow is recorded here, once, for both listing types. Without
-        // it the tracked holding would keep a token the vault no longer
-        // holds, and a later untracked arrival of the same token could not
-        // be adopted. The listing accepts only ERC-721 and ERC-1155
-        // collateral (`NFTPrepayListingFacet`).
-        LibVaipakam.recordVaultWithdraw(
-            loan.borrower,
-            loan.collateralAsset,
-            loan.collateralTokenId,
-            loan.collateralAssetType == LibVaipakam.AssetType.ERC721 ? 1 : loan.collateralQuantity
-        );
+        // The sold collateral leaves through the marketplace conduit, not a
+        // vault withdrawal route. #3205 part 2 — an ERC-721 left on the fill's
+        // just-in-time grant, and closing that grant (the executor did it
+        // before this settlement) booked the outflow. An ERC-1155 left from
+        // its listing escrow, which counts as part of the vault until the
+        // sale, so the outflow is booked here, once. The listing accepts
+        // only ERC-721 and ERC-1155 collateral (`NFTPrepayListingFacet`).
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+            LibVaipakam.recordVaultWithdraw(
+                loan.borrower, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity
+            );
+        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
@@ -312,7 +314,7 @@ library LibConsolidation {
         if (t == LibVaipakam.AssetType.ERC20) {
             amount = loan.collateralAmount;
             if (amount == 0) return (asset, 0);
-            uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
+            uint256 credited = _moveERC20(stored, current, asset, amount, loanId, loan.borrowerTokenId);
             // #2440 — outcome 3 of {LibDelivery} in every flow, voluntary or
             // forced: this relocates the borrower side's own backing between
             // that side's vaults and pays nobody. A collateral that delivers
@@ -327,13 +329,14 @@ library LibConsolidation {
             }
         } else if (t == LibVaipakam.AssetType.ERC721) {
             amount = 1;
-            _moveNFT(s, stored, current, asset, loan.collateralTokenId, 1, toProxy, true);
+            _moveNFT(s, loanId, stored, current, asset, loan.collateralTokenId, 1, toProxy, true);
         } else {
             // ERC1155
             amount = loan.collateralQuantity;
             if (amount == 0) return (asset, 0);
             _moveNFT(
                 s,
+                loanId,
                 stored,
                 current,
                 asset,
@@ -362,7 +365,7 @@ library LibConsolidation {
         LibVaipakam.ClaimInfo storage row = s.borrowerSurplusClaims[loanId];
         uint256 amount = row.claimed ? 0 : row.amount;
         if (amount == 0) return;
-        uint256 credited = _moveERC20(stored, current, row.asset, amount, toProxy);
+        uint256 credited = _moveERC20(stored, current, row.asset, amount, loanId, s.loans[loanId].borrowerTokenId);
         if (credited < amount) {
             row.amount = credited;
             LibEncumbrance.capBorrowerHeldReservation(loanId, current, credited);
@@ -393,7 +396,7 @@ library LibConsolidation {
         // own parked proceeds following its position to the current holder.
         // The held claim follows what the holder's vault received, and the
         // reservations re-keyed beside it in step 5 never exceed it.
-        uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
+        uint256 credited = _moveERC20(stored, current, asset, amount, loanId, loan.lenderTokenId);
         if (credited < amount) {
             s.heldForLender[loanId] = credited;
             LibEncumbrance.capLenderHeldReservations(loanId, current, asset, credited);
@@ -411,19 +414,15 @@ library LibConsolidation {
         address current,
         address asset,
         uint256 amount,
-        address toProxy
+        uint256 loanId,
+        uint256 positionToken
     ) private returns (uint256 credited) {
-        credited = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            stored,
-            asset,
-            toProxy,
-            amount
+        // #3205 part 2 — the consolidation class: the policy resolves the
+        // current holder's vault from the PositionNFT, and the vault checks it.
+        credited = LibVaultOutflow.toConsolidatedHolder(
+            stored, LibVaultOutflow.ERC20, asset, 0, amount, loanId, positionToken
         );
-        VaultFactoryFacet(address(this)).recordVaultDepositERC20(
-            current,
-            asset,
-            credited
-        );
+        // The policy books both sides of the move (#3205 part 2).
     }
 
     /// @dev ERC-721/1155 Diamond-mediated two-leg move (§2 step 6 / D-6). Arm
@@ -435,6 +434,7 @@ library LibConsolidation {
     ///      `current`.
     function _moveNFT(
         LibVaipakam.Storage storage s,
+        uint256 loanId,
         address stored,
         address current,
         address asset,
@@ -450,22 +450,11 @@ library LibConsolidation {
         s.consolidationExpectedAmount = amount;
 
         if (is721) {
-            VaultFactoryFacet(address(this)).vaultWithdrawERC721(
-                stored,
-                asset,
-                tokenId,
-                address(this) // leg 1 → Diamond
-            );
+            LibVaultOutflow.toDiamond(stored, LibVaultOutflow.ERC721, asset, tokenId, 1, loanId, OutflowReason.CONSOLIDATION); // leg 1 → Diamond
             IERC721(asset).safeTransferFrom(address(this), toProxy, tokenId); // leg 2
             LibVaipakam.recordVaultDeposit(current, asset, tokenId, 1);
         } else {
-            VaultFactoryFacet(address(this)).vaultWithdrawERC1155(
-                stored,
-                asset,
-                tokenId,
-                amount,
-                address(this) // leg 1 → Diamond
-            );
+            LibVaultOutflow.toDiamond(stored, LibVaultOutflow.ERC1155, asset, tokenId, amount, loanId, OutflowReason.CONSOLIDATION); // leg 1 → Diamond
             IERC1155(asset).safeTransferFrom(
                 address(this),
                 toProxy,

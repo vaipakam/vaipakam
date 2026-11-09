@@ -134,6 +134,7 @@ contract RedeploySelectorParityTest is Test {
     ///      surface.
     function test_ForcedSaleSelectors_MatchCompiledAbi() public view {
         _assertParity("ForcedSaleFacet", FacetSelectors.forcedSale());
+        _assertParity("ForcedSalePreviewFacet", FacetSelectors.forcedSalePreview());
     }
 
     /// @dev #1841 - the sale-exit verdict host, cut by `RedeployFacets`

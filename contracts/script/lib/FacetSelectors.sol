@@ -18,6 +18,7 @@ import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
 import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -79,39 +80,33 @@ library FacetSelectors {
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](20);
         s[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.getVaultBeacon.selector;
         s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        s[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        s[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        s[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        s[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
+        s[4] = VaultFactoryFacet.vaultDepositERC721.selector;
+        s[5] = VaultFactoryFacet.vaultDepositERC1155.selector;
         // #902 — the one loan-keyed renter route (replaced vaultSetNFTUser
         // and vaultSetNFTUser1155).
-        s[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        // #1566 S3e — the swap fill's counter-only outflow record.
-        s[11] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        s[12] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        s[13] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        s[14] = VaultFactoryFacet.getOfferAmount.selector;
-        s[15] = VaultFactoryFacet.getDiamondAddress.selector;
-        s[16] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        s[17] = VaultFactoryFacet.getUserVaultAddress.selector;
-        s[18] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        s[19] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[20] = VaultFactoryFacet.getTrackedHolding.selector;
+        s[6] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        s[7] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        s[8] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        s[9] = VaultFactoryFacet.getOfferAmount.selector;
+        s[10] = VaultFactoryFacet.getDiamondAddress.selector;
+        s[11] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        s[12] = VaultFactoryFacet.getUserVaultAddress.selector;
+        s[13] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        s[14] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        s[15] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[21] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[16] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[22] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[17] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[23] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        s[24] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        s[18] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[19] = VaultFactoryFacet.vaultDeliverERC20From.selector;
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (32).
@@ -605,7 +600,7 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (5).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
     ///
     /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
     ///         debt, sell it, and split the proceeds lender first.
@@ -622,13 +617,23 @@ library FacetSelectors {
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = ForcedSaleFacet.previewForcedSale.selector;
-        s[1] = ForcedSaleFacet.sellToNeed.selector;
-        s[2] = ForcedSaleFacet.payBorrowerWallet.selector;
-        s[3] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        s = new bytes4[](3);
+        s[0] = ForcedSaleFacet.sellToNeed.selector;
+        s[1] = ForcedSaleFacet.payBorrowerWallet.selector;
+        s[2] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+    }
+
+    /// @notice Full external selector surface of {ForcedSalePreviewFacet} (2).
+    ///
+    /// @dev    #3205 part 2 — the forced-sale previews, split off
+    ///         ForcedSaleFacet along its read / write seam; both size through
+    ///         `LibForcedSalePlan`. Refreshed with ForcedSaleFacet (one rule
+    ///         read by both): `RedeployFacets` cuts it from this list.
+    function forcedSalePreview() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = ForcedSalePreviewFacet.previewForcedSale.selector;
         // #2697 — the discounted liquidation's figures, read by its
         // flash-loan receiver inside the liquidating transaction.
-        s[4] = ForcedSaleFacet.previewDiscountedLiquidation.selector;
+        s[1] = ForcedSalePreviewFacet.previewDiscountedLiquidation.selector;
     }
 }

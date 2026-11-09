@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
+import { Link } from 'react-router-dom';
 import { useConfig } from 'wagmi';
 import { signTypedData, writeContract } from 'wagmi/actions';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
@@ -88,6 +89,9 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
    *  read is a new set of figures, so the consent does not carry over. */
   const [consentFor, setConsentFor] = useStoredValue<number>(`${flowKey}:consent`);
   const [loanId, setLoanId] = useStoredValue<bigint>(`${flowKey}:loan`);
+  // Whether the loan's principal was credited to the vault: the finish card
+  // then offers the withdrawal beside the new loan.
+  const [credited, setCredited] = useStoredValue<boolean>(`${flowKey}:credited`);
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
   const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${flowKey}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -245,48 +249,63 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     },
   });
 
-  /** A borrower's acceptance: the loan, what reached the wallet, and the
-   *  collateral locked in the vault. */
+  /** A borrower's acceptance: the loan, the net principal credited to the
+   *  vault, the fee share paid back, and the collateral locked in the vault. */
   const measureBorrower = async (r: AcceptReview, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
     const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
     const legs: LegOutcome[] = [];
     const opened = openedLoan(logs, diamond, offerId, account);
     legs.push(loanLeg(opened, 'accept.legLoan'));
-    // What reached the wallet (the principal less the fee, plus the fee
-    // share the protocol pays the sender) and what else left the lender's
-    // vault must add up to the principal the loan recorded, or the split
-    // is not substantiated. A figure other than the preview's (the
-    // discount tier is read again as the loan opens) is named beside it.
-    const lending = r.offer.lendingAsset;
-    const split = deliverySplit(logs, lending, account);
-    const shownLabel = format('accept.legReceived', { amount: amt(lending, f.received) });
-    if (split === null) {
-      legs.push({ status: 'not-done', label: shownLabel, reason: text('accept.receivedNone') });
-    } else if (opened && split.received + split.fee === opened.principal) {
-      legs.push({
-        status: 'done',
-        label:
-          split.received === f.received
-            ? format('accept.legReceived', { amount: amt(lending, split.received) })
-            : format('accept.legReceivedFee', { amount: exact(lending, split.received), shown: exact(lending, f.received), principal: exact(lending, opened.principal) }),
-      });
-    } else {
-      legs.push({
-        status: 'unknown',
-        label: shownLabel,
-        reason: format('accept.receivedOther', { amount: exact(lending, split.received), expected: exact(lending, f.received) }),
-      });
-    }
-    const collateral = r.offer.collateralAsset;
-    const lockLabel = format('accept.legLocked', {
-      amount: amt(collateral, f.collateral),
-    });
     let vault: Hex | null = null;
     try {
       vault = await at.read((c, b) => readVault(c, diamond, account, b));
     } catch {
       vault = null;
     }
+    // The net principal credited to the vault, the fee share paid back and
+    // what else left the lender's vault must add up to the principal the
+    // loan recorded, or the split is not substantiated. A figure other than
+    // the preview's (the discount tier is read again as the loan opens) is
+    // named beside it.
+    const lending = r.offer.lendingAsset;
+    const shownLabel = format('accept.legReceived', { amount: amt(lending, f.toVault) });
+    const split = vault === null ? null : deliverySplit(logs, diamond, lending, account, vault, offerId);
+    if (vault === null) {
+      legs.push({ status: 'unknown', label: shownLabel, reason: text('accept.vaultUnknown') });
+    } else if (split === null || split.credited === 0n) {
+      legs.push({ status: 'not-done', label: shownLabel, reason: text('accept.receivedNone') });
+    } else if (opened && split.credited + split.back + split.fee === opened.principal) {
+      setCredited(true);
+      legs.push({
+        status: 'done',
+        label:
+          split.credited === f.toVault
+            ? format('accept.legReceived', { amount: amt(lending, split.credited) })
+            : format('accept.legReceivedFee', { amount: exact(lending, split.credited), shown: exact(lending, f.toVault), principal: exact(lending, opened.principal) }),
+      });
+    } else {
+      legs.push({
+        status: 'unknown',
+        label: shownLabel,
+        reason: format('accept.receivedOther', { amount: exact(lending, split.credited), expected: exact(lending, f.toVault) }),
+      });
+    }
+    // The fee share paid to the sender: to the wallet, or into the vault
+    // under protected mode (a vault that could not be read is not counted).
+    const back = split?.back ?? moved(logs, lending, null, account);
+    if (f.feeBack > 0n || back > 0n) {
+      const backLabel = format('accept.legFeeBack', { amount: amt(lending, f.feeBack) });
+      const bv = legVerdict(back, f.feeBack);
+      legs.push(
+        bv === 'done'
+          ? { status: 'done', label: backLabel }
+          : { status: bv, label: backLabel, reason: format('accept.feeBackOther', { amount: exact(lending, back), expected: exact(lending, f.feeBack) }) },
+      );
+    }
+    const collateral = r.offer.collateralAsset;
+    const lockLabel = format('accept.legLocked', {
+      amount: amt(collateral, f.collateral),
+    });
     if (vault === null) {
       legs.push({
         status: 'unknown',
@@ -559,6 +578,15 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
                   to: `/positions/${loanId.toString()}`,
                 }
               : null
+          }
+          after={(outcome) =>
+            credited === true && outcome.verdict !== 'not-done' ? (
+              <p className="actions">
+                <Link className="btn" to="/vault" data-testid="accept-withdraw">
+                  {text('payout.withdrawNext')}
+                </Link>
+              </p>
+            ) : null
           }
           gate={gate}
           onClose={close}

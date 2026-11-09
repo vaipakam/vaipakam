@@ -32,11 +32,7 @@ interface IDiscountedLiquidationDiamond {
         view
         returns (LibDiscountedLiquidation.Preview memory);
 
-    function triggerLiquidationDiscounted(
-        uint256 loanId,
-        address recipient,
-        bytes calldata extraData
-    ) external;
+    function triggerLiquidationDiscounted(uint256 loanId, bytes calldata extraData) external;
 }
 
 /**
@@ -553,9 +549,10 @@ contract FlashLoanLiquidator is
     {
         uint256 collateralAtEntry = IERC20(r.collateralAsset).balanceOf(address(this));
         IERC20(principalAsset).forceApprove(DIAMOND, totalDebt);
+        // The seized collateral lands with this contract, the caller that
+        // paid the debt (#3205 part 2: the payee is always `msg.sender`).
         IDiscountedLiquidationDiamond(DIAMOND).triggerLiquidationDiscounted(
             r.loanId,
-            address(this),
             "" /* extraData reserved for v2 */
         );
         IERC20(principalAsset).forceApprove(DIAMOND, 0);

@@ -814,14 +814,14 @@ contract MockDiamond {
     }
 
     // Mimics `triggerLiquidationDiscounted` — pulls exactly the debt from
-    // the caller (as `LibDelivery.pullExact` does), sends the seizure.
+    // the caller (as `LibDelivery.pullExact` does), sends the seizure to the
+    // caller (#3205 part 2: the liquidator that paid is the only payee).
     function triggerLiquidationDiscounted(
         uint256 /* loanId */,
-        address recipient,
         bytes calldata /* extraData */
     ) external {
         IERC20(principal).transferFrom(msg.sender, address(this), pullOverride == 0 ? debt : pullOverride);
-        IERC20(collateral).transfer(recipient, deliveredOverride == 0 ? seizureAmount : deliveredOverride);
+        IERC20(collateral).transfer(msg.sender, deliveredOverride == 0 ? seizureAmount : deliveredOverride);
     }
 }
 

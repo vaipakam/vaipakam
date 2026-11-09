@@ -116,13 +116,13 @@ test('the holdings show the protocol’s figures: counted, free, held by a loan,
   await expect(b.page.getByTestId(`vault-held-${coll}`)).toContainText('1,500');
   await expect(collRow).toContainText('All of it is held by your loans, offers, claims, reserves or queued payouts.');
   await expect(collRow).toContainText('Found through a loan');
-  // The loan's WETH went to the borrower's wallet, so its vault row is empty
-  // and hidden behind the switch, which counts it.
+  // The loan's WETH, less the fee, was credited to the borrower's vault as
+  // its own: counted and free to withdraw, held by nothing.
   const wethRow = b.page.locator(`[data-vault-row="${weth}"]`);
-  await expect(wethRow).toHaveCount(0);
-  await b.page.getByTestId('vault-toggle-hidden').click();
   await expect(wethRow).toBeVisible();
-  await expect(b.page.getByTestId(`vault-counted-${weth}`)).toHaveText('0 WETH');
+  await expect(b.page.getByTestId(`vault-counted-${weth}`)).toHaveText('0.0499 WETH');
+  await expect(b.page.getByTestId(`vault-withdrawable-${weth}`)).toHaveText('0.0499 WETH');
+  await expect(b.page.getByTestId(`vault-held-${weth}`)).toHaveText('0 WETH');
   expect(borrower).not.toBe(lender);
   await fitsWidth(b.page);
 });

@@ -21,7 +21,7 @@ import { claimVerdict } from '../eligibility/claim';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal, Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 import { frozenRefusal, frozenState, isFrozenRefusal, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { askThrough } from '../tx/simulate';
@@ -149,8 +149,6 @@ export async function readLoanClaimReview(
     const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CLAIM, functionName: claimFunction(side), args: [loanId], account }));
     dryRun = dry.kind === 'reverted' ? refusalFromError(dry.error) : dry.kind === 'unreadable' ? 'unread' : null;
   }
-  // The claim pays from the vault of the party recorded for the side.
-  const source = side === 'lender' ? loan.lender : loan.borrower;
   return {
     identity,
     loanId,
@@ -162,7 +160,9 @@ export async function readLoanClaimReview(
     lanes,
     sellersShare: facts.sellersShare,
     protection: facts.protection,
-    route: payoutRoute(facts.protection, account, source),
+    // A claim pays the current holder's vault, credited as its own funds,
+    // whatever its protected mode (the mode delays only the withdrawal).
+    route: 'credit',
     frozen: facts.frozen,
     dryRun,
     verdict,

@@ -613,7 +613,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   sale of that loan's lender position, not a request: the list counts it
   apart and the review blocks it, because buying a running loan has its own
   terms and is not this flow. A request is funded whole, at its smallest
-  amount and highest rate; matching is a later update.
+  amount and highest rate; matching is a later update. The amount less the
+  fee is paid into the borrower's own vault, credited as the borrower's
+  funds (RB-PAYOUT-ROUTE), never to the wallet: a borrower's receipt says
+  so, and its finish card measures that credit from the protocol's own
+  record of it, the fee share paid back to the sender beside it, the two
+  plus the rest of the fee adding up to the principal the loan recorded,
+  and offers the withdrawal.
 - **RB-LEND-POST** — Borrow and Lend post the reader's own offer through
   one shared flow (form, review, signing, measured outcome) whose side is
   the poster's: a borrower posts a request, a lender posts an offer. The
@@ -960,7 +966,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   card name that wallet, never the old one. A mode that could not be read is
   stated as unknown, never as the wallet route. A change to the route, or to
   a queued payment's delay, signer requirement or release wallet, reopens the
-  review.
+  review. Some payments never reach a wallet at all: the protocol credits a
+  loan claim to the current position holder's vault, and a new loan's net
+  principal to the borrower's vault, as that owner's own free funds, whatever
+  its mode. Such a flow names the vault as the destination and the mode as
+  delaying only the later withdrawal, measures the credit from the
+  protocol's own record of a movement into the reader's vault (one that
+  stayed in the reader's own vault included, never one into another vault,
+  for another loan, or of a class the protocol does not credit), states a
+  credit to a vault it could not read as unmeasured, and offers the
+  withdrawal on the finish card.
 - **RB-POSITION-CLAIM** — collecting a loan payout (LN-48, LN-49, LN-50)
   is one flow under RB-CLAIM, opened from the loan's page and from Claims.
   Each side is decided by its own rule (RB-ELIG), read against that side's
@@ -977,10 +992,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   collateral row, collateral the borrower added in another token, and a
   surplus held for the borrower. A row recorded at zero says so, and that
   collecting still closes the position. It states where the payout goes by
-  RB-PAYOUT-ROUTE (the wallet; a protected account's own-vault payout queued
-  for its delay, or kept in its vault while the account is locked or its
-  queue is full; a payment from another party's vault into a protected
-  wallet's vault), what past sellers of the
+  RB-PAYOUT-ROUTE (credited to the holder's own vault, whatever its mode;
+  a matching reward a claim-time match pays goes to the wallet, or where
+  protected mode routes it), what past sellers of the
   lender position take first (stated as unknown, with what it may take, when
   it could not be read), that collecting burns the position token,
   that collecting in fallback ends the fallback and the borrower's cure, and

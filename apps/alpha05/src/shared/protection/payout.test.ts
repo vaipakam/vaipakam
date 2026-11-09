@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type AbiEvent, type Log } from 'viem';
-import { VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
-import { payoutOutcomes, payoutRoute } from './payout';
+import { VaultOutflowFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { creditedTo, payoutOutcomes, payoutRoute, vaultCredit } from './payout';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
 const OTHER = '0x00000000000000000000000000000000000000e2' as const;
@@ -62,5 +62,46 @@ describe('payoutOutcomes', () => {
       { kind: 'queued', amount: 7n, releaseAt: 1_900_000_000n, recipient: ME },
       { kind: 'held', amount: 5n },
     ]);
+  });
+});
+
+describe('vaultCredit', () => {
+  const VAULT = '0x00000000000000000000000000000000000000b5' as const;
+  const OUTFLOW = VaultOutflowFacetABI as Abi;
+  const outflow = (over: Record<string, unknown> = {}, address: `0x${string}` = DIAMOND): Log => {
+    const ev = OUTFLOW.find((e) => e.type === 'event' && e.name === 'VaultOutflow') as AbiEvent;
+    const args = { owner: OTHER, vault: OTHER, asset: ASSET, tokenId: 0n, amount: 9n, delivered: 8n, to: VAULT, class_: 2, reason: 1, ref: 7n, ...over };
+    const topics = encodeEventTopics({ abi: [ev], eventName: 'VaultOutflow', args } as never);
+    const data = ev.inputs.filter((i) => !i.indexed);
+    return { address, topics, data: encodeAbiParameters(data, data.map((i) => (args as Record<string, unknown>)[i.name!])) } as unknown as Log;
+  };
+
+  it('sums what the Diamond recorded arriving in this vault for a crediting class', () => {
+    const logs = [outflow(), outflow({ class_: 3, delivered: 2n }), outflow({ class_: 14, delivered: 1n })];
+    expect(vaultCredit(logs, DIAMOND, VAULT, ASSET)).toEqual({ kind: 'credit', amount: 11n });
+    expect(creditedTo(logs, DIAMOND, VAULT)).toBe(true);
+  });
+
+  it('counts a payout that stayed in its own vault (the vault is its own destination)', () => {
+    expect(vaultCredit([outflow({ owner: ME, vault: VAULT, delivered: 9n })], DIAMOND, VAULT, ASSET)).toEqual({ kind: 'credit', amount: 9n });
+  });
+
+  it('ignores another vault, another asset or NFT, an uncredited class, another loan and another emitter', () => {
+    const logs = [
+      outflow({ to: OTHER }),
+      outflow({ asset: OTHER }),
+      outflow({ tokenId: 4n }),
+      outflow({ class_: 13 }),
+      outflow({ class_: 0 }),
+      outflow({ ref: 8n }),
+      outflow({}, OTHER),
+    ];
+    expect(vaultCredit(logs, DIAMOND, VAULT, ASSET, { tokenId: 0n, ref: [7n] })).toBeNull();
+    expect(vaultCredit(logs, DIAMOND, VAULT, ASSET, { tokenId: 4n, ref: [7n] })).toEqual({ kind: 'credit', amount: 8n });
+    expect(creditedTo([outflow({ to: OTHER }), outflow({ class_: 13 })], DIAMOND, VAULT)).toBe(false);
+  });
+
+  it('narrows to the classes asked for', () => {
+    expect(vaultCredit([outflow()], DIAMOND, VAULT, ASSET, { classes: [14] })).toBeNull();
   });
 });

@@ -832,11 +832,11 @@ contract SwapToRepayFacetTest is SetupTest {
 
         // Delist → the frozen surplus is now realizable to the holder's EOA.
         sanctions.setFlagged(holder, false);
-        uint256 holderBefore = IERC20(address(principalAsset)).balanceOf(holder);
+        uint256 holderBefore = _owned(holder, address(address(principalAsset)));
         vm.prank(holder);
         ClaimFacet(address(diamond)).claimAsBorrower(1);
         assertGt(
-            IERC20(address(principalAsset)).balanceOf(holder),
+            _owned(holder, address(address(principalAsset))),
             holderBefore,
             "delisted holder receives the frozen surplus principal"
         );
@@ -894,11 +894,11 @@ contract SwapToRepayFacetTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsLender(1);
 
         sanctions.setFlagged(lenderEoa, false);
-        uint256 lenderEoaBefore = IERC20(address(principalAsset)).balanceOf(lenderEoa);
+        uint256 lenderEoaBefore = _owned(lenderEoa, address(address(principalAsset)));
         vm.prank(lenderEoa);
         ClaimFacet(address(diamond)).claimAsLender(1);
         assertGt(
-            IERC20(address(principalAsset)).balanceOf(lenderEoa),
+            _owned(lenderEoa, address(address(principalAsset))),
             lenderEoaBefore,
             "delisted lender claims the frozen proceeds"
         );

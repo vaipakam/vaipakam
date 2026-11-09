@@ -34,6 +34,8 @@ import {MockLopFill} from "./mocks/MockLopFill.sol";
 import {LibLopDomain} from "../src/libraries/LibLopDomain.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 /**
  * @title  TakerReentry
@@ -336,7 +338,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
             IERC1271.isValidSignature.selector,
             "the vault signs for the order whose making amount is the lot"
         );
-        assertEq(IERC20(weth).allowance(vault, address(lopFill)), lot, "and approves the LOP for exactly the lot");
+        // #3205 part 2 — the commit approves nothing: the fill's pre-hook
+        // grants exactly the lot inside the fill, and its post-hook closes it.
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "and approves nothing standing");
         order.makingAmount = 0;
         assertEq(
             IERC1271(vault).isValidSignature(lopFill.hashOrder(order), ""),
@@ -506,6 +510,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     function test_I5c_reentryFromTheUnwrappedEthPayout_isRefused() public {
         MockLopFill lopW = new MockLopFill(weth);
         IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(address(lopW));
+        // #3205 part 2 — the vault grants the order protocol only as a member
+        // of the registry's SWAP_ADAPTERS set.
+        LibTestVaultBeacon.registryOf(address(diamond)).setMember(RegistryKeys.SWAP_ADAPTERS, address(lopW), true);
         (uint256 other, address otherBorrower) = _otherActiveLoan();
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -957,6 +964,10 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     /// @dev    Kills: the commit setting (not raising) the allowance; the teardown zeroing (not
     ///         lowering) it, which strands the sibling unfillable; the teardown's allowance step
     ///         dropped; the teardown's revoke dropped (the registration would outlive the auction).
+    /// @dev #3205 part 2 — no standing allowance at any point: two live lots
+    ///      on one vault leave nothing approved between transactions, a
+    ///      teardown has nothing to lower, and each fill spends its own lot
+    ///      inside its own just-in-time grant.
     function test_I19_theVaultsAllowance_isTheSumOfItsLiveLots() public {
         uint256 a = _commitWeth();
         address vault = _vaultOf(a);
@@ -972,7 +983,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertGt(rb.makerAmount, 0, "fixture-live: a non-empty second lot");
         assertEq(rb.deadline, ra.deadline, "fixture-live: one deadline");
 
-        assertEq(IERC20(weth).allowance(vault, address(lopFill)), ra.makerAmount + rb.makerAmount, "both lots approved");
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "nothing approved standing for either lot");
 
         bytes32 hashA = lopFill.hashOrder(_order(ra));
         assertEq(
@@ -981,7 +992,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         vm.warp(ra.deadline); // the inclusive instant: the first is cancellable, the second still fillable
         vm.prank(LoanFacet(address(diamond)).getLoanDetails(a).borrower);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(a);
-        assertEq(IERC20(weth).allowance(vault, address(lopFill)), rb.makerAmount, "a teardown lowers it by its own lot");
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "a teardown leaves nothing standing");
         assertEq(
             VaipakamVaultImplementation(vault).getListingExecutor(hashA), address(0), "and revokes its registration"
         );

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {RegistryKeys} from "./RegistryKeys.sol";
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibLaunchCrossChainReadiness} from "./LibLaunchCrossChainReadiness.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
@@ -22,6 +23,10 @@ interface ILaunchReadableDiamond {
     function isLiquidityQuoteUsable(address quote) external view returns (bool);
     // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIToken() external view returns (address);
+    function getVaultBeacon() external view returns (address);
+    function getBackstopVault() external view returns (address);
+    function getFusionLimitOrderProtocol() external view returns (address);
+    function getCollateralListingExecutor() external view returns (address);
     function hasRole(bytes32 role, address account) external view returns (bool);
     function owner() external view returns (address);
     function roleEpoch() external view returns (uint64);
@@ -78,6 +83,22 @@ interface ILaunchReadableDiamond {
  *          the gate and a production launch refuse it, a testnet launch
  *          reports it.
  */
+/// @dev #3205 part 2 — what the readiness check reads of the vault code and
+///      the protocol registry it is built against.
+interface ILaunchVaultBeacon {
+    function implementation() external view returns (address);
+}
+
+interface ILaunchVaultCode {
+    function REGISTRY() external view returns (address);
+}
+
+interface ILaunchRegistry {
+    function pointer(bytes32 key) external view returns (address);
+    function isMember(bytes32 set, address member) external view returns (bool);
+    function memberCount(bytes32 set) external view returns (uint256);
+}
+
 library LibLaunchReadiness {
     /// @dev Gas each interface probe of a third-party contract may spend (an
     ///      adapter's `adapterName()`, the oracle's `isSanctioned`, the CCIP
@@ -215,7 +236,7 @@ library LibLaunchReadiness {
         view
         returns (Check[] memory checks)
     {
-        checks = new Check[](10);
+        checks = new Check[](11);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -226,6 +247,7 @@ library LibLaunchReadiness {
         checks[7] = _feedRegistry(diamond, declared.feedRegistry);
         checks[8] = _lapseSchedule(diamond);
         checks[9] = _rewardRole(diamond, declared.rewardRole);
+        checks[10] = _vaultRegistry(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -263,6 +285,81 @@ library LibLaunchReadiness {
     // ─── The requirements ──────────────────────────────────────────────
 
     /// @dev Fees and treasury shares need somewhere to go.
+    /// @dev #3205 part 2 — every vault checks a treasury, swap-adapter,
+    ///      order-protocol or conduit destination against the protocol
+    ///      registry its CODE names. A registry left empty (or a vault built
+    ///      against none) would refuse every fee, every swap-to-repay fill and
+    ///      every listing fill, each with a named error but only once a user
+    ///      tried. So the launch refuses first, here: the registry must exist,
+    ///      name the Diamond's treasury, carry every swap adapter and the
+    ///      1inch order protocol the Diamond routes through, and hold at least
+    ///      one conduit once a listing executor is configured.
+    function _vaultRegistry(address diamond) private view returns (Check memory c) {
+        c.label = "vault registry seeded";
+        ILaunchReadableDiamond d = ILaunchReadableDiamond(diamond);
+        address registry;
+        try d.getVaultBeacon() returns (address beacon) {
+            try ILaunchVaultBeacon(beacon).implementation() returns (address impl) {
+                try ILaunchVaultCode(impl).REGISTRY() returns (address r) {
+                    registry = r;
+                } catch {
+                    c.detail = "the vault code names no registry (REGISTRY() unreadable)";
+                    return c;
+                }
+            } catch {
+                c.detail = "the vault beacon's implementation() is unreadable";
+                return c;
+            }
+        } catch {
+            c.detail = "getVaultBeacon() unreadable";
+            return c;
+        }
+        c.checkable = true;
+        if (registry == address(0)) {
+            c.detail = "the vault code is built against no protocol registry: every treasury, adapter and conduit outflow would be refused";
+            return c;
+        }
+        ILaunchRegistry r = ILaunchRegistry(registry);
+        try d.getTreasury() returns (address t) {
+            if (t == address(0) || r.pointer(RegistryKeys.TREASURY) != t) {
+                c.detail = "the registry's TREASURY is not the Diamond's treasury";
+                return c;
+            }
+        } catch {
+            c.checkable = false;
+            c.detail = "getTreasury() unreadable";
+            return c;
+        }
+        try d.getBackstopVault() returns (address b) {
+            if (b != address(0) && r.pointer(RegistryKeys.BACKSTOP) != b) {
+                c.detail = "the registry's BACKSTOP is not the Diamond's backstop";
+                return c;
+            }
+        } catch {}
+        try d.getSwapAdapters() returns (address[] memory adapters) {
+            for (uint256 i; i < adapters.length; ++i) {
+                if (!r.isMember(RegistryKeys.SWAP_ADAPTERS, adapters[i])) {
+                    c.detail = "a swap adapter the Diamond routes through is not in the registry's SWAP_ADAPTERS";
+                    return c;
+                }
+            }
+        } catch {}
+        try d.getFusionLimitOrderProtocol() returns (address lop) {
+            if (lop != address(0) && !r.isMember(RegistryKeys.SWAP_ADAPTERS, lop)) {
+                c.detail = "the 1inch order protocol is not in the registry's SWAP_ADAPTERS: every swap-to-repay fill would be refused";
+                return c;
+            }
+        } catch {}
+        try d.getCollateralListingExecutor() returns (address executor) {
+            if (executor != address(0) && r.memberCount(RegistryKeys.CONDUITS) == 0) {
+                c.detail = "a listing executor is configured but the registry holds no CONDUITS: every listing fill would be refused";
+                return c;
+            }
+        } catch {}
+        c.met = true;
+        c.detail = "the registry names the treasury and carries the routed adapters, order protocol and conduits";
+    }
+
     function _treasury(address diamond) private view returns (Check memory c) {
         c.label = "treasury set";
         try ILaunchReadableDiamond(diamond).getTreasury() returns (address t) {

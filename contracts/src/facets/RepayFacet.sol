@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
@@ -503,13 +505,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #2440 — a voluntary repayment: refused unless the whole share
             // reached the Diamond, so the lender is never paid out of the
             // Diamond's other balance and the loan never closes on less.
-            LibFacet.vaultWithdrawExact(
-                msg.sender,
-                loan.prepayAsset,
-                address(this),
-                lenderShare,
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toDiamondExact(msg.sender, loan.prepayAsset, lenderShare, loanId, OutflowReason.REPAYMENT);
             LibSanctionedLock.endMoveOut(s);
             // #821 (Codex #832 r2 P1) — vault-lock the lender's rental share so a
             // flagged stored lender doesn't brick the rental repayment; the share

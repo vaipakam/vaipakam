@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -12,6 +13,7 @@ import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -340,7 +342,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     s,
                     loan.borrower,
                     loan.collateralAsset,
-                    loan.collateralAmount
+                    loan.collateralAmount,
+                    loanId,
+                    OutflowReason.LIQUIDATION
                 );
                 _enterFallback(loanId);
                 emit LoanFallbackPending(
@@ -430,45 +434,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     // the lender's claim below names, what it received. The
                     // loan's collateral becomes that figure (one transfer, so
                     // a token that charges on transfer charges once).
-                    loan.collateralAmount = LibFacet.vaultWithdrawDelivered(
-                        loan.borrower,
-                        loan.collateralAsset,
-                        lenderVault,
-                        loan.collateralAmount,
-                        VaultWithdrawFailed.selector
-                    );
-                    // T-051 — the credit to the lender's vault ticks the
-                    // protocolTrackedVaultBalance counter.
-                    LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, loan.collateralAmount);
+                    loan.collateralAmount = LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
+                    // The policy books the lender vault's tracked arrival
+                    // (#3205 part 2: one place books both sides of a vault move).
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC721.selector,
-                            loan.borrower,
-                            loan.collateralAsset,
-                            loan.collateralTokenId,
-                            lenderVault
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
-                    // The lender's claim pays this token out of the lender's
-                    // vault, which is bounded by the tracked ledger.
-                    LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, loan.collateralTokenId, 1);
+                    LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC721, loan.collateralAsset, loan.collateralTokenId, 1, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                            loan.borrower,
-                            loan.collateralAsset,
-                            loan.collateralTokenId,
-                            loan.collateralQuantity,
-                            lenderVault
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
-                    LibVaipakam.recordVaultDeposit(
-                        loan.lender, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity
-                    );
+                    LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC1155, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
                 }
                 LibSanctionedLock.endMoveOut(s);
 
@@ -568,13 +540,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // treasury fee first and the lender's share only after (lender
             // first), and is never made up from the Diamond's other balance.
             {
-                uint256 shortfall = loan.prepayAmount - LibFacet.vaultWithdrawDelivered(
-                    loan.borrower,
-                    loan.prepayAsset,
-                    address(this),
-                    loan.prepayAmount,
-                    VaultWithdrawFailed.selector
-                );
+                uint256 shortfall = loan.prepayAmount - LibVaultOutflow.toDiamondERC20(loan.borrower, loan.prepayAsset, loan.prepayAmount, loanId, OutflowReason.RENTAL);
                 if (shortfall > treasuryFee) {
                     prepayToLender -= shortfall - treasuryFee;
                     treasuryFee = 0;

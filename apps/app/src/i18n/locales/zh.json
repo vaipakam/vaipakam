@@ -2709,6 +2709,8 @@
         "VPFIDepositedToVault": "VPFI 已存入 vault",
         "VPFIWithdrawnFromVault": "VPFI 已从 vault 提出",
         "VaultVpfiDebited": "VPFI 已从 vault 支出",
+        "VaultOutflow": "已从 vault 转出",
+        "VaultGrantSettled": "vault 授权已结算",
         "RewardEntryForfeitSettled": "奖励已失效",
         "AutoDailyDeducted": "已支付每日租金",
         "AutoExtendBorrowerCapsChanged": "自动延期限制已更新",

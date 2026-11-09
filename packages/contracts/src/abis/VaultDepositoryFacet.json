@@ -902,6 +902,22 @@
   },
   {
     "type": "error",
+    "name": "RecipientNotOwnWallet",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RecoveryAmountExceedsUnsolicited",
     "inputs": []
   },

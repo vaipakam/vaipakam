@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -319,11 +321,11 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         // and the custody-row residual (already in the vault; returned to the pledge at match) are paid out.
         address newHolder = makeAddr("newHolder");
         _mockBorrowerNftHolder(LOAN_A, newHolder);
-        uint256 holderYBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        uint256 holderYBefore = _owned(newHolder, address(mockCollateralERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderYBefore,
+            _owned(newHolder, address(mockCollateralERC20)) - holderYBefore,
             400,
             "current holder receives the full residual (top-up + row residual)"
         );
@@ -376,11 +378,11 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         // Current (transferred-away) holder recovers the top-up.
         address newHolder = makeAddr("newHolderExhaust");
         _mockBorrowerNftHolder(LOAN_A, newHolder);
-        uint256 holderBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        uint256 holderBefore = _owned(newHolder, address(mockCollateralERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderBefore,
+            _owned(newHolder, address(mockCollateralERC20)) - holderBefore,
             200,
             "current holder recovers the top-up (not stranded)"
         );
@@ -482,11 +484,11 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         // The borrower holder claims the 200 top-up out of their vault.
         address newHolder = makeAddr("newHolder3");
         _mockBorrowerNftHolder(LOAN_A, newHolder);
-        uint256 holderYBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        uint256 holderYBefore = _owned(newHolder, address(mockCollateralERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderYBefore,
+            _owned(newHolder, address(mockCollateralERC20)) - holderYBefore,
             200,
             "holder receives the top-up"
         );
@@ -511,20 +513,20 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower, mockCollateralERC20, uint256(0), uint256(1), uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockCollateralERC20, borrower, 1);
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockCollateralERC20, borrower, 1);
 
         // Current holder claims the full residual.
         address newHolder = makeAddr("newHolder4");
         _mockBorrowerNftHolder(LOAN_A, newHolder);
-        uint256 holderYBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        uint256 holderYBefore = _owned(newHolder, address(mockCollateralERC20));
         vm.prank(newHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderYBefore,
+            _owned(newHolder, address(mockCollateralERC20)) - holderYBefore,
             400,
             "new holder receives the residual, not the stale borrower"
         );

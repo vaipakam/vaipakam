@@ -3,14 +3,12 @@ pragma solidity ^0.8.29;
 
 import {LibOfferAdmission} from "./LibOfferAdmission.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
 import {LibOfferBounds} from "./LibOfferBounds.sol";
 import {LibInitRiskGate} from "./LibInitRiskGate.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
-import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
 /**
@@ -225,41 +223,6 @@ library LibOfferMatch {
         // LIF_MATCHER_FEE_BPS (100 = 1%) when unset; capped at 50%
         // by the setter (`ConfigFacet.setLifMatcherFeeBps`).
         return (totalFee * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS;
-    }
-
-    /// @notice Pull the matcher's 1% slice of `totalFee` from the
-    ///         lender's vault and forward it to `matcher`. Caller
-    ///         is responsible for forwarding the remaining
-    ///         `(totalFee - matcherCut)` to treasury through its
-    ///         existing path. Returns the matcher's actual slice so
-    ///         the caller can subtract it from the treasury total.
-    /// @dev    No-op (returns 0) when `totalFee == 0` or
-    ///         `matcher == address(0)` — the latter covers legacy loans
-    ///         created before `loan.matcher` started being recorded.
-    function splitLifToMatcher(
-        address asset,
-        uint256 totalFee,
-        address lender,
-        address matcher
-    ) internal returns (uint256 matcherCut) {
-        if (totalFee == 0 || matcher == address(0)) return 0;
-        matcherCut = matcherShareOf(totalFee);
-        if (matcherCut == 0) return 0;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                lender,
-                asset,
-                matcher,
-                matcherCut
-            ),
-            // Reuse the existing TreasuryTransferFailed error selector
-            // by re-importing it locally would couple this lib to
-            // OfferFacet; instead, encode a generic-revert path via the
-            // crossFacetCall helper which surfaces the inner revert
-            // reason already.
-            bytes4(0)
-        );
     }
 
     /// @notice Pure midpoint helper: `(a + b) / 2`. Both args must be

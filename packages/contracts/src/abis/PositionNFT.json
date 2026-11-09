@@ -440,6 +440,53 @@
   },
   {
     "type": "function",
+    "name": "pendingDelayChangeCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingDelayChanges",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "holders",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "lowerDelay",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "lowerAt",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pendingOwner",
     "inputs": [],
     "outputs": [
@@ -447,6 +494,48 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingUnlockCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingUnlocks",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "holders",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "unlockAt",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"

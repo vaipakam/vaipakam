@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
-import { LoanFacetABI } from '@vaipakam/contracts/abis';
+import { LoanFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import { deliverySplit, legVerdict, moved, openedLoan } from './acceptOutcome';
 import { BORROWER, LENDER, TLIQ, WETH } from './testOffer';
 
@@ -39,11 +39,33 @@ describe('what an acceptance opened', () => {
     expect(moved(logs, TLIQ, VAULT, BORROWER)).toBe(0n);
   });
 
-  it('splits the principal into what reached the wallet and the fee left at the same source', () => {
+  it('splits the principal into the vault credit, the fee paid back and the fee left at the same source', () => {
     const TREASURY: Hex = '0x7777777777777777777777777777777777777777';
-    const logs = [transfer(WETH, VAULT, BORROWER, 992n), transfer(WETH, VAULT, TREASURY, 8n), transfer(WETH, LENDER, TREASURY, 50n), transfer(TLIQ, VAULT, TREASURY, 3n)];
-    expect(deliverySplit(logs, WETH, BORROWER)).toEqual({ received: 992n, fee: 8n });
-    expect(deliverySplit([transfer(WETH, VAULT, TREASURY, 8n)], WETH, BORROWER)).toBeNull();
+    const MY_VAULT: Hex = '0x6666666666666666666666666666666666666666';
+    const principal = (delivered: bigint, offerId = 7n, to: Hex = MY_VAULT) => {
+      const args = { owner: LENDER, vault: VAULT, asset: WETH, tokenId: 0n, amount: delivered, delivered, to, class_: 14, reason: 1, ref: offerId };
+      const topics = encodeEventTopics({ abi: VaultOutflowFacetABI as Abi, eventName: 'VaultOutflow', args } as never) as Hex[];
+      const data = encodeAbiParameters(
+        [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'uint256' }],
+        [0n, delivered, delivered, to, 14, 1, offerId],
+      );
+      return log(DIAMOND, topics, data);
+    };
+    const logs = [
+      transfer(WETH, VAULT, MY_VAULT, 990n),
+      principal(990n),
+      transfer(WETH, VAULT, BORROWER, 2n),
+      transfer(WETH, VAULT, TREASURY, 8n),
+      transfer(WETH, LENDER, TREASURY, 50n),
+      transfer(TLIQ, VAULT, TREASURY, 3n),
+      // The collateral deposit, wallet to vault, is not something received.
+      transfer(WETH, BORROWER, MY_VAULT, 5n),
+    ];
+    expect(deliverySplit(logs, DIAMOND, WETH, BORROWER, MY_VAULT, 7n)).toEqual({ credited: 990n, back: 2n, fee: 8n });
+    // A credit recorded for another offer, or into another vault, is not this loan's principal.
+    expect(deliverySplit([transfer(WETH, VAULT, MY_VAULT, 990n), principal(990n, 8n)], DIAMOND, WETH, BORROWER, MY_VAULT, 7n)).toEqual({ credited: 0n, back: 990n, fee: 0n });
+    expect(deliverySplit([principal(990n, 7n, TREASURY)], DIAMOND, WETH, BORROWER, MY_VAULT, 7n)).toBeNull();
+    expect(deliverySplit([transfer(WETH, VAULT, TREASURY, 8n)], DIAMOND, WETH, BORROWER, MY_VAULT, 7n)).toBeNull();
   });
 
   it('calls a leg done only at the expected figure', () => {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -760,13 +762,7 @@ contract EarlyWithdrawalDirectFacet is
         // then fan out to liam / treasury / Noah's heldForLender.
         // #2440 — a voluntary sale: refused unless the whole principal
         // arrived, so the fan-out never draws on the Diamond's other balance.
-        LibFacet.vaultWithdrawExact(
-            buyOffer.creator, // Noah
-            loan.principalAsset,
-            address(this),
-            loan.principal,
-            VaultWithdrawFailed.selector
-        );
+        LibVaultOutflow.toDiamondExact(buyOffer.creator, loan.principalAsset, loan.principal, loanId, OutflowReason.SALE);
 
 
         uint256 toLiam = loan.principal - shortfall;
@@ -869,13 +865,7 @@ contract EarlyWithdrawalDirectFacet is
             // of it arrived, so `heldForLender` keeps naming exactly what the
             // buyer's vault holds.
             s.consolidationMoveFromUser = loan.lender;
-            LibFacet.vaultWithdrawExact(
-                loan.lender, // stored (old) lender — where the held VPFI sits
-                payAsset,
-                address(this),
-                priorHeld,
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toDiamondExact(loan.lender, payAsset, priorHeld, loanId, OutflowReason.SALE);
             s.consolidationMoveFromUser = address(0);
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
             LibDelivery.pushExact(payAsset, newVault, priorHeld);

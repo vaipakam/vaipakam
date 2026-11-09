@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -316,13 +317,13 @@ contract SaleFloorTest is SetupTest {
     function test_previewCarriesTheFloor() public {
         _liquidatable();
         ForcedSaleFacet.ForcedSalePlan memory loose =
-            ForcedSaleFacet(address(diamond)).previewForcedSale(LOAN, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
+            ForcedSalePreviewFacet(address(diamond)).previewForcedSale(LOAN, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
         assertEq(loose.floorBps, 600, "no checkpoints: the cap");
 
         _twoCheckpoints();
         _tier(3);
         ForcedSaleFacet.ForcedSalePlan memory tight =
-            ForcedSaleFacet(address(diamond)).previewForcedSale(LOAN, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
+            ForcedSalePreviewFacet(address(diamond)).previewForcedSale(LOAN, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
         assertEq(tight.floorBps, 250);
         assertLt(tight.sell, loose.sell, "a tighter floor needs less collateral sold");
         assertGe(tight.floor, tight.need, "still covers the need");
@@ -339,7 +340,7 @@ contract SaleFloorTest is SetupTest {
     function _liquidateAtLoss(uint256 outputBps) internal {
         adapter.setOutputMultiplierBps(outputBps);
         ForcedSaleFacet.ForcedSalePlan memory p =
-            ForcedSaleFacet(address(diamond)).previewForcedSale(LOAN, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
+            ForcedSalePreviewFacet(address(diamond)).previewForcedSale(LOAN, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
         calls[0] = LibSwap.AdapterCall({adapterIdx: ADAPTER_IDX, data: ""});
         vm.prank(keeper);

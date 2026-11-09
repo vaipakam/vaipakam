@@ -46,8 +46,8 @@ function laneValue(l: ClaimLane, meta: TokenMetaMap | null, copy: Copy): Receipt
   return { kind: 'text', text: assetAmount({ asset: l.asset, assetType: l.assetType, amount: 0n, tokenId: l.tokenId, quantity: l.amount }, meta, copy.format) };
 }
 
-/** Where the payment lands: the wallet, or where protected account mode
- *  routes it (RB-PAYOUT-ROUTE); null when the mode could not be read. */
+/** Where the payment lands: the claimant's own vault, credited as its
+ *  funds (RB-PAYOUT-ROUTE). */
 export function claimDestination(r: Pick<LoanClaimReview, 'route' | 'protection'>, copy: Copy): string | null {
   return r.route === 'wallet' ? copy.text('loanClaim.toWallet') : routedDestination(r.route, r.protection, copy);
 }

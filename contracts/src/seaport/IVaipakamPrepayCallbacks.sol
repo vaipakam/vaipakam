@@ -131,4 +131,18 @@ interface IVaipakamPrepayCallbacks {
     ///         executor-gate read impossible because the gate needs
     ///         the offerId to resolve which executor slot to read).
     function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet) external;
+
+    /// @notice #3205 part 2 — open the just-in-time conduit allowance for a
+    ///         listing fill, from the executor's `authorizeOrder` (before
+    ///         Seaport moves anything). Exactly one listing: `loanId` for a
+    ///         loan-keyed order, else `offerId` for an offer-keyed one. The
+    ///         listed ERC-721 is approved to `conduit` for this fill only.
+    /// @dev    The implementation MUST assert the caller is the executor the
+    ///         listing names, and refuse while paused (orders follow the
+    ///         pause).
+    function executorOpenListingGrant(uint256 loanId, uint96 offerId, address conduit) external;
+
+    /// @notice Close that allowance, from the executor's `validateOrder`
+    ///         before anything settles. Returns 1 when the token left.
+    function executorCloseListingGrant(uint256 loanId, uint96 offerId) external returns (uint256 consumed);
 }

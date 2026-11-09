@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -52,12 +55,30 @@ import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
+import {LibHolderClaim} from "../src/libraries/LibHolderClaim.sol";
+import {LibSwap} from "../src/libraries/LibSwap.sol";
 
 /**
  * @title ClaimFacetTest
  * @notice Tests the claim-based fund distribution model: lender and borrower
  *         must present their Vaipakam NFT after loan resolution to collect funds.
  */
+/// @dev A contract position holder (as the backstop vault and an aggregator
+///      adapter are) that claims through the one holder-claim rule.
+contract HolderClaimHarness {
+    address internal immutable diamond;
+    LibHolderClaim.Recovered public last;
+
+    constructor(address diamond_) {
+        diamond = diamond_;
+    }
+
+    function claim(uint256 loanId, LibSwap.AdapterCall[] calldata calls) external {
+        last = LibHolderClaim.claimAsLender(diamond, loanId, calls);
+    }
+}
+
 contract ClaimFacetTest is Test {
     VaipakamDiamond diamond;
     address owner;
@@ -156,7 +177,7 @@ contract ClaimFacetTest is Test {
         accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
-        vaultImpl = new VaipakamVaultImplementation();
+        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         // Cut all facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
@@ -282,6 +303,7 @@ contract ClaimFacetTest is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
 
@@ -291,6 +313,7 @@ contract ClaimFacetTest is Test {
 
         // Init admin state
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -435,6 +458,59 @@ contract ClaimFacetTest is Test {
 
     // ─── claimAsLender ────────────────────────────────────────────────────────
 
+    /// @dev #3205 part 2 — a claim pays the holder's VAULT as free money; the
+    ///      holder then withdraws it to their own wallet. Returns what the
+    ///      wallet received from withdrawing `amount` of `token`.
+    function _withdrawToWallet(address who, address token, uint256 amount) internal returns (uint256) {
+        uint256 before = IERC20(token).balanceOf(who);
+        vm.prank(who);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(
+            who, uint8(LibVaipakam.AssetType.ERC20), token, 0, amount, who
+        );
+        return IERC20(token).balanceOf(who) - before;
+    }
+
+    /// @notice Codex #3387 r2 — a CONTRACT holder's claim is counted: the
+    ///         claim pays the holder's vault, and the one holder-claim rule
+    ///         withdraws exactly that credit to the holder and measures it.
+    function test_holderClaim_contractHolderReceivesTheRepaidPrincipal() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
+        _repayLoan(loanId);
+        (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        HolderClaimHarness h = new HolderClaimHarness(address(diamond));
+        LibTestPositionNFT.move(address(diamond), LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId, address(h));
+
+        h.claim(loanId, new LibSwap.AdapterCall[](0));
+        (, uint256 principal,,,,) = h.last();
+        assertEq(principal, claimAmount, "the recovered principal is counted");
+        assertEq(IERC20(mockERC20).balanceOf(address(h)), claimAmount, "and it is in the holder contract");
+    }
+
+    /// @notice The same for an in-kind default: the collateral the claim pays
+    ///         (into the holder's vault) reaches the holder contract and is
+    ///         counted.
+    function test_holderClaim_contractHolderReceivesInKindCollateral() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+        vm.clearMockedCalls();
+        (address claimAsset, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(claimAsset, mockCollateralERC20, "fixture: an in-kind claim");
+
+        HolderClaimHarness h = new HolderClaimHarness(address(diamond));
+        LibTestPositionNFT.move(address(diamond), LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId, address(h));
+        h.claim(loanId, new LibSwap.AdapterCall[](0));
+        (,,,,, uint256 collateral) = h.last();
+        assertEq(collateral, claimAmount, "the in-kind collateral is counted");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(address(h)), claimAmount, "and it is in the holder contract");
+    }
+
     function testClaimAsLenderSuccessAfterRepay() public {
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
@@ -443,14 +519,22 @@ contract ClaimFacetTest is Test {
         (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
 
         uint256 lenderBalBefore = IERC20(mockERC20).balanceOf(lender);
+        uint256 lenderFreeBefore = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0);
 
         vm.prank(lender);
         vm.expectEmit(true, true, false, true);
         emit ClaimFacet.LenderFundsClaimed(loanId, lender, mockERC20, claimAmount, /* newBothClaimed */ false);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        // Lender received the funds
-        assertEq(IERC20(mockERC20).balanceOf(lender) - lenderBalBefore, claimAmount);
+        // #3205 part 2 — the claim credits the lender's vault as free money
+        // (nothing reaches the wallet yet); the lender withdraws it.
+        assertEq(IERC20(mockERC20).balanceOf(lender), lenderBalBefore, "the claim pays the vault, not the wallet");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0) - lenderFreeBefore,
+            claimAmount,
+            "the lender's vault free balance rose by the claim"
+        );
+        assertEq(_withdrawToWallet(lender, mockERC20, claimAmount), claimAmount, "and the lender withdraws it");
 
         // Claim marked as done
         (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -497,13 +581,21 @@ contract ClaimFacetTest is Test {
         (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
 
         uint256 borrowerBalBefore = IERC20(mockCollateralERC20).balanceOf(borrower);
+        uint256 borrowerFreeBefore =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0);
 
         vm.prank(borrower);
         vm.expectEmit(true, true, false, true);
         emit ClaimFacet.BorrowerFundsClaimed(loanId, borrower, mockCollateralERC20, claimAmount, /* newBothClaimed */ false);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
-        assertEq(IERC20(mockCollateralERC20).balanceOf(borrower) - borrowerBalBefore, claimAmount);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(borrower), borrowerBalBefore, "the claim pays the vault, not the wallet");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0) - borrowerFreeBefore,
+            claimAmount,
+            "the borrower's vault free balance rose by the claim"
+        );
+        assertEq(_withdrawToWallet(borrower, mockCollateralERC20, claimAmount), claimAmount, "and the borrower withdraws it");
 
         (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertTrue(claimed);
@@ -764,13 +856,9 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Mock vaultWithdrawERC20 to fail
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "mock revert"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         vm.prank(lender);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         vm.clearMockedCalls();
     }
@@ -781,13 +869,9 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Mock vaultWithdrawERC20 to fail
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "mock revert"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         vm.prank(borrower);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
         vm.clearMockedCalls();
     }
@@ -940,14 +1024,10 @@ contract ClaimFacetTest is Test {
         // only held path is taken, then mock it to fail.
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "mock fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("mock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         vm.clearMockedCalls();
     }
@@ -984,7 +1064,7 @@ contract ClaimFacetTest is Test {
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC721);
 
         // Mock the vault withdraw ERC721 to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -1002,7 +1082,7 @@ contract ClaimFacetTest is Test {
         // Override loan assetType to ERC1155
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC1155);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -1019,10 +1099,10 @@ contract ClaimFacetTest is Test {
 
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC721);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         vm.clearMockedCalls();
     }
@@ -1034,10 +1114,10 @@ contract ClaimFacetTest is Test {
 
         _setLoanAssetType(loanId, LibVaipakam.AssetType.ERC1155);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         vm.clearMockedCalls();
     }
@@ -1053,7 +1133,7 @@ contract ClaimFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
         // Mock vaultWithdrawERC721 to succeed (for the ERC721 claim transfer)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -1070,7 +1150,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
@@ -1087,7 +1167,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
@@ -1104,7 +1184,7 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
@@ -1121,10 +1201,10 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setLenderClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "nft fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("nft fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         vm.clearMockedCalls();
     }
@@ -1136,10 +1216,10 @@ contract ClaimFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC1155, 42, 10);
 
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "nft fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("nft fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
         vm.clearMockedCalls();
     }
@@ -1213,10 +1293,10 @@ contract ClaimFacetTest is Test {
         );
 
         // Mock vaultWithdrawERC1155 to fail
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "nft fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("nft fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         vm.clearMockedCalls();
     }
@@ -1230,10 +1310,10 @@ contract ClaimFacetTest is Test {
         TestMutatorFacet(address(diamond)).setBorrowerClaimNFTFieldsRaw(loanId, LibVaipakam.AssetType.ERC721, 42, 0);
 
         // Mock vaultWithdrawERC721 to fail
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "nft fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("nft fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
         vm.clearMockedCalls();
     }

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -69,7 +71,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 contract OfferFacetTest is Test {
@@ -468,22 +470,18 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](11);
         selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        selectors[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet.getUserVaultAddress.selector;
+        selectors[4] = VaultFactoryFacet.vaultDepositERC721.selector;
+        selectors[5] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        selectors[6] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        selectors[7] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        selectors[8] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        selectors[9] = VaultFactoryFacet.getOfferAmount.selector;
+        selectors[10] = VaultFactoryFacet.getUserVaultAddress.selector;
         return selectors;
     }
 
@@ -1935,7 +1933,7 @@ contract OfferFacetTest is Test {
         );
 
         // Mock vaultWithdrawERC1155 to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         vm.prank(user1);
@@ -1997,7 +1995,7 @@ contract OfferFacetTest is Test {
         );
 
         // Mock vaultWithdrawERC721 and burnNFT to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         // #664 — the cancel cooldown applies to every fresh offer.
@@ -2052,7 +2050,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         // #664 — the cancel cooldown applies to every fresh offer.
@@ -2096,16 +2094,12 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "withdraw fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
-        vm.expectRevert(bytes("withdraw fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2248,16 +2242,12 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "unlock fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2352,16 +2342,12 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector),
-            "withdraw fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
-        vm.expectRevert(bytes("withdraw fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2409,16 +2395,12 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector),
-            "withdraw fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
-        vm.expectRevert(bytes("withdraw fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2463,16 +2445,12 @@ contract OfferFacetTest is Test {
         );
 
         // Borrower ERC721 offer deposited ERC-20 prepayment, so mock ERC20 withdrawal to fail
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "unlock fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2524,16 +2502,12 @@ contract OfferFacetTest is Test {
         );
 
         // Borrower ERC1155 offer deposited ERC-20 prepayment, so mock ERC20 withdrawal to fail
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "unlock fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2586,7 +2560,7 @@ contract OfferFacetTest is Test {
         // rev-8 freeze #1352 charged in full since user2 has no VPFI) = 998.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, user1, mockERC20, user2, uint256(998)),
+            abi.encodePacked(VaultOutflowFacet.vaultOutflowArgs.selector, abi.encode(user1, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(998), address(0), VaultOutflowTypes.OutflowClass.PrincipalToBorrower)),
             "transfer fail"
         );
 
@@ -3413,16 +3387,12 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector),
-            "unlock fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -3899,16 +3869,12 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector),
-            "unlock fail"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -4274,7 +4240,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
@@ -4434,7 +4400,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);

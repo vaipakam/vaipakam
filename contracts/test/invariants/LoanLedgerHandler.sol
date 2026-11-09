@@ -10,6 +10,7 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
@@ -446,7 +447,7 @@ contract LoanLedgerHandler is Test {
         (,, uint256 graceEndsAt,,,,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
         if (graceEndsAt > block.timestamp) vm.warp(graceEndsAt);
         (,,,,, shortfall,) = RepayPeriodicFacet(diamond).previewPeriodicSettle(loanId);
-        maxSell = ForcedSaleFacet(diamond)
+        maxSell = ForcedSalePreviewFacet(diamond)
             .previewForcedSale(loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement).maxSell;
     }
 

@@ -771,7 +771,7 @@ export const FORCED_SALE_KIND = {
 export type ForcedSaleKind = (typeof FORCED_SALE_KIND)[keyof typeof FORCED_SALE_KIND];
 
 /**
- * `ForcedSaleFacet.previewForcedSale`: the size of the forced sale a kind
+ * `ForcedSalePreviewFacet.previewForcedSale`: the size of the forced sale a kind
  * would make now. Every forced sale sells only what the debt needs (the
  * least collateral whose worst-case proceeds cover the debt plus the
  * largest charges), and the contract accepts a quote from `sell` to

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -753,24 +755,23 @@ contract BackstopFacet is
         // #2440 — the treasury is credited with what reached the Diamond: the
         // bucket gave up `amount`, and a token's own charge on the move is the
         // treasury's, never drawn from the Diamond's other holdings.
-        uint256 received = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            vault,
-            principal,
-            address(this),
-            amount
-        );
-        s.treasuryBalances[principal] += received;
+        // #3205 part 2 — the treasury class (the Diamond is the treasury here).
+        uint256 received = LibVaultOutflow.toTreasury(vault, principal, amount, 0, OutflowReason.BACKSTOP);
+        LibFacet.recordTreasuryAccrual(principal, received);
         emit BackstopAbsorbWithdrawn(principal, collateral, received);
     }
 
-    /// @notice Sweep WAREHOUSED absorb collateral out of the backstop vault (e.g.
-    ///         to a governance address for an off-protocol sale, or to treasury on
-    ///         a write-off). Does NOT touch the `backstopAbsorbExposure` counter —
+    /// @notice Sweep WAREHOUSED absorb collateral out of the backstop vault to
+    ///         the treasury (for an off-protocol sale the treasury runs, or a
+    ///         write-off). Does NOT touch the `backstopAbsorbExposure` counter —
     ///         per §5.1 moving unsold collateral is not a realized-cash return.
     /// @dev VAULT_ADMIN. Withdraws from the backstop vault's tracked balance.
+    ///      #3205 part 2 (decided default 2026-11-08) — the destination is the
+    ///      treasury the registry names, never an address the caller picks: a
+    ///      VAULT_ADMIN key can move warehoused collateral only to the
+    ///      Timelock-governed treasury.
     function sweepBackstopAbsorbCollateral(
         address collateral,
-        address to,
         uint256 amount
     ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         if (amount == 0) revert ZeroAmount();
@@ -785,22 +786,11 @@ contract BackstopFacet is
         uint256 warehoused = s.backstopWarehousedCollateral[collateral];
         if (amount > warehoused) revert BackstopAbsorbCollateralInsufficient();
         s.backstopWarehousedCollateral[collateral] = warehoused - amount;
-        // #2440 — what `to` received; the treasury credit below books that.
-        uint256 received = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            vault,
-            collateral,
-            to,
-            amount
-        );
-        // Write-off-to-treasury path: if the recipient is the Diamond itself (in
-        // Diamond-as-treasury mode), record the treasury credit — otherwise the
-        // swept tokens would sit as raw Diamond balance that `TreasuryFacet`
-        // can't claim (it only sweeps tracked `treasuryBalances`). Mirrors the
-        // other backstop recovery paths.
-        if (to == address(this) && s.treasury == address(this)) {
-            s.treasuryBalances[collateral] += received;
-        }
-        emit BackstopAbsorbCollateralSwept(collateral, to, amount);
+        // #2440 — what the treasury received; the accrual books that (it
+        // credits `treasuryBalances` only in Diamond-as-treasury mode).
+        uint256 received = LibVaultOutflow.toTreasury(vault, collateral, amount, 0, OutflowReason.BACKSTOP);
+        LibFacet.recordTreasuryAccrual(collateral, received);
+        emit BackstopAbsorbCollateralSwept(collateral, LibFacet.getTreasury(), amount);
     }
 
     /// @notice Release `realizedPrincipal` of absorb exposure for a pair — the
