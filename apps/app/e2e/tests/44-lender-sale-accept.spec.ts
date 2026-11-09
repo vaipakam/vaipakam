@@ -30,7 +30,7 @@
  *  Each needs its own setup (a partial repayment before listing, the Full
  *  tariff, a reward programme on the e2e chain).
  */
-import { erc20Abi, type Address } from "viem";
+import { erc20Abi, parseEther, type Address } from "viem";
 import { POSITION_ERC721_ABI } from "@vaipakam/lib/positionNft";
 import { test, expect } from "../lib/wallet-fixture";
 import { connectWallet } from "../lib/wallet-fixture";
@@ -41,6 +41,7 @@ import {
 } from "../lib/flows";
 import { seedDeskOffer, acceptOfferDirect } from "../lib/desk";
 import { sendAsAdmin } from "../lib/admin";
+import { ensureWeth } from "../lib/seed";
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, POSITION_NFT } from "../lib/chain";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -235,6 +236,10 @@ test("a third wallet buys a listed lender position; the position migrates and th
     seller: await heldBy(token, seller.account.address),
     ...(await outsideParties(token)),
   });
+  // The buyer pays the sale price from its wallet, which earlier specs may
+  // have drained (claims now land in the vault): 1 WETH covers the 0.5 WETH
+  // principal plus accrued interest. Topped up BEFORE the ledger snapshot.
+  await ensureWeth("newLender", parseEther("1"));
   const pre = await ledger();
 
   const { page } = buyer;
