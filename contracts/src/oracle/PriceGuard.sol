@@ -456,8 +456,17 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     }
 
     /// @notice Stop a secondary source counting toward the quorum, at once.
-    ///         Stop-only: the quorum falls back to fewer sources.
+    ///         Stop-only: the quorum falls back to fewer sources. It also
+    ///         cancels a pending re-enable of that source, even one already
+    ///         due, so a re-enable approved before this stop cannot undo it;
+    ///         the way back is a new proposal that waits the full delay.
     function disableSecondary(Source source) external onlyOwnerOrGuardian {
+        bytes32 subject = bytes32(uint256(uint8(source)));
+        bytes32 key = _id(Kind.SecondaryEnabled, subject);
+        if (_pending[key].executableAt != 0) {
+            delete _pending[key];
+            emit ChangeCancelled(Kind.SecondaryEnabled, subject, msg.sender);
+        }
         if (secondaryDisabled[source]) return;
         secondaryDisabled[source] = true;
         emit SecondaryDisabled(source, msg.sender);

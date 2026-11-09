@@ -66,7 +66,9 @@ and EIP-170 room comes back to `OracleFacet`.
   testnet may set 0, as the feed registry allows.
 - **One fast lever.** The guardian may disable a secondary source (Tellor,
   API3 or DIA) at once. This is stop-only: the quorum runs on fewer sources,
-  and no price can be introduced. Re-enabling a source waits the delay.
+  and no price can be introduced. Re-enabling a source waits the delay, and a
+  stop cancels any re-enable already waiting or due for that source, so an
+  approval given before the stop cannot undo it.
 - **Not configurable by the Diamond.** The Diamond holds no write path into
   the guard.
 - **First settings** (owner decision 2026-11-09, "Set at deploy, checked

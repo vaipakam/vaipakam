@@ -343,6 +343,39 @@ contract PriceGuardConfigTest is Test {
     /// @dev Stop-only, measured on a price: a source that contradicts the
     ///      primary makes the price Divergent; disabling it leaves the quorum
     ///      with no source, which accepts the primary. No price is introduced.
+    function test_DisablingASecondaryCancelsItsPendingReEnable() public {
+        PriceGuard g = _guard(DELAY);
+        bytes32 tellorKey = bytes32(uint256(PriceGuard.Source.Tellor));
+        vm.prank(guardian);
+        g.disableSecondary(PriceGuard.Source.Tellor);
+        vm.prank(owner);
+        g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
+        vm.warp(block.timestamp + DELAY);
+
+        // Due, but a second stop while it is already off still cancels it.
+        vm.expectEmit(address(g));
+        emit PriceGuard.ChangeCancelled(PriceGuard.Kind.SecondaryEnabled, tellorKey, guardian);
+        vm.prank(guardian);
+        g.disableSecondary(PriceGuard.Source.Tellor);
+        vm.expectRevert(
+            abi.encodeWithSelector(PriceGuard.NothingPending.selector, PriceGuard.Kind.SecondaryEnabled, tellorKey)
+        );
+        g.executeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey);
+        assertTrue(g.secondaryDisabled(PriceGuard.Source.Tellor));
+
+        // The same holds for a source that was on: the re-enable waits anew.
+        bytes32 api3Key = bytes32(uint256(PriceGuard.Source.Api3));
+        vm.prank(guardian);
+        g.disableSecondary(PriceGuard.Source.Api3);
+        vm.prank(owner);
+        g.proposeChange(PriceGuard.Kind.SecondaryEnabled, api3Key, bytes32(uint256(1)));
+        vm.warp(block.timestamp + DELAY);
+        vm.prank(owner);
+        g.disableSecondary(PriceGuard.Source.Api3);
+        (, uint256 at) = g.pendingChange(PriceGuard.Kind.SecondaryEnabled, api3Key);
+        assertEq(at, 0, "the stop cancels the due re-enable");
+    }
+
     function test_ADisabledSecondaryLeavesTheQuorum() public {
         PriceGuard g = _guard(DELAY);
         _arrangeDirectPrice(10e8);
