@@ -5,6 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "./lib/PriceGuardConfig.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkPairFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
@@ -32,7 +34,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         Real testnet WETH is reused as the quote asset (Base
  *         Sepolia: `0x4200…0006`; Sepolia: `0xfFf9…6B14`); we don't
  *         deploy a third mock ERC-20 for it. The protocol's
- *         `setWethContract(...)` is wired to that canonical address
+ *         the price guard's `Weth` entry is wired to that canonical address
  *         so liquidity-check call chains (`getPool(asset, WETH, fee)`)
  *         resolve correctly.
  *
@@ -84,12 +86,12 @@ contract DeployTestnetLiquidityMocks is Script {
     /// @dev Canonical Sepolia WETH9 — the long-lived testnet WETH
     ///      reused by Aave, Uniswap, etc. Not a predeploy; we just
     ///      hardcode the well-known address so the protocol's
-    ///      `setWethContract(...)` and `getPool(asset, WETH, fee)`
+    ///      the guard's `Weth` entry and `getPool(asset, WETH, fee)`
     ///      paths resolve to the same WETH everyone else uses.
     address constant SEPOLIA_WETH_DEFAULT = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
 
     // NOTE: no BNB Testnet WBNB default any more — WBNB is NOT WETH.
-    // `setWethContract` is the bridged-WETH oracle reference and the
+    // The guard's `Weth` entry is the bridged-WETH oracle reference and the
     // ETH/USD feed would misprice WBNB as ETH, so chain 97 REQUIRES an
     // explicit BNB_TESTNET_WETH (bridged/mock WETH), matching
     // DeployTestnetMocks / DeployTestnetVPFI (#982 review).
@@ -244,13 +246,15 @@ contract DeployTestnetLiquidityMocks is Script {
             feeds[2] = TestnetFeedRegistration.Feed(weth, USD_DENOM, address(wethFeed), "ETH / USD");
             TestnetFeedRegistration.register(registry, feeds);
         }
-        OracleAdminFacet oa = OracleAdminFacet(diamond);
-        oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(registry.USD());
-        oa.setEthChainlinkDenominator(registry.ETH());
-        oa.setWethContract(weth);
-        oa.setEthUsdFeed(address(wethFeed));
-        oa.setUniswapV3Factory(address(univ3));
+        // #3272 part 2 - the pricing entries live in the price guard. Its
+        // identity was keyed by this same registry's denominators at deploy;
+        // a testnet's zero delay applies each entry at once.
+        {
+            PriceGuard guard = PriceGuardConfig.guardOf(diamond);
+            PriceGuardConfig.requireIdentity(guard, registry.USD(), registry.ETH());
+            PriceGuardConfig.pointAt(guard, address(registry), weth, address(wethFeed));
+        }
+        OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3));
 
         // Stable-feed shortcuts for the peg-aware staleness rule.
         // Phase 7b lets feeds tagged "USDC", "USDT", etc. sit at the
@@ -284,17 +288,17 @@ contract DeployTestnetLiquidityMocks is Script {
         Deployments.writeAddress(".mockWETHFeed", address(wethFeed));
         // The wrapped-native asset (WETH on EVM l1/L2s, WBNB on BNB
         // chains) is consumed by both the contract layer (via
-        // OracleAdminFacet.setWethContract above) and the frontend env
+        // the price guard's Weth entry above) and the frontend env
         // loader (`weth` per chain). Stamp it once here so the artifact
         // is the single source of truth.
         Deployments.writeWeth(weth);
 
         console.log("");
         console.log("Wiring summary applied to Diamond:");
-        console.log("  setChainlinkRegistry      -> mock registry");
-        console.log("  setEthUsdFeed             -> mock WETH feed");
+        console.log("  guard FeedRegistry        -> mock registry");
+        console.log("  guard EthNumeraireFeed    -> mock WETH feed");
         console.log("  setUniswapV3Factory       -> mock factory");
-        console.log("  setWethContract           -> ", weth);
+        console.log("  guard Weth                -> ", weth);
         console.log("");
         console.log("Both mUSDC and mWBTC should now classify as Liquid.");
         console.log("Verify with:");

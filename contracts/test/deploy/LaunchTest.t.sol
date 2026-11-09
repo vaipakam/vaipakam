@@ -28,6 +28,9 @@ import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
 import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "../../script/lib/PriceGuardConfig.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 
 /// @dev Whoever owns the Diamond, read live: the route mocks below answer
@@ -298,14 +301,20 @@ contract LaunchWethStub {
 ///      real setter would refuse to write, and against a Diamond whose
 ///      quote-leg read fails.
 contract LaunchPaaDiamondStub {
-    address public getWethContract;
+    /// @dev #3272 part 2 — the check reads WETH from the Diamond's price
+    ///      guard; the stub answers as its own guard.
+    address public weth;
     address[] internal paa;
     bool internal quoteReadReverts;
 
     constructor(address weth_, address[] memory paa_, bool quoteReadReverts_) {
-        getWethContract = weth_;
+        weth = weth_;
         paa = paa_;
         quoteReadReverts = quoteReadReverts_;
+    }
+
+    function getPriceGuard() external view returns (address) {
+        return address(this);
     }
 
     function getPaaAssets() external view returns (address[] memory) {
@@ -472,10 +481,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         reg.setDelay(0);
         ConfigFacet(diamond).setPaaAssets(paa);
-        OracleAdminFacet(diamond).setChainlinkRegistry(feedRegistry);
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(reg.USD());
-        OracleAdminFacet(diamond).setEthChainlinkDenominator(reg.ETH());
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.FeedRegistry, feedRegistry);
         vm.stopPrank();
+        // #3272 part 2 — the deploy built the guard keyed by the registry's
+        // quote constants, which every VaipakamFeedRegistry shares.
+        PriceGuardConfig.requireIdentity(PriceGuardConfig.guardOf(diamond), reg.USD(), reg.ETH());
         _setUsdFeed(stableQuote, address(new LaunchUsdcFeed()));
     }
 
@@ -523,10 +533,10 @@ contract LaunchTest is Test {
     function _configure() internal {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         vm.stopPrank();
     }
 
@@ -642,7 +652,7 @@ contract LaunchTest is Test {
     function test_Testnet_RefusesWithoutSanctionsOracle() public {
         vm.chainId(84532);
         vm.startPrank(admin);
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -654,7 +664,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         address adapter = address(new LaunchAdapterStub());
         _addAdapter(adapter);
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
@@ -760,8 +770,8 @@ contract LaunchTest is Test {
     function _configureWithAdapter(address adapter) internal {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(adapter);
         vm.stopPrank();
     }
@@ -900,11 +910,11 @@ contract LaunchTest is Test {
         vm.chainId(8453);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         address adapter = address(new LaunchAdapterStub());
         _addAdapter(adapter);
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         vm.stopPrank();
         address registry = _registryWithLane();
         VaipakamTimelock tl = _realTimelock();
@@ -1081,7 +1091,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         address registry = _registryWithLane();
@@ -1093,8 +1103,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchDecimalLessFeed()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchDecimalLessFeed()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1105,8 +1115,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchWideRoundFeed()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchWideRoundFeed()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1135,8 +1145,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new LaunchCodeStub()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1147,8 +1157,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchCodeStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1161,8 +1171,8 @@ contract LaunchTest is Test {
         feed.setPrice(0);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(feed));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(feed));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1236,7 +1246,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1249,8 +1259,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCarriedRoundFeed()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchCarriedRoundFeed()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1504,8 +1514,9 @@ contract LaunchTest is Test {
     function test_Testnet_RefusesAnEoaWeth() public {
         vm.chainId(84532);
         _configure();
-        vm.prank(admin);
-        OracleAdminFacet(diamond).setWethContract(address(0xE7E7));
+        vm.startPrank(admin);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, address(0xE7E7));
+        vm.stopPrank();
         LibLaunchReadiness.Declared memory d = _d(address(0));
         d.weth = address(0xE7E7);
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1517,8 +1528,9 @@ contract LaunchTest is Test {
     function test_Production_WethChangedDuringDelayRevertsTheLaunch() public {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         address other = address(new LaunchWethStub());
-        vm.prank(OwnershipFacet(diamond).owner());
-        OracleAdminFacet(diamond).setWethContract(other);
+        vm.startPrank(PriceGuard(LibTestPriceGuard.guardOf(diamond)).owner());
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, other);
+        vm.stopPrank();
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
             launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
@@ -1625,16 +1637,19 @@ contract LaunchTest is Test {
     }
 
     /// @dev #2880 — no registry configured: only WETH would be priced, so
-    ///      NOT MET, and a testnet launch refuses.
+    ///      NOT MET, and a testnet launch refuses. The guard refuses a zero
+    ///      registry once one is set (#3272), so a guard built without one is
+    ///      stood in for by its read.
     function test_FeedRegistry_NotMetWhenUnset() public {
         vm.chainId(84532);
         _configure();
-        vm.prank(admin);
-        OracleAdminFacet(diamond).setChainlinkRegistry(address(0));
+        vm.mockCall(
+            LibTestPriceGuard.guardOf(diamond), abi.encodeWithSignature("feedRegistry()"), abi.encode(address(0))
+        );
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertTrue(c[7].checkable);
         assertFalse(c[7].met);
-        assertEq(c[7].detail, "no feed registry configured (setChainlinkRegistry), so only WETH is priced: run the configure phase");
+        assertEq(c[7].detail, "no feed registry configured in the price guard (its FeedRegistry entry), so only WETH is priced: run the configure phase");
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
         launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
@@ -1657,18 +1672,18 @@ contract LaunchTest is Test {
 
     /// @dev #2880 — a key the registry files nothing under means every
     ///      lookup under it misses: the primary key and the ETH key are each
-    ///      checked.
+    ///      checked. Both keys are the price guard's fixed identity (#3272
+    ///      part 2), so the guard's answer is mocked to stand for a guard
+    ///      built with a key the registry does not know.
     function test_FeedRegistry_NotMetWhenAKeyIsUnregistered() public {
         _configure();
-        vm.prank(admin);
-        OracleAdminFacet(diamond).setEthChainlinkDenominator(address(0xEEEE));
+        address guard = address(PriceGuardConfig.guardOf(diamond));
+        vm.mockCall(guard, abi.encodeWithSignature("ETH_DENOMINATOR()"), abi.encode(address(0xEEEE)));
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertFalse(c[7].met);
         assertEq(c[7].detail, "the registry files no quote under the oracle's ETH key, so every asset/ETH lookup misses");
-        vm.startPrank(admin);
-        OracleAdminFacet(diamond).setEthChainlinkDenominator(VaipakamFeedRegistry(feedRegistry).ETH());
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(address(0x0349));
-        vm.stopPrank();
+        vm.clearMockedCalls();
+        vm.mockCall(guard, abi.encodeWithSignature("PAD_DENOMINATOR()"), abi.encode(address(0x0349)));
         c = _gate().checks(diamond, _d(address(0)));
         assertFalse(c[7].met);
         assertEq(
@@ -1831,9 +1846,9 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
-        OracleAdminFacet(diamond).setWethContract(weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
         vm.stopPrank();
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertTrue(LibLaunchReadiness.allMet(c), "every check met, the CCIP two as not applicable");

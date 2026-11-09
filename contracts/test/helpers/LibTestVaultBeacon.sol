@@ -7,6 +7,7 @@ import {VaultBeacon} from "../../src/VaultBeacon.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibTestPositionNFT} from "./LibTestPositionNFT.sol";
 import {MockProtocolRegistry} from "../mocks/MockProtocolRegistry.sol";
+import {LibTestPriceGuard} from "./LibTestPriceGuard.sol";
 import {VaultOutflowFacet} from "../../src/facets/VaultOutflowFacet.sol";
 import {VaultDepositoryFacet} from "../../src/facets/VaultDepositoryFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -21,13 +22,18 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 ///         is usually the test contract itself.
 library LibTestVaultBeacon {
     /// @dev #3205 part 2 — the vault code reads the PositionNFT core and the
-    ///      protocol registry as immutables, so both exist before it: the core
+    ///      protocol registry as immutables, so both exist before it (and, from
+    ///      #3272 part 2, the Diamond records the same registry and prices
+    ///      through the guard it names; see {LibTestPriceGuard}): the core
     ///      is installed here (idempotently) and a {MockProtocolRegistry} is
     ///      deployed for `diamond` (it answers TREASURY with the Diamond's own
     ///      treasury; {registryOf} returns it for a test that sets more).
     function install(address diamond, address owner) internal returns (VaultBeacon beacon) {
         address nft = address(LibTestPositionNFT.install(diamond, owner));
         MockProtocolRegistry registry = new MockProtocolRegistry(diamond);
+        // #3272 part 2 - the same registry names the price guard the Diamond
+        // prices through, and the Diamond records it (one registry on chain).
+        LibTestPriceGuard.install(diamond, owner, registry);
         address impl = ArtifactDeploy.deploy(
             type(VaipakamVaultImplementation).name, abi.encode(nft, address(registry))
         );

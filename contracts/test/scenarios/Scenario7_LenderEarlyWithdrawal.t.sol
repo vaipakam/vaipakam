@@ -47,6 +47,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title Scenario7_LenderEarlyWithdrawal
@@ -98,7 +99,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset), abi.encode(status));
     }
     function mockPrice(address asset, uint256 price, uint8 dec) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
     }
 
     function setUp() public {

@@ -13,12 +13,13 @@
  *
  * Display only: nothing here feeds a signature or a transaction.
  */
-import type { PublicClient } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import type { Abi, PublicClient } from 'viem';
+import { DIAMOND_ABI_VIEM, PriceGuardABI } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   LABELLED_GETTER_HOST,
   LABELLED_KNOB_KEYS,
+  PRICE_GUARD_KNOB_GETTERS,
   PROTOCOL_KNOB_GETTERS,
   abiDescribesGetterAt,
   readProtocolConfigBundle,
@@ -39,9 +40,11 @@ import { RENDERED_KEYS } from './protocolConsoleRows';
  */
 export const CONSOLE_SNAPSHOT_MAX_AGE_SEC = 7 * 3600;
 
-/** The settings read beside the bundle; only these can be named unreported. */
+/** The settings read beside the bundle, the price guard's included (#3272
+ *  part 2); only these can be named unreported. */
 const KNOB_KEYS: ReadonlySet<string> = new Set([
   ...PROTOCOL_KNOB_GETTERS.map((k) => k.key),
+  ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key),
   ...LABELLED_KNOB_KEYS,
 ]);
 
@@ -131,7 +134,14 @@ export async function readProtocolConsoleLive(
       blockNumber,
     }),
     readProtocolConfigBundle({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber }),
-    readProtocolKnobGetters({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber, facets }),
+    readProtocolKnobGetters({
+      client,
+      diamond,
+      abi: DIAMOND_ABI_VIEM,
+      guardAbi: PriceGuardABI as Abi,
+      blockNumber,
+      facets,
+    }),
   ]);
   if (!labelsHold) {
     throw new Error('this build cannot show its names describe the deployed configuration code');

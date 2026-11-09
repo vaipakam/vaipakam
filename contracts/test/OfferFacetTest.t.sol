@@ -73,6 +73,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 contract OfferFacetTest is Test {
     VaipakamDiamond diamond;
@@ -113,7 +114,7 @@ contract OfferFacetTest is Test {
         uint8 decimals
     ) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );
@@ -2860,7 +2861,7 @@ contract OfferFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(illiquidERC20)),
             abi.encode(uint256(1e8), uint8(8))
         );

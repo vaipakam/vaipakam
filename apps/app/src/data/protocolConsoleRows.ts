@@ -43,8 +43,6 @@ export type RowFormat =
   | 'vpfiAmount'
   /** A health factor in basis points of the HF scale (10000 = 1.0). */
   | 'hfBps'
-  /** A short lowercase symbol packed into 32 bytes, shown as its text. */
-  | 'symbolText'
   /** A unix time from which something may happen (#2843): said as now
    *  once it has passed, as the time and how long until it otherwise. Zero
    *  means the row's own `zeroMeans`. */
@@ -66,7 +64,7 @@ export interface ConsoleRow {
   documentedDefaultSeconds?: number;
   /** What a zero value means on this row, in words, when it means more
    *  than "not set": for `notBefore` a zero time, for `address`,
-   *  `numeraireAmount` and `symbolText` the zero value. */
+   *  and `numeraireAmount` the zero value. */
   zeroMeans?: ConsoleCopyKey;
 }
 
@@ -185,6 +183,13 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     id: 'pc-oracles',
     heading: 'oraclesHeading',
     rows: [
+      // #3272 part 2 — every price comes from the price guard the Diamond
+      // names; the rows below it are the guard's settings.
+      { key: 'priceGuard', label: 'priceGuard', hint: 'priceGuardHint', format: 'address' },
+      { key: 'priceGuardDelaySeconds', label: 'priceGuardDelay', hint: 'priceGuardDelayHint', format: 'seconds' },
+      { key: 'priceGuardOwner', label: 'priceGuardOwner', hint: 'priceGuardOwnerHint', format: 'address' },
+      { key: 'priceGuardGuardian', label: 'priceGuardGuardian', hint: 'priceGuardGuardianHint', format: 'address' },
+      { key: 'protocolRegistry', label: 'protocolRegistry', hint: 'protocolRegistryHint', format: 'address' },
       { key: 'secondaryOracleMaxDeviationBps', label: 'secondaryOracleMaxDeviation', format: 'bps' },
       { key: 'secondaryOracleMaxStalenessSeconds', label: 'secondaryOracleMaxStaleness', format: 'seconds' },
       { key: 'pythOracle', label: 'pythOracle', hint: 'pythOracleHint', format: 'address' },
@@ -245,22 +250,9 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     id: 'pc-numeraire',
     heading: 'numeraireHeading',
     rows: [
-      { key: 'numeraireSymbol', label: 'numeraire', format: 'symbol' },
+      { key: 'numeraireSymbol', label: 'numeraire', hint: 'numeraireHint', format: 'symbol' },
+      { key: 'numeraireDenominator', label: 'numeraireDenominator', hint: 'numeraireDenominatorHint', format: 'address' },
       { key: 'ethNumeraireFeed', label: 'numeraireFeed', hint: 'numeraireFeedHint', format: 'address' },
-      { key: 'numeraireSwapEnabled', label: 'numeraireRotation', hint: 'numeraireRotationHint', format: 'flag' },
-      {
-        key: 'predominantDenominator',
-        label: 'padDenominator',
-        hint: 'padDenominatorHint',
-        format: 'address',
-        zeroMeans: 'padDenominatorUnset',
-      },
-      {
-        key: 'predominantDenominatorSymbol',
-        label: 'padSymbol',
-        hint: 'padSymbolHint',
-        format: 'symbolText',
-      },
       { key: 'ethPadFeed', label: 'padEthFeed', hint: 'padEthFeedHint', format: 'address' },
       { key: 'padNumeraireRateFeed', label: 'padRateFeed', hint: 'padRateFeedHint', format: 'address' },
     ],

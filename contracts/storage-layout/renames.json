@@ -376,6 +376,214 @@
       "from": "protectedAccount[].pendingUnpinAt",
       "to": "protectedAccount[].retiredPendingUnpinAt",
       "reason": "#3204: a pending vault pin change is held by the VaultBeacon, which applies the vault's pin delay itself; the protected-mode unpin timer is retired. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 7,
+      "offset": 0,
+      "from": "numeraireChainlinkDenominator",
+      "to": "retiredNumeraireChainlinkDenominator",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 9,
+      "offset": 0,
+      "from": "predominantDenominator",
+      "to": "retiredPredominantDenominator",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 10,
+      "offset": 0,
+      "from": "predominantDenominatorSymbol",
+      "to": "retiredPredominantDenominatorSymbol",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 11,
+      "offset": 0,
+      "from": "ethPadFeed",
+      "to": "retiredEthPadFeed",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 12,
+      "offset": 0,
+      "from": "padNumeraireRateFeed",
+      "to": "retiredPadNumeraireRateFeed",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 13,
+      "offset": 0,
+      "from": "assetNumeraireDirectFeedOverride",
+      "to": "retiredAssetNumeraireDirectFeedOverride",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 14,
+      "offset": 0,
+      "from": "chainlnkRegistry",
+      "to": "retiredChainlnkRegistry",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 15,
+      "offset": 0,
+      "from": "wethContract",
+      "to": "retiredWethContract",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 80,
+      "offset": 0,
+      "from": "sequencerUptimeFeed",
+      "to": "retiredSequencerUptimeFeed",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 100,
+      "offset": 0,
+      "from": "ethNumeraireFeed",
+      "to": "retiredEthNumeraireFeed",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 101,
+      "offset": 0,
+      "from": "ethChainlinkDenominator",
+      "to": "retiredEthChainlinkDenominator",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 102,
+      "offset": 0,
+      "from": "stableFeedBySymbol",
+      "to": "retiredStableFeedBySymbol",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 103,
+      "offset": 0,
+      "from": "stableFeedSymbolsList",
+      "to": "retiredStableFeedSymbolsList",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 104,
+      "offset": 0,
+      "from": "stableFeedSymbolPos",
+      "to": "retiredStableFeedSymbolPos",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 105,
+      "offset": 0,
+      "from": "feedOverrides",
+      "to": "retiredFeedOverrides",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 141,
+      "offset": 0,
+      "from": "tellorOracle",
+      "to": "retiredTellorOracle",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 142,
+      "offset": 0,
+      "from": "api3ServerV1",
+      "to": "retiredApi3ServerV1",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 143,
+      "offset": 0,
+      "from": "diaOracleV2",
+      "to": "retiredDiaOracleV2",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 143,
+      "offset": 20,
+      "from": "secondaryOracleMaxDeviationBps",
+      "to": "retiredSecondaryOracleMaxDeviationBps",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 143,
+      "offset": 22,
+      "from": "secondaryOracleMaxStaleness",
+      "to": "retiredSecondaryOracleMaxStaleness",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 144,
+      "offset": 0,
+      "from": "pythOracle",
+      "to": "retiredPythOracle",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 145,
+      "offset": 0,
+      "from": "pythCrossCheckFeedId",
+      "to": "retiredPythCrossCheckFeedId",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 146,
+      "offset": 0,
+      "from": "pythMaxStalenessSeconds",
+      "to": "retiredPythMaxStalenessSeconds",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 146,
+      "offset": 8,
+      "from": "pythCrossCheckMaxDeviationBps",
+      "to": "retiredPythCrossCheckMaxDeviationBps",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 146,
+      "offset": 10,
+      "from": "pythConfidenceMaxBps",
+      "to": "retiredPythConfidenceMaxBps",
+      "reason": "#3272 part 2 (owner decisions 2026-11-07 and 2026-11-09, fresh deploy only): the Diamond prices through the standalone price guard, which holds the whole pricing config under its own delay, so the Diamond's pricing fields are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 132,
+      "offset": 2,
+      "from": "protocolCfg.numeraireSwapEnabled",
+      "to": "protocolCfg.retiredNumeraireSwapEnabled",
+      "reason": "#3272 part 2 (owner decision 2026-11-09, \"Fix numeraire at deploy\"): live numeraire switching is removed, so the switch flag gates nothing and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

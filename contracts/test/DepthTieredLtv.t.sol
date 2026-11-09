@@ -19,6 +19,8 @@ import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @title DepthTieredLtv
@@ -85,14 +87,8 @@ contract DepthTieredLtv is Test {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        bytes4[] memory oracleAdminSelectors = new bytes4[](7);
-        oracleAdminSelectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        oracleAdminSelectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        oracleAdminSelectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        oracleAdminSelectors[3] = OracleAdminFacet.setWethContract.selector;
-        oracleAdminSelectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        oracleAdminSelectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        oracleAdminSelectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
+        // #3272 part 2 - the admin facet holds no price setting; the guard does.
+        bytes4[] memory oracleAdminSelectors = helper.getOracleAdminFacetSelectors();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
         cuts[0] = IDiamondCut.FacetCut({
@@ -129,11 +125,13 @@ contract DepthTieredLtv is Test {
 
         vm.warp(7 days);
 
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(mockDenom);
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(mockRegistry);
-        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
+        // #3272 part 2 - the Diamond prices through a guard keyed by these
+        // denominators, named by the registry it records.
+        LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, LibTestPriceGuard.ETH));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
         OracleAdminFacet(address(diamond)).setUniswapV3Factory(mockUniFactory);
-        OracleAdminFacet(address(diamond)).setEthUsdFeed(mockEthUsdFeed);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
         AdminFacet(address(diamond)).setPancakeswapV3Factory(mockPancakeFactory);
         AdminFacet(address(diamond)).setSushiswapV3Factory(mockSushiFactory);
 
@@ -615,29 +613,6 @@ contract DepthTieredLtv is Test {
         ConfigFacet(address(diamond)).setPaaAssets(empty);
     }
 
-    /// @dev WETH cannot be re-pointed at a set list's only other member,
-    ///      which would leave the new WETH with no route.
-    function test_wethCannotBecomeTheListsOnlyQuote() public {
-        _setPaa2(mockWeth, mockAsset);
-        // [WETH, asset]: re-pointing WETH to `asset` leaves [old WETH,
-        // asset] — still a member other than the new WETH, so allowed.
-        OracleAdminFacet(address(diamond)).setWethContract(mockAsset);
-        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
-        // With [asset] alone, re-pointing WETH to `asset` is refused.
-        address[] memory onlyAsset = new address[](1);
-        onlyAsset[0] = mockAsset;
-        ConfigFacet(address(diamond)).setPaaAssets(onlyAsset);
-        vm.expectRevert(IVaipakamErrors.PaaNeedsNonWethQuote.selector);
-        OracleAdminFacet(address(diamond)).setWethContract(mockAsset);
-    }
-
-    /// @dev A fresh Diamond sets WETH before its list, so an unconfigured
-    ///      (empty) list never blocks a WETH write.
-    function test_wethWriteAllowedOnUnconfiguredList() public {
-        OracleAdminFacet(address(diamond)).setWethContract(mockAsset);
-        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
-    }
-
     // ─── ConfigFacet — PAA list management ──────────────────────────
 
     function test_setPaaAssets_storesAndReflectsInRouteSearch() public {
@@ -734,7 +709,7 @@ contract DepthTieredLtv is Test {
 
     function _mockAssetPrice(address asset, uint256 price, uint8 decimals) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );

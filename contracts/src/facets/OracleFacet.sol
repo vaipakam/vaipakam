@@ -7,95 +7,80 @@ import {LibSlippage} from "../libraries/LibSlippage.sol";
 import {LibPeerLTV} from "../libraries/LibPeerLTV.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
-import {IFeedRegistryPairBase} from "../interfaces/IFeedRegistryPairBase.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-import {AggregatorV2V3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV2V3Interface.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {ITellor} from "../interfaces/ITellor.sol";
-import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
-import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
-import {IPyth} from "../interfaces/IPyth.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
+import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
 
 /**
  * @title OracleFacet
  * @author Vaipakam Developer Team
- * @notice Asset liquidity classification and Chainlink price feeds for the
- *         Vaipakam platform.
- * @dev Part of the Diamond Standard (EIP-2535). Reentrancy-guarded on
- *      mutating admin setters; price/liquidity views are always callable.
+ * @notice Asset liquidity classification for the Vaipakam platform, and the
+ *         Diamond's price selectors, which forward to the price guard.
+ * @dev Part of the Diamond Standard (EIP-2535).
  *
- *      ── Quote asset ──
- *      The v3-style AMM pool-depth gate is quoted against **WETH** on every
- *      EVM chain (WETH is the deepest cross-chain venue; the previous
- *      asset/USDT gate only worked on Ethereum mainnet). Pool depth is
- *      converted to USD via the direct Chainlink ETH/USD feed configured
- *      by the admin.
+ *      ── Prices (#3272 part 2) ──
+ *      Every price comes from the standalone, non-upgradeable price guard
+ *      the Timelock-owned protocol registry points at ({LibPriceGuard}). The
+ *      pricing path (the asset/<PAD> feed resolved through the chain's feed
+ *      registry, the asset/ETH × ETH/<PAD> fallback, the industrial PAD
+ *      pivot, staleness and the stable-peg branch, per-feed overrides, the
+ *      L2 sequencer check, the Pyth cross-check on the ETH anchor and the
+ *      soft 2-of-N secondary quorum) runs there, under the guard's delayed
+ *      config. {getAssetPrice}, {getAssetPriceStatus}, {tryGetAssetPrice},
+ *      {countLiveSecondaryOracleFeeds} and {sequencerHealthy} forward to it,
+ *      with the guard's refusals passed through unchanged.
  *
- *      ── Price retrieval (hybrid) ──
- *      {getAssetPrice} prefers a direct asset/USD feed and falls back to
- *      asset/ETH × ETH/USD only when no direct USD feed is available:
- *        - WETH itself: priced from `ethNumeraireFeed` directly; no pool check.
- *        - Other assets (primary): Chainlink Feed Registry getFeed(asset, USD).
- *        - Other assets (fallback): Chainlink Feed Registry
- *          getFeed(asset, ETH) × latestRoundData(ethNumeraireFeed).
- *
- *      ── Stablecoin peg-aware staleness ──
- *      Feeds older than {ORACLE_VOLATILE_STALENESS} (2h) but inside
- *      {ORACLE_STABLE_STALENESS} (25h) are accepted only if the answer
- *      is within {ORACLE_PEG_TOLERANCE_BPS} of the implicit USD $1 peg
- *      OR of any registered fiat / commodity peg (EUR, JPY, XAU, …) in
- *      {LibVaipakam.Storage.stableFeedBySymbol}. Fiat peg reference
- *      feeds are Chainlink 24h-heartbeat feeds themselves, so they are
- *      subject to the same 25h ceiling rather than the 2h volatile one.
+ *      ── Liquidity (stays in the Diamond) ──
+ *      An ERC-20 is Liquid when its price is trusted and at least one route
+ *      over the predominantly available quote assets clears the floor-size
+ *      trade at the configured slippage, in a pool depth read time-weighted
+ *      (#3354). The probe reads WETH, the ETH reference feed and the guard's
+ *      freshness rule from the guard, so the classification and the prices
+ *      never disagree about which feed or token is meant. The depth tiers
+ *      and the tier LTV cache stay here too.
  *
  *      ── Fail-closed semantics ──
  *      Liquidity classification is never manually overrideable (README
- *      §1.5); on-chain registry / feed / pool lookups fail-closed to
- *      Illiquid. getAssetPrice reverts on missing / stale data so
- *      callers (RiskFacet, LoanFacet) do not consume partial oracle
- *      state in risk math.
+ *      §1.5); registry, feed or pool failures read as Illiquid. A price that
+ *      cannot be read reverts, so callers (RiskFacet, LoanFacet) never
+ *      consume partial oracle state in risk math.
  */
 contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /// @notice #633 — peer-protocol LTV reads are paused by governance.
     error PeerLtvReadsPaused();
-    error NoPriceFeed();
     error NoDexPool();
-    error StalePriceData();
     error InsufficientLiquidity();
-    /// @notice T-033 — Chainlink ETH/USD and Pyth ETH/USD diverged
-    ///         beyond the governance-tunable
-    ///         `pythCrossCheckMaxDeviationBps`. Fail-closed: a
-    ///         numeraire reading the protocol can't agree on between
-    ///         two independent oracles is a strong signal that one
-    ///         of them has been compromised; we'd rather block
-    ///         protocol ops than accept a price the system itself
-    ///         can't trust.
+
+    // ─── The price guard's refusals ────────────────────────────────────
+    // Raised by the price guard and passed through {getAssetPrice}
+    // unchanged (#3272 part 2). Declared here, with the guard's names and
+    // parameters, so the Diamond's ABI decodes them and their selectors are
+    // the ones callers have always read.
+
+    /// @notice No feed prices the asset.
+    error NoPriceFeed();
+    /// @notice The feed's answer is older than the freshness rule allows.
+    error StalePriceData();
+    /// @notice The Pyth cross-check of the ETH reference price diverged
+    ///         beyond the guard's bound: the price is distrusted.
     error OracleCrossCheckDivergence(
         uint256 chainlinkPrice,
         uint256 pythPrice,
         uint256 deviationBps,
         uint256 maxDeviationBps
     );
-
-    /// @notice Chainlink and a configured secondary oracle (Tellor /
-    ///         API3 / DIA) disagreed beyond the chain-level
-    ///         `secondaryOracleMaxDeviationBps`. Fail-closed — callers
-    ///         must NOT fall back to a single-source price. Phase 7b.2
-    ///         replaced the previous Pyth-specific deviation gate with
-    ///         this multi-source AND-combine.
+    /// @notice Every secondary source that answered (Tellor, API3, DIA)
+    ///         disagreed with the primary price: the price is distrusted.
     error OraclePriceDivergence();
-
-    /// @notice Reverted when the l2 sequencer is currently offline.
+    /// @notice The L2 sequencer is down.
     error SequencerDown();
-    /// @notice Reverted when the l2 sequencer has been up for less than
-    ///         `LibVaipakam.SEQUENCER_GRACE_PERIOD` seconds after a recovery.
+    /// @notice The L2 sequencer recovered less than the guard's grace period
+    ///         ago.
     error SequencerGracePeriod();
     /// @notice Reverted by the pair-level {calculateLTV} when the collateral
     ///         leg values to zero — the same refusal, by the same name, as
@@ -227,11 +212,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         view
         returns (LibVaipakam.LiquidityStatus, address distrusted)
     {
-        if (!_sequencerHealthy()) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
+        IPriceGuard guard = LibPriceGuard.guard();
+        if (!guard.sequencerHealthy()) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address weth = s.wethContract;
-        address ethFeed = s.ethNumeraireFeed;
+        address weth = guard.weth();
+        address ethFeed = guard.ethNumeraireFeed();
         if (weth == address(0) || ethFeed == address(0)) {
             return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
         }
@@ -264,7 +250,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // WETH itself: no asset/WETH pool (circular); Liquid iff ETH/USD
         // is fresh (2h, no peg branch — ETH is volatile).
         if (asset == weth) {
-            (bool ok, , ) = _readFreshUsdFeed(ethFeed, /*allowStablePeg=*/ false);
+            (bool ok, , ) = guard.readFeed(ethFeed, /*allowStablePeg=*/ false);
             return (ok ? LibVaipakam.LiquidityStatus.Liquid : LibVaipakam.LiquidityStatus.Illiquid, address(0));
         }
 
@@ -313,7 +299,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // the ETH numeraire feed is stale matches the previous
         // behaviour and short-circuits the ~3 V3 staticcalls per PAA
         // quote that would otherwise run.
-        (bool ethOk, , ) = _readFreshUsdFeed(ethFeed, false);
+        (bool ethOk, , ) = guard.readFeed(ethFeed, false);
         if (!ethOk) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
         (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, tokenDec, s, closeOut);
@@ -533,22 +519,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         );
     }
 
-    /**
-     * @notice Gets the USD price of an asset (scaled by feed decimals).
-     * @dev Hybrid resolution:
-     *        1. WETH → direct {ethNumeraireFeed}.
-     *        2. Other: try asset/USD via Feed Registry (preferred).
-     *        3. Fallback: asset/ETH via Feed Registry × ETH/USD.
-     *      All paths honour the 2h volatile / 25h stable-peg staleness
-     *      rule and revert on failure. The l2 sequencer circuit breaker
-     *      runs first so queued-tx price lag never reaches LTV/HF math.
-     * @param asset The ERC20 token address.
-     * @return price The numeraire price, scaled by `decimals`: a direct
-     *         feed's own decimals, and for a composed price (asset/ETH ×
-     *         ETH/USD, or a PAD pivot) the finer of the composed feeds'
-     *         decimals ({_composePrice}).
-     * @return decimals The feed's decimal scaling.
-     */
     /// @notice Permissionless daily oracle snapshot.
     ///         AnalyticalGettersDesign §3.4 (decisions D9–D11).
     /// @dev    Anyone may call. First caller per UTC-day per asset
@@ -621,751 +591,46 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint8 feedDecimals
     );
 
+    // ─── Prices: forwarded to the price guard (#3272 part 2) ────────────
+    //
+    // Every price the Diamond reads comes from the standalone price guard
+    // the protocol registry points at ({LibPriceGuard.guard}). The whole
+    // pricing path (feed resolution, staleness, the stable-peg branch, the
+    // PAD pivot, the Pyth cross-check, the soft secondary quorum and the
+    // sequencer check) runs there, under the guard's own delayed config, and
+    // the Diamond holds no write path into it. These selectors keep their
+    // names and shapes, and a refusal bubbles up with the guard's revert
+    // data unchanged, so no consumer facet changes.
+
+    /**
+     * @notice The asset's numeraire price and the decimals it is scaled by,
+     *         from the price guard.
+     * @dev    Reverts with the guard's own refusal ({NoPriceFeed},
+     *         {StalePriceData}, {ZeroPrice}, {OraclePriceDivergence},
+     *         {OracleCrossCheckDivergence}, {SequencerDown},
+     *         {SequencerGracePeriod}, {PadNumeraireRateUnavailable}); the
+     *         Diamond declares the same errors, so their selectors are the
+     *         ones callers have always decoded. Also reverts when the Diamond
+     *         cannot find a guard in its numeraire ({LibPriceGuard.guard}).
+     * @param  asset The ERC-20 token address.
+     * @return price The numeraire price, scaled by `decimals`.
+     * @return decimals The price's decimal scaling.
+     */
     function getAssetPrice(
         address asset
     ) external view returns (uint256 price, uint8 decimals) {
-        (price, decimals) = _primaryPrice(asset);
-        // #2419 — a composed price (asset/ETH × ETH/numeraire, or an FX
-        // leg) can floor to zero from positive feeds. Every consumer
-        // multiplies by it, so a zero would value a nonzero amount at
-        // nothing (a debt as no debt). Refuse it here, once, so the
-        // try/status readers see it as Unavailable.
-        if (price == 0) revert ZeroPrice(asset);
-        // Phase 7b.2 — Soft 2-of-N cross-validation across Tellor +
-        // API3 + DIA. The aggregator probes each source, classifies
-        // its result as Unavailable / Agree / Disagree, and:
-        //   - returns Chainlink-only when every secondary is
-        //     Unavailable (graceful fallback for sparse coverage),
-        //   - returns Chainlink + agreeing-secondary quorum when at
-        //     least one secondary agrees,
-        //   - reverts {OraclePriceDivergence} only when every
-        //     responding secondary disagrees (no quorum possible).
-        // Pyth was removed in Phase 7b.2: per-asset priceId mapping
-        // conflicts with the no-per-asset-config policy.
-        _enforceSecondaryQuorum(asset, price, decimals);
-        return (price, decimals);
+        return LibPriceGuard.guard().getAssetPrice(asset);
     }
 
-    /// @dev Chainlink-only primary read returning a numeraire-quoted
-    ///      price. Architecture (T-048 — Predominantly Available
-    ///      Denominator):
-    ///
-    ///        Step A — Retail short-circuit:
-    ///          if `PAD == numeraire` (the post-deploy default —
-    ///          both are `Denominations.USD`), read `asset/PAD`
-    ///          directly via Chainlink Feed Registry and return.
-    ///          Single read, no FX multiply, math identical to the
-    ///          pre-T-048 deploy. ETH-pivot fallback (asset/ETH ×
-    ///          ETH/PAD) handles assets that lack a direct
-    ///          asset/PAD feed.
-    ///
-    ///        Step B — Industrial-fork (PAD ≠ numeraire):
-    ///          B.1: per-asset operator-curated override —
-    ///               if `assetNumeraireDirectFeedOverride[asset]`
-    ///               is set, read that Chainlink feed directly as
-    ///               the numeraire-quoted asset price and return.
-    ///               Operator vouches that the override is a
-    ///               🟢-rated direct asset/<numeraire> feed; the
-    ///               protocol does not cross-check it against Pyth.
-    ///          B.2: PAD pivot —
-    ///               read asset price in PAD-units (asset/PAD direct
-    ///               feed; falls back to asset/ETH × ETH/PAD when
-    ///               direct feed is absent), then multiply by the
-    ///               PAD/<numeraire> FX rate (direct feed if set,
-    ///               else derived from ETH/<numeraire> ÷ ETH/PAD).
-    ///               This routes all asset pricing through Chainlink's
-    ///               top-rated USD feed set, structurally biasing
-    ///               toward verified-quality data without needing
-    ///               on-chain rating metadata.
-    ///
-    ///        Step C — All paths failed: revert {NoPriceFeed}.
-    ///
-    ///      The Phase 3.2 deviation check runs AFTER this returns.
-    function _primaryPrice(
-        address asset
-    ) private view returns (uint256 price, uint8 decimals) {
-        _requireSequencerHealthy();
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        // Retail short-circuit: PAD == numeraire. Both are USD by the
-        // post-deploy default; the asset/PAD read IS the numeraire-
-        // quoted price. Behaviour identical to the pre-T-048 deploy.
-        // Also covers pre-T-048 deploys (PAD == address(0)) where the
-        // legacy numeraire-direct path stays active via
-        // `_padPriceWithFallback` reading asset/numeraireDenominator.
-        if (LibVaipakam.isPadEqualToNumeraire() || s.predominantDenominator == address(0)) {
-            return _padPriceWithFallback(s, asset);
-        }
-
-        // Industrial-fork: PAD ≠ numeraire.
-
-        // Step B.1: per-asset operator-curated override. When set, use
-        // the direct asset/<numeraire> feed and skip the PAD pivot.
-        // Operator vouches that the feed is verified-rated; no Pyth
-        // cross-check (Pyth gate is configured for ETH/<numeraire>,
-        // not asset/<numeraire>).
-        address overrideFeed = s.assetNumeraireDirectFeedOverride[asset];
-        if (overrideFeed != address(0)) {
-            (uint256 op, uint8 od) = _readAggregatorStrict(
-                overrideFeed,
-                /*allowStablePeg=*/ true
-            );
-            return (op, od);
-        }
-
-        // Step B.2: PAD pivot.
-        // Read asset price in PAD-units, then convert to numeraire.
-        (uint256 padPrice, uint8 padDec) = _padPriceWithFallback(s, asset);
-
-        // PAD/numeraire FX rate — direct feed if set, else derived
-        // from ETH/<numeraire> ÷ ETH/PAD.
-        (uint256 fxRate, uint8 fxDec) = _padNumeraireRate(s);
-
-        // Compose: numeraire price = padPrice × fxRate, at the finer of
-        // the two legs' precisions ({_composePrice}).
-        return _composePrice(padPrice, padDec, fxRate, fxDec);
-    }
-
-    /// @dev Read asset price in PAD-units. Tries Chainlink Feed
-    ///      Registry `asset/<padDenominator>` first; falls back to
-    ///      `asset/ETH × ETH/PAD` for assets that lack a direct
-    ///      USD-quoted feed (rare on the major asset set, but
-    ///      possible). Special-cases WETH itself to read `ethPadFeed`
-    ///      directly without the registry detour.
-    ///
-    ///      Pre-T-048 deploy compatibility: when
-    ///      `predominantDenominator == address(0)`, the legacy
-    ///      numeraire-direct path stays active. `usdDenom` falls back
-    ///      to `numeraireChainlinkDenominator`; `ethPadAnchor` falls
-    ///      back to `ethNumeraireFeed`. Behaviour identical to the
-    ///      pre-T-048 deploy.
-    function _padPriceWithFallback(
-        LibVaipakam.Storage storage s,
-        address asset
-    ) private view returns (uint256 price, uint8 decimals) {
-        address weth = s.wethContract;
-        address padDenom = LibVaipakam.effectivePadDenominator();
-        address ethPadAnchor = s.ethPadFeed;
-        if (ethPadAnchor == address(0)) ethPadAnchor = s.ethNumeraireFeed;
-
-        // WETH → read ETH/PAD directly.
-        if (asset != address(0) && asset == weth) {
-            if (ethPadAnchor == address(0)) revert NoPriceFeed();
-            (uint256 p, uint8 d) = _readAggregatorStrict(ethPadAnchor, /*allowStablePeg=*/ false);
-            // T-033 numeraire-redundancy gate: cross-validate the
-            // Chainlink ETH-anchor reading against Pyth's snapshot.
-            // Soft-skips if Pyth is unset / stale / low-confidence;
-            // reverts on divergence beyond tolerance.
-            _validatePythCrossCheck(p, d);
-            return (p, d);
-        }
-
-        // Primary: asset/PAD via Feed Registry.
-        address registry = s.chainlnkRegistry;
-        if (registry != address(0) && padDenom != address(0)) {
-            AggregatorV3Interface feed = _registryFeed(registry, asset, padDenom);
-            if (address(feed) != address(0)) {
-                (uint256 p, uint8 d) = _readAggregatorStrict(address(feed), /*allowStablePeg=*/ true);
-                return (p, d);
-            }
-        }
-
-        // Fallback: asset/ETH × ETH/PAD via Feed Registry.
-        address ethDenom = s.ethChainlinkDenominator;
-        if (registry != address(0) && ethDenom != address(0) && ethPadAnchor != address(0)) {
-            AggregatorV3Interface ethQuotedFeed = _registryFeed(registry, asset, ethDenom);
-            if (address(ethQuotedFeed) != address(0)) {
-                (uint256 assetPerEth, uint8 assetPerEthDec) = _readAggregatorStrict(
-                    address(ethQuotedFeed),
-                    /*allowStablePeg=*/ false
-                );
-                (uint256 ethPerPad, uint8 ethDec) = _readAggregatorStrict(ethPadAnchor, false);
-                _validatePythCrossCheck(ethPerPad, ethDec);
-                // asset/ETH × ETH/PAD, at the finer of the two feeds'
-                // precisions ({_composePrice}): an asset/ETH feed is
-                // usually 18-decimal, and a cheap asset's price keeps it.
-                return _composePrice(assetPerEth, assetPerEthDec, ethPerPad, ethDec);
-            }
-        }
-
-        revert NoPriceFeed();
-    }
-
-    /// @dev Resolve the PAD/<numeraire> FX rate. Tries the direct
-    ///      Chainlink feed (`padNumeraireRateFeed`) when set; else
-    ///      derives the rate from `ETH/<numeraire> ÷ ETH/PAD`.
-    ///      Reverts {PadNumeraireRateUnavailable} if neither path is
-    ///      reachable — a configuration error caught at first read,
-    ///      not a runtime failure.
-    ///
-    ///      Returned `(rate, decimals)`: rate is in `decimals`-scale
-    ///      (e.g. 8-dec when the feed is Chainlink USD/EUR which is
-    ///      8-decimal). The caller composes `assetPriceInPad ×
-    ///      rate / 10^decimals` to get a numeraire-quoted price in
-    ///      the same scale as the asset/PAD leg.
-    function _padNumeraireRate(LibVaipakam.Storage storage s)
-        private
-        view
-        returns (uint256 rate, uint8 decimals)
-    {
-        address direct = s.padNumeraireRateFeed;
-        if (direct != address(0)) {
-            (uint256 r, uint8 d) = _readAggregatorStrict(direct, /*allowStablePeg=*/ true);
-            return (r, d);
-        }
-
-        // Derive: PAD/<numeraire> = ETH/<numeraire> ÷ ETH/PAD.
-        address ethNumerFeed = s.ethNumeraireFeed;
-        address ethPadFeed = s.ethPadFeed;
-        if (ethNumerFeed == address(0) || ethPadFeed == address(0)) {
-            revert IVaipakamErrors.PadNumeraireRateUnavailable();
-        }
-
-        (uint256 ethNumer, uint8 ethNumerDec) = _readAggregatorStrict(ethNumerFeed, false);
-        (uint256 ethPad, uint8 ethPadDec) = _readAggregatorStrict(ethPadFeed, false);
-
-        // Both ETH-anchored feeds get the Pyth cross-check (the same
-        // gate that PAD-pivot WETH and ETH-pivot fallback already use).
-        _validatePythCrossCheck(ethPad, ethPadDec);
-
-        // Normalize both to a common scale before division. We pick
-        // the larger of (ethNumerDec, ethPadDec) as the working
-        // decimals so neither leg loses precision via truncation.
-        uint8 outDec = ethNumerDec > ethPadDec ? ethNumerDec : ethPadDec;
-        uint256 ethNumerScaled = _rescale(ethNumer, ethNumerDec, outDec);
-        uint256 ethPadScaled = _rescale(ethPad, ethPadDec, outDec);
-        if (ethPadScaled == 0) revert IVaipakamErrors.PadNumeraireRateUnavailable();
-
-        // rate = ethNumer / ethPad, then re-scaled into `outDec` so
-        // the caller's composition `padPrice × rate / 10^outDec`
-        // lands at `padPrice`'s native decimals.
-        rate = (ethNumerScaled * (10 ** outDec)) / ethPadScaled;
-        decimals = outDec;
-    }
-
-    // ─── T-033 — Pyth numeraire-redundancy gate ────────────────────────────
-
-    /// @dev Cross-validate a Chainlink ETH/USD reading against Pyth's
-    ///      latest snapshot. Soft-skips (no-op) when the gate is
-    ///      effectively disabled or Pyth's data isn't trustworthy
-    ///      for this read; reverts on a real divergence.
-    ///
-    ///      Soft-skip cases (gate degrades to Chainlink-only):
-    ///        - `pythOracle` unset (governance-disabled).
-    ///        - `pythCrossCheckFeedId` unset (governance-disabled at
-    ///          the feed-id layer).
-    ///        - `getPriceUnsafe` reverts (Pyth contract misbehaves /
-    ///          missing on this chain).
-    ///        - Pyth `publishTime` older than the staleness budget.
-    ///        - Pyth `conf / |price|` exceeds the confidence ceiling
-    ///          (publisher window too thin to trust on this read).
-    ///        - Pyth `price <= 0` (negative or zero, never expected
-    ///          on a USD peg).
-    ///
-    ///      Hard-fail case:
-    ///        - `|chainlinkPx - pythPx| / chainlinkPx >
-    ///          maxDeviationBps`. Reverts with
-    ///          {OracleCrossCheckDivergence} so the caller surfaces a
-    ///          structured error instead of a generic price-failure.
-    // Slither's `pyth-unchecked-publishtime` and `pyth-unchecked-confidence`
-    // detectors match `getPriceUnsafe(` and walk only the next ~5
-    // statements looking for `.publishTime` / `.conf` reads. Our checks
-    // sit ~20 lines below because we snapshot the Pyth Price struct
-    // first (defensive copy out of the try/catch frame). The
-    // publishTime gate is at the `block.timestamp > snap.publishTime +
-    // maxStale` line; the confidence gate is at the `confBps > confMax`
-    // line. Both are load-bearing and both are tested in
-    // OracleCrossCheckTest. Not a vuln.
-    // slither-disable-start pyth-unchecked-publishtime
-    // slither-disable-start pyth-unchecked-confidence
-    function _validatePythCrossCheck(
-        uint256 chainlinkPrice,
-        uint8 chainlinkDecimals
-    ) private view {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address pyth = s.pythOracle;
-        bytes32 feedId = s.pythCrossCheckFeedId;
-        if (pyth == address(0) || feedId == bytes32(0)) return;
-
-        IPyth.Price memory snap;
-        try IPyth(pyth).getPriceUnsafe(feedId) returns (
-            IPyth.Price memory p
-        ) {
-            snap = p;
-        } catch {
-            return; // Pyth contract misbehaved — soft-skip.
-        }
-
-        // Negative / zero price is non-credible on a USD peg.
-        if (snap.price <= 0) return;
-
-        // Staleness gate.
-        uint64 maxStale = LibVaipakam.effectivePythMaxStalenessSeconds();
-        if (block.timestamp > snap.publishTime + maxStale) return;
-
-        // Normalize Pyth's (price, expo) → uint256 in `chainlinkDecimals`-
-        // scale so the deviation comparison is unit-consistent.
-        uint256 pythScaled = _pythPriceToScale(
-            uint256(uint64(snap.price)),
-            snap.expo,
-            chainlinkDecimals
-        );
-        if (pythScaled == 0) return;
-
-        // Confidence-fraction gate: skip when conf/price exceeds
-        // `pythConfidenceMaxBps`. Computed in Pyth's native scale
-        // (no normalization needed for the ratio).
-        uint16 confMax = LibVaipakam.effectivePythConfidenceMaxBps();
-        uint256 confBps = (uint256(snap.conf) * LibVaipakam.BASIS_POINTS) /
-            uint256(uint64(snap.price));
-        if (confBps > confMax) return;
-
-        // Divergence gate (the load-bearing check). Computed against
-        // the Chainlink reading as the reference; either direction
-        // breaches the tolerance.
-        uint256 absDelta = chainlinkPrice > pythScaled
-            ? chainlinkPrice - pythScaled
-            : pythScaled - chainlinkPrice;
-        uint256 deviationBps = (absDelta * LibVaipakam.BASIS_POINTS) / chainlinkPrice;
-        uint256 maxDev = uint256(LibVaipakam.effectivePythCrossCheckMaxDeviationBps());
-        if (deviationBps > maxDev) {
-            revert OracleCrossCheckDivergence(
-                chainlinkPrice,
-                pythScaled,
-                deviationBps,
-                maxDev
-            );
-        }
-    }
-    // slither-disable-end pyth-unchecked-confidence
-    // slither-disable-end pyth-unchecked-publishtime
-
-    /// @dev Convert Pyth's (price, expo) representation into a
-    ///      uint256 expressed in `targetDecimals`. Pyth feeds carry
-    ///      a signed `expo` (typically negative — e.g. ETH/USD =
-    ///      price * 10^-8). We compose:
-    ///        scaled = price * 10^(targetDecimals + expo)
-    ///      where `targetDecimals + expo` may be negative (Pyth
-    ///      precision finer than Chainlink) or positive (coarser).
-    function _pythPriceToScale(
-        uint256 priceMagnitude,
-        int32 expo,
-        uint8 targetDecimals
-    ) private pure returns (uint256) {
-        int256 net = int256(uint256(targetDecimals)) + int256(expo);
-        if (net >= 0) {
-            // Multiply up. Bound the exponent to avoid overflow in
-            // pathological feed configurations (Pyth's documented
-            // expo range is -18..0; we cap at 30 for hardening).
-            if (net > 30) return 0;
-            // safe: this branch is gated by `if (net >= 0)` above (≥0 → uint256
-            // conversion is identity-preserving), AND `net > 30` early-returns,
-            // so the cast operates on `net ∈ [0, 30]`.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            return priceMagnitude * (10 ** uint256(net));
-        } else {
-            // safe: in the `else` branch where `net < 0`. By construction
-            // `net = int256(uint256(targetDecimals)) + int256(expo)` with
-            // `targetDecimals: uint8` and `expo: int32`, so `|net|` is
-            // bounded by `|int32.min| + uint8.max ≈ 2.1 billion` — far
-            // below int256.max. `-net` therefore can never overflow
-            // (the `int256.min → -int256.min` overflow case is unreachable
-            // from these input types).
-            // forge-lint: disable-next-line(unsafe-typecast)
-            uint256 down = uint256(-net);
-            if (down > 30) return 0;
-            return priceMagnitude / (10 ** down);
-        }
-    }
-
-    // ─── Phase 7b.2 — secondary oracles + Soft 2-of-N ────────────────
-    //
-    // Three cross-validation oracles (Tellor, API3, DIA), all keyed by
-    // the asset's registered price identity: the base symbol of its
-    // Chainlink pair in the chain's `VaipakamFeedRegistry`
-    // ({_secondarySymbol}, #2745), never the token's own `symbol()`.
-    // Operators set ONE chain-level address per oracle; the identity
-    // comes with the asset's feed registration, under the registry's
-    // delay and veto, so a token cannot re-point its own cross-check.
-    //
-    // Combine rule (Soft 2-of-N quorum):
-    //   1. Each enforcer probes its source and returns a status:
-    //        - {Unavailable}: oracle not configured / no registered
-    //          identity / no data / stale → silent skip, doesn't count.
-    //        - {Agree}: data fresh AND within deviation tolerance → +1.
-    //        - {Disagree}: data fresh AND beyond tolerance.
-    //   2. The aggregator counts how many secondaries agree and how
-    //      many disagree. Chainlink itself is the primary (always 1
-    //      "agreement" with itself).
-    //   3. Decision:
-    //        - All secondaries Unavailable → accept (graceful fallback
-    //          to Chainlink-only; preserves Phase 1 chain coverage on
-    //          long-tail assets).
-    //        - At least one Agrees → accept (quorum hit: Chainlink + 1
-    //          secondary = 2 sources within tolerance).
-    //        - Some Disagrees AND no Agrees → revert
-    //          {OraclePriceDivergence}.
-
-    enum SecondaryStatus { Unavailable, Agree, Disagree }
-
-    /// @dev Aggregator that runs the Tellor + API3 + DIA probes and
-    ///      enforces the Soft 2-of-N quorum rule documented above.
-    function _enforceSecondaryQuorum(
-        address asset,
-        uint256 primaryPrice,
-        uint8 primaryDec
-    ) private view {
-        // #2745 - no registered identity means no secondary can be asked
-        // about this asset: every source reads Unavailable.
-        bytes32 symbol = _secondarySymbol(asset);
-        if (symbol == bytes32(0)) return;
-        SecondaryStatus tellor = _checkTellor(symbol, primaryPrice, primaryDec);
-        SecondaryStatus api3 = _checkApi3(symbol, primaryPrice, primaryDec);
-        SecondaryStatus dia = _checkDia(symbol, primaryPrice, primaryDec);
-
-        bool anyAgree = tellor == SecondaryStatus.Agree ||
-            api3 == SecondaryStatus.Agree ||
-            dia == SecondaryStatus.Agree;
-        bool anyDisagree = tellor == SecondaryStatus.Disagree ||
-            api3 == SecondaryStatus.Disagree ||
-            dia == SecondaryStatus.Disagree;
-
-        // Soft fallback: every secondary returned Unavailable. Accept
-        // Chainlink-only — preserves operability on long-tail assets
-        // and chains with sparse oracle coverage.
-        if (!anyDisagree && !anyAgree) return;
-
-        // Quorum hit: at least one secondary agrees. Even if another
-        // disagrees, the protocol has 2-of-N agreement (Chainlink +
-        // the agreeing secondary). Accept.
-        if (anyAgree) return;
-
-        // anyDisagree && !anyAgree — every secondary that returned
-        // data disagreed. No quorum can be formed; revert.
-        revert OraclePriceDivergence();
-    }
-
-    /// @notice #638 — count the LIVE secondary price feeds (Tellor / API3 /
-    ///         DIA) for `asset` — configured, fresh, and reporting a non-zero
-    ///         value, i.e. NOT `Unavailable` — split by whether each agrees
-    ///         with Chainlink. `agreeing + disagreeing` is the live count;
-    ///         each is 0-3.
-    /// @dev    Reuses the exact per-source probes the Soft-2-of-N quorum uses,
-    ///         so "live", "agree" and "disagree" mean precisely what the
-    ///         quorum means by them. This is a READ-ONLY helper consumed ONLY
-    ///         by the treasury backstop's opt-in oracle-coverage gate (#638);
-    ///         it does NOT change `getAssetPrice` / `checkLiquidity` or any
-    ///         general pricing / liquid-classification path — the general
-    ///         protocol stays permissionless on asset eligibility.
-    ///
-    ///         #2737 — it used to return one number counting every live feed,
-    ///         a disagreeing one included, so a minimum coverage of 2 passed
-    ///         with one secondary agreeing and one disagreeing: the evidence
-    ///         that the price was wrong counted toward trusting it. The split
-    ///         lets the gate count only agreement and refuse on any dissent.
-    ///         The selector is unchanged (a selector is the name and the
-    ///         parameter types). A gate compiled against the old one-word
-    ///         return would still decode this reply: it reads the first
-    ///         word, now the agreeing count, so it would count agreement
-    ///         only but would not refuse on dissent. The gate and this view
-    ///         are inlined into and hosted by facets of one fresh deploy, so
-    ///         no chain runs that mix.
-    ///
-    ///         Reverts only if the primary (Chainlink) read itself reverts
-    ///         (e.g. sequencer down), which the backstop callers are already
-    ///         gated against.
+    /// @notice The live secondary sources (Tellor, API3, DIA) for `asset`,
+    ///         split by whether each agrees with the primary price: the
+    ///         price guard's count, read by the backstop's oracle-coverage
+    ///         gate (#638).
+    /// @dev    Reverts only when the primary price read does.
     function countLiveSecondaryOracleFeeds(
         address asset
     ) external view returns (uint8 agreeing, uint8 disagreeing) {
-        (uint256 primaryPrice, uint8 primaryDec) = _primaryPrice(asset);
-        bytes32 symbol = _secondarySymbol(asset);
-        if (symbol == bytes32(0)) return (0, 0);
-        SecondaryStatus[3] memory statuses = [
-            _checkTellor(symbol, primaryPrice, primaryDec),
-            _checkApi3(symbol, primaryPrice, primaryDec),
-            _checkDia(symbol, primaryPrice, primaryDec)
-        ];
-        for (uint256 i; i < 3; ++i) {
-            if (statuses[i] == SecondaryStatus.Agree) agreeing++;
-            else if (statuses[i] == SecondaryStatus.Disagree) disagreeing++;
-        }
-    }
-
-    /// @dev Tellor probe — returns the per-source status against
-    ///      Chainlink. Standard SpotPrice queryId derivation:
-    ///      `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))`
-    ///      where `symbol` is the asset's registered identity, lowercased. Reads
-    ///      the newest value reported at least
-    ///      `LibVaipakam.TELLOR_DISPUTE_BUFFER` ago (#665), so a value
-    ///      submitted in this block, or too recently to have been
-    ///      disputed, is never consumed.
-    function _checkTellor(
-        bytes32 symbol,
-        uint256 primaryPrice,
-        uint8 primaryDec
-    ) private view returns (SecondaryStatus) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address oracle = s.tellorOracle;
-        if (oracle == address(0)) return SecondaryStatus.Unavailable;
-
-        string memory lower = _toLower(_wordToString(symbol));
-
-        // T-034 Numeraire generalization (b1): lower-case numeraire symbol from
-        // storage (e.g. "usd", "eur", "xau"). Empty bytes32 default
-        // is interpreted as "usd" so the post-deploy behaviour is
-        // unchanged out of the box.
-        string memory numerLower = _numeraireLowerSymbol();
-        bytes32 queryId = keccak256(
-            abi.encode("SpotPrice", abi.encode(lower, numerLower))
-        );
-        // A chain this young has no value that old to read.
-        if (block.timestamp <= LibVaipakam.TELLOR_DISPUTE_BUFFER) return SecondaryStatus.Unavailable;
-        bytes memory raw;
-        uint256 reportedAt;
-        try ITellor(oracle).getDataBefore(
-            queryId,
-            block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER
-        ) returns (
-            bytes memory v,
-            uint256 t
-        ) {
-            raw = v;
-            reportedAt = t;
-        } catch {
-            return SecondaryStatus.Unavailable;
-        }
-        if (reportedAt == 0 || raw.length < 32) return SecondaryStatus.Unavailable;
-        if (block.timestamp - reportedAt > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
-            return SecondaryStatus.Unavailable;
-        }
-        uint256 tellorAt18 = abi.decode(raw, (uint256));
-        if (tellorAt18 == 0) return SecondaryStatus.Unavailable;
-        uint256 secondary = _rescale(tellorAt18, 18, primaryDec);
-        if (secondary == 0) return SecondaryStatus.Unavailable;
-        return _classifyDeviation(primaryPrice, secondary);
-    }
-
-    /// @dev API3 probe. dAPI name = `<UPPER_SYMBOL>/USD` packed
-    ///      left-aligned into bytes32, hashed with keccak256.
-    function _checkApi3(
-        bytes32 symbol,
-        uint256 primaryPrice,
-        uint8 primaryDec
-    ) private view returns (SecondaryStatus) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address server = s.api3ServerV1;
-        if (server == address(0)) return SecondaryStatus.Unavailable;
-
-        string memory upper = _toUpper(_wordToString(symbol));
-
-        // T-034 Numeraire generalization (b1): dAPI name uses the active numeraire's
-        // upper-case symbol from storage (default "USD").
-        bytes memory packed = abi.encodePacked(upper, "/", _numeraireUpperSymbol());
-        if (packed.length > 32) return SecondaryStatus.Unavailable;
-        bytes32 dapiName;
-        for (uint256 i = 0; i < packed.length; ++i) {
-            dapiName |= bytes32(packed[i]) >> (i * 8);
-        }
-        bytes32 dapiNameHash = keccak256(abi.encodePacked(dapiName));
-
-        int224 value;
-        uint32 reportedAt;
-        try IApi3ServerV1(server).readDataFeedWithDapiNameHash(dapiNameHash) returns (
-            int224 v,
-            uint32 t
-        ) {
-            value = v;
-            reportedAt = t;
-        } catch {
-            return SecondaryStatus.Unavailable;
-        }
-        if (value <= 0 || reportedAt == 0) return SecondaryStatus.Unavailable;
-        if (block.timestamp - reportedAt > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
-            return SecondaryStatus.Unavailable;
-        }
-        // safe: `value` is int224 from the API3 callback, guaranteed > 0
-        // by the check on the prior return path (line above the try/catch
-        // closing brace). Widen int224 → int256 → uint256 is the correct
-        // pattern; neither cast can be removed.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 secondary = _rescale(uint256(int256(value)), 18, primaryDec);
-        if (secondary == 0) return SecondaryStatus.Unavailable;
-        return _classifyDeviation(primaryPrice, secondary);
-    }
-
-    /// @dev DIA probe. Key = `<UPPER_SYMBOL>/USD` (e.g. "ETH/USD").
-    ///      DIA returns 8-decimal `(uint128 value, uint128 timestamp)`.
-    function _checkDia(
-        bytes32 symbol,
-        uint256 primaryPrice,
-        uint8 primaryDec
-    ) private view returns (SecondaryStatus) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address oracle = s.diaOracleV2;
-        if (oracle == address(0)) return SecondaryStatus.Unavailable;
-
-        // T-034 Numeraire generalization (b1): DIA key uses the active numeraire's
-        // upper-case symbol from storage (default "USD").
-        string memory key = string(abi.encodePacked(_toUpper(_wordToString(symbol)), "/", _numeraireUpperSymbol()));
-
-        uint128 value;
-        uint128 reportedAt;
-        try IDIAOracleV2(oracle).getValue(key) returns (
-            uint128 v,
-            uint128 t
-        ) {
-            value = v;
-            reportedAt = t;
-        } catch {
-            return SecondaryStatus.Unavailable;
-        }
-        if (value == 0 || reportedAt == 0) return SecondaryStatus.Unavailable;
-        if (block.timestamp - uint256(reportedAt) > LibVaipakam.effectiveSecondaryOracleMaxStaleness()) {
-            return SecondaryStatus.Unavailable;
-        }
-        uint256 secondary = _rescale(uint256(value), 8, primaryDec);
-        if (secondary == 0) return SecondaryStatus.Unavailable;
-        return _classifyDeviation(primaryPrice, secondary);
-    }
-
-    /// @dev T-034 Numeraire generalization (b1) — read the numeraire symbol from
-    ///      storage and convert to a lowercase Solidity string for
-    ///      the symbol-derived secondary oracle query construction.
-    ///      Empty bytes32 (governance never wrote the slot) defaults
-    ///      to "usd" so the post-deploy behaviour matches the
-    ///      pre-sweep deploy out of the box. The bytes32 is assumed
-    ///      to already be lowercase ASCII (governance writes it that
-    ///      way); we walk to the first null byte and emit a string of
-    ///      that length. No reverse-case-fold needed.
-    function _numeraireLowerSymbol() private view returns (string memory) {
-        bytes32 raw = LibVaipakam.storageSlot().numeraireSymbol;
-        if (raw == bytes32(0)) return "usd";
-        return _wordToString(raw);
-    }
-
-    /// @dev T-034 Numeraire generalization (b1) — uppercase variant for API3 / DIA
-    ///      query construction. Reuses `_numeraireLowerSymbol` then
-    ///      upper-cases via the existing `_toUpper` helper.
-    function _numeraireUpperSymbol() private view returns (string memory) {
-        return _toUpper(_numeraireLowerSymbol());
-    }
-
-    /// @dev Classify a (primary, secondary) pair as Agree or Disagree
-    ///      based on the chain-level deviation tolerance.
-    function _classifyDeviation(
-        uint256 primary,
-        uint256 secondary
-    ) private view returns (SecondaryStatus) {
-        uint256 diff = primary > secondary ? primary - secondary : secondary - primary;
-        uint256 deviationBps = (diff * LibVaipakam.BASIS_POINTS) / primary;
-        if (deviationBps > LibVaipakam.effectiveSecondaryOracleMaxDeviationBps()) {
-            return SecondaryStatus.Disagree;
-        }
-        return SecondaryStatus.Agree;
-    }
-
-    /// @dev #2745 - the asset's price identity for the secondary sources:
-    ///      the base symbol of its registered Chainlink pair ("LINK" for
-    ///      "LINK / USD"), read from the chain's `VaipakamFeedRegistry`, never
-    ///      from the token's own `symbol()`. A token controls its symbol (an
-    ///      upgradeable one can change it), so a symbol-keyed lookup let a
-    ///      token point its own cross-check at another asset's price, and a
-    ///      malformed `symbol()` reply reverted the whole price read. The
-    ///      pair name was checked against the feed's own `description()` when
-    ///      governance registered it, behind the registry's delay and veto.
-    ///
-    ///      Looked up under the same two quotes the primary read tries, in
-    ///      the same order (`asset/PAD`, then `asset/ETH`). WETH is priced
-    ///      from the ETH anchor feed, so its identity is ETH. Zero - every
-    ///      secondary Unavailable - when no registry is set, the asset has no
-    ///      registered pair (an industrial-fork direct-feed override is one
-    ///      such case), or the registry's answer is not exactly one word.
-    function _secondarySymbol(address asset) private view returns (bytes32) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (asset != address(0) && asset == s.wethContract) return bytes32("ETH");
-        address registry = s.chainlnkRegistry;
-        if (registry == address(0)) return bytes32(0);
-        bytes32 symbol = _pairBase(registry, asset, LibVaipakam.effectivePadDenominator());
-        if (symbol == bytes32(0)) symbol = _pairBase(registry, asset, s.ethChainlinkDenominator);
-        return symbol;
-    }
-
-    /// @dev One `pairBase` read; any failure or a reply that is not exactly
-    ///      one word reads as zero, so it can never revert a price read.
-    function _pairBase(address registry, address base, address quote) private view returns (bytes32 symbol) {
-        if (quote == address(0)) return bytes32(0);
-        (bool ok, bytes memory ret) = registry.staticcall(
-            abi.encodeCall(IFeedRegistryPairBase.pairBase, (base, quote))
-        );
-        if (ok && ret.length == 32) symbol = abi.decode(ret, (bytes32));
-    }
-
-    /// @dev A left-aligned word as a string, up to its first zero byte.
-    function _wordToString(bytes32 word) private pure returns (string memory) {
-        uint256 len;
-        while (len < 32 && word[len] != 0) ++len;
-        bytes memory out = new bytes(len);
-        for (uint256 i; i < len; ++i) out[i] = word[i];
-        return string(out);
-    }
-
-    /// @dev Returns the lowercase form of an ASCII string. Non-ASCII
-    ///      bytes pass through unchanged.
-    function _toLower(string memory s) private pure returns (string memory) {
-        bytes memory b = bytes(s);
-        bytes memory out = new bytes(b.length);
-        for (uint256 i = 0; i < b.length; ++i) {
-            uint8 c = uint8(b[i]);
-            if (c >= 0x41 && c <= 0x5A) {
-                out[i] = bytes1(c + 32);
-            } else {
-                out[i] = b[i];
-            }
-        }
-        return string(out);
-    }
-
-    /// @dev Returns the uppercase form of an ASCII string.
-    function _toUpper(string memory s) private pure returns (string memory) {
-        bytes memory b = bytes(s);
-        bytes memory out = new bytes(b.length);
-        for (uint256 i = 0; i < b.length; ++i) {
-            uint8 c = uint8(b[i]);
-            if (c >= 0x61 && c <= 0x7A) {
-                out[i] = bytes1(c - 32);
-            } else {
-                out[i] = b[i];
-            }
-        }
-        return string(out);
-    }
-
-    /// @dev The product of two prices, `a` at `aDec` decimals and `b` at
-    ///      `bDec`, at the FINER of the two scales: `max(aDec, bDec)`
-    ///      decimals, dividing the full-width product once by
-    ///      `10^min(aDec, bDec)`. The one composition rule for a pivoted
-    ///      price (asset/ETH × ETH/PAD, asset/PAD × PAD/numeraire), so no
-    ///      composition reports fewer decimals than the most precise feed it
-    ///      read. Rounds down; a product that floors to zero is still refused
-    ///      by the price readers ({ZeroPrice}).
-    function _composePrice(uint256 a, uint8 aDec, uint256 b, uint8 bDec)
-        private
-        pure
-        returns (uint256 price, uint8 decimals)
-    {
-        (uint8 lo, uint8 hi) = aDec < bDec ? (aDec, bDec) : (bDec, aDec);
-        price = Math.mulDiv(a, b, 10 ** uint256(lo));
-        decimals = hi;
-    }
-
-    /// @dev Rescale a price value from `fromDec` to `toDec` decimals.
-    ///      Returns 0 if scaling down would round to zero (caller
-    ///      treats as unavailable).
-    function _rescale(uint256 value, uint8 fromDec, uint8 toDec) private pure returns (uint256) {
-        if (fromDec == toDec) return value;
-        if (fromDec < toDec) return value * (10 ** uint256(toDec - fromDec));
-        return value / (10 ** uint256(fromDec - toDec));
+        return LibPriceGuard.guard().countLiveSecondaryOracleFeeds(asset);
     }
 
     // ─── README §13.5 asset-risk views ──────────────────────────────────
@@ -2135,55 +1400,33 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     enum PriceStatus { Priced, Unavailable, Divergent }
 
     /// @notice {getAssetPrice} without the revert, naming why a read
-    ///         failed. The one place a failed read is classified: every
-    ///         caller that must tell "no price" from "a price the quorum
-    ///         distrusts" reads this, never the revert data itself.
-    /// @dev    A divergence is recognised by its own selector, at its own
-    ///         encoded length, in the revert data of the self-call. Only
-    ///         {_enforceSecondaryQuorum} raises {OraclePriceDivergence} and
-    ///         only {_validatePythCrossCheck} raises
-    ///         {OracleCrossCheckDivergence}. The secondary oracles and Pyth
-    ///         are each read inside their own try/catch, so their revert
-    ///         data never reaches here; a governance-configured Chainlink
-    ///         feed that reverted with the same data would be read as
-    ///         Divergent, which can only turn a read into a refusal, never
-    ///         into "no price". The self-call
-    ///         takes 63/64 of the gas left; a caller that has real work
-    ///         after the read cannot starve it into a false `Unavailable`,
-    ///         because the 1/64 kept back would not pay for that work.
+    ///         failed: the price guard's classification, the one place a
+    ///         failed read is classified. Every caller that must tell "no
+    ///         price" from "a price the quorum distrusts" reads this, never
+    ///         the revert data itself.
+    /// @dev    Reverts, rather than reading Unavailable, when the Diamond
+    ///         cannot find a guard in its numeraire ({LibPriceGuard.guard}):
+    ///         a missing guard is a deploy defect, and reading it as "no
+    ///         price" would hand a lender the whole collateral on a price
+    ///         nobody looked up.
     function getAssetPriceStatus(address asset)
         public
         view
         returns (PriceStatus status, uint256 price, uint8 decimals)
     {
-        try this.getAssetPrice(asset) returns (uint256 p, uint8 d) {
-            return (PriceStatus.Priced, p, d);
-        } catch (bytes memory reason) {
-            if (reason.length >= 4) {
-                bytes4 sel = bytes4(reason);
-                if (
-                    (sel == OraclePriceDivergence.selector && reason.length == 4) ||
-                    (sel == OracleCrossCheckDivergence.selector && reason.length == 4 + 4 * 32)
-                ) return (PriceStatus.Divergent, 0, 0);
-            }
-            return (PriceStatus.Unavailable, 0, 0);
-        }
+        IPriceGuard.PriceStatus st;
+        (st, price, decimals) = LibPriceGuard.guard().getAssetPriceStatus(asset);
+        status = PriceStatus(uint8(st));
     }
 
-    /// @notice `getAssetPrice` look-alike but try/catch wrapped — callers
-    ///         that want to fail-closed instead of fail-open (the
-    ///         {checkLiquidity}, {getIlliquidAssets}) can detect pricing
-    ///         failure without bubbling a revert. `ok` is false for a
-    ///         missing AND for a distrusted price alike, which is right for
-    ///         a caller that only proceeds on a usable price. A caller that
-    ///         would act one-sidedly on "no price" reads
-    ///         {getAssetPriceStatus} instead (#666).
-    /// @dev    Promoted from `private _tryGetAssetPriceView` to `public
-    ///         tryGetAssetPrice` (Phase 2 of the
-    ///         AutonomousLtvAndOracleFallback.md design). `LibFallback` now
-    ///         reads {getAssetPriceStatus} for the failed-swap split, so a
-    ///         distrusted price refuses the split instead of pricing it as
-    ///         unavailable.
+    /// @notice `getAssetPrice` look-alike that never reverts on a refused
+    ///         price: callers that fail closed (the {checkLiquidity},
+    ///         {getIlliquidAssets}) can detect a pricing failure without
+    ///         bubbling a revert. `ok` is false for a missing AND for a
+    ///         distrusted price alike, which is right for a caller that only
+    ///         proceeds on a usable price. A caller that would act
+    ///         one-sidedly on "no price" reads {getAssetPriceStatus} instead
+    ///         (#666).
     function tryGetAssetPrice(address asset)
         public
         view
@@ -2192,230 +1435,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         PriceStatus status;
         (status, price, decimals) = getAssetPriceStatus(asset);
         ok = status == PriceStatus.Priced;
-    }
-
-    /// @dev Feed Registry lookup, try/catch wrapped. Returns `address(0)`
-    ///      on missing feed or registry failure.
-    ///
-    ///      Slither's `chainlink-feed-registry` detector warns that
-    ///      Chainlink's Feed Registry exists on Ethereum mainnet only.
-    ///      True, and why `chainlnkRegistry` is never Chainlink's: on
-    ///      every chain it is that chain's own `VaipakamFeedRegistry`
-    ///      (#2880), which answers this same `getFeed` call with the
-    ///      official Chainlink feed for the pair, or zero when none is
-    ///      registered. Not a vuln.
-    // slither-disable-next-line chainlink-feed-registry
-    function _registryFeed(address registry, address base, address quote)
-        private
-        view
-        returns (AggregatorV3Interface)
-    {
-        try FeedRegistryInterface(registry).getFeed(base, quote) returns (
-            AggregatorV2V3Interface f
-        ) {
-            return AggregatorV3Interface(address(f));
-        } catch {
-            return AggregatorV3Interface(address(0));
-        }
-    }
-
-    /// @dev Read a fresh-USD feed and enforce the staleness rule with
-    ///      optional peg-aware stable branch. Returns (ok, price, dec).
-    ///      Never reverts. Used by fail-closed callers (liquidity check).
-    function _readFreshUsdFeed(address feed, bool allowStablePeg)
-        private
-        view
-        returns (bool ok, uint256 price, uint8 decimals)
-    {
-        if (feed == address(0)) return (false, 0, 0);
-        int256 answer;
-        uint256 updatedAt;
-        uint80 roundId;
-        uint80 answeredInRound;
-        try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 rId, int256 a, uint256, uint256 u, uint80 aIr
-        ) {
-            roundId = rId;
-            answer = a;
-            updatedAt = u;
-            answeredInRound = aIr;
-        } catch {
-            return (false, 0, 0);
-        }
-        if (answer <= 0 || updatedAt == 0 || updatedAt > block.timestamp || roundId != answeredInRound) {
-            return (false, 0, 0);
-        }
-        uint256 age = block.timestamp - updatedAt;
-        if (age > LibVaipakam.ORACLE_STABLE_STALENESS) return (false, 0, 0);
-        uint8 dec;
-        try AggregatorV3Interface(feed).decimals() returns (uint8 d) {
-            dec = d;
-        } catch {
-            return (false, 0, 0);
-        }
-        if (!_freshEnough(feed, answer, age, dec, allowStablePeg)) return (false, 0, 0);
-        // safe: `answer` is validated > 0 by `_readFreshUsdFeed`'s own
-        // `if (answer <= 0 || updatedAt == 0 || ...) return (false, 0, 0);`
-        // guard near the head of the function, before any cast path runs.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return (true, uint256(answer), dec);
-    }
-
-    /// @dev Read a Chainlink aggregator and enforce the freshness rule
-    ///      ({_freshEnough}); reverts on failure. Used by the
-    ///      revert-on-failure getAssetPrice path.
-    function _readAggregatorStrict(address feed, bool allowStablePeg)
-        private
-        view
-        returns (uint256 price, uint8 decimals)
-    {
-        (
-            uint80 roundId,
-            int256 answer,
-            ,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) = AggregatorV3Interface(feed).latestRoundData();
-        if (
-            answer <= 0 ||
-            updatedAt == 0 ||
-            updatedAt > block.timestamp ||
-            roundId != answeredInRound
-        ) {
-            revert StalePriceData();
-        }
-        uint256 age = block.timestamp - updatedAt;
-        // The outer staleness bound is checked BEFORE reading the feed's
-        // decimals, so a stale feed reverts with the precise StalePriceData
-        // selector rather than tripping a secondary revert if `decimals()`
-        // itself behaves unexpectedly (empty return on a no-code address).
-        if (age > LibVaipakam.ORACLE_STABLE_STALENESS) revert StalePriceData();
-        uint8 dec2 = AggregatorV3Interface(feed).decimals();
-        if (!_freshEnough(feed, answer, age, dec2, allowStablePeg)) {
-            revert StalePriceData();
-        }
-        // safe: `answer` is validated > 0 by `_readAggregatorStrict`'s
-        // own head-of-function guard (`if (answer <= 0 || ...) revert
-        // StalePriceData();`), which runs before the staleness + peg
-        // branches reach this return path.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return (uint256(answer), dec2);
-    }
-
-    /// @dev The ONE freshness rule for a Chainlink answer, shared by the
-    ///      reverting read ({_readAggregatorStrict}) and the non-reverting
-    ///      one ({_readFreshUsdFeed}), so the price path and the liquidity
-    ///      check can never judge the same answer differently.
-    ///
-    ///      The two-tier defaults always apply: a volatile feed must be
-    ///      fresh within `ORACLE_VOLATILE_STALENESS` (2h); a stable feed may
-    ///      be up to `ORACLE_STABLE_STALENESS` (25h) old only when the answer
-    ///      sits within peg tolerance of $1 or of a registered fiat /
-    ///      commodity reference. A per-feed override (Phase 3.1) only ADDS
-    ///      bounds on top: a shorter staleness budget and a floor on the raw
-    ///      answer.
-    ///
-    ///      #2742 — before this the override REPLACED the defaults on the
-    ///      reverting read (skipping the stable-peg check too), so a 6h
-    ///      override let a 4h-old volatile price through, against
-    ///      SECURITY.md's "overrides can only make a feed stricter"; and the
-    ///      non-reverting read ignored overrides entirely, so a tightened
-    ///      feed still passed the liquidity check. Slow-heartbeat fiat and
-    ///      commodity feeds need no loosening: the stable branch already
-    ///      accepts a 25h-old answer at its reference.
-    /// @param feed            The aggregator (its override is looked up).
-    /// @param answer          The raw answer, already checked > 0.
-    /// @param age             Seconds since the answer's `updatedAt`.
-    /// @param dec             The aggregator's decimals.
-    /// @param allowStablePeg  Whether the stable-peg relaxation may apply.
-    function _freshEnough(
-        address feed,
-        int256 answer,
-        uint256 age,
-        uint8 dec,
-        bool allowStablePeg
-    ) private view returns (bool) {
-        LibVaipakam.FeedOverride storage ovr = LibVaipakam
-            .storageSlot()
-            .feedOverrides[feed];
-        if (ovr.minValidAnswer > 0 && answer < ovr.minValidAnswer) return false;
-        if (ovr.maxStaleness > 0 && age > ovr.maxStaleness) return false;
-        if (age > LibVaipakam.ORACLE_STABLE_STALENESS) return false;
-        if (age > LibVaipakam.ORACLE_VOLATILE_STALENESS) {
-            if (!allowStablePeg) return false;
-            if (!_answerWithinAnyPeg(answer, dec)) return false;
-        }
-        return true;
-    }
-
-    /// @dev Peg-aware stable branch. `answer` is accepted if it lies
-    ///      within `ORACLE_PEG_TOLERANCE_BPS` of the implicit USD $1 peg
-    ///      OR of any registered fiat / commodity reference. Reference
-    ///      feeds themselves must be fresh within `ORACLE_STABLE_STALENESS`.
-    ///      Gated on `dec == 8` so only 8-decimal USD-quoted feeds
-    ///      qualify — an asset/ETH 1e18 reading is not misclassified.
-    function _answerWithinAnyPeg(int256 answer, uint8 dec) private view returns (bool) {
-        if (dec != 8) return false;
-
-        if (_withinPegBps(answer, LibVaipakam.ORACLE_USD_PEG_1E8)) return true;
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 n = s.stableFeedSymbolsList.length;
-        for (uint256 i = 0; i < n; i++) {
-            address ref = s.stableFeedBySymbol[s.stableFeedSymbolsList[i]];
-            if (ref == address(0)) continue;
-            (bool ok, int256 refAnswer) = _readRefPegAnswer(ref);
-            if (!ok) continue;
-            if (_withinPegBps(answer, refAnswer)) return true;
-        }
-        return false;
-    }
-
-    /// @dev Read a peg reference feed (EUR/USD, JPY/USD, XAU/USD…) and
-    ///      enforce the 25h stable ceiling — these feeds run 24h
-    ///      heartbeats themselves so the 2h volatile bound does not
-    ///      apply. Returns (ok, rawAnswer8).
-    function _readRefPegAnswer(address feed) private view returns (bool ok, int256 answer) {
-        uint256 updatedAt;
-        uint80 roundId;
-        uint80 answeredInRound;
-        int256 a;
-        try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 rId, int256 rA, uint256, uint256 u, uint80 aIr
-        ) {
-            roundId = rId;
-            a = rA;
-            updatedAt = u;
-            answeredInRound = aIr;
-        } catch {
-            return (false, 0);
-        }
-        if (a <= 0 || updatedAt == 0 || updatedAt > block.timestamp || roundId != answeredInRound) {
-            return (false, 0);
-        }
-        if (block.timestamp - updatedAt > LibVaipakam.ORACLE_STABLE_STALENESS) {
-            return (false, 0);
-        }
-        try AggregatorV3Interface(feed).decimals() returns (uint8 d) {
-            if (d != 8) return (false, 0);
-        } catch {
-            return (false, 0);
-        }
-        return (true, a);
-    }
-
-    /// @dev |answer - peg| / peg in basis points ≤ ORACLE_PEG_TOLERANCE_BPS.
-    ///      Safe with positive-only answers (validated at the feed read).
-    function _withinPegBps(int256 answer, int256 peg) private pure returns (bool) {
-        if (peg <= 0) return false;
-        int256 diff = answer > peg ? answer - peg : peg - answer;
-        // safe: `peg` is strictly positive int256 by the function head
-        // (`if (peg <= 0) return false;`); `diff = |answer - peg|` is
-        // non-negative (can equal 0 when answer == peg). Both casts to
-        // uint256 are therefore lossless.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 devBps = (uint256(diff) * LibVaipakam.BASIS_POINTS) / uint256(peg);
-        return devBps <= LibVaipakam.ORACLE_PEG_TOLERANCE_BPS;
     }
 
     function _pushUniqueAddr(address[] memory arr, uint256 n, address v)
@@ -2430,51 +1449,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return n + 1;
     }
 
-    // ─── Sequencer uptime circuit breaker (Chainlink l2 feed) ──────────
+    // ─── Sequencer uptime (read from the price guard) ──────────────────
 
-    /// @notice Returns the configured l2 sequencer uptime feed address.
-    function getSequencerUptimeFeed() external view returns (address) {
-        return LibVaipakam.storageSlot().sequencerUptimeFeed;
-    }
-
-    /// @notice Non-reverting sequencer liveness view consumed by the
-    ///         default/liquidation facets to decide between DEX-swap and
-    ///         full-collateral-transfer liquidation paths.
+    /// @notice Whether the L2 sequencer is up and past its grace period, as
+    ///         the price guard reads it (true on an L1, where no sequencer
+    ///         feed is set). Consumed by the default and liquidation facets
+    ///         to choose between a swap and the full-collateral transfer.
     function sequencerHealthy() external view returns (bool) {
-        return _sequencerHealthy();
-    }
-
-    /// @dev Revert-on-failure sequencer check enforced before every
-    ///      price read in the getAssetPrice path.
-    function _requireSequencerHealthy() internal view {
-        address feed = LibVaipakam.storageSlot().sequencerUptimeFeed;
-        if (feed == address(0)) return;
-        (, int256 answer, uint256 startedAt, , ) = AggregatorV3Interface(feed).latestRoundData();
-        if (answer != 0) revert SequencerDown();
-        if (startedAt == 0) revert SequencerDown();
-        if (block.timestamp - startedAt < LibVaipakam.SEQUENCER_GRACE_PERIOD) {
-            revert SequencerGracePeriod();
-        }
-    }
-
-    /// @dev Non-reverting sibling of {_requireSequencerHealthy} for
-    ///      fail-closed callers (liquidity classification).
-    function _sequencerHealthy() internal view returns (bool) {
-        address feed = LibVaipakam.storageSlot().sequencerUptimeFeed;
-        if (feed == address(0)) return true;
-        try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80,
-            int256 answer,
-            uint256 startedAt,
-            uint256,
-            uint80
-        ) {
-            if (answer != 0) return false;
-            if (startedAt == 0) return false;
-            if (block.timestamp - startedAt < LibVaipakam.SEQUENCER_GRACE_PERIOD) return false;
-            return true;
-        } catch {
-            return false;
-        }
+        return LibPriceGuard.guard().sequencerHealthy();
     }
 }

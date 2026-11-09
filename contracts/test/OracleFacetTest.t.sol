@@ -20,6 +20,8 @@ import {LibFallback} from "../src/libraries/LibFallback.sol";
 import {LibSaleSizing} from "../src/libraries/LibSaleSizing.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @title OracleFacetTest
@@ -34,7 +36,7 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
  *   - WETH itself is a supported quote/asset — its price comes directly
  *     from `ethNumeraireFeed` and its liquidity check skips the pool hop.
  *   - Peg-aware staleness grace applies only within ±3% of any registered
- *     peg ($1, or a non-USD peg registered via `setStableTokenFeed`).
+ *     peg ($1, or a non-USD peg registered as a guard stable reference).
  *
  * Config is wired through OracleAdminFacet (owner-only setters) rather
  * than direct `vm.store` slot writes, since several new fields were
@@ -85,14 +87,8 @@ contract OracleFacetTest is Test {
         accessControlFacet  = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest          = new HelperTest();
 
-        bytes4[] memory oracleAdminSelectors = new bytes4[](7);
-        oracleAdminSelectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        oracleAdminSelectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        oracleAdminSelectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        oracleAdminSelectors[3] = OracleAdminFacet.setWethContract.selector;
-        oracleAdminSelectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        oracleAdminSelectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        oracleAdminSelectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
+        // #3272 part 2 - the admin facet holds no price setting; the guard does.
+        bytes4[] memory oracleAdminSelectors = helperTest.getOracleAdminFacetSelectors();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
@@ -123,11 +119,20 @@ contract OracleFacetTest is Test {
         vm.warp(7 days);
 
         // Wire oracle config through the admin facet (owner-only setters).
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(mockDenom);
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(mockRegistry);
-        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
+        // #3272 part 2 - the Diamond prices through a guard keyed by these
+        // denominators, named by the registry it records.
+        LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, makeAddr("ethDenom")));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
+        // A real registry reverts for a pair it files no feed under. The
+        // mock registry is a one-byte body, which would answer an unmocked
+        // lookup with empty data instead, so every lookup a test does not
+        // mock exactly (the guard's asset/ETH fallback among them) reverts.
+        vm.mockCallRevert(
+            mockRegistry, abi.encodeWithSignature("getFeed(address,address)"), "FeedNotFound"
+        );
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
         OracleAdminFacet(address(diamond)).setUniswapV3Factory(mockFactory);
-        OracleAdminFacet(address(diamond)).setEthUsdFeed(mockEthUsdFeed);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
 
         // Default ETH/USD mock: $2000, 8 decimals, fresh. Individual tests
         // may override or revert this to cover the ETH-feed branches.
@@ -221,9 +226,9 @@ contract OracleFacetTest is Test {
         _mockRegistryFeed(mockAsset, mockFeed);
 
         // Past the 25h stable ceiling — even $1 must be rejected as stale.
-        vm.warp(LibVaipakam.ORACLE_STABLE_STALENESS + 10 hours);
+        vm.warp(PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 10 hours);
         uint80 roundId = 1;
-        uint256 staleAt = block.timestamp - (LibVaipakam.ORACLE_STABLE_STALENESS + 1);
+        uint256 staleAt = block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 1);
         vm.mockCall(
             mockFeed,
             abi.encodeWithSignature("latestRoundData()"),
@@ -344,9 +349,9 @@ contract OracleFacetTest is Test {
 
     /// @dev If the ETH/USD feed itself is stale, even WETH collapses to Illiquid.
     function testCheckLiquidityIlliquidForWethWhenEthFeedStale() public {
-        vm.warp(LibVaipakam.ORACLE_STABLE_STALENESS + 10 hours);
+        vm.warp(PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 10 hours);
         uint80 roundId = 1;
-        uint256 staleAt = block.timestamp - (LibVaipakam.ORACLE_STABLE_STALENESS + 1);
+        uint256 staleAt = block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 1);
         vm.mockCall(
             mockEthUsdFeed,
             abi.encodeWithSignature("latestRoundData()"),
@@ -470,7 +475,7 @@ contract OracleFacetTest is Test {
         _mockRegistryFeed(mockAsset2, mockFeed2);
         _mockFeedFull(mockFeed2, int256(1e8), 8);
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockAsset),
             abi.encode(uint256(0), uint8(8))
         );
@@ -639,7 +644,6 @@ contract OracleFacetTest is Test {
     ) internal {
         address ethDenom = makeAddr("ethDenom");
         address assetEthFeed = makeAddr(feedName);
-        OracleAdminFacet(address(diamond)).setEthChainlinkDenominator(ethDenom);
         _mockRegistryFeed(asset, address(0));
         vm.mockCall(
             mockRegistry,
@@ -763,9 +767,9 @@ contract OracleFacetTest is Test {
 
     function testGetAssetPriceReverts_StalePriceData_TooOld() public {
         _mockRegistryFeed(mockAsset, mockFeed);
-        vm.warp(LibVaipakam.ORACLE_STABLE_STALENESS + 10 hours);
+        vm.warp(PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 10 hours);
         uint80 roundId = 1;
-        uint256 staleAt = block.timestamp - (LibVaipakam.ORACLE_STABLE_STALENESS + 1);
+        uint256 staleAt = block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).STABLE_STALENESS() + 1);
         vm.mockCall(
             mockFeed,
             abi.encodeWithSignature("latestRoundData()"),

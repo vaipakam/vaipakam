@@ -20,8 +20,8 @@
  *     a future setter missing from the allowlist) still converges.
  */
 
-import { type Address, type PublicClient } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { type Abi, type Address, type PublicClient } from 'viem';
+import { DIAMOND_ABI_VIEM, PriceGuardABI } from '@vaipakam/contracts/abis';
 import {
   LABELLED_GETTER_HOST,
   PROTOCOL_KNOB_SETTER_EVENTS,
@@ -122,16 +122,11 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'ZeroExProxySet',
   'AllowanceTargetSet',
   'SanctionsOracleSet',
-  // #2685 — chain-level oracle settings and the backstop switches, which
-  // wrote silently until they gained these events.
-  'ChainlinkRegistrySet',
-  'UsdChainlinkDenominatorSet',
-  'EthChainlinkDenominatorSet',
-  'WethContractSet',
-  'EthNumeraireFeedSet',
-  'StableTokenFeedSet',
+  // #2685 — chain-level settings and the backstop switches, which wrote
+  // silently until they gained these events. The oracle wiring moved to the
+  // price guard in #3272 part 2; the guard announces its own changes, and
+  // its settings are refreshed on this snapshot's schedule.
   'UniswapV3FactorySet',
-  'SequencerUptimeFeedSet',
   'BackstopEnabledSet',
   'BackstopFillEnabledSet',
   'BackstopAbsorbEnabledSet',
@@ -549,6 +544,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         client: opts.client,
         diamond: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
+        guardAbi: PriceGuardABI as Abi,
         blockNumber: opts.blockNumber,
         facets: getDeployment(opts.chainId)?.facets,
       }).catch((err: unknown) => {

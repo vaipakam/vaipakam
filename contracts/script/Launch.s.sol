@@ -7,7 +7,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
-import {LibLaunchReadiness, ILaunchReadableDiamond} from "../src/governance/LibLaunchReadiness.sol";
+import {LibLaunchReadiness, ILaunchReadableDiamond, ILaunchPriceGuard} from "../src/governance/LibLaunchReadiness.sol";
 import {ILaunchGate} from "../src/interfaces/ILaunchGate.sol";
 import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
 
@@ -669,8 +669,13 @@ contract Launch is Script {
                 remoteToken: Deployments.vpfiLaneTokenOptionalForChain(ids[i])
             });
         }
-        try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
-            d.weth = w;
+        // #3272 part 2 - WETH is the price guard's entry, not Diamond config.
+        try ILaunchReadableDiamond(diamond).getPriceGuard() returns (address g) {
+            if (g.code.length != 0) {
+                try ILaunchPriceGuard(g).weth() returns (address w) {
+                    d.weth = w;
+                } catch {}
+            }
         } catch {}
         d.mirrorToken = !Deployments.isCanonicalVpfiChainId(block.chainid);
         d.feedRegistry = Deployments.readFeedRegistryOptional();
@@ -770,7 +775,7 @@ contract Launch is Script {
         );
         console.log("      WETH:", declared.weth);
         console.log("        verify it against the chain's official bridge registry: the bridged WETH9,");
-        console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
+        console.log("        never the wrapped native token (the price guard's Weth entry policy)");
         console.log("      feed registry (the artifact's feedRegistry):", declared.feedRegistry);
         console.log("        the chain's VaipakamFeedRegistry; its owner and veto are proven by the handover gate");
         console.log(

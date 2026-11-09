@@ -1172,12 +1172,6 @@ interface IVaipakamErrors {
         uint8 cadence
     );
 
-    /// @notice Cross-numeraire batched setter `setNumeraire` is
-    ///         gated by the `numeraireSwapEnabled` flag. Threshold-
-    ///         only updates via `setMinPrincipalForFinerCadence` are
-    ///         NOT gated by this error. See design doc §10.2.
-    error NumeraireSwapDisabled();
-
     /// @notice `settlePeriodicInterest` was called before the period's
     ///         grace window expired. Settler must wait until
     ///         `lastPeriodicInterestSettledAt + intervalDays(cadence) +
@@ -1218,25 +1212,13 @@ interface IVaipakamErrors {
 
     // ─── T-048 — Predominantly Available Denominator (PAD) ─────────────
 
-    /// @notice Reverted when an industrial-fork deploy's
-    ///         `numeraire ≠ PAD` AND the protocol can't compute the
-    ///         PAD/<numeraire> FX rate — neither the direct
-    ///         `padNumeraireRateFeed` is set, nor are both
-    ///         `ethPadFeed` + `ethNumeraireFeed` populated for the
-    ///         derived path. Configuration error caught at the first
-    ///         priced read; nothing on-chain can recover except a
-    ///         governance call to `setPredominantDenominator` with a
-    ///         reachable rate path.
+    /// @notice The price guard's refusal when its numeraire is not the PAD
+    ///         and it cannot compute the PAD/numeraire rate: neither the
+    ///         direct rate feed nor both ETH legs are set (#3272: raised by
+    ///         the guard, carried here so a forwarded revert decodes from
+    ///         the Diamond's ABI). Recovered only by the guard's own delayed
+    ///         config change.
     error PadNumeraireRateUnavailable();
-
-    /// @notice Reverted when `_primaryPrice` is asked to price an
-    ///         asset on a `numeraire ≠ PAD` deploy but no PAD-side
-    ///         feed (asset/PAD direct OR asset/ETH-pivot via PAD)
-    ///         resolves on the active chain. Same shape as
-    ///         {NoPriceFeed} but specific to the PAD-pivot path so
-    ///         operator monitoring can distinguish "asset never had a
-    ///         feed" from "feed setup mid-rotation."
-    error PadPivotFeedUnavailable(address asset);
 
     /// @notice Reverted when the operator sets
     ///         `padNumeraireRateFeed` but the feed read returns a

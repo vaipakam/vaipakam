@@ -14,6 +14,8 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "./lib/PriceGuardConfig.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
@@ -129,10 +131,13 @@ contract BaseSepoliaPartialFlows is Script {
         _fundIfNeeded(newLender, 0.02 ether);
         _fundIfNeeded(newBorrower, 0.02 ether);
 
-        OracleAdminFacet(diamond).setChainlinkRegistry(address(registry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(usdDenom);
-        OracleAdminFacet(diamond).setWethContract(address(weth));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
+        // #3272 part 2 - the price guard holds the pricing config; the
+        // rehearsal chain's zero delay applies each entry at once.
+        {
+            PriceGuard guard = PriceGuardConfig.guardOf(diamond);
+            PriceGuardConfig.requireIdentity(guard, usdDenom, address(0));
+            PriceGuardConfig.pointAt(guard, address(registry), address(weth), address(wethFeed));
+        }
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));
 
         RiskFacet(diamond).updateRiskParams(address(weth), 8000, 300);

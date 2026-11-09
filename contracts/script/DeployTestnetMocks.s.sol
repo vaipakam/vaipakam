@@ -9,6 +9,8 @@ import {TestnetMultiToken} from "./mocks/TestnetMultiToken.sol";
 import {ZeroExProxyMock} from "../test/mocks/ZeroExProxyMock.sol";
 import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "./lib/PriceGuardConfig.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -563,13 +565,15 @@ contract DeployTestnetMocks is Script {
             feeds[3] = TestnetFeedRegistration.Feed(weth, USD_DENOM, ethUsdFeedAddr, "ETH / USD");
             TestnetFeedRegistration.register(registry, feeds);
         }
-        OracleAdminFacet oa = OracleAdminFacet(diamond);
-        oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(registry.USD());
-        oa.setEthChainlinkDenominator(registry.ETH());
-        oa.setWethContract(weth);
-        oa.setEthUsdFeed(ethUsdFeedAddr);
-        oa.setUniswapV3Factory(address(univ3));
+        // #3272 part 2 - the pricing entries live in the price guard. Its
+        // identity was keyed by this same registry's denominators at deploy;
+        // a testnet's zero delay applies each entry at once.
+        {
+            PriceGuard guard = PriceGuardConfig.guardOf(diamond);
+            PriceGuardConfig.requireIdentity(guard, registry.USD(), registry.ETH());
+            PriceGuardConfig.pointAt(guard, address(registry), weth, ethUsdFeedAddr);
+        }
+        OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3));
 
         // Pin the PAA quote list to [weth, mUSDC], both of which the mock
         // factory pools. When `paaAssets` is already populated on a chain,
@@ -728,7 +732,7 @@ contract DeployTestnetMocks is Script {
     function _wethFor(uint256 cid) private view returns (address) {
         if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
         if (cid == 11155111) return vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
-        // BNB Testnet: WBNB is NOT WETH — `setWethContract` is the
+        // BNB Testnet: WBNB is NOT WETH — the guard's `Weth` entry is the
         // bridged-WETH oracle reference and the mock ETH/USD feed would
         // price WBNB as ETH. There is no canonical bridged WETH on 97,
         // so REQUIRE an explicit address (a bridged/mock WETH the

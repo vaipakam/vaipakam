@@ -47,6 +47,7 @@ import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
 import {LibTestVaultBeacon as LibTestVaultBeaconPayout} from "../helpers/LibTestVaultBeacon.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title Scenario1_ERC20LendingLifecycle
@@ -95,7 +96,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     }
 
     function mockPrice(address asset, uint256 price, uint8 dec) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
     }
 
     function setUp() public {

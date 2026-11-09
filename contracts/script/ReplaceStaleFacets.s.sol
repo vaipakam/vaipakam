@@ -28,6 +28,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
@@ -159,6 +160,8 @@ contract ReplaceStaleFacets is DeployDiamond {
             IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.positionNFT.selector) == address(0)
                 || VaipakamNFTFacet(diamond).positionNFT() == address(0)
         ) revert PredatesPositionNFT(diamond);
+        // #3272 part 2 - and one from before the price guard.
+        PriceGuardCrossing.requireRecorded(diamond);
 
         vm.startBroadcast(deployerKey);
 

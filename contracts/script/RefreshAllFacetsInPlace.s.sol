@@ -18,6 +18,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -520,6 +521,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
         _requirePositionNFTDiamond(diamond);
+        // #3272 part 2 - and one from before the price guard.
+        PriceGuardCrossing.requireRecorded(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see
@@ -782,53 +785,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // every route this deploy no longer installs, after the migrations
         // below that read a retired selector as their completion marker
         // (#2313).
-
-        // Recycling M1 (#1346) — one-time notification-tariff migration.
-        // M1 changed the notification fee from a numeraire-denominated value
-        // to a flat native-VPFI quantity, and dropped `setNumeraire`'s 8th
-        // (notification-fee) argument — an 8→7-arg SELECTOR change. On the
-        // FIRST in-place refresh carrying M1 the old 8-arg selector is still
-        // routed to stale bytecode that writes `c.notificationFee`, so a
-        // queued numeraire rotation could clobber the flat tariff, and any
-        // pre-existing numeraire-denominated `notificationFee` override would
-        // now be reinterpreted as VPFI wei. Both are cleared here: Remove the
-        // retired selector and reset the slot to 0 (→ the new 0.5-VPFI
-        // default). Gated on the old selector still being routed so this runs
-        // EXACTLY ONCE — a later refresh (selector already gone) skips it and
-        // never wipes a deliberately-set VPFI tariff. This block removes its
-        // own selector rather than leaving it to {_sweepStaleRoutes}, because
-        // the selector's storage SEMANTICS changed, not just its
-        // implementation: the routed selector is the migration's completion
-        // marker, and the reset must land before it goes.
-        bytes4 oldSetNumeraire = bytes4(
-            keccak256(
-                "setNumeraire(address,address,bytes32,bytes32,uint256,uint256,uint256,uint256)"
-            )
-        );
-        if (loupe.facetAddress(oldSetNumeraire) != address(0)) {
-            // Order matters (Codex r2): reset the slot FIRST, Remove the
-            // selector LAST. The still-routed old selector is the DURABLE
-            // completion marker for the whole migration — the gate above
-            // stays true until the Remove mines, so if the reset lands but
-            // the Remove is dropped/reverted, a rerun re-enters this block
-            // and re-does both (the reset is idempotent — 0 → the same
-            // 0.5-VPFI default). Removing first would clear the marker while
-            // the reset could still fail, permanently skipping it and
-            // leaving a stale numeraire value reinterpreted as VPFI wei.
-            ConfigFacet(diamond).setNotificationFee(0);
-            bytes4[] memory rm = new bytes4[](1);
-            rm[0] = oldSetNumeraire;
-            IDiamondCut.FacetCut[] memory rmCut = new IDiamondCut.FacetCut[](1);
-            rmCut[0] = IDiamondCut.FacetCut({
-                facetAddress: address(0),
-                action: IDiamondCut.FacetCutAction.Remove,
-                functionSelectors: rm
-            });
-            IDiamondCut(diamond).diamondCut(rmCut, address(0), "");
-            console.log(
-                "M1 (#1346): reset notification tariff to VPFI default + removed stale 8-arg setNumeraire selector"
-            );
-        }
 
         // ─── the receiver requirement, decided ONCE, after the cuts ───────
         //
@@ -2237,9 +2193,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      batches, naming each one before it goes. Then ask the loupe again,
     ///      so a removal that did not take is loud.
     ///
-    ///      Runs after every selector-gated migration above. M1's tariff
-    ///      reset uses its still-routed retired selector as the completion
-    ///      marker, so sweeping earlier would skip that migration for good. It also runs before the custody
+    ///      Runs after every selector-gated migration above: a migration that
+    ///      reads its still-routed retired selector as its completion marker
+    ///      would be skipped for good by an earlier sweep. It also runs before the custody
     ///      cutover stamp, which records the routing as it stands. A stamp
     ///      taken with a retired reward hook still routed would attest exactly
     ///      the routing the stamp exists to exclude.

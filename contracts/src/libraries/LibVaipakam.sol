@@ -3,19 +3,18 @@
 pragma solidity ^0.8.29;
 
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+import {LibPriceGuard} from "./LibPriceGuard.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
 import {LibTierRecord} from "./LibTierRecord.sol";
-// Numeraire generalization (b1) (T-047 prep): the INumeraireOracle interface that
-// Phase 1+2 introduced for numeraire→USD boundary conversion is no
-// longer needed — `OracleFacet.getAssetPrice` now returns numeraire-
-// quoted prices directly via the renamed Chainlink slots
-// (ethNumeraireFeed, numeraireChainlinkDenominator, numeraireSymbol).
-// All comparison sites now compare numeraire-vs-numeraire, so the
-// boundary conversion that lived in `_convertNumeraireToUsd` /
-// `getKycTier{0,1}Threshold` is removed.
+// Numeraire generalization (b1) (T-047 prep): `OracleFacet.getAssetPrice`
+// returns numeraire-quoted prices directly, so every comparison site
+// compares numeraire-vs-numeraire with no boundary conversion. Since #3272
+// part 2 the numeraire is the price guard's fixed identity: the Diamond
+// keeps only its symbol (`numeraireSymbol`, recorded with the protocol
+// registry) and reads every price through the guard.
 
 /**
  * @title LibVaipakam
@@ -396,9 +395,8 @@ library LibVaipakam {
     //    universally-correct default because the active numeraire can be
     //    rotated away from USD, so a hard-coded $1k default would
     //    mis-classify ordinary loans as dust on a non-USD deployment.
-    //    Governance sets an explicit floor in the active numeraire to switch
-    //    dust handling on, and a rotation resets it to 0
-    //    (`NumeraireConfigFacet.setNumeraire`). A nonzero floor is bounded
+    //    Governance sets an explicit floor in the deploy's numeraire (fixed
+    //    at deploy since #3272) to switch dust handling on. A nonzero floor is bounded
     //    to [1, 100_000] numeraire units: the cap so a misconfigured floor
     //    can't turn every routine partial into a full close, the minimum so
     //    a value written on the pre-#2419 whole-unit scale (every one of
@@ -557,9 +555,8 @@ library LibVaipakam {
     ///      replaces the retired ETH/numeraire conversion. The default
     ///      `0.5 VPFI` preserves the ≈0.5-VPFI bill the old
     ///      `$2 ÷ ($4000 × 1e-3)` conversion produced at typical prices.
-    ///      The fee has **no numeraire linkage** — `setNumeraire` no
-    ///      longer rotates it (it would clobber a VPFI quantity with a
-    ///      fiat-denominated value); it is tuned only via
+    ///      The fee has **no numeraire linkage**: it is a VPFI quantity,
+    ///      never a fiat-denominated value, and it is tuned only via
     ///      `ConfigFacet.setNotificationFee`.
     uint256 constant NOTIFICATION_FEE_DEFAULT = 5e17; // 0.5 VPFI (flat tariff)
     uint256 constant MIN_NOTIFICATION_FEE_FLOOR = 1e17; // 0.1 VPFI
@@ -647,7 +644,6 @@ library LibVaipakam {
     uint256 constant KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000 * 1e18; // Tier0 max
     uint256 constant KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000 * 1e18; // Tier1 max
     uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeLedger entries scanned per window query in MetricsFacet
-    uint256 constant SEQUENCER_GRACE_PERIOD = 3600; // 1h post-recovery grace on L2s before prices are trusted again
 
     // ─── T-044 — duration-tiered loan-default grace bounds ───────────────
     // The grace period applied between a loan's `endTime` and the moment
@@ -681,34 +677,6 @@ library LibVaipakam {
     // lender lock-up).
     uint256 constant GRACE_SECONDS_MIN = 1 hours;
     uint256 constant GRACE_SECONDS_MAX = 90 days;
-
-    // ─── Chainlink staleness thresholds (stable-peg-aware hybrid) ───────
-    // Volatile feeds (ETH/BTC/etc.-USD) publish on a 1h heartbeat + 0.5%
-    // deviation trigger. Stable / fiat / commodity feeds (USDC, EUR/USD,
-    // JPY/USD, XAU/USD) publish on a 24h heartbeat + small deviation —
-    // they commonly go a full day without an update because the price is
-    // pinned to its reference. OracleFacet.getAssetPrice enforces a
-    // two-tier staleness rule:
-    //   age <= ORACLE_VOLATILE_STALENESS                              → accept
-    //   age <= ORACLE_STABLE_STALENESS AND feed reports within peg    → accept
-    //   otherwise                                                     → revert
-    //
-    // The stable-path check uses the SAME `answer` already read (no
-    // extra feed call) and is gated on `feed.decimals() == 8` so only
-    // 8-decimal USD-quoted feeds qualify — an asset/ETH feed that
-    // happens to report 1e18 is not misclassified.
-    //
-    // "Within peg" = within ORACLE_PEG_TOLERANCE_BPS of either
-    //   (a) the implicit USD $1 peg (ORACLE_USD_PEG_1E8), or
-    //   (b) any registered non-USD peg in `stableFeedBySymbol` (EUR/JPY/
-    //       XAU/etc.) whose reference feed is itself within
-    //       ORACLE_STABLE_STALENESS. Fiat/commodity reference feeds are
-    //       themselves on 24h heartbeats, so we cannot force a 2h
-    //       freshness requirement on them — we reuse the stable ceiling.
-    uint256 constant ORACLE_VOLATILE_STALENESS = 2 hours;
-    uint256 constant ORACLE_STABLE_STALENESS = 25 hours;
-    uint256 constant ORACLE_PEG_TOLERANCE_BPS = 300; // 3%
-    int256 constant ORACLE_USD_PEG_1E8 = 1e8; // $1 scaled to 8 decimals
 
     // ─── VPFI Discount Tier Table (docs/TokenomicsTechSpec.md §6) ────────
     // Tiered fee discount gated purely by the user's vault VPFI balance.
@@ -1295,21 +1263,18 @@ library LibVaipakam {
         // `[MIN_NOTIFICATION_FEE_FLOOR, MAX_NOTIFICATION_FEE_CEIL]` at the
         // setter so a misfire can't lock users out OR drain their vaults.
         // There is NO numeraire linkage and NO oracle conversion — the
-        // stored value IS the VPFI amount billed. `setNumeraire` does not
-        // rotate this slot (a rotation would clobber a VPFI quantity with a
-        // fiat-denominated value); the §14.2 conversion class the old
+        // stored value IS the VPFI amount billed, never a fiat-denominated
+        // value; the §14.2 conversion class the old
         // `VPFI_PER_ETH_FIXED_PHASE1`-peg path used is forbidden at launch.
         uint256 notificationFee; // 0 ⇒ NOTIFICATION_FEE_DEFAULT (5e17 = 0.5 VPFI)
         // ── T-034 / b1 — Periodic Interest Payment config ─────────────
         // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md §6.
         //
-        // The numeraire identity is captured by the feed-side slots at
-        // the top-level Storage struct (`ethNumeraireFeed`,
-        // `numeraireChainlinkDenominator`, `numeraireSymbol`) — there
-        // is no longer a dedicated "numeraire oracle" contract. The
-        // post-Numeraire-generalization design has `OracleFacet.getAssetPrice` return
-        // numeraire-quoted prices natively; comparison sites compare
-        // numeraire-vs-numeraire without any boundary conversion.
+        // The numeraire is the price guard's fixed identity (#3272 part
+        // 2); the Diamond records only its symbol (`numeraireSymbol`).
+        // `OracleFacet.getAssetPrice` returns numeraire-quoted prices
+        // natively, so comparison sites compare numeraire-vs-numeraire
+        // without any boundary conversion.
         // Principal threshold for opting into a finer-than-mandatory
         // cadence. Stored in numeraire-units (1e18-scaled). 0 ⇒
         // PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT. Range
@@ -1338,16 +1303,7 @@ library LibVaipakam {
         // is ready to activate the feature mesh-wide. See §10.1 of the
         // design doc for the full behavior matrix.
         bool periodicInterestEnabled;
-        // Independently gates the atomic batched `setNumeraire` setter.
-        // Default `false` — a fresh deploy ships USD-as-numeraire (the
-        // ETH/USD Chainlink feed pointed at by `s.ethNumeraireFeed`,
-        // empty `s.numeraireSymbol` interpreted as "usd") and
-        // governance cannot rotate to a different numeraire until this
-        // flag flips. Threshold-only updates via
-        // `setMinPrincipalForFinerCadence(uint256)` and the per-knob
-        // setters are NOT gated by this flag — governance can tune
-        // individual values within the same numeraire freely.
-        bool numeraireSwapEnabled;
+        bool retiredNumeraireSwapEnabled; // #3272: retired; numeraire switching is removed
         // ── Depth-tiered LTV (Piece B) — governance globals ───────────
         // See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
         // §4.2-§4.3. Every field is `0 ⇒ LibVaipakam constant default`;
@@ -3141,72 +3097,20 @@ library LibVaipakam {
         address treasury; // Configurable treasury address
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
-        address numeraireChainlinkDenominator; // Chainlink Feed Registry denominator constant for the active numeraire (Denominations.USD by default; rotates with the numeraire)
-        // T-034 Numeraire generalization (b1) — symbol of the active numeraire used by
-        // the symbol-derived secondary oracles (Tellor / API3 / DIA). Stored
-        // as bytes32 (max 32 ASCII chars) for cheap on-chain comparison;
-        // governance writes lowercase ASCII (e.g. "usd", "eur", "xau").
-        // Empty bytes32 (post-deploy default before governance writes)
-        // is interpreted as "usd" in `_checkTellor` / `_checkApi3` /
-        // `_checkDia` so the protocol behaves identically to the pre-
-        // sweep deploy out of the box.
+        address retiredNumeraireChainlinkDenominator; // #3272: retired; the price guard holds it
+        // #3272 part 2 — the numeraire every price and every
+        // numeraire-denominated threshold is in: the price guard's identity,
+        // lower-case ASCII (`"usd"` on retail). Written once, by
+        // `OracleAdminFacet.initializeProtocolRegistry`; a guard in any other
+        // numeraire is refused (`LibPriceGuard.guard`).
         bytes32 numeraireSymbol;
-        // T-048 — Predominantly Available Denominator (PAD).
-        // PAD is the Chainlink-denomination side that the protocol expects
-        // to have UNIVERSAL coverage on every supported chain — USD by the
-        // post-deploy default. `_primaryPrice` queries `asset/PAD` first
-        // (Chainlink Feed Registry, deepest coverage); if PAD ≠ active
-        // numeraire, the PAD-quoted price is then converted via the
-        // PAD/<numeraire> rate (direct feed if `padNumeraireRateFeed` is
-        // set, else derived from `ethNumeraireFeed ÷ ethPadFeed`). When
-        // PAD == numeraire (retail default — both are
-        // `Denominations.USD`), the conversion is short-circuited and the
-        // PAD price IS the numeraire price — zero overhead, behavior
-        // identical to the pre-T-048 deploy.
-        //
-        // Tunable via `ConfigFacet.setPredominantDenominator`; zero on a
-        // fresh deploy, in which case `_primaryPrice` falls through to the
-        // legacy numeraire-direct path. An industrial-fork deploy on a
-        // non-USD numeraire MUST set PAD before opening loans (a deploy-
-        // script pre-flight enforces it).
-        address predominantDenominator;
-        // bytes32 lowercase ASCII symbol for the symbol-derived secondary
-        // oracles (Tellor / API3 / DIA) when querying asset/PAD pairs.
-        // Empty bytes32 is interpreted as "usd" — matches the existing
-        // numeraireSymbol fallback convention.
-        bytes32 predominantDenominatorSymbol;
-        // Chainlink ETH/<PAD> AggregatorV3 — always populated when PAD is
-        // set. Used (a) directly when the asset is WETH and PAD == numeraire,
-        // and (b) as the denominator of the derived PAD/<numeraire> rate
-        // when the direct feed is absent: rate = ETH/<numeraire> ÷ ETH/PAD.
-        // On retail (PAD == numeraire == USD), this typically points at
-        // the same Chainlink ETH/USD address as `ethNumeraireFeed` — the
-        // two slots are allowed to alias.
-        address ethPadFeed;
-        // Optional Chainlink PAD/<numeraire> AggregatorV3 (e.g. USD/EUR
-        // on Ethereum mainnet). When set, the FX rate is read from this
-        // feed directly. When unset (the more common case on L2s), the
-        // protocol derives the rate from ETH/<numeraire> ÷ ETH/PAD using
-        // existing infrastructure. Address(0) on retail (PAD == numeraire)
-        // is correct — no FX conversion is needed.
-        address padNumeraireRateFeed;
-        // Per-asset opt-in override for the PAD-pivot path. When non-zero,
-        // `_primaryPrice` reads this Chainlink AggregatorV3 directly as the
-        // asset's numeraire-quoted price and skips the PAD pivot entirely
-        // (no FX multiply, no asset/PAD lookup). Use case: on a non-USD
-        // numeraire deploy, an operator finds a 🟢-rated direct
-        // `asset/<numeraire>` Chainlink feed (rare but possible) and wants
-        // to use it instead of pivoting via USD. Default zero = pivot via
-        // PAD (the structurally-safe path that biases toward the top-rated
-        // asset/USD feed set). Cleared by writing zero.
-        //
-        // Operator vouches for the feed's quality when setting this — the
-        // protocol does NOT cross-check the override against Pyth or the
-        // secondary quorum, since both are configured for ETH/<numeraire>
-        // not asset/<numeraire>. Use only for verified-rated feeds.
-        mapping(address => address) assetNumeraireDirectFeedOverride;
-        address chainlnkRegistry; // Chainlink Feed Registry (mainnet only; address(0) on L2s)
-        address wethContract; // Canonical WETH on the active network — v3-style AMM liquidity quote asset
+        address retiredPredominantDenominator; // #3272: retired; the price guard holds it
+        bytes32 retiredPredominantDenominatorSymbol; // #3272: retired; the price guard holds it
+        address retiredEthPadFeed; // #3272: retired; the price guard holds it
+        address retiredPadNumeraireRateFeed; // #3272: retired; the price guard holds it
+        mapping(address => address) retiredAssetNumeraireDirectFeedOverride; // #3272: retired; the price guard holds it
+        address retiredChainlnkRegistry; // #3272: retired; the price guard holds it
+        address retiredWethContract; // #3272: retired; the price guard holds it
         address uniswapV3Factory; // UNISWAP_V3_FACTORY
         address diamondAddress;
         mapping(uint256 => uint256) loanToSaleOfferId;
@@ -3535,25 +3439,7 @@ library LibVaipakam {
         ///      with zero global interest" from "day `D` not yet
         ///      broadcast here".
         mapping(uint256 => bool) knownGlobalSet;
-        // #687-A: a "Bridged Fixed-Rate VPFI Buy" section header stood
-        // here, describing non-Base chains getting a bridged-buy UX via
-        // VPFIBuyAdapter. Its FIELDS were removed with the excision; only
-        // the header survived, so it labelled the sequencer-uptime slots
-        // below it. Removed — there is no protocol VPFI purchase surface.
-        // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
-        // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
-        // while the sequencer has been down — users can't submit txs, so
-        // posted prices lag and create a restart-arb / liquidation-storm
-        // window. When `sequencerUptimeFeed` is non-zero, OracleFacet
-        // consults this Chainlink feed before every price read: if the
-        // feed answer is 1 (sequencer DOWN) or the last status change
-        // was within SEQUENCER_GRACE_PERIOD seconds (just recovered),
-        // price reads revert. Set to `address(0)` on l1 / Ethereum
-        // mainnet where no sequencer exists — skips the check.
-        /// @dev Chainlink l2 Sequencer Uptime feed address (e.g., Base
-        ///      mainnet: 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433).
-        ///      Zero = check skipped (l1/mainnet deployments).
-        address sequencerUptimeFeed;
+        address retiredSequencerUptimeFeed; // #3272: retired; the price guard holds it
         // ─── Per-Asset Pause (governance-controlled reserve pause) ──────
         // Governance can pause a specific asset without flipping the
         // protocol-wide pause. Creation paths (createOffer, acceptOffer,
@@ -3675,66 +3561,12 @@ library LibVaipakam {
         uint256[] activeOfferIdsList;
         /// @dev 1-based position map for active-offer swap-and-pop.
         mapping(uint256 => uint256) activeOfferIdsListPos;
-        // ─── ETH-referenced oracle / liquidity config ────────────────────
-        // OracleFacet classifies an ERC-20 as Liquid via a v3-style AMM
-        // asset/WETH 0.3% pool (the deepest quote layer across EVM
-        // chains), converts depth to USD via the ETH/USD feed, and
-        // prices assets with a hybrid rule: prefer a direct asset/USD
-        // Chainlink feed; fall back to asset/ETH × ETH/USD when no
-        // direct USD feed exists. Both lookups go through
-        // `chainlnkRegistry`, which on every chain is that chain's own
-        // `VaipakamFeedRegistry` (#2880): Chainlink runs its Feed
-        // Registry on Ethereum mainnet only, so without ours every
-        // asset but WETH (priced from `ethNumeraireFeed`) would revert
-        // {NoPriceFeed}.
-        /// @dev AggregatorV3 address for ETH/USD (8 decimals). REQUIRED
-        ///      for liquidity depth conversion and for pricing WETH
-        ///      itself. Zero disables every ETH-quoted code path.
-        address ethNumeraireFeed;
-        /// @dev Chainlink Feed Registry ETH pseudo-address denominator
-        ///      (mainnet: 0x0000...0000000EeeeE...). Used by
-        ///      getAssetPrice to look up asset/ETH feeds as the USD
-        ///      fallback. Zero on L2s and disables the asset/ETH
-        ///      fallback path.
-        address ethChainlinkDenominator;
-        // ─── Generalized stablecoin peg registry ─────────────────────────
-        // OracleFacet's peg-aware stale branch accepts a price as fresh
-        // if the feed (8-decimal USD-quoted) reports within
-        // ORACLE_PEG_TOLERANCE_BPS of the USD $1 anchor OR of any
-        // registered fiat / commodity reference (EUR, JPY, XAU, etc.).
-        // The reference feeds are Chainlink 8-decimal USD-quoted
-        // aggregators; they are themselves subject to the 25h
-        // ORACLE_STABLE_STALENESS ceiling (their heartbeats are also
-        // 24h+), and are skipped in the peg loop if stale beyond that.
-        //
-        // symbol key is `bytes32(bytes(symbol))` with right-padded
-        // zeroes — e.g. `"EUR" -> 0x4555520000...`. Registry is
-        // maintained swap-and-pop so iteration is O(active symbols).
-        /// @dev Fiat / commodity symbol → AggregatorV3 reference feed.
-        mapping(bytes32 => address) stableFeedBySymbol;
-        /// @dev Append-with-swap-pop list of registered symbols.
-        bytes32[] stableFeedSymbolsList;
-        /// @dev 1-based position map for swap-and-pop removal.
-        mapping(bytes32 => uint256) stableFeedSymbolPos;
-        // ─── Per-feed oracle override (Phase 3.1 hardening) ──────────────
-        // Lets governance tighten `maxStaleness` and install a minimum-
-        // valid-answer floor on individual Chainlink aggregators WITHOUT
-        // redeploying. The two-tier global defaults (ORACLE_VOLATILE_
-        // STALENESS / ORACLE_STABLE_STALENESS) remain the fallback — an
-        // override is consulted only when `maxStaleness > 0`. Set via
-        // `OracleAdminFacet.setFeedOverride` under ORACLE_ADMIN_ROLE,
-        // which becomes timelock-gated after the governance handover.
-        //
-        // Use cases:
-        //   - High-value collateral (BTC, ETH) feed gets a tighter 30-
-        //     minute staleness to reduce the blind window vs the default
-        //     2h volatile ceiling.
-        //   - A feed known to occasionally return 1 wei during incidents
-        //     gets a `minValidAnswer` floor so a bad read reverts rather
-        //     than producing a fake "asset collapse" price.
-        //   - An off-US-market-hours commodity feed gets a relaxed
-        //     staleness to avoid false stalenesss reverts overnight.
-        mapping(address => FeedOverride) feedOverrides;
+        address retiredEthNumeraireFeed; // #3272: retired; the price guard holds it
+        address retiredEthChainlinkDenominator; // #3272: retired; the price guard holds it
+        mapping(bytes32 => address) retiredStableFeedBySymbol; // #3272: retired; the price guard holds it
+        bytes32[] retiredStableFeedSymbolsList; // #3272: retired; the price guard holds it
+        mapping(bytes32 => uint256) retiredStableFeedSymbolPos; // #3272: retired; the price guard holds it
+        mapping(address => FeedOverride) retiredFeedOverrides; // #3272: retired; the price guard holds it
         // ─── Address-level sanctions oracle (Phase 4.3) ─────────────────
         // Governance sets this slot to the chain's on-chain sanctions
         // oracle (any `ISanctionsList`) via {ProfileFacet.setSanctionsOracle}.
@@ -3883,42 +3715,11 @@ library LibVaipakam {
         ///      `pancakeswapV3Factory`, gives the liquidity check 1-of-3
         ///      OR-redundancy without any per-asset governance config.
         address sushiswapV3Factory;
-        // ─── Phase 7b.2: cross-provider price-feed redundancy ──────────
-        /// @dev Tellor oracle address on this chain. Tellor is keyed
-        ///      by 32-byte queryId derived from the asset's symbol via
-        ///      `keccak256(abi.encode("SpotPrice", abi.encode(symbol,
-        ///      "usd")))`. {OracleFacet} reads `asset.symbol()` on
-        ///      demand, lowercases it, derives the queryId, and runs
-        ///      a deviation check against the Chainlink primary.
-        ///      Zero address disables the Tellor leg silently — the
-        ///      primary still works, no revert. Per-asset governance
-        ///      config is intentionally NOT present.
-        address tellorOracle;
-        /// @dev API3 ServerV1 address on this chain. API3 is keyed by
-        ///      32-byte dapiName hash derived from the asset's symbol
-        ///      via `keccak256(abi.encodePacked(bytes32(string(symbol,
-        ///      "/USD"))))`. Same derivation pattern as Tellor; same
-        ///      no-per-asset-config policy.
-        address api3ServerV1;
-        /// @dev DIA Oracle V2 address on this chain. DIA is keyed by
-        ///      a string `<SYMBOL>/USD` (e.g. "ETH/USD"). {OracleFacet}
-        ///      derives the key by reading `asset.symbol()` and
-        ///      concatenating `/USD`. Same no-per-asset-config policy
-        ///      as Tellor + API3.
-        address diaOracleV2;
-        /// @dev Maximum allowed deviation between the Chainlink
-        ///      primary and any secondary oracle (Tellor / API3),
-        ///      in basis points. Chain-level config — no per-asset
-        ///      override. Defaults to 500 (5%) on a fresh deploy
-        ///      until governance writes a non-zero value via
-        ///      `setSecondaryOracleMaxDeviationBps`. Zero is treated
-        ///      as "use the LibVaipakam.SECONDARY_ORACLE_MAX_DEVIATION_BPS_DEFAULT".
-        uint16 secondaryOracleMaxDeviationBps;
-        /// @dev Maximum acceptable secondary-oracle data age, in
-        ///      seconds. Chain-level. Defaults to
-        ///      `LibVaipakam.SECONDARY_ORACLE_MAX_STALENESS_DEFAULT`
-        ///      when zero.
-        uint40 secondaryOracleMaxStaleness;
+        address retiredTellorOracle; // #3272: retired; the price guard holds it
+        address retiredApi3ServerV1; // #3272: retired; the price guard holds it
+        address retiredDiaOracleV2; // #3272: retired; the price guard holds it
+        uint16 retiredSecondaryOracleMaxDeviationBps; // #3272: retired; the price guard holds it
+        uint40 retiredSecondaryOracleMaxStaleness; // #3272: retired; the price guard holds it
         // ─── T-033 — Pyth as numeraire-redundancy oracle ───────────────
         //
         // Pyth was removed in Phase 7b.2 because a per-asset `priceId`
@@ -3930,41 +3731,11 @@ library LibVaipakam {
         // derived Tellor / API3 / DIA secondary quorum — Pyth doesn't
         // replace it, just adds a single load-bearing-peg defense.
 
-        /// @dev Pyth contract address on this chain. Zero disables
-        ///      the numeraire gate silently — protocol falls back to
-        ///      Chainlink-only on the WETH/USD reading. Same
-        ///      "off-by-default-on-fresh-deploy" pattern as the other
-        ///      secondary oracles.
-        address pythOracle;
-        /// @dev Pyth feed id for this chain's numeraire ETH/USD (or
-        ///      bridged WETH/USD on chains where bridged WETH is the
-        ///      unit of account, e.g. BNB / Polygon mainnet). Single
-        ///      governance write per chain — adding new collateral
-        ///      assets never touches this slot.
-        bytes32 pythCrossCheckFeedId;
-        /// @dev Maximum acceptable staleness (in seconds) for the
-        ///      Pyth numeraire snapshot. Beyond this, the gate soft-
-        ///      skips (treats Pyth as unavailable for this read);
-        ///      Chainlink-only proceeds. Bounded to
-        ///      `[PYTH_MAX_STALENESS_MIN_SECONDS,
-        ///      PYTH_MAX_STALENESS_MAX_SECONDS]` by the setter.
-        uint64 pythMaxStalenessSeconds;
-        /// @dev Maximum tolerated divergence between Chainlink ETH/USD
-        ///      and Pyth ETH/USD, in basis points (1 bp = 0.01%).
-        ///      Beyond this, the price view fails-closed
-        ///      (`OracleCrossCheckDivergence`). Bounded to
-        ///      `[PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN,
-        ///      PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX]` by the setter
-        ///      so a misconfig can't accidentally halt the protocol
-        ///      (zero) or effectively disable the gate (≥ 100%).
-        uint16 pythCrossCheckMaxDeviationBps;
-        /// @dev Maximum tolerated Pyth confidence fraction
-        ///      (`conf / price`) in basis points. When the published
-        ///      uncertainty exceeds this, the gate soft-skips Pyth
-        ///      (the publisher window is too thin to trust). Bounded
-        ///      to `[PYTH_CONFIDENCE_MAX_BPS_MIN,
-        ///      PYTH_CONFIDENCE_MAX_BPS_MAX]` by the setter.
-        uint16 pythConfidenceMaxBps;
+        address retiredPythOracle; // #3272: retired; the price guard holds it
+        bytes32 retiredPythCrossCheckFeedId; // #3272: retired; the price guard holds it
+        uint64 retiredPythMaxStalenessSeconds; // #3272: retired; the price guard holds it
+        uint16 retiredPythCrossCheckMaxDeviationBps; // #3272: retired; the price guard holds it
+        uint16 retiredPythConfidenceMaxBps; // #3272: retired; the price guard holds it
         // ── Range Orders Phase 1 — match-override slot ─────────────────
         // Set by `OfferFacet.matchOffers` immediately before
         // cross-facet-calling `LoanFacet.initiateLoan`, read by
@@ -4053,7 +3824,7 @@ library LibVaipakam {
         // typically not an ERC-20): PAA is *what pools we look at*, PAD
         // is *what we measure depth in*. Maintained by `ADMIN_ROLE`
         // (later governance) via `ConfigFacet.set/add/removePaaAsset`;
-        // empty ⇒ {effectivePaaAssets} falls back to `[wethContract]`,
+        // empty ⇒ {effectivePaaAssets} falls back to `[WETH]` (the guard's),
         // so an un-configured deploy behaves exactly like today's
         // WETH-only probe in `OracleFacet._v3DepthLiquid`. Keep it short
         // (2-4 entries) — every entry adds a `getPool` probe × the
@@ -8434,6 +8205,13 @@ library LibVaipakam {
         ///      the refresh are missing from it (it can only read short, never
         ///      list a closed row). Appended — append-only.
         EnumerableSet.UintSet openPayoutIds;
+        /// @dev #3272 part 2 — the protocol registry through which the
+        ///      Diamond finds its price guard (pointer
+        ///      `RegistryKeys.PRICE_GUARD`). Set once at deploy by
+        ///      `OracleAdminFacet.initializeProtocolRegistry`, together with
+        ///      `numeraireSymbol` from the guard. No price setting lives in
+        ///      this storage. Appended — append-only.
+        address protocolRegistry;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -10028,85 +9806,6 @@ library LibVaipakam {
         bool active;
     }
 
-    /// @dev Default secondary-oracle deviation tolerance: 5%.
-    uint16 internal constant SECONDARY_ORACLE_MAX_DEVIATION_BPS_DEFAULT = 500;
-
-    /// @dev Default secondary-oracle staleness: 1h.
-    uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_DEFAULT = 3600;
-
-    /// @dev #665 — the Tellor dispute buffer: the Tellor read takes only a
-    ///      value reported at least this long before `block.timestamp`.
-    ///      Anyone can stake as a Tellor reporter and submit a value, and a
-    ///      submission can be disputed afterwards (a disputed value leaves
-    ///      the record). Without the buffer a reporter's own fresh value
-    ///      could be consumed in the block it lands, before anyone could
-    ///      dispute it, and count as the one agreeing secondary. Staleness
-    ///      is still measured from `block.timestamp`, so a Tellor value
-    ///      counts only while it is between this old and the staleness
-    ///      bound old: with the 1h default that is 40 minutes of reports,
-    ///      and a staleness bound set at or below this buffer leaves Tellor
-    ///      unavailable. A constant, not a knob: shortening it would reopen
-    ///      the same-block path it closes.
-    uint256 internal constant TELLOR_DISPUTE_BUFFER = 20 minutes;
-
-    // ─── T-033 — Pyth numeraire-redundancy bounds ──────────────────────────
-    //
-    // Every Pyth knob is governance-tunable but bounded so a
-    // compromised admin / governance multisig cannot push the value
-    // to a degenerate setting that effectively disables the gate
-    // (too-loose bounds) or fail-closes the protocol (too-tight
-    // bounds). The setter on {OracleAdminFacet} reverts on out-of-
-    // range writes with a `ParameterOutOfRange(name, value, min,
-    // max)` error so failed governance proposals surface clearly.
-
-    /// @dev Default deviation between Chainlink and Pyth ETH/USD
-    ///      that's tolerated before {OracleCrossCheckDivergence}
-    ///      fires: 5%. Pyth and Chainlink can naturally drift this
-    ///      far in fast markets without either being compromised.
-    uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_DEFAULT = 500;
-
-    /// @dev Lower bound on the deviation tolerance — 1% (100 bps).
-    ///      Tighter than this would fail-close on legitimate
-    ///      cross-oracle drift and DoS the protocol. The bound
-    ///      applies to setter writes; the runtime value is allowed
-    ///      to be at the floor.
-    uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN = 100;
-
-    /// @dev Upper bound on the deviation tolerance — 20% (2000 bps).
-    ///      Looser than this and the gate is effectively disabled
-    ///      (a 20% peg-feed drift between independent oracles is
-    ///      already unusual; a 30%+ drift is "one is compromised"
-    ///      no matter how charitable the variance assumption).
-    uint16 internal constant PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX = 2000;
-
-    /// @dev Default Pyth confidence-fraction ceiling: 1% (100 bps).
-    ///      `conf / price > 1%` → soft-skip Pyth on this read.
-    uint16 internal constant PYTH_CONFIDENCE_MAX_BPS_DEFAULT = 100;
-
-    /// @dev Lower bound on confidence ceiling — 0.5% (50 bps).
-    ///      Tighter and Pyth gets soft-skipped too often (most
-    ///      well-published feeds run conf < 0.3%, so 0.5% gives
-    ///      headroom for fast markets without going opaque).
-    uint16 internal constant PYTH_CONFIDENCE_MAX_BPS_MIN = 50;
-
-    /// @dev Upper bound on confidence ceiling — 5% (500 bps).
-    ///      Beyond this the "Pyth said the price is X" claim has
-    ///      enough uncertainty that consulting it is meaningless.
-    uint16 internal constant PYTH_CONFIDENCE_MAX_BPS_MAX = 500;
-
-    /// @dev Default Pyth max-staleness: 5 min. Pyth's published
-    ///      heartbeat on ETH/USD is sub-second on Base; 5min is a
-    ///      generous "the publishers are at least breathing" bound.
-    uint64 internal constant PYTH_MAX_STALENESS_DEFAULT_SECONDS = 300;
-
-    /// @dev Lower bound on Pyth staleness budget — 1 min. Tighter
-    ///      and a transient mempool jam soft-skips Pyth too often.
-    uint64 internal constant PYTH_MAX_STALENESS_MIN_SECONDS = 60;
-
-    /// @dev Upper bound on Pyth staleness budget — 1 h. Beyond this
-    ///      Pyth is effectively cached forever and a stale-but-
-    ///      manipulated reading could drive divergence outcomes.
-    uint64 internal constant PYTH_MAX_STALENESS_MAX_SECONDS = 3600;
 
     // ─── Setter range audit (2026-05-02) — bounds for governance-tunable
     //     parameters that previously had no min/max. The shared
@@ -10114,24 +9813,6 @@ library LibVaipakam {
     //     {IVaipakamErrors} is the load-bearing guard; even a
     //     compromised governance multisig cannot push these values
     //     beyond the policy range without a contract upgrade.
-
-    /// @dev Tighter cap on the secondary-oracle deviation tolerance
-    ///      (Tellor / API3 / DIA). Replaces the previous
-    ///      `(0, BASIS_POINTS)` window — too wide. Same shape as the
-    ///      Pyth gate.
-    uint16 internal constant SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN = 100;
-    uint16 internal constant SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX = 2000;
-
-    /// @dev Bounds for {setSecondaryOracleMaxStaleness}. Previous
-    ///      `!= 0` had no upper bound — a misconfig could allow
-    ///      arbitrary stale data through the secondary quorum.
-    ///      Upper at 29h leaves a 5h buffer above the 24h heartbeat
-    ///      that some stablecoin price feeds (USDC, USDT) publish on
-    ///      — tightening below 24h would soft-skip those feeds on
-    ///      every legitimate update.
-    uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_MIN_SECONDS = 60;
-    uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_MAX_SECONDS =
-        29 * 3600;
 
     /// @dev Bounds for {setRewardGraceSeconds}. Previous setter had
     ///      no bounds. Min 5 min so a transient outage can't be
@@ -11099,19 +10780,19 @@ library LibVaipakam {
 
     /// @dev The "predominantly available assets" the liquidity check
     ///      probes pools against (see `Storage.paaAssets`). Empty
-    ///      config ⇒ `[wethContract]`, the state of a fresh Diamond before
-    ///      its configure phase: non-WETH assets still find a WETH route, but
-    ///      WETH itself has none (#2747), so the launch readiness check
-    ///      refuses an empty list and `setPaaAssets` never writes one. Returns a fresh
-    ///      memory array; callers must tolerate a single-element fallback
-    ///      (and a zero element if `wethContract` itself is unset, which
-    ///      `OracleFacet` already skips).
+    ///      config ⇒ `[WETH]` (the price guard's WETH, #3272), the state of
+    ///      a fresh Diamond before its configure phase: non-WETH assets still
+    ///      find a WETH route, but WETH itself has none (#2747), so the launch
+    ///      readiness check refuses an empty list and `setPaaAssets` never
+    ///      writes one. Returns a fresh memory array; callers must tolerate a
+    ///      single-element fallback (and a zero element if the guard's WETH
+    ///      is unset, which `OracleFacet` already skips).
     function effectivePaaAssets() internal view returns (address[] memory) {
         Storage storage s = storageSlot();
         uint256 n = s.paaAssets.length;
         if (n == 0) {
             address[] memory one = new address[](1);
-            one[0] = s.wethContract;
+            one[0] = LibPriceGuard.weth();
             return one;
         }
         address[] memory out = new address[](n);
@@ -11120,10 +10801,10 @@ library LibVaipakam {
     }
 
     /// @dev #2747 — whether the configured quote-asset (PAA) list names an
-    ///      asset other than the configured WETH. The tier search skips the
-    ///      quote equal to the asset being tiered, so with only WETH to quote
-    ///      against (an explicit `[WETH]`, or the empty list's implicit
-    ///      `[wethContract]` fallback) WETH has no route and resolves to tier
+    ///      asset other than WETH (the price guard's, #3272). The tier search
+    ///      skips the quote equal to the asset being tiered, so with only
+    ///      WETH to quote against (an explicit `[WETH]`, or the empty list's
+    ///      implicit `[WETH]` fallback) WETH has no route and resolves to tier
     ///      0. The tier is read whatever the depth-tier switch says: it is
     ///      stamped as every liquid loan's liquidation threshold, it decides
     ///      the discounted-liquidation discount (which refuses tier 0), and it
@@ -11131,7 +10812,7 @@ library LibVaipakam {
     ///      never the fallback: an empty list answers false.
     function paaHasNonWethQuote() internal view returns (bool) {
         Storage storage s = storageSlot();
-        address weth = s.wethContract;
+        address weth = LibPriceGuard.weth();
         uint256 n = s.paaAssets.length;
         for (uint256 i; i < n; ++i) {
             if (s.paaAssets[i] != weth) return true;
@@ -11144,9 +10825,12 @@ library LibVaipakam {
     ///      of a fresh Diamond, which the launch readiness check refuses and
     ///      which nothing can return to once a list is set: `setPaaAssets`
     ///      refuses any list without such a quote, empty included, and
-    ///      `setWethContract` refuses re-pointing WETH at a set list's only
-    ///      other member. Switching depth-tiered LTV on refuses an empty
-    ///      list too ({ConfigFacet.setDepthTieredLtvEnabled}).
+    ///      switching depth-tiered LTV on refuses an empty list too
+    ///      ({ConfigFacet.setDepthTieredLtvEnabled}). WETH itself is the
+    ///      price guard's delayed entry (#3272), which the Diamond cannot
+    ///      veto: re-pointing it at a list's only non-WETH member would
+    ///      break the invariant, so the launch readiness check reads it live
+    ///      and that change is one to refuse in the guard's review window.
     function assertPaaHasNonWethQuote() internal view {
         if (!paaHasNonWethQuote()) revert IVaipakamErrors.PaaNeedsNonWethQuote();
     }
@@ -11636,122 +11320,6 @@ library LibVaipakam {
         return s.allowedTrades[hashA][hashB];
     }
 
-    /// @dev Set the Chainlink Feed Registry USD denominator. Owner-only.
-    ///      Setting to `address(0)` forces {OracleFacet.getAssetPrice} down
-    ///      the NoPriceFeed branch.
-    /// @param newUsdChainlinkDenominator USD-denominator address registered
-    ///        in the Chainlink Feed Registry (typically the canonical USD
-    ///        pseudo-address).
-    function setUsdChainlinkDenominator(
-        address newUsdChainlinkDenominator
-    ) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        emit UsdChainlinkDenominatorSet(s.numeraireChainlinkDenominator, newUsdChainlinkDenominator);
-        s.numeraireChainlinkDenominator = newUsdChainlinkDenominator;
-    }
-
-    /// @dev Set the Chainlink Feed Registry contract used by OracleFacet.
-    ///      Owner-only. Setting to `address(0)` disables price lookups.
-    /// @param newChainlnkRegistry Chainlink Feed Registry contract address.
-    function setChainlinkRegistry(address newChainlnkRegistry) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        emit ChainlinkRegistrySet(s.chainlnkRegistry, newChainlnkRegistry);
-        s.chainlnkRegistry = newChainlnkRegistry;
-    }
-
-    /// @dev Set the canonical WETH ERC-20 used by OracleFacet as the
-    ///      v3-style AMM pool-depth quote asset. Owner-only. Setting to
-    ///      `address(0)` fail-closes every asset to Illiquid.
-    /// @param newWethContract WETH ERC-20 contract address on the active
-    ///        network.
-    function setWethContract(address newWethContract) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        emit WethContractSet(s.wethContract, newWethContract);
-        s.wethContract = newWethContract;
-        // #2747 — once a quote list is set, re-pointing WETH at its only
-        // other member would leave the new WETH with no tier route. A fresh
-        // Diamond sets WETH before its list, so an empty list is not checked.
-        if (s.paaAssets.length != 0) assertPaaHasNonWethQuote();
-    }
-
-    /// @dev Set the direct Chainlink ETH/USD AggregatorV3 feed. Owner-only.
-    ///      REQUIRED — used by OracleFacet to price WETH itself and to
-    ///      convert asset/WETH pool depth into USD. Setting to `address(0)`
-    ///      disables every ETH-quoted code path (WETH pricing, depth
-    ///      conversion, asset/ETH fallback price).
-    /// @param newEthUsdFeed Chainlink ETH/USD aggregator contract address.
-    function setEthUsdFeed(address newEthUsdFeed) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        emit EthNumeraireFeedSet(s.ethNumeraireFeed, newEthUsdFeed);
-        s.ethNumeraireFeed = newEthUsdFeed;
-    }
-
-    /// @dev Set the Chainlink Feed Registry ETH-denominator pseudo-address
-    ///      used by OracleFacet's asset/ETH fallback price path. Owner-only.
-    ///      Zero on L2s where the Feed Registry does not exist —
-    ///      disables the ETH-route fallback (assets without a direct
-    ///      asset/USD feed revert NoPriceFeed).
-    /// @param newEthChainlinkDenominator ETH-denominator address recognised
-    ///        by the Chainlink Feed Registry.
-    function setEthChainlinkDenominator(
-        address newEthChainlinkDenominator
-    ) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        emit EthChainlinkDenominatorSet(s.ethChainlinkDenominator, newEthChainlinkDenominator);
-        s.ethChainlinkDenominator = newEthChainlinkDenominator;
-    }
-
-    /// @dev Register / replace / deregister a fiat or commodity peg
-    ///      reference feed for OracleFacet's generalized peg-aware stable
-    ///      staleness branch. Owner-only. `symbol` is the short ticker
-    ///      ("USD" — implicit, do not register; "EUR", "JPY", "XAU",
-    ///      "GBP", etc.), case-sensitive and up to 32 bytes.
-    ///
-    ///      Semantics:
-    ///        - feed != 0 and symbol unknown → append to registry
-    ///        - feed != 0 and symbol known   → update reference feed
-    ///        - feed == 0 and symbol known   → remove via swap-and-pop
-    ///        - feed == 0 and symbol unknown → no-op
-    /// @param symbol Short fiat / commodity ticker (e.g. "EUR").
-    /// @param feed   Chainlink aggregator for `<symbol>/USD` (8 decimals).
-    function setStableTokenFeed(string memory symbol, address feed) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        // safe: stable-feed symbols are bounded by `MAX_STABLE_SYMBOL_LEN`
-        // = 10 in `OracleAdminFacet.setStableTokenFeed` (the only call
-        // site that flows here); the symbol's bytes are guaranteed ≤10,
-        // well under bytes32's 32-byte limit.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        bytes32 key = bytes32(bytes(symbol));
-        uint256 pos = s.stableFeedSymbolPos[key];
-        if (feed == address(0)) {
-            if (pos == 0) return;
-            emit StableTokenFeedSet(symbol, s.stableFeedBySymbol[key], address(0));
-            uint256 lastIdx = s.stableFeedSymbolsList.length - 1;
-            uint256 idx = pos - 1;
-            if (idx != lastIdx) {
-                bytes32 last = s.stableFeedSymbolsList[lastIdx];
-                s.stableFeedSymbolsList[idx] = last;
-                s.stableFeedSymbolPos[last] = idx + 1;
-            }
-            s.stableFeedSymbolsList.pop();
-            delete s.stableFeedSymbolPos[key];
-            delete s.stableFeedBySymbol[key];
-            return;
-        }
-        emit StableTokenFeedSet(symbol, s.stableFeedBySymbol[key], feed);
-        s.stableFeedBySymbol[key] = feed;
-        if (pos == 0) {
-            s.stableFeedSymbolsList.push(key);
-            s.stableFeedSymbolPos[key] = s.stableFeedSymbolsList.length;
-        }
-    }
-
     /// @dev Set the v3-style AMM factory used by OracleFacet's liquidity
     ///      classification. Owner-only. Setting to `address(0)` fail-closes
     ///      every asset to Illiquid.
@@ -11763,69 +11331,15 @@ library LibVaipakam {
         s.uniswapV3Factory = newUniswapV3Factory;
     }
 
-    /// @dev Set the Chainlink l2 Sequencer Uptime feed used by
-    ///      OracleFacet as a circuit breaker before every price read.
-    ///      Owner-only. Setting to `address(0)` disables the check —
-    ///      correct for l1/Ethereum mainnet where no sequencer exists.
-    ///      On L2s (Base/Arb/OP) this MUST be set to the canonical
-    ///      sequencer uptime feed at deploy time.
-    /// @param newFeed Chainlink l2 Sequencer Uptime feed address.
-    function setSequencerUptimeFeed(address newFeed) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        emit SequencerUptimeFeedSet(s.sequencerUptimeFeed, newFeed);
-        s.sequencerUptimeFeed = newFeed;
-    }
-
     // ─── #2685 — every chain-level oracle setting announces its change ──
     // Each setter above emits the previous and the new value, so off-chain
     // monitoring and the indexer's config snapshot see a change in the
     // transaction that made it. Until #2685 these eight wrote silently.
 
-    /// @notice Emitted when the Chainlink Feed Registry address changes.
-    /// @custom:event-category informational/config
-    event ChainlinkRegistrySet(address indexed previous, address indexed next);
-    /// @notice Emitted when the Feed Registry USD denominator changes.
-    /// @custom:event-category informational/config
-    event UsdChainlinkDenominatorSet(address indexed previous, address indexed next);
-    /// @notice Emitted when the Feed Registry ETH denominator changes.
-    /// @custom:event-category informational/config
-    event EthChainlinkDenominatorSet(address indexed previous, address indexed next);
-    /// @notice Emitted when the canonical WETH used for pool-depth quotes changes.
-    /// @custom:event-category informational/config
-    event WethContractSet(address indexed previous, address indexed next);
-    /// @notice Emitted when the direct ETH/numeraire price feed changes through
-    ///         `OracleAdminFacet.setEthUsdFeed` (`setNumeraire` announces its own
-    ///         write of the same slot with `NumeraireUpdated`).
-    /// @custom:event-category informational/config
-    event EthNumeraireFeedSet(address indexed previous, address indexed next);
-    /// @notice Emitted when a peg reference feed is registered, replaced or
-    ///         removed (`next == address(0)`).
-    /// @custom:event-category informational/config
-    event StableTokenFeedSet(string symbol, address indexed previous, address indexed next);
     /// @notice Emitted when the v3-style AMM factory used for liquidity
     ///         classification changes.
     /// @custom:event-category informational/config
     event UniswapV3FactorySet(address indexed previous, address indexed next);
-    /// @notice Emitted when the L2 sequencer uptime feed changes
-    ///         (`next == address(0)` turns the sequencer check off).
-    /// @custom:event-category informational/config
-    event SequencerUptimeFeedSet(address indexed previous, address indexed next);
-
-    /// @notice Emitted whenever a per-feed oracle override is installed or
-    ///         cleared. Off-chain monitoring watches this so a governance-
-    ///         driven freshness tightening is publicly observable.
-    /// @param feed           Chainlink aggregator address the override
-    ///                       applies to.
-    /// @param maxStaleness   New max age in seconds (0 = cleared).
-    /// @param minValidAnswer New minimum-valid-answer floor (0/negative =
-    ///                       no floor).
-    /// @custom:event-category informational/config
-    event FeedOverrideSet(
-        address indexed feed,
-        uint40 maxStaleness,
-        int256 minValidAnswer
-    );
 
     /// @notice Emitted on every change to the autonomous tier-LTV
     ///         peer-protocol read addresses (Phase 3 of
@@ -12055,390 +11569,9 @@ library LibVaipakam {
         emit PeerProtocolAddressesSet(aaveV3PoolDataProvider, compoundV3Comet, morphoBlue);
     }
 
-    /// @notice Installs or clears a per-feed staleness + min-answer
-    ///         override for a specific Chainlink aggregator.
-    /// @dev Owner-only. After the governance handover the owner is the
-    ///      TimelockController, so every override change is 48h-gated
-    ///      and publicly observable via `CallScheduled` on the timelock.
-    ///      Passing `maxStaleness == 0` clears BOTH fields regardless of
-    ///      the `minValidAnswer` argument — it's the "remove the
-    ///      override entirely" escape hatch. An override can only make the
-    ///      feed STRICTER: it is applied on top of the two-tier defaults,
-    ///      never instead of them (#2742), so a budget above
-    ///      `ORACLE_STABLE_STALENESS` is refused.
-    /// @param feed           Chainlink aggregator to configure.
-    /// @param maxStaleness   Max acceptable age in seconds, at most
-    ///                       `ORACLE_STABLE_STALENESS`. 0 clears.
-    /// @param minValidAnswer Floor on the raw answer the aggregator
-    ///                       returns; in the aggregator's decimals.
-    ///                       Pass 0 (or a negative int) for no floor.
-    function setFeedOverride(
-        address feed,
-        uint40 maxStaleness,
-        int256 minValidAnswer
-    ) internal {
-        LibDiamond.enforceIsContractOwner();
-        if (feed == address(0)) revert IVaipakamErrors.InvalidAddress();
-        Storage storage s = storageSlot();
-        FeedOverride storage ovr = s.feedOverrides[feed];
-        if (maxStaleness == 0) {
-            // Clear both fields — explicit "remove override" action.
-            ovr.maxStaleness = 0;
-            ovr.minValidAnswer = 0;
-            emit FeedOverrideSet(feed, 0, 0);
-            return;
-        }
-        // #2742 — an override only tightens (OracleFacet._freshEnough applies
-        // it ON TOP of the two-tier defaults), so a budget above the outer
-        // default bound could never bind. Refuse it as the configuration
-        // mistake it is, rather than store a value that reads as a loosening.
-        if (maxStaleness > ORACLE_STABLE_STALENESS) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "feedMaxStaleness", uint256(maxStaleness), 1, ORACLE_STABLE_STALENESS
-            );
-        }
-        ovr.maxStaleness = maxStaleness;
-        ovr.minValidAnswer = minValidAnswer;
-        emit FeedOverrideSet(feed, maxStaleness, minValidAnswer);
-    }
-
     // ─── Phase 7b.2: Tellor + API3 + chain-level secondary config ──
 
-    /// @notice Emitted when the chain's Tellor oracle address changes.
-    /// @custom:event-category informational/config
-    event TellorOracleSet(address indexed previous, address indexed next);
-
-    /// @notice Emitted when the chain's API3 ServerV1 address changes.
-    /// @custom:event-category informational/config
-    event Api3ServerV1Set(address indexed previous, address indexed next);
-
-    /// @notice Emitted when the chain's DIA Oracle V2 address changes.
-    /// @custom:event-category informational/config
-    event DIAOracleV2Set(address indexed previous, address indexed next);
-
-    /// @notice Emitted when the chain-level secondary-oracle deviation
-    ///         tolerance changes. Off-chain monitors should alert on
-    ///         transitions: a wider tolerance weakens the cross-
-    ///         provider check.
-    /// @custom:event-category informational/config
-    event SecondaryOracleMaxDeviationBpsSet(uint16 previous, uint16 current);
-
-    /// @notice Emitted when the chain-level secondary-oracle staleness
-    ///         tolerance changes.
-    /// @custom:event-category informational/config
-    event SecondaryOracleMaxStalenessSet(uint40 previous, uint40 current);
-
-    /// @notice Install the chain's Tellor oracle address. Owner-only;
-    ///         null disables Tellor's leg of the price-feed deviation
-    ///         check globally.
-    function setTellorOracle(address oracle) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        address prev = s.tellorOracle;
-        s.tellorOracle = oracle;
-        emit TellorOracleSet(prev, oracle);
-    }
-
-    /// @notice Install the chain's API3 ServerV1 address. Owner-only;
-    ///         null disables API3's leg of the deviation check globally.
-    function setApi3ServerV1(address server) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        address prev = s.api3ServerV1;
-        s.api3ServerV1 = server;
-        emit Api3ServerV1Set(prev, server);
-    }
-
-    /// @notice Install the chain's DIA Oracle V2 address. Owner-only;
-    ///         null disables DIA's leg of the deviation check globally.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function setDIAOracleV2(address oracle) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        address prev = s.diaOracleV2;
-        s.diaOracleV2 = oracle;
-        emit DIAOracleV2Set(prev, oracle);
-    }
-
-    /// @notice Set the chain-level deviation tolerance applied to
-    ///         every secondary oracle (Tellor / API3 / DIA) when it
-    ///         disagrees with the Chainlink primary.
-    /// @dev    Setter-range audit (2026-05-02): tightened from the
-    ///         original `(0, BASIS_POINTS)` window to
-    ///         `[SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN,
-    ///         SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX]` so a
-    ///         compromised governance multisig cannot push the
-    ///         tolerance to a degenerate setting (1 bps fail-closes
-    ///         every legitimate cross-oracle drift; 9999 effectively
-    ///         disables the gate).
-    function setSecondaryOracleMaxDeviationBps(uint16 bps) internal {
-        LibDiamond.enforceIsContractOwner();
-        if (
-            bps < SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN ||
-            bps > SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "secondaryOracleMaxDeviationBps",
-                uint256(bps),
-                uint256(SECONDARY_ORACLE_MAX_DEVIATION_BPS_MIN),
-                uint256(SECONDARY_ORACLE_MAX_DEVIATION_BPS_MAX)
-            );
-        }
-        Storage storage s = storageSlot();
-        uint16 prev = s.secondaryOracleMaxDeviationBps;
-        s.secondaryOracleMaxDeviationBps = bps;
-        emit SecondaryOracleMaxDeviationBpsSet(prev, bps);
-    }
-
-    /// @notice Set the chain-level secondary-oracle staleness tolerance
-    ///         in seconds.
-    /// @dev    Setter-range audit (2026-05-02): added upper bound.
-    ///         Previously only `!= 0` — a misconfig could allow
-    ///         arbitrary stale data through the secondary quorum,
-    ///         defeating the freshness gate.
-    function setSecondaryOracleMaxStaleness(uint40 maxStaleness) internal {
-        LibDiamond.enforceIsContractOwner();
-        if (
-            maxStaleness < SECONDARY_ORACLE_MAX_STALENESS_MIN_SECONDS ||
-            maxStaleness > SECONDARY_ORACLE_MAX_STALENESS_MAX_SECONDS
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "secondaryOracleMaxStaleness",
-                uint256(maxStaleness),
-                uint256(SECONDARY_ORACLE_MAX_STALENESS_MIN_SECONDS),
-                uint256(SECONDARY_ORACLE_MAX_STALENESS_MAX_SECONDS)
-            );
-        }
-        Storage storage s = storageSlot();
-        uint40 prev = s.secondaryOracleMaxStaleness;
-        s.secondaryOracleMaxStaleness = maxStaleness;
-        emit SecondaryOracleMaxStalenessSet(prev, maxStaleness);
-    }
-
-    /// @notice Read the effective deviation tolerance — falls back to
-    ///         the package default when no value is configured.
-    function effectiveSecondaryOracleMaxDeviationBps()
-        internal
-        view
-        returns (uint16)
-    {
-        uint16 v = storageSlot().secondaryOracleMaxDeviationBps;
-        return v == 0 ? SECONDARY_ORACLE_MAX_DEVIATION_BPS_DEFAULT : v;
-    }
-
-    /// @notice Read the effective staleness tolerance — falls back to
-    ///         the package default when no value is configured.
-    function effectiveSecondaryOracleMaxStaleness()
-        internal
-        view
-        returns (uint40)
-    {
-        uint40 v = storageSlot().secondaryOracleMaxStaleness;
-        return v == 0 ? SECONDARY_ORACLE_MAX_STALENESS_DEFAULT : v;
-    }
-
     // ─── T-033 — Pyth setters + readers with bounded ranges ────────────────
-
-    /// @notice Emitted when the chain-level Pyth contract address
-    ///         changes. Setting to `address(0)` disables the
-    ///         numeraire gate globally, so the event is worth a
-    ///         human review either way.
-    /// @custom:event-category informational/config
-    event PythOracleSet(address indexed previous, address indexed next);
-
-    /// @notice Emitted when the chain's Pyth ETH/USD (or WETH/USD)
-    ///         feed id changes. Single-write-per-chain — emitted at
-    ///         init and on any subsequent governance update.
-    /// @custom:event-category informational/config
-    event PythNumeraireFeedIdSet(
-        bytes32 indexed previous,
-        bytes32 indexed next
-    );
-
-    /// @notice Emitted when the Pyth max-staleness budget changes.
-    /// @custom:event-category informational/config
-    event PythMaxStalenessSecondsSet(uint64 previous, uint64 current);
-
-    /// @notice Emitted when the Pyth numeraire deviation tolerance
-    ///         changes. Stored value applies on the next price view.
-    /// @custom:event-category informational/config
-    event PythNumeraireMaxDeviationBpsSet(uint16 previous, uint16 current);
-
-    /// @notice Emitted when the Pyth confidence ceiling changes.
-    /// @custom:event-category informational/config
-    event PythConfidenceMaxBpsSet(uint16 previous, uint16 current);
-
-    /// @notice Set the Pyth contract address on this chain. Zero
-    ///         disables the numeraire gate globally — protocol price
-    ///         views fall back to Chainlink-only on the WETH/USD leg.
-    /// @dev    Owner-only. No range bound — `address(0)` is the
-    ///         meaningful "disabled" sentinel and any non-zero
-    ///         contract is acceptable here (sanity-check that it
-    ///         responds to {IPyth.getPriceUnsafe} happens on first
-    ///         use, not at setter time).
-    function setPythOracle(address oracle) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        address prev = s.pythOracle;
-        s.pythOracle = oracle;
-        emit PythOracleSet(prev, oracle);
-    }
-
-    /// @notice Set the Pyth feed id used as this chain's numeraire
-    ///         (ETH/USD on ETH-native chains, bridged-WETH/USD on
-    ///         BNB / Polygon mainnet).
-    /// @dev    Zero disables the gate at the feed-id layer (same
-    ///         soft-skip semantics as a zero `pythOracle`); non-zero
-    ///         values are accepted as-is. The price-read path
-    ///         catches a mis-identified feed via the deviation gate.
-    function setPythCrossCheckFeedId(bytes32 feedId) internal {
-        LibDiamond.enforceIsContractOwner();
-        Storage storage s = storageSlot();
-        bytes32 prev = s.pythCrossCheckFeedId;
-        s.pythCrossCheckFeedId = feedId;
-        emit PythNumeraireFeedIdSet(prev, feedId);
-    }
-
-    /// @notice Set the Pyth max-staleness budget in seconds. Bounded
-    ///         to `[PYTH_MAX_STALENESS_MIN_SECONDS,
-    ///         PYTH_MAX_STALENESS_MAX_SECONDS]`. A compromised
-    ///         governance multisig cannot push the budget tighter
-    ///         than 1 min (would soft-skip Pyth on every transient
-    ///         mempool jam, defeating the gate) or looser than 1 h
-    ///         (a stale-but-manipulated reading could drive the
-    ///         deviation outcome).
-    function setPythMaxStalenessSeconds(uint64 secondsBudget) internal {
-        LibDiamond.enforceIsContractOwner();
-        if (
-            secondsBudget < PYTH_MAX_STALENESS_MIN_SECONDS ||
-            secondsBudget > PYTH_MAX_STALENESS_MAX_SECONDS
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "pythMaxStalenessSeconds",
-                uint256(secondsBudget),
-                uint256(PYTH_MAX_STALENESS_MIN_SECONDS),
-                uint256(PYTH_MAX_STALENESS_MAX_SECONDS)
-            );
-        }
-        Storage storage s = storageSlot();
-        uint64 prev = s.pythMaxStalenessSeconds;
-        s.pythMaxStalenessSeconds = secondsBudget;
-        emit PythMaxStalenessSecondsSet(prev, secondsBudget);
-    }
-
-    /// @notice Set the Chainlink ↔ Pyth max-deviation tolerance, in
-    ///         basis points. Bounded to
-    ///         `[PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN,
-    ///         PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX]`.
-    function setPythCrossCheckMaxDeviationBps(uint16 bps) internal {
-        LibDiamond.enforceIsContractOwner();
-        if (
-            bps < PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN ||
-            bps > PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "pythCrossCheckMaxDeviationBps",
-                uint256(bps),
-                uint256(PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MIN),
-                uint256(PYTH_NUMERAIRE_MAX_DEVIATION_BPS_MAX)
-            );
-        }
-        Storage storage s = storageSlot();
-        uint16 prev = s.pythCrossCheckMaxDeviationBps;
-        s.pythCrossCheckMaxDeviationBps = bps;
-        emit PythNumeraireMaxDeviationBpsSet(prev, bps);
-    }
-
-    /// @notice Set the Pyth confidence-fraction ceiling, in basis
-    ///         points. Bounded to `[PYTH_CONFIDENCE_MAX_BPS_MIN,
-    ///         PYTH_CONFIDENCE_MAX_BPS_MAX]`.
-    function setPythConfidenceMaxBps(uint16 bps) internal {
-        LibDiamond.enforceIsContractOwner();
-        if (
-            bps < PYTH_CONFIDENCE_MAX_BPS_MIN ||
-            bps > PYTH_CONFIDENCE_MAX_BPS_MAX
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "pythConfidenceMaxBps",
-                uint256(bps),
-                uint256(PYTH_CONFIDENCE_MAX_BPS_MIN),
-                uint256(PYTH_CONFIDENCE_MAX_BPS_MAX)
-            );
-        }
-        Storage storage s = storageSlot();
-        uint16 prev = s.pythConfidenceMaxBps;
-        s.pythConfidenceMaxBps = bps;
-        emit PythConfidenceMaxBpsSet(prev, bps);
-    }
-
-    /// @notice Read the effective Pyth max-staleness — falls back to
-    ///         the package default when no value is configured.
-    function effectivePythMaxStalenessSeconds() internal view returns (uint64) {
-        uint64 v = storageSlot().pythMaxStalenessSeconds;
-        return v == 0 ? PYTH_MAX_STALENESS_DEFAULT_SECONDS : v;
-    }
-
-    /// @notice Read the effective Pyth deviation tolerance — falls
-    ///         back to the package default when no value is
-    ///         configured.
-    function effectivePythCrossCheckMaxDeviationBps()
-        internal
-        view
-        returns (uint16)
-    {
-        uint16 v = storageSlot().pythCrossCheckMaxDeviationBps;
-        return v == 0 ? PYTH_NUMERAIRE_MAX_DEVIATION_BPS_DEFAULT : v;
-    }
-
-    /// @notice Read the effective Pyth confidence ceiling — falls
-    ///         back to the package default when no value is
-    ///         configured.
-    function effectivePythConfidenceMaxBps() internal view returns (uint16) {
-        uint16 v = storageSlot().pythConfidenceMaxBps;
-        return v == 0 ? PYTH_CONFIDENCE_MAX_BPS_DEFAULT : v;
-    }
-
-    /// @notice T-048 — read the effective PAD symbol used by the
-    ///         symbol-derived secondary oracles. Empty bytes32
-    ///         (post-deploy default before governance writes) is
-    ///         interpreted as `"usd"`, matching the
-    ///         `numeraireSymbol` fallback convention.
-    function effectivePadSymbol() internal view returns (bytes32) {
-        bytes32 v = storageSlot().predominantDenominatorSymbol;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return v == bytes32(0) ? bytes32("usd") : v;
-    }
-
-    /// @notice #2880 — the quote key the oracle's primary lookup passes to
-    ///         the feed registry: the predominant denominator, or, while it
-    ///         is unset (the pre-T-048 path), the numeraire's denominator.
-    ///         The ONE statement of that rule, read by the oracle's price
-    ///         path and by the launch readiness check, so the check asks the
-    ///         registry about the key the oracle actually uses.
-    function effectivePadDenominator() internal view returns (address pad) {
-        Storage storage s = storageSlot();
-        pad = s.predominantDenominator;
-        if (pad == address(0)) pad = s.numeraireChainlinkDenominator;
-    }
-
-    /// @notice T-048 — `true` when the active numeraire's Chainlink
-    ///         denomination matches the PAD denomination. On retail
-    ///         (both default to `Denominations.USD`), this returns
-    ///         `true` and the oracle path short-circuits the FX
-    ///         conversion. Industrial-fork deploys with
-    ///         `numeraire == EUR / JPY / XAU` return `false` and
-    ///         require the FX conversion path (direct or derived).
-    ///
-    ///         Treats unset `predominantDenominator` (zero) as a
-    ///         pre-T-048 deploy where PAD wasn't configured: returns
-    ///         `false` so the legacy numeraire-direct path keeps
-    ///         working without a forced PAD configuration.
-    function isPadEqualToNumeraire() internal view returns (bool) {
-        Storage storage s = storageSlot();
-        address pad = s.predominantDenominator;
-        if (pad == address(0)) return false;
-        return pad == s.numeraireChainlinkDenominator;
-    }
 
     /// @notice Emitted when the chain's sanctions oracle address changes.
     ///         Off-chain monitoring should alert on a transition to or

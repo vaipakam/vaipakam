@@ -2,14 +2,15 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
-import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockSequencerUptimeFeed} from "./mocks/MockSequencerUptimeFeed.sol";
 
 /// @title SequencerUptimeCheckTest
 /// @notice Covers the l2 sequencer uptime circuit breaker
-///         wired in OracleFacet. Verifies:
+///         the price guard runs and OracleFacet reads (#3272 part 2). Verifies:
 ///           1. Feed unset  → check is a no-op (correct for l1 deployments)
 ///           2. Sequencer UP and past the 1h grace window → healthy
 ///           3. Sequencer DOWN (answer != 0) → getAssetPrice reverts
@@ -31,18 +32,12 @@ contract SequencerUptimeCheckTest is SetupTest {
         // the real OracleFacet path executes end-to-end.
         vm.clearMockedCalls();
 
-        // #229 — OracleAdminFacet is now cut by `SetupTest.setupHelper()`
-        // (all 34 selectors, mirroring DeployDiamond), including the
-        // setSequencerUptimeFeed setter this test exercises. The prior
-        // local 8-selector subset cut would double-cut and revert.
-        // Dropped.
-
         // Deploy mock feed with sequencer UP and startedAt well past the
         // grace window so default state is "healthy" for most tests.
         vm.warp(1_000_000);
         seqFeed = new MockSequencerUptimeFeed(
             0, // UP
-            block.timestamp - 2 * LibVaipakam.SEQUENCER_GRACE_PERIOD
+            block.timestamp - 2 * PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).SEQUENCER_GRACE_PERIOD()
         );
     }
 
@@ -50,24 +45,21 @@ contract SequencerUptimeCheckTest is SetupTest {
 
     function testFeedUnsetTreatsSequencerAsHealthy() public view {
         // SetupTest does not wire the sequencer feed — it starts at zero.
-        assertEq(
-            OracleFacet(address(diamond)).getSequencerUptimeFeed(),
-            address(0)
-        );
+        assertEq(PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).sequencerFeed(), address(0));
         assertTrue(OracleFacet(address(diamond)).sequencerHealthy());
     }
 
     // ─── Healthy path: feed set, UP, past grace ──────────────────────────
 
     function testHealthyWhenUpAndPastGrace() public {
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
         assertTrue(OracleFacet(address(diamond)).sequencerHealthy());
     }
 
     // ─── Down path ────────────────────────────────────────────────────────
 
     function testSequencerDownBlocksPriceAndCollapsesLiquidity() public {
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
         seqFeed.setStatus(1, block.timestamp); // DOWN
 
         // sequencerHealthy view agrees
@@ -87,12 +79,12 @@ contract SequencerUptimeCheckTest is SetupTest {
     // ─── Just recovered: inside grace window ──────────────────────────────
 
     function testSequencerGracePeriodBlocksPriceAndCollapsesLiquidity() public {
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
         // Flip DOWN then back UP at `now - 30min` — inside the 1h window.
         seqFeed.setStatus(1, block.timestamp - 2 hours);
         seqFeed.setStatus(
             0,
-            block.timestamp - (LibVaipakam.SEQUENCER_GRACE_PERIOD / 2)
+            block.timestamp - (PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).SEQUENCER_GRACE_PERIOD() / 2)
         );
 
         assertFalse(OracleFacet(address(diamond)).sequencerHealthy());
@@ -109,37 +101,34 @@ contract SequencerUptimeCheckTest is SetupTest {
     // ─── Grace boundary: exactly SEQUENCER_GRACE_PERIOD seconds since UP ─
 
     function testSequencerRecoveredPastGraceIsHealthy() public {
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
         seqFeed.setStatus(1, block.timestamp - 3 hours);
         seqFeed.setStatus(
             0,
-            block.timestamp - LibVaipakam.SEQUENCER_GRACE_PERIOD - 1
+            block.timestamp - PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).SEQUENCER_GRACE_PERIOD() - 1
         );
         assertTrue(OracleFacet(address(diamond)).sequencerHealthy());
     }
 
-    // ─── Owner-only guard on the setter ──────────────────────────────────
+    // ─── Only the guard's owner may propose the feed ─────────────────────
 
-    function testSetSequencerUptimeFeedRevertsForNonOwner() public {
+    function testSequencerFeedChangeRevertsForNonOwner() public {
         address attacker = makeAddr("attacker");
+        PriceGuard guard = PriceGuard(LibTestPriceGuard.guardOf(address(diamond)));
         vm.prank(attacker);
         vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(seqFeed));
+        guard.proposeChange(PriceGuard.Kind.SequencerFeed, bytes32(0), bytes32(uint256(uint160(address(seqFeed)))));
     }
 
-    // ─── Round-trip: owner writes → getter reads the same address ────────
+    // ─── Round-trip: the guard holds the feed the Diamond reads ──────────
 
-    function testSetSequencerUptimeFeedRoundTrip() public {
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(seqFeed));
-        assertEq(
-            OracleFacet(address(diamond)).getSequencerUptimeFeed(),
-            address(seqFeed)
-        );
+    function testSequencerFeedRoundTrip() public {
+        PriceGuard guard = PriceGuard(LibTestPriceGuard.guardOf(address(diamond)));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        assertEq(guard.sequencerFeed(), address(seqFeed));
         // Unset by writing zero.
-        OracleAdminFacet(address(diamond)).setSequencerUptimeFeed(address(0));
-        assertEq(
-            OracleFacet(address(diamond)).getSequencerUptimeFeed(),
-            address(0)
-        );
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(0));
+        assertEq(guard.sequencerFeed(), address(0));
+        assertTrue(OracleFacet(address(diamond)).sequencerHealthy());
     }
 }

@@ -40,6 +40,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title PositiveFlowsGapFillers
@@ -589,7 +590,7 @@ contract PositiveFlowsGapFillers is Test {
 
     function _mockPrice(address asset, uint256 price, uint8 decs) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decs)
         );

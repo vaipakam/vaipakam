@@ -16,17 +16,14 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-// Numeraire generalization (b1) — INumeraireOracle interface and its mocks were
-// retired in favour of the symbol-derived feed slots
-// (ethNumeraireFeed + numeraireSymbol + numeraireChainlinkDenominator
-// + pythCrossCheckFeedId). The atomic `setNumeraire` setter now takes
-// these slot values directly; no oracle contract to mock.
+// #3272 part 2 — the numeraire is the price guard's identity, recorded on the
+// Diamond once with the registry; there is no numeraire setter to test here.
 
 /// @title PeriodicInterestCadenceTest
 /// @notice Targeted PR1 coverage for T-034 — Periodic Interest Payment.
 ///         Locks the storage shape, the validation matrix at offer
 ///         creation (Filter 0 + 1 + 2), the master kill-switch behavior,
-///         and the numeraire-related setters. Settlement / repay-fold
+///         and the cadence setters. Settlement / repay-fold
 ///         paths land in PR2 — out of scope here.
 ///
 ///         See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md.
@@ -150,12 +147,12 @@ contract PeriodicInterestCadenceTest is SetupTest {
     }
 
     function testToggleEnabledFlag() public {
-        (, , , bool periodicEnabled, ) =
+        (, , , bool periodicEnabled) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertFalse(periodicEnabled, "default off");
 
         _enableFeature();
-        (, , , periodicEnabled, ) =
+        (, , , periodicEnabled) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertTrue(periodicEnabled, "after enable");
     }
@@ -326,13 +323,13 @@ contract PeriodicInterestCadenceTest is SetupTest {
     // ─── Setters (§5.1, §6, §10) ─────────────────────────────────────────────
 
     function testSetPreNotifyDays_DefaultThenSet() public {
-        (, , uint8 preNotify, ,) =
+        (, , uint8 preNotify, ) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(preNotify, LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT);
 
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setPreNotifyDays(7);
-        (, , preNotify, ,) =
+        (, , preNotify, ) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(preNotify, 7);
     }
@@ -349,7 +346,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         NumeraireConfigFacet(address(diamond)).setPreNotifyDays(7);
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setPreNotifyDays(0);
-        (, , uint8 preNotify, ,) =
+        (, , uint8 preNotify, ) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(preNotify, LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT);
     }
@@ -374,80 +371,19 @@ contract PeriodicInterestCadenceTest is SetupTest {
     function testSetMinPrincipalForFinerCadence_InRange() public {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(50_000 * 1e18);
-        (, uint256 threshold, , ,) =
+        (, uint256 threshold, , ) =
             NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(threshold, 50_000 * 1e18);
     }
 
-    function testSetNumeraire_DisabledFlagReverts() public {
-        // Default: numeraireSwapEnabled = false. setNumeraire reverts.
-        // Args don't matter past the gate check.
-        address fakeFeed = makeAddr("fakeFeed");
-        address fakeDenom = makeAddr("fakeDenom");
-        vm.expectRevert(IVaipakamErrors.NumeraireSwapDisabled.selector);
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            // forge-lint: disable-next-line(unsafe-typecast)
-            fakeFeed, fakeDenom, bytes32("eur"), bytes32(0), 50_000 * 1e18, 0, 0
-        );
-    }
-
-    function testSetNumeraire_RejectsZeroEthFeed() public {
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            // forge-lint: disable-next-line(unsafe-typecast)
-            address(0), makeAddr("denom"), bytes32("eur"), bytes32(0), 0, 0, 0
-        );
-    }
-
-    function testSetNumeraire_RejectsZeroDenominator() public {
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            // forge-lint: disable-next-line(unsafe-typecast)
-            makeAddr("ethFeed"), address(0), bytes32("eur"), bytes32(0), 0, 0, 0
-        );
-    }
-
-    function testSetNumeraire_RejectsZeroSymbol() public {
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            makeAddr("ethFeed"), makeAddr("denom"), bytes32(0), bytes32(0), 0, 0, 0
-        );
-    }
-
-    function testSetNumeraire_AcceptsValidEurRotation() public {
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        // Hypothetical EUR rotation: ETH/EUR Chainlink feed +
-        // Chainlink Feed Registry's Denominations.EUR constant +
-        // bytes32("eur") for symbol-derived secondary queries +
-        // Pyth ETH/EUR feed id. None of these need to actually exist
-        // on the test chain — the setter only validates structure.
-        address ethEurFeed = makeAddr("ethEurFeed");
-        address eurDenom = makeAddr("eurDenom");
+    /// @dev #3272 part 2: the cadence threshold is denominated in the
+    ///      numeraire the Diamond recorded from its guard, and the config
+    ///      read names it.
+    function testConfigNamesTheGuardsNumeraire() public view {
+        (bytes32 sym, , , ) = NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         // forge-lint: disable-next-line(unsafe-typecast)
-        bytes32 eurSymbol = bytes32("eur");
-        bytes32 pythEurFeedId = bytes32(uint256(0xCAFEBABE));
-        uint256 thresholdInEur = 5_000 * 1e18;
-        vm.prank(owner);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            ethEurFeed, eurDenom, eurSymbol, pythEurFeedId,
-            thresholdInEur, 0, 0
-        );
-        (bytes32 sym, uint256 threshold, , ,) =
-            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
-        assertEq(sym, eurSymbol);
-        assertEq(threshold, thresholdInEur);
-        assertEq(NumeraireConfigFacet(address(diamond)).getEthNumeraireFeed(), ethEurFeed);
+        assertEq(sym, bytes32("usd"));
+        assertEq(sym, NumeraireConfigFacet(address(diamond)).getNumeraireSymbol());
     }
 
     function testNonAdmin_SetterReverts() public {
