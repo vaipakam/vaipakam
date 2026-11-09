@@ -122,7 +122,13 @@ function notify(): void {
 }
 
 export function subscribeKnown(listener: () => void): () => void {
-  if (listeners.size === 0 && typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+  if (listeners.size === 0) {
+    // Nothing listened for other tabs' writes while no card was mounted, so
+    // every cached record may be stale: read storage again. A record this
+    // visit could not store is still read first (see readKnown).
+    snapshots.clear();
+    if (typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+  }
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

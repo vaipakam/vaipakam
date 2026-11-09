@@ -100,6 +100,13 @@ function setRun(identity: string, patch: Partial<RunEntry>): void {
   for (const l of runListeners) l();
 }
 
+/** A wallet-wide unlink revokes every code the wallet holds, on every
+ *  network: none of them may still be offered. */
+function dropWalletCodes(wallet: Hex): void {
+  const suffix = `:${wallet.toLowerCase()}`;
+  for (const [identity, entry] of runs) if (identity.endsWith(suffix) && entry.code) runs.set(identity, { ...entry, code: null });
+}
+
 function subscribeRuns(listener: () => void): () => void {
   runListeners.add(listener);
   return () => runListeners.delete(listener);
@@ -141,6 +148,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
         const answer = readAlertAnswer(action, res.status, res.data);
         const at = Math.floor(Date.now() / 1000);
         recordAnswer(chainId, wallet, action, answer, at);
+        if (answer.ok && answer.action === 'unlink' && answer.scope === 'wallet') dropWalletCodes(wallet);
         const code =
           answer.ok && answer.action === 'link'
             ? { code: answer.code, botUrl: answer.botUrl, expiresAt: at + CODE_LIFETIME_S }
