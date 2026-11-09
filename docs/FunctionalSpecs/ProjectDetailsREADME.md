@@ -548,6 +548,14 @@ and the loan or offer it belongs to.
   vault of that side's party as the loan records it, and is never counted as
   that party's own withdrawable money. The claim pays it to the current
   holder. Making every share follow its holder directly is #3381.
+- **A contract that holds a lender position** (the backstop, an aggregator
+  adapter) claims through one rule. The claim pays its vault, and the same
+  step withdraws exactly that credit, including collateral paid in kind, to
+  the contract and counts it. Its recovery is never left uncounted in its
+  vault.
+- **A payout into the vault it already sits in moves nothing**, so it changes
+  neither the vault's tracked balance nor a VPFI holder's discount record. It
+  only becomes the holder's own withdrawable money.
 - **A liquidator buying collateral at a discount** receives it only at the
   address that paid, never at an address it names. The backstop's warehoused
   collateral can be swept only to the treasury.
@@ -558,7 +566,8 @@ and the loan or offer it belongs to.
   id and amount into an escrow the vault creates for that listing, which is
   the order's seller and the only holder of the marketplace approval; every
   cancel, expiry or teardown brings the rest back. While an allowance is
-  open the vault refuses every other movement, and anyone may close a
+  open the vault refuses every other movement. Within its own transaction
+  only the platform may close it; after that, anyone may close a
   leftover one, since that can only reduce what the vault exposes.
 - **What is not yet guaranteed**, until the second stage of this work
   (#3379), which lands before any deployment: the vault does not yet bound

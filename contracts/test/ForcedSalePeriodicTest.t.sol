@@ -466,7 +466,12 @@ contract ForcedSalePeriodicTest is SetupTest {
     /// @dev When what leaves the exiting holder's vault on a handover is VPFI
     ///      (here the principal asset, so the held extra), that vault owner is
     ///      refreshed (#1820) so no fee-tier credit stays on VPFI no longer vaulted.
-    function test_handover_restampsTheExitingHolderWhenVpfiLeaves() public {
+    /// @dev #3205 part 2 (Codex #3387 r2) — the held VPFI extra is paid to the
+    ///      exiting holder's OWN vault, the vault it was held in: nothing
+    ///      leaves, so the tracked VPFI balance and the tier record are left
+    ///      exactly as they were (no withdraw-then-deposit dip, no restamp);
+    ///      the extra becomes the holder's free money there.
+    function test_handover_heldVpfiPaidToTheSameVault_needsNoRestamp() public {
         _heldWhileFlaggedThenDelisted();
         (, uint256 offerId) = _incomingBorrowerOffer();
         vm.prank(owner);
@@ -474,7 +479,8 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(VPFIDiscountAccumulatorFacet.syncTierRecord.selector, borrower)
+            abi.encodeWithSelector(VPFIDiscountAccumulatorFacet.syncTierRecord.selector, borrower),
+            0
         );
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId);

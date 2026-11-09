@@ -482,7 +482,10 @@ contract VaultOutflowPolicyTest is SetupTest {
         park.positionToken = lenderToken;
         _run(0, alice, park);
         assertEq(token.balanceOf(_vault(storedLender)), 5 ether, "parked in the stored lender's vault");
-        TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(storedLender, address(token), 0, 5 ether);
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(storedLender, address(token), 0), 5 ether,
+            "the policy booked the parked share to the stored party's tracked holding"
+        );
 
         // The position moves on.
         LibTestPositionNFT.move(address(diamond), lenderToken, newHolder);
@@ -549,7 +552,10 @@ contract VaultOutflowPolicyTest is SetupTest {
         _run(0, alice, leg);
         assertEq(token.balanceOf(_vault(storedLender)), 6 ether, "parked with the receiving loan's stored lender");
         assertEq(token.balanceOf(stranger), 0, "the named recipient is ignored");
-        TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(storedLender, address(token), 0, 6 ether);
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(storedLender, address(token), 0), 6 ether,
+            "the policy booked the parked share to the stored party's tracked holding"
+        );
 
         // A mismatched pair is refused: the asset is not the receiving
         // loan's principal.

@@ -636,9 +636,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     payingBorrower, asset, lenderShare, payingLoanId, loanId, OutflowReason.LIQUIDATION
                 )
             );
-            VaultFactoryFacet(address(this)).recordVaultDepositERC20(
-                receivingLender, asset, lenderShare
-            );
         }
         if (incentive > 0) {
             // #21 matcher-recipient fix: pay the incentive to `matcher`

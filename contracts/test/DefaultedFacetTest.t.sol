@@ -2585,13 +2585,21 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        // #3205 part 2 — the token is parked in the stored lender's vault as
+        // claim custody through the outflow policy, which books both sides
+        // (the stub here answers for the policy, so the move is pinned as the
+        // policy call itself).
+        vm.expectCall(
+            address(diamond),
+            abi.encodePacked(
+                VaultOutflowFacet.vaultOutflowArgs.selector,
+                abi.encode(loanOverride.borrower, VaultOutflowTypes.AssetKind.ERC721, mockIlliquidERC20, uint256(99), uint256(1))
+            )
+        );
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
-        // The token moved to the lender's vault is credited to the lender's
-        // tracked holding, which bounds the claim that pays it out.
-        assertEq(VaultFactoryFacet(address(diamond)).getTrackedHolding(loan.lender, mockIlliquidERC20, 99), 1);
         vm.clearMockedCalls();
     }
 
@@ -2617,11 +2625,21 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        // #3205 part 2 — the token is parked in the stored lender's vault as
+        // claim custody through the outflow policy, which books both sides
+        // (the stub here answers for the policy, so the move is pinned as the
+        // policy call itself).
+        vm.expectCall(
+            address(diamond),
+            abi.encodePacked(
+                VaultOutflowFacet.vaultOutflowArgs.selector,
+                abi.encode(loanOverride.borrower, VaultOutflowTypes.AssetKind.ERC1155, mockIlliquidERC20, uint256(99), uint256(5))
+            )
+        );
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
-        assertEq(VaultFactoryFacet(address(diamond)).getTrackedHolding(loan.lender, mockIlliquidERC20, 99), 5);
         vm.clearMockedCalls();
     }
 

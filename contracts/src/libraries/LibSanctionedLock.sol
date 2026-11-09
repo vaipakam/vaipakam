@@ -313,10 +313,8 @@ library LibSanctionedLock {
             c == VaultOutflowTypes.OutflowClass.SellerClaim ? OutflowReason.SELLER_CLAIM : OutflowReason.SANCTIONED_LOCK
         );
         s.consolidationMoveFromUser = address(0);
-        // Tick `owner`'s tracked balance (the funds now sit in their vault), the
-        // same bookkeeping `LibFacet.depositForNewLender` does for a Diamond
-        // `safeTransfer` into a vault.
-        LibVaipakam.recordVaultDeposit(owner, asset, credited);
+        // `owner`'s tracked balance was ticked by the policy, the one place
+        // both sides of a vault move are booked (#3205 part 2).
         if (LibVaipakam.isSanctionedAddress(owner)) {
             emit SanctionedProceedsLocked(loanId, owner, asset, credited);
         }

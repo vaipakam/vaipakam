@@ -738,9 +738,9 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
                 LibDelivery.pushMeasured(asset, oldLenderVault, borrowerToOldLender)
             );
         }
-        // Both legs arrived in full, so the old lender's tracked balance ticks
-        // by the whole due.
-        LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, lenderDue);
+        // Both legs arrived in full. The policy booked the vault-to-vault leg
+        // (`net`); the Diamond-pushed leg is booked here.
+        if (borrowerToOldLender > 0) LibVaipakam.recordVaultDeposit(oldLoan.lender, asset, borrowerToOldLender);
         LibSanctionedLock.end(s, oldLoan.lender, oldLoanId, asset, lenderDue);
 
         // The treasury's share, out of what the Diamond now holds (#2440: the

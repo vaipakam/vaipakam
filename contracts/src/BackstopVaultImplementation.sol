@@ -11,6 +11,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IPositionNFTSource} from "./interfaces/IPositionNFTSource.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
+import {LibHolderClaim} from "./libraries/LibHolderClaim.sol";
 import {LibDelivery} from "./libraries/LibDelivery.sol";
 
 /**
@@ -50,19 +51,6 @@ interface IBackstopDiamond {
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external returns (uint256 loanId);
-
-    /// @dev #3205 part 2 — a claim credits the holder's Vaipakam vault; the
-    ///      backstop withdraws that credit to itself before forwarding it.
-    function getDepositoryHolding(address user, address asset, uint256 tokenId) external view returns (uint256);
-
-    function withdrawFromVault(
-        address account,
-        uint8 kind,
-        address asset,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external returns (uint256 queuedId);
 
     function claimAsLenderWithRetry(
         uint256 loanId,
@@ -230,53 +218,18 @@ contract BackstopVaultImplementation is
             uint256 collateralRecovered
         )
     {
-        LibVaipakam.Loan memory loan = IBackstopDiamond(diamond).getLoanDetails(
-            loanId
-        );
-        principalAsset = loan.principalAsset;
-        collateralAsset = loan.collateralAsset;
-        uint256 principalBefore = IERC20(principalAsset).balanceOf(address(this));
-        bool distinctCollateral = collateralAsset != principalAsset;
-        uint256 collateralBefore = distinctCollateral
-            ? IERC20(collateralAsset).balanceOf(address(this))
-            : 0;
-        // #3205 part 2 — the claim pays the backstop's Vaipakam vault as free
-        // money (every holder's claim lands in its vault). Withdraw exactly
-        // what this claim credited, per asset, to this contract, then forward
-        // what arrived as before.
-        uint256 pCredit0 = IBackstopDiamond(diamond).getDepositoryHolding(address(this), principalAsset, 0);
-        uint256 cCredit0 =
-            distinctCollateral ? IBackstopDiamond(diamond).getDepositoryHolding(address(this), collateralAsset, 0) : 0;
-        IBackstopDiamond(diamond).claimAsLenderWithRetry(loanId, retryCalls);
-        _withdrawCredit(principalAsset, pCredit0);
-        if (distinctCollateral) _withdrawCredit(collateralAsset, cCredit0);
-        uint256 principalReceived =
-            IERC20(principalAsset).balanceOf(address(this)) - principalBefore;
-        if (principalReceived > 0) {
-            principalRecovered =
-                LibDelivery.pushMeasured(principalAsset, diamond, principalReceived);
+        // #3205 part 2 — the claim pays the backstop's Vaipakam vault; the one
+        // holder-claim rule withdraws exactly that credit here and measures it.
+        LibHolderClaim.Recovered memory r = LibHolderClaim.claimAsLender(diamond, loanId, retryCalls);
+        principalAsset = r.principalAsset;
+        collateralAsset = r.collateralAsset;
+        if (r.principal > 0) {
+            principalRecovered = LibDelivery.pushMeasured(principalAsset, diamond, r.principal);
         }
-        // Only forward the collateral leg when it is a DISTINCT token; a
-        // same-asset loan already counted the whole delta as `principalRecovered`.
-        if (distinctCollateral) {
-            uint256 collateralReceived =
-                IERC20(collateralAsset).balanceOf(address(this)) - collateralBefore;
-            if (collateralReceived > 0) {
-                collateralRecovered = LibDelivery.pushMeasured(
-                    collateralAsset,
-                    diamond,
-                    collateralReceived
-                );
-            }
-        }
-    }
-
-    /// @dev Withdraw to this contract what the claim just credited to its
-    ///      Vaipakam vault for `asset` (the rise above `before`).
-    function _withdrawCredit(address asset, uint256 before) private {
-        uint256 nowHeld = IBackstopDiamond(diamond).getDepositoryHolding(address(this), asset, 0);
-        if (nowHeld > before) {
-            IBackstopDiamond(diamond).withdrawFromVault(address(this), 0, asset, 0, nowHeld - before, address(this));
+        // Only forward the collateral leg when it is a DISTINCT ERC-20; a
+        // same-asset loan already counted the whole delta as the principal.
+        if (r.collateral > 0 && r.collateralKind == uint8(LibVaipakam.AssetType.ERC20)) {
+            collateralRecovered = LibDelivery.pushMeasured(collateralAsset, diamond, r.collateral);
         }
     }
 

@@ -422,11 +422,7 @@ library LibConsolidation {
         credited = LibVaultOutflow.toConsolidatedHolder(
             stored, LibVaultOutflow.ERC20, asset, 0, amount, loanId, positionToken
         );
-        VaultFactoryFacet(address(this)).recordVaultDepositERC20(
-            current,
-            asset,
-            credited
-        );
+        // The policy books both sides of the move (#3205 part 2).
     }
 
     /// @dev ERC-721/1155 Diamond-mediated two-leg move (§2 step 6 / D-6). Arm

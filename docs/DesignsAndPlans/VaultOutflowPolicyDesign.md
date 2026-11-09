@@ -705,6 +705,36 @@ coordinator's approval of each.
       because only one grant may be open at a time, two ERC-721 listings from
       one vault can't be filled in a single Seaport batch. That is a denial
       of service only, with no funds at risk.
+13. **What Codex rounds 1 and 2 changed** (root fixes, one seam each).
+    - **One spender rule in the vault.** Every spender right the vault
+      grants or causes, whether a just-in-time grant or a listing escrow's
+      conduit approval, passes `_requireRegistrySpender`.
+    - **One free-balance rule.** `LibEncumbrance.vaultFree` is read by the
+      policy and by the depository (its free holding, withdrawable amount
+      and withdrawal gate). NFTs use the tracked holding; ERC-20s are capped
+      at the vault's balance.
+    - **No authorization from state the settlement clears.** A prior
+      seller's payout is authorized by a transient, single-use record for
+      the exact share (`LibSellerPayAuth`), written from the claim being
+      paid. It never reads the seller-claim list, which the terminal split
+      deletes first.
+    - **One place books both sides of a vault move.** The policy books the
+      payer's tracked fall and the payee vault owner's rise, for every class
+      whose payee is a vault. No settlement books the arrival again. A
+      same-vault payout changes no tracked ledger at all, so a VPFI holder's
+      tier record sees no intermediate dip. Only the depository credit
+      moves, and only for a holder payout or new principal.
+    - **One way for a contract holder to claim.** `LibHolderClaim` claims,
+      withdraws exactly the credit the claim gave the holder's vault
+      (ERC-20, or the collateral in kind) to the holder contract, and
+      measures it. The backstop vault and the aggregator adapter use it.
+      Both are standalone UUPS contracts:
+      - `BackstopVaultImplementation` reaches a chain through
+        `BackstopFacet.upgradeBackstopVault`.
+      - `AggregatorAdapterImplementation` reaches a chain through the
+        adapter factory's upgrade.
+      
+      On a fresh deploy, each ships with it.
 
 ## 9. Order of work
 

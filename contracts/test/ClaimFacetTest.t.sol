@@ -56,12 +56,29 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
+import {LibHolderClaim} from "../src/libraries/LibHolderClaim.sol";
+import {LibSwap} from "../src/libraries/LibSwap.sol";
 
 /**
  * @title ClaimFacetTest
  * @notice Tests the claim-based fund distribution model: lender and borrower
  *         must present their Vaipakam NFT after loan resolution to collect funds.
  */
+/// @dev A contract position holder (as the backstop vault and an aggregator
+///      adapter are) that claims through the one holder-claim rule.
+contract HolderClaimHarness {
+    address internal immutable diamond;
+    LibHolderClaim.Recovered public last;
+
+    constructor(address diamond_) {
+        diamond = diamond_;
+    }
+
+    function claim(uint256 loanId, LibSwap.AdapterCall[] calldata calls) external {
+        last = LibHolderClaim.claimAsLender(diamond, loanId, calls);
+    }
+}
+
 contract ClaimFacetTest is Test {
     VaipakamDiamond diamond;
     address owner;
@@ -451,6 +468,47 @@ contract ClaimFacetTest is Test {
             who, uint8(LibVaipakam.AssetType.ERC20), token, 0, amount, who
         );
         return IERC20(token).balanceOf(who) - before;
+    }
+
+    /// @notice Codex #3387 r2 — a CONTRACT holder's claim is counted: the
+    ///         claim pays the holder's vault, and the one holder-claim rule
+    ///         withdraws exactly that credit to the holder and measures it.
+    function test_holderClaim_contractHolderReceivesTheRepaidPrincipal() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
+        _repayLoan(loanId);
+        (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        HolderClaimHarness h = new HolderClaimHarness(address(diamond));
+        LibTestPositionNFT.move(address(diamond), LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId, address(h));
+
+        h.claim(loanId, new LibSwap.AdapterCall[](0));
+        (, uint256 principal,,,,) = h.last();
+        assertEq(principal, claimAmount, "the recovered principal is counted");
+        assertEq(IERC20(mockERC20).balanceOf(address(h)), claimAmount, "and it is in the holder contract");
+    }
+
+    /// @notice The same for an in-kind default: the collateral the claim pays
+    ///         (into the holder's vault) reaches the holder contract and is
+    ///         counted.
+    function test_holderClaim_contractHolderReceivesInKindCollateral() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+        vm.clearMockedCalls();
+        (address claimAsset, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(claimAsset, mockCollateralERC20, "fixture: an in-kind claim");
+
+        HolderClaimHarness h = new HolderClaimHarness(address(diamond));
+        LibTestPositionNFT.move(address(diamond), LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId, address(h));
+        h.claim(loanId, new LibSwap.AdapterCall[](0));
+        (,,,,, uint256 collateral) = h.last();
+        assertEq(collateral, claimAmount, "the in-kind collateral is counted");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(address(h)), claimAmount, "and it is in the holder contract");
     }
 
     function testClaimAsLenderSuccessAfterRepay() public {

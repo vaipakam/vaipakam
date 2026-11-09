@@ -435,19 +435,12 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     // loan's collateral becomes that figure (one transfer, so
                     // a token that charges on transfer charges once).
                     loan.collateralAmount = LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
-                    // T-051 — the credit to the lender's vault ticks the
-                    // protocolTrackedVaultBalance counter.
-                    LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, loan.collateralAmount);
+                    // The policy books the lender vault's tracked arrival
+                    // (#3205 part 2: one place books both sides of a vault move).
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC721, loan.collateralAsset, loan.collateralTokenId, 1, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
-                    // The lender's claim pays this token out of the lender's
-                    // vault, which is bounded by the tracked ledger.
-                    LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, loan.collateralTokenId, 1);
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC1155, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
-                    LibVaipakam.recordVaultDeposit(
-                        loan.lender, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity
-                    );
                 }
                 LibSanctionedLock.endMoveOut(s);
 

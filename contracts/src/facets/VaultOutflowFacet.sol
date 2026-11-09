@@ -262,7 +262,8 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // CALLER names (an allowlisted address, an incentive payee, a
         // liquidation buyer) may never name the paying vault itself: that
         // would debit the ledger for tokens that never left.
-        if (o.to == proxy) {
+        bool sameVault = o.to == proxy;
+        if (sameVault) {
             if (_paysWallet(o.class_)) revert OutflowRecipientInvalid(o.class_, o.to);
             delivered = o.amount;
         } else {
@@ -272,18 +273,28 @@ contract VaultOutflowFacet is IVaipakamErrors {
             emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, delivered, o.to, o.class_, o.reason, o.ref);
             return delivered;
         }
-        LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
+        // THE one place both sides of a vault move are booked (Codex #3387
+        // r2): the payer's tracked ledger falls, the payee VAULT's owner's
+        // rises by what arrived, for every class whose payee is a vault. A
+        // same-vault payout moves nothing, so it changes no tracked ledger at
+        // all (no withdraw-then-deposit pair, so no intermediate dip in a
+        // VPFI holder's tier record): only the depository credit moves.
+        if (!sameVault) LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
 
-        // A payee VAULT is credited in the tracked ledger and, as free money
-        // for its owner, in the depository ledger: a holder payout and a
-        // protected wallet's redirected payment both leave only through that
-        // owner's own withdrawal. Claim custody is booked by the settlement
-        // that parked it (its claim, not its owner, decides where it goes).
+        // A payee VAULT's owner is credited in the tracked ledger (here, for
+        // every vault class; no settlement books the arrival again) and, for a
+        // holder payout or a protected wallet's redirected payment, as free
+        // money in the depository ledger, which leaves only through that
+        // owner's own withdrawal.
         if (creditTo != address(0)) {
             LibProtectedAccount.creditPayment(payeeOwner, o.asset, o.tokenId, o.amount, delivered);
         } else if (payeeOwner != address(0)) {
-            LibVaipakam.recordVaultDeposit(payeeOwner, o.asset, o.tokenId, delivered);
-            LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
+            if (!sameVault) LibVaipakam.recordVaultDeposit(payeeOwner, o.asset, o.tokenId, delivered);
+            // Free money for its owner only for a holder payout and a new
+            // loan's principal; a stored party's custody, a consolidation, a
+            // matched leg, the backstop's warehouse and a seller's share stay
+            // under the settlement's own reservation.
+            if (_credits(o.class_)) LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
         }
 
         if (o.kind == VaultOutflowTypes.AssetKind.ERC20 && o.asset == LibVaipakam.storageSlot().vpfiToken) {
@@ -359,6 +370,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
                     || receiving.principalAsset != o.asset
             ) revert OutflowPositionMismatch(o.ref, o.counterRef);
             o.positionToken = receiving.lenderTokenId;
+            payeeOwner = receiving.lender;
             o.to = s.userVaipakamVaults[receiving.lender];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else if (
@@ -374,7 +386,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
             o.to = LibFacet.getOrCreateVault(holder);
             // A consolidation moves custody under the lien: the move books it.
             // A holder payout is free money for the holder: booked here.
-            if (c != VaultOutflowTypes.OutflowClass.Consolidation) payeeOwner = holder;
+            payeeOwner = holder;
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist
@@ -387,6 +399,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (o.positionToken != 0 && o.positionToken == loan.lenderTokenId) stored = loan.lender;
             else if (o.positionToken != 0 && o.positionToken == loan.borrowerTokenId) stored = loan.borrower;
             else revert OutflowPositionMismatch(o.ref, o.positionToken);
+            payeeOwner = stored;
             o.to = s.userVaipakamVaults[stored];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else if (c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower) {
@@ -407,6 +420,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // absorbs. The settlement books the arrival (tracked ledger).
             address backstop = LibVaipakam.getBackstopVault();
             if (backstop == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            payeeOwner = backstop;
             o.to = LibFacet.getOrCreateVault(backstop);
         } else if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) {
             o.to = address(this);
@@ -427,6 +441,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // loan's seller-claim list: the terminal split deletes it before
             // it pays. The vault is that seller's own.
             LibSellerPayAuth.consume(o.ref, o.to, o.amount);
+            payeeOwner = o.to;
             o.to = s.userVaipakamVaults[o.to];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else {
@@ -487,6 +502,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
 
     /// @dev The classes whose recipient is a wallet the caller names, which a
     ///      protected payee receives into its vault instead.
+    /// @dev The classes whose arrival is the payee's own free money.
+    function _credits(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
+        return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
+            || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower;
+    }
+
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
             || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer;

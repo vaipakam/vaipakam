@@ -8,6 +8,7 @@ No vault holds an allowance between transactions any more. A swap-to-repay fill 
 
 ForcedSaleFacet had reached 11 bytes under the contract size limit, so its two previews move to a new ForcedSalePreviewFacet, with the sizing rule both read in one shared library. A launch is now refused until the registry names the treasury and carries every route the platform sells or lists through. Design and every decided default: `docs/DesignsAndPlans/VaultOutflowPolicyDesign.md` (Stage A build notes).
 
+> Caveat: the backstop vault and the aggregator adapter, which hold lender positions, claim through one shared rule that withdraws the claim's vault credit to them. Both are their own upgradeable contracts and change with this release.
 > Caveat: Stage A does not yet bound an amount by an owner-signed lien. That, the class budgets, the payee-receipt release and the seller-claim check are Stage B (#3379). No deployment happens before Stage B.
 > Caveat: the launch check needs the protocol registry (#3383); until it lands, every launch refuses.
 > Caveat: a share that cannot follow its holder yet is parked with the loan's stored party until the claim (#3381 makes it follow the holder).
