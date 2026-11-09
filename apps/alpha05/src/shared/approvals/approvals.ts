@@ -174,7 +174,10 @@ export async function readApprovals(c: PublicClient, diamond: Hex, account: Hex,
       ]);
       if (allowance === null) unreadable++;
       else if (allowance > 0n) rows.push({ kind: 'erc20', asset, tokenId: 0n, amount: allowance, expiration: 0n });
-      if (p2 !== null && p2[0] > 0n && BigInt(p2[1]) > block.timestamp) rows.push({ kind: 'permit2', asset, tokenId: 0n, amount: p2[0], expiration: BigInt(p2[1]) });
+      // Where Permit2 is deployed, an allowance read that did not answer is
+      // unknown, never "none"; where it is not deployed there is nothing to read.
+      if (permit2 && p2 === null) unreadable++;
+      else if (p2 !== null && p2[0] > 0n && BigInt(p2[1]) > block.timestamp) rows.push({ kind: 'permit2', asset, tokenId: 0n, amount: p2[0], expiration: BigInt(p2[1]) });
     }),
     ...subjects.collections.map(async ({ asset }) => {
       const ok = await view<boolean>(asset, NFT_ABI as Abi, 'isApprovedForAll', [account, diamond]);

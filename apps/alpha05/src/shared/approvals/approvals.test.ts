@@ -12,13 +12,14 @@ const nft = '0x0000000000000000000000000000000000000003' as Hex;
 const broken = '0x0000000000000000000000000000000000000004' as Hex;
 
 /** A chain stand-in: each contract answers from a table; `broken` reverts. */
-function client(opts: { permit2?: boolean; allowances?: Record<string, bigint>; permit2Allowance?: [bigint, number]; operator?: boolean; owner?: Hex; approved?: Hex; approvedFails?: boolean } = {}): PublicClient {
+function client(opts: { permit2?: boolean; allowances?: Record<string, bigint>; permit2Allowance?: [bigint, number]; operator?: boolean; owner?: Hex; approved?: Hex; approvedFails?: boolean; permit2Fails?: boolean } = {}): PublicClient {
   return {
     getBlock: async () => ({ number: 10n, timestamp: 1_000n }),
     getCode: async ({ address }: { address: Hex }) => (address === PERMIT2 && opts.permit2 ? '0x60' : '0x'),
     readContract: async ({ address, functionName }: { address: Hex; functionName: string }) => {
       // No code where a view was expected: the contract's own answer.
       if (address === broken) throw new ContractFunctionZeroDataError({ functionName });
+      if (functionName === 'allowance' && address === PERMIT2 && opts.permit2Fails) throw new ContractFunctionZeroDataError({ functionName });
       if (functionName === 'allowance' && address === PERMIT2) return [...(opts.permit2Allowance ?? [0n, 0]), 0];
       if (functionName === 'allowance') return opts.allowances?.[address] ?? 0n;
       if (functionName === 'isApprovedForAll') return opts.operator ?? false;
@@ -46,6 +47,11 @@ describe('reading the approvals', () => {
     expect(live.rows).toEqual([{ kind: 'permit2', asset: tokA, tokenId: 0n, amount: 9n, expiration: 2_000n }]);
     const expired = await readApprovals(client({ permit2: true, permit2Allowance: [9n, 900] }), diamond, account, { ...subjects, erc20: [tokA], collections: [], tokens: [] });
     expect(expired.rows).toEqual([]);
+  });
+  it('a Permit2 allowance that did not answer is unknown, never none', async () => {
+    const scan = await readApprovals(client({ permit2: true, permit2Fails: true }), diamond, account, { ...subjects, erc20: [tokA], collections: [], tokens: [] });
+    expect(scan.rows).toEqual([]);
+    expect(scan.unreadable).toBe(1);
   });
   it('a token the wallet no longer owns carries no approval of its own', async () => {
     const scan = await readApprovals(client({ approved: diamond, owner: tokB }), diamond, account, { ...subjects, erc20: [], collections: [] });
