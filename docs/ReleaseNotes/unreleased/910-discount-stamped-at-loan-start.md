@@ -1,4 +1,4 @@
-## Thread — The discounted liquidation's discount is fixed when the loan starts (PR #<n>)
+## Thread — The discounted liquidation's discount is fixed when the loan starts (PR #3467)
 
 A discounted liquidation gives the liquidator the collateral at a discount that depends on how deep the collateral's market is: the thinner the market, the wider the discount. Until now the route measured that depth at the moment of the liquidation, with the same read new positions use. That read deliberately drops a pool whose current price disagrees with the oracle. So a liquidator could push one deep pool's price in the liquidation's own block, make the collateral look thinner, and take a wider discount out of the borrower's surplus. A keeper lowering the asset's tier later had the same effect on every open loan. The route is switched off on every chain, so nothing was exposed, but it had to be fixed before the route is ever switched on.
 
