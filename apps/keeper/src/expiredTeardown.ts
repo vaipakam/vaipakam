@@ -330,11 +330,15 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
   // Each read stage stops early enough to leave the stages after it their
   // time (runWindow.ts, rule 3): the offer records by the read cutoff, which
   // reserves the sends' time; the offer list a stage reserve before that; the
+  // moved positions' dead-route reads a stage reserve before that; their loan
+  // details (which give the position token) a stage reserve before that; the
   // per-loan reads a stage reserve before that; the loan window a stage
-  // reserve before those.
+  // reserve before those. So a slow stage never leaves a later one no time.
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const offerListCutoff = priorStageCutoffMs(readCutoff);
-  const loanReadsCutoff = priorStageCutoffMs(offerListCutoff);
+  const routesCutoff = priorStageCutoffMs(offerListCutoff);
+  const detailsCutoff = priorStageCutoffMs(routesCutoff);
+  const loanReadsCutoff = priorStageCutoffMs(detailsCutoff);
   const windowCutoff = priorStageCutoffMs(loanReadsCutoff);
   const due: Record<Step, Due[]> = { prepay: [], sale: [], vehicle: [], intent: [] };
 
@@ -362,7 +366,7 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
       sender.noteUnread(key, err instanceof PastRunDeadline ? `the run deadline passed during ${what}` : `${what} (${shortErr(err)})`);
     }
   };
-  await stage('loans', 'the active-loan reads', () => scanLoans(diamond, deps, sender, report, due, { windowCutoff, loanReadsCutoff }));
+  await stage('loans', 'the active-loan reads', () => scanLoans(diamond, deps, sender, report, due, { windowCutoff, loanReadsCutoff, detailsCutoff, routesCutoff }));
   await stage('sales', 'the active-offer reads', () => scanSales(diamond, deps, sender, report, due, { offerListCutoff, readCutoff }));
 
   // c. The contract decides, step by step.
@@ -405,7 +409,7 @@ async function scanLoans(
   sender: StepSender,
   report: TeardownReport,
   due: Record<Step, Due[]>,
-  cut: { windowCutoff: number; loanReadsCutoff: number },
+  cut: { windowCutoff: number; loanReadsCutoff: number; detailsCutoff: number; routesCutoff: number },
 ): Promise<void> {
   const scan = await readActiveWindow(deps.readClient, diamond, deps.visit, cut.windowCutoff);
   report.window = scan.window;
@@ -453,7 +457,7 @@ async function scanLoans(
     else if (hasCommit(commit)) live.push({ loanId: id, reason: ROUTE_SWAP_TO_REPAY_INTENT, step: 'intent' });
   }
   if (unread > 0) sender.noteUnread('loans', `the listing or intent records of ${unread} loan(s) in the window`);
-  if (live.length > 0) await scanMovedRoutes(diamond, deps, sender, due, live, cut.loanReadsCutoff, scan.window.round, scan.blockNumber);
+  if (live.length > 0) await scanMovedRoutes(diamond, deps, sender, due, live, cut, scan.window.round, scan.blockNumber);
 }
 
 /** A listing or intent that is not due by time: its loan, the route it holds
@@ -467,14 +471,16 @@ interface LiveRoute {
 /** #3336 — which of the listings and intents not yet due by time sit on a
  *  borrower position whose route is dead (it moved, or another flow replaced
  *  the route): due now, by the Diamond's own dead-route read, at the scan's
- *  block. The teardown still decides each one. */
+ *  block. The teardown still decides each one. The two reads are separate
+ *  stages with their own cutoffs (runWindow.ts, rule 3), so details that run
+ *  to their cutoff still leave the route reads time. */
 async function scanMovedRoutes(
   diamond: Address,
   deps: TeardownDeps,
   sender: StepSender,
   due: Record<Step, Due[]>,
   live: readonly LiveRoute[],
-  cutoff: number,
+  cut: { detailsCutoff: number; routesCutoff: number },
   round: number,
   blockNumber: bigint,
 ): Promise<void> {
@@ -485,7 +491,7 @@ async function scanMovedRoutes(
     READ_CHUNK,
     (id) => ({ address: diamond, abi: ABI, functionName: 'getLoanDetails', args: [id] }),
     'expiredTeardown loan positions',
-    cutoff,
+    cut.detailsCutoff,
     round,
     blockNumber,
   );
@@ -505,7 +511,7 @@ async function scanMovedRoutes(
     READ_CHUNK,
     (w) => ({ address: diamond, abi: ABI, functionName: 'isPositionRouteDead', args: [w.tokenId, w.item.reason] }),
     'expiredTeardown dead routes',
-    cutoff,
+    cut.routesCutoff,
     round,
     blockNumber,
   );

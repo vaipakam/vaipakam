@@ -474,14 +474,32 @@ describe('a run', () => {
 
   it('stops its reads early enough to leave the sends their reserve', async () => {
     d.loans.set(1n, pastGrace({ listing: HASH }));
-    // Inside the send reserve plus the three stage reserves: no read starts.
-    const r = await run({ sendDeadline: Date.now() + SEND_RESERVE_MS + 3 * STAGE_RESERVE_MS - 1_000 });
+    // Inside the send reserve plus the five stage reserves: no read starts.
+    const r = await run({ sendDeadline: Date.now() + SEND_RESERVE_MS + 5 * STAGE_RESERVE_MS - 1_000 });
     expect(d.sent).toEqual([]);
     expect(d.simulated).toEqual([]);
     expect(r.unread.get('run')).toContain('run deadline');
     // With the reserves clear, the same listing is torn down.
-    await run({ sendDeadline: Date.now() + SEND_RESERVE_MS + 3 * STAGE_RESERVE_MS + 60_000 });
+    await run({ sendDeadline: Date.now() + SEND_RESERVE_MS + 5 * STAGE_RESERVE_MS + 60_000 });
     expect(d.sent).toEqual(['cancelExpiredPrepayListing:1']);
+  });
+
+  it('#3336: loan details that run to their cutoff still leave the dead-route reads their time', async () => {
+    d.loans.set(1n, loan({ intentDeadline: NOW + 3600n, moved: true }));
+    const deadline = Date.now() + 600_000;
+    // The details stage stops a stage reserve before the route reads', which
+    // stop a stage reserve before the offer list's.
+    const detailsCutoff = deadline - SEND_RESERVE_MS - 3 * STAGE_RESERVE_MS;
+    const read = d.readContract;
+    d.readContract = async (p) => {
+      // The details answer just inside their own cutoff, past the one the
+      // per-loan reads had.
+      if (p.functionName === 'getLoanDetails') vi.spyOn(Date, 'now').mockReturnValue(detailsCutoff - 500);
+      return read(p);
+    };
+    const r = await run({ sendDeadline: deadline });
+    expect(d.sent).toEqual(['cancelExpiredIntent:1']);
+    expect(r.unread.has('moved')).toBe(false);
   });
 
   it('sends nothing once the run\'s deadline passes, and leaves the rest for the next run', async () => {
