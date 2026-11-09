@@ -183,6 +183,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 free0 = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, address(vpfiToken), 0);
 
         // The holder payout of 40 VPFI from the holder's own vault.
+        vm.recordLogs();
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
             borrower, uint8(VaultOutflowTypes.AssetKind.ERC20), address(vpfiToken), 0, 40 ether, address(0),
@@ -204,6 +205,48 @@ contract VPFIDiscountFacetTest is SetupTest {
             40 ether,
             "only the free-money credit moved"
         );
+        assertEq(_vpfiDebits(vm.getRecordedLogs()), 0, "no VaultVpfiDebited: nothing left the vault (Codex #3387 r4)");
+    }
+
+    /// @notice The counterpart: a holder payout of VPFI into ANOTHER owner's
+    ///         vault is a real outflow, so it still emits one VaultVpfiDebited
+    ///         for the paying vault, for the amount.
+    function test_crossVaultVpfiPayout_emitsTheRetentionDebit() public {
+        uint256 amount = 100 ether;
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), amount);
+        _facet().depositVPFIToVault(amount);
+        vm.stopPrank();
+
+        uint256 loanId = 77_3388;
+        LibVaipakam.Loan memory l;
+        l.id = loanId;
+        l.lender = borrower;
+        l.lenderTokenId = 77_33881;
+        l.borrowerTokenId = 77_33882;
+        l.principalAsset = address(vpfiToken);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        vm.prank(address(diamond));
+        LibTestPositionNFT.core(address(diamond)).mint(lender, l.lenderTokenId); // another owner holds it
+
+        vm.recordLogs();
+        vm.prank(address(diamond));
+        VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
+            borrower, uint8(VaultOutflowTypes.AssetKind.ERC20), address(vpfiToken), 0, 40 ether, address(0),
+            uint8(VaultOutflowTypes.OutflowClass.PositionHolder), loanId, l.lenderTokenId, OutflowReason.CLAIM
+        );
+        assertEq(_vpfiDebits(vm.getRecordedLogs()), 40 ether, "one retention debit, for what left the vault");
+    }
+
+    /// @dev Sum of the VaultVpfiDebited amounts in `logs`.
+    function _vpfiDebits(Vm.Log[] memory logs) internal pure returns (uint256 total) {
+        bytes32 topic = keccak256("VaultVpfiDebited(address,uint256,address)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) {
+                (uint256 amt,) = abi.decode(logs[i].data, (uint256, address));
+                total += amt;
+            }
+        }
     }
 
     function testDepositVPFIToVaultHappyPath() public {

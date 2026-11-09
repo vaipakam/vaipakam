@@ -262,8 +262,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // CALLER names (an allowlisted address, an incentive payee, a
         // liquidation buyer) may never name the paying vault itself: that
         // would debit the ledger for tokens that never left.
-        bool sameVault = o.to == proxy;
-        if (sameVault) {
+        // ONE rule for whether anything left the paying vault: the tracked
+        // ledger, the payee's booking and the VPFI retention-debit event all
+        // read it, so the event can never report an outflow the ledger did
+        // not book (Codex #3387 r4).
+        bool moved = o.to != proxy;
+        if (!moved) {
             if (_paysWallet(o.class_)) revert OutflowRecipientInvalid(o.class_, o.to);
             delivered = o.amount;
         } else {
@@ -279,7 +283,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // same-vault payout moves nothing, so it changes no tracked ledger at
         // all (no withdraw-then-deposit pair, so no intermediate dip in a
         // VPFI holder's tier record): only the depository credit moves.
-        if (!sameVault) LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
+        if (moved) LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
 
         // A payee VAULT's owner is credited in the tracked ledger (here, for
         // every vault class; no settlement books the arrival again) and, for a
@@ -289,7 +293,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
         if (creditTo != address(0)) {
             LibProtectedAccount.creditPayment(payeeOwner, o.asset, o.tokenId, o.amount, delivered);
         } else if (payeeOwner != address(0)) {
-            if (!sameVault) LibVaipakam.recordVaultDeposit(payeeOwner, o.asset, o.tokenId, delivered);
+            if (moved) LibVaipakam.recordVaultDeposit(payeeOwner, o.asset, o.tokenId, delivered);
             // Free money for its owner only for a holder payout and a new
             // loan's principal; a stored party's custody, a consolidation, a
             // matched leg, the backstop's warehouse and a seller's share stay
@@ -297,7 +301,9 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (_credits(o.class_)) LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
         }
 
-        if (o.kind == VaultOutflowTypes.AssetKind.ERC20 && o.asset == LibVaipakam.storageSlot().vpfiToken) {
+        // A retention debit only when VPFI actually left the vault: a
+        // same-vault payout moved nothing and debits nothing.
+        if (moved && o.kind == VaultOutflowTypes.AssetKind.ERC20 && o.asset == LibVaipakam.storageSlot().vpfiToken) {
             emit VaultVpfiDebited(user, o.amount, o.to);
         }
         emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, delivered, o.to, o.class_, o.reason, o.ref);
