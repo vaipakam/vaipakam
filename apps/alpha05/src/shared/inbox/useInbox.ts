@@ -1,11 +1,11 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import type { CopyAccess } from '../copy/useCopy';
 import { worldKey } from '../reads/identityKey';
 import { IndexerUnavailable } from '../reads/world/indexerClient';
 import { useWorldRail } from '../reads/world/WorldRailContext';
-import { readInboxPage } from './inbox';
+import { readInboxNewer, readInboxPage } from './inbox';
 
 type Hex = `0x${string}`;
 
@@ -33,6 +33,24 @@ export function useInbox() {
     retry: 1,
   });
   return { chain, account, indexed: world.indexer.origin !== null, query };
+}
+
+/** How many alerts the index wrote for the connected wallet after row
+ *  `seen` (null: nothing to ask yet), re-read on the inbox's cadence. */
+export function useInboxNewer(seen: number | null) {
+  const { address, chainId } = useAccount();
+  const chain: SupportedChain | null = address ? getSupportedChain(chainId) : null;
+  const account: Hex | null = chain && address ? address : null;
+  const world = useWorldRail();
+  return useQuery({
+    queryKey: worldKey(chain?.chainId ?? 0, 'inboxNewer', account?.toLowerCase() ?? '', seen),
+    queryFn: () => readInboxNewer(world.indexer, chain!.chainId, account!, seen!),
+    enabled: chain !== null && account !== null && seen !== null && world.indexer.origin !== null,
+    refetchInterval: INBOX_POLL_MS,
+    refetchIntervalInBackground: false,
+    staleTime: INBOX_POLL_MS / 2,
+    retry: 1,
+  });
 }
 
 /** Why the inbox could not be read, in the reader's words. */

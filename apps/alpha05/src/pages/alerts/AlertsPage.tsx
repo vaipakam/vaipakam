@@ -5,7 +5,7 @@ import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCop
 import { WhyLink } from '../../shared/help/WhyLink';
 import { inboxTarget, type InboxRow } from '../../shared/inbox/inbox';
 import { markSeen, readSeen } from '../../shared/inbox/seen';
-import { inboxReason, useInbox } from '../../shared/inbox/useInbox';
+import { inboxReason, useInbox, useInboxNewer } from '../../shared/inbox/useInbox';
 import { Icon } from '../../shared/ui/Icon';
 import { formatUtc } from '../../shared/ui/format';
 import { currentAppHref, PAGES } from '../../routes/pageMap';
@@ -41,14 +41,24 @@ export function AlertsPage() {
   if (identity !== null && chain !== null && account !== null && query.data !== undefined && baseline?.identity !== identity) {
     setBaseline({ identity, seen: readSeen(chain.chainId, account) });
   }
-  const newestId = rows.reduce((m, r) => Math.max(m, r.id), 0);
   const ready = baseline?.identity === identity;
+  const seenAtOpen = ready ? baseline!.seen : null;
+  // How many arrived since then is the index's count over every row (a new
+  // row stamped with an older block can sort below the rows on screen); what
+  // is recorded as seen is everything written so far, as a notification
+  // centre clears its count when opened. Without the count, only the rows
+  // shown are recorded.
+  const newer = useInboxNewer(seenAtOpen);
+  const newestId = Math.max(
+    rows.reduce((m, r) => Math.max(m, r.id), 0),
+    newer.data && !newer.isRefetchError ? newer.data.newestId : 0,
+  );
   useEffect(() => {
-    if (!ready || chain === null || account === null || newestId === 0) return;
+    if (!ready || chain === null || account === null || newestId === 0 || newer.isPending) return;
     markSeen(chain.chainId, account, newestId);
-  }, [ready, chain, account, newestId]);
-  const seenAtOpen = baseline?.identity === identity ? baseline.seen : null;
-  const fresh = seenAtOpen === null ? 0 : rows.filter((r) => r.id > seenAtOpen).length;
+  }, [ready, chain, account, newestId, newer.isPending]);
+  const fresh = newer.data ? `${newer.data.count}${newer.data.capped ? '+' : ''}` : null;
+  const freshBelow = seenAtOpen !== null && newer.data !== undefined && query.hasNextPage && newer.data.count > rows.filter((r) => r.id > seenAtOpen).length;
 
   const failed = !indexed || query.status === 'error';
   const reason = inboxReason(query.error, indexed, text);
@@ -77,9 +87,15 @@ export function AlertsPage() {
               {format('inbox.unreadable', { count: String(unreadable) })}
             </p>
           )}
-          {fresh > 0 && (
+          {fresh !== null && fresh !== '0' && (
             <p className="tier-b" data-testid="alerts-fresh">
-              {format('inbox.newCount', { count: String(fresh) })}
+              {format('inbox.newCount', { count: fresh })}
+              {freshBelow && ` ${text('inbox.newBelow')}`}
+            </p>
+          )}
+          {newer.status === 'error' && query.data !== undefined && (
+            <p className="tier-b" data-testid="alerts-fresh-failed">
+              {format('inbox.newFailed', { reason: inboxReason(newer.error, indexed, text) })}
             </p>
           )}
           {query.data !== undefined && rows.length === 0 && !query.hasNextPage && unreadable === 0 && (

@@ -125,12 +125,35 @@ export async function readInboxPage(indexer: IndexerClient, chainId: number, acc
   return { rows, nextBefore, unreadable };
 }
 
-/** How many rows of `page` are newer than `seen`, and whether there may be
- *  more than counted (every row of a full first page is new and older pages
- *  exist). */
-export function unreadOf(page: InboxPage, seen: number): { count: number; more: boolean } {
-  const count = page.rows.filter((r) => r.id > seen).length;
-  return { count, more: page.nextBefore !== null && count === page.rows.length && count > 0 };
+export interface InboxNewer {
+  /** How many of the wallet's rows have an id above the one asked about. */
+  count: number;
+  /** True when the index stopped counting at its cap: "at least". */
+  capped: boolean;
+  /** The wallet's newest row id (0 when it has none). */
+  newestId: number;
+}
+
+/** How many of `account`'s rows on `chainId` the index wrote after row
+ *  `seen`, and its newest id. Counted by the index over every row, not
+ *  from a page: ids follow write order and pages follow chain order, so a
+ *  row stamped with an older block can be new while sorting below the
+ *  first page. Throws {@link IndexerUnavailable} when the index does not
+ *  answer, answers for another network or wallet, or leaves the count out
+ *  (an index that predates it). */
+export async function readInboxNewer(indexer: IndexerClient, chainId: number, account: Hex, seen: number): Promise<InboxNewer> {
+  const q = new URLSearchParams({ chainId: String(chainId), limit: '1', newerThan: String(seen) });
+  const res: { chainId?: unknown; address?: unknown; newerThan?: unknown } = await indexer.getJson(`/notifications/${account.toLowerCase()}?${q.toString()}`);
+  if (res.chainId !== chainId || typeof res.address !== 'string' || res.address.toLowerCase() !== account.toLowerCase()) {
+    throw new IndexerUnavailable('shape', 'The index answered for another network or wallet.');
+  }
+  const n = typeof res.newerThan === 'object' && res.newerThan !== null ? (res.newerThan as Record<string, unknown>) : null;
+  const count = wholeNumber(n?.count);
+  const newestId = wholeNumber(n?.newestId);
+  if (n === null || n.id !== seen || count === null || newestId === null || typeof n.capped !== 'boolean') {
+    throw new IndexerUnavailable('shape', 'The index did not count the new alerts.');
+  }
+  return { count, capped: n.capped, newestId };
 }
 
 /** Where a row points: its loan's page, or Claims for a reward entry. */

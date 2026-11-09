@@ -57,25 +57,25 @@ test('the inbox lists the wallet’s alerts, counts the new ones on the bell, an
     await expect(bell).toBeVisible();
     await expect(bell).toHaveAttribute('data-unread', '0');
 
-    // New alerts arrive while the wallet is elsewhere: the bell counts the
-    // four it can read; the unreadable one is not counted as new.
+    // New alerts arrive while the wallet is elsewhere: the bell shows the
+    // index's count of rows written since, the one this app cannot read included.
     await addNotifications(sc.address('lender'), [
       { kind: 'hf_critical', loanId: Number(loanId) },
       { kind: 'reward_final_notice', loanId: null, data: { entryId: 4 } },
       { kind: 'offer_matched', loanId: null },
       { kind: 'loan_ended', loanId: Number(loanId), eventKind: NOTIF_EVENT_KIND_RECONCILED },
-      { kind: 'loan_repaid', id: 'not-a-number' },
+      { kind: 'loan_repaid', loanId: Number(loanId), createdAt: null },
     ]);
     await page.goto('/');
     await connectWallet(page);
-    await expect(bell).toHaveAttribute('data-unread', '4', { timeout: 30_000 });
-    await expect(bell).toHaveAccessibleName('Alerts, 4 new');
+    await expect(bell).toHaveAttribute('data-unread', '5', { timeout: 30_000 });
+    await expect(bell).toHaveAccessibleName('Alerts, 5 new');
     await fitsWidth(page);
 
     // The next visit marks them New, states the unreadable row, and clears the bell.
     await bell.click();
     await expect(page).toHaveURL(/\/alerts$/);
-    await expect(page.getByTestId('alerts-fresh')).toHaveText('4 new since this page was last opened here.', { timeout: 30_000 });
+    await expect(page.getByTestId('alerts-fresh')).toHaveText('5 new since this page was last opened here.', { timeout: 30_000 });
     await expect(page.getByTestId('alerts-unreadable')).toHaveText('1 alerts could not be read and are not shown.');
     const critical = list.locator('[data-alert="hf_critical"]');
     await expect(critical).toContainText(`Loan #${id}’s health fell below 1.05 and liquidation is close: add collateral or repay now.`);

@@ -1512,6 +1512,8 @@ export const copy = {
     empty: B('No alerts for this wallet on {{chain}} yet.'),
     unreadable: A('{{count}} alerts could not be read and are not shown.'),
     newCount: B('{{count}} new since this page was last opened here.'),
+    newBelow: B('Some are further down the list; each is marked New when shown.'),
+    newFailed: B('How many alerts are new could not be counted ({{reason}}); the ones shown here are marked.'),
     newBadge: B('New'),
     more: B('Show older alerts'),
     readingMore: B('Reading older alerts…'),

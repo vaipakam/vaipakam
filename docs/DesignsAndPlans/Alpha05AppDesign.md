@@ -1441,11 +1441,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   it happened is not known. A failed read is said, never shown as an empty
   inbox. The header carries a bell beside its word, shown while a wallet is
   connected on a served network and the build reads an index, with the
-  count of rows newer than the last ones the page showed in this browser.
-  "Newer" is by the index's row id, which only grows in write order, so a
-  row stamped with an older block still counts. Which rows were seen is kept
-  in this browser only and only moves forward; opening the page records
-  what it showed and marks the rows that were new as New for the visit. The
+  count of rows the index wrote after the newest one recorded as seen. The
+  index counts them over every row by its row id, which only grows in write
+  order, so a row stamped with an older block still counts even when it
+  sorts below the first page; a count taken from a page is never used. The
+  seen record is kept in this browser only and only moves forward; opening
+  the page records every row written so far as seen (as a notification
+  centre clears its count when opened), states how many were new, and
+  marks those it shows as New for the visit. When the latest count failed,
+  the bell says the alerts could not be read and shows no count, even with
+  an earlier count in hand. The
   page says Telegram and push alerts are still set up in the current app
   until that part is built here.
 

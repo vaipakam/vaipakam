@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenance';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
-import { INBOX_PAGE, inboxTarget, parseInboxRow, readInboxPage, unreadOf, type InboxPage } from './inbox';
+import { INBOX_PAGE, inboxTarget, parseInboxRow, readInboxNewer, readInboxPage } from './inbox';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000Aa' as const;
 
@@ -76,21 +76,22 @@ describe('readInboxPage', () => {
   });
 });
 
-describe('unreadOf', () => {
-  const page = (ids: number[], nextBefore: string | null): InboxPage => ({
-    rows: ids.map((id) => ({ id, kind: 'loan_matched', rawKind: 'loan_matched', loanId: 1n, createdAt: 1, entryId: null, reconciled: false })),
-    nextBefore,
-    unreadable: 0,
+describe('readInboxNewer', () => {
+  it('asks the index to count rows written after the one seen', async () => {
+    const seen: string[] = [];
+    const r = await readInboxNewer(client(answer([], null, { newerThan: { id: 8, count: 3, capped: false, newestId: 14 } }), seen), 84532, ACCOUNT, 8);
+    expect(seen[0]).toBe(`/notifications/${ACCOUNT.toLowerCase()}?chainId=84532&limit=1&newerThan=8`);
+    expect(r).toEqual({ count: 3, capped: false, newestId: 14 });
   });
 
-  it('counts rows newer than the one seen, by id', () => {
-    expect(unreadOf(page([9, 4, 12], null), 8)).toEqual({ count: 2, more: false });
-    expect(unreadOf(page([3, 2], null), 8)).toEqual({ count: 0, more: false });
-  });
-
-  it('says there may be more when a whole page is new and older pages exist', () => {
-    expect(unreadOf(page([9, 8], '1:0:8'), 0)).toEqual({ count: 2, more: true });
-    expect(unreadOf(page([9, 8], '1:0:8'), 8)).toEqual({ count: 1, more: false });
+  it.each([
+    ['no count (an index that predates it)', {}],
+    ['a count for another id', { newerThan: { id: 7, count: 3, capped: false, newestId: 14 } }],
+    ['a bad count', { newerThan: { id: 8, count: -1, capped: false, newestId: 14 } }],
+    ['no cap flag', { newerThan: { id: 8, count: 1, newestId: 14 } }],
+    ['another wallet', { address: '0x0000000000000000000000000000000000000001', newerThan: { id: 8, count: 1, capped: false, newestId: 14 } }],
+  ])('refuses an answer with %s', async (_why, over) => {
+    await expect(readInboxNewer(client(answer([], null, over)), 84532, ACCOUNT, 8)).rejects.toBeInstanceOf(IndexerUnavailable);
   });
 });
 

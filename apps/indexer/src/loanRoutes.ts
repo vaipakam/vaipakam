@@ -59,6 +59,8 @@ import {
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
+/** The most rows `newerThan` counts; at the cap the answer says `capped`. */
+const NEWER_THAN_CAP = 1000;
 
 function corsHeaders(): HeadersInit {
   return {
@@ -2134,6 +2136,15 @@ export async function handleNotifications(
   if (notServed) return notServed;
   const limit = parseLimit(url.searchParams.get('limit'));
   const beforeRaw = url.searchParams.get('before');
+  // `newerThan=<id>` adds how many of the wallet's rows have a larger id —
+  // the client's unread count. Ids grow in WRITE order, which the chain
+  // order of the page does not follow (a calendar, health or replayed row
+  // can be stamped with an older block), so a count taken from the first
+  // page alone would miss a new row that sorts below it.
+  const newerRaw = url.searchParams.get('newerThan');
+  if (newerRaw !== null && !/^\d{1,15}$/.test(newerRaw)) {
+    return jsonResponse({ error: 'bad-newer-than' }, 400);
+  }
 
   const where: string[] = ['chain_id = ?', 'recipient = ?'];
   const binds: (string | number)[] = [chainId, addr];
@@ -2166,8 +2177,41 @@ export async function handleNotifications(
     const nextBefore = last
       ? `${last.block_number}:${last.log_index}:${last.id}`
       : null;
+    // With it, the wallet's newest id too, so a client that has shown the
+    // inbox can record everything written so far as seen, not only the rows
+    // its first page happened to hold.
+    let newerThan:
+      | { id: number; count: number; capped: boolean; newestId: number }
+      | undefined;
+    if (newerRaw !== null) {
+      const id = Number.parseInt(newerRaw, 10);
+      const counted = await env.DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM (
+              SELECT 1 FROM notifications
+               WHERE chain_id = ? AND recipient = ? AND id > ?
+               LIMIT ?)) AS n,
+           (SELECT MAX(id) FROM notifications
+             WHERE chain_id = ? AND recipient = ?) AS newest`,
+      )
+        .bind(chainId, addr, id, NEWER_THAN_CAP, chainId, addr)
+        .first<{ n: number; newest: number | null }>();
+      const count = Number(counted?.n ?? 0);
+      newerThan = {
+        id,
+        count,
+        capped: count >= NEWER_THAN_CAP,
+        newestId: Number(counted?.newest ?? 0),
+      };
+    }
     return jsonResponse(
-      { chainId, address: addr, notifications, nextBefore },
+      {
+        chainId,
+        address: addr,
+        notifications,
+        nextBefore,
+        ...(newerThan ? { newerThan } : {}),
+      },
       200,
       { 'Cache-Control': 'no-store' },
     );

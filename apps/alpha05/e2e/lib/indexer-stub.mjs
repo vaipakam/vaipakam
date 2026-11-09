@@ -43,8 +43,8 @@
 //    `POST /__stub/notifications` (kinds the fixture cannot reach by itself,
 //    such as health bands, reward deadlines, an unknown kind or an
 //    unreadable row), stamped after every chain row. Newest first, paged by
-//    the indexer's `block:log:id` cursor; refused while the posture is
-//    `down`.
+//    the indexer's `block:log:id` cursor, with the `newerThan` count of rows
+//    written after an id; refused while the posture is `down`.
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
@@ -241,7 +241,16 @@ async function notifications(url, address) {
   }
   page = page.slice(0, limit);
   const last = page.length === limit ? page[page.length - 1] : null;
-  return { status: 200, body: { chainId: CHAIN_ID, address: addr, notifications: page, nextBefore: last ? `${last.blockNumber}:${last.logIndex}:${last.id}` : null } };
+  const body = { chainId: CHAIN_ID, address: addr, notifications: page, nextBefore: last ? `${last.blockNumber}:${last.logIndex}:${last.id}` : null };
+  // `newerThan=<id>`: how many of the wallet's rows have a larger id, and its
+  // newest id, as the indexer counts them (every row, whatever its block).
+  const newer = url.searchParams.get('newerThan');
+  if (newer !== null) {
+    if (!/^\d{1,15}$/.test(newer)) return { status: 400, body: { error: 'bad-newer-than' } };
+    const id = Number(newer);
+    body.newerThan = { id, count: rows.filter((r) => r.id > id).length, capped: false, newestId: rows.reduce((m, r) => Math.max(m, r.id), 0) };
+  }
+  return { status: 200, body };
 }
 
 /** The `/loans/recent` disclosure of loans whose terms the index has not
