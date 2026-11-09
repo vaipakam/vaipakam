@@ -1463,3 +1463,15 @@ En Alquilar, «Ofrecer un NFT en alquiler» abre un formulario breve: la colecci
 ### Alquilar: riesgos de ofrecer
 
 El NFT se queda en tu bóveda mientras la oferta está abierta y mientras está alquilado, y no puedes retirarlo hasta que termine la oferta o el alquiler. Mientras nadie lo haya alquilado, puedes cancelar la oferta desde su página pasados sus primeros cinco minutos. Una vez alquilado, el arrendatario tiene el derecho a usar el NFT hasta que termine el alquiler, y no puedes retirárselo antes. Un alquiler no se cierra solo: lo cierra el arrendatario, o pasado el periodo de gracia cualquiera puede cerrarlo como impago; entonces el alquiler va a ti y el margen al protocolo. Una oferta que caduca deja el NFT en tu bóveda hasta que se cierra.
+
+<a id="rent-request"></a>
+
+### Alquilar: pedir un NFT en alquiler
+
+En Alquilar, Publicar una solicitud de alquiler abre el mismo formulario breve que una oferta, redactado para ti como arrendatario: la colección y el número del token (y, en una colección multitoken, la cantidad), el token en que pagas, la tarifa diaria como una sola cifra, el plazo en días, la regla de alquiler y cuánto tiempo sigue abierta la solicitud. La revisión muestra que el alquiler de todo el plazo y un margen pasan ahora de tu billetera a tu propia bóveda, la parte de margen que esta solicitud fija con el ajuste de hoy, que el plazo empieza cuando un propietario acepta la solicitud y que un propietario que la acepta inicia el alquiler de inmediato, sin ningún paso más por tu parte. Si tu billetera tiene demasiado poco, o ya tiene ese NFT, la revisión lo dice antes de cualquier paso en la billetera; un token que aún no existe se señala. Después tu billetera aprueba exactamente el alquiler y el margen y publica la solicitud, que la app prueba antes como simulación. Luego la app comprueba en la cadena que la solicitud quedó registrada y que el alquiler y el margen llegaron a tu bóveda, y enlaza la página de la solicitud.
+
+<a id="rent-request-risks"></a>
+
+### Alquilar: riesgos de una solicitud de alquiler
+
+El alquiler y el margen se quedan en tu bóveda mientras la solicitud está abierta, y no puedes retirarlos hasta que la canceles o termine. Mientras ningún propietario la haya aceptado, puedes cancelar la solicitud desde su página pasados sus primeros cinco minutos, y vuelven a tu billetera. Un propietario que la acepta inicia el alquiler de inmediato con exactamente estas condiciones: tienes el derecho a usar el NFT, nunca el NFT en sí. Un alquiler no se cierra solo: ciérralo desde su página de posición. Cerrar tarde cuesta un recargo por retraso tomado del margen, y si entra en impago el alquiler va al propietario y el margen al protocolo. Una solicitud que caduca deja el alquiler y el margen en tu bóveda hasta que se cierre.

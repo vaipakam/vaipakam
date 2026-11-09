@@ -1481,3 +1481,15 @@ Dans Louer, « Proposer un NFT à la location » ouvre un court formulaire : la 
 ### Louer : risques de la mise en location
 
 Le NFT reste dans votre coffre tant que l'offre est ouverte et tant qu'il est loué, et vous ne pouvez pas le retirer avant la fin de l'offre ou de la location. Tant que personne ne l'a loué, vous pouvez annuler l'offre depuis sa page après ses cinq premières minutes. Une fois loué, le locataire détient le droit d'utiliser le NFT jusqu'à la fin de la location, et vous ne pouvez pas le reprendre plus tôt. Une location ne se clôture pas d'elle-même : le locataire la clôture, ou après le délai de grâce n'importe qui peut la clôturer comme défaut ; le loyer vous revient alors et la marge va au protocole. Une offre expirée garde le NFT dans votre coffre jusqu'à sa clôture.
+
+<a id="rent-request"></a>
+
+### Louer : demander à louer un NFT
+
+Dans Louer, Publier une demande de location ouvre le même court formulaire qu'une offre, rédigé pour vous en tant que locataire : la collection et le numéro du jeton (et, pour une collection multi-jetons, la quantité), le jeton dans lequel vous payez, le tarif journalier en un seul chiffre, la durée en jours, la règle de location et la durée pendant laquelle la demande reste ouverte. La vérification montre que le loyer de toute la durée et une marge passent dès maintenant de votre portefeuille à votre propre coffre, la part de marge que cette demande fixe au réglage du jour, que la durée court à partir du moment où un propriétaire accepte la demande, et qu'un propriétaire qui l'accepte démarre la location aussitôt, sans autre étape de votre part. Si votre portefeuille détient trop peu, ou détient déjà ce NFT, la vérification le dit avant toute étape dans le portefeuille ; un jeton qui n'existe pas encore est signalé. Votre portefeuille approuve ensuite exactement le loyer et la marge et publie la demande, que l'application essaie d'abord en simulation. Ensuite, l'application vérifie sur la chaîne que la demande a été enregistrée et que le loyer et la marge sont arrivés dans votre coffre, et renvoie vers la page de la demande.
+
+<a id="rent-request-risks"></a>
+
+### Louer : risques d'une demande de location
+
+Le loyer et la marge restent dans votre coffre tant que la demande est ouverte, et vous ne pouvez pas les retirer avant de l'annuler ou qu'elle prenne fin. Tant qu'aucun propriétaire ne l'a acceptée, vous pouvez annuler la demande depuis sa page après ses cinq premières minutes, et ils reviennent dans votre portefeuille. Un propriétaire qui l'accepte démarre la location aussitôt à exactement ces conditions : vous détenez le droit d'utiliser le NFT, jamais le NFT lui-même. Une location ne se clôt pas d'elle-même : clôturez-la depuis sa page de position. Clôturer en retard coûte des frais de retard pris sur la marge, et en cas de défaut le loyer va au propriétaire et la marge au protocole. Une demande expirée laisse le loyer et la marge dans votre coffre jusqu'à ce qu'elle soit fermée.

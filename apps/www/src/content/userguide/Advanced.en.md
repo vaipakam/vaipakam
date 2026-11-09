@@ -2808,3 +2808,15 @@ The form reads the collection's standard with ERC-165 `supportsInterface` and th
 ### Rent: Risks of Listing
 
 The NFT stays in your vault while the listing is open and while it is rented, and you cannot withdraw it until the listing or the rental ends. While nobody has rented it, you can cancel the listing from its page after its first five minutes. Once rented, the renter holds the right to use the NFT until the rental ends, and you cannot take that right back early. A rental does not close by itself: the renter closes it, or after the grace period anyone can close it as a default; then the rent comes to you and the buffer goes to the protocol. A listing that lapses keeps the NFT in your vault until it is closed.
+
+<a id="rent-request"></a>
+
+### Rent: Asking to Rent an NFT
+
+The form reads the collection's standard with ERC-165 `supportsInterface` and the longest term from `getProtocolConfigBundle`. The review reads the token's holder with `ownerOf` (an ERC-1155 has no holder list), the payment token's class from `getAssetPriceStatus` and the liquidity check, the wallet's `balanceOf` and `allowance` of the payment token, the buffer share from `getRiskConfig` and the grace period from `getEffectiveGraceSeconds`, then dry-runs `createOffer` with `offerType` 1, `assetType` 1 or 2, `amount` and `amountMax` both the daily fee, every collateral and rate field zero and `prepayAsset` the payment token. Posting records `rentalBufferBpsAtCreate` and pulls the daily fee times the term plus that share into the renter's vault; the outcome is read from the transaction's `OfferCreated` log and the payment token's `Transfer` log into the vault.
+
+<a id="rent-request-risks"></a>
+
+### Rent: Risks of a Rental Request
+
+The rent and buffer stay in your vault while the request is open, and you cannot withdraw them until you cancel it or it ends. While no owner has taken it, you can cancel the request from its page after its first five minutes, and they come back to your wallet. An owner who takes it starts the rental at once on exactly these terms: you hold the right to use the NFT, never the NFT itself. A rental does not close by itself: close it from its position page. Closing late costs a late fee from the buffer, and if it defaults the rent goes to the owner and the buffer to the protocol. A request that lapses keeps the rent and buffer in your vault until it is closed.

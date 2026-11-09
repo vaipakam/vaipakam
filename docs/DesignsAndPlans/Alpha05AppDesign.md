@@ -1712,6 +1712,21 @@ above. Each resolves here, so a route reviewer needs no private file:
   error, a failed read of the network's longest term (stated with a
   retry), or that a read the listing needs has not answered yet.
 
+- **RB-RENT-REQUEST** — A renter posts a request to rent a named NFT
+  (NFT-02) on the Rent page, behind the Terms gate, through the same form
+  as a listing worded for the renter. Only one of the two forms is open at
+  a time, and the rental book steps aside while either is. The review
+  states that the rent for the whole term and the buffer move from the
+  wallet into the renter's own vault now and stay there while the request
+  is open, the buffer share the request fixes at posting, that the term
+  runs from when an owner takes it and that taking it starts the rental at
+  once with no further step from the renter, and what closing late or a
+  default does. A shortfall is said before any wallet step; a token that
+  does not exist yet is noted, and a token the wallet already holds is
+  refused. The approval is exactly the rent and buffer, put back if the
+  request does not go through; the outcome is measured (the request
+  recorded and the rent and buffer in the renter's vault).
+
 ## 3. Companion specifications
 
 ### 3.1 Deployment and service capabilities
