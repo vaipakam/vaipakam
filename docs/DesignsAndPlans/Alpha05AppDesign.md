@@ -1482,10 +1482,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   network only for a smart account; a network whose protected mode holds
   the chat names it and says the chat keeps every alert until the delay
   ends, with the time the service gives, or says the delay has not started
-  because the chat has not yet been told. Push is offered only when the
+  because the chat has not yet been told. Those holds are kept apart from
+  the link's state, so a new code or a test alert never erases them; only a
+  later unlink answer replaces them (a one-network answer only that
+  network's). Push is offered only when the
   service's current answer, read successfully, says it can send now; when
   its answer covers the reminder sender only, the page says warnings may not
-  reach push; when it cannot send, push is not offered, and an earlier
+  reach push; when it cannot send, push is not offered, the service's
+  reason and the sender it concerns are named, a setup reason is said to be
+  this deployment's configuration rather than an outage, and an earlier
   switch-on made here is said to stay stored; when the service cannot be
   asked, that is said and push is not offered. Push also needs the channel
   subscription in the wallet's push app, and it stops by unsubscribing
@@ -1494,8 +1499,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   and 1.05 unless changed) are fixed in Basic and editable in Advanced,
   each above the next and the last above 1.0; a warning is not a promise
   that anyone will act. Payment reminders switch off and on. Linking
-  Telegram and switching push on ask for the Terms first (ACC-15);
-  switching anything off never does. A declined signature sends nothing,
+  Telegram and switching push on ask for the Terms first (ACC-15), and the
+  action asked for survives leaving the page mid-acceptance; switching
+  anything off never does. A declined signature sends nothing,
   and every refusal has its own words and remedy. A build with no alert
   service says Telegram and push alerts are not set up and sends nothing.
 
