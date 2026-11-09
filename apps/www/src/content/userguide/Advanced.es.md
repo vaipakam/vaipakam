@@ -1437,6 +1437,12 @@ La página Alertas lee la bandeja del índice para la wallet conectada en su red
 
 Cada cambio es una firma EIP-191 sobre un mensaje en texto claro que nombra la acción, la billetera, la red y la hora; el servicio de alertas acepta cada solicitud firmada una vez en diez minutos, y un guardado lleva solo el ajuste que cambia. El servicio guarda la billetera, la red, los ajustes y, una vez vinculado, el id del chat de Telegram; no los devuelve, así que cada tarjeta indica lo que hizo este navegador. El vínculo de Telegram solo se prueba cuando una alerta de prueba llega al chat. Desvincular con una billetera normal borra todas las redes, una cuenta inteligente solo la red firmada, y una red con el modo protegido activo mantiene el chat hasta que pasa el plazo de protección. Push solo se ofrece cuando el estado del servicio dice que ambos remitentes pueden enviar por un canal; si solo cubre el remitente de recordatorios, los avisos pueden no llegar por push. Las tres líneas de salud son por defecto 1,5, 1,2 y 1,05 y se pueden cambiar aquí, cada una por encima de la siguiente y la última por encima de 1,0. Vincular Telegram y activar push piden primero los Términos; desactivar nunca.
 
+<a id="alerts-paid-push"></a>
+
+### Avisos push de pago
+
+Tu aceptación es un tope guardado en la cadena: lo máximo en VPFI que pagarás por lado del préstamo. La tarjeta lo muestra con el propio juicio del contrato sobre si cubre la comisión actual. En Básico aceptas la comisión actual; en Avanzado puedes escribir un tope desde la comisión hasta el límite del protocolo de 50 VPFI, y aceptar el límite acepta cualquier comisión que la gobernanza pueda fijar. Aceptar solo se ofrece donde el servicio de alertas dice que cobra, nunca a una billetera que el control de sanciones marca, y pide antes los Términos. Primero vienen la revisión y una simulación, y la comisión se vuelve a leer justo antes de abrir tu billetera: si cambió, no se envía nada. Retirar pone el tope a cero y se ofrece siempre que haya un tope guardado, incluso con el protocolo en pausa o sin poder consultar el servicio de alertas. Un despliegue sin el registro de aceptación no ofrece ninguna de las dos cosas, y la tarjeta dice si aún puede cobrar la comisión.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Escalera de umbrales

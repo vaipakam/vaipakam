@@ -1,13 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useMode } from '../../app/ModeContext';
 import { SUPPORTED_CHAINS, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { AGENT } from '../../shared/alerts/agentClient';
-import { bandsProblem, DEFAULT_BANDS, parseBand, parsePushStatus, pushChannelUrl, type AlertAction, type Bands } from '../../shared/alerts/alerts';
+import { bandsProblem, DEFAULT_BANDS, parseBand, pushChannelUrl, type AlertAction, type Bands } from '../../shared/alerts/alerts';
 import { type KnownAlerts } from '../../shared/alerts/known';
 import { useKnown } from '../../shared/alerts/useKnown';
 import { useAlertAction, type AlertRun } from '../../shared/alerts/useAlertAction';
+import { usePushStatus } from '../../shared/alerts/usePushStatus';
 import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -69,21 +69,8 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
   const action = useAlertAction(chain.chainId, account);
   const nowS = Math.floor(useNow(5_000) / 1000);
 
-  const push = useQuery({
-    queryKey: ['alerts', 'pushStatus'],
-    queryFn: async () => {
-      const res = await AGENT.request('GET', '/push/status');
-      if (res.status !== 200) throw new Error(format('alertChannels.pushStatusCode', { status: String(res.status) }));
-      const status = parsePushStatus(res.data);
-      if (status === null) throw new Error(text('alertChannels.pushStatusShape'));
-      return status;
-    },
-    staleTime: 60_000,
-    retry: 1,
-  });
-  // Only a read that succeeded now offers push: after a failed refetch the
-  // query keeps its last answer, which must not stand beside "could not ask".
-  const pushNow = push.status === 'success' ? push.data : null;
+  const push = usePushStatus();
+  const pushNow = push.current;
 
   const run = async (a: AlertAction) => {
     await action.start(a);
@@ -189,10 +176,10 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
 
       <div className="card alert-channel" data-testid="alert-push">
         <h3>{text('alertChannels.pushTitle')}</h3>
-        {push.status === 'pending' && <p className="tier-b">{text('alertChannels.pushChecking')}</p>}
-        {push.status === 'error' && (
+        {push.state === 'pending' && <p className="tier-b">{text('alertChannels.pushChecking')}</p>}
+        {push.state === 'error' && (
           <p className="tier-b" data-testid="alert-push-unknown">
-            {format('alertChannels.pushUnknown', { reason: (push.error as Error).message })}
+            {format('alertChannels.pushUnknown', { reason: push.error ?? '' })}
           </p>
         )}
         {pushNow?.kind === 'available' && (

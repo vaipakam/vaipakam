@@ -1588,6 +1588,12 @@ The Alerts page reads the index's inbox for the connected wallet on its network,
 
 Every change is an EIP-191 signature over a plain message naming the action, the wallet, the network and the time; the alert service accepts each signed request once within ten minutes, and a save carries only the setting it changes. The service stores the wallet, the network, the settings and, once linked, the Telegram chat id; it does not report them back, so each card states what this browser did. The Telegram link is proven only by a test alert reaching the chat. Unlinking with an ordinary wallet clears every network, a smart account clears the signed network only, and a network where protected mode is on keeps the chat until the protection delay passes. Push is offered only when the service's status says both senders can send on one channel; when it covers the reminder sender only, warnings may not reach push. The three health lines default to 1.5, 1.2 and 1.05 and can be changed here, each above the next and the last above 1.0. Linking Telegram and switching push on ask for the Terms first; switching anything off never does.
 
+<a id="alerts-paid-push"></a>
+
+### Paid push alerts
+
+Your agreement is a cap stored on chain: the most VPFI you will pay per loan side. The card shows it with the contract's own word on whether it covers the fee now. Basic agrees at the fee now; Advanced lets you type a cap from the fee up to the protocol's ceiling of 50 VPFI, and agreeing to the ceiling accepts any fee governance can set. Agreeing is offered only where the alert service says it charges, never to a wallet the sanctions screen flags, and asks for the Terms first. The review and a dry run come first, and the fee is read again right before your wallet opens: if it moved, nothing is sent. Withdrawing sets the cap to zero and is offered whenever a cap is stored, even while the protocol is paused or the alert service cannot be asked. A deployment without the agreement record offers neither, and the card says whether it can still charge the fee.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder
