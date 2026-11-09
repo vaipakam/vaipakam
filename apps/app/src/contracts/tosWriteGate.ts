@@ -26,6 +26,7 @@
  */
 import { decodeFunctionData, toFunctionSelector, type AbiFunction } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { LEGACY_DIAMOND_NFT_ABI } from '@vaipakam/lib/positionNft';
 
 /**
  * Writes that must work whatever the Terms say.
@@ -164,16 +165,27 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'escapeWithdraw',
   'disownUntracked',
   'releasePayout',
+  // The pre-#3205 Diamond's position-NFT queue (legacy-mode chains only;
+  // named in the frozen fragment, not the generated ABI). Queuing a
+  // position NFT to an allowed destination is how a protected account (and
+  // a replaced one's controller) takes its own position out.
+  // TODO(#3321 positionNft-legacy-removal): remove these four.
   'releasePositionTransfer',
-  // Queuing a position NFT to an allowed destination is how a protected
-  // account (and a replaced one's controller) takes its own position out.
   'queuePositionTransfer',
-  'cancelPayout',
   'cancelPositionTransfer',
-  'cosignPayout',
   'cosignPositionTransfer',
+  'cancelPayout',
+  'cosignPayout',
   'lockVault',
+  // `requestUnlock` is also the PositionNFT holder lock's own unlock
+  // request; with `lock`, `cancelUnlock` and `executeUnlock` (#3205) it
+  // protects or frees the holder's own tokens.
   'requestUnlock',
+  'lock',
+  'cancelUnlock',
+  'executeUnlock',
+  // Protected mode's own switch-on of that holder lock (a Diamond write).
+  'lockPositionNfts',
   'removeAllowlisted',
   'cancelSettingChange',
   'cancelAddAllowlisted',
@@ -214,7 +226,7 @@ const ZERO_ONLY: Readonly<Record<string, number>> = {
 
 /** Selectors of the exit writes, for inspecting batched calls. */
 const EXIT_SELECTORS: ReadonlySet<string> = new Set(
-  (DIAMOND_ABI_VIEM as readonly unknown[])
+  [...(DIAMOND_ABI_VIEM as readonly unknown[]), ...(LEGACY_DIAMOND_NFT_ABI as readonly unknown[])]
     .filter(
       (item): item is AbiFunction =>
         typeof item === 'object' &&

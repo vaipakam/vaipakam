@@ -8,15 +8,7 @@
  */
 import type { Verdict } from '../eligibility/types';
 
-export type ClaimKind =
-  | 'lender-terminal'
-  | 'borrower-terminal'
-  | 'fallback-in-kind'
-  | 'seller-interest'
-  | 'extension-reserve'
-  | 'payroll'
-  | 'reward'
-  | 'protected-payout';
+export type ClaimKind = 'lender-terminal' | 'borrower-terminal' | 'fallback-in-kind' | 'seller-interest' | 'extension-reserve' | 'payroll' | 'reward' | 'protected-payout';
 
 export interface ClaimRow {
   id: string;

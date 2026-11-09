@@ -6,7 +6,7 @@
 // wallet-file element threw a raw TypeError. They are inputs, so a bad one
 // is BLOCKED by the drive that reads it; these pin the parsing.
 import { describe, expect, it } from 'vitest';
-import { normaliseWallets, parseAppRouteList, parseOrigin, parseWalletFileText } from './driver.mjs';
+import { normalisePrivateKey, normaliseWallets, parseAppRouteList, parseOrigin, parseWalletFileText } from './driver.mjs';
 
 describe('parseOrigin', () => {
   it('drops a trailing slash, so a route appends to a bare origin', () => {
@@ -99,5 +99,28 @@ describe('normaliseWallets', () => {
   it('throws a described error on a file that is neither shape', () => {
     expect(() => normaliseWallets('nope')).toThrow(/neither a role map nor an array/);
     expect(() => normaliseWallets(null)).toThrow(/neither a role map nor an array/);
+  });
+});
+
+describe('normalisePrivateKey', () => {
+  const HEX = 'ab'.repeat(32);
+  it('keeps a 0x-prefixed key', () => {
+    expect(normalisePrivateKey(`0x${HEX}`)).toBe(`0x${HEX}`);
+  });
+  it('adds the prefix to an unprefixed key', () => {
+    expect(normalisePrivateKey(HEX)).toBe(`0x${HEX}`);
+  });
+  it('accepts an upper-case 0X prefix', () => {
+    expect(normalisePrivateKey(`0X${HEX}`)).toBe(`0x${HEX}`);
+  });
+  it.each([
+    ['a short key', 'ab'.repeat(31)],
+    ['a long key', 'ab'.repeat(33)],
+    ['non-hex', 'zz'.repeat(32)],
+    ['a doubled prefix', `0x0x${HEX}`],
+    ['a non-string', 42],
+    ['undefined', undefined],
+  ])('refuses %s', (_label, key) => {
+    expect(normalisePrivateKey(key)).toBeNull();
   });
 });

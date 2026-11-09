@@ -25,6 +25,7 @@ import {
   type LoanSalePendingState,
 } from '../data/loanSalePending';
 import { formatDateTime } from '../lib/format';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function LoanSalePendingCard({
   state,
@@ -45,6 +46,7 @@ export function LoanSalePendingCard({
    *  its result must outlive it. */
   onDone: (message: string) => void;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
   const { onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
@@ -54,7 +56,10 @@ export function LoanSalePendingCard({
   const view = saleListingCardView(state, stale);
   // The cancel control's own gate, so the copy never names a control that
   // is not on the card (Codex #2673 r1).
-  const canCancel = Boolean(state.offerId) && state.isHolder;
+  // #3205 — a listing whose lender position moved can never complete, and
+  // the protocol lets ANYONE cancel it (the refund still goes to its poster),
+  // so the cancel is offered to every viewer then.
+  const canCancel = Boolean(state.offerId) && (state.isHolder || view === 'moved');
 
   async function cancelListing() {
     if (!state.offerId || !walletReady) return;
@@ -62,7 +67,7 @@ export function LoanSalePendingCard({
     setError(null);
     try {
       await write('cancelOffer', [BigInt(state.offerId)]);
-      onDone(copy.loanSale.cancelled);
+      onDone(routeBlocks ? copy.loanSale.cancelled : copy.loanSale.cancelledRoute);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -74,8 +79,10 @@ export function LoanSalePendingCard({
   }
 
   const listingLine = state.offerId
-    ? copy.loanSale.pending(state.offerId)
-    : copy.loanSale.pendingNoId;
+    ? (routeBlocks ? copy.loanSale.pending : copy.loanSale.pendingRoute)(state.offerId)
+    : routeBlocks
+      ? copy.loanSale.pendingNoId
+      : copy.loanSale.pendingNoIdRoute;
 
   return (
     <section className="card">
@@ -86,13 +93,21 @@ export function LoanSalePendingCard({
               and is current, REPLACES the pre-acceptance text rather than
               sitting under it. */}
           {view === 'settled'
-            ? copy.loanSale.loanSettledWhileListed
+            ? (routeBlocks ? copy.loanSale.loanSettledWhileListed : copy.loanSale.loanSettledWhileListedRoute)
+            : view === 'moved'
+              ? canCancel
+                ? copy.loanSale.movedEnded
+                : copy.loanSale.movedEndedNoId
             : view === 'accepted'
               ? copy.loanSale.acceptedCompleting
               : view === 'expired'
                 ? (canCancel
-                    ? copy.loanSale.expiredUnsold
-                    : copy.loanSale.expiredUnsoldNoCancel)(
+                    ? routeBlocks
+                      ? copy.loanSale.expiredUnsold
+                      : copy.loanSale.expiredUnsoldRoute
+                    : routeBlocks
+                      ? copy.loanSale.expiredUnsoldNoCancel
+                      : copy.loanSale.expiredUnsoldNoCancelRoute)(
                     formatDateTime(Number(state.expiresAt)),
                   )
                 : listingLine}
@@ -117,6 +132,13 @@ export function LoanSalePendingCard({
           <p className="field-hint" style={{ marginTop: 8 }}>
             {copy.loanSale.boundsNote}
           </p>
+          {/* #3205 — where moving the NFT does not block (standalone
+              PositionNFT), say when the app cannot tell whether it moved. */}
+          {!routeBlocks && state.positionMoved === 'unknown' ? (
+            <p className="field-hint" style={{ marginTop: 8 }}>
+              {copy.loanSale.movedUnknown}
+            </p>
+          ) : null}
         </>
       ) : null}
       {canCancel ? (

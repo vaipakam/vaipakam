@@ -2,8 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 are decided, and the others still need an answer
-before code starts. This builds on [#3204's central vault code
+settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
 ## 1. The problem, measured
@@ -562,6 +561,44 @@ opens by itself.
    taken were refusing plain transfers while a loan is open, and a signed
    handover for every move; both existed only because the ownership record
    sat in Diamond storage.
+
+### Build notes, part 1: the position-NFT contract (2026-11-07)
+
+These record the choices the build made where §3.9 left room. The coordinator approved points 1 to 5, and point 5 came with the additions listed under it.
+
+1. **The core.** `PositionNFT` is a non-upgradeable ERC-721 Enumerable.
+   - It is owned by the Timelock through a two-step transfer; renouncing reverts.
+   - Its guardian may cancel a pending replacement.
+   - The Diamond is its immutable minter.
+   - It keeps a per-token transfer count that only rises.
+   - The renderer and the transfer check are replaced in two steps, at least `MIN_COMPONENT_DELAY` (3 days) apart.
+2. **No burn.** The core has no burn entry. The Diamond's `burnNFT` became `retirePosition`. It keeps the #569 lien release and the #2342 tier sync, and marks the token retired in Diamond storage. Every Diamond holder read treats a retired token as the old code treated a burned one (`ownerOf` reverts, `holderOrZero` returns 0), so no settlement path changed meaning. The token stays with its holder as a receipt, and it still renders.
+3. **Routes in place of locks.**
+   - The route record (its reason) stays in Diamond storage, one per token, so two routes still cannot overlap on one token.
+   - Opening a route stores the token's transfer count. Each completion (the offset, the lender sale, the collateral sale, the swap-to-repay pre-hook and post-hook) requires it unchanged. Cancels and teardowns do not check it.
+   - A swap-to-repay order whose position moved reads as invalid to the order protocol.
+4. **The Diamond is the first renderer and the first transfer check.** As the check, it runs:
+   - the #821 / #1123 fail-closed sanctions screen;
+   - the #2342 tier sync. This is the one-way ping the owner allowed (2026-11-07) for a time-accrued record that must follow the holder.
+
+   The check is guarded against re-entry, as the old guarded transfer was. It can only refuse a transfer.
+5. **The Diamond's protected-mode queue is gone.** That covers the queued position transfer, its co-sign and its rows (the storage fields are retired). NFT protection is the core's holder lock. Following the coordinator's additions, the core gives the Diamond the same narrow powers it has over the VaultBeacon's pin delay:
+   - It may lock a holder (on enable with NFT protection, on an emergency lock, and on a replacement).
+   - It may raise the holder's lock delay toward the protected delay, up to `MAX_DIAMOND_LOCK_DELAY` (5 days, the longest protected delay).
+   - It may void a pending unlock or delay lowering, from the same single `_voidPendingChanges` that voids the beacon's pending pin change, and on re-enable.
+   - It can never unlock a holder or lower a delay.
+
+   The core applies the VaultBeacon's own rules:
+   - every delay is bounded by `MAX_LOCK_DELAY` (30 days);
+   - every stored time passes one checked cast;
+   - a lowering waits the old delay;
+   - any raise drops a pending lowering.
+
+   Approvals granted before a lock are retired by an approval epoch that each lock bumps.
+
+**Interim residual, until part 2.** The recovery transfer (§3.9, "primary replacement moves the positions too") needs the vault's own record of the replacement (§3.7), which part 2 adds. Until then, a replaced account's tokens stay with the old wallet under the holder lock. The old wallet can still ask to unlock and, after the delay, move them. No chain sees this window, because both parts land before any deploy.
+
+**Not automated yet.** Nothing backs the core's `executeUnlock` and `executeLockDelay` with a keeper pass. They are open entry points that only apply what the holder asked for once its delay has passed. They are recorded as a gap in `permissionless-steps.json`.
 
 ## 9. Order of work
 

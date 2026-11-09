@@ -79,6 +79,12 @@ export interface StoredOffer {
   interestRateBps: bigint;
   interestRateBpsMax: bigint;
   collateralAmount: bigint;
+  /** A borrower request's collateral range: `collateralAmount` is its
+   *  floor and this its ceiling (equal for a single amount; lender offers
+   *  always carry the two equal). */
+  collateralAmountMax: bigint;
+  /** Collateral of a ranged request already committed to loans. */
+  collateralAmountFilled: bigint;
   durationDays: bigint;
   tokenId: bigint;
   collateralTokenId: bigint;

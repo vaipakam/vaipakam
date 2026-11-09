@@ -101,17 +101,34 @@ function componentSheets() {
   return out;
 }
 
+/** The brand colours themselves, read from the shared file: every value of
+ *  a token that carries the brand (all but `--text-on-brand`, which is the
+ *  text on it), in both themes. Derived, so the check follows the palette
+ *  instead of naming whichever colours it once held. */
+function brandLiterals() {
+  const css = SHEETS[0];
+  const out = new Set();
+  for (const m of css.matchAll(/--(brand[\w-]*|focus-ring):\s*(#[0-9a-fA-F]{6})\s*;/g)) out.add(m[2].toLowerCase());
+  return out;
+}
+
 /** A `var(--brand…, <literal>)` is a second colour the palette never
  *  defined, shown wherever the token is missing (the consent banner's icon
- *  shipped the old indigo that way after the palette moved), and the old
- *  indigo literals are the brand colour this palette replaced. Neither
- *  belongs in a stylesheet: a surface takes its colour from the shared
- *  tokens, or mixes one from --brand. */
-test('no stylesheet carries a brand-token fallback or the retired indigo', () => {
+ *  shipped the old indigo that way after the palette moved), and a brand
+ *  colour written out is one that stops following the palette when it
+ *  changes. Neither belongs in a stylesheet: a surface takes its colour from
+ *  the shared tokens, or mixes one from --brand. */
+test('no stylesheet carries a brand-token fallback or a brand colour written out', () => {
+  const brand = brandLiterals();
+  assert.ok(brand.size >= 4, 'brand colours read from the shared file');
   const offenders = [];
   for (const [file, css] of componentSheets()) {
     for (const m of css.matchAll(/var\(\s*--brand[\w-]*\s*,[^)]*\)/g)) offenders.push(`${file}: ${m[0]}`);
-    for (const m of css.matchAll(/rgba?\(\s*99\s*,\s*102\s*,\s*241\b|#(?:6366f1|4f46e5|4338ca|3730a3|312e81|818cf8|a5b4fc|c7d2fe|e0e7ff|eef2ff)\b/gi)) offenders.push(`${file}: ${m[0]}`);
+    for (const m of css.matchAll(/#[0-9a-fA-F]{6}\b/g)) if (brand.has(m[0].toLowerCase())) offenders.push(`${file}: ${m[0]}`);
+    for (const m of css.matchAll(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g)) {
+      const hex = '#' + m.slice(1, 4).map((v) => Number(v).toString(16).padStart(2, '0')).join('');
+      if (brand.has(hex)) offenders.push(`${file}: ${m[0]}`);
+    }
   }
   assert.deepEqual(offenders, []);
 });

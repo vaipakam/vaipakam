@@ -69,6 +69,8 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
   await expect(receipt).not.toContainText('This figure did not grow over that window');
   await expect(receipt).not.toContainText('Paying gives you no right to the collateral');
   await expect(receipt).toContainText('Wallet prompts: 2, then up to 1 more to put back the unused approval.');
+  // Base Sepolia keeps no public queue, so the public-queue notice (RB-PUBLIC-QUEUE) is not shown.
+  await expect(page.getByTestId('flow-public-queue')).toHaveCount(0);
   await fitsWidth(page);
 
   const sent = flags.sentTransactions;

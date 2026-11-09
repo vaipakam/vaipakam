@@ -57,6 +57,8 @@ import { PASS_CADENCE_SEC as POSITION_UPKEEP_CADENCE_SEC, runPositionUpkeep } fr
 import { PASS_CADENCE_SEC as REWARD_STAGING_UPKEEP_CADENCE_SEC, runRewardStagingUpkeep } from './rewardStagingUpkeep';
 import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } from './expiredTeardown';
 import { PASS_CADENCE_SEC as VAULT_BEACON_UPKEEP_CADENCE_SEC, runVaultBeaconUpkeep } from './vaultBeaconUpkeep';
+import { runKeeperFeeBalance } from './keeperFeeBalance';
+import { PASS_CADENCE_SEC as PRICE_CHECKPOINT_CADENCE_SEC, runPriceCheckpoint } from './priceCheckpoint';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -119,6 +121,12 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: 1,
     why: 'autonomous liquidation — protocol safety, every tick',
     run: runLiquidator,
+  },
+  {
+    name: 'keeperFeeBalance',
+    cadenceMinutes: 1,
+    why: 'warns ops when the keeper wallet cannot pay for its liquidations; fees jump in the same crash that makes liquidations due, so every tick (#3365)',
+    run: runKeeperFeeBalance,
   },
   {
     name: 'matcher',
@@ -373,11 +381,23 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     // :26 — clear of every staggered pass (the 5-minute ones sit on :02–:03
     // modulo 5, the 15-minute ones on :00, :01, :04, :05, :09 and :10 modulo
     // 15, the other hourly ones on :06, :14, :21, :29, :36, :44, :51 and :59).
-    // It shares :11 modulo 15 with no pass today; a future quarter-hour pass
-    // there would meet it once an hour.
+    // It shares :11 modulo 15 with priceCheckpoint (:11 and :41), which
+    // leaves :56 the only free minute there.
     offsetMinutes: 26,
     why: 'applies VaultBeacon changes whose delay (hours or days) has passed; each only applies what its owner decided, so an hour past maturity is not material (#3282)',
     run: runVaultBeaconUpkeep,
+  },
+  {
+    name: 'priceCheckpoint',
+    cadenceMinutes: PRICE_CHECKPOINT_CADENCE_SEC / 60,
+    // :11 and :41 — half an hour apart and clear of every staggered pass (the
+    // 5-minute ones sit on :02–:04 modulo 5, the 15-minute ones on :00, :01,
+    // :04, :05, :09 and :10 modulo 15, the hourly ones on :06, :14, :21, :26,
+    // :29, :36, :44, :51 and :59). With vaultBeaconUpkeep at :26 that leaves
+    // only :56 free at :11 modulo 15.
+    offsetMinutes: 11,
+    why: "writes each UTC hour's price checkpoint the #3359 forced-sale floor reads; the second run is the hour's retry, and a missed hour only returns sales to the full slippage cap (#3384)",
+    run: runPriceCheckpoint,
   },
   {
     name: 'rewardStagingUpkeep',

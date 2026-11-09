@@ -77,6 +77,7 @@ import ProtectedAccountFacetABI from './ProtectedAccountFacet.json';
 import VaultPayoutFacetABI from './VaultPayoutFacet.json';
 import VaultDepositoryFacetABI from './VaultDepositoryFacet.json';
 import OfferBookFacetABI from './OfferBookFacet.json';
+import SaleFloorFacetABI from './SaleFloorFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -175,6 +176,9 @@ import RewardSweepWalkFacetABI from './RewardSweepWalkFacet.json';
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
 import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
+// #3361 — standalone keeper backup runner (Chainlink Automation). Named export
+// only; not part of the diamond's selector set.
+import KeeperBackupUpkeepABI from './KeeperBackupUpkeep.json';
 // #394 Lever B — standalone dual-factor risk-premium rate model (an
 // `IRateModel` registered via `RateModelFacet.setRateModel`). Named export only;
 // deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
@@ -204,6 +208,10 @@ import VpfiReturnSenderABI from './VpfiReturnSender.json';
 // facet): the keeper's return-transport pass reads which Diamond it delivers to.
 import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
 import VaultBeaconABI from './VaultBeacon.json';
+// #3205 — the PositionNFT (standalone; NOT a diamond facet): the position
+// ownership record.
+import PositionNFTABI from './PositionNFT.json';
+import ProtocolRegistryABI from './ProtocolRegistry.json';
 
 export {
   OfferCreateFacetABI,
@@ -252,6 +260,7 @@ export {
   VaultPayoutFacetABI,
   VaultDepositoryFacetABI,
   OfferBookFacetABI,
+  SaleFloorFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
@@ -321,6 +330,7 @@ export {
   RewardForfeitWalkFacetABI,
   RewardSweepWalkFacetABI,
   FlashLoanLiquidatorABI,
+  KeeperBackupUpkeepABI,
   RiskPremiumRateModelABI,
   TestnetSanctionsOverlayABI,
   SanctionsListABI,
@@ -334,6 +344,8 @@ export {
   VpfiReturnSenderABI,
   VpfiReturnReceiverABI,
   VaultBeaconABI,
+  PositionNFTABI,
+  ProtocolRegistryABI,
 };
 
 import type { Abi } from 'viem';

@@ -299,6 +299,8 @@ FACETS=(
   "VaultDepositoryFacet"
   # The offer book's entry step and bounds (#3242).
   "OfferBookFacet"
+  # The forced-sale floor rule (#3359).
+  "SaleFloorFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
@@ -347,6 +349,9 @@ FACETS=(
   # `DIAMOND_ABI` in the barrel; the keeper bot in `apps/keeper`
   # constructs calls to it directly by named ABI export.
   "FlashLoanLiquidator"
+  # #3361 — the standalone keeper backup runner Chainlink Automation drives.
+  # NOT a diamond facet; named ABI export only.
+  "KeeperBackupUpkeep"
   # #394 Lever B — standalone dual-factor risk-premium rate model
   # (an `IRateModel` registered via `RateModelFacet.setRateModel`). NOT a
   # diamond facet, so deliberately NOT spread into `DIAMOND_ABI` in the
@@ -409,6 +414,14 @@ FACETS=(
   # resolves its code through it; the vault page reads versions, pins and
   # pending code changes from it, and the indexer decodes its events.
   "VaultBeacon"
+  # #3205 — the PositionNFT (standalone; NOT a diamond facet). The ownership
+  # record of every position: the app reads holders, approvals and the holder
+  # lock from it, and the indexer decodes its Transfer and lock events.
+  "PositionNFT"
+  # #3272 — the ProtocolRegistry (standalone; NOT a diamond facet). The
+  # delayed endpoints the Diamond and every vault share; the governance page
+  # reads its pending changes and the indexer decodes its events.
+  "ProtocolRegistry"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

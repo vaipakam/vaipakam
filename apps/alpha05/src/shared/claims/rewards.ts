@@ -172,7 +172,11 @@ export interface LowerBound {
 }
 
 export async function readRewardLowerBound(client: PublicClient, diamond: Hex, account: Hex): Promise<LowerBound> {
-  const [amount, fromDay, toDay] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'previewInteractionRewards', args: [account] })) as readonly [bigint, bigint, bigint];
+  const [amount, fromDay, toDay] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'previewInteractionRewards', args: [account] })) as readonly [
+    bigint,
+    bigint,
+    bigint,
+  ];
   return { amount, fromDay, toDay };
 }
 
@@ -265,6 +269,17 @@ export async function readSoonestExpiry(client: PublicClient, diamond: Hex, acco
  *  tested once. */
 export function moreRemains(now: PendingRewards | null, claimBlock: bigint): boolean {
   return now?.kind === 'exact' && now.atBlock >= claimBlock;
+}
+
+/** After a claim at `claimBlock`, whether more rewards remain: true for a
+ *  preview with a figure read at or after that block, false when the
+ *  protocol answers that nothing is left (it cannot answer so before the
+ *  claim, which had something to pay), and null when that is not known (no
+ *  read, a figure read before the claim, or any other answer). */
+export function remainderAfter(now: PendingRewards | null, claimBlock: bigint): boolean | null {
+  if (now === null) return null;
+  if (now.kind === 'none') return false;
+  return moreRemains(now, claimBlock) ? true : null;
 }
 
 /** Within the final notice before the estimate (unix seconds). */

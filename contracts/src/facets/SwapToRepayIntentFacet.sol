@@ -27,7 +27,7 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibLopDomain} from "../libraries/LibLopDomain.sol";
 
 /**
@@ -430,7 +430,7 @@ contract SwapToRepayIntentFacet is
             revert IntentTokenNotAllowed(loan.collateralAsset);
         LibAuth.requireBorrowerNftOwner(loan);
         if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
-        if (IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender)
+        if (LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender)
             revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
@@ -528,7 +528,7 @@ contract SwapToRepayIntentFacet is
         // already holds the lock, so a commit cannot overwrite it. Every
         // teardown (cancel, expired cancel, both force-cancels) and the fill
         // settlement release it.
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent, true);
 
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
@@ -746,7 +746,9 @@ contract SwapToRepayIntentFacet is
      *         filled pre-check + same return target as
      *         {cancelSwapToRepayIntent}. Bypasses the §5.6 master
      *         switch IFF a commit exists (so a chain-toggle-off
-     *         can't leave an order live forever).
+     *         can't leave an order live forever). #3336 — callable at
+     *         any time once the borrower position has moved since the
+     *         commit, since such an order can never fill.
      */
     function cancelExpiredIntent(uint256 loanId)
         external
@@ -762,7 +764,16 @@ contract SwapToRepayIntentFacet is
         // window only the current borrower-NFT holder may cancel —
         // keeps a keeper / opportunist from front-running the
         // borrower's own clean recovery path.
+        //
+        // #3336 — except once the borrower position has moved since the
+        // commit (or another flow replaced its route): the order can then
+        // never fill (both fill hooks refuse it), there is no holder recovery
+        // path left to protect, so anyone may clear it at once. The teardown
+        // moves no tokens; the lot stays in the loan's vault under its lien.
         if (
+            !LibPositionNFT.routeIsDead(
+                s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent
+            ) &&
             block.timestamp <
                 uint256(commit.deadline) + uint256(LibVaipakam.cfgIntentCancelGraceSecondsEffective())
         ) revert IntentNotPastCancelGrace();
@@ -936,7 +947,7 @@ contract SwapToRepayIntentFacet is
         // #2322 — release the borrower-position lock the commit took. Reason-
         // checked: a commit made before the lock existed never took it, and
         // must not clear another flow's lock (e.g. a live prepay listing's).
-        LibERC721._unlockIfHeldBy(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
 
         // #594 — every teardown (borrower cancel, permissionless cancel,
         // force-cancel via HF / past-default) leaves the whole collateral in

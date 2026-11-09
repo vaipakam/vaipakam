@@ -8,7 +8,6 @@
  */
 import { openLoan, postLenderOffer, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { scenario } from '../lib/chain';
-import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 const INTENTS = ['/borrow', '/lend', '/rent', '/rent?side=owner', '/positions'];
@@ -36,7 +35,8 @@ test('a wallet with nothing yet sees the first-run cards, "nothing yet" and the 
   await page.goto('/');
   await connectWallet(page);
   const cards = page.getByRole('region', { name: 'Getting started' });
-  await expect(cards.locator('[data-card]')).toHaveCount(3);
+  await expect(cards.locator('[data-card]')).toHaveCount(4);
+  await expect(cards.locator('[data-card="rate"]')).toContainText('A fixed rate you agree');
   await expect(page.getByText('Nothing yet on Base Sepolia: no live loans, open offers or payouts.')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('region', { name: 'I want to…' })).toBeVisible();
   // The sync chip names how long ago and through which source the book was read.
@@ -45,9 +45,9 @@ test('a wallet with nothing yet sees the first-run cards, "nothing yet" and the 
   await expect(page.locator('main > .stamp', { hasText: /^Synced .* ago through (your wallet|the read-only proxy|the public endpoint)\./ })).toBeVisible();
 
   await cards.locator('[data-card="vault"]').getByRole('button', { name: 'Got it' }).click();
-  await expect(cards.locator('[data-card]')).toHaveCount(2);
+  await expect(cards.locator('[data-card]')).toHaveCount(3);
   await page.reload();
-  await expect(page.getByRole('region', { name: 'Getting started' }).locator('[data-card]')).toHaveCount(2);
+  await expect(page.getByRole('region', { name: 'Getting started' }).locator('[data-card]')).toHaveCount(3);
   await page.getByRole('button', { name: 'Hide these' }).click();
   await expect(page.getByRole('region', { name: 'Getting started' })).toHaveCount(0);
 });
@@ -132,7 +132,7 @@ test('a position follows its NFT: a lender who transferred it no longer sees the
   const [view] = await sc.read<readonly { loan: { lenderTokenId: bigint } }[]>('getLoansBatch', [[loanId]]);
   // The lender position moves to a wallet this suite does not drive; the
   // loan's recorded lender is unchanged, which is what an index walk would read.
-  await sc.diamondWrite('lender', 'transferFrom', [accountFor('lender').address, '0x000000000000000000000000000000000000dEaD', view!.loan.lenderTokenId]);
+  await sc.positionTransfer('lender', '0x000000000000000000000000000000000000dEaD', view!.loan.lenderTokenId);
 
   const borrower = await launchWallet('borrower');
   await borrower.page.goto('/');

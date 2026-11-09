@@ -7,7 +7,7 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -53,7 +53,7 @@ import {PrepayListingFacet} from "./PrepayListingFacet.sol";
  *              orderHash, conduit). The facet validates authority +
  *              opt-in + ask vs floor + grace window, **locks** the
  *              borrower-position NFT via
- *              `LibERC721._lock(LockReason.PrepayCollateralListing)`,
+ *              `LibPositionNFT.openRoute(LockReason.PrepayCollateralListing)`,
  *              **records** the orderHash on the executor (so the
  *              executor's ERC-1271 path returns the magic value at
  *              fill time), and **bookkeeps** the active orderHash on
@@ -324,7 +324,6 @@ contract NFTPrepayListingFacet is
     ///         the older flow's lock state. Concurrent strategic
     ///         flows are not supported in v1; the borrower must
     ///         resolve the existing flow first.
-    error BorrowerNFTAlreadyLocked(uint256 tokenId, LibERC721.LockReason currentReason);
 
     /// @notice Master kill-switch is off. ADMIN flips it on once
     ///         steps 7 (vault approval) + 10 (default-flow lock-
@@ -401,7 +400,11 @@ contract NFTPrepayListingFacet is
         // `syncPrepaySaleListing`: a live consideration recipient was found
         // sanctions-flagged and registered, so the listing is torn down so it
         // can't fill.
-        SanctionsSync
+        SanctionsSync,
+        // #3205 (#3318 Codex r3) — torn down by the permissionless auto-list:
+        // the borrower position moved since the listing was posted, so the
+        // listing was a former holder's and is cancelled whole.
+        PositionMoved
     }
 
     // ─── Borrower entry: postPrepayListing ──────────────────────────────
@@ -502,10 +505,8 @@ contract NFTPrepayListingFacet is
         if (existing != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, existing);
         }
-        LibERC721.LockReason currentLock = LibERC721.storedLockOf(loan.borrowerTokenId);
-        if (currentLock != LibERC721.LockReason.None) {
-            revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
-        }
+        // #3205 — another flow's LIVE route refuses in `openRoute` (in
+        // LibPrepayListingWiring.wire); a dead one is replaced there.
 
         // Grace-window upper bound.
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
@@ -514,7 +515,7 @@ contract NFTPrepayListingFacet is
         }
 
         // Authority — must currently hold the borrower-position NFT.
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
@@ -629,7 +630,7 @@ contract NFTPrepayListingFacet is
         // wire vault. Effects-before-interactions: storage writes
         // BEFORE the external calls to executor + vault, even
         // though both are trusted singletons.
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
+        // #3205 — the route opens (or rebinds) in LibPrepayListingWiring.wire.
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
         // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) —
@@ -719,7 +720,7 @@ contract NFTPrepayListingFacet is
             revert PrepayGraceWindowClosed(loanId, block.timestamp, gracePeriodEnd);
         }
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
@@ -849,7 +850,7 @@ contract NFTPrepayListingFacet is
         // `LibPrepayListingWiring.wire` so both v1 post + update and
         // the new atomic-match facet stay in lock-step. v1 behavior
         // unchanged.
-        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor), /* holderAuthenticated */ true);
     }
 
     // ─── Borrower entry: cancelPrepayListing ────────────────────────────
@@ -879,7 +880,7 @@ contract NFTPrepayListingFacet is
         // calling it after the terminal already swept is a cheap
         // no-op via the orderHash early-return.
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
@@ -936,7 +937,7 @@ contract NFTPrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
@@ -948,7 +949,9 @@ contract NFTPrepayListingFacet is
     // ─── Permissionless entry: cancelExpiredPrepayListing ───────────────
 
     /// @notice Permissionless cleanup of a listing whose grace
-    ///         window has expired without a fill.
+    ///         window has expired without a fill, or (#3336), at any
+    ///         time, of a listing whose borrower position has moved
+    ///         since it was posted.
     /// @dev    Three rationale points worth keeping in mind:
     ///
     ///         1. **Lock liveness.** The borrower-position NFT
@@ -995,6 +998,16 @@ contract NFTPrepayListingFacet is
         bytes32 orderHash = s.prepayListingOrderHash[loanId];
         if (orderHash == bytes32(0)) {
             revert PrepayListingNotFound(loanId);
+        }
+
+        // #3336 — a listing whose borrower position moved since it was posted
+        // (or whose route another flow replaced) can never fill
+        // (`LibPositionNFT.completeRoute` refuses it), so anyone may clear it
+        // at once, with no window to wait for. Like every cancel here it moves
+        // nothing: the collateral stays in the loan's vault under its lien.
+        if (LibPositionNFT.routeIsDead(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing)) {
+            _cancel(s, loan, loanId, orderHash, CancelReason.PositionMoved);
+            return;
         }
 
         // Round-5 Block B (#309) post-merge polish — Codex P2 (mode-
@@ -1146,7 +1159,7 @@ contract NFTPrepayListingFacet is
             legs = IListingExecutorRecorder(pinnedExecutor).orderFeeLegs(orderHash);
         }
         parties = new address[](1 + legs.length);
-        parties[0] = LibERC721._ownerOfRaw(loan.borrowerTokenId);
+        parties[0] = LibPositionNFT.holderOrZero(loan.borrowerTokenId);
         for (uint256 i = 0; i < legs.length; ) {
             parties[i + 1] = legs[i].recipient;
             unchecked {
@@ -1361,7 +1374,7 @@ contract NFTPrepayListingFacet is
         // an unset-executor state mid-rollout.
         if (pinnedExecutor == address(0)) revert ExecutorNotSet();
 
-        LibERC721._unlock(loan.borrowerTokenId);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
         IListingExecutorRecorder(pinnedExecutor).clearOrder(orderHash);
@@ -1407,7 +1420,7 @@ contract NFTPrepayListingFacet is
         // grant + ERC-1271 binding logic. v1 behavior preserved
         // byte-for-byte — the library's `wire` does exactly what the
         // private body did before the refactor.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor);
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor, /* holderAuthenticated */ true);
     }
 
     /// @dev Read-only borrower-vault lookup. Reverts via

@@ -38,7 +38,7 @@
     "privacy": "Privacy",
     "cookieSettings": "Cookie settings",
     "license": "BUSL 1.1 License",
-    "tagline": "Decentralized vault-to-vault lending and NFT rentals. Trustless, transparent, on-chain.",
+    "tagline": "Non-custodial vault-to-vault lending and NFT rentals, at a fixed rate and term the two parties agree. Transparent and on-chain.",
     "comingSoon": "Coming soon",
     "supportedNetworks": "Supported networks",
     "viewDiamondOnExplorer": "View Diamond on explorer…",
@@ -193,12 +193,12 @@
     "titleLine1": "Vault-to-Vault",
     "titleLine2": "Secure On-Chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "lets you lend and borrow tokens, rent NFTs, and set your own terms. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
+    "subtitleBody": "lets you lend and borrow tokens at a fixed rate and term agreed between lender and borrower, and rent NFTs. Lending funds and collateral wait in each user's own non-custodial vault. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
     "launchApp": "Launch Vaipakam",
     "buyVpfi": "VPFI Benefits",
     "howItWorks": "How It Works",
-    "statP2pValue": "P2P",
-    "statP2pLabel": "Direct Lending",
+    "statP2pValue": "Fixed",
+    "statP2pLabel": "Rate & Term",
     "statNftValue": "NFT",
     "statNftLabel": "Position Tracking",
     "statVaultValue": "1:1",
@@ -217,8 +217,8 @@
     "sectionLabel": "Features",
     "title": "Everything you need for trustless lending",
     "subtitle": "A complete DeFi lending protocol built on the Diamond Standard, supporting ERC-20 tokens and rentable NFTs across Ethereum, Polygon, and Arbitrum.",
-    "p2pTitle": "P2P Lending & Borrowing",
-    "p2pDesc": "Create or accept offers for ERC-20 tokens with custom terms — interest rate, collateral type, and loan duration. No intermediary pools.",
+    "p2pTitle": "Vault-to-Vault Lending & Borrowing",
+    "p2pDesc": "Create or accept offers for ERC-20 tokens on terms you set — interest rate, collateral type and loan duration. The agreed rate holds for the life of the loan. It changes only if both sides agree to extend the loan near its end, or if the borrower hands the loan to a new borrower, when the lender is paid any interest they would lose. No intermediary pools.",
     "nftTitle": "NFT Rentals (ERC-4907)",
     "nftDesc": "Rent out ERC-721 and ERC-1155 NFTs with daily pricing. Borrowers get user rights while the NFT stays safely in the vault.",
     "vaultTitle": "Vaipakam Vaults",
@@ -280,7 +280,7 @@
   "cta": {
     "sectionLabel": "Get Started",
     "title": "Ready to start lending?",
-    "subtitle": "Connect a wallet, create an offer, and start earning. Set custom terms — no pool, no middleman.",
+    "subtitle": "Connect a wallet and post an offer at a fixed rate and term you choose. Your offer waits in your own vault — no pool, no middleman.",
     "launchApp": "Launch Vaipakam",
     "readDocs": "Read Documentation"
   },
@@ -305,7 +305,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "What is Vaipakam, in plain English?",
-        "a1": "Vaipakam is a vault-to-vault marketplace for lending crypto and renting digital items (NFTs). One person posts an offer with the terms they're comfortable with — amount, interest, duration — and another person accepts it. No bank, no fund manager, no intermediary sitting between the two counterparties.",
+        "a1": "Vaipakam is a vault-to-vault marketplace for lending crypto and renting digital items (NFTs). One person posts an offer with the terms they're comfortable with — amount, interest, duration — and another person accepts it. No bank, no fund manager, no intermediary sitting between the two counterparties. The interest rate they agree is fixed for the whole loan. It changes only if both agree to extend the loan, or if the borrower hands it to a new borrower, in which case the lender is paid any interest they would lose.",
         "a2": "What keeps everyone honest is a set of smart contracts on a blockchain. They hold the assets in individual vault during the loan and release them automatically when the terms are met. Each user remains in control of their own funds; the protocol simply enforces the deal that was agreed."
       },
       "basics-wallet": {
@@ -507,8 +507,8 @@
   },
   "pageMeta": {
     "landing": {
-      "title": "Vaipakam — Decentralized P2P Lending, Borrowing & NFT Rental",
-      "description": "Lend, borrow, and rent NFTs on Vaipakam — a non-custodial vault-to-vault protocol. Set your own terms. No pools, no middlemen. Built on the EIP-2535 Diamond standard."
+      "title": "Vaipakam — Non-Custodial Vault-to-Vault Lending, Borrowing & NFT Rental",
+      "description": "Lend, borrow and rent NFTs on Vaipakam — a non-custodial vault-to-vault protocol. Lender and borrower agree a fixed rate and term. No pools, no middlemen. Built on the EIP-2535 Diamond standard."
     },
     "buyVpfi": {
       "title": "VPFI — Vaipakam's Native Token",
@@ -520,7 +520,7 @@
     },
     "terms": {
       "title": "Terms of Service — Vaipakam",
-      "description": "The terms governing your use of Vaipakam, a decentralized P2P lending and borrowing protocol. Read before connecting a wallet."
+      "description": "The terms governing your use of Vaipakam, a non-custodial vault-to-vault lending and borrowing protocol. Read before connecting a wallet."
     },
     "privacy": {
       "title": "Privacy Policy — Vaipakam",
@@ -531,7 +531,7 @@
       "description": "Download, delete, or revoke consent for the client-side data Vaipakam stores in your browser. GDPR / UK GDPR / CCPA compliant."
     },
     "overview": {
-      "title": "Vaipakam Overview — How P2P Lending Works",
+      "title": "Vaipakam Overview — How Vault-to-Vault Lending Works",
       "description": "A plain-English walkthrough of Vaipakam: lend, borrow, rent NFTs, protocol fees, VPFI tier discounts, and the safety guarantees behind every position."
     },
     "userGuideBasic": {

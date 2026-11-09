@@ -420,6 +420,7 @@ library Deployments {
     }
 
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
+    function readKeeperBackupUpkeepOptional() internal view returns (address) { return _tryReadAddr(".keeperBackupUpkeep"); }
     /// @notice #1566 slice 4 PR A — optional, non-reverting read of
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
@@ -580,6 +581,8 @@ library Deployments {
     function writeDiamond(address a)         internal { _writeAddr(".diamond",         a); }
     function writeVaultImpl(address a)      internal { _writeAddr(".vaultImpl",      a); }
     function writeVaultBeacon(address a)    internal { _writeAddr(".vaultBeacon",    a); }
+    function writePositionNFT(address a)    internal { _writeAddr(".positionNFT",    a); }
+    function writeProtocolRegistry(address a) internal { _writeAddr(".protocolRegistry", a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
@@ -603,6 +606,9 @@ library Deployments {
     function writeVpfiReturnReceiver(address a)     internal { _writeAddr(".vpfiReturnReceiver",     a); }
     function writeVpfiReturnReceiverImpl(address a) internal { _writeAddr(".vpfiReturnReceiverImpl", a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
+    /// @notice #3361 — the keeper backup runner Chainlink Automation drives
+    ///         (`KeeperBackupUpkeep`), bound to this Diamond.
+    function writeKeeperBackupUpkeep(address a) internal { _writeAddr(".keeperBackupUpkeep", a); }
     /// @notice #1566 slice 4 PR A — the delivered reward custody holder
     ///         (`RewardCustodyHolder`) bound to this Diamond. Written once by
     ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`

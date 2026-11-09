@@ -88,6 +88,7 @@ import type { ServerOrchestrationResult } from './serverQuotes';
 import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
 import { PastRunDeadline, readPhaseClient } from './batchRead';
 import { boundedCall } from './passReader';
+import { positionNftForDiamond } from './positionNft';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
@@ -395,7 +396,7 @@ async function saleVerdict(
 ): Promise<string | null> {
   let state: SaleListingHoldState;
   try {
-    state = await probeSaleHoldLive(client, diamond, loanId, lenderTokenId, keeper, blockNumber);
+    state = await probeSaleHoldLive(client, positionNftForDiamond(diamond), loanId, lenderTokenId, keeper, blockNumber);
   } catch (err) {
     return `sale-unread:${describeFailure(err)}`;
   }

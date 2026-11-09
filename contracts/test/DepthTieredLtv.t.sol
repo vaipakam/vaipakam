@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {MockV3PoolOracle} from "./helpers/MockV3PoolOracle.sol";
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -253,66 +254,144 @@ contract DepthTieredLtv is Test {
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
     }
 
-    // ─── getLiquidityTier — Uni-V2-fork family (Piece B follow-up b) ──
+    // ─── #3354 — durable depth: the pool's own time-weighted record ───
 
-    /// @dev With only a thin V3 pool (just enough for `_checkLiquidity`
-    ///      to pass) the route search lands Tier 1; adding a deep V2
-    ///      pool against the same quote token pulls the asset up to
-    ///      Tier 3 — i.e. the V2 leg is consulted alongside the V3 trio
-    ///      and contributes to the best-route selection.
-    function test_tier_v2_poolPullsAssetUpToTier3() public {
-        // Thin V3 pool — clears `_checkLiquidity`'s $1M depth-at-tick
-        // floor (L_TIER1 = 1e22 ⇒ ~$40M padDepthScaled) and lands Tier 1
-        // in the route search by itself.
-        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
-        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
-
-        // Configure the UniV2 factory + mock a deep V2 pool. With both
-        // legs of the route search active the V2 pool's lower slippage
-        // at the larger test sizes wins ⇒ Tier 3.
-        address mockUniV2 = makeAddr("uniV2Factory");
-        AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
-        _mockV2Pool(mockUniV2, mockAsset, mockWeth, SafeCast.toUint112(L_TIER3), SafeCast.toUint112(L_TIER3));
-        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 3);
+    function _status(bool closeOut) internal view returns (uint256) {
+        return closeOut
+            ? uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockAsset))
+            : uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset));
     }
 
-    /// @dev V2 value-balance guard: a V2 pool with mismatched legs
-    ///      (asset reserves valued 2× the WETH reserve per the feeds)
-    ///      gets excluded from the route search — only the (thin) V3
-    ///      pool's contribution remains, so the tier doesn't climb.
-    function test_tier_v2_valueBalanceGuardExcludesMismatchedPool() public {
+    /// @dev A deep pool whose depth appeared only now (a one-transaction
+    ///      top-up: current liquidity high, window mean thin) earns
+    ///      neither Liquid status nor a tier on an admission read.
+    function test_durableDepth_topUpAroundOneTxDoesNotAdmit() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        MockV3PoolOracle.steady(pool, int24(0), L_NOT_LIQUID);
+        assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
+        // The close-out read credits the same thin mean: still Illiquid.
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+    }
+
+    /// @dev The tier is earned at the window mean, never above the
+    ///      current depth: a mean of Tier-3 depth over a pool now holding
+    ///      Tier-1 depth reads Tier 1, and the reverse reads Tier 1 too.
+    function test_durableDepth_tierIsTheLowerOfCurrentAndMean() public {
         _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
-        address mockUniV2 = makeAddr("uniV2Factory");
-        AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
-        // V2 pool with deep but unbalanced reserves (asset side 2× the
-        // WETH side at the feed prices ⇒ pool spot disagrees with the
-        // feed by 100% ⇒ guard rejects ⇒ V2 leg contributes nothing).
-        _mockV2Pool(mockUniV2, mockAsset, mockWeth, SafeCast.toUint112(L_TIER3) * 2, SafeCast.toUint112(L_TIER3));
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        MockV3PoolOracle.steady(pool, int24(0), L_TIER3);
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
+
+        vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(L_TIER3));
+        MockV3PoolOracle.steady(pool, int24(0), L_TIER1);
         assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 1);
     }
 
-    /// @dev V2-only path: a chain with no V3 deployment configured but a
-    ///      deep V2 pool now classifies the asset Liquid post-§4.4-step-3.
-    ///      The legacy `_v3DepthLiquid` was V3-only, so this scenario
-    ///      previously fell through to Illiquid (documented by the
-    ///      pre-step-3 version of this test, which has been kept here in
-    ///      flipped form to make the semantic upgrade legible). The new
-    ///      `_passesFloorSlippage` consults the same V2 leg the route
-    ///      search uses for tier resolution, so a deep V2 pool against a
-    ///      PAA quote is enough to clear the floor.
-    function test_tier_v2_aloneClassifiesLiquidPostStep3() public {
-        address mockUniV2 = makeAddr("uniV2Factory");
-        AdminFacet(address(diamond)).setUniswapV2Factory(mockUniV2);
-        _mockV2Pool(mockUniV2, mockAsset, mockWeth, SafeCast.toUint112(L_TIER3), SafeCast.toUint112(L_TIER3));
-        // V3 factories all empty for this asset (default setUp), but the
-        // deep V2 pool clears the floor slippage on its own.
-        assertEq(
-            uint256(OracleFacet(address(diamond)).checkLiquidity(mockAsset)),
-            uint256(LibVaipakam.LiquidityStatus.Liquid)
+    /// @dev Liquidity pulled in the same block as a close-out (current
+    ///      zero, window mean deep) cannot make the close-out refuse: the
+    ///      close-out read stays Liquid, while an admission read of the same
+    ///      pool refuses a new position.
+    function test_durableDepth_drainInTheSameBlockDoesNotBlockCloseOut() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(uint128(0)));
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Liquid));
+        assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+    }
+
+    /// @dev Depth that has stayed away for the window lowers the mean, and
+    ///      the close-out read then follows it to Illiquid as before.
+    function test_durableDepth_sustainedDrainReadsIlliquidAtCloseOut() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(uint128(0)));
+        MockV3PoolOracle.history(pool, int24(0), 0, MockV3PoolOracle.DEFAULT_WINDOW);
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+    }
+
+    /// @dev A pool whose oracle cannot answer for the window (no history:
+    ///      the default observation cardinality) does not count, however
+    ///      deep it is now. Before #3354 its TWAP guard was skipped and it
+    ///      was searched on its current state alone.
+    function test_durableDepth_poolWithoutHistoryDoesNotCount() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        MockV3PoolOracle.noHistory(_poolAddr(mockUniFactory, mockAsset, mockWeth, 3000));
+        assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 0);
+    }
+
+    /// @dev The mean-tick guard is no longer best-effort: a window mean
+    ///      away from the current tick (a recently moved pool) excludes it.
+    function test_durableDepth_recentlyMovedPoolIsExcluded() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        MockV3PoolOracle.steady(pool, int24(5_000), L_TIER3);
+        assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+    }
+
+    /// @dev #3371 — a genuine fast move (the current tick ~50% away from
+    ///      its 30-minute mean) still refuses a new position, but the
+    ///      close-out read of the same pool stays Liquid, so its
+    ///      liquidation or default can run. The sale's oracle floor governs
+    ///      what the moved pool can fill.
+    function test_closeOut_fastMoveDoesNotBlockLiquidation() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        MockV3PoolOracle.steady(pool, int24(5_000), L_TIER3);
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Liquid));
+    }
+
+    /// @dev #3371 — a pool whose current price was pushed away from the
+    ///      feed (and from its own mean) in the block before a close-out
+    ///      fails both price guards for admission, but cannot make the
+    ///      close-out read refuse.
+    function test_closeOut_pricePushDoesNotBlockLiquidation() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        // sqrtPrice 1.1 × 2^96 ⇒ price 1.21 against a 1:1 feed; tick ~1906.
+        vm.mockCall(
+            pool,
+            abi.encodeWithSignature("slot0()"),
+            abi.encode(
+                uint160((uint256(11) << 96) / 10), int24(1906), uint16(0), uint16(0), uint16(0), uint8(0), false
+            )
         );
-        // The tier resolution then runs over the same routes — V2 pool
-        // at L_TIER3 ⇒ clears every test size ⇒ Tier 3.
-        assertEq(OracleFacet(address(diamond)).getLiquidityTier(mockAsset), 3);
+        assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Liquid));
+    }
+
+    /// @dev #3359 — the close-out depth tier, which a forced sale's floor is
+    ///      read from, is built at the feed price, so a swap in the sale's
+    ///      own block that moves the pool's current price (in either
+    ///      direction, by a factor of ten) does not move the tier.
+    function test_closeOut_tierIgnoresAPricePush() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 3);
+        _pushSqrtPrice(pool, uint160(uint256(10) << 96));
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 3, "price pushed up");
+        _pushSqrtPrice(pool, uint160((uint256(1) << 96) / 10));
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 3, "price pushed down");
+    }
+
+    /// @dev #3359 — the feed-price reserve is the pool's true depth: a
+    ///      shallower pool still reads its lower close-out tier.
+    function test_closeOut_tierFollowsTheMeanDepth() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 1);
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER2);
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 2);
+    }
+
+    function _pushSqrtPrice(address pool, uint160 sqrtPriceX96) internal {
+        vm.mockCall(
+            pool,
+            abi.encodeWithSignature("slot0()"),
+            abi.encode(sqrtPriceX96, int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
+        );
     }
 
     // ─── getEffectiveLiquidityTier = min(onChain, keeperTier) ───────
@@ -669,9 +748,8 @@ contract DepthTieredLtv is Test {
 
     /// @dev Wire `factory.getPool(asset, weth, fee)` ⇒ a pseudo-pool with
     ///      `sqrtPriceX96 = 2⁹⁶` and `liquidity = L`. Plants bytecode so
-    ///      `pool.code.length > 0`. `observe(...)` is left unmocked ⇒ the
-    ///      best-effort TWAP guard is skipped (only the value-balance
-    ///      guard applies).
+    ///      `pool.code.length > 0`. The pool's oracle is mocked as having
+    ///      held `liquidity` for the whole TWAP window (#3354).
     function _mockPool(address factory, address asset, uint24 fee, uint128 liquidity) internal {
         _mockPoolPair(factory, asset, mockWeth, fee, liquidity);
     }
@@ -697,6 +775,7 @@ contract DepthTieredLtv is Test {
             abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
         vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(liquidity));
+        MockV3PoolOracle.steady(pool, int24(0), liquidity);
     }
 
     function _mockEmptyAtAllTiers(address factory) internal {
@@ -718,40 +797,4 @@ contract DepthTieredLtv is Test {
         }
     }
 
-    /// @dev Wire a Uni-V2-clone factory: `factory.getPair(a, b)` and
-    ///      `getPair(b, a)` both return a deterministic pseudo-pool
-    ///      whose `getReserves()` is mocked. Reserves are mapped to
-    ///      canonical token0/token1 order (ascending address) the same
-    ///      way real V2 factories store them. Plants bytecode at the
-    ///      pool address so the contract's `pool.code.length` check
-    ///      passes.
-    function _mockV2Pool(
-        address factory,
-        address a,
-        address b,
-        uint112 reserveA,
-        uint112 reserveB
-    ) internal {
-        (address t0, address t1) = a < b ? (a, b) : (b, a);
-        (uint112 r0, uint112 r1) = a < b ? (reserveA, reserveB) : (reserveB, reserveA);
-        address pool = address(
-            uint160(uint256(keccak256(abi.encode("mockV2Pool", factory, t0, t1))))
-        );
-        vm.mockCall(
-            factory,
-            abi.encodeWithSignature("getPair(address,address)", t0, t1),
-            abi.encode(pool)
-        );
-        vm.mockCall(
-            factory,
-            abi.encodeWithSignature("getPair(address,address)", t1, t0),
-            abi.encode(pool)
-        );
-        vm.etch(pool, hex"6080");
-        vm.mockCall(
-            pool,
-            abi.encodeWithSignature("getReserves()"),
-            abi.encode(r0, r1, uint32(0))
-        );
-    }
 }

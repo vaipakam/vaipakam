@@ -113,6 +113,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 | **OfferBookFacet** | The step where a new offer enters the book (#3242): `openOfferOnBook`, the `address(this)`-gated self-call every `OfferCreateFacet` creation ends with, applies the two book bounds (the $10 value floor on a liquid priced principal, the per-wallet open-offer cap), records the offer in the active index and emits `OfferCreated` + `OfferCreatedDetails` (still `OfferCreateFacet`'s declarations, emitted by name, so topic hashes are unchanged). Also `requireOfferValueAdmitted` (OfferMutateFacet's amount re-check) and `getOfferBookBounds(wallet)`. Split off `OfferCreateFacet`, which had about 100 bytes of EIP-170 headroom. **`OfferCreatedDetails` is no longer emitted from OfferCreateFacet's code.** Refreshed together with OfferCreateFacet and OfferMutateFacet |
+| **SaleFloorFacet** | The one rule for a forced sale's slippage floor (#3359): `saleFloorBps` returns the per-tier figure (2.5% / 3.5% / 4.5% by OracleFacet's `getCloseOutLiquidityTier`) when the pair is calm against both of the last two hourly checkpoints and the collateral covers 110% of the debt, else the full `cfgMaxLiquidationSlippageBps`. ForcedSaleFacet (sizing and minimum output, reported as `ForcedSalePlan.floorBps`) and RiskFacet's partial liquidation self-call it. Also the permissionless hourly checkpoint writer `checkpointHourlyPrices` and the bounded settings. Its own facet because ForcedSaleFacet had about 300 bytes of EIP-170 headroom. **Refreshed together with ForcedSaleFacet, RiskFacet and OracleFacet**; `RedeployFacets` refuses a Diamond that does not already route `saleFloorBps` (`PredatesSaleFloorRule`) |
 | **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
@@ -1286,7 +1287,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_REMIT_ACK_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `KEEPER_FEE_BALANCE_ALERT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1319,6 +1320,11 @@ artifacts and stay in their respective env / config:
   capital from the backstop vault, also on `BACKSTOP_FILL_ENABLED`),
   `expiredTeardown` (#3097) on `EXPIRED_TEARDOWN_ENABLED`,
   `vaultBeaconUpkeep` (#3282) on `VAULT_BEACON_UPKEEP_ENABLED`,
+  `priceCheckpoint` (#3384, the hourly price checkpoints the #3359
+  forced-sale floor reads) on `PRICE_CHECKPOINT_ENABLED`,
+  `keeperFeeBalance` (#3365, read-only: an ops alert when the keeper
+  wallet cannot pay for its liquidation reserve) on
+  `KEEPER_FEE_BALANCE_ALERT_ENABLED`,
   `rewardStagingUpkeep` (#3097) on `REWARD_STAGING_UPKEEP_ENABLED` (its
   unwind step, which releases a stuck staging record's holdings back to
   where they came from, also on `REWARD_STAGING_UNWIND_ENABLED`),

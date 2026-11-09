@@ -1206,6 +1206,18 @@ Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo p
 
 Salvo que fije partes en el modo avanzado, un solo prestatario toma todo el importe, o nadie, y debe bloquear exactamente la garantía que usted fija. El formulario muestra cuánto del token prestado tiene su billetera. Cada cifra se lee exactamente como la escribe: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red. La oferta sigue abierta hasta que se acepte o se cancele, o durante los días que elija, hasta un año. Los intereses de plazo completo, la opción habitual, significan que un reembolso anticipado no reduce lo que usted gana; a prorrata se le paga solo por el tiempo que el préstamo está abierto. También puede permitir que el prestatario reembolse una parte antes. El formulario muestra lo que el prestatario le debería en la fecha de vencimiento si aceptara la oferta ahora. En el modo avanzado una oferta también puede prestarse en partes, llevar un modo de ejecución, pagar intereses según un calendario y tomar la tarifa de comisión Full.
 
+<a id="rate-check"></a>
+
+### Comparar tu tasa con préstamos recientes
+
+Bajo la tasa, en los dos formularios de publicación, la oferta de un prestamista y la solicitud de un prestatario, la app muestra la tasa media de los préstamos que empezaron con el mismo par y el mismo plazo en los últimos 30 días, y cuántos fueron. Si tu tasa se aleja más de cinco puntos, te avisa y dice en qué sentido: un prestamista muy por debajo del mercado, o un prestatario muy por encima, publica la oferta que se toma primero cuando las tasas se mueven; en el otro sentido, la oferta puede quedarse sin tomar. Solo avisa; puedes publicar igualmente. Si no hay préstamos recientes con los que comparar, si la garantía es un NFT o si no se puede leer el índice del protocolo, el formulario lo dice en lugar de callar.
+
+<a id="public-queue"></a>
+
+### Redes con cola pública
+
+En Ethereum y BNB Chain (y BNB Testnet), una transacción que envías espera en una cola pública antes de incluirse, y cualquiera que observe esa cola, bots incluidos, puede verla y actuar primero: tomar una oferta antes de que llegue tu cancelación o actuar sobre un préstamo antes de que llegue tu pago. Por eso, en esas redes, la revisión de publicar, tomar o cancelar una oferta, pagar y añadir garantía lo indica antes de que se abra tu billetera. Algunas billeteras pueden enviar la transacción de forma privada; busca en los ajustes de red o de seguridad de tu billetera. La app no puede elegir esa ruta por ti, y enviar de la forma habitual solo cambia quién puede ver la transacción antes de que llegue. Base, Arbitrum y Optimism no tienen cola pública, así que allí no se muestra nada.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Una oferta en partes (Avanzado)
@@ -1250,7 +1262,7 @@ Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que 
 
 Cada préstamo tiene su propia página. Empieza con el estado del préstamo y luego tu papel: el lado que tu wallet guarda ahora, ya que los tokens de posición pueden venderse o transferirse. Si no guardas ningún lado, solo lo estás viendo. Un plazo que te afecta se redacta para tu lado. Cuando termina el período de gracia, la página dice que cualquiera puede iniciar el impago, y solo cuando el protocolo lo confirma.
 
-Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actual antes de cualquier crédito por pausa, el tiempo añadido mientras el protocolo estuvo en pausa, la fecha de vencimiento y el fin del período de gracia), sus condiciones tal como están ahora (un reembolso parcial reduce el principal aún adeudado), su factor de salud y dónde está su garantía. Una cifra que no se pudo leer aparece como desconocida. Si la garantía no tiene precio, un impago entrega al prestamista la garantía misma, y la página lo dice. Si la red reserva una banda justo por encima del umbral de liquidación para un emparejamiento interno con otro préstamo, la página lo indica: dentro de esa banda ninguna venta externa puede cerrar el préstamo. Un alquiler de NFT no tiene garantía: si entra en impago, termina el uso del arrendatario, el alquiler prepagado va al prestamista menos la parte del protocolo y el colchón va a la tesorería. Pagar el préstamo completo y pagar una parte son sus primeras acciones; las demás llegan en próximas actualizaciones.
+Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actual antes de cualquier crédito por pausa, el tiempo añadido mientras el protocolo estuvo en pausa, la fecha de vencimiento y el fin del período de gracia), sus condiciones tal como están ahora (un reembolso parcial reduce el principal aún adeudado), su factor de salud y dónde está su garantía. Una cifra que no se pudo leer aparece como desconocida. Si la garantía no tiene precio, un impago entrega al prestamista la garantía misma, y la página lo dice. Si la red reserva una banda justo por encima del umbral de liquidación para un emparejamiento interno con otro préstamo, la página lo indica: dentro de esa banda ninguna venta externa puede cerrar el préstamo. Un alquiler de NFT no tiene garantía: si entra en impago, termina el uso del arrendatario, el alquiler prepagado va al prestamista menos la parte del protocolo y el colchón va a la tesorería. Pagar el préstamo completo, pagar una parte, añadir garantía y retirarla son sus primeras acciones; las demás llegan en próximas actualizaciones.
 
 <a id="repay"></a>
 
@@ -1275,6 +1287,114 @@ Cuando terminan un período y su gracia, cualquiera puede liquidarlo. Un períod
 El titular de la posición prestataria puede pagar parte del principal de un préstamo en curso desde su página, cuando los términos del préstamo lo permiten. Escriba la parte del principal: el protocolo acepta al menos su parte mínima para el token prestado y menos que todo el principal (pagarlo todo es «Pagar todo»). Se suma el interés acumulado desde el último pago de intereses del préstamo. El préstamo sigue en curso con el principal más bajo y su fecha de vencimiento no se mueve.
 
 La revisión muestra la parte, el interés, el principal restante y lo que cubre la aprobación. En un préstamo prorrateado antes de su vencimiento, el interés es exacto. En un préstamo de plazo completo, o después del vencimiento, aparece «como máximo»: la cifra del protocolo que lee la aplicación también cuenta el resto del plazo o un recargo por mora, que un pago parcial no cobra. El pago parcial queda en espera mientras haya activa una solicitud de refinanciación del préstamo o una oferta de compensación sobre la posición prestataria, y una vez terminado el período de gracia.
+
+<a id="add-collateral"></a>
+
+### Añadir garantía
+
+Quien tiene la posición prestataria puede añadir garantía a un préstamo en curso desde su página. Añadir garantía sube el factor de salud del préstamo y baja su relación préstamo-valor, lo que lo aleja de la liquidación. Añades más del mismo token que el préstamo ya tiene: el protocolo no acepta otro, y solo acepta un aporte para una garantía que hoy tiene precio. Escribe la cantidad; el formulario muestra lo que tiene tu billetera.
+
+La revisión muestra la garantía ahora y después, dónde se guarda (en tu bóveda, ligada al préstamo hasta que termine) y el factor de salud y la relación préstamo-valor del préstamo ahora. Tu billetera aprueba exactamente la cantidad si tu aprobación no la cubre ya, y la aplicación prueba antes el aporte como simulación. Después, la aplicación muestra el factor de salud y la relación préstamo-valor que el protocolo calcula tras el aporte. Añadir garantía sigue abierto aunque el protocolo esté en pausa. Un préstamo en fallback vuelve a estar en curso si el aporte restablece los límites de apertura del protocolo; si no, la garantía se añade y el préstamo sigue en fallback. La garantía que añades puede perderse con el resto si el préstamo se liquida o entra en impago. Si asumiste la posición prestataria y el préstamo está en fallback, el aporte va a la bóveda del prestatario que registra el préstamo y pasa a la tuya solo si devuelve el préstamo a curso.
+
+<a id="take-back-collateral"></a>
+
+### Retirar garantía
+
+Mientras un préstamo está activo, quien tiene la posición de prestatario puede retirar, desde la página del préstamo, la garantía que supere lo que el préstamo necesita. El protocolo calcula el máximo de modo que el factor de salud se mantenga en el mínimo del préstamo o por encima y el préstamo sobre valor dentro de su límite de apertura. Ese límite cambia con los precios y a medida que se acumulan intereses, y el formulario lo muestra mientras escribe. Retirar garantía acerca el préstamo a la liquidación.
+
+La revisión muestra la garantía ahora y después, que va de su bóveda a su billetera, el límite actual y el factor de salud y el préstamo sobre valor actuales. No hace falta aprobación, así que su billetera pide confirmar una vez, después de que la app pruebe el retiro en simulación. El protocolo vuelve a comprobar sus límites cuando el retiro se confirma: si los precios se movieron y el importe ya no cabe, se rechaza y no se mueve nada. Una pausa del protocolo, una orden de swap-to-repay pendiente, una solicitud de refinanciación vigente o una venta listada por el prestamista lo detiene, y el protocolo solo permite retirar garantía de un token al que pone precio. Si tu cuenta tiene activado el modo protegido, la garantía espera en su cola de pagos durante el retraso de la cuenta antes de llegar a tu cartera, y la revisión lo indica.
+
+<a id="collect-a-payout"></a>
+
+### Cobrar un pago
+
+Cuando un préstamo termina, el protocolo registra lo que se debe a cada parte, y quien tiene cada posición lo cobra desde la página del préstamo o desde Reclamaciones. Paga a quien tiene la posición ahora, así que una posición que compraste te paga a ti. El pago del prestamista es el principal y los intereses, o lo que recuperó un impago o una liquidación, más los fondos retenidos para el prestamista y, en un alquiler, el NFT alquilado. El pago del prestatario es la garantía devuelta o lo que sobró, más el excedente retenido para el prestatario. Cobrar quema tu token de posición, y cuando ambas partes han cobrado, el préstamo queda liquidado.
+
+La revisión enumera cada pago que hace la reclamación, lo que cobran primero los vendedores anteriores de una posición de prestamista (intereses ganados y no pagados) y adónde llega el pago: a tu billetera o, con el modo protegido activado, a la cola de pagos de tu cuenta o a tu bóveda. No hace falta ninguna aprobación, así que tu billetera pregunta una vez, después de que la app pruebe la reclamación en simulación. Una pausa del protocolo detiene toda reclamación. Mientras un préstamo está en fallback, el pago del prestatario espera a que el prestamista cobre, y ese cobro termina el fallback: el prestatario ya no puede subsanarlo. La tarjeta final muestra lo que la transacción pagó de verdad.
+
+<a id="claim-everything"></a>
+
+### Cobrarlo todo
+
+Claims empieza con «Cobrarlo todo»: cada pago que puede cobrar ahora, reunido en una sola transacción. Lista los pagos de préstamos terminados cuya posición usted tiene, las recompensas por interacción, el capital no prestado de sus ofertas permanentes, el VPFI libre de su bóveda y, si es beneficiario, la nómina retirable. Cada pago tiene un interruptor, así que puede dejar fuera cualquiera. El VPFI libre de la bóveda está apagado salvo que lo active, porque fija su nivel de descuento en comisiones, y lo mismo el capital de una oferta permanente que sigue prestando. Los intereses que le deben de una posición que vendió, y un préstamo en fallback, se cobran por separado. Cada pago se ejecuta por su cuenta dentro de la transacción: uno que el protocolo rechaza se omite y sigue en la lista, y los demás se pagan igualmente. Una transacción lleva como máximo 30 pagos; el resto espera a una segunda. Nada sale de su billetera, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra cada pago cobrado u omitido y adónde llegó el dinero. Una pausa detiene todo cobro.
+
+<a id="payout-queue"></a>
+
+### Pagos en espera en tu cola
+
+Con el modo protegido activado, todo lo que sale de tu bóveda hacia tu billetera espera el retraso de tu cuenta en una cola de pagos. Reclamaciones muestra lo que espera allí, primero lo más próximo, cada uno con un código de solicitud corto: cada alerta sobre un pago muestra el mismo código, así puedes relacionar un mensaje con una solicitud. Cada fila indica qué paga, adónde va y cuándo puede liberarse. Cuando un pago vence, cualquiera puede liberarlo, y solo paga al destino que registró; si ese destino ya no está permitido, liberarlo lo cancela. Tú, o uno de tus firmantes secundarios, puedes cancelar un pago en cualquier momento, incluso durante una pausa, y el activo se queda en tu bóveda. Si tu cuenta exige aprobación, un firmante secundario aprueba antes cada pago; un firmante encuentra tu cuenta en el modo avanzado pegando su dirección. Una pausa retiene las liberaciones hasta que termina o, tras una pausa larga, se abre su vía de escape. Cada acción pide a tu billetera una sola vez, y la tarjeta final muestra lo que hizo la transacción.
+
+<a id="seller-interest"></a>
+
+### Intereses de una posición que vendiste
+
+Cuando vendes una posición de prestamista, los intereses que ganaste mientras la tenías y aún no cobraste siguen siendo tuyos como un derecho sobre el préstamo. Claims muestra cada préstamo en el que tienes ese derecho, con lo que se te debe tras la parte del protocolo en los intereses y lo que ya espera en tu bóveda. Mientras el préstamo sigue en curso, cada pago de intereses paga primero los derechos abiertos, el más antiguo primero, en la bóveda propia de cada vendedor; hasta que algo llega a la tuya no hay nada que retirar. Cuando el préstamo ha terminado, retirar primero reparte lo que recuperó el lado prestamista: primero el principal del titular, luego cada derecho de vendedor, el más antiguo primero. Entonces se cierran todos los derechos abiertos, y lo que un derecho no cobra queda sin pagar. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busca un préstamo por su número, que se lee solo de la cadena. No hace falta ninguna aprobación, así que tu billetera pide una vez, tras una simulación, y la tarjeta final muestra lo que pagó la transacción.
+
+<a id="frozen-proceeds"></a>
+
+### Cuando un pago está congelado
+
+Si el control de sanciones marca su billetera, el protocolo no toma nada de lo que se le debe y nunca impide que un préstamo se cierre: la otra parte igualmente recibe lo que recupera su lado. Su parte queda aparcada en una bóveda, bloqueada, y se libera cuando su billetera sale de la lista. Claims y la página del préstamo indican entonces «Congelado, a la espera de salir de la lista» y no ofrecen botón para cobrar. Si el control no puede leerse y su billetera fue confirmada como marcada antes, un pago congelado sigue bloqueado hasta que el control responda de nuevo, y un pago debido a su billetera en ese tiempo queda aparcado del mismo modo, porque el protocolo la sigue tratando como marcada; una caída por sí sola nunca congela una billetera que nunca fue confirmada como marcada. En un préstamo en curso, su página muestra además lo que el préstamo ya pagó y está reservado para la posición del prestamista hasta que este lo cobre, y un préstamo reembolsado indica cuándo espera un excedente que el prestatario aún no ha cobrado.
+
+<a id="extension-reserves"></a>
+
+### Reservas de extensión
+
+Si tiene la posición del prestatario de un préstamo, puede apartar el token del préstamo en su propia bóveda para sus extensiones. Una extensión, la del keeper o la suya, toma primero de esa reserva. La reserva sigue siendo suya. Claims lista cada préstamo en el que le queda algo, e indica si una extensión aún puede tomar de ella: solo mientras el préstamo está en curso y usted tiene su posición del prestatario. Puede recuperar toda la reserva en cualquier momento mientras el protocolo no esté en pausa, sea cual sea el estado del préstamo; si el préstamo sigue en curso, su siguiente extensión toma entonces de su otro saldo del token. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busque un préstamo por su número. No hace falta ninguna aprobación, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra adónde llegó el dinero.
+
+<a id="vault-holdings"></a>
+
+### Tu bóveda
+
+Bóveda muestra tu propia bóveda en la red a la que estás conectado: su dirección completa, con un enlace al explorador. Es un contrato que el protocolo mantiene solo para tu billetera; nada de lo que contiene se mezcla con lo de nadie más, y los activos solo salen de ella según las reglas del protocolo. Si aún no tienes bóveda, la página lo dice y ofrece crearla; tu primer depósito u oferta la crearía de todos modos. Crearla no mueve nada ni pide ninguna aprobación, así que tu billetera pregunta una vez. Cada activo muestra tres cifras del protocolo: En tu bóveda (lo que el protocolo cuenta como tuyo allí), Libre para retirar ahora y Retenido por tus posiciones (lo que guardan tus préstamos, ofertas, reclamos, reservas o pagos en cola). Un token enviado a tu bóveda con una transferencia simple no se cuenta y no puede retirarse hasta que lo adoptes; la fila lo dice y enlaza a donde lo adoptas o lo repudias. La página lista los activos que depositaste y los que nombran tus préstamos, las ofertas que creaste y tus ofertas permanentes, así que un token enviado con una transferencia simple solo aparece si uno de ellos lo nombra. Las filas pequeñas y vacías quedan ocultas tras un interruptor que las cuenta. El VPFI de tu bóveda fija tu nivel de descuento en comisiones; tenerlo para eso no lo pignora, y el VPFI que pignoras en un préstamo u oferta aparece como retenido. Cada activo con algo libre tiene un botón Retirar.
+
+<a id="vault-deposit"></a>
+
+### Depositar en tu bóveda
+
+Depositar, en la página Bóveda, mueve un token o un NFT de tu billetera a tu propia bóveda, fuera de cualquier préstamo. Elige qué depositar: un token sugerido o una colección de prueba, o pega una dirección; si es un token, un NFT o una colección multitoken se lee de su contrato. Luego escribe la cantidad, el id del NFT, o el id del token y cuántos. Si hay Términos de Servicio en vigor que no has aceptado, la app te los pide primero, y otra vez antes de firmar si cambias a una billetera que no los ha aceptado. La revisión dice qué sale de tu billetera y a qué bóveda; si aún no tienes bóveda, el depósito la crea. Un token pide una aprobación por exactamente la cantidad, un NFT solo por ese token, y una colección multitoken una aprobación que se retira justo después del depósito, con un paso más en la billetera. El protocolo comprueba el depósito antes de que tu billetera lo envíe, y rechaza un token que no llega entero, como uno que cobra una comisión al transferirse. Si el depósito no se completa, la app te pide devolver la aprobación. Lo que llega cuenta como tuyo. Sin el modo protegido puedes retirarlo al instante; con él, un retiro espera el plazo de tu cuenta, y nada sale mientras la cuenta está bloqueada. La revisión dice cuál se aplica. Mientras el protocolo está en pausa, los depósitos están cerrados.
+
+<a id="vault-withdraw"></a>
+
+### Retirar de tu bóveda
+
+Retirar, en un activo de la página Bóveda, devuelve lo libre a tu billetera. Libre significa que no lo retiene ningún préstamo, oferta, reclamo, oferta permanente ni pago en cola; decide la cifra del propio protocolo, y el formulario la muestra y rechaza más. Un NFT que tu registro de depósitos solo nombra por su colección se retira escribiendo su id bajo esa colección. La app solo retira a la billetera que firma. La revisión dice qué sale de qué bóveda y adónde va. Sin el modo protegido llega a tu billetera al instante. Con él, el protocolo lo pone en cola durante el plazo de tu cuenta, con la aprobación de un firmante secundario si tu cuenta la exige; puedes cancelar un retiro en cola desde la cola de pagos de la página Reclamos, y entonces se queda en tu bóveda. Mientras la cuenta está bloqueada no se puede retirar nada. Nada sale de tu billetera y no se pide ninguna aprobación. Mientras el protocolo está en pausa, los retiros están cerrados hasta que se abre su vía de escape; consulta Cuando el protocolo está en pausa.
+
+<a id="vault-safety"></a>
+
+### Seguridad de la cuenta
+
+La tarjeta Seguridad de la cuenta en la página Bóveda muestra si tu cuenta usa el modo protegido, su plazo, si un firmante secundario debe aprobar cada liberación, si tus NFT de posición están protegidos, cuántos pagos esperan en su cola y cada cambio aún pendiente. Activar el modo protegido hace que cada pago de tu bóveda a tu billetera espere un plazo, para que un ladrón que se haga con tu billetera no pueda vaciar tu bóveda antes de que lo notes; un pago que te llega desde la bóveda de otra persona va a tu bóveda, y nada de lo que debes a otros se retrasa. En el modo básico el plazo es el más corto que permite el protocolo, dos días, y la protección de los NFT de posición queda desactivada; el modo avanzado te deja elegir hasta cinco días y proteger tus NFT de posición. Bloquear ahora cancela cada pago en cola (los activos se quedan en tu bóveda), detiene las posiciones nuevas y descarta cada cambio pendiente; pagar y añadir garantía siguen funcionando, y un bloqueo funciona incluso durante una pausa. Desbloquear es una solicitud que solo surte efecto tras el plazo de tu cuenta; cuando vence, Aplicar los cambios vencidos la aplica, junto con cualquier otro cambio vencido. Tu cola de pagos aparece bajo la tarjeta. Si el protocolo de esta red no tiene modo protegido, la tarjeta dice que no está disponible; si no se puede leer, la tarjeta no ofrece ningún control y dice que no supongas que está desactivado. Cada acción pide tu billetera una vez, y la tarjeta final muestra lo que registró el protocolo.
+
+<a id="vault-escape"></a>
+
+### Cuando el protocolo está en pausa
+
+Mientras el protocolo está en pausa, la página Bóveda lo dice arriba: los retiros están cerrados, mientras que el pago total y parcial y añadir garantía siguen abiertos. Si es una pausa administrativa, también dice cuándo se abre su vía de escape, según lo informa el protocolo, con una cuenta atrás. Una vez abierta la vía, Retirar en cualquier activo con algo libre devuelve lo tuyo directamente a tu billetera; la revisión dice que pasa por la vía de escape, y la vía nunca devuelve lo que retiene un préstamo, una oferta o un reclamo. Con el modo protegido activo, tus retiros siguen esperando el plazo de tu cuenta en la cola de pagos, como siempre. Una pausa automática, o un protocolo aún no lanzado, no abre ninguna vía de escape, y la página dice que no hay ninguna prevista.
+
+<a id="my-offers"></a>
+
+### Tus ofertas
+
+Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada oferta cuyo token de posición tienes ahora, la más reciente primero. Cada una muestra el estado que informa el protocolo: abierta, completada, vendida, vencida o cancelada, y los filtros sobre la lista cuentan cada estado. Una solicitud de préstamo figura como vendida cuando su garantía se vendió mediante su anuncio en el mercado antes de que alguien la aceptara: no se abrió ningún préstamo y lo obtenido en la venta fue a la bóveda de quien la creó. Una oferta abierta mantiene en tu bóveda lo que presta o compromete hasta que se completa o se cancela; una vencida lo mantiene ahí hasta que alguien la limpia. Cuando el protocolo cancela una oferta que nada completó, borra sus condiciones, así que la página muestra solo su número y su estado. Si otra billetera tiene el token de posición de una oferta que creaste, aún puedes cancelarla y la devolución llega a ti; si tienes una que creó otra billetera, solo esa billetera puede cancelarla antes de que venza. Debajo de tus ofertas está el libro de ofertas, que se describe a continuación.
+
+<a id="offer-book"></a>
+
+### El libro de ofertas
+
+Debajo de tus ofertas, el libro de ofertas muestra todas las ofertas abiertas de la red, de la más nueva a la más antigua, y puedes leerlo sin conectar una billetera. Las pestañas separan los préstamos de un token de los alquileres de NFT, un filtro muestra las ofertas de prestamistas, las solicitudes de prestatarios o ambas, y una vez conectado puedes ocultar tus propias ofertas. Las ofertas más antiguas se cargan con «Mostrar ofertas anteriores»; los filtros se aplican a lo leído, y la línea de recuento dice cuánto es. El libro viene del índice del protocolo, que puede ir unos minutos por detrás de la cadena, así que solo te señala ofertas: abre una para verla tal como la guarda la cadena. Una oferta pasada su vencimiento se marca como vencida; cualquiera puede limpiarla, y lo que bloqueaba vuelve a su creador. Si el índice no se puede leer, el libro lo dice en lugar de mostrar que no hay ofertas.
+
+<a id="offer-detail"></a>
+
+### La página de una oferta
+
+Cada oferta tiene su propia página, leída de la cadena haya o no una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes.
+
+<a id="offer-cancel"></a>
+
+### Cancelar una oferta
+
+Cancelar en una oferta abierta que creaste la retira del libro y devuelve lo que aún bloquea en tu bóveda: el importe no prestado o el NFT de una oferta de préstamo, la garantía sin usar de una solicitud, o la tarifa prepagada y el margen de una solicitud de alquiler. Una oferta que nada ha completado no puede cancelarse en sus primeros cinco minutos, para que una cancelación nunca compita con una aceptación; la revisión dice cuándo podrá, y levanta el bloqueo por sí sola. La parte ya completada sigue completada. Una oferta vencida tiene un botón Limpiar que devuelve de la misma forma lo que bloqueaba; cualquiera puede limpiar una oferta vencida, y la devolución siempre va a su creador. La revisión dice qué vuelve y adónde: sin modo protegido llega a tu billetera al instante; con él, espera el retraso de tu cuenta en la cola de pagos, o queda en tu bóveda mientras la cuenta está bloqueada. Cuando la app no puede calcular la devolución, como en una oferta ligada a un préstamo en curso, la revisión lo dice y la tarjeta final muestra lo que se movió. Mientras el protocolo está en pausa, cancelar está cerrado. Nada sale de tu billetera y no se pide ninguna aprobación, así que tu billetera pregunta una vez.
 
 <a id="risk-access"></a>
 

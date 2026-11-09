@@ -1,8 +1,12 @@
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
+import { AddCollateral, addCollateralKey } from '../../shared/collateral/AddCollateral';
+import { TakeBack, takeBackKey } from '../../shared/collateral/TakeBack';
+import { addCollateralVerdict } from '../../shared/eligibility/addCollateral';
 import { partialRepayVerdict } from '../../shared/eligibility/partialRepay';
 import { repayVerdict } from '../../shared/eligibility/repay';
+import { takeBackVerdict } from '../../shared/eligibility/takeBack';
 import { unknownVerdict } from '../../shared/eligibility/types';
 import { isLiveStatus } from '../../shared/positions/model';
 import type { LoanView, Role } from '../../shared/positions/loanView';
@@ -34,12 +38,23 @@ interface LoanActionsProps {
  * (LN-22) is the borrower position holder's alone, so it is offered to that
  * holder only; its closed reason is stated only where it differs from the
  * full repayment's (a reason both share, such as the grace period having
- * ended, is said once). The two flows never run at once.
+ * ended, is said once). Adding collateral (LN-31) is likewise the borrower
+ * position holder's alone; its closed reason is stated only where it is its
+ * own (the collateral token paused or unpriced). Taking back collateral
+ * (LN-32) is the borrower position holder's alone too; its closed reason is
+ * stated only where no action above already said it (the protocol pause,
+ * nothing above the loan's limits, a refinance request or an unpriced token
+ * not already named). The flows never run at once.
  */
 
 /** Refusals that close paying part but not repaying in full: the only ones
  *  the page states for it, since every other is already said above. */
 const PARTIAL_ONLY = new Set(['PartialRepayNotAllowed', 'RefinanceRequestLive', 'OffsetLive']);
+/** Refusals of a top-up the page states: those no repayment shares. */
+const ADD_ONLY = new Set(['AssetPaused', 'IlliquidAsset']);
+/** Refusals of a withdrawal the page states, unless an action above already
+ *  named the same hold. */
+const TAKE_ONLY = new Set(['EnforcedPause', 'NothingToTakeBack', 'RefinanceRequestOpen', 'IlliquidAsset']);
 export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanActionsProps) {
   const copy = useCopy();
   const { text } = copy;
@@ -49,11 +64,19 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   const pKey = partialKey(loanId);
   const pEntry = useTxEntry(pKey);
   const [pOpen, setPOpen] = useStoredValue<boolean>(`${pKey}:open`);
+  const aKey = addCollateralKey(loanId);
+  const aEntry = useTxEntry(aKey);
+  const [aOpen, setAOpen] = useStoredValue<boolean>(`${aKey}:open`);
+  const tKey = takeBackKey(loanId);
+  const tEntry = useTxEntry(tKey);
+  const [tOpen, setTOpen] = useStoredValue<boolean>(`${tKey}:open`);
   const nowMs = useNow();
   const live = isLiveStatus(v.loan.status);
   const inRepay = open === true || holdsFlow(entry.phase);
   const inPartial = !inRepay && (pOpen === true || holdsFlow(pEntry.phase));
-  if (!live && !inRepay && !inPartial) return null;
+  const inAdd = !inRepay && !inPartial && (aOpen === true || holdsFlow(aEntry.phase));
+  const inTake = !inRepay && !inPartial && !inAdd && (tOpen === true || holdsFlow(tEntry.phase));
+  if (!live && !inRepay && !inPartial && !inAdd && !inTake) return null;
 
   const lenderOnly = role?.lender === true && role.borrower !== true;
   const l = v.loan;
@@ -92,8 +115,64 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
           copy,
           nowMs,
         );
+  const add = addCollateralVerdict(
+    {
+      status: l.status,
+      assetType: l.assetType,
+      borrowerHolder: v.holders.borrower,
+      borrowerLock: v.borrowerLock,
+      assetPaused: v.collateralPaused,
+      collateralLiquid: v.collateralLiquidNow,
+    },
+    own.account,
+    copy,
+    nowMs,
+  );
+  const take = takeBackVerdict(
+    {
+      status: l.status,
+      assetType: l.assetType,
+      paused: v.paused,
+      borrowerHolder: v.holders.borrower,
+      borrowerLock: v.borrowerLock,
+      refinanceLive: v.refinanceLive,
+      collateralLiquid: v.collateralLiquidNow,
+      maxWithdrawable: v.maxWithdrawable,
+    },
+    own.account,
+    copy,
+    nowMs,
+  );
   const borrower = role?.borrower === true;
+  const erc20 = l.assetType === 0;
+  const addCode = add.refusals[0]?.code;
   const partialCode = partial.refusals[0]?.code;
+  const takeCode = take.refusals[0]?.code;
+  // A hold both actions share is said once, by the action above, in words
+  // that name both, so the withdrawal's closed reason is never left unsaid.
+  const unpricedBoth = takeCode === 'IlliquidAsset' && addCode === 'IlliquidAsset';
+  const refinanceBoth = takeCode === 'RefinanceRequestOpen' && partialCode === 'RefinanceRequestLive';
+  const takeSaidAbove = unpricedBoth || refinanceBoth;
+  const addNote =
+    !borrower || !erc20 || add.state === 'open' ? null : add.state === 'unknown' ? (
+      <p className="tier-a" data-testid="add-collateral-refusal">
+        {text('addColl.unknown')}
+      </p>
+    ) : addCode !== undefined && ADD_ONLY.has(addCode) ? (
+      <p className="tier-b" data-testid="add-collateral-refusal" data-code={addCode}>
+        {unpricedBoth ? text('addColl.illiquidBoth') : add.refusals[0]?.reason}
+      </p>
+    ) : null;
+  const takeNote =
+    !borrower || !erc20 || take.state === 'open' ? null : take.state === 'unknown' ? (
+      <p className="tier-a" data-testid="take-back-refusal">
+        {text('takeBack.unknown')}
+      </p>
+    ) : takeCode !== undefined && TAKE_ONLY.has(takeCode) && !takeSaidAbove ? (
+      <p className="tier-b" data-testid="take-back-refusal" data-code={takeCode}>
+        {take.refusals[0]?.reason}
+      </p>
+    ) : null;
   const partialNote =
     !borrower || partial.state === 'open' ? null : partial.state === 'unknown' ? (
       <p className="tier-a" data-testid="partial-refusal">
@@ -101,7 +180,7 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
       </p>
     ) : partialCode !== undefined && PARTIAL_ONLY.has(partialCode) ? (
       <p className="tier-b" data-testid="partial-refusal" data-code={partialCode}>
-        {partial.refusals[0]?.reason}
+        {refinanceBoth ? text('partial.refinanceLiveBoth') : partial.refusals[0]?.reason}
       </p>
     ) : null;
 
@@ -112,9 +191,13 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
         <RepayLoan loanId={loanId} chain={chain} own={own} meta={meta} onClose={() => setOpen(null)} />
       ) : inPartial ? (
         <PartialRepay loanId={loanId} chain={chain} own={own} meta={meta} asset={l.principalAsset} principal={l.principal} onClose={() => setPOpen(null)} />
+      ) : inAdd ? (
+        <AddCollateral loanId={loanId} chain={chain} own={own} meta={meta} asset={l.collateralAsset} onClose={() => setAOpen(null)} />
+      ) : inTake ? (
+        <TakeBack loanId={loanId} chain={chain} own={own} meta={meta} asset={l.collateralAsset} onClose={() => setTOpen(null)} />
       ) : (
         <>
-          {((!lenderOnly && verdict.state === 'open') || (borrower && partial.state === 'open')) && (
+          {((!lenderOnly && verdict.state === 'open') || (borrower && partial.state === 'open') || (borrower && add.state === 'open') || (borrower && take.state === 'open')) && (
             <div className="position-action-row">
               {!lenderOnly && verdict.state === 'open' && (
                 <button type="button" className="btn btn-primary" onClick={() => setOpen(true)} data-testid="repay-open">
@@ -126,6 +209,16 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
                   {text('partial.action')}
                 </button>
               )}
+              {borrower && add.state === 'open' && (
+                <button type="button" className="btn" onClick={() => setAOpen(true)} data-testid="add-collateral-open">
+                  {text('addColl.action')}
+                </button>
+              )}
+              {borrower && take.state === 'open' && (
+                <button type="button" className="btn" onClick={() => setTOpen(true)} data-testid="take-back-open">
+                  {text('takeBack.action')}
+                </button>
+              )}
             </div>
           )}
           {!lenderOnly && verdict.state !== 'open' && (
@@ -134,6 +227,8 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
             </p>
           )}
           {partialNote}
+          {addNote}
+          {takeNote}
         </>
       )}
       <p className="tier-b" data-testid="position-actions-later">

@@ -226,6 +226,7 @@ export interface DeploymentFacets {
   vaultDepositoryFacet?: HexAddress;
   /** #3242 — the offer book's entry step and bounds, split off offerCreateFacet. */
   offerBookFacet?: HexAddress;
+  saleFloorFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */
@@ -250,6 +251,16 @@ export interface Deployment {
   /** #3204 — the VaultBeacon every user vault resolves its code through.
    *  Optional until each chain's next fresh deploy writes it. */
   vaultBeacon?: HexAddress;
+  /** #3205 — the PositionNFT: the ownership record of every position
+   *  (owners, approvals, transfers, the holder lock). Absent on a chain whose
+   *  Diamond predates it, where the Diamond itself is still the position
+   *  NFT; read through `positionNftAddress`. Optional until each chain's
+   *  next fresh deploy writes it. */
+  positionNFT?: HexAddress;
+  /** #3272 — the ProtocolRegistry: the delayed, Timelock-owned endpoints the
+   *  Diamond and every vault share (the price guard first). Optional until
+   *  each chain's next fresh deploy writes it. */
+  protocolRegistry?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;
@@ -365,6 +376,13 @@ export interface Deployment {
    *  equivalent receivers — `triggerLiquidationDiscounted` is
    *  permissionless, this is just OUR reference deployment. */
   flashLoanLiquidator?: HexAddress;
+
+  /** #3361 — the keeper backup runner (`KeeperBackupUpkeep`) Chainlink
+   *  Automation drives on this chain. It runs a permissionless upkeep step
+   *  only after our own keeper has left it undone past a set lag, and every
+   *  step ships switched off. Absent on a chain that has not run
+   *  `DeployKeeperBackupUpkeep`. */
+  keeperBackupUpkeep?: HexAddress;
 
   /** #1566 slice 4 PR A — the `RewardCustodyHolder` bound to this Diamond:
    *  the dedicated custody address for delivered reward funding. Absent on
@@ -535,4 +553,15 @@ export function getDeployment(
 ): Deployment | undefined {
   if (chainId == null) return undefined;
   return DEPLOYMENTS[chainId];
+}
+
+/** #3205 — the contract that holds a chain's position NFTs: its
+ *  `positionNFT` when the deployment records one, otherwise the Diamond
+ *  itself, which was the position NFT before #3205. Both answer the same
+ *  ERC-721 surface (owners, approvals, transfers, enumeration), so a read
+ *  or a transfer aimed here works on either. A TEMPORARY bridge for the
+ *  chains not yet freshly deployed past #3205; remove the fallback once
+ *  every deployment records `positionNFT`. */
+export function positionNftAddress(d: Pick<Deployment, 'diamond' | 'positionNFT'>): HexAddress {
+  return d.positionNFT ?? d.diamond;
 }

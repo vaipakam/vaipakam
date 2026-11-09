@@ -126,7 +126,7 @@ export const STATE_READS = Object.freeze({
   getAutoRefinanceCaps: 'one loan’s caps',
   calculateRepaymentAmount: 'one loan’s payoff',
   getLoanCollateralLien: 'one loan’s lien',
-  ownerOf: 'one position NFT’s holder',
+  // ownerOf: read through positionHolder.mjs (#3205) — not a Diamond view.
   getUserVaultAddress: 'one user’s vault',
   hasAcceptedCurrentTerms: 'one user’s terms acceptance',
   checkLiquidity: 'external oracle / pool state — a precondition on the collateral only, never a model input',

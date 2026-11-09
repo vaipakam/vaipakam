@@ -273,6 +273,26 @@ interface BaseEnv {
    *  moves no value and pays only gas. */
   VAULT_BEACON_UPKEEP_ENABLED?: string;
 
+  // Keeper fee balance alert (#3365). `secret_text` like the flags above.
+  /** 'true' arms the keeper fee balance alert (in addition to KEEPER_ENABLED):
+   *  every tick, per chain, an ops alert when the keeper wallet's native
+   *  balance would not pay for the reserve of liquidations below, and a
+   *  recovery message once it does again. Read-only; sends no transaction. */
+  KEEPER_FEE_BALANCE_ALERT_ENABLED?: string;
+  /** Liquidations the fee reserve covers (positive whole number, default 20). */
+  KEEPER_FEE_RESERVE_LIQUIDATIONS?: string;
+  /** Gas limit assumed per liquidation (positive whole number, default
+   *  2500000). */
+  KEEPER_FEE_RESERVE_LIQUIDATION_GAS?: string;
+
+  // Price checkpoint pass (#3384). `secret_text` like the flags above.
+  /** 'true' arms the price checkpoint pass (in addition to KEEPER_ENABLED):
+   *  twice an hour, per chain, `checkpointHourlyPrices` for the assets of
+   *  active ERC-20 loans not yet checkpointed this UTC hour, which the #3359
+   *  forced-sale floor's calm test reads. Permissionless; stores only the
+   *  oracle's own reading, moves no value and pays only gas. */
+  PRICE_CHECKPOINT_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -538,6 +558,10 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_STAGING_UNWIND_ENABLED',
   'EXPIRED_TEARDOWN_ENABLED',
   'VAULT_BEACON_UPKEEP_ENABLED',
+  'KEEPER_FEE_BALANCE_ALERT_ENABLED',
+  'KEEPER_FEE_RESERVE_LIQUIDATIONS',
+  'KEEPER_FEE_RESERVE_LIQUIDATION_GAS',
+  'PRICE_CHECKPOINT_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -767,6 +791,10 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_STAGING_UNWIND_ENABLED: raw.REWARD_STAGING_UNWIND_ENABLED,
     EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,
     VAULT_BEACON_UPKEEP_ENABLED: raw.VAULT_BEACON_UPKEEP_ENABLED,
+    KEEPER_FEE_BALANCE_ALERT_ENABLED: raw.KEEPER_FEE_BALANCE_ALERT_ENABLED,
+    KEEPER_FEE_RESERVE_LIQUIDATIONS: raw.KEEPER_FEE_RESERVE_LIQUIDATIONS,
+    KEEPER_FEE_RESERVE_LIQUIDATION_GAS: raw.KEEPER_FEE_RESERVE_LIQUIDATION_GAS,
+    PRICE_CHECKPOINT_ENABLED: raw.PRICE_CHECKPOINT_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

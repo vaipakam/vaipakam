@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -360,15 +362,18 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // Use TestMutatorFacet so we can write the lock through the
         // diamond's storage context.
         TestMutatorFacet(address(diamond)).lockNFTRaw(
-            BORROWER_TOKEN_ID, LibERC721.LockReason.PrecloseOffset
+            BORROWER_TOKEN_ID, LibPositionNFT.RouteReason.PrecloseOffset
         );
 
         vm.prank(borrowerHolder);
+        // #3205 — the one route rule (`openRoute`, reached through the
+        // listing wiring) refuses another flow's live route.
         vm.expectRevert(
             abi.encodeWithSelector(
-                NFTPrepayListingFacet.BorrowerNFTAlreadyLocked.selector,
+                LibPositionNFT.RouteConflict.selector,
                 BORROWER_TOKEN_ID,
-                LibERC721.LockReason.PrecloseOffset
+                LibPositionNFT.RouteReason.PrecloseOffset,
+                LibPositionNFT.RouteReason.PrepayCollateralListing
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
@@ -418,8 +423,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Borrower-position NFT locked with the right reason.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "borrower NFT locked with PrepayCollateralListing reason"
         );
     }
@@ -577,8 +582,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock stays on through the update (only the orderHash rotates).
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "lock stays on through update"
         );
     }
@@ -694,8 +699,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "post-repay cancel clears bookkeeping"
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "post-repay cancel releases the lock"
         );
     }
@@ -724,8 +729,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock released.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT unlocked"
         );
     }
@@ -906,8 +911,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             address(mockExecutor)
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing)
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing)
         );
 
         // Trigger the cleanup helper (the entry point both
@@ -932,8 +937,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "vault orderHash binding cleared"
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT lock released"
         );
         // Executor side received the clearOrder.
@@ -1025,8 +1030,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
 
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "post-default cleanup still releases the lock"
         );
         assertEq(
@@ -1059,8 +1064,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         assertEq(mockExecutor.clearCallCount(), 1, "clearOrder called");
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT unlocked"
         );
     }
@@ -1117,8 +1122,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "orderHash cleared on Dutch-expiry cleanup"
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT unlocked"
         );
     }
@@ -1398,8 +1403,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock active under PrepayCollateralListing.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "borrower NFT locked"
         );
     }
@@ -1633,9 +1638,103 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock stayed PrepayCollateralListing across the rotation.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "lock continuous"
+        );
+    }
+
+    // ─── #3205: a received position re-arms the listing on update ───────
+
+    /// @dev Real lending token, a posted listing, then the borrower position
+    ///      handed to a new holder. Returns the new holder.
+    function _postThenHandOver(bool dutch) internal returns (address newHolder, ERC20Mock lendingToken) {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        lendingToken = new ERC20Mock("Lending", "LND", 18);
+        LibVaipakam.Loan memory loan = _baseLoan();
+        loan.allowsPrepayListing = true;
+        loan.principalAsset = address(lendingToken);
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+
+        vm.prank(borrowerHolder);
+        if (dutch) {
+            NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+                LOAN_ID, 110 ether, 104 ether, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+            );
+        } else {
+            NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+                LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+            );
+        }
+        newHolder = makeAddr("receivedPositionHolder");
+        LibTestPositionNFT.move(address(diamond), BORROWER_TOKEN_ID, newHolder);
+    }
+
+    function _fillAndAssertSettled(ERC20Mock lendingToken) internal {
+        lendingToken.mint(address(diamond), _floorPlusBuffer());
+        vm.prank(address(mockExecutor));
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID, _floorPlusBuffer());
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "the sale settled"
+        );
+    }
+
+    /// @notice The OLD holder's listing can never fill once the position moved.
+    function test_transferredPosition_oldListingCannotFill() public {
+        (, ERC20Mock lendingToken) = _postThenHandOver(false);
+        lendingToken.mint(address(diamond), _floorPlusBuffer());
+        vm.prank(address(mockExecutor));
+        vm.expectRevert();
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID, _floorPlusBuffer());
+    }
+
+    /// @notice Fixed-price: the new holder's update re-arms the route at the
+    ///         current transfer count, so the updated listing fills.
+    function test_transferThenUpdateThenFill_fixedPrice() public {
+        (address newHolder, ERC20Mock lendingToken) = _postThenHandOver(false);
+        vm.prank(newHolder);
+        NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 1 ether, TEST_SALT_B, conduitKey, _emptyFeeLegs()
+        );
+        _fillAndAssertSettled(lendingToken);
+    }
+
+    /// @notice Dutch: same rule through the Dutch update.
+    function test_transferThenUpdateThenFill_dutch() public {
+        (address newHolder, ERC20Mock lendingToken) = _postThenHandOver(true);
+        vm.prank(newHolder);
+        NFTPrepayDutchListingFacet(address(diamond)).updatePrepayDutchListing(
+            LOAN_ID, 115 ether, 108 ether, block.timestamp + 12 hours, TEST_SALT_A + 1, conduitKey, _emptyFeeLegs()
+        );
+        _fillAndAssertSettled(lendingToken);
+    }
+
+    /// @notice #3336 — a listing whose borrower position moved can never fill,
+    ///         so anyone may clear it at once, fixed-price or Dutch, with no
+    ///         grace or auction window to wait for. It moves nothing.
+    function test_cancelExpiredPrepayListing_movedPosition_anyoneClearsAtOnce() public {
+        _postThenHandOver(false);
+        assertLt(block.timestamp, _graceEnd(), "well before grace ends");
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "orderHash cleared"
+        );
+        assertEq(mockExecutor.clearCallCount(), 1, "clearOrder called");
+    }
+
+    function test_cancelExpiredPrepayListing_movedPosition_dutchAnyoneClearsAtOnce() public {
+        _postThenHandOver(true);
+        vm.prank(randomCaller);
+        NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "orderHash cleared before the auction ends"
         );
     }
 

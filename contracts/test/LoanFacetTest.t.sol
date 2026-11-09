@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -320,6 +321,7 @@ contract LoanFacetTest is Test {
         // Init vault factory with impl
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
 
         // Mock approvals
         vm.prank(lender);

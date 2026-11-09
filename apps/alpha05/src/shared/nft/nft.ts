@@ -10,7 +10,8 @@
  * flow grants it for the action alone and takes it back after
  * (shared/tx/operatorApproval).
  */
-import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, parseAbi, parseEventLogs, type Log, type PublicClient } from 'viem';
+import { parseAbi, parseEventLogs, type Log, type PublicClient } from 'viem';
+import { isContractAnswer } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -34,12 +35,7 @@ export const NFT_ABI = [
   { type: 'function', name: 'setApprovalForAll', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'bool' }], outputs: [] },
 ] as const;
 
-/** Whether an error is the contract's own answer (a revert, or no code /
- *  no data where a view was expected), as opposed to a read that failed. */
-export function isContractAnswer(e: unknown): boolean {
-  if (!(e instanceof BaseError)) return false;
-  return e.walk((x) => x instanceof ContractFunctionRevertedError || x instanceof ContractFunctionZeroDataError) !== null;
-}
+export { isContractAnswer };
 
 async function supports(c: PublicClient, asset: Hex, iface: Hex): Promise<boolean> {
   try {
@@ -193,4 +189,3 @@ export function quantityMoved(logs: readonly Log[], asset: Hex, tokenId: bigint,
   }
   return moved;
 }
-

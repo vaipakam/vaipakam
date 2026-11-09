@@ -3,7 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 
@@ -93,15 +93,31 @@ library LibPrepayCleanup {
         // keyed binding).
         _clearOfferListing(uint96(loan.offerId), true);
 
-        bytes32 orderHash = s.prepayListingOrderHash[loanId];
-        if (orderHash == bytes32(0)) return; // no live listing — no-op.
+        clearLoanListing(loan, loanId);
+    }
+
+    /**
+     * @notice Tear down the loan-keyed collateral listing, if one is
+     *         recorded: its order hash and pinned executor, its route, the
+     *         executor's record and the vault's binding. Leaves the
+     *         per-loan auto-list state alone (unlike {clearActiveListing},
+     *         the terminal cleanup). Returns the cleared order hash, or 0.
+     * @dev    #3205 — also the auto-list's teardown of a listing whose
+     *         position moved since it was posted: that listing belongs to a
+     *         former holder and is cancelled whole, keeping none of its
+     *         terms (#3318 Codex r3).
+     */
+    function clearLoanListing(LibVaipakam.Loan storage loan, uint256 loanId) internal returns (bytes32 orderHash) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        orderHash = s.prepayListingOrderHash[loanId];
+        if (orderHash == bytes32(0)) return orderHash; // no live listing — no-op.
 
         address pinnedExecutor = s.prepayListingExecutor[loanId];
 
         // 1. Effects.
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
-        LibERC721._unlock(loan.borrowerTokenId);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
 
         // 2. Interactions.
         // Executor clear — guarded for the unusual case where the

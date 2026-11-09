@@ -41,6 +41,8 @@ library LibMetricsHooks {
     ///         IS the real loan id, so zero would both fail to identify the
     ///         vehicle and leave the acceptance event nothing true to name.
     error InternalVehicleNeedsRealLoan();
+    /// @dev #3205 — `tokenId` is already the position token of loan `boundLoanId`.
+    error PositionTokenBoundToAnotherLoan(uint256 tokenId, uint256 boundLoanId);
 
     // ───────────────────────── Loan hooks ─────────────────────────
 
@@ -134,14 +136,13 @@ library LibMetricsHooks {
             s.nftsInVaultByCollection[loan.collateralAsset] += 1;
         }
 
-        // Position NFT → loan id reverse mapping (O(1) NFT-rental lookup), and
-        // the accepted-offer's tokenId carries over from offer-position to
-        // loan-position (LoanFacet._copyFinancialFields assigns it to
-        // lenderTokenId or borrowerTokenId depending on offerType). Clear
-        // the offer-side reverse mapping so `getUserPositionOffers` no
-        // longer returns this tokenId as an OPEN offer position — the
-        // loan-side mapping now owns it. Both slots clear is safe:
-        // whichever was set will be cleared; the other is a no-op delete.
+        // Position NFT → loan id reverse mapping (O(1) NFT-rental lookup). On
+        // a direct accept the consumed offer's tokenId carries over from
+        // offer-position to loan-position; a match slice takes fresh tokens on
+        // both sides (#3205, LoanFacet._mintCounterpartyPosition). Clear the
+        // offer-side reverse mapping so `getUserPositionOffers` no longer
+        // returns a carried-over tokenId as an OPEN offer position. A token
+        // already bound to another loan is refused (#3205).
         _registerPositionTokens(s, loan, id);
     }
 
@@ -218,14 +219,19 @@ library LibMetricsHooks {
         LibVaipakam.Loan storage loan,
         uint256 id
     ) private {
-        if (loan.lenderTokenId != 0) {
-            s.loanIdByPositionTokenId[loan.lenderTokenId] = id;
-            delete s.offerIdByPositionTokenId[loan.lenderTokenId];
-        }
-        if (loan.borrowerTokenId != 0) {
-            s.loanIdByPositionTokenId[loan.borrowerTokenId] = id;
-            delete s.offerIdByPositionTokenId[loan.borrowerTokenId];
-        }
+        _bindPositionToken(s, loan.lenderTokenId, id);
+        _bindPositionToken(s, loan.borrowerTokenId, id);
+    }
+
+    /// @dev #3205 — one position token per loan side, never shared across
+    ///      loans: a token already bound to another loan is refused, so two
+    ///      loans can never answer to one NFT.
+    function _bindPositionToken(LibVaipakam.Storage storage s, uint256 tokenId, uint256 id) private {
+        if (tokenId == 0) return;
+        uint256 bound = s.loanIdByPositionTokenId[tokenId];
+        if (bound != 0 && bound != id) revert PositionTokenBoundToAnotherLoan(tokenId, bound);
+        s.loanIdByPositionTokenId[tokenId] = id;
+        delete s.offerIdByPositionTokenId[tokenId];
     }
 
     /// @notice Updates counters and the active-set list for a loan status edge.

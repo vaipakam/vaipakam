@@ -88,7 +88,7 @@ test('a position received on an ended loan is stated apart under Ready to collec
   const snapshot = await anvilRpc<string>('evm_snapshot');
   try {
     const { lenderTokenId } = await sc.read<{ lenderTokenId: bigint }>('getLoanDetails', [loanId]);
-    await sc.diamondWrite('lender', 'transferFrom', [sc.address('lender'), accountFor('visitor').address, lenderTokenId]);
+    await sc.positionTransfer('lender', accountFor('visitor').address, lenderTokenId);
 
     const { page, ctx } = await launchWallet('visitor');
     await page.goto('/positions');

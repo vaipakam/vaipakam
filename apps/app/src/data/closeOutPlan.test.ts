@@ -5,6 +5,7 @@
  * that would need something disclosed is left out with the reason, and
  * a read that fails is THAT loan's refusal, never the batch's.
  */
+import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicClient } from 'viem';
 import { copy } from '../content/copy';
@@ -65,7 +66,7 @@ const ctx: CloseOutCtx = {
     getBlock: async () => ({ timestamp: reads.now }),
     readContract: async () => reads.lock,
   } as unknown as PublicClient,
-  diamond: '0x000000000000000000000000000000000000d1a0',
+  diamond: DEPLOYMENTS[84532]!.diamond as `0x${string}`, // a legacy-mode record (#3205)
   holder: '0x00000000000000000000000000000000000000b0',
 };
 const LOAN: CloseOutLoan = {

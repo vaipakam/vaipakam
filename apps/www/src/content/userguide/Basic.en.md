@@ -1179,6 +1179,18 @@ When no request fits, you can post your own lending offer for your two tokens: t
 
 Unless you set parts in Advanced mode, one borrower takes the whole amount, or nobody does, and must lock exactly the collateral you set. The form shows how much of the lending token your wallet holds. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows. The offer stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, means an early repayment does not lower what you earn; pro-rata pays you only for the time the loan is open. You can also let the borrower repay part early. The form shows what the borrower would owe you at the due date if they took the offer now. In Advanced mode an offer can also be lent in parts, carry a fill mode, pay interest on a schedule and take the Full fee tariff.
 
+<a id="rate-check"></a>
+
+### Checking your rate against recent loans
+
+Under the rate on both posting forms, a lender's offer and a borrower's request, the app shows the middle rate of loans that started on the same pair and term in the last 30 days, and how many there were. If your rate is more than five points away, it warns you and says which way it cuts: a lender far under the market, or a borrower far over it, posts the offer taken first when rates move; the other way, the offer may sit untaken. It only warns, and you can still post. When there are no recent loans to compare with, when the collateral is an NFT, or when the protocol's index cannot be read, the form says so instead of staying silent.
+
+<a id="public-queue"></a>
+
+### Networks with a public queue
+
+On Ethereum and BNB Chain (and BNB Testnet), a transaction you send waits in a public queue before it is included, and anyone watching that queue, bots included, can see it and act first: take an offer before your cancel lands, or act on a loan before your repayment does. So on those networks the review of posting, taking or cancelling an offer, repaying and adding collateral says so before your wallet opens. Some wallets can send a transaction privately instead; look in your wallet's network or security settings. The app cannot choose that route for you, and sending the usual way changes only who can see the transaction before it lands. Base, Arbitrum and Optimism keep no public queue, so nothing is shown there.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts (Advanced)
@@ -1223,7 +1235,7 @@ All, Lent and Borrowed narrow the three lists at once. Positions says you have n
 
 Each loan has its own page. It starts with the loan's status, then your role: the side your wallet holds now, since position tokens can be sold or transferred. If you hold neither side, you are viewing. A deadline that needs you is worded for your side. Once the grace period is over, the page says anyone may now start the default, and only when the protocol confirms it.
 
-Below that come the loan's dates (the due date of its current term before any pause credit, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. Where the network holds a band just above the liquidation threshold for an internal match with another loan, the page states it: inside that band no outside sale can close the loan. An NFT rental has no collateral: if it defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Repaying in full and paying part are its first actions; the others come in later updates.
+Below that come the loan's dates (the due date of its current term before any pause credit, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. Where the network holds a band just above the liquidation threshold for an internal match with another loan, the page states it: inside that band no outside sale can close the loan. An NFT rental has no collateral: if it defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Repaying in full, paying part, adding collateral and taking it back are its first actions; the others come in later updates.
 
 <a id="repay"></a>
 
@@ -1248,6 +1260,114 @@ Once a period and its grace are over, anyone may settle it. A paid period only m
 The holder of the borrower position can pay part of a running loan's principal from its page, when the loan's terms allow it. Type the principal part: the protocol takes at least its minimum part for the lending token, and less than the whole principal (paying all of it is Repay in full). The interest accrued since the loan's interest was last paid is added on top. The loan keeps running with the lower principal, and its due date does not move.
 
 The review shows the part, the interest, the principal left and what the approval covers. On a pro-rata loan before its due date the interest is exact. On a full-term loan, or past the due date, it reads "at most": the protocol figure the app reads also counts the rest of the term or a late fee, which a part payment does not charge. Paying part is held while a refinance request on the loan or an offset offer on the borrower position is live, and once the grace period has ended.
+
+<a id="add-collateral"></a>
+
+### Adding Collateral
+
+The holder of the borrower position can add collateral to a running loan from its page. Adding collateral raises the loan's health factor and lowers its loan-to-value, which keeps it further from liquidation. You add more of the same token the loan already holds: the protocol takes no other, and it takes a top-up only for collateral it prices now. Type the amount; the form shows what your wallet holds.
+
+The review shows the collateral now and after, where it is held (your vault, locked to the loan until it ends), and the loan's health factor and loan-to-value now. Your wallet approves exactly the amount if your approval does not already cover it, and the app first tries the top-up as a dry run. Afterwards the app shows the protocol's own health factor and loan-to-value after the top-up. Adding collateral stays open even while the protocol is paused. A loan in fallback returns to running if the top-up restores the protocol's opening limits; otherwise the collateral is added and the loan stays in fallback. Collateral you add can be lost with the rest if the loan is liquidated or defaults. If you took over the borrower position and the loan is in fallback, the top-up goes to the vault of the borrower the loan records, and moves to yours only if it returns the loan to running.
+
+<a id="take-back-collateral"></a>
+
+### Taking Back Collateral
+
+While a loan runs, the holder of the borrower position can take back collateral above what the loan needs, from the loan's page. The protocol works out the most that can be taken back so that the health factor stays at or above the loan's minimum and the loan-to-value within its opening cap. That limit moves with prices and as interest accrues, and the form shows it as you type. Taking back collateral moves the loan closer to liquidation.
+
+The review shows the collateral now and after, that it goes from your vault to your wallet, the limit now, and the loan's health factor and loan-to-value now. No approval is needed, so your wallet asks once, after the app tries the withdrawal as a dry run. The protocol checks its limits again when the withdrawal confirms: if prices moved and the amount no longer fits, it is refused and nothing moves. A protocol pause, a pending swap-to-repay order, a standing refinance request or a lender's sale listing holds it, and the protocol lets collateral be taken back only for a token it prices. If your account has protected mode on, the collateral waits in its payout queue for the account's delay before reaching your wallet, and the review says so.
+
+<a id="collect-a-payout"></a>
+
+### Collecting a Payout
+
+When a loan ends, the protocol records what each side is owed, and the holder of each position collects it from the loan's page or from Claims. It pays whoever holds the position now, so a position you bought pays you. The lender's payout is the principal and interest, or what a default or liquidation recovered, plus any funds held for the lender and, on a rental, the NFT that was rented out. The borrower's payout is the collateral back or what was left over, plus any surplus held for the borrower. Collecting burns your position token, and once both sides have collected, the loan is settled.
+
+The review lists every payout the claim makes, what past sellers of a lender position take first (interest they earned and were not paid), and where the payment lands: your wallet, or, with protected mode on, your account's payout queue or your vault. No approval is needed, so your wallet asks once, after the app tries the claim as a dry run. A protocol pause stops every claim. While a loan is in fallback, the borrower's payout waits until the lender collects, and the lender collecting ends the fallback: the borrower can no longer cure it. The finish card shows what the transaction actually paid.
+
+<a id="claim-everything"></a>
+
+### Claim Everything
+
+Claims opens with Claim everything: every payout you can collect right now, gathered into one transaction. It lists loan payouts on ended loans whose position you hold, interaction rewards, the un-lent capital of your standing offers, free VPFI in your vault and, if you are a payee, withdrawable payroll. Each payout has a switch, so you can leave any of them out. Free vault VPFI is off unless you turn it on, because it sets your fee-discount tier, and so is the capital of a standing offer that is still lending. Interest owed to you from a position you sold, and a loan in fallback, are collected on their own. Each payout runs on its own inside the transaction: one the protocol refuses is skipped and stays listed, and the rest still pay. One transaction carries at most 30 payouts; the rest wait for a second one. Nothing leaves your wallet, so your wallet asks once, after a dry run, and the finish card shows each payout collected or skipped and where the money landed. A pause stops every claim.
+
+<a id="payout-queue"></a>
+
+### Payouts Waiting in Your Queue
+
+With protected mode on, everything leaving your vault for your wallet waits out your account's delay in a payout queue. Claims lists what waits there, soonest first, each with a short request code: every alert about a payout prints the same code, so you can match a message to a request. Each row says what it pays, where it goes and when it can be released. Once a payout is due, anyone can release it, and it only ever pays the destination it recorded; if that destination is no longer allowed, releasing it cancels it instead. You, or one of your secondary signers, can cancel a payout at any time, even during a pause, and the asset stays in your vault. If your account requires approval, a secondary signer approves each payout first; a signer finds your account in Advanced mode by pasting its address. A pause holds releases until it ends or, after a long pause, its escape route opens. Each action asks your wallet once, and the finish card shows what the transaction did.
+
+<a id="seller-interest"></a>
+
+### Interest from a Position You Sold
+
+When you sell a lender position, the interest you earned while you held it, and were not yet paid, stays yours as a claim on the loan. Claims lists every loan where you hold such a claim, with what you are owed after the protocol's share of interest and what already waits in your vault. While the loan runs, each interest payment pays the open claims first, oldest first, into each seller's own vault; until some reaches yours there is nothing to withdraw. Once the loan has ended, withdrawing first splits what the lender side recovered: the holder's principal first, then each seller's claim, oldest first. Every open claim closes then, and whatever a claim is not paid stays unpaid. The loans are found in the app's index; if it cannot list them, look a loan up by its number, which reads the chain alone. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows what the transaction paid.
+
+<a id="frozen-proceeds"></a>
+
+### When a Payout Is Frozen
+
+If the sanctions screen flags your wallet, the protocol takes nothing you are owed and never stops a loan from closing: the other party still receives what its side recovers. Your share is parked in a vault, locked, and released once your wallet is de-listed. Claims and the loan's page then say "Frozen, awaiting de-listing" and offer no button to collect. If the screen cannot be read and your wallet was confirmed flagged before, a frozen payout stays locked until the screen answers again, and a payment due to your wallet in that time is parked the same way, since the protocol still treats it as flagged; an outage alone never freezes a wallet never confirmed flagged. On a running loan, the loan's page also shows what the loan already paid that is reserved for the lender position until the lender collects it, and a repaid loan says when it waits for a surplus the borrower has not yet collected.
+
+<a id="extension-reserves"></a>
+
+### Extension Reserves
+
+If you hold a loan's borrower position, you can set aside the loan's token in your own vault for its extensions. An extension, the keeper's or your own, draws on that reserve first. The reserve stays yours. Claims lists every loan where you have some left, and says whether an extension can still draw on it: only while the loan runs and you hold its borrower position. You can take the whole reserve back at any time while the protocol is not paused, whatever the loan's state; if the loan is still running, its next extension then draws on your other balance of the token instead. The loans are found in the app's index; if it cannot list them, look a loan up by its number. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows where the money landed.
+
+<a id="vault-holdings"></a>
+
+### Your Vault
+
+Vault shows your own vault on the network you are connected to: its full address, with a link to the explorer. It is a contract the protocol keeps for your wallet alone; nothing in it is pooled with anyone else's, and assets leave it only by the protocol's rules. If you have no vault yet, the page says so and offers to create one; your first deposit or offer would create it anyway. Creating it moves nothing and asks no approval, so your wallet asks once. Each asset shows three figures from the protocol: In your vault (what the protocol counts as yours there), Free to withdraw now, and Held by your positions (what your loans, offers, claims, reserves or queued payouts keep). A token sent to your vault by a plain transfer is not counted and cannot be withdrawn until you adopt it; the row says so and links to where you adopt or disown it. The page lists the assets you deposited and the assets your loans, the offers you made and your standing offers name, so a token sent by a plain transfer shows only if one of those names it. Small and empty rows are hidden behind a switch that counts them. VPFI in your vault sets your fee-discount tier; holding it for that does not pledge it, and VPFI you pledge to a loan or offer shows as held. Each asset with something free has a Withdraw button.
+
+<a id="vault-deposit"></a>
+
+### Deposit into your vault
+
+Deposit on the Vault page moves a token or an NFT from your wallet into your own vault, outside any loan. Choose what to deposit: a suggested token or test collection, or paste an address; whether it is a token, an NFT or a multi-token collection is read from its contract. Then type the amount, the NFT's token id, or the token id and how many. If Terms of Service are in force that you have not accepted, the app asks for them first, and asks again before you sign if you switch to a wallet that has not accepted them. The review says what leaves your wallet and into which vault; if you have no vault yet, the deposit creates it. A token asks for an approval of exactly the amount, an NFT for that one token only, and a multi-token collection for an approval that is taken back right after the deposit, in one more wallet step. The protocol checks the deposit before your wallet sends it, and refuses a token that does not arrive in full, such as one that charges a fee on transfer. If the deposit does not go through, the app asks to put an approval back. What arrives is counted as yours. Without protected mode you can withdraw it at once; with it, a withdrawal waits out your account's delay, and nothing leaves while the account is locked. The review says which applies. While the protocol is paused, deposits are closed.
+
+<a id="vault-withdraw"></a>
+
+### Withdraw from your vault
+
+Withdraw on an asset of the Vault page takes what is free back to your wallet. Free means not held by any loan, offer, claim, standing offer or queued payout; the protocol's own figure decides, and the form shows it and refuses more. An NFT your deposit record names only by its collection is withdrawn by typing its token id under that collection. The app withdraws only to the wallet that signs. The review says what leaves which vault and where it goes. Without protected mode it reaches your wallet at once. With it, the protocol queues it for your account's delay, with a secondary signer's approval if your account requires one; you can cancel a queued withdrawal from the payout queue on the Claims page, and it then stays in your vault. While the account is locked nothing can be withdrawn. Nothing leaves your wallet and no approval is asked. While the protocol is paused, withdrawals are closed until its escape route opens; see When the protocol is paused.
+
+<a id="vault-safety"></a>
+
+### Account safety
+
+The Account safety card on the Vault page shows whether your account runs protected mode, its delay, whether a secondary signer must approve each release, whether your position NFTs are protected, how many payouts wait in its queue, and every change still pending. Turning protected mode on makes every payout from your vault to your wallet wait a delay, so a thief who takes your wallet cannot empty your vault before you notice; a payment to you from anyone else's vault lands in your vault instead, and nothing you owe others is delayed. In Basic mode the delay is the shortest the protocol allows, two days, and position NFT protection stays off; Advanced mode lets you choose up to five days and protect your position NFTs. Lock now cancels every queued payout (the assets stay in your vault), stops new positions and drops every pending change; repaying and adding collateral keep working, and a lock works even during a pause. Unlocking is a request that takes effect only after your account's delay; once it is due, Apply due changes applies it, together with any other change that is due. Your payout queue is shown under the card. If the protocol on this network has no protected mode, the card says it is unavailable; if it cannot be read, the card offers no control and says not to assume it is off. Each action asks your wallet once, and the finish card shows what the protocol recorded.
+
+<a id="vault-escape"></a>
+
+### When the protocol is paused
+
+While the protocol is paused, the Vault page says so at the top: withdrawals are closed, while full and partial repayment and adding collateral stay open. If the pause is an administrative one, it also says when its escape route opens, as the protocol reports it, with a countdown. Once the route is open, Withdraw on any asset with something free takes what is yours straight back to your wallet; the review says it goes through the escape route, and the route never returns what a loan, offer or claim holds. With protected mode on, your withdrawals still wait your account's delay in the payout queue, as usual. An automatic pause, or a protocol not yet launched, opens no escape route, and the page says none is scheduled.
+
+<a id="my-offers"></a>
+
+### Your offers
+
+Offers lists every offer you made on the network you are connected to, and every offer whose position token you hold now, newest first. Each shows the state the protocol reports: open, filled, sold, expired or cancelled, and the filters above the list count each state. A borrowing request reads as sold when its collateral was sold through its marketplace listing before anyone accepted it: no loan opened, and the sale's proceeds went to the creator's vault. An open offer keeps what it lends or pledges in your vault until it is filled or cancelled; an expired one keeps it there until it is cleaned up. When the protocol cancels an offer that nothing filled, it clears the offer's terms, so the page shows only its number and state. If another wallet holds the position token of an offer you made, you can still cancel it and its return comes to you; if you hold one that another wallet made, only that wallet can cancel it before it expires. Below your offers is the offer book, described next.
+
+<a id="offer-book"></a>
+
+### The offer book
+
+Below your offers, the offer book lists every open offer on the network, newest first, and you can read it without connecting a wallet. Tabs split loans of a token from NFT rentals, a filter shows lenders' offers, borrowers' requests or both, and once connected you can hide your own offers. Older offers load with Show older offers; the filters apply to what has been read, and the count line says how many that is. The book comes from the protocol's index, which can lag the chain by a few minutes, so it only points you at offers: open one to see it as the chain holds it. An offer past its expiry is tagged expired; anyone may clean it up, and what it locked returns to its creator. If the index cannot be read, the book says so instead of showing no offers.
+
+<a id="offer-detail"></a>
+
+### An offer's page
+
+Each offer has its own page, read from the chain whether or not a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
+
+<a id="offer-cancel"></a>
+
+### Cancel an offer
+
+Cancel on an open offer you made takes it off the book and returns what it still locks in your vault: a lending offer's unlent amount or its NFT, a request's unused collateral, or a rental request's prepaid fee and buffer. An offer nothing has filled cannot be cancelled in its first five minutes, so a cancel never races someone's accept; the review says when it can be, and lifts the block by itself. Part of an offer already filled stays filled. An expired offer has a Clean up button that returns what it locked in the same way; anyone may clean up an expired offer, and the return always goes to its creator. The review says what returns and where: without protected mode it reaches your wallet at once; with it, it waits your account's delay in the payout queue, or stays in your vault while the account is locked. Where the app cannot size the return, such as for an offer tied to a running loan, the review says so and the finish card shows what moved. While the protocol is paused, cancelling is closed. Nothing leaves your wallet and no approval is asked, so your wallet asks once.
 
 <a id="risk-access"></a>
 

@@ -29,6 +29,7 @@ import { putBackPrompts } from './approvalCap';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { readPayoff, readPayoffAt, type Payoff } from './payoff';
 import { PAYOFF_MIN_LEAD_SECONDS, readLoanFacts } from './repayReview';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -86,12 +87,8 @@ export function minimumPart(principal: bigint, minPartialBps: bigint): bigint {
 /** The protocol's minimum part for a loan, read on its own for the amount
  *  form; null when unread. */
 export async function readPartialFloor(c: PublicClient, diamond: Hex, asset: Hex, principal: bigint): Promise<bigint | null> {
-  try {
-    const p = (await c.readContract({ address: diamond, abi: CONFIG, functionName: 'getAssetRiskParams', args: [asset] })) as { minPartialBps: bigint };
-    return minimumPart(principal, BigInt(p.minPartialBps));
-  } catch {
-    return null;
-  }
+  const p = (await answerOrNull(c.readContract({ address: diamond, abi: CONFIG, functionName: 'getAssetRiskParams', args: [asset] }))) as { minPartialBps: bigint } | null;
+  return p === null ? null : minimumPart(principal, BigInt(p.minPartialBps));
 }
 
 export async function readPartialReview(

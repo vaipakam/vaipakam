@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {PositionNFT} from "../src/PositionNFT.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -20,7 +22,7 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../src/libraries/LibDepositoryLedger.sol";
-import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -81,7 +83,7 @@ contract ProtectedVaultTest is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
         LibTestVaultBeacon.install(address(diamond), address(this));
-        VaipakamNFTFacet(address(diamond)).initializeNFT();
+        LibTestPositionNFT.install(address(diamond), address(this));
         sanctionsList = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctionsList));
 
@@ -122,6 +124,15 @@ contract ProtectedVaultTest is Test {
 
     function _nftFacet() internal view returns (VaipakamNFTFacet) {
         return VaipakamNFTFacet(address(diamond));
+    }
+
+    function _core() internal view returns (PositionNFT) {
+        return LibTestPositionNFT.core(address(diamond));
+    }
+
+    function _mintTo(address to, uint256 id) internal {
+        vm.prank(address(diamond));
+        _nftFacet().mintNFT(to, id, id, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated);
     }
 
     function _vault(address u) internal returns (address) {
@@ -491,13 +502,12 @@ contract ProtectedVaultTest is Test {
         _enable();
         uint256 id = _queue(1 ether, user);
         vm.startPrank(user);
-        _prot().setProtectNfts(user, false);
+        _prot().setRequireCosign(user, false);
         _prot().requestDisableProtectedMode();
         vm.stopPrank();
         vm.warp(block.timestamp + DELAY);
         // The switch-off waits for the open row; the other due change applies.
         _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).protectNfts);
         assertTrue(_prot().getProtectedAccount(user).enabled);
         _pay().releasePayout(id);
         _prot().finalizeSettingChanges(user);
@@ -537,6 +547,35 @@ contract ProtectedVaultTest is Test {
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.RowNotQueued.selector, id));
         _pay().releasePayout(id);
         assertEq(_depo().freeHolding(user, K20, address(token), 0), 10 ether);
+    }
+
+    /// @dev #3361 — the global open-payout set holds exactly the queued ids:
+    ///      a queue adds, a cancel, a release and a lock's cancel-all remove.
+    function testOpenPayoutSetTracksQueueCancelReleaseAndLock() public {
+        _deposit20(100 ether);
+        _enable();
+        _addSigner(s1);
+        uint256 a = _queue(10 ether, user);
+        uint256 b = _queue(10 ether, user);
+        uint256 c = _queue(10 ether, user);
+        assertEq(_pay().getOpenPayoutCount(), 3);
+        uint256[] memory page = _pay().getOpenPayoutIds(1, 5);
+        assertEq(page.length, 2, "a page stops at the end of the set");
+        assertEq(_pay().getOpenPayoutIds(3, 5).length, 0, "an offset past the end is empty");
+
+        vm.prank(user);
+        _pay().cancelPayout(a);
+        assertEq(_pay().getOpenPayoutCount(), 2);
+
+        vm.warp(block.timestamp + DELAY);
+        _pay().releasePayout(b);
+        uint256[] memory open = _pay().getOpenPayoutIds(0, 10);
+        assertEq(open.length, 1);
+        assertEq(open[0], c);
+
+        vm.prank(s1);
+        _prot().lockVault(user);
+        assertEq(_pay().getOpenPayoutCount(), 0, "a lock's cancel-all empties it");
     }
 
     // ─── Signers, co-sign and the lock ───────────────────────────────────
@@ -652,8 +691,10 @@ contract ProtectedVaultTest is Test {
         _prot().requestRemoveSigner(user, s3);
         _prot().addAllowlisted(user, thief);
         _prot().setRequireCosign(user, false);
-        _prot().setProtectNfts(user, false);
         vm.stopPrank();
+        // ...and asks the PositionNFT core to unlock its positions (#3205).
+        vm.prank(user);
+        _core().requestUnlock();
 
         vm.prank(s1);
         _prot().proposeReplacement(user, nominee);
@@ -667,7 +708,8 @@ contract ProtectedVaultTest is Test {
         assertEq(_prot().getAllowlistPendingAt(user, thief), 0);
         LibVaipakam.ProtectedAccount memory a = _prot().getProtectedAccount(user);
         assertEq(a.pendingCosignOffAt, 0);
-        assertEq(a.pendingNftOffAt, 0);
+        (, , uint256 unlockAt, , ) = _core().lockOf(user);
+        assertEq(unlockAt, 0, "the replacement voided the pending unlock");
         vm.expectRevert();
         _prot().finalizeRemoveSigner(user, s3);
         vm.expectRevert();
@@ -675,7 +717,7 @@ contract ProtectedVaultTest is Test {
         _prot().finalizeSettingChanges(user);
         a = _prot().getProtectedAccount(user);
         assertTrue(a.requireCosign);
-        assertTrue(a.protectNfts);
+        assertTrue(_core().isLocked(user), "positions stay locked");
     }
 
     function _replaceWithNominee() internal {
@@ -894,60 +936,122 @@ contract ProtectedVaultTest is Test {
 
     // ─── Position NFTs ───────────────────────────────────────────────────
 
-    function testProtectedOwnerPositionMovesOnlyThroughTheQueue() public {
-        vm.prank(address(diamond));
-        _nftFacet().mintNFT(user, 1, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+    /// @dev #3205 — a protected account's positions sit under the
+    ///      PositionNFT core's holder lock, and a NEW position minted to it
+    ///      is locked from the start: no transfer, no approval.
+    function testProtectedAccountsNewPositionIsMintedLocked() public {
         _enable();
-        assertEq(uint8(_nftFacet().positionLock(1)), uint8(LibERC721.LockReason.ProtectedOwner));
+        _mintTo(user, 1);
+        assertTrue(_core().isLocked(user));
         vm.prank(user);
-        vm.expectRevert();
-        _nftFacet().transferFrom(user, friend, 1);
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
+        _core().transferFrom(user, friend, 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(LibERC721.ProtectedOwnerApprovalForbidden.selector, user));
-        _nftFacet().setApprovalForAll(friend, true);
-
-        // The destination rule of a payout: an address not on the
-        // allowlist is refused.
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
+        _core().setApprovalForAll(friend, true);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.RecipientNotAllowlisted.selector, user, friend));
-        _nftFacet().queuePositionTransfer(1, friend);
-        vm.prank(user);
-        _prot().addAllowlisted(user, friend);
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeAddAllowlisted(user, friend);
-
-        vm.prank(user);
-        uint256 id = _nftFacet().queuePositionTransfer(1, friend);
-        vm.warp(block.timestamp + DELAY);
-        _nftFacet().releasePositionTransfer(id);
-        assertEq(_nftFacet().ownerOf(1), friend);
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
+        _core().approve(friend, 1);
     }
 
-    function testPositionTransferNeedsTheCosignAndFollowsTheAllowlist() public {
-        vm.prank(address(diamond));
-        _nftFacet().mintNFT(user, 1, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+    /// @dev Enabling raises the core lock delay toward the account's delay
+    ///      (capped at the core's Diamond cap); the holder's own unlock then
+    ///      waits it, after which the position moves freely.
+    function testHolderUnlocksAfterTheDelayThenMoves() public {
+        _mintTo(user, 1);
         _enable();
-        _addSigner(s1);
-        vm.startPrank(user);
-        _prot().setRequireCosign(user, true);
-        _prot().addAllowlisted(user, friend);
-        vm.stopPrank();
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeAddAllowlisted(user, friend);
+        (, uint256 delay, , , ) = _core().lockOf(user);
+        uint256 cap = _core().MAX_DIAMOND_LOCK_DELAY();
+        assertEq(delay, DELAY > cap ? cap : DELAY, "lock delay follows the protected delay");
+        vm.prank(user);
+        _core().requestUnlock();
+        vm.warp(block.timestamp + delay - 1);
+        vm.expectRevert();
+        _core().executeUnlock(user);
+        vm.warp(block.timestamp + 1);
+        _core().executeUnlock(user);
+        vm.prank(user);
+        _core().transferFrom(user, friend, 1);
+        assertEq(_core().ownerOf(1), friend);
+    }
 
+    /// @dev A pending unlock is voided by a protected-mode lock, by a
+    ///      switch-off, and by a re-enable: none matures under the next posture.
+    function testPendingUnlockIsVoidedByLockSwitchOffAndReEnable() public {
+        _mintTo(user, 1);
+        _enable();
+        uint256 at;
+        // 1. A lock voids it (and keeps the tokens locked).
         vm.prank(user);
-        uint256 id = _nftFacet().queuePositionTransfer(1, friend);
+        _core().requestUnlock();
+        (, , at, , ) = _core().lockOf(user);
+        assertGt(at, 0);
+        vm.prank(user);
+        _prot().lockVault(user);
+        (, , at, , ) = _core().lockOf(user);
+        assertEq(at, 0, "lock voids the pending unlock");
+        assertTrue(_core().isLocked(user));
+        // Unlock the protected vault again (its own delayed path).
+        vm.prank(user);
+        _prot().requestUnlock(user);
         vm.warp(block.timestamp + DELAY);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CosignRequired.selector, id));
-        _nftFacet().releasePositionTransfer(id);
-        vm.prank(s1);
-        VaultPayoutFacet(address(diamond)).cosignPositionTransfer(id);
-        // Removing the destination from the allowlist cancels the transfer.
+        _prot().finalizeSettingChanges(user);
+        // 2. A switch-off voids it.
         vm.prank(user);
-        _prot().removeAllowlisted(user, friend);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.RowNotQueued.selector, id));
-        _nftFacet().releasePositionTransfer(id);
-        assertEq(_nftFacet().ownerOf(1), user);
+        _core().requestUnlock();
+        vm.prank(user);
+        _prot().requestDisableProtectedMode();
+        vm.warp(block.timestamp + DELAY);
+        _prot().finalizeSettingChanges(user);
+        assertFalse(_prot().getProtectedAccount(user).enabled);
+        (, , at, , ) = _core().lockOf(user);
+        assertEq(at, 0, "switch-off voids the pending unlock");
+        // 3. A re-enable voids it.
+        vm.prank(user);
+        _core().requestUnlock();
+        (, , at, , ) = _core().lockOf(user);
+        assertGt(at, 0);
+        _enable();
+        (, , at, , ) = _core().lockOf(user);
+        assertEq(at, 0, "re-enable voids the pending unlock");
+        assertTrue(_core().isLocked(user));
+    }
+
+    /// @dev The Diamond can lock a holder and raise the lock delay (capped),
+    ///      and void a pending change, but it has no path that unlocks a
+    ///      holder or lowers a delay.
+    function testTheDiamondCannotUnlockOrLowerTheDelay() public {
+        _mintTo(user, 1);
+        _enable();
+        PositionNFT c = _core();
+        (, uint256 delay, , , ) = c.lockOf(user);
+        // No pending unlock: executing one reverts for anyone, the Diamond too.
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.NoUnlockPending.selector, user));
+        c.executeUnlock(user);
+        // The Diamond's own requestUnlock acts on the Diamond's address only.
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderNotLocked.selector, address(diamond)));
+        c.requestUnlock();
+        // Its raise only raises, and never past its cap.
+        uint256 cap = c.MAX_DIAMOND_LOCK_DELAY();
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.DelayNotHigher.selector, delay, delay));
+        c.raiseLockDelay(user, delay);
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.DelayAboveDiamondCap.selector, cap + 1, cap));
+        c.raiseLockDelay(user, cap + 1);
+        // Lowering the delay is the holder's own setLockDelay; the Diamond
+        // calling it changes only the Diamond's own (unlocked) record.
+        vm.prank(address(diamond));
+        c.setLockDelay(0);
+        (bool locked, uint256 after_, , , ) = c.lockOf(user);
+        assertTrue(locked);
+        assertEq(after_, delay);
+        // And no one but the Diamond may use its lock powers.
+        vm.prank(thief);
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.NotDiamond.selector, thief));
+        c.voidPending(user);
     }
 
     function testALockVoidsTheOwnersReplacementProposal() public {
@@ -1165,11 +1269,10 @@ contract ProtectedVaultTest is Test {
     }
 
     function testRetiredAccountProtectsPositionNftsEvenIfNotChosen() public {
-        vm.prank(address(diamond));
-        _nftFacet().mintNFT(user, 1, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+        _mintTo(user, 1);
         vm.prank(user);
         _prot().enableProtectedMode(DELAY, false);
-        assertEq(uint8(_nftFacet().positionLock(1)), uint8(LibERC721.LockReason.None));
+        assertFalse(_core().isLocked(user));
         _threeSigners();
         vm.prank(s1);
         _prot().proposeReplacement(user, nominee);
@@ -1177,11 +1280,13 @@ contract ProtectedVaultTest is Test {
         _prot().approveReplacement(user);
         vm.warp(block.timestamp + DELAY);
         _prot().finalizeReplacement(user);
-        // The old wallet still holds the token but can no longer move it.
-        assertEq(uint8(_nftFacet().positionLock(1)), uint8(LibERC721.LockReason.ProtectedOwner));
+        // The old wallet still holds the token but can no longer move it:
+        // the replacement put it under the core's holder lock (#3205; the
+        // vault-verified recovery transfer to the new wallet is PR 2).
+        assertTrue(_core().isLocked(user));
         vm.prank(user);
-        vm.expectRevert();
-        _nftFacet().transferFrom(user, thief, 1);
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
+        _core().transferFrom(user, thief, 1);
     }
 }
 

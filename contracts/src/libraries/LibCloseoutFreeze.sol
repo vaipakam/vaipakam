@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibDelivery} from "./LibDelivery.sol";
@@ -40,7 +41,7 @@ interface IBorrowerWalletPush {
  *         each calling facet (no delegatecall), so the shared logic is a single
  *         source of truth without a runtime hop. `address(this)` inside these
  *         helpers is the Diamond (internal-lib calls run in the caller's
- *         context), so `IERC721(address(this)).ownerOf(...)` reads the position
+ *         context), so `LibPositionNFT.ownerOf(...)` reads the position
  *         NFT held on the Diamond.
  *
  *         See docs/DesignsAndPlans/SanctionsCloseoutSweepAndSaleVehicleFixes.md.
@@ -590,7 +591,7 @@ library LibCloseoutFreeze {
         // the lender NFT is live and `ownerOf` holds) — the intended payee AND the
         // party the fail-closed marker keys on. Resolving inside the helper keeps
         // the `ownerOf` + `IERC721` weight out of the EIP-170-tight caller facets.
-        address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // #2440 — a wallet reading is trusted only to refuse (see @dev).
             if (holderAmount > 0) LibDelivery.pushExact(asset, lenderRecipient, holderAmount);
@@ -631,7 +632,7 @@ library LibCloseoutFreeze {
         (uint256 sellersGross, uint256 sellersNet) =
             LibInterestLedger.paySellersFirst(s, loan, payer, asset, interestGross, interestNet);
         uint256 holderAmount = amount - sellersNet;
-        address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // #1281-011 — the holder is booked as paid, so the payment must have
             // arrived in full; a short arrival is refused.
@@ -671,7 +672,7 @@ library LibCloseoutFreeze {
         uint256 amount
     ) internal {
         if (amount == 0) return;
-        address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             LibDelivery.requireFull(
                 asset,

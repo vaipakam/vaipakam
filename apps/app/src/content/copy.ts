@@ -68,6 +68,7 @@ const copySource = {
   "apr": "Annual APR",
   "notRecorded": "Not recorded",
   "partial": "Partially filled — use the rate desk to match remaining liquidity.",
+  "positionMoved": "This refinance request can no longer be taken: the borrower position it is for has moved since it was posted.",
   "own": "Your own offer",
   "refinance": "Refinance request — review existing collateral and loan terms.",
   "collateralFloor": "Borrower collateral shown is the committed minimum; review the full range before signing.",
@@ -1320,6 +1321,9 @@ const copySource = {
       'That’s your own offer — you can cancel it from My positions, but you can’t accept it yourself.',
     offerGone:
       'That offer is no longer open. Browse current matches below or post your own.',
+    // #3205 — an offer tied to a loan position that moved since it was posted.
+    offerPositionMoved:
+      'That offer can no longer be taken: the loan position it is tied to has moved to another wallet (or away and back) since it was posted, and it can complete only while that position has not moved. Browse current matches below or post your own.',
     counterpartyBlocked:
       'The other side of this offer can’t transact right now (compliance flag), so it can’t be accepted. Nothing was sent.',
     offerNotFound:
@@ -1723,6 +1727,9 @@ const copySource = {
       'None of these positions can be listed together right now. Open each loan to see its options.',
     consentLabel:
       'I understand the lock on each listed position and the settlement taken out of each buyer’s payment, and agree to them for every loan listed above.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    consentLabelRoute:
+      'I understand that moving a listed position NFT cancels its listing, and the settlement taken out of each buyer’s payment, and agree to them for every loan listed above.',
     confirm: 'Confirm — list these positions',
     cancel: 'Cancel',
     dismiss: 'Done',
@@ -1730,6 +1737,11 @@ const copySource = {
       'Listing locks each listed lender position NFT — it can’t be transferred until that sale completes or that listing ends (cancelling unlocks it in one step, from the loan’s page; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
     receiveEach:
       'For each listed loan, at least the minimum shown above once the settlement is taken, if a buyer takes it before its listing ends. Each listing records its own minimum, and is skipped rather than made if it would record less.',
+    // #3205 — standalone PositionNFT networks (see loanSale.lockWarningRoute).
+    lockWarningRoute:
+      'Moving a listed lender position NFT cancels that listing: once it has moved, that sale can no longer complete and the listing can only be cancelled. Your claim rights are unaffected.',
+    lockEachRoute:
+      'Nothing is locked. While each listing stands, moving that loan’s lender position NFT means its sale can no longer complete.',
     lockEach:
       'Each listed loan’s lender position NFT, until its sale completes or its listing ends. Nothing else.',
     youMayOwe:
@@ -2027,6 +2039,10 @@ const copySource = {
     ),
     lockWarn:
       'While this offer is open, your borrower position is transfer-locked — it can’t be moved, listed, or sold until the offset completes or you cancel the offer.',
+    // #3205 — standalone PositionNFT networks: the offset is a route that a
+    // transfer stops from completing, not a transfer lock.
+    lockWarnRoute:
+      'While this offer is open, keep your borrower position NFT where it is: moving it means the offset can no longer complete, and the offer can then only be cancelled.',
     fundsNote: tmpl(
       'Posting locks {{principal}} from your wallet as the new offer’s lending money. Keep about {{completion}} more available: when someone accepts, the payoff of your current loan is pulled from your wallet automatically in that same transaction.',
       ['principal', 'completion'],
@@ -2060,8 +2076,19 @@ const copySource = {
       'A lending offer is live for this loan. As soon as a borrower accepts it, the offset completes automatically — your old loan closes and your collateral is released for you to claim. You don’t need to complete anything yourself; the one remaining step afterwards is claiming that collateral.',
     pendingLoanClosed:
       'This loan has already settled another way, so the linked offer can no longer complete. Cancel it to unlock your position and get your lending money back.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    pendingLoanClosedRoute:
+      'This loan has already settled another way, so the linked offer can no longer complete. Cancel it to get your lending money back.',
     pendingTermUnfillable:
       'The offer’s replacement term can no longer finish before this loan’s due date, so no one can accept it any more. Cancel it to unlock your position and get your lending money back.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    pendingTermUnfillableRoute:
+      'The offer’s replacement term can no longer finish before this loan’s due date, so no one can accept it any more. Cancel it to get your lending money back.',
+    // #3205 — the borrower position moved since the offset was posted.
+    pendingMoved:
+      'This offset can no longer complete: your borrower position NFT moved (to another wallet, or away and back) after the offset was posted, and an offset completes only while the position has not moved since. No one can accept it any more. Anyone can cancel its offer to close it out; the lending money it holds goes back to the wallet that posted it.',
+    movedUnknown:
+      'The app can’t tell whether your borrower position NFT has moved since this offset was posted. If it has, the offset can no longer complete and only a cancel closes it out.',
     pendingOffer: tmpl('Linked offer: #{{offerId}}.', ['offerId']),
     pendingOfferUnknown:
       'This device doesn’t remember the linked offer’s number (it may have been created elsewhere). You can still find and cancel it from My positions → your offers.',
@@ -2078,6 +2105,9 @@ const copySource = {
       'This offset is no longer live — it was completed or cancelled elsewhere. Nothing was approved; refresh to see the current state.',
     restoreLoanClosed:
       'This loan has already settled another way, so the offset can no longer complete. Nothing was approved — cancel the offer to unlock your position and get your lending money back.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    restoreLoanClosedRoute:
+      'This loan has already settled another way, so the offset can no longer complete. Nothing was approved — cancel the offer to get your lending money back.',
     blockedByOtherLock:
       'This position is tied up by another live flow on this loan (a collateral listing, or a sale listing on the lender side). Nothing was approved or sent — clear that first, then post the offset.',
     approvalRestored: 'Approval restored — the offset can complete again.',
@@ -2088,6 +2118,9 @@ const copySource = {
       'Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.',
     cancelledApprovalKept:
       'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    cancelledApprovalKeptRoute:
+      'Offset offer cancelled — your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
     blockedOtherPaths:
       'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
     alreadyLive:
@@ -2253,6 +2286,12 @@ const copySource = {
       'This wallet has posted more offers since this loan’s offer was made than we can check here, so an older refinance request on this loan (one posted before the protocol kept a record of requests) may not be shown. Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     pendingUntakeable:
       'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it. Its payoff approval is not removed with it, because the same approval serves every refinance request this wallet posts on this token; if nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
+    // #3205 — the borrower position moved since the request was posted.
+    pendingMoved:
+      'This refinance request can no longer be accepted: the borrower position NFT moved (to another wallet, or away and back) after it was posted, and a request completes only while the position has not moved since. It does not hold the loan back. Only the wallet that posted it can cancel it before it expires; after that, anyone can. The position’s current holder can post a new request.',
+    // #3205 — the chain says the request no longer stands, reason unnamed.
+    pendingNotStanding:
+      'The protocol no longer counts this refinance request as standing, so no lender can accept it: since it was posted, the borrower position NFT has moved, or another wallet now holds it. It does not hold the loan back. Only the wallet that posted it can cancel it before it expires; after that, anyone can.',
     // #2429 r3 — cancelling a leftover never revokes the shared approval.
     cancelledLeftoverApprovalKept:
       'Request cancelled. Its payoff approval was left in place, because the same approval serves every refinance request this wallet posts on this token. If nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
@@ -2459,6 +2498,27 @@ const copySource = {
       'Locked for a collateral listing — it can’t be transferred while that listing stands.',
     lockSwapToRepayIntent:
       'Locked for a repay-from-collateral auction — collateral is committed to a live order to repay the loan, and any collateral the order does not include stays pledged. It can’t be transferred until the auction settles or is cancelled.',
+    // #3205 — on a network whose position NFTs live in the standalone
+    // PositionNFT, an open route does not stop a transfer; a transfer stops
+    // the route from completing.
+    routeLabel: 'Open protocol route',
+    routePrecloseOffset:
+      'A preclose-by-offset is open on this token. It can still be transferred, but after a transfer the offset can no longer complete and can only be cancelled.',
+    routeSale:
+      'A position sale listing is open on this token. It can still be transferred, but after a transfer the sale can no longer complete and the listing can only be cancelled.',
+    routePrepayListing:
+      'A collateral listing is open on this token. It can still be transferred, but after a transfer the listing can no longer complete and can only be cancelled.',
+    routeSwapToRepayIntent:
+      'A repay-from-collateral auction is open on this token: collateral is committed to a live order to repay the loan. The token can still be transferred, but after a transfer the auction can no longer settle and can only be cancelled.',
+    routeUnrecognized:
+      'A protocol route this app version doesn’t recognise is open on this token. A transfer may stop it from completing.',
+    routeUnknown:
+      'We couldn’t read whether a protocol route is open on this token right now — re-check before relying on a transfer leaving it intact.',
+    holderLockLabel: 'Holder lock',
+    holderLocked:
+      'The current holder has locked their position NFTs: this token can’t be transferred until they unlock, and an unlock waits the delay they set.',
+    holderLockUnknown:
+      'We couldn’t read whether the current holder has locked their position NFTs — don’t rely on this token being transferable until this reads clean.',
     sanctionsLabel: 'Compliance status',
     sanctionsFlagged:
       'The current holder is compliance-flagged: this NFT cannot be transferred in or out of their wallet, and its claims stay frozen until the flag clears. Do not buy this token expecting delivery.',
@@ -3052,6 +3112,25 @@ const copySource = {
     signerLockHoldsMove:
       'A recovery signer has locked this account, so this wallet cannot cancel the proposed move or propose another. The recovery signers can cancel it.',
     transfersUnknown: 'We couldn’t read the transfer queue just now. Don’t assume it is empty.',
+    // #3205 — the PositionNFT holder lock (networks whose position NFTs live
+    // in the standalone PositionNFT contract). It replaces the NFT queue.
+    protectNftsLockLabel: 'Also lock my position NFTs now (unlocking them later waits the delay)',
+    summaryNftLockOn: 'Your position NFTs are locked.',
+    summaryNftLockOff: 'Your position NFTs are not locked.',
+    nftLockTitle: 'Position NFT lock',
+    nftLockOn: 'Your position NFTs are locked: none of them can be transferred, and no transfer approval can be given, until they are unlocked.',
+    nftLockOff: 'Your position NFTs are not locked: they can be transferred like any other NFT.',
+    nftLockDelay: tmpl('Unlocking waits {{delay}} after you ask.', ['delay']),
+    nftLockNoDelay: 'Unlocking takes effect as soon as you ask.',
+    nftUnlockPending: tmpl('An unlock was asked for. It can be applied from {{when}}; cancel it if you did not ask for it.', ['when']),
+    nftUnlockDue: 'The unlock you asked for can be applied now. Anyone can send it.',
+    nftLowerPending: tmpl('A shorter unlock wait of {{delay}} was asked for and applies from {{when}}.', ['delay', 'when']),
+    nftLockNow: 'Lock my position NFTs now',
+    nftCancelUnlock: 'Cancel the unlock',
+    nftExecuteUnlock: 'Apply the unlock',
+    nftLockUnknown: 'We couldn’t read your position NFT lock just now. Don’t assume your NFTs are unlocked.',
+    nftLockNote:
+      'This lock is kept by the position NFT contract itself. Protection can switch it on and lengthen the wait, but never unlock it or shorten the wait: only the wallet holding the NFTs can ask to unlock, and the unlock always waits.',
     transferLine: tmpl('Position NFT #{{tokenId}} to {{to}}', ['tokenId', 'to']),
     allowlistTitle: 'Payout addresses',
     allowlistBody: 'Payouts may go only to your own wallet or to up to five addresses listed here. A new address becomes usable after the delay.',
@@ -3942,6 +4021,9 @@ const copySource = {
       // not happen.
       listStructural:
         'While the listing stands, your position can’t be transferred, and it also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
+      // #3205 — standalone PositionNFT networks.
+      listStructuralRoute:
+        'While the listing stands, moving your position NFT cancels the listing’s chance to complete. The listing also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
       listAlreadyListed:
         'Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.',
       // Codex r5 P2 — the line above promises a cancel the pending card
@@ -4185,10 +4267,14 @@ const copySource = {
       ['amount', 'sym'],
     ),
     consentLabel: 'I understand the lock and the settlement taken out of the buyer’s payment, and agree to them.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    consentLabelRoute: 'I understand that moving my lender position NFT cancels this listing, and the settlement taken out of the buyer’s payment, and agree to them.',
     receiptLock: 'Your lender position NFT, until the sale completes or the listing ends. Cancelling releases it in one step; after the listing expires, a small cleanup transaction (which anyone — you, or a helper bot — can send, even while the protocol is paused) releases it. Nothing else.',
     receiptCanLose: 'Nothing in your wallet is at stake. A buyer’s attempt is refused, and nothing moves, if the settlement would be larger than their payment or a sale would break the figures the listing records; the listing then sits unfillable until you cancel it.',
     receiptFees: 'No fee is taken at the sale. When your claim on the interest you earned is paid, the protocol’s usual cut of interest comes out of it.',
     receiptEnds: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, or when it expires — at the end of your chosen window, or at the loan’s due date, whichever comes first. An expired listing can’t be bought any more; your NFT then unlocks with the cancel action or a cleanup transaction anyone can send.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    receiptEndsRoute: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, when it expires — at the end of your chosen window, or at the loan’s due date, whichever comes first — or when your lender position NFT moves. An expired listing, or one whose NFT has moved, can’t be bought any more; cancel it, or a cleanup transaction anyone can send closes it out.',
     title: 'List this position for sale',
     blurb:
       'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you’re paid in that same transaction: the buyer’s payment, less the settlement. The interest you earned stays yours as a claim on the loan. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
@@ -4228,6 +4314,26 @@ const copySource = {
       'Listing locks your lender position NFT — it can’t be transferred until the sale completes or the listing ends (cancelling unlocks it in one step; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
     sweetenNote:
       'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term is deducted from what the buyer pays you.',
+    // #3205 — standalone PositionNFT networks: a listing does not lock the
+    // NFT; moving it cancels the listing's chance to complete.
+    lockWarningRoute:
+      'Moving your lender position NFT cancels your open listing: once it has moved, the sale can no longer complete and the listing can only be cancelled. Your claim rights are unaffected.',
+    receiptLockRoute:
+      'Nothing is locked. While the listing stands, moving your lender position NFT means the sale can no longer complete. Nothing else.',
+    pendingRoute: tmpl(
+      `Sale listing #{{offerId}} is live. Keep your lender NFT where it is: moving it cancels your open listing. When a buyer accepts, you’re paid in the same transaction: the buyer’s payment, less the settlement.`,
+      ['offerId'],
+    ),
+    pendingNoIdRoute:
+      'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Moving your lender NFT cancels your open listing.',
+    expiredUnsoldRoute: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. It still holds this loan until it is cleared: cancel it here, or anyone can send the cleanup transaction.',
+      ['date'],
+    ),
+    expiredUnsoldNoCancelRoute: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. It still holds this loan until it is cleared, which anyone can do by sending the cleanup transaction.',
+      ['date'],
+    ),
     done:
       'Position listed. When a buyer accepts, the sale settles in their transaction and you’re paid their payment less the settlement — there’s nothing to keep in place meanwhile. You can cancel the listing below.',
     pending: tmpl(
@@ -4260,13 +4366,26 @@ const copySource = {
     // rather than implying it checked (the view is #2672).
     boundsNote:
       'When a listing is made, it records the least you can come out with and how much is already set aside for the lender. If the loan changes before a buyer takes it so that a sale would break either figure — for example, the borrower repays part of the loan — buyers’ attempts are refused, and you can cancel and list again at the new terms. The app can’t read the figures recorded for this listing yet, so it can’t tell you whether that has happened. (Listings made before this protection existed recorded no figures and sell as before.)',
+    // #3205 — the lender position moved since the listing was posted.
+    movedEnded:
+      'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted, and a sale completes only while the position has not moved since its listing. No buyer can take it. Anyone can cancel it to close it out; anything it holds goes back to the wallet that posted it.',
+    movedEndedNoId:
+      'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted. No buyer can take it. Anyone can cancel it to close it out, but the app couldn’t identify the listing’s offer, so it can’t offer the cancel here.',
+    movedUnknown:
+      'The app can’t tell whether your lender position NFT has moved since this listing was posted. If it has, the listing can no longer complete and only a cancel closes it out.',
     cancel: 'Cancel listing',
     cancelled:
       'Listing cancelled — your lender NFT is unlocked and the loan continues unchanged. (Listings made with an earlier version of the app also set a token approval. If one is still in place, you can remove it from your wallet’s token-approvals view.)',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    cancelledRoute:
+      'Listing cancelled — the loan continues unchanged. (Listings made with an earlier version of the app also set a token approval. If one is still in place, you can remove it from your wallet’s token-approvals view.)',
     cancelSoon:
       'Cancellation opens a few minutes after listing — try again shortly.',
     loanSettledWhileListed:
       'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT.',
+    // #3205 — standalone PositionNFT networks: a route never locks the token.
+    loanSettledWhileListedRoute:
+      'This loan has settled, so the sale listing can never complete — cancel it to close it out.',
     ended:
       'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet, and the interest you earned is your claim on the loan, shown in Claims.',
     // Issue #951 — the on-chain listing entry point is broken; the
@@ -5230,6 +5349,9 @@ const copySource = {
     // being an unexplained dead end.
     notTakeablePartial: 'Part of this offer is already taken, so the rest can’t be taken directly here.',
     notTakeableNft: 'This offer uses an NFT as the loan or its collateral, which can’t be taken directly here.',
+    // #3205 — tied to a loan position that moved since it was posted.
+    notTakeableMoved:
+      'This can no longer be taken: the loan position it is tied to has moved to another wallet (or away and back) since it was posted, and it can complete only while that position has not moved.',
     filters: {
       showLabel: 'Show',
       sideAll: 'Everything',

@@ -107,6 +107,22 @@
       "flag": "REWARD_HORIZON_HEARTBEAT_ENABLED",
       "evidence": "apps/keeper/src/rewardHorizonHeartbeat.ts"
     },
+    "KeeperBackupUpkeep.checkUpkeep(bytes)": {
+      "class": "gated",
+      "gate": "simulation only: it reverts unless tx.origin is the zero address or Chainlink Automation simulation address 0x1111...1111, which no signed transaction can have, so no transaction can run it"
+    },
+    "KeeperBackupUpkeep.isDue(uint8,uint256)": {
+      "class": "user",
+      "why": "a preview: it reads a probe that always reverts with its result, so nothing the probed step writes survives"
+    },
+    "KeeperBackupUpkeep.probe(uint8,uint256)": {
+      "class": "user",
+      "why": "a preview: it always reverts with its result, so nothing it writes survives"
+    },
+    "KeeperBackupUpkeep.sweep(address)": {
+      "class": "user",
+      "why": "returns a token a backed step paid the backup contract to the treasury fixed at its deployment; it can send nowhere else, and a token left there waits harmlessly for the next sweep"
+    },
     "LegalFacet.acceptTerms(uint32,bytes32)": {
       "class": "user",
       "why": "the user accepts the terms for itself"
@@ -215,6 +231,57 @@
       "pass": "protocolUpkeep",
       "flag": "PROTOCOL_UPKEEP_ENABLED",
       "evidence": "apps/keeper/src/protocolUpkeep.ts"
+    },
+    "PositionNFT.approve(address,uint256)": {
+      "class": "user",
+      "why": "the holder's own ERC-721 approval; refused while the holder is locked"
+    },
+    "PositionNFT.cancelUnlock()": {
+      "class": "user",
+      "why": "the holder withdraws its own pending unlock"
+    },
+    "PositionNFT.executeComponent(enum:PositionNFT.Component)": {
+      "class": "gap",
+      "issue": "#3205",
+      "why": "applies a renderer or transfer-check replacement the Timelock proposed, once MIN_COMPONENT_DELAY has passed; the Timelock's executor runs it with the change it scheduled. No keeper pass backs it"
+    },
+    "PositionNFT.executeLockDelay(address)": {
+      "class": "gap",
+      "issue": "#3205",
+      "why": "applies a holder's own requested lock-delay lowering once the current delay has passed; anyone may call it and only the holder waits on it. No keeper pass backs it yet; a follow-up issue tracks one"
+    },
+    "PositionNFT.executeUnlock(address)": {
+      "class": "gap",
+      "issue": "#3205",
+      "why": "applies a holder's own requested unlock once its lock delay has passed; anyone may call it and only the holder waits on it. No keeper pass backs it yet; a follow-up issue tracks one"
+    },
+    "PositionNFT.lock()": {
+      "class": "user",
+      "why": "the holder locks its own tokens; it only tightens"
+    },
+    "PositionNFT.requestUnlock()": {
+      "class": "user",
+      "why": "the holder asks to unlock its own tokens; it waits the holder's own lock delay"
+    },
+    "PositionNFT.safeTransferFrom(address,address,uint256)": {
+      "class": "user",
+      "why": "as transferFrom, with the receiver hook"
+    },
+    "PositionNFT.safeTransferFrom(address,address,uint256,bytes)": {
+      "class": "user",
+      "why": "as transferFrom, with the receiver hook"
+    },
+    "PositionNFT.setApprovalForAll(address,bool)": {
+      "class": "user",
+      "why": "the holder's own ERC-721 operator approval; refused while the holder is locked (a revoke is always allowed)"
+    },
+    "PositionNFT.setLockDelay(uint256)": {
+      "class": "user",
+      "why": "the holder's own lock delay; a lowering waits the current delay"
+    },
+    "PositionNFT.transferFrom(address,address,uint256)": {
+      "class": "user",
+      "why": "an ERC-721 transfer by the holder or one it approved; refused out of a locked holder and shown to the transfer check"
     },
     "PrecloseFacet.completeOffset(uint256)": {
       "class": "user",
@@ -325,6 +392,10 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
+    "ProtectedAccountFacet.lockPositionNfts(address)": {
+      "class": "user",
+      "why": "the account manager locks its own account's position NFTs at the PositionNFT core (called with its own account; a caller naming another account is refused unless it manages it); it can only tighten"
+    },
     "ProtectedAccountFacet.lockVault(address)": {
       "class": "user",
       "why": "the account manager or one of its signers locks its own account"
@@ -345,10 +416,6 @@
       "class": "user",
       "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
     },
-    "ProtectedAccountFacet.setProtectNfts(address,bool)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
     "ProtectedAccountFacet.setProtectedDelay(address,uint32)": {
       "class": "user",
       "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
@@ -366,6 +433,18 @@
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
+    },
+    "ProtocolRegistry.executeAdd(bytes32,address)": {
+      "class": "user",
+      "why": "governance applies a change it proposed through the Timelock once the registry's own delay has passed; a change nobody executes leaves the current entry in place"
+    },
+    "ProtocolRegistry.executeDelay()": {
+      "class": "user",
+      "why": "governance applies a change it proposed through the Timelock once the registry's own delay has passed; a change nobody executes leaves the current entry in place"
+    },
+    "ProtocolRegistry.executePointer(bytes32)": {
+      "class": "user",
+      "why": "governance applies a change it proposed through the Timelock once the registry's own delay has passed; a change nobody executes leaves the current entry in place"
     },
     "RepatriationFacet.executeRepatriation(uint32,address,uint256,address)": {
       "class": "keeper",
@@ -685,6 +764,12 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/keeper.ts"
     },
+    "SaleFloorFacet.checkpointHourlyPrices(address[])": {
+      "class": "keeper",
+      "pass": "priceCheckpoint",
+      "flag": "PRICE_CHECKPOINT_ENABLED",
+      "evidence": "apps/keeper/src/priceCheckpoint.ts"
+    },
     "SanctionsClearanceAttestor.sendReply(bytes32,bytes)": {
       "class": "service",
       "service": "sanctions delister (ops/sanctions)",
@@ -764,16 +849,6 @@
     "VaipakamFeedRegistry.execute(uint256,struct:VaipakamFeedRegistry.Change[])": {
       "class": "user",
       "why": "the proposer executes its own feed change after the delay; a change nobody executes leaves the current feeds in place"
-    },
-    "VaipakamNFTFacet.releasePositionTransfer(uint256)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "VaipakamNFTFacet.setApprovalForAll(address,bool)": {
-      "class": "user",
-      "why": "the holder's own ERC-721 approval"
     },
     "VaipakamRewardMessenger.initialize(address,address,address,bool,uint256,uint256)": {
       "class": "init",

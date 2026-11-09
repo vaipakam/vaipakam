@@ -84,6 +84,7 @@ import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -292,11 +293,31 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // value floor, the per-wallet open-offer cap, the active index and the
     // creation events), split off OfferCreateFacet for EIP-170 headroom. Its
     // selectors are new, so they are cut as Adds.
-    uint256 public constant EXPECTED_FACETS = 110;
+    // 110 -> 111: SaleFloorFacet (#3359) - the forced-sale floor rule that
+    // ForcedSaleFacet and RiskFacet's partial liquidation self-call, and the
+    // hourly price checkpoints it reads. Its selectors are new (Adds).
+    uint256 public constant EXPECTED_FACETS = 111;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
     error PredatesSlice3FillLock(address diamond);
+
+    /// @notice #3205 - the target Diamond predates the PositionNFT core: its
+    ///         position owners live in Diamond storage, which no refresh can
+    ///         move into the standalone contract. Fresh deploy only.
+    error PredatesPositionNFT(address diamond);
+
+    /// @dev #3205 - refuse a Diamond that does not route
+    ///      `VaipakamNFTFacet.positionNFT`, or routes it with no core set:
+    ///      every refreshed holder read would revert against an unset core
+    ///      while the old owners stay unreadable in Diamond storage. Called
+    ///      before anything is deployed, so a refused run sends nothing.
+    function _requirePositionNFTDiamond(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.positionNFT.selector) == address(0)
+                || VaipakamNFTFacet(diamond).positionNFT() == address(0)
+        ) revert PredatesPositionNFT(diamond);
+    }
 
     /// @notice #3204 - the target Diamond predates the VaultBeacon: its vaults
     ///         are per-vault UUPS proxies, which no in-place refresh can turn
@@ -492,6 +513,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
+        _requirePositionNFTDiamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see
@@ -1354,6 +1376,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[107] = Item("vaultPayoutFacet", ArtifactDeploy.deploy(type(VaultPayoutFacet).name), _getVaultPayoutSelectors());
         items[108] = Item("vaultDepositoryFacet", ArtifactDeploy.deploy(type(VaultDepositoryFacet).name), _getVaultDepositorySelectors());
         items[109] = Item("offerBookFacet", ArtifactDeploy.deploy(type(OfferBookFacet).name), _getOfferBookSelectors());
+        items[110] = Item("saleFloorFacet", ArtifactDeploy.deploy(type(SaleFloorFacet).name), _getSaleFloorSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

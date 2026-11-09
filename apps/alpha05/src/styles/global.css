@@ -1063,10 +1063,20 @@ dd.value-unknown > .icon {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-@media (min-width: 720px) {
-  .intents,
+@media (min-width: 480px) {
   .first-run-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 720px) {
+  .intents {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+/* Four first-run cards: two by two until the row is wide enough for all four. */
+@media (min-width: 1024px) {
+  .first-run-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 a.btn {
@@ -1574,6 +1584,48 @@ a.btn {
 .positions-side {
   margin: 12px 0 4px;
 }
+/* A book row's tags (expired, refinance request, loan sale): wrap on a phone. */
+.row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.row-badges:empty {
+  display: none;
+}
+/* Offer state filters: pills that wrap on a phone rather than scroll. */
+.offers-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.offers-filters button {
+  min-height: var(--taptarget);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text-body);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 250ms var(--ease-standard), color 250ms var(--ease-standard), border-color 250ms var(--ease-standard);
+}
+.offers-filters button:hover {
+  border-color: var(--brand-fill);
+}
+.offers-filters button[aria-pressed='true'] {
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
+  color: var(--text-on-brand);
+}
+@media (prefers-reduced-motion: reduce) {
+  .offers-filters button {
+    transition: none;
+  }
+}
 .positions-side button {
   min-height: var(--taptarget);
   padding: 8px 18px;
@@ -1645,4 +1697,62 @@ a.btn {
   .partial-form {
     animation: none;
   }
+}
+
+/* LN-54: a protected account's payout queue. Each row leads with its
+   request code, set like a ticket so it reads the same as an alert. */
+.queue-account + .queue-account,
+.queue-lookup {
+  margin-top: 20px;
+}
+.queue-account h3 {
+  margin: 0 0 6px;
+}
+.request-code {
+  display: inline-block;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.14em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+.queue-row {
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .queue-row:hover {
+    transform: translateY(-1px);
+  }
+}
+@media (max-width: 560px) {
+  .queue-row .form-actions .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* Vault (ACC-20, ACC-21): full addresses stay whole and copyable, wrapped
+   inside the column instead of running off a phone screen. */
+.vault-address code {
+  display: block;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+}
+.vault-asset-address {
+  margin: 2px 0 10px;
+}
+.vault-asset-address code {
+  background: none;
+  padding: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
 }

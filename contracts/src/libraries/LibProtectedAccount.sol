@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibDepositoryLedger} from "./LibDepositoryLedger.sol";
@@ -106,7 +107,10 @@ library LibProtectedAccount {
     error AlreadyApproved();
     error AmountExceedsFree(uint256 requested, uint256 free);
     error EscapeClosed();
-    error PositionMovesOnlyByQueuedTransfer(address account);
+    /// @dev #3205 — the holder keeps its position NFTs under the PositionNFT
+    ///      core's holder lock, so a protocol route does not take a position
+    ///      out of it either (a lender sale).
+    error PositionNftsLocked(address account);
 
     // ─── Events (state-change/vault-mutation) ────────────────────────────
 
@@ -158,24 +162,6 @@ library LibProtectedAccount {
         uint256 amount,
         uint256 received
     );
-    /// @custom:event-category state-change/vault-mutation
-    event PositionTransferQueued(
-        address indexed account,
-        uint256 indexed id,
-        uint256 indexed tokenId,
-        address to,
-        uint256 releaseAt
-    );
-    /// @custom:event-category state-change/vault-mutation
-    event PositionTransferReleased(
-        address indexed account,
-        uint256 indexed id,
-        uint256 indexed tokenId,
-        address to
-    );
-    /// @custom:event-category state-change/vault-mutation
-    event PositionTransferCancelled(address indexed account, uint256 indexed id, address by);
-
     // ─── Reads ───────────────────────────────────────────────────────────
 
     function _s() private pure returns (LibVaipakam.Storage storage) {
@@ -187,15 +173,15 @@ library LibProtectedAccount {
         return _s().protectedAccount[account].enabled;
     }
 
-    /// @notice Whether `account`'s position NFTs carry the owner-level lock:
-    ///         the owner chose NFT protection, OR the account was retired by
-    ///         a replacement. A retired account's old wallet has lost every
-    ///         right over it, so its positions move only through the queued
-    ///         transfer its controller requests, whatever the optional NFT
-    ///         setting says. The ONE rule: {LibERC721} reads it too.
+    /// @notice Whether `account`'s positions are held against leaving it:
+    ///         its tokens are under the PositionNFT core's holder lock (#3205;
+    ///         the holder's own choice, or set by protected mode), OR the
+    ///         account was retired by a replacement, whose old wallet has lost
+    ///         every right over it. A protocol route that would take a
+    ///         position out of the account (a lender sale) reads this.
     function protectsNfts(address account) internal view returns (bool) {
         LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        return a.enabled && (a.protectNfts || a.retired);
+        return (a.enabled && a.retired) || LibPositionNFT.isHolderLocked(account);
     }
 
     /// @notice The wallet that manages `account`: its controller once
@@ -269,9 +255,9 @@ library LibProtectedAccount {
         if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
     }
 
-    /// @notice Open rows (payouts plus position transfers) of `account`.
+    /// @notice Open payout rows of `account`.
     function openRows(address account) internal view returns (uint256) {
-        return _s().pendingPayoutIds[account].length() + _s().pendingTransferIds[account].length();
+        return _s().pendingPayoutIds[account].length();
     }
 
     /// @notice Whether the escape route is open: the Diamond has launched,
@@ -420,6 +406,7 @@ library LibProtectedAccount {
             delivered: 0
         });
         s.pendingPayoutIds[account].add(id);
+        s.openPayoutIds.add(id);
         s.pendingPayoutEarmark[account][asset][tokenId] += amount;
         emit PayoutQueued(account, id, asset, kind, tokenId, amount, recipient, releaseAt);
     }
@@ -434,6 +421,7 @@ library LibProtectedAccount {
         if (p.state != ROW_QUEUED) revert RowNotQueued(id);
         p.state = ROW_CANCELLED;
         s.pendingPayoutIds[p.user].remove(id);
+        s.openPayoutIds.remove(id);
         s.pendingPayoutEarmark[p.user][p.asset][p.tokenId] -= p.amount;
         LibDepositoryLedger.credit(p.user, p.asset, p.tokenId, p.amount);
         emit PayoutCancelled(p.user, id, by);
@@ -454,6 +442,7 @@ library LibProtectedAccount {
         if (a.requireCosign && !p.cosigned) revert CosignRequired(id);
         p.state = ROW_RELEASED;
         s.pendingPayoutIds[p.user].remove(id);
+        s.openPayoutIds.remove(id);
         s.pendingPayoutEarmark[p.user][p.asset][p.tokenId] -= p.amount;
         bindRelease(p.user, p.asset, p.tokenId, p.amount, p.recipient);
     }
@@ -465,72 +454,12 @@ library LibProtectedAccount {
         emit PayoutReleased(p.user, id, p.asset, p.amount, delivered, p.recipient);
     }
 
-    /// @notice Queue a transfer of position NFT `tokenId` from `account` to
-    ///         `to`. The caller has checked `account` holds it.
-    function queueTransfer(address account, uint256 tokenId, address to) internal returns (uint256 id) {
-        LibVaipakam.Storage storage s = _s();
-        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[account];
-        if (a.locked) revert ProtectedVaultLocked(account);
-        if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
-        uint256 open = s.pendingTransferByToken[tokenId];
-        if (open != 0) cancelTransfer(open, account);
-        id = ++s.protectedRowSeq;
-        uint64 releaseAt = uint64(block.timestamp) + a.delaySeconds;
-        s.pendingPositionTransfers[id] = LibVaipakam.PendingPositionTransfer({
-            from: account,
-            state: ROW_QUEUED,
-            cosigned: false,
-            releaseAt: releaseAt,
-            to: to,
-            tokenId: tokenId
-        });
-        s.pendingTransferIds[account].add(id);
-        s.pendingTransferByToken[tokenId] = id;
-        emit PositionTransferQueued(account, id, tokenId, to, releaseAt);
-    }
-
-    /// @notice Cancel queued position transfer `id`.
-    function cancelTransfer(uint256 id, address by) internal {
-        LibVaipakam.Storage storage s = _s();
-        LibVaipakam.PendingPositionTransfer storage t = s.pendingPositionTransfers[id];
-        if (t.state != ROW_QUEUED) revert RowNotQueued(id);
-        t.state = ROW_CANCELLED;
-        s.pendingTransferIds[t.from].remove(id);
-        delete s.pendingTransferByToken[t.tokenId];
-        emit PositionTransferCancelled(t.from, id, by);
-    }
-
-    /// @notice Take queued position transfer `id` off the queue for its
-    ///         release. The caller then moves the NFT.
-    function beginTransferRelease(uint256 id)
-        internal
-        returns (LibVaipakam.PendingPositionTransfer storage t)
-    {
-        LibVaipakam.Storage storage s = _s();
-        t = s.pendingPositionTransfers[id];
-        if (t.state != ROW_QUEUED) revert RowNotQueued(id);
-        if (block.timestamp < t.releaseAt) revert PayoutNotDue(id, t.releaseAt);
-        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[t.from];
-        if (a.locked) revert ProtectedVaultLocked(t.from);
-        // A position transfer is a payout of the position: it follows the
-        // same destination rule and the same co-sign requirement as a
-        // payout, read again at release.
-        if (a.requireCosign && !t.cosigned) revert CosignRequired(id);
-        if (!isAllowed(t.from, t.to)) revert RecipientNotAllowlisted(t.from, t.to);
-        t.state = ROW_RELEASED;
-        s.pendingTransferIds[t.from].remove(id);
-        delete s.pendingTransferByToken[t.tokenId];
-        emit PositionTransferReleased(t.from, id, t.tokenId, t.to);
-    }
-
     /// @notice Cancel every queued row of `account` (a lock, a replacement,
     ///         a removed destination). Bounded by `MAX_OPEN_ROWS`.
     function cancelAllRows(address account, address by) internal {
         LibVaipakam.Storage storage s = _s();
         EnumerableSet.UintSet storage payouts = s.pendingPayoutIds[account];
         while (payouts.length() != 0) cancelPayout(payouts.at(payouts.length() - 1), by);
-        EnumerableSet.UintSet storage transfers = s.pendingTransferIds[account];
-        while (transfers.length() != 0) cancelTransfer(transfers.at(transfers.length() - 1), by);
     }
 
     /// @notice Cancel every queued payout of `account` addressed to
@@ -543,13 +472,6 @@ library LibProtectedAccount {
             --i;
             uint256 id = payouts.at(i);
             if (s.pendingPayouts[id].recipient == recipient) cancelPayout(id, by);
-        }
-        EnumerableSet.UintSet storage transfers = s.pendingTransferIds[account];
-        i = transfers.length();
-        while (i != 0) {
-            --i;
-            uint256 id = transfers.at(i);
-            if (s.pendingPositionTransfers[id].to == recipient) cancelTransfer(id, by);
         }
     }
 }

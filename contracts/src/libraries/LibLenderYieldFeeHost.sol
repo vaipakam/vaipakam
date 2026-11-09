@@ -39,7 +39,7 @@ import {VPFIDiscountFacet} from "../facets/VPFIDiscountFacet.sol";
  *         consumers, so the dependency stays one-way.
  *
  *         **Settling lender.** Callers pass the party actually being paid —
- *         `LibERC721.ownerOf(loan.lenderTokenId)`, never the stored
+ *         `LibPositionNFT.ownerOf(loan.lenderTokenId)`, never the stored
  *         `loan.lender`. Every settlement path attempts a Tier-2 consolidation
  *         first and that consolidation is deliberately *skip-not-block*, so a
  *         call to it is not proof the stored field is fresh. Keying on the stale

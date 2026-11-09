@@ -12,9 +12,12 @@ import { ScenarioChain, type ChainFixture } from '@vaipakam/anvil-harness/scenar
 import { ANVIL_URL } from './anvil';
 import { FIXTURE_FILE } from './artifacts';
 import { CHAIN_ID } from './wallet';
-import { accountFor } from './wallets';
+import { accountFor, type Role } from './wallets';
 
-export function scenario(): ScenarioChain {
+/** The scenario chain, with the harness's lender and borrower played by the
+ *  suite's `lender` and `borrower` wallets unless `cast` names other roles
+ *  (a spec that needs wallets with no history casts the fresh ones). */
+export function scenario(cast: { lender?: Role; borrower?: Role } = {}): ScenarioChain {
   const saved = JSON.parse(fs.readFileSync(FIXTURE_FILE, 'utf8')) as { diamond: Hex; adminKey: Hex; artifact: Record<string, unknown> };
   const fixture: ChainFixture = {
     diamond: saved.diamond,
@@ -25,6 +28,6 @@ export function scenario(): ScenarioChain {
   };
   return new ScenarioChain({ url: ANVIL_URL, control: anvilControl(ANVIL_URL) }, fixture, CHAIN_ID, {
     name: 'alpha05-e2e',
-    accounts: { lender: accountFor('lender'), borrower: accountFor('borrower') },
+    accounts: { lender: accountFor(cast.lender ?? 'lender'), borrower: accountFor(cast.borrower ?? 'borrower') },
   });
 }

@@ -31,6 +31,7 @@
  *  tariff, a reward programme on the e2e chain).
  */
 import { erc20Abi, type Address } from "viem";
+import { POSITION_ERC721_ABI } from "@vaipakam/lib/positionNft";
 import { test, expect } from "../lib/wallet-fixture";
 import { connectWallet } from "../lib/wallet-fixture";
 import {
@@ -40,7 +41,7 @@ import {
 } from "../lib/flows";
 import { seedDeskOffer, acceptOfferDirect } from "../lib/desk";
 import { sendAsAdmin } from "../lib/admin";
-import { pub, DIAMOND, DIAMOND_ABI_VIEM } from "../lib/chain";
+import { pub, DIAMOND, DIAMOND_ABI_VIEM, POSITION_NFT } from "../lib/chain";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -93,6 +94,15 @@ const read = <T>(functionName: string, args: readonly unknown[]) =>
     functionName,
     args: args as unknown[],
   }) as Promise<T>;
+
+/** #3205 — a position NFT's holder, from the standalone PositionNFT. */
+const holderOf = (tokenId: bigint) =>
+  pub.readContract({
+    address: POSITION_NFT,
+    abi: POSITION_ERC721_ABI,
+    functionName: "ownerOf",
+    args: [tokenId],
+  }) as Promise<Address>;
 
 const loanOf = (loanId: bigint) => read<Loan>("getLoanDetails", [loanId]);
 
@@ -211,7 +221,7 @@ test("a third wallet buys a listed lender position; the position migrates and th
   ).toBe(loanId);
   const before = await loanOf(loanId);
   expect(
-    Number(await read<number>("positionLock", [before.lenderTokenId])),
+    Number(await read<number>("positionRoute", [before.lenderTokenId])),
     "the listing should lock the lender position",
   ).toBe(2); // EarlyWithdrawalSale
   const sale = await read<Offer>("getOfferDetails", [saleOfferId]);
@@ -254,15 +264,16 @@ test("a third wallet buys a listed lender position; the position migrates and th
     "the lender position is re-minted, not handed over",
   ).not.toBe(before.lenderTokenId);
   expect(
-    (await read<Address>("ownerOf", [after.lenderTokenId])).toLowerCase(),
+    (await holderOf(after.lenderTokenId)).toLowerCase(),
     "the buyer holds the new lender NFT",
   ).toBe(buyer.account.address.toLowerCase());
-  await expect(
-    read<Address>("ownerOf", [before.lenderTokenId]),
-    "the seller's lender NFT is burned",
-  ).rejects.toThrow();
+  // #3205: a closed position's token is retired, never burned.
   expect(
-    Number(await read<number>("positionLock", [after.lenderTokenId])),
+    await read<boolean>("isPositionRetired", [before.lenderTokenId]),
+    "the seller's lender NFT is retired",
+  ).toBe(true);
+  expect(
+    Number(await read<number>("positionRoute", [after.lenderTokenId])),
     "the buyer's position carries no sale lock",
   ).toBe(0);
   expect((await read<Offer>("getOfferDetails", [saleOfferId])).accepted).toBe(
@@ -274,7 +285,7 @@ test("a third wallet buys a listed lender position; the position migrates and th
   expect(after.borrower).toBe(before.borrower);
   expect(after.borrowerTokenId).toBe(before.borrowerTokenId);
   expect(
-    (await read<Address>("ownerOf", [after.borrowerTokenId])).toLowerCase(),
+    (await holderOf(after.borrowerTokenId)).toLowerCase(),
   ).toBe(before.borrower.toLowerCase());
   expect(after.principal).toBe(before.principal);
   expect(after.interestRateBps, "the borrower's rate is unchanged").toBe(

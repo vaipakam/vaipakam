@@ -587,6 +587,7 @@ then deploy.
       | `BACKSTOP_FILL_ENABLED` | the position upkeep pass's backstop fill step skips — a borrower offer that opted into the backstop waits past its eligibility time with no fill until someone calls `backstopFill` by hand, and expires unfilled if nobody does | filling opted-in offers from the treasury-seeded backstop (#3097) |
       | `EXPIRED_TEARDOWN_ENABLED` | expired-teardown pass skips — a prepay listing past its loan's grace keeps the borrower position locked and its conduit approval live, a lender-sale listing past its expiry (or on a closed loan) keeps holding the borrower's partial repayment and collateral withdrawal, and a swap-to-repay intent past its cancel grace keeps the position locked and the loan out of internal matching, unless someone makes the permissionless `cancelExpiredPrepayListing` / `teardownStaleSaleListing` / `cancelExpiredIntent` call by hand (a closing path also clears a prepay listing or an intent) | tearing down expired listings and intents (#3097) |
       | `VAULT_BEACON_UPKEEP_ENABLED` | vault-beacon upkeep pass skips — a Timelock current-version or revoke proposal past its delay, a vault owner's signed pin or unpin past its pin delay, and a signed pin-delay lowering past the current delay all stay pending (nothing lapses: each waits for whoever applies it), unless someone makes the permissionless `executeCurrentVersion` / `executeRevoke` / `executePin` / `executePinDelay` call by hand | applying VaultBeacon changes once their delay has passed (#3282) |
+      | `PRICE_CHECKPOINT_ENABLED` | price checkpoint pass skips — no hourly price checkpoint is written unless someone calls the permissionless `checkpointHourlyPrices` by hand, so the #3359 forced-sale floor reads no checkpoint and every forced sale uses the full liquidation slippage cap (the behaviour before #3359; nothing is lost, sales just keep the wider floor) | the hourly checkpoints the forced-sale floor's calm test reads (#3384) |
       | `REWARD_STAGING_UPKEEP_ENABLED` | reward staging upkeep pass skips — a reward claim day held in a staging record waits for whoever calls the permissionless staging entries by hand: a record or claim domain is not prepared, reserved or resolved, a resolving record (which has no deadline) never pays out, a legacy slice is not stepped, and a released batch's priority window lapses with nobody registered | moving held reward claim days on to payment (#3097) |
       | `REWARD_STAGING_UNWIND_ENABLED` | the reward staging upkeep pass's unwind step skips — a staging record or claim domain past its deadline that cannot be covered, or one the contract finds stale, keeps holding what it reserved until someone calls `unwindStagedDayPage` / `unwindDomainPage` by hand; the pass names each one it left | releasing stuck staging records (#3097) |
 
@@ -1650,6 +1651,7 @@ DELETE FROM loan_lifecycle_state; \
 DELETE FROM loan_lifecycle_violation; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
+DELETE FROM position_side_moves; \
 DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
 DELETE FROM offers; \
@@ -2018,7 +2020,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

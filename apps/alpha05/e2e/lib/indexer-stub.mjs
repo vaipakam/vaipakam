@@ -14,15 +14,34 @@
 //    unavailable, polling" line is exercised rather than mocked;
 //  - the read-only RPC proxy's `POST /rpc/:chainId`, forwarded to Anvil
 //    verbatim (alpha05 refuses a per-chain RPC URL, so this is the ONLY
-//    way the dev server's reads reach the fixture chain).
+//    way the dev server's reads reach the fixture chain);
+//  - the indexer's `GET /activity?actor=…&kind=…`, for the seller-claim and
+//    extension-reserve kinds only: read from the chain's own logs of those
+//    events, filed under the seller or the reserve's depositor as the
+//    indexer files them (topic 2 of each: the loan is topic 1), so Claims
+//    discovers a sold position or a reserve the way it does against the
+//    real Worker. Refused with 503 while the posture is `down`, as the whole
+//    index is;
+//  - the indexer's `GET /offers/active?chainId&limit&before`, the offer
+//    book: every offer the chain's `OfferCreated` logs name, read back from
+//    the Diamond and filed `active` while the protocol reports it open or
+//    lazily expired (as the indexer files it, expiry being lazy on-chain),
+//    newest first, paged by id. Also refused while the posture is `down`;
+//  - the indexer's `GET /loans/recent?chainId&limit&lendingAsset&
+//    collateralAsset&durationDays&excludeSaleVehicles`, the recent loans the
+//    rate warning compares against: every loan the chain's `LoanInitiated`
+//    logs name, read back from the Diamond, filtered to the scope asked for
+//    and echoing that scope as the indexer does. The agreed rate is the
+//    loan's stored rate (the fixture never refinances a loan it reads here).
+//    Refused while the posture is `down`.
 //
-// Everything a world read would need beyond health lands with the route
-// that reads it (the Home PR adds the position views, the Offers PR the
-// book), hydrated from the chain the same way apps/app's stub does.
+// Everything a world read would need beyond these lands with the route
+// that reads it, hydrated from the chain the same way.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createPublicClient, http as viemHttp, toEventSelector } from 'viem';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.ALPHA05_E2E_ANVIL_URL ?? 'http://127.0.0.1:8546';
@@ -34,6 +53,132 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The e2e bundle global setup writes after deploying the fixture (never the
 // committed one, whose 84532 entry is the live testnet).
 const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'))[String(CHAIN_ID)];
+
+// The activity events the stand-in serves, from the combined Diamond ABI
+// (the seller's recorded event is a library's, so it is in no single
+// facet's file). Each carries the loan as topic 1 and its actor as topic 2.
+const DIAMOND_ABI = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '..', '..', '..', 'packages', 'contracts', 'src', 'diamondAbi.json'), 'utf8'));
+const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'];
+const RESERVE_KINDS = ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn'];
+const ACTIVITY_KINDS = [...SELLER_KINDS, ...RESERVE_KINDS];
+const ACTIVITY_TOPICS = new Map(
+  ACTIVITY_KINDS.map((name) => {
+    const item = DIAMOND_ABI.find((e) => e.type === 'event' && e.name === name);
+    if (!item) throw new Error(`the Diamond ABI has no ${name} event`);
+    return [toEventSelector(item), name];
+  }),
+);
+
+const LOAN_INITIATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanInitiated'));
+const OFFER_CREATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'OfferCreated'));
+const chain = createPublicClient({ transport: viemHttp(ANVIL_URL) });
+
+/** One offer in the indexer's `/offers/active` row shape (amounts as text). */
+async function offerRow(id) {
+  const read = (functionName) => chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName, args: [id] });
+  const [o, state, linked] = await Promise.all([read('getOffer'), read('getOfferState'), read('getOfferLinkedLoanId')]);
+  // 0 = open, 4 = expired: the indexer keeps a lapsed offer `active`.
+  if (Number(state) !== 0 && Number(state) !== 4) return null;
+  const lender = Number(o.offerType) === 0;
+  return {
+    chainId: CHAIN_ID,
+    offerId: Number(id),
+    status: 'active',
+    creator: o.creator.toLowerCase(),
+    offerType: Number(o.offerType),
+    lendingAsset: o.lendingAsset.toLowerCase(),
+    collateralAsset: o.collateralAsset.toLowerCase(),
+    assetType: Number(o.assetType),
+    collateralAssetType: Number(o.collateralAssetType),
+    tokenId: o.tokenId.toString(),
+    collateralTokenId: o.collateralTokenId.toString(),
+    quantity: o.quantity.toString(),
+    collateralQuantity: o.collateralQuantity.toString(),
+    amount: o.amount.toString(),
+    amountMax: o.amountMax.toString(),
+    amountFilled: o.amountFilled.toString(),
+    interestRateBps: Number(o.interestRateBps),
+    interestRateBpsMax: Number(o.interestRateBpsMax),
+    collateralAmount: o.collateralAmount.toString(),
+    collateralAmountMax: (o.collateralAmountMax === 0n ? o.collateralAmount : o.collateralAmountMax).toString(),
+    collateralAmountFilled: o.collateralAmountFilled.toString(),
+    durationDays: Number(o.durationDays),
+    prepayAsset: o.prepayAsset.toLowerCase(),
+    expiresAt: Number(o.expiresAt),
+    isSaleVehicle: linked !== 0n && !lender,
+    isOffsetVehicle: linked !== 0n && lender,
+    refinanceTargetLoanId: Number(o.refinanceTargetLoanId),
+    positionFlow: linked !== 0n || o.refinanceTargetLoanId !== 0n ? { movedSinceOpened: null } : null,
+  };
+}
+
+/** `/offers/active`: the open offers, newest first, `limit` per page. */
+async function activeOffers(url) {
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const before = url.searchParams.get('before');
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [OFFER_CREATED] }]);
+  const ids = [...new Set(logs.map((l) => BigInt(l.topics[1])))].filter((id) => before === null || id < BigInt(before)).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  const offers = [];
+  for (const id of ids) {
+    if (offers.length === limit) break;
+    const row = await offerRow(id);
+    if (row !== null) offers.push(row);
+  }
+  return { chainId: CHAIN_ID, offers, nextBefore: offers.length === limit ? offers[offers.length - 1].offerId : null };
+}
+
+/** `/loans/recent` in the indexer's scoped shape: newest first, filtered to
+ *  the pair and term asked for, the scope echoed back. */
+async function recentLoans(url) {
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const lending = url.searchParams.get('lendingAsset')?.toLowerCase() ?? null;
+  const collateral = url.searchParams.get('collateralAsset')?.toLowerCase() ?? null;
+  const days = url.searchParams.get('durationDays');
+  const durationDays = days === null ? null : Number(days);
+  const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [LOAN_INITIATED] }]);
+  const ids = [...new Set(logs.map((l) => BigInt(l.topics[1])))].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  const loans = [];
+  for (const id of ids) {
+    if (loans.length === limit) break;
+    const l = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [id] });
+    if (lending !== null && l.principalAsset.toLowerCase() !== lending) continue;
+    if (collateral !== null && l.collateralAsset.toLowerCase() !== collateral) continue;
+    if (durationDays !== null && Number(l.durationDays) !== durationDays) continue;
+    // A lender-sale vehicle is a borrower offer linked to a loan: the loan it
+    // opens is bookkeeping, not a fresh rate.
+    const linked = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getOfferLinkedLoanId', args: [l.offerId] });
+    const offer = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getOffer', args: [l.offerId] });
+    const isSaleVehicle = linked !== 0n && Number(offer.offerType) !== 0;
+    if (excludeSaleVehicles && isSaleVehicle) continue;
+    loans.push({
+      chainId: CHAIN_ID,
+      loanId: Number(id),
+      offerId: Number(l.offerId),
+      lendingAsset: l.principalAsset.toLowerCase(),
+      collateralAsset: l.collateralAsset.toLowerCase(),
+      durationDays: Number(l.durationDays),
+      interestRateBps: Number(l.interestRateBps),
+      initRateBps: Number(l.interestRateBps),
+      startAt: Number(l.startTime),
+      isSaleVehicle,
+    });
+  }
+  return {
+    chainId: CHAIN_ID,
+    loans,
+    nextBefore: loans.length === limit ? loans[loans.length - 1].loanId : null,
+    scope: { lendingAsset: lending, collateralAsset: collateral, durationDays, placement: 'e2e stand-in', excludeSaleVehicles },
+    // Every fixture loan's terms are the chain's own, so none is unplaced
+    // unless a spec sets the count (`/__stub/unplaced`) to drive the
+    // disclosure.
+    unplaced,
+  };
+}
+
+/** The `/loans/recent` disclosure of loans whose terms the index has not
+ *  confirmed; set by a spec through `/__stub/unplaced`. */
+let unplaced = { count: 0, capped: false };
 
 /** @type {'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending'} */
 let posture = 'live';
@@ -76,6 +221,29 @@ async function ingestHealth() {
   };
 }
 
+/** `/activity` for the served kinds: every such event filed under `actor`,
+ *  newest first, in one page (a test chain never needs a second). */
+async function actorActivity(url) {
+  const actor = (url.searchParams.get('actor') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(actor)) return { status: 400, body: { error: 'actor must be an address' } };
+  const kinds = (url.searchParams.get('kind') ?? '').split(',').filter(Boolean);
+  if (kinds.length === 0 || kinds.some((k) => !ACTIVITY_KINDS.includes(k))) return { status: 400, body: { error: 'the stand-in serves the seller and reserve kinds only' } };
+  const topics = [...ACTIVITY_TOPICS].filter(([, name]) => kinds.includes(name)).map(([t]) => t);
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [topics, null, `0x${actor.slice(2).padStart(64, '0')}`] }]);
+  const events = logs
+    .map((l) => ({
+      chainId: CHAIN_ID,
+      kind: ACTIVITY_TOPICS.get(l.topics[0]),
+      actor,
+      loanId: Number(BigInt(l.topics[1])),
+      blockNumber: Number(l.blockNumber),
+      logIndex: Number(l.logIndex),
+      txHash: l.transactionHash,
+    }))
+    .sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
+  return { status: 200, body: { chainId: CHAIN_ID, events, nextBefore: null } };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -111,7 +279,19 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/') {
-      json(res, 200, { service: 'alpha05 e2e stand-in', routes: ['/health/ingest', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'] });
+      json(res, 200, {
+        service: 'alpha05 e2e stand-in',
+        routes: [
+          '/health/ingest',
+          '/activity (seller and reserve kinds)',
+          '/offers/active',
+          '/loans/recent',
+          '/ws/chain/:chainId (503)',
+          '/rpc/:chainId',
+          '/__stub/index-posture',
+          '/__stub/unplaced',
+        ],
+      });
       return;
     }
     if (url.pathname === '/__stub/index-posture' && req.method === 'POST') {
@@ -124,12 +304,47 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { posture });
       return;
     }
+    if (url.pathname === '/__stub/unplaced' && req.method === 'POST') {
+      const next = JSON.parse(await readBody(req));
+      if (!Number.isSafeInteger(next.count) || next.count < 0 || typeof next.capped !== 'boolean') {
+        json(res, 400, { error: 'unplaced needs { count, capped }' });
+        return;
+      }
+      unplaced = { count: next.count, capped: next.capped };
+      json(res, 200, { unplaced });
+      return;
+    }
     if (url.pathname === '/health/ingest') {
       if (posture === 'down') {
         json(res, 503, { error: 'e2e stand-in: index posture is down' });
         return;
       }
       json(res, 200, await ingestHealth());
+      return;
+    }
+    if (url.pathname === '/activity' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const out = await actorActivity(url);
+      json(res, out.status, out.body);
+      return;
+    }
+    if (url.pathname === '/offers/active' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      json(res, 200, await activeOffers(url));
+      return;
+    }
+    if (url.pathname === '/loans/recent' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      json(res, 200, await recentLoans(url));
       return;
     }
     const rpc = url.pathname.match(/^\/rpc\/(\d+)$/);
@@ -169,10 +384,7 @@ const server = http.createServer(async (req, res) => {
 const PUSH_OFF = JSON.stringify({ error: 'e2e stand-in: push rail is off' });
 server.on('upgrade', (req, socket) => {
   socket.on('error', () => {});
-  socket.end(
-    'HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n' +
-      `Content-Length: ${Buffer.byteLength(PUSH_OFF)}\r\n\r\n${PUSH_OFF}`,
-  );
+  socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n' + `Content-Length: ${Buffer.byteLength(PUSH_OFF)}\r\n\r\n${PUSH_OFF}`);
 });
 
 // A client that drops an ordinary request mid-way is not this process's

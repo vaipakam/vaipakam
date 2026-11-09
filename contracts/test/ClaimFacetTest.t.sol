@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -41,6 +42,7 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -157,7 +159,7 @@ contract ClaimFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -271,6 +273,13 @@ contract ClaimFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getForcedSaleFacetSelectors()
         });
+        // #3359 - both forced sellers read their slippage floor through a
+        // self-call into SaleFloorFacet.
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleFloorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleFloorFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -282,6 +291,7 @@ contract ClaimFacetTest is Test {
 
         // Init admin state
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -808,7 +818,7 @@ contract ClaimFacetTest is Test {
         // Allow vault withdraw but fail burnNFT
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             "burn failed"
         );
         vm.prank(lender);
@@ -825,7 +835,7 @@ contract ClaimFacetTest is Test {
         // Allow vault withdraw but fail burnNFT
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             "burn failed"
         );
         vm.prank(borrower);
@@ -888,8 +898,8 @@ contract ClaimFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.Settled),
             "and the loan settles"
         );
-        vm.expectRevert();
-        IERC721(address(diamond)).ownerOf(lenderTokenId);
+        // #3205: the core never burns; a closed position is retired.
+        assertTrue(VaipakamNFTFacet(address(diamond)).isPositionRetired(lenderTokenId));
     }
 
     /// @dev Covers heldForLender > 0 path in claimAsLender.

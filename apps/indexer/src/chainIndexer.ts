@@ -89,10 +89,10 @@ import {
   DIAMOND_OFFER_DETAILS_ABI,
   DIAMOND_LOAN_DETAILS_ABI,
   DIAMOND_SIGNED_OFFER_ABI,
-  ERC721_OWNER_OF_ABI,
 } from './diamondAbi';
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
+import { recordPositionMove } from './positionFlowMoves';
 import { maybeRefreshProtocolConfig } from './configSnapshot';
 import {
   collectPushHints,
@@ -152,6 +152,7 @@ import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentE
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -186,7 +187,10 @@ function getDeployBlock(chainId: number): number | undefined {
 const EVENT_ABI: readonly AbiEvent[] = (() => {
   const seen = new Set<string>();
   const out: AbiEvent[] = [];
-  for (const item of DIAMOND_ABI_VIEM as Abi) {
+  // #3205 — the ERC-721 `Transfer` the generated Diamond ABI no longer
+  // carries: emitted by the PositionNFT (standalone) or a legacy Diamond.
+  // The legacy Diamond's NFT-queue events too (TODO(#3321 positionNft-legacy-removal)).
+  for (const item of [...(DIAMOND_ABI_VIEM as Abi), POSITION_TRANSFER_EVENT as AbiEvent, ...LEGACY_POSITION_EVENTS]) {
     if (item.type !== 'event') continue;
     const ev = item as AbiEvent;
     let sig: string;
@@ -1083,6 +1087,18 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 1, m
  * healthy, and the rotation returns to those rows next tick.
  */
 /**
+ * #3205 — the ONE SQL predicate for "this position side still has a live
+ * holder": a side whose position closed (its token burned, or RETIRED by
+ * `PositionRetired`) carries the zero holder and stays closed. Every
+ * Transfer-driven write reads it, the owner updates and the participation
+ * history alike (#3318 Codex r3), so a retired receipt moving on never
+ * re-points a holder or records a participant.
+ */
+function liveSideSql(column: 'lender_current_owner' | 'borrower_current_owner' | 'creator_current_owner'): string {
+  return `(${column} IS NULL OR ${column} != '0x0000000000000000000000000000000000000000')`;
+}
+
+/**
  * The CURRENT holder of each side of a position, read from the chain.
  *
  * The repair cannot use the index's own `*_current_owner` columns to decide
@@ -1136,14 +1152,10 @@ async function resolveCurrentHolders(
     // '0' is the stub-row sentinel, never a real ERC721 id.
     if (!tokenId || tokenId === '0') return null;
     try {
-      const owner = (await client.readContract({
-        address: diamond,
-        abi: ERC721_OWNER_OF_ABI,
-        functionName: 'ownerOf',
-        args: [BigInt(tokenId)],
-        blockNumber: head,
-      })) as string;
-      return owner.toLowerCase();
+      // #3318 r2 — a retired receipt (standalone) or a burned token
+      // (legacy) has no live holder: 'gone' at this same pinned head.
+      const holder = await readPositionHolder(client, positionNftForDiamond(diamond), BigInt(tokenId), head);
+      return holder === 'gone' ? null : holder.toLowerCase();
     } catch {
       // Unreadable, or gone. This pass does not need to know which: it uses
       // a holder only when it has one, and writes no owner column.
@@ -2546,7 +2558,9 @@ async function runChainPass(
       // (config-facet events, ERC-721 Approval, etc.) throw on decode
       // and are skipped.
       const rawLogs = await client.getLogs({
-        address: diamond,
+        // #3205: plus the PositionNFT on a standalone-mode chain, whose
+        // `Transfer` events keep the holder columns current.
+        address: scannedAddresses(diamond),
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
@@ -3121,7 +3135,10 @@ async function processOfferLogs(
   // Bucket by event name — all the OfferCreated rows first (so the
   // row exists before any later status flip in the same scan window),
   // then the terminal events.
-  const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint }[] = [];
+  // #3205 — `logIndex` with `blockNumber` is the point the offer opened
+  // (`offers.created_log_index`), which a position-bound offer's moved verdict
+  // compares against (`positionFlowMoves.ts`).
+  const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint; logIndex: number }[] = [];
   const accepted: { offerId: bigint; loanId: bigint }[] = [];
   const cancelled: { offerId: bigint }[] = [];
   // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — distinct bucket
@@ -3194,6 +3211,7 @@ async function processOfferLogs(
         creator: a.creator as Address,
         offerType: Number(a.offerType),
         blockNumber: log.blockNumber,
+        logIndex: Number(log.logIndex),
       });
     } else if (log.eventName === 'OfferAccepted') {
       accepted.push({
@@ -3365,9 +3383,9 @@ async function processOfferLogs(
            is_stub, collateral_range_stale,
            created_at, expires_at, fill_mode,
            refinance_target_loan_id,
-           first_seen_block, first_seen_at, updated_at)
+           first_seen_block, created_log_index, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -3419,6 +3437,7 @@ async function processOfferLogs(
           Number(od.fillMode ?? 0),
           refinanceTargetFromDetail(od.refinanceTargetLoanId),
           Number(o.blockNumber),
+          o.logIndex,
           now,
           now,
         )
@@ -3441,9 +3460,9 @@ async function processOfferLogs(
          amount, interest_rate_bps, collateral_amount, duration_days,
          creator_current_owner,
          is_stub,
-         first_seen_block, first_seen_at, updated_at)
+         first_seen_block, created_log_index, first_seen_at, updated_at)
        VALUES
-        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?)`,
+        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -3454,6 +3473,7 @@ async function processOfferLogs(
         // column; subsequent Transfer events overwrite as needed.
         o.creator.toLowerCase(),
         Number(o.blockNumber),
+        o.logIndex,
         now,
         now,
       )
@@ -4242,14 +4262,8 @@ async function refreshOfferDetails(
   let observedOwner: string | null = null;
   if (o.positionTokenId > 0n) {
     try {
-      const owner = (await client.readContract({
-        address: diamond,
-        abi: ERC721_OWNER_OF_ABI,
-        functionName: 'ownerOf',
-        args: [o.positionTokenId],
-        blockNumber: atBlock,
-      })) as string;
-      if (owner) observedOwner = owner.toLowerCase();
+      const holder = await readPositionHolder(client, positionNftForDiamond(diamond), o.positionTokenId, atBlock);
+      if (holder !== 'gone') observedOwner = holder.toLowerCase();
     } catch {
       // unanswered — keep the stored holder (see above).
     }
@@ -5135,6 +5149,46 @@ async function recordLoanParticipant(
 }
 
 /**
+ * The ONE rule for a new loan row's initial position holders (both insert
+ * paths). In order, per side:
+ *   1. the recipient of that token's mint in this batch (`NFTMinted`, the
+ *      loan's own transaction): authoritative, and the only source for a
+ *      match slice's fresh tokens (#3205, #3318 Codex r4), which never equal
+ *      the offer's token;
+ *   2. a token REUSED from the creator's offer (a direct accept): the offer's
+ *      current holder (#749), since its NFT may have moved before the accept;
+ *   3. the event's origination party.
+ */
+async function seedPositionOwners(
+  env: Env,
+  chainId: number,
+  offerId: number,
+  mintedTo: ReadonlyMap<string, string>,
+  sides: { lenderTok: string; borrowerTok: string; lender: string; borrower: string },
+): Promise<{ lenderOwner: string; borrowerOwner: string }> {
+  let lenderOwner = mintedTo.get(sides.lenderTok) ?? sides.lender;
+  let borrowerOwner = mintedTo.get(sides.borrowerTok) ?? sides.borrower;
+  const lenderMinted = mintedTo.has(sides.lenderTok);
+  const borrowerMinted = mintedTo.has(sides.borrowerTok);
+  if (lenderMinted && borrowerMinted) return { lenderOwner, borrowerOwner };
+  const offerRow = await env.DB.prepare(
+    `SELECT position_token_id, creator_current_owner FROM offers
+      WHERE chain_id = ? AND offer_id = ?`,
+  )
+    .bind(chainId, offerId)
+    .first<{ position_token_id: string; creator_current_owner: string }>();
+  if (offerRow?.creator_current_owner) {
+    const creatorTok = String(offerRow.position_token_id);
+    if (creatorTok !== '0' && creatorTok === sides.lenderTok && !lenderMinted) {
+      lenderOwner = offerRow.creator_current_owner;
+    } else if (creatorTok !== '0' && creatorTok === sides.borrowerTok && !borrowerMinted) {
+      borrowerOwner = offerRow.creator_current_owner;
+    }
+  }
+  return { lenderOwner, borrowerOwner };
+}
+
+/**
  * Insert a `LoanInitiated` row and seed its initiation participants in ONE
  * D1 batch, so the two land together or not at all (#2221, Codex #2836 r6).
  *
@@ -5217,11 +5271,20 @@ export async function processLoanLogs(
   // map here means the lookup works regardless of the relative log
   // order of the two events within the tx.
   const loanDetailsByLoanId = new Map<number, Record<string, unknown>>();
+  // #3205 (#3318 Codex r4) — who each position token minted in this batch was
+  // minted to, from the Diamond's own `NFTMinted` (emitted on both legacy and
+  // standalone chains, in the loan's own transaction). The loan seeding reads
+  // it first, so a fresh token's holder comes from the mint, never from
+  // token-id reuse.
+  const mintedTo = new Map<string, string>();
   for (const log of logs) {
     if (log.eventName === 'LoanInitiatedDetails') {
       const la = log.args as Record<string, unknown>;
       const det = la.details as Record<string, unknown> | undefined;
       if (det) loanDetailsByLoanId.set(Number(la.loanId as bigint), det);
+    } else if (log.eventName === 'NFTMinted') {
+      const ma = log.args as Record<string, unknown>;
+      mintedTo.set(String(ma.tokenId as bigint), String(ma.owner as string).toLowerCase());
     }
   }
 
@@ -5323,22 +5386,12 @@ export async function processLoanLogs(
         // resolvable yet (no-transfer case is identical anyway). The frontend's
         // on-chain verify is the authoritative backstop for the residual stub /
         // same-batch race.
-        let lenderOwner = lender;
-        let borrowerOwner = borrower;
-        const offerRow = await env.DB.prepare(
-          `SELECT position_token_id, creator_current_owner FROM offers
-            WHERE chain_id = ? AND offer_id = ?`,
-        )
-          .bind(chainId, offerId)
-          .first<{ position_token_id: string; creator_current_owner: string }>();
-        if (offerRow?.creator_current_owner) {
-          const creatorTok = String(offerRow.position_token_id);
-          if (creatorTok !== '0' && creatorTok === lenderTok) {
-            lenderOwner = offerRow.creator_current_owner;
-          } else if (creatorTok !== '0' && creatorTok === borrowerTok) {
-            borrowerOwner = offerRow.creator_current_owner;
-          }
-        }
+        const { lenderOwner, borrowerOwner } = await seedPositionOwners(env, chainId, offerId, mintedTo, {
+          lenderTok,
+          borrowerTok,
+          lender,
+          borrower,
+        });
         // #2467 — `init_terms_unbacked = 0`: this path takes the rate and
         // duration from the `LoanInitiatedDetails` event itself, so the
         // initiation terms are backed. The other insert paths leave the
@@ -5471,22 +5524,12 @@ export async function processLoanLogs(
         // offer's position_token_id; falls back to the read-back parties
         // when the offer row isn't resolvable (identical in the
         // no-pre-accept-transfer common case).
-        let lenderOwner = loanDetail.lender.toLowerCase();
-        let borrowerOwner = loanDetail.borrower.toLowerCase();
-        const offerRow = await env.DB.prepare(
-          `SELECT position_token_id, creator_current_owner FROM offers
-            WHERE chain_id = ? AND offer_id = ?`,
-        )
-          .bind(chainId, offerId)
-          .first<{ position_token_id: string; creator_current_owner: string }>();
-        if (offerRow?.creator_current_owner) {
-          const creatorTok = String(offerRow.position_token_id);
-          if (creatorTok !== '0' && creatorTok === loanDetail.lenderTokenId.toString()) {
-            lenderOwner = offerRow.creator_current_owner;
-          } else if (creatorTok !== '0' && creatorTok === loanDetail.borrowerTokenId.toString()) {
-            borrowerOwner = offerRow.creator_current_owner;
-          }
-        }
+        const { lenderOwner, borrowerOwner } = await seedPositionOwners(env, chainId, offerId, mintedTo, {
+          lenderTok: loanDetail.lenderTokenId.toString(),
+          borrowerTok: loanDetail.borrowerTokenId.toString(),
+          lender: loanDetail.lender.toLowerCase(),
+          borrower: loanDetail.borrower.toLowerCase(),
+        });
         const insert = env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -5648,8 +5691,9 @@ export async function processLoanLogs(
         `INSERT OR REPLACE INTO swap_to_repay_intents
            (chain_id, loan_id, order_hash, committed_by,
             maker_amount, taker_amount, deadline,
-            committed_at, committed_tx_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            committed_at, committed_tx_hash,
+            committed_block, committed_log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -5661,6 +5705,9 @@ export async function processLoanLogs(
           Number(a.deadline as bigint),
           blockAt,
           log.transactionHash,
+          // #3205 — the point the intent opened, for its moved verdict.
+          Number(log.blockNumber),
+          Number(log.logIndex),
         )
         .run();
     } else if (log.eventName === 'SwapToRepayIntentFilled') {
@@ -6016,10 +6063,12 @@ export async function processLoanLogs(
       // routes fail open (row shows) rather than dropping real fills.
       const saleOfferId = Number(a.saleOfferId as bigint);
       const marked = await env.DB.prepare(
-        `UPDATE offers SET is_sale_vehicle = 1, updated_at = ?
+        // #3205 — `vehicle_loan_id` binds the sale to the loan's LENDER side,
+        // whose moves end it (`positionFlowMoves.ts`).
+        `UPDATE offers SET is_sale_vehicle = 1, vehicle_loan_id = ?, updated_at = ?
           WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(Math.floor(Date.now() / 1000), chainId, saleOfferId)
+        .bind(Number(a.loanId as bigint), Math.floor(Date.now() / 1000), chainId, saleOfferId)
         .run();
       if ((marked.meta?.changes ?? 0) === 0) {
         console.error(
@@ -6043,10 +6092,12 @@ export async function processLoanLogs(
       // (row shows) rather than dropping real liquidity.
       const offsetOfferId = Number(a.newOfferId as bigint);
       const marked = await env.DB.prepare(
-        `UPDATE offers SET is_offset_vehicle = 1, updated_at = ?
+        // #3205 — `vehicle_loan_id` binds the offset to the loan's BORROWER
+        // side, whose moves end it (`positionFlowMoves.ts`).
+        `UPDATE offers SET is_offset_vehicle = 1, vehicle_loan_id = ?, updated_at = ?
           WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(Math.floor(Date.now() / 1000), chainId, offsetOfferId)
+        .bind(Number(a.originalLoanId as bigint), Math.floor(Date.now() / 1000), chainId, offsetOfferId)
         .run();
       if ((marked.meta?.changes ?? 0) === 0) {
         console.error(
@@ -6879,6 +6930,30 @@ export async function processLoanLogs(
     // transitions to a loan's lender/borrower-tokenId at offer
     // accept). We fire all 3 UPDATEs blindly; only the matching
     // row gets touched, the others no-op.
+    // #3205 — standalone mode retires a closed position's token instead of
+    // burning it (no `Transfer` to 0x0), so the retirement clears the holder
+    // exactly as a burn did (#749): the position drops out of the
+    // by-holder routes and the claimables.
+    else if (log.eventName === 'PositionRetired') {
+      const tokenId = String(a.tokenId as bigint);
+      if (tokenId !== '0') {
+        const writes = await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND lender_token_id = ?`,
+          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          env.DB.prepare(
+            `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND borrower_token_id = ?`,
+          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          env.DB.prepare(
+            `UPDATE offers SET creator_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND position_token_id = ?`,
+          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+        ]);
+        if (writes.reduce((n, r) => n + (r.meta?.changes ?? 0), 0) > 0) ownershipTransfers++;
+      }
+    }
     else if (log.eventName === 'Transfer') {
       const tokenId = String(a.tokenId as bigint);
       const to = String(a.to as string).toLowerCase();
@@ -6891,18 +6966,42 @@ export async function processLoanLogs(
       // were skipped, leaving the last live holder — they'd keep showing the
       // claimed position as still held.) The same tokenId sits on at most one
       // of the three rows; the others no-op.
+      // #3205 — a token whose position closed (burned, or RETIRED by
+      // `PositionRetired` below) keeps the zero holder: a standalone-mode
+      // retired token can still move as a receipt, and that move must not
+      // put a closed position back into anyone's holdings.
+      // #3205 — record the move FIRST: a position-bound flow opened before
+      // it can never complete (`positionFlowMoves.ts`). First because a burn
+      // writes the zero holder below, after which the live-side predicate no
+      // longer finds the side it burned. A mint (`from` = 0x0) records nothing.
+      await recordPositionMove(
+        env,
+        chainId,
+        {
+          tokenId,
+          from: String(a.from as string),
+          block: Number(log.blockNumber),
+          logIndex: Number(log.logIndex),
+          txHash: String(log.transactionHash),
+          movedAt: chainTimeOf(blockTimestamps, log.blockNumber),
+        },
+        liveSideSql,
+      );
       const ownerWrites = await env.DB.batch([
         env.DB.prepare(
           `UPDATE loans SET lender_current_owner = ?, updated_at = ?
-           WHERE chain_id = ? AND lender_token_id = ?`,
+           WHERE chain_id = ? AND lender_token_id = ?
+             AND ${liveSideSql('lender_current_owner')}`,
         ).bind(to, now, chainId, tokenId),
         env.DB.prepare(
           `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
-           WHERE chain_id = ? AND borrower_token_id = ?`,
+           WHERE chain_id = ? AND borrower_token_id = ?
+             AND ${liveSideSql('borrower_current_owner')}`,
         ).bind(to, now, chainId, tokenId),
         env.DB.prepare(
           `UPDATE offers SET creator_current_owner = ?, updated_at = ?
-           WHERE chain_id = ? AND position_token_id = ?`,
+           WHERE chain_id = ? AND position_token_id = ?
+             AND ${liveSideSql('creator_current_owner')}`,
         ).bind(to, now, chainId, tokenId),
       ]);
       // RPC read-diet PR 0 — count only Transfers that re-pointed a TRACKED
@@ -6931,11 +7030,15 @@ export async function processLoanLogs(
       ) {
         const sideMatches = (
           await env.DB.prepare(
+            // #3318 Codex r3 — the same live-side predicate as the owner
+            // updates above: a retired (or burned) side records no
+            // participant, so a receipt bought after its position closed is
+            // never history of that loan.
             `SELECT loan_id, 'lender' AS role FROM loans
-              WHERE chain_id = ?1 AND lender_token_id = ?2
+              WHERE chain_id = ?1 AND lender_token_id = ?2 AND ${liveSideSql('lender_current_owner')}
              UNION ALL
              SELECT loan_id, 'borrower' AS role FROM loans
-              WHERE chain_id = ?1 AND borrower_token_id = ?2`,
+              WHERE chain_id = ?1 AND borrower_token_id = ?2 AND ${liveSideSql('borrower_current_owner')}`,
           )
             .bind(chainId, tokenId)
             .all<{ loan_id: number; role: 'lender' | 'borrower' }>()

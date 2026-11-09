@@ -870,6 +870,562 @@ above. Each resolves here, so a route reviewer needs no private file:
   least the part, at most the stated upper total), where the interest
   period stands afterwards, and the approval put back. The two repayment
   flows never run at once.
+- **RB-POSITION-ADD-COLLATERAL** — adding collateral to a loan (LN-31) is
+  the borrower position holder's alone, so the action is offered to that
+  holder only. Its one rule (RB-ELIG) reads the inputs `addCollateral`
+  checks, in its order: a pending swap-to-repay order on the borrower
+  position, the holder, a loan that is neither running nor in fallback, a
+  rental (no collateral leg), a collateral token governance has paused, and
+  collateral the protocol does not price now. Both token checks are read
+  live, not from the loan's recorded class at opening. It never holds for
+  the protocol pause (a borrower can always lower their risk), a lender's
+  listing, a refinance request or an offset, and the page states only the
+  refusals no repayment shares (the token paused or unpriced). The amount
+  is more of the loan's own collateral token, more than nothing and within
+  the wallet's balance, checked as it is typed. The review states the
+  collateral before and after, where it is held, the health factor and
+  loan-to-value now, the approval, and every consequence. Where it is held
+  follows the protocol: the top-up lands in the vault of the borrower the
+  loan records, which for a running loan is the holder's own (the position
+  is consolidated first), but for a loan in fallback whose position changed
+  hands is the recorded borrower's, named, until the top-up cures it. The
+  consequences, always shown: added collateral can be lost with the rest to
+  a liquidation or default; no view gives the figures a top-up leads to, so
+  the finish card states the protocol's own; added collateral can be
+  taken back only within the protocol's limits while the loan runs; a loan
+  in fallback returns to running only if the top-up restores its opening
+  limits; and the pause posture, stated in every case (open, paused and
+  still open, or unread). The top-up pulls exactly the amount, so a standing
+  approval that covers it is left as it is and a smaller one is raised to
+  exactly the amount, put back if the top-up does not go through. A re-read
+  reopens the review when a stated loan field, the holder or lock, the
+  pause, the allowance, the balance check or the verdict moves; the health
+  factor and loan-to-value move with prices and are restated without
+  reopening it. The finish card measures, from the transaction's own logs,
+  the collateral the top-up left, the protocol's health factor and
+  loan-to-value after, the cure of a loan in fallback, and what left the
+  wallet.
+- **RB-POSITION-TAKE-BACK** — taking back collateral from a loan (LN-32) is
+  the borrower position holder's alone, so the action is offered to that
+  holder only. Its one rule (RB-ELIG) reads the inputs
+  `partialWithdrawCollateral` checks, in its order: the protocol pause, a
+  pending swap-to-repay order on the borrower position, a standing refinance
+  request, the holder, a loan that is not running (one in fallback
+  included), a rental, collateral the protocol does not price now, and the
+  protocol's own most that can be taken back now being zero. A lender's
+  linked sale listing also holds it; no view exposes that link (#3308), so
+  the review's dry run of this very withdrawal names it, and the send runs
+  the dry run again. The page states a closed reason only where no action
+  above already said it, and a hold said once for two actions (an unpriced
+  token with the top-up, a refinance request with paying part) is said in
+  words that name both. The amount is more than nothing and at most the
+  protocol's limit now (`calculateMaxWithdrawable`), checked as it is typed;
+  the form says the limit moves with prices and as interest accrues, and
+  offers no "use the most" shortcut, since an amount at the limit is
+  refused once a second of interest accrues. No approval is asked: the
+  collateral goes from the borrower's vault to the wallet that asks, in one
+  prompt. A wallet running protected account mode has it queued for the
+  account's delay instead, stated by the one payout rule every flow paying
+  the wallet shares (RB-PAYOUT-ROUTE below), and, while the account requires
+  it, released only once a secondary signer approves, which the protocol
+  checks at release. The withdrawal is always the holder's own: it first
+  moves a bought position's collateral into the holder's vault, and every
+  state that skips that move is one the rule or the dry run refuses. The
+  review states that route, or that
+  the mode could not be read, and the finish card measures where the
+  collateral went and, when queued, from when it can be released. The review states the collateral before and after, where it goes,
+  the limit, the health factor and loan-to-value now, and every
+  consequence: the loan moves closer to liquidation; the protocol checks its
+  limits again at confirmation, so a price move first refuses it with
+  nothing moved; a pause before then does the same; and the finish card
+  states the protocol's own figures after. A re-read reopens the review
+  when a stated loan field, the holder or lock, the pause, the refinance
+  request, the payout route or the verdict moves; the limit, health factor and loan-to-value
+  move with prices and are restated, and a limit that falls below the
+  amount blocks the review rather than reopening it. The finish card
+  measures, from the transaction's own logs, the collateral the withdrawal
+  left, the protocol's health factor and loan-to-value after, and what
+  arrived in the wallet, was queued for it, or was paid into the vault.
+- **RB-PAYOUT-ROUTE** — every flow that pays the wallet (taking back
+  collateral, collecting a claim) states where protected account mode sends
+  the payment with one rule and one set of words, so two flows cannot
+  describe the same queue differently. The route depends on whose vault pays
+  and on the receiving wallet's mode: a wallet without the mode is paid at
+  once; a payment from the account's own vault is queued for its delay, or
+  kept in the vault while the account is locked; a payment from anyone else's
+  vault is paid into the account's vault. A queued payment that needs a
+  secondary signer's approval to be released says so before signing and on
+  the finish card. A payment queued for an account a replacement retired is
+  released to the wallet that now manages it, so the review and the finish
+  card name that wallet, never the old one. A mode that could not be read is
+  stated as unknown, never as the wallet route. A change to the route, or to
+  a queued payment's delay, signer requirement or release wallet, reopens the
+  review.
+- **RB-POSITION-CLAIM** — collecting a loan payout (LN-48, LN-49, LN-50)
+  is one flow under RB-CLAIM, opened from the loan's page and from Claims.
+  Each side is decided by its own rule (RB-ELIG), read against that side's
+  position holder, never the reader's overall role, in the order
+  `claimAsLender` / `claimAsBorrower` checks: the protocol pause, a loan
+  whose status pays no claim on that side (a running loan; a settled one; a
+  loan in fallback, which pays the borrower only after the lender has
+  collected or the loan is cured), a side already collected or with nothing
+  recorded, and the holder. On the loan's page the borrower's payout stays
+  shown while it waits on a loan in fallback, with that reason, so its
+  holder is never left with no payout section and no explanation. The review names every payout the claim makes
+  on that side: the lender's recorded row and funds held for the lender
+  before the loan ended, a rented NFT back to its lender, the borrower's
+  collateral row, collateral the borrower added in another token, and a
+  surplus held for the borrower. A row recorded at zero says so, and that
+  collecting still closes the position. It states where the payout goes by
+  RB-PAYOUT-ROUTE (the wallet; a protected account's own-vault payout queued
+  for its delay, or kept in its vault while the account is locked or its
+  queue is full; a payment from another party's vault into a protected
+  wallet's vault), what past sellers of the
+  lender position take first (stated as unknown, with what it may take, when
+  it could not be read), that collecting burns the position token,
+  that collecting in fallback ends the fallback and the borrower's cure, and
+  the pause posture. The protocol's dry run of this very claim is part of
+  the review, and the send runs it again. The finish card measures, from
+  the transaction's own logs, the claim recorded, what the protocol paid
+  from the row against what was reviewed, each payout that arrived, was
+  queued, kept or credited to a vault (each destination stated, since one
+  payment can split between the queue and the vault), an NFT's arrival, and
+  the loan's settlement once both sides have collected. A lender claim on a
+  loan in fallback runs the protocol's match first with the claimant as its
+  matcher. A match rewrites the payout in places the protocol records only
+  in part (a full match the row, a partial one the funds held for the
+  lender), so when the logs show one the card says the match changed the
+  payout and states what each token delivered instead of comparing it with
+  the review (a reviewed token that delivered nothing is still flagged), and
+  states the matcher's reward each leg paid, in that leg's loan's principal
+  token, the collateral token's included. A claim the review
+  could not read is stated as unknown, never as zero. A claim flow in progress
+  stays on Claims, drawn from the app's record of it, after its position
+  token is burnt and the reader leaves and returns, until its finish card is
+  closed. Claims lists the payouts of
+  the positions the wallet holds now, so a bought position pays its new
+  holder, and says "nothing to collect" only when every read completed;
+  seller interest is RB-SELLER-CLAIM, an unused extension reserve is
+  RB-RESERVE, and a payout frozen for a flagged wallet is RB-FROZEN.
+- **RB-PAYOUT-QUEUE** — Claims lists a protected account's payout queue
+  (LN-54, LN-55, LN-56): the wallet's own account, then an account it
+  manages since a replacement retired it, and in Advanced mode any account
+  looked up by address, for a secondary signer. Rows come in the order they
+  fall due by the chain's clock, never the browser's. Each row leads with its
+  request code exactly as the chain derives it and every alert prints it
+  (`@vaipakam/lib/requestCode`), and states what it pays, its destination
+  (the reader's wallet, the account's wallet, or an allowlisted address),
+  when it can be released, and, where the account requires it, whether a
+  signer has approved it. A row or list that could not be read is said so,
+  never shown as empty. Each action has one rule (RB-ELIG) read in the order
+  the contract checks it. Release is anyone's: held by a pause until the
+  pause ends or its escape route opens; open at once for a row whose
+  destination is no longer allowed, which the review and the button state
+  cancels it instead of paying; otherwise only once due, the account
+  unlocked, and approved where required. Cancel belongs to the account's
+  manager wallet or a secondary signer and works during a pause. Approve
+  belongs to a signer, only where the account requires approval and the row
+  is not yet approved. Each runs through one flow (review, the protocol's
+  dry run, one wallet prompt) and its finish card is measured from the
+  transaction's logs: the release paid, with the protocol's measured
+  delivery stated beside a short one; a cancel instead of a payment, stated
+  as such; the cancel; the approval. The account's delay and approval rule,
+  the keeper service's arming for releases (the capability service's
+  answer, unknown by default) and the pause posture are stated above the
+  rows. An action in progress stays on screen until its finish card is
+  closed: after its row leaves the queue, after the lookup that found the
+  account is cleared, and when that account's queue cannot be read. The
+  sync stamp covers every queue the section shows, a looked-up one
+  included.
+- **RB-SELLER-CLAIM** — the interest a past seller of a lender position
+  earned and was not paid (LN-52) is collected from Claims, in its own
+  section. The loans come from the index (any step of a seller claim filed
+  under the wallet); when the index cannot list them the section says so,
+  never shows an empty list, and offers a lookup by loan number that reads
+  the chain alone. A later poll that fails is said too: the last list stays,
+  named as the last list, and "nothing owed" is withdrawn until the index
+  answers again. Each loan is read from the chain as the withdrawal reads
+  it, and only the chain decides: what the wallet is owed, stated net of the
+  loan's own fee on interest (the legacy share said as such where the loan
+  recorded none), what already waits in the wallet's vault, and on an ended
+  loan the split. The withdrawal has one rule (RB-ELIG) in the order
+  `claimAsSeller` checks it: the pause, then something to pay. On a running
+  loan it pays what reached the vault, and with nothing there it says the
+  claim is paid from later interest, oldest claim first, and offers no
+  button; a loan in fallback waits. On an ended loan the withdrawal first
+  splits what the lender side recovered (the holder's principal, then each
+  claim oldest first, net of the fee), which closes every open seller claim
+  on the loan: in the principal token the review states the wallet's part
+  exactly and what stays unpaid, and in another token it states that the
+  split pays by value when it runs. The protocol's dry run is part of the
+  review and the send runs it again. The payment goes from the wallet's own
+  vault to its wallet, so it follows RB-PAYOUT-ROUTE. The finish card
+  measures, from the transaction's logs, each claim the split closed (paid
+  in full, or short with what stays unpaid, and a figure other than the
+  reviewed one said beside it) and each payment where it landed. A row that
+  could not be read is said so, and a withdrawal in progress stays on screen
+  until its finish card is closed, whatever the latest list or lookup shows.
+- **RB-RESERVE** — an extension reserve (LN-62) is the depositor's own
+  money, set aside in their own vault for a loan's extensions, and Claims
+  lists every loan where this wallet has some left: found from the index's
+  activity filed under the wallet (funded, charged, withdrawn), or looked
+  up by loan number from the chain alone, never shown as empty while the
+  index fails. Each row states the reserve and whether an extension can
+  still draw on it: only on a running ERC-20 loan with no interest cadence,
+  and only while this wallet holds the borrower position, since an
+  extension charges the current holder's vault; with the holder unread on a
+  running loan, it is said unknown, never safe. The whole reserve is taken
+  back in one withdrawal, open whatever the loan's state and whoever holds
+  the position, held by the protocol pause (it is one of the withdrawals a
+  pause stops, as the protocol enforces) and refused for a flagged wallet
+  (RB-FROZEN; an outage is the dry run's). The review says a running
+  extension then loses the reserve, the dry run decides the rest (a wallet
+  that no longer manages the account is told so), and the finish card
+  measures where the money landed (RB-PAYOUT-ROUTE) and what stays
+  reserved if more was set aside meanwhile.
+- **RB-CLAIM-ALL** — Claim everything (LN-51) leads Claims and carries
+  RB-CLAIM's inclusion list, read from the chain: each loan side the
+  wallet holds whose claim the loan's own rule opens and that pays
+  something; interaction rewards when the claim, run as its preview,
+  completes, even paying nothing, since such a claim walks days that paid
+  nothing to reach later paying ones (that claim also pays any held
+  reward), or else a held reward
+  the screen releases; the un-lent capital of each standing offer the wallet
+  owns; free VPFI in its vault; and each payroll stream paying it (paid
+  into a protected payee's vault, as any payment from outside its own
+  vault). A lender
+  claim on a loan in fallback is named as collected on its own, since that
+  claim settles the fallback first and only then decides what it pays; a
+  source or a loan that could not be read is named as left out, never
+  dropped, and the other sources are still read and offered (the position
+  book failing leaves out the loans only). Every payout has a switch; all are on except free vault VPFI
+  and the capital of a standing offer that lends VPFI (both count toward the
+  fee-discount tier, which the review says when either is sent; an offer's
+  capital is also kept off, and said, while the VPFI token cannot be read)
+  and the
+  capital of a standing offer still lending (taking it out leaves the offer
+  less to lend), which the reader turns on. A held reward the screen
+  releases is offered even when the rewards preview cannot be read. The pause and a flagged wallet stop the whole batch before
+  signing, said once; anything else is the protocol's call, payout by
+  payout: the batch entry runs each payout as its own call with the wallet
+  as caller and each allowed to fail, so the review's dry run of the batch
+  answers for each one, a refused payout is left out of the transaction
+  with the protocol's reason, and one refused when the transaction runs is
+  skipped, moves nothing and stays listed. Because a call allowed to fail
+  never reverts the batch, its gas limit is sized on the same calls each
+  required to succeed, so no payout is skipped only for want of gas. One
+  transaction carries at most
+  the protocol's bound (30 calls); the rest wait for a second one, said in
+  the list and the review. The review states where each payout lands, one
+  row per destination when they differ, a queued one with its delay. A
+  queued payout's delay or secondary signer
+  changing while the review is open is a changed review. The finish card
+  reports each payout collected or
+  skipped from its own record in the logs, each NFT (collection and token
+  id, summed across the payouts that paid it) where its routing records or
+  transfer put it, each place with its own quantity, and each token measured where it
+  landed (RB-PAYOUT-ROUTE) against what the collected payouts recorded,
+  summed across them; a rewards claim that leaves more says so, and the
+  rest is listed again, and when that cannot be read after the claim the
+  card says it is not known rather than implying nothing is left. A payroll
+  figure is a floor (the withdrawal pays all accrued when it runs), stated
+  as such; its rise while the review is open is not a change to confirm, a
+  fall is.
+- **RB-VAULT** — the Vault page (ACC-20, ACC-21, ACC-24) shows the wallet's
+  own vault on its chain: its full address with an explorer link, and that
+  it is a contract kept for this wallet alone, nothing pooled, leaving only
+  by the protocol's rules. With no vault yet the page says so and offers to
+  create one (a deposit or a first offer would too); the review says nothing
+  moves and no approval is asked, the protocol's dry run decides (a flagged
+  wallet is refused before it, since the protocol creates no vault for one),
+  and the finish card names the vault the transaction's record gives, or
+  that it names none. Each asset row carries the protocol's figures at one
+  block, never one worked out by the app: what the protocol counts as the
+  wallet's there (the smaller of the vault's balance and the protocol's
+  record, so a plain transfer never raises it), what may be withdrawn now
+  (the protocol's own answer after every position and queued payout), and
+  the rest as held by the wallet's positions; a vault holding less than the
+  protocol counts shows both, a row whose figures could not all be read says
+  so and shows none as free or held, and a fully held row says so. A part
+  that reached the vault outside the protocol is stated as uncounted and not
+  withdrawable until adopted, with the route to adopt or disown it. Assets
+  come from the deposit record's list (paged to its stated length; an empty
+  page before it, or the page cap, is said incomplete) and from the wallet's
+  own records (every loan it was ever a party to or holds a position in and every offer it ever
+  created, each read from its own record, a rental's prepaid fee token included, since an offer's
+  escrow stays in its creator's vault whoever holds its position; and the lent asset of every
+  standing offer it owns, a cancelled one included, since funding one adds nothing to the deposit
+  record), always from a list kept by the wallet that made the record; the page
+  says that a plainly transferred asset shows only if one of those names it,
+  says when either source was incomplete or failed, names every deposited
+  NFT collection, since only a token a loan or offer names can be listed
+  with figures (the record keeps no token ids). Empty rows and dust (below
+  1e-11 of a whole token, never one with an uncounted part or a vault short
+  of the count) are hidden behind a switch that counts them. VPFI in the
+  vault is named as setting the fee-discount tier, holding it for that pledging nothing (VPFI
+  pledged to a loan or offer shows as held), with a
+  link to Rewards. Withdraw is the next slice; until then the page links the
+  current app for it.
+- **RB-VAULT-DEPOSIT** — a deposit into the wallet's own vault (ACC-22) is
+  one asset, chosen from the suggested tokens and test collections or
+  pasted, its standard the contract's own answer, then the amount, the NFT's
+  token id, or the token id and quantity. An unaccepted Terms version is
+  accepted first, and the Terms are read again as the last check before
+  signing: a switch to a wallet that has not accepted them, or a version
+  published while the form is open, sends the deposit back through the gate
+  (a transaction already under way is left to finish). The review is read at
+  one block: the wallet's vault (or that the deposit creates it), the
+  protocol pause, the sanctions screen, whether a replacement retired the
+  wallet, the account's protected mode, and the wallet's holding and
+  approval. The receipt states how the deposit can leave again: to the
+  wallet at once without protected mode, after the account's delay (and a
+  secondary signer, where the account requires one) with it, not at all
+  while the account is locked (the protocol still takes the deposit), and
+  that it is unknown when the mode was not read; a change to any of these
+  while the review is open is a change. A pause, a flagged wallet, a retired wallet or a shortfall stops
+  it by name, and an unread pause or screen is stated and left to the
+  protocol's dry run. The approval is exactly what the deposit takes (an
+  ERC-20 amount, one ERC-721 token, or an ERC-1155 collection granted for
+  this deposit and taken back after it unless the wallet had granted it),
+  the dry run runs with it in place (so a token that does not arrive in full
+  is refused before the deposit is sent), and an approval the flow made is
+  put back when the deposit does not go through. The receipt states that no
+  token-safety screening runs. The finish card states what the protocol's
+  own deposit record credited and what the token's own logs moved into the
+  vault. While the protocol is paused the panel says so, with what stays
+  open, and offers no deposit. The form's balance check is read again each
+  block, so a balance that grows lifts its refusal by itself.
+- **RB-VAULT-WITHDRAW** — a withdrawal from the wallet's own vault (ACC-23)
+  takes what is free back to the connected wallet, and only to it: the
+  protocol would pay any screened address for an account without protected
+  mode, and the app offers none, so the receipt says the destination is the
+  wallet that signs. It opens from an asset row with something free, or, for
+  an NFT collection the deposit record names without token ids, from that
+  collection with the token id typed. The form's limit is the protocol's own
+  `withdrawableNow` figure for that asset and token, read again each block.
+  The review is read at one block: the vault, the pause and whether the
+  escape route is open under it, the sanctions screen, the account's
+  protected mode (retired, on, locked, delay, secondary signer) and the free
+  figure, then the protocol's dry run of this very withdrawal. No vault, a
+  retired wallet, a flagged wallet, a pause that applies (every pause, except
+  for a protected account once the escape route opens), a locked account, an
+  amount above the free figure, or the dry run's refusal stops it by name;
+  an unread pause, screen, free figure or dry run is stated. The receipt
+  names the vault it leaves, where it goes (this wallet at once, or the
+  account's payout queue for its delay, with a secondary signer's approval
+  where required), the free figure before and after, that only what is free
+  moves, that a queued withdrawal can be cancelled from the payout queue on
+  the Claims page, and that no approval is asked. The finish card states the
+  protocol's own withdrawal record (and whether it queued it), the queued
+  payout with its release time, and what the token's own logs moved from the
+  vault to the wallet.
+- **RB-VAULT-SAFETY** — the Vault page's safety card (ACC-36 Basic face,
+  ACC-37, ACC-43) reads the account's protected mode at one block, with the
+  protocol's delay bounds, the pause, the sanctions screen and the queued
+  payout count, on its own reads: it never waits on holdings discovery, so a
+  failed holdings scan cannot hide Lock now. A Diamond without the feature reads "unavailable", never
+  "off"; an unread mode offers no control and says not to assume it is off;
+  a wallet a replacement retired names the wallet that manages the account
+  and offers nothing. Off, it offers Turn on: in Basic the shortest delay the
+  protocol allows and NFT protection off, both stated; in Advanced the delay
+  in whole days inside the bounds and NFT protection. On, it states the
+  delay, co-sign, NFT protection, queued count, lock (since when, by whom)
+  and every pending change with its time, and offers Lock now (unlocked),
+  Ask to unlock (locked, none asked) and Apply due changes (anything due).
+  Each receipt states what the mode becomes and every consequence: turning
+  on never delays what is owed to others, credits other vaults' payments
+  into the vault, cancels any pending vault-code change and raises the wait
+  on a future one (said, not read); a lock cancels every queued payout (counted), drops every
+  pending setting change (counted) and voids every pending destination,
+  signer and vault-code change (said, not counted), cancels a replacement
+  this wallet proposed while one its signers proposed survives (said, not
+  read), leaves repayment and
+  adding collateral open and works during a pause; an unlock waits the
+  delay; applying due changes applies every due change together, a shorter
+  delay is always shown as the delay it sets beside the current one, and a
+  switch-off waits for an empty queue and clears destinations, signers,
+  their pending additions and any pending replacement. Every consequence is
+  taken from the facet's own code path for that call, whole, not from one
+  finding at a time. Each action is dry-run at review and again before the wallet
+  opens, and the finish card reads the Diamond's own events for this
+  account. The account's own payout queue (RB-CLAIM: the Claims component)
+  is shown under the card.
+- **RB-VAULT-ESCAPE** — while the protocol is paused, the Vault page
+  states it at the top (ACC-30, ACC-31): withdrawals are closed, full and
+  partial repayment and adding collateral stay open, and, under an
+  administrative pause, when its escape route opens, from the protocol's own
+  `escapeOpensAt` against the chain's clock, never a hard-coded period. A
+  pause that schedules no route (automatic, or a protocol not yet launched)
+  is said to schedule none. Once the route is open, the Withdraw button
+  routes a wallet without protected mode through `escapeWithdraw`, and the
+  receipt says the asset goes straight to this wallet through the escape
+  route and that the route never returns what a loan, offer or claim holds;
+  a protected account keeps the ordinary withdrawal, which keeps queueing.
+  If the pause, the route or, under an open route, the mode is unread, no
+  entry point is chosen and nothing is sent. The finish card reads
+  `EscapeWithdrawal` and the token's own transfer to the wallet.
+- **RB-OFFERS-MINE** — the Offers page (OFF-46) lists every offer the
+  connected wallet created, from the protocol's own per-creator index
+  (which keeps a cancelled id), together with every offer whose position
+  token it holds now, read in one bulk call with the protocol's own state
+  for each, newest first. Filters by state (open, filled, sold, expired,
+  cancelled, all) carry each one's count. A request whose collateral sold
+  through its parallel listing before any accept opened no loan, so it is
+  "sold" with its own note, never counted or described as filled; a list that could not be read to its end says so, and
+  nothing missing is reported as none. Each row is matched to the id it was
+  asked for, never to the id the view reports: an offer cancelled with
+  nothing filled has its record cleared, so the row says the protocol
+  cleared its terms and shows only its number and state, never rebuilt
+  terms. An offer held by one wallet but created by another says who may
+  cancel it and where its return goes. The offer line is one shared helper,
+  the same as Home's open offers. Each row opens the offer's own page
+  (RB-OFFER-PAGE).
+- **RB-OFFER-BOOK** — the offer book (OFF-39, OFF-40, OFF-43) is on the
+  Offers page below the wallet's own offers and is read with or without a
+  wallet: every open offer the index files on the screen's network, newest
+  first, a page at a time ("Show older offers"), in two tabs (loans of a
+  token, NFT rentals), with a side filter and, when a wallet is connected,
+  a switch that hides its own offers. The filters apply to what has been
+  read so far, and the count line says how many that is and whether older
+  offers remain. The index only names candidates: no row carries an action,
+  and each opens the offer's page, which reads the chain. A lapsed offer the
+  index still files as open is tagged expired, with anyone allowed to clean
+  it up; a refinance request, a loan sale, an offset and an offer whose
+  bound position moved are tagged by kind, and a request the index has not
+  read as refinance or not says it may be one. A borrower request's
+  collateral reads as its range when it has one, and as "at least" its
+  floor when the index has not read the ceiling, never as the floor alone;
+  an ERC-1155 leg, rented or pledged, states its unit count.
+  A row the index returned in
+  a shape the app cannot read is counted as unread, never dropped silently;
+  a failed read is a degraded-source warning ("nothing here means no
+  offers"), and a failed re-read behind a list already shown says the list
+  may be out of date. The book refreshes on the index's push signal and on
+  a bounded interval while visible (RB-REFRESH). Advanced sorting and the
+  remaining filters (asset, duration, amount, liquidity) are later work.
+- **RB-OFFER-PAGE** — an offer's page (`/offers/:id`, OFF-41, OFF-45) reads
+  it from the chain at one block, with or without a wallet: the stored
+  terms, the protocol's state, and the running loan a loan-sale or offset
+  offer is tied to. The protocol keeps no count of offers and clears the
+  terms of an offer cancelled with nothing filled, so an id with no stored
+  terms says exactly that: cancelled, or never posted, and the protocol does
+  not say which. The page states the side, the creator, the amount (a range
+  when it has one), what is already filled, the collateral asked for or
+  pledged (a request's range when it has one, and what of it is already
+  committed to loans), the term and when the offer lapses, and what a refinance
+  request, loan sale or offset would do. What the reader may do follows
+  from that read: take an open loan offer of a token against token
+  collateral whole, through the same acceptance flow and Terms gate as
+  Borrow and Lend (OFF-50, kept in its own store so a review in flight on
+  another page never shows here, and one review at a time); cancel their
+  own open offer, or clean up an expired one whoever created it, through
+  RB-OFFER-CANCEL; or, for a rental, an NFT-collateral offer, a loan sale or
+  an offset, be told it is taken in the current app for now, with a link.
+  An ended offer says how it ended and offers nothing. A take, cancel or
+  clean-up that is open or in flight keeps its panel, finish card included,
+  after its own transaction changes the offer, even when a cancel cleared
+  the terms, and a take whose offer the creator cancels under the review
+  keeps its panel and its Close. Without a wallet the page asks for one at the action, never
+  before reading, and a failed re-read behind terms already shown says the
+  terms are the earlier read and may be out of date.
+- **RB-OFFER-CANCEL** — cancelling an offer (OFF-48) or cleaning up an
+  expired one (OFF-49) is one flow, keyed by the offer, opened from its row.
+  The review is read at one block: the offer, the protocol's state for it,
+  the loan a sale or offset listing is tied to, the pause and the creator's
+  protected mode, then the protocol's dry run. A filled, cancelled or unread
+  offer, a pause (or an unread one), a non-creator before expiry, the
+  protocol's five-minute cool-down on an unfilled offer (with the time it
+  ends, lifting by itself as the chain passes it) or the dry run's refusal
+  stops it by name. A row whose cancel is open or in flight stays on screen
+  whatever the filter, and even after the refreshed inventory drops it,
+  until the finish card is closed. The receipt states what returns, sized from the offer's
+  own terms by the facet's own branches (unlent principal, the NFT, unused
+  collateral, a rental request's prepay and buffer at its stamped rate), or
+  says it cannot be sized (an offer tied to a running loan, a refinance
+  request that carries its collateral, a rental request posted before the
+  buffer stamp) and leaves the figure to the finish card. It states where
+  the return lands: for the creator, its own payout route; for anyone
+  cleaning up someone else's offer, the creator's wallet, queue (with their
+  secondary signer's approval where required) or vault, named as the
+  creator's, never "yours". It also says a filled part stays
+  filled, the return leaves the creator's vault, the position token is
+  retired, a cancel past the cool-down races an accept and either may win,
+  and that no approval is asked. The finish card reads the Diamond's cancel
+  event, the routed payout and what the token's own logs moved to the
+  creator. A return it could not size is measured in the asset the offer
+  itself can return, an ERC-20 or an NFT, and one that moved nothing is
+  stated as nothing returned.
+- **RB-FROZEN** — money the protocol holds for a wallet the sanctions
+  screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
+  where its loan keeps it, in a vault, not lost, and released once the
+  wallet is de-listed. The wallet's standing is read once, from the
+  protocol's own views (whether a screen is configured, the screen's answer
+  for the wallet, and the registry of wallets confirmed flagged while the
+  screen could be read), and is one of four: flagged; an outage, meaning the
+  screen cannot be read and the wallet was confirmed flagged before, so a
+  payout frozen for it stays locked until the screen answers (release is
+  fail-closed), and a payment due to it during the outage is parked too,
+  since the protocol keeps treating a registered wallet as flagged; unknown, when the standing could not be read, said and never
+  assumed either way; or nothing frozen. An outage alone never freezes
+  anyone, so a wallet never confirmed flagged reads as nothing frozen in an
+  outage. Claims and the loan's page show a notice for the first three, to
+  the wallet itself only. Every claim's rule (RB-ELIG) refuses a flagged
+  wallet right after the pause, in these words, and a seller's withdrawal
+  also refuses in an outage for a wallet confirmed flagged, as
+  `claimAsSeller` checks it; a loan claim's caller check lets an outage
+  through, so its dry run decides. A dry run refused for a sanctions reason
+  is said in the same words: a party the protocol recorded as frozen on that
+  loan side (the app cannot read who, since the protocol keeps no view of
+  it), or a release waiting for the screen. On a running loan the page
+  states what the loan already paid that is reserved for the lender
+  position in the lender vault the loan records, such as a payment made
+  while the holder was flagged, until the lender's claim pays it; when that
+  amount could not be read it says so, and only a zero read shows nothing. A repaid
+  loan whose borrower surplus is still held says that surplus is one of the
+  payouts left to collect before it settles (never that collecting it alone
+  settles the loan, since the lender's side may be open too), so its status
+  reads true. A change to the wallet's
+  standing reopens a claim's review. Repayments and close-outs are never
+  held for a flagged party; only what it is owed waits. The surfaces never
+  promise the other party more than its side recovers: a default or a
+  liquidation can recover less than is owed. A standing whose latest read
+  failed is unknown, even with an earlier answer in hand.
+- **RB-RATE-CHECK** — the rate warning before posting (#3357, OFF-15) sits
+  under the rate on both posting forms, a lender's offer and a borrower's
+  request. It compares the typed rate with the middle rate of loans that
+  started on the same pair and term in the last 30 days, read from the
+  index (the lower of the two middles for an even count, so no rate is
+  invented). Only agreed rates the index's ledger backs count, and loans a
+  lender sale opens are left out, since a sale is not a fresh rate. Loans
+  on the pair whose terms the index has not confirmed belong to no term;
+  the index counts them and the form states that count beside the
+  comparison, so "no confirmed loans" never hides loans of unknown term. More
+  than five points either way is a warning that says which way it cuts: a
+  lender far under the market or a borrower far over it is the offer taken
+  first when rates move; the other way the offer may sit untaken. Within
+  five points it is a note with the middle rate and the count. No loans to
+  compare, NFT collateral, and an index that cannot be read each say so, so
+  a missing comparison never reads as a clean one, and an index answer not
+  scoped to the pair and term asked for is refused rather than compared.
+  When the read reached its sample cap the note says only the latest loans
+  were read. It warns and never blocks: the review still opens. An offer's
+  expiry defaults to 7 days; choosing "until taken or cancelled" is
+  explicit and shows a note that such an offer keeps its rate as the
+  market moves.
+- **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
+  public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
+  so it can be seen before mainnet; #3357), the review of a write that a
+  watcher could act on first says so before the wallet opens: posting,
+  taking or cancelling an offer, repaying in full or in part, and adding
+  collateral. It names the exposure (anyone watching, bots included, can
+  see the transaction and act first, such as taking an offer before its
+  cancel lands) and its help says some wallets can send privately, that
+  neither the protocol nor the app can choose that route, and that the
+  usual route changes only who sees the transaction before it lands. No
+  private sending service is named or set by the app. The single-sequencer
+  rollups the app serves keep no public queue, so nothing is said there.
+  The list of networks is one rule (`publicQueue.ts`), and a test fails if
+  a served network is not decided.
 
 ## 3. Companion specifications
 

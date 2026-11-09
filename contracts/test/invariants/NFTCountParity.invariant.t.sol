@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
@@ -87,7 +88,7 @@ contract NFTCountParityInvariant is Test {
     ///      failure (`address(0)` → the assertEq below will fire with a
     ///      clearer message than a generic revert).
     function _safeOwnerOf(uint256 tokenId) internal view returns (address) {
-        try VaipakamNFTFacet(address(base.diamond())).ownerOf(tokenId) returns (address owner) {
+        try LibTestPositionNFT.core(address(base.diamond())).ownerOf(tokenId) returns (address owner) {
             return owner;
         } catch {
             return address(0);

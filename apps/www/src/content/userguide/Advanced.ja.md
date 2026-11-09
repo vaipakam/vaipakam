@@ -2163,6 +2163,18 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
 
+<a id="rate-check"></a>
+
+### 金利を最近のローンと比べる
+
+両方の投稿フォームは、同じ貸付資産・担保資産・期間についてインデックスの `/loans/recent` を読み（貸し手の売却用オファーは除外）、直近30日に始まり、インデックスの台帳が裏づける合意金利を持つローンだけを残します（条件が確認されていないローンは除きます）。比較の基準はそれらの金利の中央値で、件数が偶数のときは中央の2つのうち低い方を使い、合意された2つの金利の間に存在しない金利を作りません。そこから5パーセントポイント（500 bps）を超えて離れた金利は、向きを示す警告になります。大きく低い貸し手、または大きく高い借り手は、金利が動いたときに真っ先に取られるオファーを出し、逆の向きではオファーが取られずに残るかもしれません。その幅の内側では、中央値と件数を示す注記になります。1回の読み取りは最新100件までで、上限に達すると最新分だけを読んだと注記します。依頼したペアと期間に絞られていないインデックスの応答は比較せずに拒否し、NFT担保は比較せず、読み取りに失敗したときはそう表示します。レビューを止めることはありません。 インデックスが条件を確認していないこのペアのローンはどの期間にも属しません。インデックスはその件数（`unplaced`）を数え、フォームは比較の横にその件数を示すので、「確認済みのローンなし」が期間不明のローンを隠すことはありません。
+
+<a id="public-queue"></a>
+
+### 公開待ち行列のあるネットワーク
+
+Ethereum と BNB Chain（および BNB Testnet）では、送信したトランザクションは取り込まれる前に公開の待ち行列で待ちます。その待ち行列を見ている人（ボットを含む）は誰でもそれを見て先に動けます。キャンセルが届く前にオファーを取る、返済が届く前にローンに手を出す、といったことです。そのためこれらのネットワークでは、オファーの投稿・受諾・キャンセル、返済、担保の追加のレビューで、ウォレットが開く前にその旨を表示します。トランザクションを非公開で送れるウォレットもあります。ウォレットのネットワーク設定やセキュリティ設定を確認してください。アプリがその経路を代わりに選ぶことはできず、通常の方法で送っても変わるのは、届く前に誰がトランザクションを見られるかだけです。Base、Arbitrum、Optimism には公開待ち行列がないため、何も表示されません。 対象ネットワークはアプリ内の一つのルールです（Ethereum 1、BNB Chain 56、BNB Testnet 97）。アプリが対応するネットワークが未判定ならテストが失敗します。通知はレビュー内、最後の再確認とウォレットの前に、次の操作に限って表示されます：オファーの投稿・受諾・キャンセル、全額返済と一部返済、担保の追加。ヘルプは非公開送信サービスの名前を挙げません。ウォレットがどの経路を使ったかをプロトコルは確認できず、どちらの経路でもトランザクションの効果は同じだからです。
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: パートに分けて貸すオファー
@@ -2205,7 +2217,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### Position: ローンの読み方
 
-ページは `getLoanDetails(loanId)` と、貸し手・借り手のポジション NFT の `ownerOf` を読みます。役割はウォレットが今保有しているトークンです。進行中のローン（Active または FallbackPending）では、`getLoanDeadlines`（停止クレジット前の現在の期間の満期。延長や借り手の引き継ぎで書き換わります、停止クレジット、満期、猶予期間の終了）、利払いスケジュールがあれば `getPeriodicInterestEnabled` とともに `previewPeriodicSettle`、`isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor`、`calculateLTV` を読みます。すべてのローンで `getLoanCollateralLien` と `isSaleVehicleLoan` を読みます。各読み取りは独立しており、失敗したものは 0 ではなく不明と表示し、日付を `startTime` と `durationDays` から計算することはありません。
+ページは `getLoanDetails(loanId)` と、貸し手・借り手のポジション NFT の保有者（デプロイメントが記録する PositionNFT コントラクト上の `ownerOf`。#3205 より前のデプロイメントでは Diamond 自体の `ownerOf`）を読みます。役割はウォレットが今保有しているトークンです。進行中のローン（Active または FallbackPending）では、`getLoanDeadlines`（停止クレジット前の現在の期間の満期。延長や借り手の引き継ぎで書き換わります、停止クレジット、満期、猶予期間の終了）、利払いスケジュールがあれば `getPeriodicInterestEnabled` とともに `previewPeriodicSettle`、`isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor`、`calculateLTV` を読みます。すべてのローンで `getLoanCollateralLien` と `isSaleVehicleLoan` を読みます。各読み取りは独立しており、失敗したものは 0 ではなく不明と表示し、日付を `startTime` と `durationDays` から計算することはありません。
 
 価格のあるローンでは `getInternalMatchConfigBundle` も読みます。内部マッチングが有効な間、LTVがしきい値からしきい値＋`externalLiquidationPriorityWindowBps` までにあるローンは内部マッチング用に確保され、外部の清算ルートはすべて拒否します（`InternalMatchOnlyBand`）。ページはその範囲を示します。`loanInitiationFeeBpsAtInit` が 0（料率が記録される前に開始したローン）の場合は未記録と表示し、`treasuryFeeBpsAtInit` が 0 の場合は決済が適用する従来の1%として表示します。現物引き渡しの警告はERC-20ローンのみが対象です。NFTレンタルには担保がなく、デフォルトすると借り手の利用が終わり、前払いの賃料はトレジャリーの取り分を差し引いて貸し手へ支払われ、バッファはトレジャリーへ送られます。ページは代わりにそれを示します。
 
@@ -2215,7 +2227,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### 全額返済: 金額の決め方
 
-この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、`positionLock(borrowerTokenId)` が `SwapToRepayIntent` の間も止まります。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
+この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、借り手ポジションの開いているルートが `SwapToRepayIntent` の間も止まります（Diamond 上の `positionRoute(borrowerTokenId)`。#3205 より前のデプロイメントでは `positionLock(borrowerTokenId)`）。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
 
 確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、返済がローンを残した状態をその `LoanRepaid` ログから読み（ブロック時点の状態ではありません。同じブロックの後続の請求で既に清算済みになっている場合があるためです）、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。その数値を超える allowance（無制限を含む）も同じ数値まで下げます。`repayLoan(loanId)` には上限も期限もないためです。戻す処理では、その後に元の大きい値に戻します。
 
@@ -2234,6 +2246,114 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 `repayPartial(loanId, amount)` は元本 `amount` と、`interestAccrualStart` 以降に発生した利息(定期クレジット控除後)を受け取ります。利息はまず、売却前の利息がまだ未払いの以前の保有者に支払い(`paySellersFirst`)、次に現在の貸し手ポジション保有者に支払い、トレジャリーの取り分を分け(プロトコルが凍結すべき保有者の場合、その取り分は代わりに貸し手のボールトへロックして預けられます。`freezeOrPayActiveLenderFromPayer`)、`principal` を減らし、利息の時計を再開し、現在の期間に計上します。満期は動きません。猶予期間の終了後、`principal × minPartialBps / 10000`(`getAssetRiskParams`)未満、元本全額以上(`PartialWouldRetireFullPrincipal`)、有効なインテントコミットや借り換えリクエストがあるとき、そして流動性のあるローンでヘルスファクターが悪化するときは拒否します。
 
 呼び出し前に一部返済の利息を返すビューはないため(#3299)、確認画面では今と少し先の時点で読んだ `calculateRepaymentAmount` から `principal` を引いた値を使います。満期までの日割りローンでは正確ですが、`useFullTermInterest` では残り期間の最低利息、満期後は延滞料を含むため「最大」と表示します。承認額は返済額とその上限値の合計ちょうどです。完了カードは、支払い自身の `PartialRepaid` ログの `newPrincipal`（ブロック時点の `principal` ではありません。同じブロックの後続トランザクションで変わりうるためです）、ウォレットからの流出、その後の `previewPeriodicSettle` を測定します。レビューがウォレットを止めるのは、部分額、または部分額と正確な利息に残高が足りないときだけです。上限の数字だけが残高を超える場合は、支払いを送る直前のドライランが判断します。
+
+<a id="add-collateral"></a>
+
+### 担保の追加：何が確認されるか
+
+`addCollateral(loanId, amount)` は、ローン自身の担保トークンをちょうど `amount` だけ呼び出し元から借り手のボールトへ引き出し、`collateralAmount` と担保リーエンを増やし、新しいヘルスファクターと LTV を含む `CollateralAdded` を発行します。進行中の swap-to-repay コミット、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でも FallbackPending でもないローン、レンタル、一時停止中の担保資産（`isAssetPaused`）、`checkLiquidity` が Liquid と報告しない担保を拒否します。`whenNotPaused` は付いていません。入金先は記録された `loan.borrower` のボールトです。Active のローンは先に移転済みポジションを保有者へ統合する(`consolidateToHolder`)ため保有者のボールトになり、FallbackPending のローンは回復するまで統合されないため、レビューは記録されたボールトを示します。追加したトークンは清算やデフォルトで消費される `collateralAmount` に含まれ、レビューはそのことを伝えます。
+
+アプリはこれらの入力を読み取り、資産の 2 つの確認はローン開始時の区分ではなく現在の状態で行い、ドライランがプロトコルの最終判断となります。追加後のヘルスファクターを返すビューはないため、確認画面は現在の `calculateHealthFactor` と `calculateLTV` を示し、完了カードは取引の `CollateralAdded` ログから新しい数値を読み取ります。FallbackPending のローンでは、新しいヘルスファクターがローンの最低値に達し、LTV が開始時の上限内に収まると追加によって回復します。完了カードは `LoanCuredFromFallback` を確認します。金額以上の既存の承認はそのまま残します。引き出されるのはちょうどその金額だからです。小さい承認はちょうどその金額まで上げ、追加が成立しなければ元に戻します。
+
+<a id="take-back-collateral"></a>
+
+### 担保の引き出し: 確認される内容
+
+`partialWithdrawCollateral(loanId, amount)` は借り手のボールトから呼び出し元のウォレットへ担保を `amount` 送り、`collateralAmount` と担保リーエンを減らし、新しいヘルスファクターとLTVを含む `PartialCollateralWithdrawn` を発行します。`whenNotPaused` が付いており、次の順に拒否します: 制裁対象の呼び出し元、有効なスワップ返済コミット、有効なリファイナンス依頼(`RefinanceRequestOpen`)、紐づいた売却出品(`SaleListingActive`)、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でないローン、担保を超える金額、`checkLiquidity` が Liquid と報告しない担保、最低ヘルスファクターを下回るか開始時のLTV上限を超える結果。
+
+フォームは金額を `calculateMaxWithdrawable` と照合します。これは Active でないローンや非流動的な担保ではゼロで、利息の発生とともに下がります。紐づいた売却出品を返すビューはないため、確認画面で引き出しをドライランし、その拒否を表示します。送信時にも再度実行します。完了カードは、残った担保と新しい数値をトランザクションの `PartialCollateralWithdrawn` ログから、受け取った金額をウォレットへのトークンの `Transfer` から読み取ります。保護アカウントモードの呼び出し元の場合、ボールトの支払いゲートは引き出しを支払わずにアカウントの遅延期間だけキューに入れる(`PayoutQueued`)ため、レビューは `getProtectedAccount` を読み、完了カードはそのログを読みます。
+
+<a id="collect-a-payout"></a>
+
+### 支払いを受け取る: 確認される内容
+
+`claimAsLender(loanId)` と `claimAsBorrower(loanId)` には `whenNotPaused` が付いており、その側に記録された当事者(`loan.lender` / `loan.borrower`)のボールトから呼び出し元へ支払います。呼び出し元はその側のポジショントークンの `ownerOf` でなければなりません。貸し手は Repaid、Defaulted、FallbackPending、InternalMatched のローンで請求でき、借り手は Repaid、Defaulted、InternalMatched のみです。貸し手の請求は、請求済みの行(`AlreadyClaimed`)を保有者確認の前に、未払いのない側(`NothingToClaim`)をその後に拒否します。強制クローズがゼロで記録した行も実行され、ポジションを閉じます。借り手の請求は担保の行と余剰の行の両方が空か請求済みのときだけ拒否し、それぞれを各自のフラグで支払います。別のトークンでローンのリーエン下に残る担保も合わせて支払われます。
+
+確認画面は `getClaimable`(貸し手の行は過去の売り手分を差し引き済みで、`getSellersShareOfLenderClaim` を併記)、`getBorrowerSurplusClaim`、`getLoanCollateralLien` を読み、請求をドライランします。ドライランでは制裁チェックも適用されます。一覧はポジショントークンに従います。`getUserDashboardClaimables` は記録された当事者の請求を列挙するため、列挙された行はウォレットがその側を保有している間だけ残り、他人から受け取った終了済みローンのポジションは請求を直接読みます。完了カードは `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed`、`LoanSettled` と、ウォレットへのトークン送金を読みます。保護アカウントモードの呼び出し元の場合は `PayoutQueued`(アカウント自身のボールト)、`PayoutHeldInVault`(ロック中またはキューが満杯)、`PaymentCreditedToVault`(他の当事者のボールト)を読みます。FallbackPending のローンでは貸し手の請求が請求時の内部マッチを実行して行を書き換えることがあるため、完了カードは送金をプロトコル自身の記録と比較します。
+
+<a id="claim-everything"></a>
+
+### すべてを受け取る：何が確認されるか
+
+一括処理は `multicall(calls)` を通り、各呼び出しをプロトコル自身への `delegatecall` で実行するため、`msg.sender` はあなたのウォレットのままで、各呼び出しが自分のルールを確認します。受け付けるのは最大 30 件で、アプリは各呼び出しを `allowFailure` 付きで送るため、拒否された呼び出しだけが取り消され、一括処理は続きます。呼び出しは `claimAsLender` / `claimAsBorrower(loanId)`、保持中の報酬も解放する `claimInteractionRewardsTo(Vault)`（報酬プレビューが完了できないが `getRewardSanctionsStatus` が Deliver を示す場合は `claimHeldInteractionRewards(Vault)`）、`getLenderIntentsByOwner` の各インテントの `availableCapital` に対する `withdrawLenderIntentCapital(account, lendingAsset, collateralAsset, amount)`、VPFI の `freeHolding` に対する `withdrawVPFIFromVault(amount)`、そして受益者がウォレットである `getPayrollStream` の各ストリームに対し `getWithdrawableSalary` の額で `withdrawSalary(streamId)` です。FallbackPending のローンに対する貸し手の請求は、請求時のマッチングが支払額を決めるため除外されます。レビューは一括処理を試行し、各呼び出しの `success` とリバートデータを読み、拒否された呼び出しはデコードしたエラーとともに除外し、送信時にもう一度試行します。完了カードは各呼び出し自身のイベント (`LenderFundsClaimed` / `BorrowerFundsClaimed`, `InteractionRewardsClaimed` with `RewardDeliveredToVault`, `LenderIntentCapitalWithdrawn`, `VPFIWithdrawnFromVault`, `SalaryWithdrawn`) を読み、イベントのない呼び出しはスキップされたものです。ウォレットへのトークン送金と、保護モードの `PayoutQueued` / `PayoutHeldInVault` / `PaymentCreditedToVault` は、受け取った呼び出し全体でトークンごとに合計されます。一時停止（すべての呼び出しにある `whenNotPaused`）とフラグ付きウォレットは、署名前に一括処理を止めます。
+
+<a id="payout-queue"></a>
+
+### 支払いキュー: 確認される内容
+
+一覧は `getPendingPayoutIds(account)` で、各行に `getPendingPayout(id)` と `requestCode(id)` を読みます。コードは通知と同じ共有レンダラーで6文字の base32 として表示され、行はブラウザの時計ではなく最新ブロックのタイムスタンプに対する `releaseAt` の順に並びます。`releasePayout(id)` は誰でも呼び出せますが、一時停止中は `isEscapeOpen()` になるまで拒否されます。受取人が管理者(アカウント、または引退後はそのコントローラー)でもなく `getAllowlist` にも載っていないキュー中の行は、時刻の確認より前に、支払われる代わりに取り消されます。それ以外の場合、行は期限が来ており、アカウントはロックされておらず(`ProtectedVaultLocked`)、`requireCosign` がオンの間は共同署名済み(`CosignRequired`)である必要があり、受取人は再びスクリーニングされます。`cancelPayout(id)` は管理者または署名者のもので(`NotManagerOrSigner`)、一時停止中も使え、資産を再び引き出せるよう預入台帳に計上します。`cosignPayout(id)` は `getProtectedSigners` の署名者のもので(`NotSigner`)、アプリはアカウントがそれを必要とし、行がまだ共同署名されていない間だけ提示します。各操作は確認画面でドライランとして実行され、送信時にも再度実行されます。完了カードはその id の `PayoutReleased`(金額とプロトコルが測定した `delivered`)、`PayoutCancelled`、`PayoutCosigned` を読みます。keeper の `protectedAccount` パスが期限の来た行を解放するかどうかはケイパビリティサービスの回答で、既定では不明です。ロックはキュー中のすべての行を取り消します。
+
+<a id="seller-interest"></a>
+
+### 売却したポジションの利息：確認される内容
+
+売却は、売り手が得てまだ支払われていない利息を請求として記録します。`getInterestLedger(loanId)` は未決の請求を古い順に、それぞれの総額とともに一覧します。`claimAsSeller(loanId)` には `whenNotPaused` と制裁チェックがあります。請求が残る Repaid、Defaulted、Settled、InternalMatched のローンでは、まず貸し手の回収額（`getSellersShareOfLenderClaim`）を分配し、各請求に純額（総額からローンの `treasuryFeeBpsAtInit` の取り分を引いて切り捨て。記録がないローンは従来の 1%）まで支払って、すべてを閉じます。FallbackPending のローンは分配しません。その後、元本トークン、および異なる場合は貸し手請求のトークンについて、`getSellerInterestHeld(loanId, seller, asset)` を売り手自身のボールトから売り手のウォレットへ引き出し、ゼロなら `NothingToClaimAsSeller` で拒否します。アプリは、売り手としてウォレットに紐づくインデックスのアクティビティ（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）からローンを一覧し、番号での検索はチェーンだけを読みます。元本トークンでは、レビューは分配額からウォレットの取り分を正確に算出します。別のトークンでは分配は価値ベースで、実行時に決まると明記します。引き出しはレビューでドライランし、送信時にも再度実行します。完了カードは `SellerInterestClaimClosed`（支払額、入金額、全額支払い）と `SellerInterestWithdrawn` を読み、保護モードが支払いをキューに入れた、または保持した場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
+
+<a id="frozen-proceeds"></a>
+
+### 凍結された支払い：何が確認されるか
+
+アプリは `getSanctionsOracle`（ゼロならこのチェーンにスクリーニングなし）、`sanctionsStatus(wallet)`（Clean、Flagged、またはスクリーニングがリバートしたときの Unavailable）、`isSanctionsConfirmedFlagged(wallet)`（`refreshSanctionsFlag` が確定的な読み取りから同期する登録簿）を読み取ります。Flagged、またはウォレットが登録済みの Unavailable は凍結と読みます。未登録の Unavailable はそう読みません。`claimAsLender` と `claimAsBorrower` は `whenNotPaused` の後に呼び出し元をスクリーニングし、障害は通します。プロトコルが記録した当事者のために支払いを凍結した側は fail-closed で解放され、その当事者が Clean と読まれるまで、その時点で誰がポジションを持っていても `SanctionedAddress` または `SanctionsOracleUnavailable` でリバートします。プロトコルはその記録された当事者を参照するビューを持たないため、アプリはそこではドライランに頼り、その拒否を同じ言葉で伝えます。`claimAsSeller` はフラグ付きの売り手を、また障害中は登録済みの売り手を拒否します。ローンの進行中、フラグ付きの保有者のために保留された貸し手の取り分は `getClaimable(loanId, true)` の `heldForLender` に加算され、貸し手のクレームが支払うまで記録上の貸し手のボールトに確保されます。フラグ付きの借り手でも返済はできますが、担保の追加はできません。
+
+<a id="extension-reserves"></a>
+
+### 延長用リザーブ：何が確認されるか
+
+`fundExtendReserve(loanId, amount)` は、借り手ポジション保有者のウォレットからローンの元本トークンを本人のボールトに預け入れ、そのローン用に確保します。`whenNotPaused` と制裁スクリーニングを伴い、ローンが Active で、ERC-20 ローンで、定期的な利払い間隔がない場合を除き拒否されます。`getExtendFunding(loanId, holder)` はトークン、`reserved`、保有者のその他の自由残高、延長が現時点と期間終了時に請求する額を返します。延長は現在の保有者のボールトからのみ、リザーブを先に請求します。`withdrawExtendReserve(account, loanId, amount)` は `whenNotPaused` を伴い、呼び出し元がアカウントの管理者（本人のウォレット、または置き換え後のコントローラー）であることを求め、呼び出し元をスクリーニングし（障害時は通過）、確保額を超えると `ExtendReserveInsufficient` で取り消されます。ローンの状態にかかわらず利用できます。アプリはウォレットに紐づくインデックスのアクティビティ (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) からローンを一覧にし、番号での検索はチェーンだけを読みます。レビューが読み取ったリザーブ全額を引き出し、呼び出しをレビュー時と送信時に試行し、完了カードは `ExtendReserveWithdrawn`（金額と、確保されたまま残る額）を読み、保護モードが支払いをキューに入れたり保持したりした場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
+
+<a id="vault-holdings"></a>
+
+### あなたのボールト：何が読まれるか
+
+ボールトは `VaultFactoryFacet.getUserVaultAddress(wallet)` です。`getOrCreateUserVault(wallet)` がこれを作成し（ティア1の制裁チェック、一時停止ゲートなし）、完了カードは `UserVaultCreated` を読みます。資産ごとに同じブロックで読むのは、ボールト自身の残高（ERC-20 は `balanceOf`、ERC-721 は `ownerOf`、ERC-1155 は `balanceOf`）、`getTrackedHolding`、`withdrawableNow`、`untrackedHolding` です。「ボールト内」は残高と追跡保有量の小さい方、「今すぐ引き出し可能」は返された `withdrawableNow` そのもの（入金保有量を `freeHolding`、つまり追跡量からリーエンと保護モードの留保を引いた量で上限としたもの）、「ポジションが保持中」は計上量からそれを引いたものです。資産は `getDepositoryAssets(wallet, offset, limit)` から、返された総数までページごとに読みます（その前の空ページは不完全として扱います）。一覧の各コントラクトの規格は ERC-165 で読み、さらに `getUserLoansPaginated(wallet)` のすべてのローンと、ウォレットがポジションを保有するすべてのローンの各レッグ（貸し出し資産、担保、レンタルの前払い手数料トークン）を同じブロックで `getLoanDetails` により読み、これまでに作成したすべてのオファー（`getUserOffersPaginated(wallet)`、各件を `getOffer` で読む）の各レッグも加えます。オファーの預け入れは、ポジションNFTを譲渡した後も作成者のボールトに残るためです。`getLenderIntentsByOwner(wallet)` の各常設オファー（取り消し済みを含む）が貸し出す資産も加えます。常設オファーへの資金投入は、入金記録に載せずにその資産をボールトへ入れるためです。記録は NFT のトークンIDを保持しないため、入金済みの NFT コレクションはすべて注記で名前を示し、数値付きで一覧に出るのはローンかオファーが指すトークンだけです。ダストとは、ゼロより大きく、トークン1枚の 1e-11 未満の計上量です。
+
+<a id="vault-deposit"></a>
+
+### ボールトに入金する
+
+入金は `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)` です。kind は 0 が ERC-20、1 が ERC-721、2 が ERC-1155 で、ERC-20 のトークンIDは 0、ERC-721 の数量は 1 です。`whenNotPaused` で、呼び出し元を審査し（Tier-1）、置き換えで退役したウォレットを拒否します（`requireManager`）。レビューは同じブロックで `getUserVaultAddress`、`paused`、制裁審査の状態、`getProtectedAccount(wallet)`、ウォレットの残高と承認を読みます。読めなかった停止・審査・退役はその旨を示し、ドライランが判断します。承認は ERC-20 なら厳密な `approve`（先にゼロへ戻す必要があるトークンは2段階）、ERC-721 なら `approve(diamond, tokenId)`、ERC-1155 なら `setApprovalForAll(diamond, true)` で、すでに付与済みでなければ入金後に取り消します。ドライランは承認の後に実行し、ERC-20 は全額到着の確認（`LibDelivery.pullExact`）付きで引き取るため、送金手数料のあるトークンは失敗します。完了カードは `VaultDeposited(account, asset, kind, tokenId, amount)` と、ボールトへのトークン自身の転送ログを読みます。この入金に permit の経路はありません。レビューは `getProtectedAccount(wallet)` から `enabled`、`locked`、`delaySeconds`、`requireCosign` も保持し、レシートは入金が再び出られる方法を示します。すぐに、待機時間の後に（必要な場合はセカンダリ署名者の承認付きで）、またはアカウントのロック中は出られない、のいずれかで、ロック中でも `depositToVault` は拒否しません。署名前の最後の確認で `hasAcceptedCurrentTerms` を読み直し、未同意のバージョンを拒否します。
+
+<a id="vault-withdraw"></a>
+
+### ボールトからの引き出し
+
+引き出しは `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)` で、`account` と `recipient` はどちらも接続中のウォレットです。上限は `withdrawableNow(account, kind, asset, tokenId)`（超えると `AmountExceedsFree`）で、`requireManager(account)` を確認し、呼び出し元（Tier-1）と受取人を審査します。一時停止中は、保護アカウントで `isEscapeOpen` が真の場合を除き拒否されます。レビューは1つのブロックで `getUserVaultAddress`、`paused`、`isEscapeOpen`、制裁ステータス、`getProtectedAccount(wallet)`、`withdrawableNow` を読み、その後呼び出しをドライランします。保護モードがオフならボールトのルートがすぐにウォレットへ支払い、オンなら `LibProtectedAccount.queuePayout` が `delaySeconds` のあいだ支払いをキューに入れ、`ProtectedVaultLocked`、`RecipientNotAllowlisted`、`TooManyPendingRows` を拒否します。完了カードは `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`、`PayoutQueued`、ボールトからウォレットへのトークン自身の転送ログを読みます。入金記録がトークンIDなしで示すコレクションは、トークンIDを入力して引き出し、フォームの上限はそのトークンの `withdrawableNow` で、ブロックごとに読み直します。
+
+<a id="vault-safety"></a>
+
+### アカウントの安全
+
+カードは同じブロックで `getProtectedAccount(wallet)`、`getProtectedDelayBounds()`、`paused`、制裁状況、`getPendingPayoutIds(wallet)` を読みます。`FunctionDoesNotExist` のリバートは利用不可と読みます。オンにするのは `enableProtectedMode(delaySeconds, protectNfts)` で、即時に有効、一時停止中またはすでにオンなら拒否され、遅延は範囲内（2日から5日）でなければならず、ボールトがなければ作成します。「今すぐロック」は `lockVault(wallet)` で、一時停止中も使え、キュー中のすべての行を取り消し（`PayoutCancelled`）、保留中のすべての変更を破棄し、管理者が提案した交代を無効にします。ロック解除の申請は `requestUnlock(wallet)` で、一時停止中や `cooldownUntil` 以前は拒否され、`pendingUnlockAt` を現在時刻に `delaySeconds` を足した時刻に設定します。「期限の来た変更を適用」は `finalizeSettingChanges(wallet)` で、期限の来たすべての変更を一度に適用します。オフへの切り替えは開いた行がなくなるまで待ちます（`PendingRowsExist`）。各操作はレビュー時とウォレットを開く直前にドライランされ、完了カードは Diamond のログから `ProtectedModeEnabled`、`VaultLocked`、`PayoutCancelled`、`SettingChangeRequested`、`SettingChangeApplied` を読みます。
+
+<a id="vault-escape"></a>
+
+### プロトコルが一時停止しているとき
+
+通知は同じブロックで `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手動一時停止の開始時刻に、開始時のエスケープ期間を足したもの。有効な一時停止がない場合や Diamond が一度も開始されていない場合はゼロ）、`getProtectedAccount(wallet)` を読み、ブロック時刻に対してカウントダウンします。ルートが閉じたまま一時停止中は `withdrawFromVault` が `EnforcedPause` でリバートし、レビューは一時停止が止めていると伝えます。`isEscapeOpen` が真になると、保護されたアカウントは引き続き `withdrawFromVault` を使い、キューへの登録が続きます。それ以外のウォレットの引き出しは `escapeWithdraw(kind, asset, tokenId, amount)` を呼びます。これは保護されたアカウントを拒否し（`EscapeNotForProtected`）、禁止された受取人を拒否し、ウォレット自身の入金残高と自由な数値で上限が決まり、呼び出し元に支払います。完了カードは `EscapeWithdrawal(account, asset, tokenId, amount)` と、ボールトからウォレットへのトークン自体の移転を読みます。一時停止、ルート、またはルートが開いている場合のモードが読めなければ、引き出しは送信されません。
+
+<a id="my-offers"></a>
+
+### あなたのオファー
+
+一覧は `getUserOffersPaginated(wallet)`（作成者ごとのインデックスで、取り消したIDも残る）と `getUserPositionOffersPaginated(wallet)`（ウォレットがポジショントークンを持つオファー）の和集合で、`MetricsDashboardFacet.getOffersWithState` を通じて最大250件ずつ読み、位置ごとに対応する答えを受け取ります。各行は問い合わせたIDに対応づけられます。何も成立せずに取り消されたオファーはレコードが削除されるため、ビューはID 0と導出状態「取消済み」を返し、行は条件を再構成せずに何も示しません。部分成立後に取り消されたオファーは `accepted` が立ったままレコードが残り、成立として読まれます。フィルターの件数は読み取った行について数えます。どちらかのインデックスを最後まで読めなかった場合、ページは一覧が不完全かもしれないと示します。
+
+<a id="offer-book"></a>
+
+### オファーブック
+
+ブックはインデクサーの `GET /offers/active?chainId&limit=50&before=<offerId>` を読み、オファーIDの新しい順に `nextBefore` でページ送りします。インデクサーは期限切れのオファーを `active` のままにする（チェーン上の期限は遅延評価）ため、`expiresAt` を過ぎた行には期限切れのタグを付けます。`isSaleVehicle`、`isOffsetVehicle`、`refinanceTargetLoanId`（null = 未読）が種類を、`positionFlow.movedSinceOpened` が移動した紐付きポジションを示します（#3205）。各フィールドは厳密に解析し、失敗した行は未読として数えます。タブは `assetType`（0 = ERC-20 ローン、それ以外はレンタル）、サイドは `offerType` です。クエリはプッシュレールで無効化され、表示中は60秒ごとに再読み込みします。インデックスの障害はそのまま伝え、空のブックとしては表示しません。
+
+<a id="offer-detail"></a>
+
+### オファーのページ
+
+`/offers/:id` は1つのブロックで `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)`、`getOfferLinkedLoanId(id)` を読みます。ウォレット接続時はウォレット経由、それ以外は読み取り専用プロキシ経由です。作成者がゼロなら、記録が削除された（何も成立せずに取り消された）か、書かれたことがないかのどちらかです。プロトコルはオファー数を保持しないため、ページはどちらかを述べません。ゼロ以外の紐付きローンはローン売却（借り手のオファー）またはオフセット（貸し手のオファー）を示し、借り手のオファーの `refinanceTargetLoanId` は借り換えリクエストを示します。受けるときは共有の `acceptOffer` フロー（署名済み `AcceptTerms`、正確な承認、ドライラン、計測結果）を専用のストアキーで実行し、取り消しと片付けは共有の `cancelOffer` フローで行います。レンタル、NFT担保、ローン売却、オフセットは現在のアプリにリンクします。
+
+<a id="offer-cancel"></a>
+
+### オファーを取り消す
+
+確認画面は1つのブロックで `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` と作成者の `getProtectedAccount` を読み、`OfferCancelFacet.cancelOffer(id)` を試行実行します。ファセットは作成者のマネージャーにはいつでも、`expiresAt` を過ぎれば誰にでも取消を認めます。`OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` を拒否し、`amountFilled == 0` のオファーが300秒未満で期限内なら `CancelCooldownActive` を返し、`whenNotPaused` です。返却額はファセット自身の分岐で算出します。ERC-20の貸付オファーは貸付資産の `(amountMax または amount) - amountFilled`、NFTの貸付オファーはそのトークンまたはERC-1155の数量、借入リクエストは未使用の担保 `(collateralAmountMax または collateralAmount) - collateralAmountFilled` またはそのNFT（`refinanceCarryOver` で担保がローンに残る場合はなし）、レンタルリクエストは `amount × durationDays` に `rentalBufferBpsAtCreate` のバッファを加えた額です。`getOfferLinkedLoanId` でローンに結びつくオファーや、記録されたバッファがゼロのレンタルリクエスト（その場合プロトコルは現行率を使う）は署名前に算出しません。返却はすべてボールト出金を通じて作成者のボールトから出るため、保護モードではキューに入るか、ロック中はボールトに留まります。ポジショントークンは廃止されます。完了カードは `OfferCanceled(offerId, creator)`、作成者へのプロトコルの支払い記録、作成者へのトークン自身の送金を読みます。
 
 <a id="risk-access"></a>
 

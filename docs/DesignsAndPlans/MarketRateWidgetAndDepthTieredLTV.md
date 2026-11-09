@@ -102,6 +102,12 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   factory addresses for Ethereum / Base / Arbitrum / Optimism / BNB
   Chain / Polygon PoS (verified against each protocol's official
   registry); operator runs once per chain to flip the V2 leg on.
+  **Retired 2026-11-08 (#3354):** the V2 leg, its setters and the
+  script are removed. A V2 pair keeps no time-weighted record of its
+  reserves, so its depth could only be read as it stood in the current
+  block, which a caller can top up and withdraw around one transaction.
+  The route search is V3-only and credits each pool with its
+  time-weighted liquidity.
 - **Piece B follow-up (e) — frontend `useProtocolConfig` wiring —
   LANDED** (2026-05-14, commit `f73646b`): the `useMarketRateMinCollateral`
   auto-fill hook + `OfferRiskPreview` HF-warning component are now
@@ -127,8 +133,9 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   flipping `depthTieredLtvEnabled` on any chain" list is now landed
   end-to-end. The remaining work is **operational** (the §4.4-step-6
   audit gate + per-chain rollout):
-  - Run `ConfigureV2Factories.s.sol` per chain to wire V2 forks
-    (zero by default ⇒ V3-only until configured).
+  - ~~Run `ConfigureV2Factories.s.sol` per chain to wire V2 forks.~~
+    Retired in #3354: the V2 leg and the script are removed (see the
+    note at the V2-fork item above).
   - Run the pre-deploy census per chain
     (`docs/AuditPackage/pre-deploy-census-2026-05-14/` was today's
     first pass; re-run after Aave's WETH-restoration AIP executes

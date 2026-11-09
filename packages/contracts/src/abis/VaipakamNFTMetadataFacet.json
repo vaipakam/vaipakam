@@ -208,6 +208,11 @@
   },
   {
     "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StringsInsufficientHexLength",
     "inputs": [
       {

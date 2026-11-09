@@ -789,13 +789,28 @@ function loadWallets(opts = {}) {
  * @returns `{ ok: true, wallet }`, or `{ ok: false, why, roles }` where
  *   `why` completes the sentence "no usable credential for role X — ".
  */
+/**
+ * The one spelling of a role's key the driver signs with: 32 bytes of hex,
+ * `0x`-prefixed. A wallet file may store the key with or without the
+ * prefix (the desktop's file carries both forms, and an unprefixed entry
+ * BLOCKED the first #1209 seller-claim drive). Accepting both here, in the
+ * single validator, is what keeps every signing path on one rule; a
+ * second, prefix-adding copy at a call site would be the drift
+ * `validateWalletEntry`'s history warns about. Anything else returns null.
+ */
+export function normalisePrivateKey(key) {
+  if (typeof key !== 'string') return null;
+  const hex = /^0x/i.test(key) ? key.slice(2) : key;
+  return /^[0-9a-fA-F]{64}$/.test(hex) ? `0x${hex}` : null;
+}
+
 function validateWalletEntry(wallets, role) {
   const roles = Object.keys(wallets ?? {});
   const w = wallets?.[role];
-  const key = w?.privateKey;
+  const key = normalisePrivateKey(w?.privateKey);
   const no = (why) => ({ ok: false, why, roles });
 
-  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+  if (key === null) {
     return no('no valid privateKey');
   }
   // The ADDRESS is a credential too, not decoration. `addressOf` is used
@@ -822,7 +837,9 @@ function validateWalletEntry(wallets, role) {
       `address ${w.address} is not the one its privateKey derives (${derived})`,
     );
   }
-  return { ok: true, wallet: w };
+  // The normalised key, never the file's spelling, so every caller signs
+  // with the same value this function validated.
+  return { ok: true, wallet: { ...w, privateKey: key } };
 }
 
 /** The remedy line, shared so both transports say the same thing. */

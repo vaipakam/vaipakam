@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -256,6 +257,7 @@ contract AddCollateralFacetTest is Test {
 
         // Init admin state
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -550,11 +552,7 @@ contract AddCollateralFacetTest is Test {
         // `IERC721.ownerOf` call, so the flagged holder passes ownership and the
         // new payer screen is the only thing left to catch them.
         address flaggedHolder = makeAddr("flaggedTopupHolder");
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, loan.borrowerTokenId),
-            abi.encode(flaggedHolder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), loan.borrowerTokenId, flaggedHolder);
 
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
