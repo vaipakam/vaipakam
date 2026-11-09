@@ -2820,3 +2820,15 @@ The form reads the collection's standard with ERC-165 `supportsInterface` and th
 ### Rent: Risks of a Rental Request
 
 The rent and buffer stay in your vault while the request is open, and you cannot withdraw them until you cancel it or it ends. While no owner has taken it, you can cancel the request from its page after its first five minutes, and they come back to your wallet. An owner who takes it starts the rental at once on exactly these terms: you hold the right to use the NFT, never the NFT itself. A rental does not close by itself: close it from its position page. Closing late costs a late fee from the buffer, and if it defaults the rent goes to the owner and the buffer to the protocol. A request that lapses keeps the rent and buffer in your vault until it is closed. The buffer share is the protocol's setting when the request lands: if it changes after your review, a higher one is refused when your wallet approved exactly this amount and taken when an earlier approval covers it, and the outcome states what moved.
+
+<a id="rent-take"></a>
+
+### Rent: Taking a Renter's Request
+
+The review reads the request with `getOffer` (its `rentalBufferBpsAtCreate`), the protocol's verdict from `previewAccept`, both sides' risk settings, the grace period from `getEffectiveGraceSeconds`, the protocol's share from `getTreasuryFeeBps`, and `getRiskConfig` only for a request that recorded no buffer. `previewAccept` does not check who holds the NFT, so the app reads that with `ownerOf`, `getApproved` and `isApprovedForAll` (`balanceOf` and `isApprovedForAll` for an ERC-1155). Taking it is `acceptOffer` with signed `AcceptTerms`: the protocol pulls the NFT from the owner's wallet into the owner's vault and records the renter as its user until the term ends. The outcome is read from the transaction's logs (the rental opened from this request and the NFT's `Transfer` or `TransferSingle` into the owner's vault) and from `vaultGetNFTUserOf` at the receipt's block.
+
+<a id="rent-take-risks"></a>
+
+### Rent: Risks of Taking a Request
+
+The NFT stays in your vault for the whole rental, and you cannot withdraw it while the rental is open. The renter holds the right to use it until the rental ends, and you cannot take that right back early. The terms are the request's own: you cannot change the daily fee, the term, the rent rule or the buffer. A rental does not close by itself: the renter closes it, or after the grace period anyone can close it as a default; then the rent comes to you and the buffer goes to the protocol. A request that recorded no buffer of its own takes today's setting when the rental starts.

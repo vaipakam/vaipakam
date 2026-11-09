@@ -2632,3 +2632,15 @@ Le formulaire lit le standard de la collection avec ERC-165 `supportsInterface` 
 ### Louer : risques d'une demande de location
 
 Le loyer et la marge restent dans ton coffre tant que la demande est ouverte, et tu ne peux pas les retirer avant de l'annuler ou qu'elle prenne fin. Tant qu'aucun propriétaire ne l'a acceptée, tu peux annuler la demande depuis sa page après ses cinq premières minutes, et ils reviennent dans ton portefeuille. Un propriétaire qui l'accepte démarre la location aussitôt à exactement ces conditions : tu détiens le droit d'utiliser le NFT, jamais le NFT lui-même. Une location ne se clôt pas d'elle-même : clôture-la depuis sa page de position. Clôturer en retard coûte des frais de retard pris sur la marge, et en cas de défaut le loyer va au propriétaire et la marge au protocole. Une demande expirée laisse le loyer et la marge dans ton coffre jusqu'à ce qu'elle soit fermée. La part de marge est le réglage du protocole au moment où la demande est enregistrée : s'il change après ta vérification, une part plus élevée est refusée si ton portefeuille a approuvé exactement ce montant, et prélevée si une approbation antérieure la couvre ; le résultat indique ce qui a bougé.
+
+<a id="rent-take"></a>
+
+### Louer : accepter la demande d'un locataire
+
+L'examen lit la demande avec `getOffer` (son `rentalBufferBpsAtCreate`), le verdict du protocole dans `previewAccept`, les réglages de risque des deux côtés, le délai de grâce dans `getEffectiveGraceSeconds`, la part du protocole dans `getTreasuryFeeBps`, et `getRiskConfig` seulement pour une demande sans marge enregistrée. `previewAccept` ne vérifie pas qui détient le NFT, donc l'application le lit avec `ownerOf`, `getApproved` et `isApprovedForAll` (`balanceOf` et `isApprovedForAll` pour un ERC-1155). Accepter, c'est `acceptOffer` avec des `AcceptTerms` signés : le protocole fait passer le NFT du portefeuille du propriétaire à son coffre et inscrit le locataire comme son utilisateur jusqu'à la fin de la durée. Le résultat se lit dans les logs de la transaction (la location ouverte depuis cette demande et le `Transfer` ou `TransferSingle` du NFT vers le coffre du propriétaire) et avec `vaultGetNFTUserOf` au bloc du reçu.
+
+<a id="rent-take-risks"></a>
+
+### Louer : risques de l'acceptation d'une demande
+
+Le NFT reste dans ton coffre pendant toute la location, et tu ne peux pas le retirer tant qu'elle est ouverte. Le locataire détient le droit de l'utiliser jusqu'à la fin de la location, et tu ne peux pas le lui reprendre plus tôt. Les conditions sont celles de la demande : tu ne peux changer ni le tarif journalier, ni la durée, ni la règle de loyer, ni la marge. Une location ne se clôture pas d'elle-même : le locataire la clôture, ou après le délai de grâce n'importe qui peut la clôturer comme défaut ; le loyer te revient alors et la marge va au protocole. Une demande qui n'a enregistré aucune marge propre prend le réglage du jour au début de la location.

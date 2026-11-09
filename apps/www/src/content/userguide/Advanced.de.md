@@ -2622,3 +2622,15 @@ Das Formular liest den Standard der Sammlung mit ERC-165 `supportsInterface` und
 ### Mieten: Risiken einer Mietanfrage
 
 Miete und Puffer bleiben in deinem Vault, solange die Anfrage offen ist, und du kannst sie erst abheben, wenn du sie stornierst oder sie endet. Solange kein Eigentümer sie angenommen hat, kannst du die Anfrage nach ihren ersten fünf Minuten auf ihrer Seite stornieren, und beides kommt in deine Wallet zurück. Ein Eigentümer, der sie annimmt, startet die Miete sofort zu genau diesen Bedingungen: Du hältst das Recht, das NFT zu nutzen, nie das NFT selbst. Eine Miete endet nicht von selbst: Beende sie auf ihrer Positionsseite. Wer zu spät beendet, zahlt eine Verspätungsgebühr aus dem Puffer, und bei einem Ausfall geht die Miete an den Eigentümer und der Puffer an das Protokoll. Eine abgelaufene Anfrage lässt Miete und Puffer in deinem Vault, bis sie geschlossen wird. Der Pufferanteil ist die Einstellung des Protokolls, wenn die Anfrage auf der Chain landet: Ändert sie sich nach deiner Prüfung, wird ein höherer Anteil abgelehnt, wenn deine Wallet genau diesen Betrag freigegeben hat, und eingezogen, wenn eine frühere Freigabe ihn deckt; das Ergebnis nennt, was bewegt wurde.
+
+<a id="rent-take"></a>
+
+### Mieten: Die Anfrage eines Mieters annehmen
+
+Die Prüfung liest die Anfrage mit `getOffer` (ihr `rentalBufferBpsAtCreate`), das Urteil des Protokolls aus `previewAccept`, die Risikoeinstellungen beider Seiten, die Nachfrist aus `getEffectiveGraceSeconds`, den Anteil des Protokolls aus `getTreasuryFeeBps` und `getRiskConfig` nur für eine Anfrage ohne eigenen Puffer. `previewAccept` prüft nicht, wer das NFT hält, daher liest die App das mit `ownerOf`, `getApproved` und `isApprovedForAll` (`balanceOf` und `isApprovedForAll` bei einem ERC-1155). Das Annehmen ist `acceptOffer` mit signierten `AcceptTerms`: Das Protokoll zieht das NFT aus der Wallet des Eigentümers in dessen Vault und trägt den Mieter bis zum Ende der Laufzeit als Nutzer ein. Das Ergebnis wird aus den Logs der Transaktion gelesen (die aus dieser Anfrage eröffnete Miete und der `Transfer` oder `TransferSingle` des NFTs in den Vault des Eigentümers) und aus `vaultGetNFTUserOf` im Block der Quittung.
+
+<a id="rent-take-risks"></a>
+
+### Mieten: Risiken beim Annehmen einer Anfrage
+
+Das NFT bleibt für die ganze Miete in deinem Vault, und du kannst es nicht abheben, solange die Miete offen ist. Der Mieter hält das Nutzungsrecht bis zum Ende der Miete, und du kannst es nicht früher zurücknehmen. Die Bedingungen sind die der Anfrage: Tagesgebühr, Laufzeit, Mietregel und Puffer kannst du nicht ändern. Eine Miete schließt sich nicht von selbst: Der Mieter schließt sie, oder nach der Nachfrist kann jeder sie als Ausfall schließen; dann kommt die Miete zu dir und der Puffer geht an das Protokoll. Eine Anfrage ohne eigenen Puffer übernimmt beim Start der Miete die heutige Einstellung.

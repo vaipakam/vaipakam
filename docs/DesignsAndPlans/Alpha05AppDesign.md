@@ -1733,6 +1733,21 @@ above. Each resolves here, so a route reviewer needs no private file:
   request does not go through; the outcome is measured (the request
   recorded and the rent and buffer in the renter's vault).
 
+- **RB-RENT-TAKE** — An owner takes a renter's request (NFT-01 / NFT-02)
+  from the request's own page, which names it a renter's request and offers
+  "Rent out your NFT", behind the Terms gate. The review states that the NFT
+  moves from the wallet into the owner's own vault and stays there until
+  the rental ends, who the renter is and that the renter becomes its user
+  at once, the term from now, the rent and buffer already in the renter's
+  vault with the buffer share the request fixed, what the owner receives
+  (the rent due less the protocol's share, fixed at this start) and what a
+  default does; a token the wallet does not hold, or too few units, is said
+  before any wallet step. The terms are signed, the approval is the one
+  ERC-721 token (or for an ERC-1155 the operator approval for this rental
+  alone, taken back afterwards whatever happens), and the acceptance is
+  sent only after a dry run with that signature; the outcome is measured
+  (the rental, the NFT in the owner's vault, the renter as its user).
+
 ## 3. Companion specifications
 
 ### 3.1 Deployment and service capabilities
