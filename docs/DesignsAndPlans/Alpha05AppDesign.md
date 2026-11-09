@@ -1798,7 +1798,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   consent is on, off or unread. The tier copy follows the contract's three
   gates (a minimum continuous holding, a recency-weighted average, a clamp
   to the lowest tier held over the current holding) and names no fixed
-  window for the average. No VPFI pause exists apart from the protocol's,
+  window for the average. Only VPFI in the vault on VPFI's home network
+  (the protocol's own flag) sets the tier; other networks apply a copy of
+  the tier worked out there. Away from it the panel says so, and the
+  receipts say a move there changes no tier instead of the tier effects;
+  when the flag is unread they say that. No VPFI pause exists apart from the protocol's,
   so only that one is named. Nothing on the page buys, sells, prices or
   stakes VPFI, and its copy follows RL-6.
 

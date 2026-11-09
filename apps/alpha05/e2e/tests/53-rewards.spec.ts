@@ -9,8 +9,10 @@
  * fee-discount tier and that the wallet's consent is off; the outcome is
  * measured and the counted figure is read again. A withdrawal of all of it
  * says the holding time restarts and that the consent stays as it is, and
- * the chain agrees that nothing stays counted. Runs on the desktop and the
- * phone project; the chain is reverted after each test.
+ * the chain agrees that nothing stays counted. Away from VPFI's home network
+ * (the admin's flag turned off), the page and the deposit receipt say vault
+ * VPFI there sets no tier. Runs on the desktop and the phone project; the
+ * chain is reverted after each test.
  */
 import { erc20Abi, parseEther, type Hex } from 'viem';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
@@ -62,6 +64,10 @@ test('VPFI is deposited into the vault and counted for the tier, then all of it 
   // A mintable test token stands in for VPFI on the fixture chain.
   const token = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!;
   await sc.diamondWrite('admin', 'setVPFIToken', [token]);
+  // The fixture deploy leaves the home-network flag unset: the admin sets it,
+  // as the home network's deploy does.
+  await sc.diamondWrite('admin', 'setCanonicalVPFIChain', [true]);
+  expect(await sc.read<boolean>('isCanonicalVpfiChain'), 'this network is VPFI’s home network').toBe(true);
   await sc.write('borrower', token, TOKEN_ABI, 'mint', [me, parseEther('10')]);
   const symbol = await sc.pub.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' });
 
@@ -121,5 +127,30 @@ test('VPFI is deposited into the vault and counted for the tier, then all of it 
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('rewards-vpfi-counted')).toHaveText(`0 ${symbol}`, { timeout: 60_000 });
   await expect(page.getByTestId('rewards-vpfi-withdraw-closed')).toContainText('no VPFI is counted in your vault');
+  await fitsWidth(page);
+});
+
+test('away from VPFI’s home network, the page and the deposit receipt say vault VPFI there sets no tier', async ({ launchWallet }) => {
+  test.setTimeout(180_000);
+  const sc = scenario({ borrower: 'freshBorrower' });
+  const me = sc.address('borrower');
+  const token = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!;
+  await sc.diamondWrite('admin', 'setVPFIToken', [token]);
+  // The admin's own flag says this network is not VPFI's home network.
+  await sc.diamondWrite('admin', 'setCanonicalVPFIChain', [false]);
+  await sc.write('borrower', token, TOKEN_ABI, 'mint', [me, parseEther('10')]);
+
+  const { page } = await launchWallet('freshBorrower');
+  await page.goto('/rewards');
+  await connectWallet(page);
+  const vpfi = page.getByTestId('rewards-vpfi');
+  await expect(vpfi).toHaveAttribute('data-vpfi', 'available', { timeout: 60_000 });
+  await expect(page.getByTestId('rewards-vpfi-away')).toContainText('On this network VPFI in your vault does not set your fee-discount tier', { timeout: 60_000 });
+  await page.getByTestId('rewards-vpfi-deposit').click();
+  await page.getByTestId('vault-deposit-amount').fill('4');
+  await page.getByTestId('vault-deposit-review').click();
+  const receipt = page.getByTestId('vault-deposit-panel').locator('.receipt');
+  await expect(receipt).toContainText('On this network deposited VPFI does not count toward your fee-discount tier', { timeout: 60_000 });
+  await expect(receipt).not.toContainText('Deposited VPFI counts toward your fee-discount tier');
   await fitsWidth(page);
 });

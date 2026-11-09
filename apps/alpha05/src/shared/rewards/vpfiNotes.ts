@@ -5,7 +5,9 @@
  * wallet's consent is on (stated as on, off or unread); a withdrawal works
  * the tier out again from what stays counted, says when it takes the
  * counted VPFI to zero (the holding time then restarts), and leaves the
- * consent as it is.
+ * consent as it is. Away from VPFI's home network a move there changes no
+ * tier (the tier is a copy of the home network's), and the notes say so;
+ * when that could not be read, they say that instead of a tier effect.
  */
 import type { CopyAccess } from '../copy/useCopy';
 import { emptiesTier, type VpfiFacts } from './vpfiFacts';
@@ -17,11 +19,15 @@ function consentNote(f: VpfiFacts, { text }: Copy): string {
 }
 
 export function vpfiDepositNotes(f: VpfiFacts, copy: Copy): string[] {
-  return [copy.text('rewardsVault.depositTier'), consentNote(f, copy)];
+  const { text } = copy;
+  if (f.home === false) return [text('rewardsVault.depositAway')];
+  return [text(f.home === null ? 'rewardsVault.homeUnread' : 'rewardsVault.depositTier'), consentNote(f, copy)];
 }
 
 export function vpfiWithdrawNotes(f: VpfiFacts, amount: bigint, copy: Copy): string[] {
   const { text } = copy;
+  if (f.home === false) return [text('rewardsVault.withdrawAway'), text('rewardsVault.consentStays')];
+  if (f.home === null) return [text('rewardsVault.homeUnread'), text('rewardsVault.consentStays')];
   const empties = emptiesTier(f, amount);
   return [
     text('rewardsVault.withdrawTier'),

@@ -120,6 +120,12 @@ export function VpfiVault({ chain, own }: { chain: SupportedChain; own: OwnState
             <dt className="tier-b">{text('rewardsVault.rowHeld')}</dt>
             <dd data-testid="rewards-vpfi-held">{amount(fig.held)}</dd>
           </dl>
+          {b.home === false && (
+            <p className="tier-a" data-testid="rewards-vpfi-away">
+              {text('rewardsVault.away')}
+            </p>
+          )}
+          {b.home === null && <p className="tier-a">{text('rewardsVault.homeUnread')}</p>}
           {b.vault === null && <p className="tier-b">{text('rewardsVault.noVault')}</p>}
           {fig.uncounted !== null && fig.uncounted > 0n && (
             <p className="tier-a" data-testid="rewards-vpfi-uncounted">

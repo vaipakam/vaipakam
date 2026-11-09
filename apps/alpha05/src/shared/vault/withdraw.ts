@@ -225,6 +225,7 @@ export function withdrawChanged(a: WithdrawReview, b: WithdrawReview, copy: Pick
   if (a.withdrawable !== b.withdrawable) return text('vaultWithdraw.changedFree');
   if ((a.dryRun === null) !== (b.dryRun === null) || (a.dryRun === 'unread') !== (b.dryRun === 'unread')) return text('repay.changedVerdict');
   if ((a.vpfi?.consent ?? null) !== (b.vpfi?.consent ?? null)) return text('rewardsVault.changedConsent');
+  if ((a.vpfi?.home ?? null) !== (b.vpfi?.home ?? null)) return text('rewardsVault.changedHome');
   return null;
 }
 

@@ -2198,7 +2198,7 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### 奖励：金库中的 VPFI
 
-页面用 `getVPFIToken` 读取代币；零地址表示该网络未设置 VPFI。它在同一个区块读取钱包的 `balanceOf`、`getUserVaultAddress` 给出的金库、`getTrackedVPFIBalance` 给出的已计入 VPFI、`withdrawableNow` 给出的可自由提取额，以及金库自身的 `balanceOf`。占用额是已计入额减去可自由提取额；未计入额是金库余额中超出已计入额的部分。“存入 VPFI”是金库的通用 `depositToVault`，“提取 VPFI”是其 `withdrawFromVault`（协议暂停且应急通道开放时，非保护模式的账户为 `escapeWithdraw`），而不是 VPFI 专用入口：通用路径同样为等级记录 VPFI，且只有它们有应急通道。每个确认页在其自身区块读取 `getTrackedVPFIBalance` 和 `getVPFIDiscountConsent`，结果从交易中测得。
+页面用 `getVPFIToken` 读取代币；零地址表示该网络未设置 VPFI。它在同一个区块读取钱包的 `balanceOf`、`getUserVaultAddress` 给出的金库、`getTrackedVPFIBalance` 给出的已计入 VPFI、`withdrawableNow` 给出的可自由提取额，以及金库自身的 `balanceOf`。占用额是已计入额减去可自由提取额；未计入额是金库余额中超出已计入额的部分。“存入 VPFI”是金库的通用 `depositToVault`，“提取 VPFI”是其 `withdrawFromVault`（协议暂停且应急通道开放时，非保护模式的账户为 `escapeWithdraw`），而不是 VPFI 专用入口：通用路径同样为等级记录 VPFI，且只有它们有应急通道。每个确认页在其自身区块读取 `getTrackedVPFIBalance` 和 `getVPFIDiscountConsent`，结果从交易中测得。同时读取 `isCanonicalVpfiChain`：只有 VPFI 主网络根据其自身已计入的 VPFI 计算等级，其他网络使用该等级的缓存副本，因此在那里页面和每张收据都会说明操作不会改变等级。
 
 <a id="rewards-vpfi-risks"></a>
 

@@ -12,6 +12,7 @@ import { VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contrac
 import { VPFI_DISCOUNT_ABI } from '../consent/feeDiscount';
 import { ASSET_TYPE } from '../nft/nft';
 import { answerOrNull } from '../reads/answer';
+import { readVpfiHome } from './vpfiFacts';
 
 type Hex = `0x${string}`;
 
@@ -26,21 +27,25 @@ export interface VpfiBalances {
   counted: bigint | null;
   sitting: bigint | null;
   free: bigint | null;
+  /** Whether this is VPFI's home network (only there does vault VPFI set
+   *  the tier); null when unread. */
+  home: boolean | null;
   blockNumber: bigint;
 }
 
 export async function readVpfiBalances(c: PublicClient, diamond: Hex, account: Hex, token: Hex): Promise<VpfiBalances> {
   const blockNumber = await c.getBlockNumber({ cacheTime: 0 });
   const at = { blockNumber };
-  const [vaultRaw, wallet, counted, free] = await Promise.all([
+  const [vaultRaw, wallet, counted, free, home] = await Promise.all([
     c.readContract({ address: diamond, abi: FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at }) as Promise<Hex>,
     answerOrNull(c.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [account], ...at })),
     answerOrNull(c.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getTrackedVPFIBalance', args: [account], ...at }) as Promise<bigint>),
     answerOrNull(c.readContract({ address: diamond, abi: DEPOSITORY, functionName: 'withdrawableNow', args: [account, ASSET_TYPE.erc20, token, 0n], ...at }) as Promise<bigint>),
+    readVpfiHome(c, diamond, blockNumber),
   ]);
   const vault = vaultRaw.toLowerCase() === ZERO ? null : vaultRaw;
   const sitting = vault === null ? 0n : await answerOrNull(c.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [vault], ...at }));
-  return { vault, wallet, counted, sitting, free, blockNumber };
+  return { vault, wallet, counted, sitting, free, home, blockNumber };
 }
 
 /** The figures the panel states beside the reads: what is held (counted

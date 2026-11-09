@@ -2356,7 +2356,7 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### 리워드: 볼트의 VPFI
 
-페이지는 `getVPFIToken`으로 토큰을 읽으며, 0 주소는 그 네트워크에 VPFI가 설정되지 않았다는 뜻입니다. 한 블록에서 지갑의 `balanceOf`, `getUserVaultAddress`의 볼트, `getTrackedVPFIBalance`의 집계된 VPFI, `withdrawableNow`의 자유 금액, 볼트 자체의 `balanceOf`를 읽습니다. 묶인 양은 집계된 양에서 자유 금액을 뺀 것이고, 미집계는 볼트 잔액 중 집계된 양을 넘는 부분입니다. 'VPFI 입금'은 볼트의 범용 `depositToVault`, 'VPFI 출금'은 그 `withdrawFromVault`(프로토콜이 일시 중지되고 비상 출구가 열려 있는 동안, 보호 모드가 아닌 계정은 `escapeWithdraw`)이며, VPFI 전용 진입점이 아닙니다. 범용 경로도 등급을 위해 VPFI를 똑같이 기록하며, 비상 출구는 범용 경로에만 있습니다. 각 검토 화면은 자체 블록에서 `getTrackedVPFIBalance`와 `getVPFIDiscountConsent`를 읽고, 결과는 트랜잭션에서 측정됩니다.
+페이지는 `getVPFIToken`으로 토큰을 읽으며, 0 주소는 그 네트워크에 VPFI가 설정되지 않았다는 뜻입니다. 한 블록에서 지갑의 `balanceOf`, `getUserVaultAddress`의 볼트, `getTrackedVPFIBalance`의 집계된 VPFI, `withdrawableNow`의 자유 금액, 볼트 자체의 `balanceOf`를 읽습니다. 묶인 양은 집계된 양에서 자유 금액을 뺀 것이고, 미집계는 볼트 잔액 중 집계된 양을 넘는 부분입니다. 'VPFI 입금'은 볼트의 범용 `depositToVault`, 'VPFI 출금'은 그 `withdrawFromVault`(프로토콜이 일시 중지되고 비상 출구가 열려 있는 동안, 보호 모드가 아닌 계정은 `escapeWithdraw`)이며, VPFI 전용 진입점이 아닙니다. 범용 경로도 등급을 위해 VPFI를 똑같이 기록하며, 비상 출구는 범용 경로에만 있습니다. 각 검토 화면은 자체 블록에서 `getTrackedVPFIBalance`와 `getVPFIDiscountConsent`를 읽고, 결과는 트랜잭션에서 측정됩니다. `isCanonicalVpfiChain`도 함께 읽습니다. VPFI의 홈 네트워크만 자체 집계된 VPFI로 등급을 계산하고, 다른 네트워크는 그 등급의 캐시된 사본을 적용하므로, 그곳에서는 페이지와 각 영수증이 작업으로 등급이 바뀌지 않는다고 말합니다.
 
 <a id="rewards-vpfi-risks"></a>
 

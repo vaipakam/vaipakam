@@ -194,6 +194,7 @@ export function depositChanged(a: DepositReview, b: DepositReview, copy: Pick<Co
   if (x.kind === 'erc721' && y.kind === 'erc721' && (x.state.owner ?? '').toLowerCase() !== (y.state.owner ?? '').toLowerCase()) return text('repay.changedFunds');
   if (x.kind === 'erc1155' && y.kind === 'erc1155' && x.state.balance >= a.draft.amount !== y.state.balance >= b.draft.amount) return text('repay.changedFunds');
   if ((a.vpfi?.consent ?? null) !== (b.vpfi?.consent ?? null)) return text('rewardsVault.changedConsent');
+  if ((a.vpfi?.home ?? null) !== (b.vpfi?.home ?? null)) return text('rewardsVault.changedHome');
   return null;
 }
 

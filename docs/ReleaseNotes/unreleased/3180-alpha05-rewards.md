@@ -21,6 +21,11 @@ what stays counted, and taking the counted VPFI to zero restarts the holding
 time. Both say whether the fee-discount consent is on. The outcome is measured
 from the chain.
 
+Only VPFI in the vault on VPFI's home network sets the tier; other networks
+apply a copy of the tier worked out there. On those networks the page says so,
+and each receipt says the move changes no tier instead of describing a tier
+effect.
+
 Nothing on the page buys, sells, prices or stakes VPFI.
 
 Advances #3180.

@@ -2465,7 +2465,7 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### リワード：ボールトの VPFI
 
-ページは `getVPFIToken` でトークンを読み、ゼロアドレスはそのネットワークで VPFI が設定されていないことを意味します。1 つのブロックで、ウォレットの `balanceOf`、`getUserVaultAddress` からボールト、`getTrackedVPFIBalance` から計上済み VPFI、`withdrawableNow` から自由な額、ボールト自身の `balanceOf` を読みます。保留中は計上済みから自由な額を引いたもの、未計上はボールト残高のうち計上済みを超える分です。「VPFI を入金」はボールトの汎用 `depositToVault`、「VPFI を引き出す」はその `withdrawFromVault`（プロトコルが一時停止中で緊急退出ルートが開いている間、保護モードでないアカウントでは `escapeWithdraw`）で、VPFI 専用の入口ではありません。汎用ルートもティアのために VPFI を同じように記録し、緊急退出ルートを持つのは汎用ルートだけです。各確認画面は自身のブロックで `getTrackedVPFIBalance` と `getVPFIDiscountConsent` を読み、結果はトランザクションから測定されます。
+ページは `getVPFIToken` でトークンを読み、ゼロアドレスはそのネットワークで VPFI が設定されていないことを意味します。1 つのブロックで、ウォレットの `balanceOf`、`getUserVaultAddress` からボールト、`getTrackedVPFIBalance` から計上済み VPFI、`withdrawableNow` から自由な額、ボールト自身の `balanceOf` を読みます。保留中は計上済みから自由な額を引いたもの、未計上はボールト残高のうち計上済みを超える分です。「VPFI を入金」はボールトの汎用 `depositToVault`、「VPFI を引き出す」はその `withdrawFromVault`（プロトコルが一時停止中で緊急退出ルートが開いている間、保護モードでないアカウントでは `escapeWithdraw`）で、VPFI 専用の入口ではありません。汎用ルートもティアのために VPFI を同じように記録し、緊急退出ルートを持つのは汎用ルートだけです。各確認画面は自身のブロックで `getTrackedVPFIBalance` と `getVPFIDiscountConsent` を読み、結果はトランザクションから測定されます。あわせて `isCanonicalVpfiChain` を読みます。VPFI のホームネットワークだけが自身の計上済み VPFI からティアを算出し、他のネットワークはそのティアのキャッシュされたコピーを適用するため、そこではページと各受領書が、操作でティアは変わらないと示します。
 
 <a id="rewards-vpfi-risks"></a>
 

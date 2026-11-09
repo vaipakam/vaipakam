@@ -11,7 +11,9 @@
  * token. What this module adds is the tier's side: whether the asset IS
  * this network's VPFI, the tracked VPFI (so a withdrawal that takes it to
  * zero can say that the holding time restarts), and the wallet's
- * fee-discount consent (without which holding VPFI changes no fee).
+ * fee-discount consent (without which holding VPFI changes no fee), and
+ * whether this is VPFI's home network: only there does vault VPFI set the
+ * tier; elsewhere the tier is a copy of the home network's.
  */
 import type { Abi, PublicClient } from 'viem';
 import { VPFITokenFacetABI } from '@vaipakam/contracts/abis';
@@ -29,6 +31,15 @@ export interface VpfiFacts {
   tracked: bigint | null;
   /** The wallet's fee-discount consent. */
   consent: boolean | null;
+  /** Whether this network is VPFI's home network, the only one whose vault
+   *  VPFI sets the tier (other networks apply a copy of the tier resolved
+   *  there, so a move on them changes no tier). */
+  home: boolean | null;
+}
+
+/** Whether this network is VPFI's home network (the protocol's own flag). */
+export async function readVpfiHome(c: PublicClient, diamond: Hex, blockNumber?: bigint): Promise<boolean | null> {
+  return answerOrNull(c.readContract({ address: diamond, abi: VPFI_TOKEN, functionName: 'isCanonicalVpfiChain', ...(blockNumber === undefined ? {} : { blockNumber }) }) as Promise<boolean>);
 }
 
 /** This network's VPFI token, or null when none is set (or it could not be
@@ -45,11 +56,12 @@ export async function readVpfiFacts(c: PublicClient, diamond: Hex, account: Hex,
   const token = await readVpfiTokenAt(c, diamond, blockNumber);
   if (token === null || token.toLowerCase() !== asset.toLowerCase()) return null;
   const at = { blockNumber };
-  const [tracked, consent] = await Promise.all([
+  const [tracked, consent, home] = await Promise.all([
     answerOrNull(c.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getTrackedVPFIBalance', args: [account], ...at }) as Promise<bigint>),
     answerOrNull(c.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getVPFIDiscountConsent', args: [account], ...at }) as Promise<boolean>),
+    readVpfiHome(c, diamond, blockNumber),
   ]);
-  return { tracked, consent };
+  return { tracked, consent, home };
 }
 
 /** Whether a withdrawal of `amount` takes the counted VPFI to zero; null
