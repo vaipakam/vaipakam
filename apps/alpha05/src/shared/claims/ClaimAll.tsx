@@ -40,7 +40,9 @@ import {
   type ClaimAllWords,
   type LegPayout,
 } from './claimAll';
+import { creditedTo } from '../protection/payout';
 import { MULTICALL, readClaimAllList, readClaimAllReview } from './claimAllRead';
+import { readClaimantVault } from './claimOutcome';
 import { readPendingRewards, remainderAfter } from './rewards';
 
 type Hex = `0x${string}`;
@@ -227,6 +229,9 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
   const account = own.account;
   const identity = reviewIdentity(own);
   const [review, setReview] = useStoredValue<ClaimAllReview>(`${CLAIM_ALL_KEY}:review`);
+  // Whether the batch credited the vault: the finish card then offers the
+  // withdrawal.
+  const [credited, setCredited] = useStoredValue<boolean>(`${CLAIM_ALL_KEY}:credited`);
   const [loadError, setLoadError] = useState<string | null>(null);
   const setStep = useTxNote(CLAIM_ALL_KEY);
   const w = useWords(meta);
@@ -273,8 +278,10 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
         gas: claimAllGasLimit(est.value),
       });
     },
-    measure: async (receipt) => {
+    measure: async (receipt, at) => {
       if (!review) return [];
+      const vault = await readClaimantVault(at, diamond, account);
+      setCredited(vault !== null && creditedTo(receipt.logs, diamond, vault));
       // A rewards claim pays a bounded run of days: whether more remains is
       // read at the claim's own block or later.
       let more: boolean | null = null;
@@ -285,7 +292,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
           .catch(() => null);
         more = remainderAfter(now, receipt.blockNumber);
       }
-      return measureClaimAll(review, receipt.logs, diamond, account, w, copy, more);
+      return measureClaimAll(review, receipt.logs, diamond, account, vault, w, copy, more);
     },
     release: async () => null,
   });
@@ -419,7 +426,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={null}
+        next={credited === true ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
         gate={gate}
         onClose={close}
       />

@@ -15,7 +15,8 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
-import { measureLoanClaim, type OutcomeText } from './claimOutcome';
+import { creditedTo } from '../protection/payout';
+import { measureLoanClaim, readClaimantVault, type OutcomeText } from './claimOutcome';
 import type { ClaimSide } from './loanClaim';
 import { loanClaimReceipt } from './loanClaimReceipt';
 import { CLAIM, claimFunction, loanClaimBlockers, loanClaimChanged, readLoanClaimReview, readPaidIncentives, type LoanClaimReview } from './loanClaimReview';
@@ -66,7 +67,11 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
   const identity = reviewIdentity(own);
   const flowKey = loanClaimKey(loanId, side);
   const [review, setReview] = useStoredValue<LoanClaimReview>(`${flowKey}:review`);
+  // Whether the claim credited the vault: the finish card then offers the
+  // withdrawal.
+  const [credited, setCredited] = useStoredValue<boolean>(`${flowKey}:credited`);
   const [loadError, setLoadError] = useState<string | null>(null);
+
   const setStep = useTxNote(flowKey);
 
   const words: OutcomeText = {
@@ -95,7 +100,13 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('loanClaim.stepSend') }));
       return writeContract(config, { address: diamond, abi: CLAIM, functionName, args: [loanId], chainId: chain.chainId, account });
     },
-    measure: async (receipt) => (review ? measureLoanClaim(review, receipt.logs, diamond, account, words, await readPaidIncentives(own, diamond, review, receipt.logs)) : []),
+    measure: async (receipt, at) => {
+      if (!review) return [];
+      const vault = await readClaimantVault(at, diamond, account);
+      const legs = measureLoanClaim(review, receipt.logs, diamond, account, vault, words, await readPaidIncentives(own, diamond, review, receipt.logs));
+      setCredited(vault !== null && creditedTo(receipt.logs, diamond, vault));
+      return legs;
+    },
     release: async () => null,
   });
 
@@ -226,7 +237,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={null}
+        next={credited === true ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
         gate={gate}
         onClose={close}
       />

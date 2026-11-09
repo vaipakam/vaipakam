@@ -1,7 +1,8 @@
 /**
- * Protected account mode in words: the one way every flow that pays the
- * wallet states where a payment goes before signing and where it went
- * after. Each flow names its own plain wallet route (a take-back says the
+ * Where a payment lands, in words: the one way every flow that pays the
+ * account states where a payment goes before signing and where it went
+ * after, whether credited to its own vault (a loan claim, a new loan's
+ * principal) or routed by protected account mode. Each flow names its own plain wallet route (a take-back says the
  * collateral comes from the vault, a claim does not); everything the mode
  * changes is said here, once, so two flows cannot describe the same queue
  * differently.
@@ -37,6 +38,8 @@ export function routedDestination(route: PayoutRoute, protection: Protection | n
       return copy.text('payout.toHeld');
     case 'vault':
       return copy.text('payout.toVault');
+    case 'credit':
+      return copy.text('payout.toCredit');
     case 'wallet':
     case 'unknown':
       return null;
@@ -55,6 +58,13 @@ export function routeNotes(route: PayoutRoute, protection: Protection | null, co
       return [copy.text('payout.heldNote')];
     case 'vault':
       return [copy.text('payout.vaultNote')];
+    case 'credit':
+      // Credited whatever the account's mode; only taking it out to the
+      // wallet later is a payout the mode delays.
+      return [
+        copy.text('payout.creditNote'),
+        ...(protection?.enabled === true ? [copy.format('payout.creditProtectedNote', { delay: formatSpan(protection.delaySeconds) })] : []),
+      ];
     case 'unknown':
       return [copy.text('payout.protectionUnread')];
     case 'wallet':
@@ -75,6 +85,7 @@ export function routedLeg(o: PayoutOutcome, what: string, protection: Protection
   // its queue is full (`LibProtectedAccount.gate`); the cause is named only
   // when the account read as locked, both otherwise.
   if (o.kind === 'held') return copy.format(protection?.locked === true ? 'payout.legHeld' : 'payout.legHeldEither', { what });
+  if (o.kind === 'credit') return copy.format('payout.legCredit', { what });
   return copy.format('payout.legVault', { what });
 }
 
@@ -110,12 +121,17 @@ export function payoutLegs(
     /** A routed line for a payment to someone else (the reader is not the
      *  payee); the payee's own wording otherwise. */
     routed?: (o: PayoutOutcome, what: string) => string;
+    /** The line for a payment whose expected place is not the wallet (a
+     *  claim credits the vault), used when nothing landed anywhere; the
+     *  wallet line otherwise. */
+    none?: (what: string) => string;
   },
   copy: Copy,
 ): LegOutcome[] {
   const routed = p.routed ?? ((o: PayoutOutcome, what: string) => routedLeg(o, what, p.protection, copy));
   const legs: LegOutcome[] = p.outcomes.map((o) => ({ status: 'done', label: routed(o, p.what(o.amount)) }));
-  if (p.wallet > 0n || p.outcomes.length === 0) legs.push({ status: 'done', label: p.walletLeg(p.what(p.wallet)) });
+  if (p.wallet > 0n) legs.push({ status: 'done', label: p.walletLeg(p.what(p.wallet)) });
+  else if (p.outcomes.length === 0) legs.push({ status: 'done', label: p.none ? p.none(p.what(p.expected)) : p.walletLeg(p.what(p.wallet)) });
   const total = p.outcomes.reduce((t, o) => t + o.amount, p.wallet);
   if (total === p.expected) return legs;
   const reason =

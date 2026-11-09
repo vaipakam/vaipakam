@@ -132,11 +132,14 @@ test('a flagged lender’s payout waits frozen, through an outage, and collects 
   await expect(panel.or(open)).toBeVisible({ timeout: 60_000 });
   if (!(await panel.isVisible())) await open.click();
   await expect(page.getByTestId('frozen-notice')).toHaveCount(0);
-  const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] });
+  // The payout, the reserved part with it, is credited to the lender's own
+  // vault, free to withdraw.
+  const before = await sc.read<bigint>('withdrawableNow', [lenderAddr, 0, WETH, 0n]);
   await expect(panel.locator('.receipt')).toContainText(`Collect the lender payout of loan #${loanId}`, { timeout: 60_000 });
   await panel.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = panel.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
-  const after = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] });
+  await expect(finish).toContainText('credited to your vault, free to withdraw');
+  const after = await sc.read<bigint>('withdrawableNow', [lenderAddr, 0, WETH, 0n]);
   expect(after - before).toBe(owed + held);
 });

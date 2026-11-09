@@ -18,10 +18,13 @@
  * through `withdrawFromVault`, which keeps queueing, while a wallet without
  * the mode withdraws through `VaultPayoutFacet.escapeWithdraw`, which pays
  * what is its own and free to the wallet itself and refuses a protected
- * account (`EscapeNotForProtected`). The app withdraws to
- * the connected wallet only: the protocol would pay any address it screens
- * for an account without the mode, and the app does not offer one, so the
- * destination is always the wallet that signs.
+ * account (`EscapeNotForProtected`). The protocol pays an account without
+ * the mode only to its own wallet (`withdrawFromVault` refuses any other
+ * recipient, `RecipientNotOwnWallet`), and a protected account to its own
+ * wallet or, after the delay, an address it allowlisted; the app withdraws
+ * to the connected wallet only, so the destination is always the wallet
+ * that signs. A loan claim and a new loan's principal are credited to this
+ * vault as the wallet's own funds, so they leave through this withdrawal.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { AdminFacetABI, ProtectedAccountFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
