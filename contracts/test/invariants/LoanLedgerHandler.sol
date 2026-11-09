@@ -173,6 +173,14 @@ contract LoanLedgerHandler is Test {
     function acceptLenderOffer(uint256 borrowerSeed, uint256 offerIdx) external {
         uint256 n = inner.loanIdsLength();
         uint256 offsetOf = _pickedOffsetLoan(offerIdx);
+        // An offset accept whose acceptor already holds the closing loan's lender side (an
+        // earlier offset made a borrower a lender) puts one party on both loans in two roles,
+        // and its delta cannot be split between them. The ledger does not drive that case.
+        if (offsetOf != 0) {
+            address acceptor = base.borrowerAt(borrowerSeed);
+            LoanBook storage b1 = books[offsetOf];
+            if (acceptor == b1.lender || b1.lenderSide[acceptor]) return;
+        }
         Snap memory before = _snap();
         inner.acceptLenderOffer(borrowerSeed, offerIdx);
         if (offsetOf != 0 && inner.loanIdsLength() != n) {

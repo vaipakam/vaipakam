@@ -49,6 +49,8 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *         origination (so its LIF is checked as on any accept) and books every other movement
  *         against the loan it closes, whose lender cap then runs to the end of the original
  *         term (the offset pays the rest of the term's interest the new offer does not earn).
+ *         One offset accept is not driven: an acceptor that already holds the closing loan's
+ *         lender side, whose single delta cannot be split between its two roles.
  *         Refinance and rentals are not yet driven; #3241 tracks them, and the vault outflow
  *         seam (#3205) is where this check is meant to bind every one of them.
  *
