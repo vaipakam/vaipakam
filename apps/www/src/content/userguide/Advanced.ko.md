@@ -2054,6 +2054,12 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 0(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
 
+<a id="rate-check"></a>
+
+### 최근 대출과 금리 비교하기
+
+두 게시 양식은 같은 대출 자산, 같은 담보 자산, 같은 기간에 대해 인덱스의 `/loans/recent`를 읽고(대출자 매각용 오퍼는 제외), 최근 30일 안에 시작되었고 인덱스 원장이 뒷받침하는 합의 금리를 가진 대출만 남깁니다(조건이 확인되지 않은 대출은 제외). 비교 기준은 그 금리들의 중앙값이며, 건수가 짝수이면 가운데 두 값 중 낮은 값을 써서 합의된 두 금리 사이에 없는 금리를 만들지 않습니다. 기준에서 5%포인트(500 bps)보다 더 떨어진 금리는 방향을 알려 주는 경고가 됩니다. 훨씬 낮은 대출자나 훨씬 높은 차입자는 금리가 움직일 때 가장 먼저 체결되는 오퍼를 내고, 반대 방향이면 오퍼가 체결되지 않고 남을 수 있습니다. 그 범위 안에서는 중앙값과 건수를 보여 주는 안내입니다. 한 번의 읽기는 최신 100건까지이며, 그 한도에 닿으면 최신 건만 읽었다고 안내합니다. 요청한 페어와 기간으로 한정되지 않은 인덱스 응답은 비교하지 않고 거부하며, NFT 담보는 비교하지 않고, 읽기에 실패하면 그렇다고 알려 줍니다. 검토를 막지는 않습니다. 인덱스가 조건을 확인하지 않은 이 페어의 대출은 어느 기간에도 속하지 않습니다. 인덱스가 그 수(`unplaced`)를 세고 양식은 비교 옆에 그 수를 밝히므로, "확인된 대출 없음"이 기간을 알 수 없는 대출을 가리지 않습니다.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: 부분으로 빌려주는 오퍼

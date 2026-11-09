@@ -26,7 +26,14 @@
 //    book: every offer the chain's `OfferCreated` logs name, read back from
 //    the Diamond and filed `active` while the protocol reports it open or
 //    lazily expired (as the indexer files it, expiry being lazy on-chain),
-//    newest first, paged by id. Also refused while the posture is `down`.
+//    newest first, paged by id. Also refused while the posture is `down`;
+//  - the indexer's `GET /loans/recent?chainId&limit&lendingAsset&
+//    collateralAsset&durationDays&excludeSaleVehicles`, the recent loans the
+//    rate warning compares against: every loan the chain's `LoanInitiated`
+//    logs name, read back from the Diamond, filtered to the scope asked for
+//    and echoing that scope as the indexer does. The agreed rate is the
+//    loan's stored rate (the fixture never refinances a loan it reads here).
+//    Refused while the posture is `down`.
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
@@ -62,6 +69,7 @@ const ACTIVITY_TOPICS = new Map(
   }),
 );
 
+const LOAN_INITIATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanInitiated'));
 const OFFER_CREATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'OfferCreated'));
 const chain = createPublicClient({ transport: viemHttp(ANVIL_URL) });
 
@@ -118,6 +126,59 @@ async function activeOffers(url) {
   }
   return { chainId: CHAIN_ID, offers, nextBefore: offers.length === limit ? offers[offers.length - 1].offerId : null };
 }
+
+/** `/loans/recent` in the indexer's scoped shape: newest first, filtered to
+ *  the pair and term asked for, the scope echoed back. */
+async function recentLoans(url) {
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const lending = url.searchParams.get('lendingAsset')?.toLowerCase() ?? null;
+  const collateral = url.searchParams.get('collateralAsset')?.toLowerCase() ?? null;
+  const days = url.searchParams.get('durationDays');
+  const durationDays = days === null ? null : Number(days);
+  const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [LOAN_INITIATED] }]);
+  const ids = [...new Set(logs.map((l) => BigInt(l.topics[1])))].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  const loans = [];
+  for (const id of ids) {
+    if (loans.length === limit) break;
+    const l = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [id] });
+    if (lending !== null && l.principalAsset.toLowerCase() !== lending) continue;
+    if (collateral !== null && l.collateralAsset.toLowerCase() !== collateral) continue;
+    if (durationDays !== null && Number(l.durationDays) !== durationDays) continue;
+    // A lender-sale vehicle is a borrower offer linked to a loan: the loan it
+    // opens is bookkeeping, not a fresh rate.
+    const linked = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getOfferLinkedLoanId', args: [l.offerId] });
+    const offer = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getOffer', args: [l.offerId] });
+    const isSaleVehicle = linked !== 0n && Number(offer.offerType) !== 0;
+    if (excludeSaleVehicles && isSaleVehicle) continue;
+    loans.push({
+      chainId: CHAIN_ID,
+      loanId: Number(id),
+      offerId: Number(l.offerId),
+      lendingAsset: l.principalAsset.toLowerCase(),
+      collateralAsset: l.collateralAsset.toLowerCase(),
+      durationDays: Number(l.durationDays),
+      interestRateBps: Number(l.interestRateBps),
+      initRateBps: Number(l.interestRateBps),
+      startAt: Number(l.startTime),
+      isSaleVehicle,
+    });
+  }
+  return {
+    chainId: CHAIN_ID,
+    loans,
+    nextBefore: loans.length === limit ? loans[loans.length - 1].loanId : null,
+    scope: { lendingAsset: lending, collateralAsset: collateral, durationDays, placement: 'e2e stand-in', excludeSaleVehicles },
+    // Every fixture loan's terms are the chain's own, so none is unplaced
+    // unless a spec sets the count (`/__stub/unplaced`) to drive the
+    // disclosure.
+    unplaced,
+  };
+}
+
+/** The `/loans/recent` disclosure of loans whose terms the index has not
+ *  confirmed; set by a spec through `/__stub/unplaced`. */
+let unplaced = { count: 0, capped: false };
 
 /** @type {'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending'} */
 let posture = 'live';
@@ -220,7 +281,16 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/') {
       json(res, 200, {
         service: 'alpha05 e2e stand-in',
-        routes: ['/health/ingest', '/activity (seller and reserve kinds)', '/offers/active', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'],
+        routes: [
+          '/health/ingest',
+          '/activity (seller and reserve kinds)',
+          '/offers/active',
+          '/loans/recent',
+          '/ws/chain/:chainId (503)',
+          '/rpc/:chainId',
+          '/__stub/index-posture',
+          '/__stub/unplaced',
+        ],
       });
       return;
     }
@@ -232,6 +302,16 @@ const server = http.createServer(async (req, res) => {
       }
       posture = next;
       json(res, 200, { posture });
+      return;
+    }
+    if (url.pathname === '/__stub/unplaced' && req.method === 'POST') {
+      const next = JSON.parse(await readBody(req));
+      if (!Number.isSafeInteger(next.count) || next.count < 0 || typeof next.capped !== 'boolean') {
+        json(res, 400, { error: 'unplaced needs { count, capped }' });
+        return;
+      }
+      unplaced = { count: next.count, capped: next.capped };
+      json(res, 200, { unplaced });
       return;
     }
     if (url.pathname === '/health/ingest') {
@@ -257,6 +337,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await activeOffers(url));
+      return;
+    }
+    if (url.pathname === '/loans/recent' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      json(res, 200, await recentLoans(url));
       return;
     }
     const rpc = url.pathname.match(/^\/rpc\/(\d+)$/);

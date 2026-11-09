@@ -1390,6 +1390,28 @@ above. Each resolves here, so a route reviewer needs no private file:
   promise the other party more than its side recovers: a default or a
   liquidation can recover less than is owed. A standing whose latest read
   failed is unknown, even with an earlier answer in hand.
+- **RB-RATE-CHECK** — the rate warning before posting (#3357, OFF-15) sits
+  under the rate on both posting forms, a lender's offer and a borrower's
+  request. It compares the typed rate with the middle rate of loans that
+  started on the same pair and term in the last 30 days, read from the
+  index (the lower of the two middles for an even count, so no rate is
+  invented). Only agreed rates the index's ledger backs count, and loans a
+  lender sale opens are left out, since a sale is not a fresh rate. Loans
+  on the pair whose terms the index has not confirmed belong to no term;
+  the index counts them and the form states that count beside the
+  comparison, so "no confirmed loans" never hides loans of unknown term. More
+  than five points either way is a warning that says which way it cuts: a
+  lender far under the market or a borrower far over it is the offer taken
+  first when rates move; the other way the offer may sit untaken. Within
+  five points it is a note with the middle rate and the count. No loans to
+  compare, NFT collateral, and an index that cannot be read each say so, so
+  a missing comparison never reads as a clean one, and an index answer not
+  scoped to the pair and term asked for is refused rather than compared.
+  When the read reached its sample cap the note says only the latest loans
+  were read. It warns and never blocks: the review still opens. An offer's
+  expiry defaults to 7 days; choosing "until taken or cancelled" is
+  explicit and shows a note that such an offer keeps its rate as the
+  market moves.
 
 ## 3. Companion specifications
 

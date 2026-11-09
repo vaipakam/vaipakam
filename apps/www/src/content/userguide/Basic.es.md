@@ -1206,6 +1206,12 @@ Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo p
 
 Salvo que fije partes en el modo avanzado, un solo prestatario toma todo el importe, o nadie, y debe bloquear exactamente la garantía que usted fija. El formulario muestra cuánto del token prestado tiene su billetera. Cada cifra se lee exactamente como la escribe: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red. La oferta sigue abierta hasta que se acepte o se cancele, o durante los días que elija, hasta un año. Los intereses de plazo completo, la opción habitual, significan que un reembolso anticipado no reduce lo que usted gana; a prorrata se le paga solo por el tiempo que el préstamo está abierto. También puede permitir que el prestatario reembolse una parte antes. El formulario muestra lo que el prestatario le debería en la fecha de vencimiento si aceptara la oferta ahora. En el modo avanzado una oferta también puede prestarse en partes, llevar un modo de ejecución, pagar intereses según un calendario y tomar la tarifa de comisión Full.
 
+<a id="rate-check"></a>
+
+### Comparar tu tasa con préstamos recientes
+
+Bajo la tasa, en los dos formularios de publicación, la oferta de un prestamista y la solicitud de un prestatario, la app muestra la tasa media de los préstamos que empezaron con el mismo par y el mismo plazo en los últimos 30 días, y cuántos fueron. Si tu tasa se aleja más de cinco puntos, te avisa y dice en qué sentido: un prestamista muy por debajo del mercado, o un prestatario muy por encima, publica la oferta que se toma primero cuando las tasas se mueven; en el otro sentido, la oferta puede quedarse sin tomar. Solo avisa; puedes publicar igualmente. Si no hay préstamos recientes con los que comparar, si la garantía es un NFT o si no se puede leer el índice del protocolo, el formulario lo dice en lugar de callar.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Una oferta en partes (Avanzado)

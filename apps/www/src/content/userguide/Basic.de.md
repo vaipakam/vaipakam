@@ -1228,6 +1228,12 @@ Passt keine Anfrage, können Sie für Ihre zwei Token ein eigenes Kreditangebot 
 
 Sofern Sie im Advanced-Modus keine Teile festlegen, übernimmt ein Kreditnehmer den ganzen Betrag, oder niemand, und muss genau die Sicherheit sperren, die Sie festlegen. Das Formular zeigt, wie viel des verliehenen Tokens Ihre Wallet hält. Jede Zahl wird genau so gelesen, wie Sie sie eingeben: Mehr Nachkommastellen, als der Token hat, werden abgelehnt, nie gerundet, und der Zinssatz reicht bis 100 % pro Jahr mit zwei Nachkommastellen. Die angebotenen Laufzeiten enden bei der längsten, die das Netzwerk erlaubt. Das Angebot bleibt offen, bis es angenommen oder storniert wird, oder für die Zahl von Tagen, die Sie wählen, höchstens ein Jahr. Zinsen für die volle Laufzeit, die übliche Wahl, bedeuten, dass eine vorzeitige Rückzahlung Ihren Ertrag nicht senkt; anteilige Zinsen zahlen Ihnen nur die Zeit, in der der Kredit läuft. Sie können dem Kreditnehmer auch Teilrückzahlungen erlauben. Das Formular zeigt, was der Kreditnehmer Ihnen am Fälligkeitsdatum schulden würde, wenn er das Angebot jetzt annähme. Im Advanced-Modus kann ein Angebot auch in Teilen verliehen werden, einen Ausführungsmodus tragen, Zinsen nach Plan zahlen und den Full-Gebührentarif nehmen.
 
+<a id="rate-check"></a>
+
+### Ihren Zinssatz mit aktuellen Krediten vergleichen
+
+Unter dem Zinssatz zeigt die App auf beiden Formularen, dem Angebot eines Verleihers und der Anfrage eines Kreditnehmers, den mittleren Zinssatz der Kredite, die in den letzten 30 Tagen mit demselben Paar und derselben Laufzeit begonnen haben, und wie viele es waren. Liegt Ihr Satz mehr als fünf Prozentpunkte daneben, warnt die App und sagt, in welche Richtung das wirkt: Ein Verleiher weit unter dem Markt oder ein Kreditnehmer weit darüber stellt das Angebot ein, das zuerst angenommen wird, wenn sich die Zinsen bewegen; in die andere Richtung bleibt das Angebot womöglich liegen. Es ist nur eine Warnung, Sie können trotzdem posten. Gibt es keine aktuellen Kredite zum Vergleich, ist die Sicherheit ein NFT oder kann der Index des Protokolls nicht gelesen werden, sagt das Formular das, statt zu schweigen.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Ein Angebot in Teilen (Erweitert)

@@ -15,3 +15,14 @@ export async function setIndexPosture(posture: IndexPosture): Promise<void> {
   });
   if (!res.ok) throw new Error(`stub refused posture ${posture}: ${res.status}`);
 }
+
+/** Set how many loans on a pair `/loans/recent` reports as having terms the
+ *  index has not confirmed (`{ count: 0, capped: false }` restores none). */
+export async function setUnplacedLoans(count: number, capped: boolean): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/unplaced`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ count, capped }),
+  });
+  if (!res.ok) throw new Error(`stub refused unplaced ${count}: ${res.status}`);
+}

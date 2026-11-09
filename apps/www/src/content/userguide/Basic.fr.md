@@ -1224,6 +1224,12 @@ Si aucune demande ne convient, vous pouvez publier votre propre offre de prêt p
 
 Sauf si vous fixez des parts en mode avancé, un seul emprunteur prend tout le montant, ou personne, et doit bloquer exactement la garantie que vous fixez. Le formulaire indique combien du jeton prêté votre portefeuille détient. Chaque chiffre est lu exactement comme vous le saisissez : plus de décimales que le jeton n'en a sont refusées, jamais arrondies, et le taux va jusqu'à 100 % par an avec deux décimales. Les durées proposées s'arrêtent à la plus longue que le réseau autorise. L'offre reste ouverte jusqu'à son acceptation ou son annulation, ou pendant le nombre de jours que vous choisissez, jusqu'à un an. Les intérêts sur toute la durée, le choix habituel, signifient qu'un remboursement anticipé ne réduit pas ce que vous gagnez ; au prorata, vous n'êtes payé que pour le temps où le prêt est ouvert. Vous pouvez aussi permettre à l'emprunteur de rembourser une partie en avance. Le formulaire montre ce que l'emprunteur vous devrait à l'échéance s'il acceptait l'offre maintenant. En mode avancé, une offre peut aussi être prêtée en parts, porter un mode d'exécution, payer les intérêts selon un échéancier et prendre le tarif de frais Full.
 
+<a id="rate-check"></a>
+
+### Comparer votre taux aux prêts récents
+
+Sous le taux, sur les deux formulaires de publication, l'offre d'un prêteur et la demande d'un emprunteur, l'application affiche le taux médian des prêts ouverts sur la même paire et la même durée au cours des 30 derniers jours, et leur nombre. Si votre taux s'en écarte de plus de cinq points, elle vous avertit et indique dans quel sens : un prêteur très en dessous du marché, ou un emprunteur très au-dessus, publie l'offre prise en premier quand les taux bougent ; dans l'autre sens, l'offre risque de rester sans preneur. Ce n'est qu'un avertissement, vous pouvez quand même publier. S'il n'y a aucun prêt récent à comparer, si la garantie est un NFT ou si l'index du protocole ne peut pas être lu, le formulaire le dit au lieu de se taire.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend : Une offre en parts (Avancé)
