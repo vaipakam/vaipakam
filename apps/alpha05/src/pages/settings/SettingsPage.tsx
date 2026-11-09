@@ -13,6 +13,7 @@ import { WhyLink } from '../../shared/help/WhyLink';
 import { fingerprint, PRIVACY_URL, termsUrl } from '../../shared/terms/terms';
 import { useTerms } from '../../shared/terms/useTerms';
 import { formatUtc } from '../../shared/ui/format';
+import { Approvals } from './Approvals';
 import { DataRights } from './DataRights';
 import { RiskSettings } from './RiskSettings';
 
@@ -25,13 +26,14 @@ const THEME_KEY = { system: 'settings.themeSystem', light: 'settings.themeLight'
 const LANGUAGES = Object.values(LOCALE_DISPLAY_CONFIG).filter((l) => l.visible);
 
 /**
- * Settings (#3180; ACC-06, ACC-13, ACC-14, ACC-15 status, ACC-33, ACC-35,
- * ACC-61; RB-SETTINGS). One page for what the reader sets once: the mode, the
- * theme and the language, which need no wallet; then, for a connected wallet,
- * the Terms it has accepted on this network, the fee-discount consent, its
- * risk access (`RiskSettings`), and where alerts are set. What this build
- * does with the reader's data is stated, and the reader can download the
- * app's records or erase everything this site keeps (ACC-55, `DataRights`).
+ * Settings (#3180; ACC-06, ACC-13, ACC-14, ACC-15 status, ACC-32, ACC-33,
+ * ACC-35, ACC-61; RB-SETTINGS). One page for what the reader sets once: the
+ * mode, the theme and the language, which need no wallet; then, for a
+ * connected wallet, the Terms it has accepted on this network, the
+ * fee-discount consent, its risk access (`RiskSettings`), its standing
+ * approvals (`Approvals`), and where alerts are set. What this build does
+ * with the reader's data is stated, and the reader can download the app's
+ * records or erase everything this site keeps (ACC-55, `DataRights`).
  */
 export function SettingsPage() {
   const { text, format } = useCopy();
@@ -123,6 +125,8 @@ export function SettingsPage() {
       )}
 
       {own && chain && <RiskSettings chain={chain} own={own} />}
+
+      {own && chain && <Approvals chain={chain} own={own} />}
 
       <section className="home-section" aria-labelledby="settings-alerts" data-testid="settings-alerts">
         <h2 id="settings-alerts">{text('settings.alertsTitle')}</h2>
