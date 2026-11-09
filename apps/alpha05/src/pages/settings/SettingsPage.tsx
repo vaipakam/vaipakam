@@ -14,6 +14,7 @@ import { fingerprint, PRIVACY_URL, termsUrl } from '../../shared/terms/terms';
 import { useTerms } from '../../shared/terms/useTerms';
 import { formatUtc } from '../../shared/ui/format';
 import { Approvals } from './Approvals';
+import { InstallApp } from './InstallApp';
 import { Keepers } from './Keepers';
 import { DataRights } from './DataRights';
 import { RiskSettings } from './RiskSettings';
@@ -27,9 +28,10 @@ const THEME_KEY = { system: 'settings.themeSystem', light: 'settings.themeLight'
 const LANGUAGES = Object.values(LOCALE_DISPLAY_CONFIG).filter((l) => l.visible);
 
 /**
- * Settings (#3180; ACC-06, ACC-13, ACC-14, ACC-15 status, ACC-32, ACC-33,
- * ACC-34, ACC-35, ACC-61; RB-SETTINGS). One page for what the reader sets once: the
- * mode, the theme and the language, which need no wallet; then, for a
+ * Settings (#3180; ACC-06, ACC-11, ACC-13, ACC-14, ACC-15 status, ACC-32,
+ * ACC-33, ACC-34, ACC-35, ACC-61; RB-SETTINGS). One page for what the reader
+ * sets once: the mode, the theme and the language, which need no wallet;
+ * installing the app in Advanced (`InstallApp`); then, for a
  * connected wallet, the Terms it has accepted on this network, the
  * fee-discount consent, its risk access (`RiskSettings`), its standing
  * approvals (`Approvals`), its keepers (`Keepers`), and where alerts are
@@ -106,6 +108,8 @@ export function SettingsPage() {
           <p className="tier-b">{text('settings.languageStored')}</p>
         </fieldset>
       </section>
+
+      {mode === 'advanced' && <InstallApp />}
 
       <section className="home-section" aria-labelledby="settings-legal" data-testid="settings-legal">
         <h2 id="settings-legal">{text('settings.legalTitle')}</h2>

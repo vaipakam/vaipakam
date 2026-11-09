@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { connectSources, rpcConfigProblems } from './src/chain/endpoints.ts';
+import { serviceWorkerSource, shellFiles } from './src/shared/install/serviceWorkerSource.ts';
 import { buildCommitLabel, buildSourceTime } from '@vaipakam/lib/buildTime';
 
 // Stamp the commit and build time into the bundle (shown on the Help page
@@ -60,6 +62,23 @@ function e2eDeploymentsBundle(): Plugin {
   return e2eDeploymentsBundlePlugin({ stateDir: path.join(HERE, 'e2e', '.state'), runIdEnv: 'APP_E2E_RUN_ID' }) as Plugin;
 }
 
+// ACC-11 — the service worker is written from the files this build emitted,
+// so it can keep copies of those and nothing else (the rule and the worker
+// are src/shared/install/serviceWorkerSource.ts). Its store is named by a
+// digest of that list, so two builds of one commit name the same store and
+// any change to the output names a new one.
+function serviceWorkerPlugin(): Plugin {
+  return {
+    name: 'alpha05-service-worker',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const shell = shellFiles(Object.keys(bundle));
+      const id = createHash('sha256').update(shell.join('\n')).digest('hex').slice(0, 16);
+      this.emitFile({ type: 'asset', fileName: 'sw.js', source: serviceWorkerSource(id, shell) });
+    },
+  };
+}
+
 // RB-INTEGRITY — the Content-Security-Policy is completed from the build
 // itself and the build throws rather than ship a policy it could not
 // complete: inline scripts are allowed by hash only, and the hosts the page
@@ -75,6 +94,7 @@ export default defineConfig(({ mode, command }) => {
       ? [e2eDeploymentsBundle(), react()]
       : [
           react(),
+          serviceWorkerPlugin(),
           cspScriptHashesPlugin() as Plugin,
           cspConnectSourcesPlugin({
             header: REPORT_ONLY_HEADER,

@@ -20,7 +20,7 @@ function store(entries: Record<string, string> = {}, opts: { sticky?: string[] }
 const W = '0xabcdef0000000000000000000000000000000001';
 
 function sources(over: Partial<Sources> = {}, local = store(), session = store()): Sources {
-  return { local: () => local, session: () => session, databases: async () => [], cookie: () => '', ...over };
+  return { local: () => local, session: () => session, databases: async () => [], caches: async () => [], cookie: () => '', ...over };
 }
 
 describe('what this browser keeps', () => {
@@ -76,6 +76,7 @@ describe('erasing', () => {
       disconnect: async () => true,
       keepDisconnected: async () => 0,
       deleteDatabase: async () => undefined,
+      deleteCache: async () => true,
       clearCookie: () => {
         cookie = '';
       },
@@ -103,10 +104,11 @@ describe('erasing', () => {
     expect(report).toEqual({
       at: 1_000,
       disconnected: true,
-      removed: { app: 1, connector: 1, session: 1, databases: 2, langCookie: true },
+      removed: { app: 1, connector: 1, session: 1, databases: 2, cacheFiles: 0, langCookie: true },
       kept: 0,
       refused: [],
       databasesUnknown: false,
+      cachesUnknown: false,
     });
     expect(local.length).toBe(0);
     expect([...session.map.keys()]).toEqual([REPORT_KEY]);
@@ -169,5 +171,17 @@ describe('erasing', () => {
     );
     expect(refused.kept).toBe(0);
     expect(refused.refused).toEqual([{ what: 'marker', reason: 'the browser did not keep it' }]);
+  });
+  it("removes the service worker's saved files and counts them file by file", async () => {
+    const stores = async () => [
+      { name: 'alpha05-shell-a', files: 3 },
+      { name: 'alpha05-shell-b', files: 2 },
+    ];
+    expect((await takeInventory(sources({ caches: stores }))).cacheFiles).toBe(5);
+    expect((await takeInventory(sources({ caches: async () => 'unknown' }))).cacheFiles).toBe('unknown');
+    const report = await eraseAll(steps({ disconnect: async () => null, caches: stores, deleteCache: async (name) => name.endsWith('a') }));
+    expect(report.removed.cacheFiles).toBe(3);
+    expect(report.refused).toEqual([{ what: 'cache', name: 'alpha05-shell-b', reason: 'the browser kept it' }]);
+    expect((await eraseAll(steps({ disconnect: async () => null, caches: async () => 'unknown' }))).cachesUnknown).toBe(true);
   });
 });
