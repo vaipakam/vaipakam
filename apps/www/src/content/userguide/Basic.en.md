@@ -1406,3 +1406,9 @@ confirmation and moves no funds. If the app cannot read whether you
 accepted, it says so and lets you try again instead of treating it
 as a no. Repaying, claiming, withdrawing your own assets, cancelling
 your own offers and turning a consent off are never held back.
+
+<a id="settings"></a>
+
+### Settings
+
+Settings is at the foot of the menu. Mode, theme and language need no wallet and stay in this browser. The theme follows your device until you choose one, and a language not translated yet shows English until it is. With a wallet connected, Settings shows which Terms of Service version you accepted on this network, or that a version is in force and not accepted yet; you are asked at the first action that needs it, never there. The fee-discount setting is the same one as on Home. Settings also says what this browser keeps for the app, that nothing secret is stored, and that the app sends no error reports or diagnostics. Settings can also download the app's records in this browser as a file, or erase everything this site keeps here. Before you erase, it says how many items will go; erasing disconnects your wallet, resets mode, theme and language, and then shows what was removed. Your positions on chain, your alert settings with the alert service, the marketing site and your wallet app are not affected.

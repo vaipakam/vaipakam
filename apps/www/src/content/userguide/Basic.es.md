@@ -1425,3 +1425,9 @@ Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y s
 ### El aviso de los Términos
 
 Cuando hay una versión de los Términos del servicio vigente, la app te pide aceptarla antes de una acción que inicia algo nuevo, como activar el descuento en comisiones, y nombra la acción que lo pidió. Muestra la versión, una huella de su texto y un enlace a esa versión exacta, cuyo texto nunca cambia. Aceptar es una confirmación en la wallet y no mueve fondos. Si la app no puede leer si aceptaste, lo dice y te deja reintentar en lugar de tomarlo como un no. Repagar, cobrar, retirar tus propios activos, cancelar tus propias ofertas y desactivar un consentimiento nunca se bloquean.
+
+<a id="settings"></a>
+
+### Ajustes
+
+Ajustes está al pie del menú. El modo, el tema y el idioma no necesitan billetera y se quedan en este navegador. El tema sigue a tu dispositivo hasta que eliges uno, y un idioma aún sin traducir muestra inglés hasta que se traduzca. Con una billetera conectada, Ajustes muestra qué versión de los Términos de servicio aceptaste en esta red, o que hay una versión en vigor aún no aceptada; se te pide en la primera acción que la necesite, nunca ahí. El ajuste del descuento de comisiones es el mismo que en Inicio. Ajustes también dice qué guarda este navegador para la app, que no se guarda nada secreto y que la app no envía informes de errores ni diagnósticos. Ajustes también puede descargar en un archivo los registros de la app en este navegador, o borrar todo lo que este sitio guarda aquí. Antes de borrar, dice cuántos elementos se eliminarán; borrar desconecta tu billetera, devuelve el modo, el tema y el idioma a sus valores por defecto y luego muestra lo que se eliminó. Tus posiciones en la cadena, tus ajustes de alertas en el servicio de alertas, el sitio informativo y tu app de billetera no se ven afectados.

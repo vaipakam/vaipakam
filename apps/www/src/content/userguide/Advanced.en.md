@@ -2770,3 +2770,9 @@ is read again, so a newer version replaces the one shown and an
 acceptance made in another tab lets the action continue. A failed
 read is "cannot confirm", with a retry, never "not accepted". Exits
 are never gated.
+
+<a id="settings"></a>
+
+### Settings
+
+Settings gathers what you set once. Mode and theme are kept in this browser's storage for this site, and the language is kept there and in the `vaipakam_lang` cookie shared across the platform's sites; the page's own language attribute stays English until a translation ships. The Terms line reads `getCurrentTos` and the wallet's acceptance on the connected network: none in force, accepted with the version and the text's fingerprint, or in force and not accepted, asked at the first gated action. A failed read is "could not confirm", with a retry, never "not accepted". The fee-discount toggle is `setVPFIDiscountConsent`, the same flow as on Home. This build carries no diagnostic capture. The browser also keeps which alerts were seen, the alert channels record, the last signed alert request's time, the last token pair, closed first-run cards and the wallet connector's last connection; never a key or a signature. Download writes a JSON file of the app's own records (keys starting `app.` or `alpha05.`, and the language), names the wallet addresses those records are kept under, and counts but does not copy the wallet connector's session items and this site's databases. Erase disconnects every wallet connection first so the connector cannot write its records back, then removes this site's local and per-tab storage, deletes its databases where the browser can list them, and expires the `vaipakam_lang` cookie at every domain it may be set on; it then reloads and shows, for that tab, what was removed and anything the browser refused, with its reason.
