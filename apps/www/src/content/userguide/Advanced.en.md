@@ -2846,3 +2846,15 @@ The review reads the rental with `getLoanDetails`, its dates with `getLoanDeadli
 ### Rent: Risks of Closing
 
 Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.
+
+<a id="rewards-vpfi"></a>
+
+### Rewards: VPFI in Your Vault
+
+The page reads the token with `getVPFIToken`; the zero address means VPFI is not set up on that network. At one block it reads the wallet's `balanceOf`, the vault from `getUserVaultAddress`, the counted VPFI from `getTrackedVPFIBalance`, the free amount from `withdrawableNow` and the vault's own `balanceOf`. Held is the counted amount less the free one; uncounted is the vault's balance above the counted one. Deposit VPFI is the vault's generic `depositToVault`, and Withdraw VPFI its `withdrawFromVault` (`escapeWithdraw` while the protocol is paused and the escape route is open, for an account not in protected mode), not the VPFI-only entries: the generic routes record VPFI for the tier the same way, and only they have the escape route. Each review reads `getTrackedVPFIBalance` and `getVPFIDiscountConsent` at its own block, and the outcome is measured from the transaction.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Rewards: Risks of Moving VPFI
+
+The tier is not today's balance. It is zero until your current continuous holding has lasted the minimum number of days; it then follows a recency-weighted average of your daily closing balances; and it is clamped to the lowest tier you held on any day of your current holding, looking back at most 30 days. These are two separate look-backs. Withdrawing part of your counted VPFI lowers that day's lowest balance, which the clamp reads, and withdrawing all of it restarts your holding time. A top-up does not restart it. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released. VPFI in your vault is not collateral. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.

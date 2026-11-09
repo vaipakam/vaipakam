@@ -11,6 +11,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { routedDestination, routeNotes } from '../protection/payoutCopy';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import { assetName, type TokenMetaMap } from '../reads/tokens';
+import { vpfiWithdrawNotes } from '../rewards/vpfiNotes';
 import { pauseStops, withdrawAmount, type WithdrawDraft, type WithdrawReview } from './withdraw';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -67,6 +68,7 @@ export function withdrawReceipt(r: WithdrawReview, meta: TokenMetaMap | null, co
     ...(r.frozen === 'unknown' || r.frozen === 'outage' ? [text('vaultDeposit.screenUnread')] : []),
     ...(r.withdrawable === null ? [text('vaultWithdraw.freeUnread')] : []),
     ...(r.dryRun === 'unread' ? [text('vaultWithdraw.dryRunUnread')] : []),
+    ...(r.vpfi !== null ? vpfiWithdrawNotes(r.vpfi, d.amount, copy) : []),
     text('vaultWithdraw.noApproval'),
   ];
   return { title: text('vaultWithdraw.title'), rows, consequences, prompts: 1, readAt: r.readAt };

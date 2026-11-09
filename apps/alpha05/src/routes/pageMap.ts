@@ -43,7 +43,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/alerts', name: 'Alerts', tier: 'basic', rows: 'ACC alerts, Telegram, push', order: 9, built: true, nav: false, currentApp: '/settings' },
   { path: '/settings', name: 'Settings', tier: 'basic', rows: 'ACC settings, consents, data rights', order: 10, built: true, nav: false, currentApp: '/settings' },
   { path: '/rent', name: 'Rent', tier: 'basic', rows: 'NFT rentals', order: 11, built: true, nav: true, currentApp: '/rent' },
-  { path: '/rewards', name: 'Rewards', tier: 'basic', rows: 'RW VPFI, tiers, recycling', order: 12, built: false, nav: true, currentApp: '/vpfi' },
+  { path: '/rewards', name: 'Rewards', tier: 'basic', rows: 'RW VPFI, tiers, recycling', order: 12, built: true, nav: true, currentApp: '/vpfi' },
   { path: '/protection', name: 'Protection', tier: 'advanced', rows: 'ACC protected account mode', order: 13, built: false, nav: true, currentApp: '/vault/protection' },
   { path: '/desk', name: 'Desk', tier: 'advanced', rows: 'OFF signed orders', order: 14, built: false, nav: true, currentApp: '/desk' },
   { path: '/console', name: 'Console', tier: 'advanced', rows: 'ACC switches, keeper posture, pause', order: 15, built: false, nav: true, currentApp: '/protocol-console' },

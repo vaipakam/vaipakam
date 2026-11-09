@@ -2658,3 +2658,15 @@ La revue lit la location avec `getLoanDetails`, ses dates avec `getLoanDeadlines
 ### Louer : risques de la clôture
 
 La clôture met fin tout de suite à ton droit d'utiliser le NFT, même s'il reste des jours convenus, et ne peut pas être annulée. Le loyer est compté quand la clôture est confirmée : un jour qui commence avant est payé en entier ; avec une durée complète, chaque jour convenu pas encore réglé est payé, aussi tôt que tu clôtures. Après la fin de la durée, des frais de retard sont pris sur ta marge : 1 % du loyer total plus 0,5 % par jour de retard, au plus 5 % et jamais plus que la marge. Après le délai de grâce, le protocole refuse la clôture ; la location finit alors quand ses jours restants sont réglés un à un, ce que n'importe qui peut faire, ou par un défaut, selon ce qui arrive en premier. Le moment ultérieur que montre la revue n'est ni une échéance ni un plafond : une clôture confirmée plus tard est comptée à ce moment-là, donc plus de loyer ou des frais de retard plus élevés peuvent être pris et moins te revient. Ce qui te revient reste dans ton propre coffre sous forme de réclamation jusqu'à ce que tu l'encaisses.
+
+<a id="rewards-vpfi"></a>
+
+### Récompenses : le VPFI dans le coffre
+
+La page lit le jeton avec `getVPFIToken` ; l'adresse zéro signifie que le VPFI n'est pas configuré sur ce réseau. À un seul bloc, elle lit le `balanceOf` du wallet, le coffre dans `getUserVaultAddress`, le VPFI compté dans `getTrackedVPFIBalance`, le montant libre dans `withdrawableNow` et le `balanceOf` du coffre lui-même. Le retenu est le montant compté moins le libre ; le non compté est le solde du coffre au-delà du compté. « Déposer du VPFI » est le `depositToVault` générique du coffre, et « Retirer du VPFI » son `withdrawFromVault` (`escapeWithdraw` tant que le protocole est en pause et que la voie de secours est ouverte, pour un compte hors mode protégé), et non les entrées propres au VPFI : les voies génériques enregistrent le VPFI pour le niveau de la même façon, et elles seules ont la voie de secours. Chaque examen lit `getTrackedVPFIBalance` et `getVPFIDiscountConsent` à son propre bloc, et le résultat est mesuré à partir de la transaction.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Récompenses : risques du déplacement de VPFI
+
+Le niveau n'est pas ton solde du jour. Il est nul tant que ta détention continue actuelle n'a pas atteint le nombre minimal de jours ; il suit ensuite une moyenne de tes soldes de clôture quotidiens pondérée vers les jours récents ; et il est plafonné au niveau le plus bas que tu as eu un jour de ta détention actuelle, avec un regard en arrière de 30 jours au plus. Ce sont deux regards en arrière distincts. Retirer une partie de ton VPFI compté abaisse le solde le plus bas de ce jour, que lit le plafond, et tout retirer fait repartir ta durée de détention. Un complément ne la fait pas repartir. Le VPFI retenu pour un prêt, une offre, une réclamation ou un versement ne peut être retiré qu'une fois libéré. Le VPFI dans ton coffre n'est pas une garantie. Le protocole ne vend pas de VPFI, n'en donne aucun prix et ne paie rien pour le détenir.

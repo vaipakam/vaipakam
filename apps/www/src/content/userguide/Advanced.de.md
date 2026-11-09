@@ -2648,3 +2648,15 @@ Die Prüfung liest die Miete mit `getLoanDetails`, ihre Termine mit `getLoanDead
 ### Mieten: Risiken des Schließens
 
 Das Schließen beendet dein Nutzungsrecht sofort, auch wenn noch vereinbarte Tage übrig sind, und lässt sich nicht rückgängig machen. Die Miete wird gezählt, wenn das Schließen auf der Chain landet; ein Tag, der vorher beginnt, wird als ganzer bezahlt. Bei voller Laufzeit wird jeder noch nicht abgerechnete vereinbarte Tag bezahlt, wie früh du auch schließt. Nach dem Ende der Laufzeit wird eine Verzugsgebühr aus deinem Puffer genommen: 1 % der ganzen Miete plus 0,5 % für jeden Tag Verzug, höchstens 5 % und nie mehr als der Puffer. Nach der Nachfrist lehnt das Protokoll ein Schließen ab; die Miete endet dann, wenn ihre restlichen Tage einzeln abgerechnet werden, was jeder tun darf, oder durch Ausfall, je nachdem, was zuerst eintritt. Der spätere Zeitpunkt, den die Prüfung zeigt, ist weder Frist noch Obergrenze: Ein Schließen, das später landet, wird dann gezählt, sodass mehr Miete oder eine höhere Verzugsgebühr anfallen kann und weniger an dich zurückkommt. Was zurückkommt, bleibt als Anspruch in deinem eigenen Vault, bis du es abholst.
+
+<a id="rewards-vpfi"></a>
+
+### Belohnungen: VPFI im Vault
+
+Die Seite liest den Token mit `getVPFIToken`; die Nulladresse bedeutet, dass VPFI in diesem Netzwerk nicht eingerichtet ist. In einem Block liest sie `balanceOf` der Wallet, den Vault aus `getUserVaultAddress`, das gezählte VPFI aus `getTrackedVPFIBalance`, den freien Betrag aus `withdrawableNow` und `balanceOf` des Vaults selbst. Gebunden ist der gezählte Betrag abzüglich des freien; ungezählt ist der Saldo des Vaults über dem gezählten. „VPFI einzahlen“ ist das allgemeine `depositToVault` des Vaults und „VPFI abheben“ sein `withdrawFromVault` (`escapeWithdraw`, solange das Protokoll pausiert und der Notausgang offen ist, für ein Konto ohne geschützten Modus), nicht die reinen VPFI-Einstiege: Die allgemeinen Routen erfassen VPFI für die Stufe genauso, und nur sie haben den Notausgang. Jede Prüfung liest `getTrackedVPFIBalance` und `getVPFIDiscountConsent` in ihrem eigenen Block, und das Ergebnis wird aus der Transaktion gemessen.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Belohnungen: Risiken beim Bewegen von VPFI
+
+Die Stufe ist nicht dein heutiger Bestand. Sie ist null, bis dein aktueller ununterbrochener Bestand die Mindestzahl von Tagen erreicht hat; danach folgt sie einem nach Aktualität gewichteten Durchschnitt deiner täglichen Schlussbestände; und sie wird auf die niedrigste Stufe begrenzt, die du an einem Tag deines aktuellen Bestands hattest, mit einem Rückblick von höchstens 30 Tagen. Das sind zwei getrennte Rückblicke. Wenn du einen Teil deines gezählten VPFI abhebst, sinkt der niedrigste Bestand dieses Tages, den die Begrenzung liest, und wenn du alles abhebst, beginnt deine Haltezeit neu. Eine Aufstockung startet sie nicht neu. Für einen Kredit, ein Angebot, einen Anspruch oder eine Auszahlung gebundenes VPFI kann erst abgehoben werden, wenn es freigegeben ist. VPFI in deinem Vault ist keine Sicherheit. Das Protokoll verkauft kein VPFI, nennt keinen Preis dafür und zahlt nichts für das Halten.

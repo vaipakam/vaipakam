@@ -46,9 +46,9 @@ export const WITHDRAW_KEY = 'vault.withdraw';
 
 /** The asset whose withdrawal is open (the form, or a draft under review
  *  or in flight), so the page keeps the panel on screen until it is closed. */
-export function useWithdrawHeld(): { subject: WithdrawSubject | null; inFlight: boolean; open: (s: WithdrawSubject | null) => void } {
-  const entry = useTxEntry(WITHDRAW_KEY);
-  const [subject, setSubject] = useStoredValue<WithdrawSubject>(`${WITHDRAW_KEY}:subject`);
+export function useWithdrawHeld(flowKey: string = WITHDRAW_KEY): { subject: WithdrawSubject | null; inFlight: boolean; open: (s: WithdrawSubject | null) => void } {
+  const entry = useTxEntry(flowKey);
+  const [subject, setSubject] = useStoredValue<WithdrawSubject>(`${flowKey}:subject`);
   return { subject, inFlight: holdsFlow(entry.phase), open: setSubject };
 }
 
@@ -66,6 +66,10 @@ interface WithdrawProps {
   own: OwnStateClient;
   subject: WithdrawSubject;
   onClose: () => void;
+  /** The store key this flow keeps its state under, so a second page that
+   *  hosts the withdrawal (Rewards, for VPFI) never shares a draft with the
+   *  Vault page's. */
+  flowKey?: string;
 }
 
 /**
@@ -80,8 +84,9 @@ interface WithdrawProps {
  * transaction's own logs.
  */
 export function WithdrawVault(props: WithdrawProps) {
-  const entry = useTxEntry(WITHDRAW_KEY);
-  const [draft, setDraft] = useStoredValue<WithdrawDraft>(`${WITHDRAW_KEY}:draft`);
+  const flowKey = props.flowKey ?? WITHDRAW_KEY;
+  const entry = useTxEntry(flowKey);
+  const [draft, setDraft] = useStoredValue<WithdrawDraft>(`${flowKey}:draft`);
   const current = draft !== null && draftFits(draft, props.subject) ? draft : null;
   if (current === null && !holdsFlow(entry.phase)) return <WithdrawForm {...props} onChosen={setDraft} />;
   if (current === null) return null;
@@ -90,10 +95,10 @@ export function WithdrawVault(props: WithdrawProps) {
 
 /** The form: the token when a collection was opened, then how much,
  *  checked as it is typed against what is free, read again each block. */
-function WithdrawForm({ chain, own, subject, onClose, onChosen }: WithdrawProps & { onChosen: (d: WithdrawDraft) => void }) {
+function WithdrawForm({ chain, own, subject, onClose, onChosen, flowKey = WITHDRAW_KEY }: WithdrawProps & { onChosen: (d: WithdrawDraft) => void }) {
   const { text, format } = useCopy();
-  const [input, setInput] = useStoredValue<string>(`${WITHDRAW_KEY}:amount`);
-  const [idInput, setIdInput] = useStoredValue<string>(`${WITHDRAW_KEY}:tokenId`);
+  const [input, setInput] = useStoredValue<string>(`${flowKey}:amount`);
+  const [idInput, setIdInput] = useStoredValue<string>(`${flowKey}:tokenId`);
   const [asked, setAsked] = useState(false);
   const typedId = idInput ?? '';
   const tokenId = subject.standard === 'erc20' ? 0n : subject.tokenId !== null ? subject.tokenId : parseTokenId(typedId);
@@ -210,7 +215,7 @@ function WithdrawForm({ chain, own, subject, onClose, onChosen }: WithdrawProps 
 }
 
 /** The review and the transaction, for one draft. */
-function WithdrawFlow({ chain, own, draft, onChange, onClose }: WithdrawProps & { draft: WithdrawDraft; onChange: () => void }) {
+function WithdrawFlow({ chain, own, draft, onChange, onClose, flowKey = WITHDRAW_KEY }: WithdrawProps & { draft: WithdrawDraft; onChange: () => void }) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -218,10 +223,10 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose }: WithdrawProps & 
   const account = own.account;
   const identity = reviewIdentity(own);
   const meta = useTokenMeta([draft.asset]).data;
-  const [review, setReview] = useStoredValue<WithdrawReview>(`${WITHDRAW_KEY}:review`);
-  const [, setInput] = useStoredValue<string>(`${WITHDRAW_KEY}:amount`);
+  const [review, setReview] = useStoredValue<WithdrawReview>(`${flowKey}:review`);
+  const [, setInput] = useStoredValue<string>(`${flowKey}:amount`);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const setStep = useTxNote(WITHDRAW_KEY);
+  const setStep = useTxNote(flowKey);
 
   const nft = draft.standard !== 'erc20';
   const exact = (v: bigint) => (nft ? v.toString() : exactTokenAmount(v, draft.asset, meta, format));
@@ -229,7 +234,7 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose }: WithdrawProps & 
   const read = (d: WithdrawDraft, who: string) => readWithdrawReview(own, diamond, d, who, copy);
 
   const tx = useTrackedTx({
-    key: WITHDRAW_KEY,
+    key: flowKey,
     chainId: chain.chainId,
     account,
     sources: own.sources,

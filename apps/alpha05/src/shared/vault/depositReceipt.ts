@@ -11,6 +11,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { figured, textValue, type Receipt, type ReceiptRow, type ReceiptText } from '../receipt/types';
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatSpan } from '../ui/format';
+import { vpfiDepositNotes } from '../rewards/vpfiNotes';
 import { depositPromptCount, withdrawRoute, type DepositReview } from './deposit';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -70,6 +71,7 @@ export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy
     ...(route === 'unknown' ? [text('vaultDeposit.afterUnread')] : []),
     ...(d.standard === 'erc20' ? [text('vaultDeposit.afterExact')] : []),
     ...(r.vault === null ? [text('vaultDeposit.afterCreate')] : []),
+    ...(r.vpfi !== null ? vpfiDepositNotes(r.vpfi, copy) : []),
     text('vaultDeposit.noScreening'),
     ...(r.paused === null ? [text('vaultDeposit.pauseUnread')] : []),
     ...(r.frozen === 'unknown' || r.frozen === 'outage' ? [text('vaultDeposit.screenUnread')] : []),

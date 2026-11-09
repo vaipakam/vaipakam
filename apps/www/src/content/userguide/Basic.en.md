@@ -1480,3 +1480,15 @@ A running rental's page offers you, as the renter, Close the rental. Closing pay
 ### Rent: Risks of Closing
 
 Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.
+
+<a id="rewards-vpfi"></a>
+
+### Rewards: VPFI in Your Vault
+
+Rewards, in the menu, shows your rewards on this network, your VPFI and your fee-discount consent. Your rewards are the usage rebates Home shows, claimed the same way. Below them the page shows your VPFI: in your wallet, counted in your own vault, free to withdraw now, and held for loans, offers, claims or payouts. Counted VPFI sets your fee-discount tier, and the tier lowers your fees only while your consent is on. VPFI sent to your vault directly, without a deposit, is not counted and never raises your tier; the page shows it and points you to the Vault page to adopt it. Deposit VPFI moves VPFI from your wallet into your own vault, which only your wallet controls, after you accept the Terms if you have not yet; the first deposit creates the vault. Withdraw VPFI moves VPFI that is free back to your wallet. Each review says what the move does to your tier and whether your consent is on, and afterwards the app checks the result on the chain. On a network where VPFI is not set up, the page says so and offers neither.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Rewards: Risks of Moving VPFI
+
+Your tier is not your balance today. It is zero until your current holding has lasted a minimum number of days. It then follows an average of your daily holdings that weights recent days more. Separately, it never exceeds the lowest tier you held on any day of your current holding, looking back at most 30 days. So a deposit raises your tier only with time, and a brief top-up does not lift it. Withdrawing part of your counted VPFI can lower your tier, and withdrawing all of it restarts your holding time from your next deposit. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released, and a protected account's withdrawal waits its delay first. VPFI in your vault is not collateral and backs no loan. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.

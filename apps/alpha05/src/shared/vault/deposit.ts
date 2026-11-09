@@ -28,6 +28,7 @@ import { frozenState, readSanctionsPosture, type FrozenState } from '../sanction
 import { allowanceSteps } from '../tx/approval';
 import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAnswer, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
+import { readVpfiFacts, type VpfiFacts } from '../rewards/vpfiFacts';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -65,6 +66,9 @@ export interface DepositReview {
   /** The account's protected mode; null when unread. */
   protection: Protection | null;
   holding: DepositHolding;
+  /** The fee-discount tier's side when the asset is this network's VPFI;
+   *  null for any other asset. */
+  vpfi: VpfiFacts | null;
   readAt: number;
 }
 
@@ -108,7 +112,9 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         holding = { kind: 'erc20', balance, allowance, approvalSteps: 0 };
       }
       const protection = protectionFrom(account_);
+      const vpfi = draft.standard === 'erc20' ? await readVpfiFacts(c, diamond, account, draft.asset, block) : null;
       return {
+        vpfi,
         vault: vault.toLowerCase() === ZERO ? null : vault,
         paused,
         frozen: frozenState(posture),
@@ -130,7 +136,7 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
     );
     holding = { ...h, approvalSteps: steps.length };
   }
-  return { identity, draft, vault: facts.vault, paused: facts.paused, frozen: facts.frozen, retired: facts.retired, protection: facts.protection, holding, readAt: Date.now() };
+  return { identity, draft, vault: facts.vault, paused: facts.paused, frozen: facts.frozen, retired: facts.retired, protection: facts.protection, holding, vpfi: facts.vpfi, readAt: Date.now() };
 }
 
 /** How what this deposit adds can leave the vault for the wallet later:
@@ -187,6 +193,7 @@ export function depositChanged(a: DepositReview, b: DepositReview, copy: Pick<Co
   if (x.kind === 'erc20' && y.kind === 'erc20' && x.allowance !== y.allowance) return text('repay.changedFunds');
   if (x.kind === 'erc721' && y.kind === 'erc721' && (x.state.owner ?? '').toLowerCase() !== (y.state.owner ?? '').toLowerCase()) return text('repay.changedFunds');
   if (x.kind === 'erc1155' && y.kind === 'erc1155' && x.state.balance >= a.draft.amount !== y.state.balance >= b.draft.amount) return text('repay.changedFunds');
+  if ((a.vpfi?.consent ?? null) !== (b.vpfi?.consent ?? null)) return text('rewardsVault.changedConsent');
   return null;
 }
 

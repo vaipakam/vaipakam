@@ -1779,6 +1779,29 @@ above. Each resolves here, so a route reviewer needs no private file:
   vault totals, which expired and same-block rentals move) and the
   renter's claim (inside the range the review stated).
 
+- **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
+  RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
+  its VPFI in its own vault and the fee-discount consent. On a network with
+  no VPFI token set it says so and offers no deposit or withdrawal. Otherwise
+  it reads, at one block, the VPFI in the wallet, counted in the vault (what
+  the tier reads), free to withdraw, held, and any VPFI sitting in the vault
+  uncounted (sent there directly, never raising the tier, with the way to
+  adopt it from Vault). VPFI in the vault is not collateral. Deposit and
+  withdrawal use the vault's own generic deposit and withdrawal for this one
+  token, not the VPFI-only entries: those count VPFI for the tier just the
+  same, and the generic withdrawal also has the escape route while the
+  protocol is paused, which the VPFI-only one has not. A deposit is behind
+  the Terms gate; a withdrawal never is. Each receipt adds the tier's side:
+  deposited VPFI counts toward the tier under the holding rules and pledges
+  nothing; a withdrawal works the tier out again from what stays counted,
+  and taking the counted VPFI to zero restarts the holding time; whether the
+  consent is on, off or unread. The tier copy follows the contract's three
+  gates (a minimum continuous holding, a recency-weighted average, a clamp
+  to the lowest tier held over the current holding) and names no fixed
+  window for the average. No VPFI pause exists apart from the protocol's,
+  so only that one is named. Nothing on the page buys, sells, prices or
+  stakes VPFI, and its copy follows RL-6.
+
 ## 3. Companion specifications
 
 ### 3.1 Deployment and service capabilities

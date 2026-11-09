@@ -35,6 +35,7 @@ const multiDraft: DepositDraft = { standard: 'erc1155', asset: NFT, tokenId: 2n,
 function erc20(p: Partial<DepositReview> = {}, h: Partial<{ balance: bigint; allowance: bigint; approvalSteps: number }> = {}): DepositReview {
   return {
     identity: 'i',
+    vpfi: null,
     draft: erc20Draft,
     vault: VAULT,
     paused: false,

@@ -37,6 +37,7 @@ import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAns
 import { routeChanged } from '../protection/payoutCopy';
 import { answerOrNull } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
+import { readVpfiFacts, type VpfiFacts } from '../rewards/vpfiFacts';
 import { askThrough } from '../tx/simulate';
 
 type Hex = `0x${string}`;
@@ -95,6 +96,9 @@ export interface WithdrawReview {
    *  refusal when it refuses, 'unread' when it could not be run. Asked only
    *  when nothing the app reads already stops it. */
   dryRun: Refusal | null | 'unread';
+  /** The fee-discount tier's side when the asset is this network's VPFI;
+   *  null for any other asset. */
+  vpfi: VpfiFacts | null;
   readAt: number;
 }
 
@@ -152,7 +156,9 @@ export async function readWithdrawReview(own: OwnStateClient, diamond: Hex, draf
         read<bigint>(DEPOSITORY, 'withdrawableNow', [account, ASSET_TYPE[draft.standard], draft.asset, draft.standard === 'erc20' ? 0n : draft.tokenId]),
       ]);
       const protection = protectionFrom(mode);
+      const vpfi = draft.standard === 'erc20' ? await readVpfiFacts(c, diamond, account, draft.asset, block) : null;
       return {
+        vpfi,
         vault: vault.toLowerCase() === ZERO ? null : vault,
         paused,
         escapeOpen,
@@ -218,6 +224,7 @@ export function withdrawChanged(a: WithdrawReview, b: WithdrawReview, copy: Pick
   if (fits(a) !== fits(b)) return text('repay.changedFunds');
   if (a.withdrawable !== b.withdrawable) return text('vaultWithdraw.changedFree');
   if ((a.dryRun === null) !== (b.dryRun === null) || (a.dryRun === 'unread') !== (b.dryRun === 'unread')) return text('repay.changedVerdict');
+  if ((a.vpfi?.consent ?? null) !== (b.vpfi?.consent ?? null)) return text('rewardsVault.changedConsent');
   return null;
 }
 
