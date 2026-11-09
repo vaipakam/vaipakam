@@ -5,7 +5,7 @@ import { SHELL_CACHE_PREFIX, serviceWorkerSource, shellFiles } from './serviceWo
 type Handler = (event: Record<string, unknown>) => void;
 
 /** Runs the generated worker against a stand-in for the worker's globals. */
-function boot(shell: string[]) {
+function boot(shell: string[], contentType: (url: string) => string = (u) => (u.endsWith('.css') ? 'text/css' : 'text/javascript')) {
   const handlers: Record<string, Handler> = {};
   const stores = new Map<string, Map<string, { body: string }>>([
     [`${SHELL_CACHE_PREFIX}old`, new Map()],
@@ -26,7 +26,8 @@ function boot(shell: string[]) {
   const caches = { keys: async () => [...stores.keys()], delete: async (k: string) => stores.delete(k), open: async (k: string) => store(k) };
   const fetch = async (r: { url: string }) => {
     fetched.push(r.url);
-    return { ok: true, type: 'basic', body: `net:${r.url}`, clone() { return this; } };
+    const kind = contentType(r.url);
+    return { ok: true, type: 'basic', body: `net:${r.url}`, headers: { get: (h: string) => (h.toLowerCase() === 'content-type' ? kind : null) }, clone() { return this; } };
   };
   runInNewContext(serviceWorkerSource('abc123', shell), { self, caches, fetch, URL, Set, Promise });
   /** What the worker answered with, or null when it let the browser go to the network. */
@@ -49,6 +50,13 @@ describe('the service worker', () => {
     expect(await w.request('https://app.example/assets/index-1.js')).toBe('net:https://app.example/assets/index-1.js');
     expect(w.fetched).toHaveLength(1);
     expect(w.stores.get(`${SHELL_CACHE_PREFIX}abc123`)?.size).toBe(1);
+  });
+  it('passes on, but never keeps, a page sent in place of a listed file', async () => {
+    const w = boot(shell, () => 'text/html; charset=utf-8');
+    expect(await w.request('https://app.example/assets/index-1.js')).toBe('net:https://app.example/assets/index-1.js');
+    expect(await w.request('https://app.example/assets/index-1.js')).toBe('net:https://app.example/assets/index-1.js');
+    expect(w.fetched).toHaveLength(2);
+    expect(w.stores.get(`${SHELL_CACHE_PREFIX}abc123`)?.size ?? 0).toBe(0);
   });
   it('never answers a page load, another origin, an unlisted file or a write', async () => {
     const w = boot(shell);

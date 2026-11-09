@@ -8,8 +8,11 @@
  * downloads chunks the reader does not visit. It never answers a page load
  * (a navigation always goes to the network, so a deploy is seen at once), and
  * never touches an RPC, Worker or any other origin's request: anything not on
- * this build's list passes straight through, uncached. On activation it
- * deletes every earlier build's store.
+ * this build's list passes straight through, uncached. A listed file is kept
+ * only when the answer is the file itself: a page sent in its place (the
+ * host's fallback for a file it no longer has, as during a deploy) is passed
+ * on but never stored, so a reload can still fetch the real file. On
+ * activation it deletes every earlier build's store.
  */
 
 /** Every store this app's worker writes starts with this. */
@@ -50,7 +53,8 @@ self.addEventListener('fetch', (event) => {
         (hit) =>
           hit ||
           fetch(request).then((response) => {
-            if (response.ok && response.type === 'basic') cache.put(url.pathname, response.clone());
+            const kind = (response.headers.get('content-type') || '').toLowerCase();
+            if (response.ok && response.type === 'basic' && kind !== '' && !kind.startsWith('text/html')) cache.put(url.pathname, response.clone());
             return response;
           }),
       ),
