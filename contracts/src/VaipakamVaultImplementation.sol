@@ -26,7 +26,9 @@ import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol
  * @title VaipakamVaultImplementation
  * @author Vaipakam Developer Team
  * @notice This is the upgradable implementation for per-user vault contracts in the Vaipakam platform.
- * @dev This contract uses UUPS for upgradeability and Ownable for access control (owned by the Diamond).
+ * @dev Each vault is a `BeaconProxy` whose code the `VaultBeacon` resolves (#3204: the owner's
+ *      pinned version while not revoked, else the current version). Ownable for access control
+ *      (owned by the Diamond).
  *      It handles ERC20 deposits/withdrawals and NFT (ERC721/1155) deposits/withdrawals.
  *      Supports ERC-4907 for rentable NFTs: setUser, userOf, userExpires (calls on external NFT contracts).
  *      Implements IERC721Receiver and IERC1155Receiver for safe transfers.
@@ -59,7 +61,7 @@ contract VaipakamVaultImplementation is
     ///      list of concurrent rentals so ERC-1155 can expose the active
     ///      aggregate quantity and the minimum active expiry. ERC-721
     ///      rentals always collapse to a single entry with quantity = 1.
-    ///      Storage kept at the tail of the layout for UUPS-upgrade safety.
+    ///      Storage kept at the tail of the layout for upgrade safety.
     ///      `rentalId` (#902) keys an ERC-1155 row to the one rental (the
     ///      Diamond's loan id) it records, so concurrent rentals of the same
     ///      token are separate rows and closing one leaves the others; it is
@@ -109,7 +111,7 @@ contract VaipakamVaultImplementation is
     ///      Storage layout note: appended to the tail of the
     ///      pre-gap layout, paired with a corresponding decrement
     ///      of `__gap` below to keep the overall slot footprint
-    ///      constant across UUPS upgrades.
+    ///      constant across vault code versions.
     mapping(bytes32 => address) private _listingExecutor;
 
     // Custom errors for clarity and gas efficiency.
