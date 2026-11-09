@@ -14,7 +14,7 @@ import { openLoan } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
-import { setIndexPosture } from '../lib/stub';
+import { setIndexPosture, setUnplacedLoans } from '../lib/stub';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 async function openForm(page: Page, side: 'lend' | 'borrow', collateral: Hex): Promise<void> {
@@ -37,6 +37,7 @@ async function fitsWidth(page: Page): Promise<void> {
 
 test.afterEach(async () => {
   await setIndexPosture('live');
+  await setUnplacedLoans(0, false);
 });
 
 test('the rate warning compares an offer with recent loans on its pair and term, and never blocks', async ({ launchWallet }) => {
@@ -82,7 +83,14 @@ test('the rate warning compares an offer with recent loans on its pair and term,
 
     // Another term with no loans: nothing to compare, said so.
     await term(page, 46);
-    await expect(check).toContainText('No loans on this pair and term in the last 30 days', { timeout: 30_000 });
+    await expect(check).toContainText('No confirmed loans on this pair and term in the last 30 days', { timeout: 30_000 });
+
+    // Loans on the pair whose terms the index has not confirmed are stated,
+    // so "no confirmed loans" never hides loans whose term is unknown.
+    await setUnplacedLoans(3, false);
+    await term(page, 48);
+    await expect(check).toContainText('3 loans on this pair have terms the index has not confirmed; they are not compared.', { timeout: 30_000 });
+    await setUnplacedLoans(0, false);
 
     // The index down: not compared, and the reason given.
     await setIndexPosture('down');

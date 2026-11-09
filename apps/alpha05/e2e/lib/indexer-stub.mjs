@@ -169,9 +169,16 @@ async function recentLoans(url) {
     loans,
     nextBefore: loans.length === limit ? loans[loans.length - 1].loanId : null,
     scope: { lendingAsset: lending, collateralAsset: collateral, durationDays, placement: 'e2e stand-in', excludeSaleVehicles },
-    unplaced: null,
+    // Every fixture loan's terms are the chain's own, so none is unplaced
+    // unless a spec sets the count (`/__stub/unplaced`) to drive the
+    // disclosure.
+    unplaced,
   };
 }
+
+/** The `/loans/recent` disclosure of loans whose terms the index has not
+ *  confirmed; set by a spec through `/__stub/unplaced`. */
+let unplaced = { count: 0, capped: false };
 
 /** @type {'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending'} */
 let posture = 'live';
@@ -274,7 +281,16 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/') {
       json(res, 200, {
         service: 'alpha05 e2e stand-in',
-        routes: ['/health/ingest', '/activity (seller and reserve kinds)', '/offers/active', '/loans/recent', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'],
+        routes: [
+          '/health/ingest',
+          '/activity (seller and reserve kinds)',
+          '/offers/active',
+          '/loans/recent',
+          '/ws/chain/:chainId (503)',
+          '/rpc/:chainId',
+          '/__stub/index-posture',
+          '/__stub/unplaced',
+        ],
       });
       return;
     }
@@ -286,6 +302,16 @@ const server = http.createServer(async (req, res) => {
       }
       posture = next;
       json(res, 200, { posture });
+      return;
+    }
+    if (url.pathname === '/__stub/unplaced' && req.method === 'POST') {
+      const next = JSON.parse(await readBody(req));
+      if (!Number.isSafeInteger(next.count) || next.count < 0 || typeof next.capped !== 'boolean') {
+        json(res, 400, { error: 'unplaced needs { count, capped }' });
+        return;
+      }
+      unplaced = { count: next.count, capped: next.capped };
+      json(res, 200, { unplaced });
       return;
     }
     if (url.pathname === '/health/ingest') {

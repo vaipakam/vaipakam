@@ -1580,7 +1580,7 @@ export const copy = {
   },
   rateCheck: {
     reading: B('Reading the rates of recent loans on this pair and term…'),
-    none: B('No loans on this pair and term in the last {{days}} days to compare this rate with.'),
+    none: B('No confirmed loans on this pair and term in the last {{days}} days to compare this rate with.'),
     near: B('Recent loans on this pair and term: a middle rate of {{median}}% a year, {{count}} loans, {{days}} days.'),
     capped: B('Only the latest {{count}} were read.'),
     farTakenBelow: A(
@@ -1597,6 +1597,9 @@ export const copy = {
     ),
     failed: B('Recent rates could not be read ({{reason}}), so this rate is not compared.'),
     nft: B('No rate comparison is made for NFT collateral.'),
+    noIndex: B('this build is not connected to the protocol’s index'),
+    unplaced: B('{{count}} loans on this pair have terms the index has not confirmed; they are not compared.'),
+    unplacedCapped: B('At least {{count}} loans on this pair have terms the index has not confirmed; they are not compared.'),
     whySummary: B('How this comparison works'),
     why: C(
       'The middle rate is read from the protocol’s index: loans that started on the same pair and term in the last 30 days, counting only rates the index has confirmed and leaving out loans opened by selling a running loan. A rate more than five points from it is flagged; it is a guide, never a limit, and the index can lag the chain by a few minutes.',

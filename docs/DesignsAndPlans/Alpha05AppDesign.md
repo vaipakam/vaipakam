@@ -1396,7 +1396,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   started on the same pair and term in the last 30 days, read from the
   index (the lower of the two middles for an even count, so no rate is
   invented). Only agreed rates the index's ledger backs count, and loans a
-  lender sale opens are left out, since a sale is not a fresh rate. More
+  lender sale opens are left out, since a sale is not a fresh rate. Loans
+  on the pair whose terms the index has not confirmed belong to no term;
+  the index counts them and the form states that count beside the
+  comparison, so "no confirmed loans" never hides loans of unknown term. More
   than five points either way is a warning that says which way it cuts: a
   lender far under the market or a borrower far over it is the offer taken
   first when rates move; the other way the offer may sit untaken. Within

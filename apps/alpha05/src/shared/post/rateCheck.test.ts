@@ -5,6 +5,7 @@ import { RATE_SAMPLE, RATE_WINDOW_DAYS, medianBps, rateVerdict, readRecentRates 
 
 const NOW = 1_800_000_000;
 const DAY = 86_400;
+const NONE = { count: 0, capped: false };
 
 function client(body: unknown, seen: string[] = []): IndexerClient {
   return {
@@ -27,7 +28,7 @@ function loan(rate: unknown, ageDays = 1): Record<string, unknown> {
 describe('readRecentRates', () => {
   it('asks for the pair and term, sale vehicles excluded, lowercased', async () => {
     const seen: string[] = [];
-    await readRecentRates(client({ loans: [], scope: scope() }, seen), 84532, WETH, TLIQ, 30n, NOW);
+    await readRecentRates(client({ loans: [], scope: scope(), unplaced: NONE }, seen), 84532, WETH, TLIQ, 30n, NOW);
     expect(seen[0]).toContain(`lendingAsset=${WETH.toLowerCase()}`);
     expect(seen[0]).toContain(`collateralAsset=${TLIQ.toLowerCase()}`);
     expect(seen[0]).toContain('durationDays=30');
@@ -36,13 +37,20 @@ describe('readRecentRates', () => {
   });
 
   it('keeps only backed rates inside the window', async () => {
-    const r = await readRecentRates(client({ loans: [loan(800), loan(null), loan('1200', 5), loan(300, RATE_WINDOW_DAYS + 1)], scope: scope() }), 84532, WETH, TLIQ, 30n, NOW);
-    expect(r).toEqual({ rates: [800n, 1200n], capped: false });
+    const r = await readRecentRates(
+      client({ loans: [loan(800), loan(null), loan('1200', 5), loan(300, RATE_WINDOW_DAYS + 1)], scope: scope(), unplaced: NONE }),
+      84532,
+      WETH,
+      TLIQ,
+      30n,
+      NOW,
+    );
+    expect(r).toEqual({ rates: [800n, 1200n], capped: false, unplaced: NONE });
   });
 
   it('says when the read reached its sample cap', async () => {
     const loans = Array.from({ length: RATE_SAMPLE }, () => loan(500));
-    const r = await readRecentRates(client({ loans, scope: scope() }), 84532, WETH, TLIQ, 30n, NOW);
+    const r = await readRecentRates(client({ loans, scope: scope(), unplaced: NONE }), 84532, WETH, TLIQ, 30n, NOW);
     expect(r.capped).toBe(true);
   });
 
@@ -53,12 +61,22 @@ describe('readRecentRates', () => {
     ['another term', scope({ durationDays: 60 })],
     ['sale vehicles kept', scope({ excludeSaleVehicles: false })],
   ])('refuses an answer with %s', async (_why, s) => {
-    await expect(readRecentRates(client({ loans: [loan(500)], scope: s }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(IndexerUnavailable);
+    await expect(readRecentRates(client({ loans: [loan(500)], scope: s, unplaced: NONE }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(IndexerUnavailable);
+  });
+
+  it('carries the count of loans whose terms the index has not confirmed, and refuses an answer without it', async () => {
+    const r = await readRecentRates(client({ loans: [], scope: scope(), unplaced: { count: 3, capped: true } }), 84532, WETH, TLIQ, 30n, NOW);
+    expect(r.unplaced).toEqual({ count: 3, capped: true });
+    for (const unplaced of [undefined, null, { count: -1, capped: false }, { count: 2 }]) {
+      await expect(readRecentRates(client({ loans: [], scope: scope(), unplaced }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(IndexerUnavailable);
+    }
   });
 
   it('refuses a rate that is not a whole number, and a loan with no start', async () => {
-    await expect(readRecentRates(client({ loans: [loan(5.5)], scope: scope() }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(IndexerUnavailable);
-    await expect(readRecentRates(client({ loans: [{ initRateBps: 500 }], scope: scope() }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(IndexerUnavailable);
+    await expect(readRecentRates(client({ loans: [loan(5.5)], scope: scope(), unplaced: NONE }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(IndexerUnavailable);
+    await expect(readRecentRates(client({ loans: [{ initRateBps: 500 }], scope: scope(), unplaced: NONE }), 84532, WETH, TLIQ, 30n, NOW)).rejects.toBeInstanceOf(
+      IndexerUnavailable,
+    );
   });
 });
 

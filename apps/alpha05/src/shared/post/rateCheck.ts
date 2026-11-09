@@ -9,7 +9,9 @@
  * Only agreed rates the index's ledger backs are counted (`initRateBps`,
  * null when the loan's terms are not confirmed), sale vehicles are left out
  * (a sale is not a fresh rate), and only loans that started in the last
- * {@link RATE_WINDOW_DAYS} days. The index echoes the scope it read under;
+ * {@link RATE_WINDOW_DAYS} days. Loans whose terms the index has not
+ * confirmed are in no term's sample; the index counts them per pair
+ * (`unplaced`) and the form states that count. The index echoes the scope it read under;
  * an answer whose scope is not the one asked for is refused rather than
  * compared, since an unscoped page would be the whole chain's loans.
  */
@@ -31,6 +33,19 @@ export interface RecentRates {
   /** Whether the read reached its sample cap, so older loans in the window
    *  were not read. */
   capped: boolean;
+  /** Loans on the pair (any term, any time) whose agreed terms the index has
+   *  not confirmed: it cannot place them in a term, so they are in no
+   *  market's sample. Stated beside the comparison, so "no loans" never
+   *  hides loans whose term is unknown. `capped`: at least `count`. */
+  unplaced: { count: number; capped: boolean };
+}
+
+function unplacedFrom(v: unknown): { count: number; capped: boolean } {
+  const u = v as Record<string, unknown> | null | undefined;
+  if (!u || typeof u !== 'object' || !Number.isSafeInteger(u.count) || (u.count as number) < 0 || typeof u.capped !== 'boolean') {
+    throw new IndexerUnavailable('shape', 'The index did not say how many loans on this pair have unconfirmed terms.');
+  }
+  return { count: u.count as number, capped: u.capped };
 }
 
 function bps(v: unknown): bigint | null {
@@ -46,7 +61,7 @@ export async function readRecentRates(indexer: IndexerClient, chainId: number, l
   const l = lending.toLowerCase();
   const c = collateral.toLowerCase();
   const q = `chainId=${chainId}&limit=${RATE_SAMPLE}&lendingAsset=${l}&collateralAsset=${c}&durationDays=${durationDays.toString()}&excludeSaleVehicles=1`;
-  const body = await indexer.getJson<{ loans?: unknown; scope?: unknown }>(`/loans/recent?${q}`);
+  const body = await indexer.getJson<{ loans?: unknown; scope?: unknown; unplaced?: unknown }>(`/loans/recent?${q}`);
   const scope = body.scope as Record<string, unknown> | undefined;
   if (
     !Array.isArray(body.loans) ||
@@ -58,6 +73,7 @@ export async function readRecentRates(indexer: IndexerClient, chainId: number, l
   ) {
     throw new IndexerUnavailable('shape', 'The index did not read recent loans on this pair and term.');
   }
+  const unplaced = unplacedFrom(body.unplaced);
   const since = Math.floor(nowSec) - RATE_WINDOW_DAYS * 86_400;
   const rates: bigint[] = [];
   for (const raw of body.loans as Record<string, unknown>[]) {
@@ -67,7 +83,7 @@ export async function readRecentRates(indexer: IndexerClient, chainId: number, l
     const r = bps(raw.initRateBps);
     if (r !== null) rates.push(r);
   }
-  return { rates, capped: body.loans.length >= RATE_SAMPLE };
+  return { rates, capped: body.loans.length >= RATE_SAMPLE, unplaced };
 }
 
 /** The middle rate (the lower of the two middles for an even count, so no

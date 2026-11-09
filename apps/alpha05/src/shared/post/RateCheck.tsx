@@ -63,7 +63,7 @@ export function RateCheck({
   if (durationDays === null) return null;
   if (world.indexer.origin === null || recent.status === 'error') {
     const e = recent.error;
-    const reason = e instanceof IndexerUnavailable ? e.message : world.indexer.origin === null ? text('offerBook.noIndex') : ((e as Error | null)?.message ?? '');
+    const reason = e instanceof IndexerUnavailable ? e.message : world.indexer.origin === null ? text('rateCheck.noIndex') : ((e as Error | null)?.message ?? '');
     return (
       <p className="tier-b" data-testid="rate-check">
         {format('rateCheck.failed', { reason })}
@@ -78,6 +78,8 @@ export function RateCheck({
     );
   const days = String(RATE_WINDOW_DAYS);
   const capped = recent.data.capped ? ` ${format('rateCheck.capped', { count: String(recent.data.rates.length) })}` : '';
+  const u = recent.data.unplaced;
+  const unplaced = u.count === 0 ? '' : ` ${format(u.capped ? 'rateCheck.unplacedCapped' : 'rateCheck.unplaced', { count: String(u.count) })}`;
   const why = <WhyLink summaryKey="rateCheck.whySummary" detailKey="rateCheck.why" />;
   const median = medianBps(recent.data.rates);
   const v = rateBps === null ? null : rateVerdict(rateBps, recent.data.rates);
@@ -86,6 +88,7 @@ export function RateCheck({
       <div data-testid="rate-check">
         <p className="tier-b">
           {median === null ? format('rateCheck.none', { days }) : format('rateCheck.near', { median: formatBps(median), count: String(recent.data.rates.length), days }) + capped}
+          {unplaced}
         </p>
         {why}
       </div>
@@ -96,6 +99,7 @@ export function RateCheck({
       <Notice tone="warn" tier="A">
         {format(farKey(lender, v.above), { rate: formatBps(rateBps!), median: formatBps(v.median), count: String(v.count), days })}
         {capped}
+        {unplaced}
       </Notice>
       {why}
     </div>
