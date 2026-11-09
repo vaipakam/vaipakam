@@ -61,7 +61,7 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        uses: ./.github/actions/setup-foundry  # cached + digest-pinned; see its header
         with:
           # PINNED to the last mdbook-era release, in lockstep with
           # ci.yml's Build docs job (#2010): Foundry v1.8.0

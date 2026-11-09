@@ -22,8 +22,11 @@ actions/upload-artifact@*
 actions/upload-pages-artifact@*
 github/codeql-action/*@*
 
-# Foundry — official Foundry GitHub Action:
-foundry-rs/foundry-toolchain@*
+# Foundry — official Foundry GitHub Action. NO LONGER USED by any workflow
+# since 2026-11-09: jobs install Foundry through the local composite action
+# .github/actions/setup-foundry (cached, digest-pinned release tarball), which
+# needs no allowlist entry. This line can be dropped from Settings.
+# foundry-rs/foundry-toolchain@*
 
 # pnpm — official pnpm Action:
 pnpm/action-setup@*

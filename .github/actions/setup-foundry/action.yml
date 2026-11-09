@@ -1,0 +1,119 @@
+# Install a PINNED Foundry release, from the Actions cache when it holds it.
+#
+# Why this exists (2026-11-09): every job that needs forge or anvil used
+# foundry-rs/foundry-toolchain, which downloads the foundryup installer, the
+# release attestation and the release tarball from GitHub release assets on
+# EVERY run. Those downloads returned 504 (Gateway Time-out) several times on
+# 2026-11-08 and 2026-11-09, and each one failed the job before any test ran.
+# A pinned version never changes, so the tarball is downloaded once into the
+# Actions cache and every later run restores it from there.
+#
+# What it checks, every run:
+#   - The tarball's SHA-256 must equal the pin in the table below, whether it
+#     came from the cache or from GitHub. An unknown version is refused, so a
+#     version bump is a reviewed commit that adds its digest here (the same
+#     rule as the `version:` pins themselves, #1984).
+#   - On a download (cache miss), the tarball's build provenance is also
+#     checked with `gh attestation verify` against foundry-rs/foundry, so the
+#     pinned digest is proven to be Foundry's own release build. That is
+#     stricter than foundryup, which skips verification when the attestation
+#     is missing.
+#
+# Downloads retry with back-off, so one 504 no longer fails the job.
+#
+# Not carried over from foundry-toolchain: its RPC-response cache
+# (~/.foundry/cache/rpc). No job here runs fork tests (no FORK_URL_* is set in
+# any workflow), so that cache held nothing.
+name: Set up Foundry (pinned, cached)
+description: Install a pinned Foundry release from the Actions cache, downloading and verifying it only on a cache miss.
+
+inputs:
+  version:
+    description: Foundry release tag, e.g. v1.8.6. Must have a digest in this action's pin table.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the pinned digest
+      id: pin
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" != "Linux" ] || [ "$RUNNER_ARCH" != "X64" ]; then
+          echo "::error::setup-foundry pins linux_amd64 tarballs only (runner: $RUNNER_OS/$RUNNER_ARCH)"
+          exit 1
+        fi
+        # SHA-256 of foundry_<version>_linux_amd64.tar.gz. Add a line here in
+        # the same commit that moves a workflow's `version:` pin.
+        case "$VERSION" in
+          v1.7.1) sha=cf7e688ed0c4c48adffca788b496076e31060b67ac5afe1e43dbb5499c20c88b ;;
+          v1.8.3) sha=7ca48e6ca3cac1bce1403ca67e5bc1dc3bc1fd818199c9957c7165079c228568 ;;
+          v1.8.6) sha=58850106984038f3a7200f38a4182c8cb423d3a4f4c7848eacbc2453e6bc35fc ;;
+          *)
+            echo "::error::Foundry $VERSION has no pinned digest in .github/actions/setup-foundry/action.yml; add one in the commit that bumps the version"
+            exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/foundry-dist"
+        mkdir -p "$dir"
+        {
+          echo "sha=$sha"
+          echo "file=$dir/foundry_${VERSION}_linux_amd64.tar.gz"
+          echo "key=foundry-dist-v1-linux-amd64-${VERSION}-${sha:0:16}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore the Foundry tarball from the cache
+      id: restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ steps.pin.outputs.file }}
+        key: ${{ steps.pin.outputs.key }}
+
+    - name: Download and verify the Foundry tarball (cache miss)
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        FILE: ${{ steps.pin.outputs.file }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        url="https://github.com/foundry-rs/foundry/releases/download/${VERSION}/foundry_${VERSION}_linux_amd64.tar.gz"
+        curl -sSfL --retry 6 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o "$FILE" "$url"
+        # Provenance: the file must be a build attested by foundry-rs/foundry.
+        ok=0
+        for attempt in 1 2 3 4; do
+          if gh attestation verify "$FILE" --repo foundry-rs/foundry > /dev/null; then ok=1; break; fi
+          echo "attestation check failed (attempt $attempt); retrying"
+          sleep $((attempt * 15))
+        done
+        if [ "$ok" != 1 ]; then
+          echo "::error::gh attestation verify failed for $url"
+          exit 1
+        fi
+
+    - name: Check the digest and install
+      shell: bash
+      env:
+        SHA: ${{ steps.pin.outputs.sha }}
+        FILE: ${{ steps.pin.outputs.file }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        echo "$SHA  $FILE" | sha256sum --check --strict
+        bin="$RUNNER_TEMP/foundry-bin-$VERSION"
+        mkdir -p "$bin"
+        tar -xzf "$FILE" -C "$bin"
+        echo "$bin" >> "$GITHUB_PATH"
+        "$bin/forge" --version
+
+    # Saved only after the digest check above passed, so the cache never holds
+    # a tarball that failed it.
+    - name: Save the Foundry tarball to the cache
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ steps.pin.outputs.file }}
+        key: ${{ steps.pin.outputs.key }}

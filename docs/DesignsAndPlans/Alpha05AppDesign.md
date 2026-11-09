@@ -1597,6 +1597,54 @@ above. Each resolves here, so a route reviewer needs no private file:
   not affected; switching strict mode off says it is a check removed and
   when it stops applying. Per-pair agreements and acknowledgements stay in
   the flows that need them (RB-RISK-STEP).
+- **RB-APPROVALS** — Settings › Approvals (ACC-32) lists the standing
+  approvals the connected wallet gives the protocol on its network: an ERC-20
+  allowance (stated as unlimited at half the largest value or above), a
+  Permit2 allowance with its expiry where Permit2 is deployed, an operator
+  approval over an NFT collection, and a single ERC-721 token's approval.
+  No chain read lists every approval a wallet has given, so the page checks
+  the suggested assets and every asset the wallet's deposit record, loans,
+  offers and standing offers name on this network (a standing offer's lent
+  asset and the collateral it asks for), plus any contract the
+  reader adds, and says what it checked and that an approval outside that
+  set is not found. A record that could not be read to its end, or an asset
+  that did not answer, is stated; neither is ever "no approval" (a token the
+  wallet owns whose approval did not answer is counted unknown). Each
+  approval is withdrawn in one signed transaction through RB-CONFIDENCE (what
+  it lets the protocol move now, what still lets it move the asset after, no
+  funds moved), read again before the wallet opens and measured at the
+  receipt's block. "After" is read with the row at one block: another
+  approval of the same asset (the collection's operator approval for one NFT,
+  the single-token approvals found for a collection, the Permit2 allowance
+  for an ERC-20, the token's own allowance for a Permit2 one) is named as
+  staying, one that did not answer makes it unknown, and only when each was
+  read and none stands does it say nothing remains; a change in it before
+  the signature stops the signature as a change. The receipt
+  says that anything relying on it refuses until approved again, and a
+  Permit2 withdrawal leaves the token's own approval for Permit2, which other
+  apps may use, unchanged.
+- **RB-KEEPERS** — Settings › Keepers (ACC-34) shows the wallet's keeper
+  settings on its network in one block: the master switch, each approved
+  keeper (at most five) and the actions it holds, each action with whose side
+  it drives and where it reaches. Everything starts off, and the section
+  states that a keeper acts only while access is on and it holds the action,
+  that a step on a loan also needs that loan or offer to name the keeper
+  while an account action (the signed fill, the auto-roll, the lock) does
+  not, and the receipt of a grant that adds an account action says so; that
+  a keeper never receives funds and
+  cannot claim, withdraw or transfer, that a position follows its current
+  holder's settings, and when the protocol has paused every keeper. This
+  app's keeper on a network is named only from the deployment record.
+  Turning access off and removing a keeper are offered in either mode;
+  turning access on, approving a keeper and changing its actions are
+  Advanced. Only a change that gives a keeper more (access on, a new keeper,
+  an action it did not hold) asks for the Terms where a version is in force;
+  taking a permission away never does. Each change is one
+  signed transaction through RB-CONFIDENCE, built from settings read when the
+  review opens, refused before the wallet where the protocol would refuse it,
+  read again before the wallet opens and measured at the receipt's block.
+  The protocol's pause closes every change, removing included, and is stated
+  rather than offered.
 
 ## 3. Companion specifications
 
