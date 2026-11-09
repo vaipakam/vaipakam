@@ -1576,6 +1576,12 @@ each, and on a band crossing in the unsafe direction fires
 once via the configured channels. There is no on-chain state
 and no gas. Alerts are advisory — they don't move funds.
 
+<a id="alerts-inbox"></a>
+
+### The Alerts inbox
+
+The Alerts page reads the index's inbox for the connected wallet on its network, newest first, fifty rows at a time. A row is written for the wallet holding the loan position when the row is written: loan started; partial and full repayment, including preclose, refinance, swap-to-repay and collateral-sale close-outs; default or liquidation; an internal-match close; a loan the index saw end without being able to tell how; the 7-day and 1-day due notices; grace entered and grace ended; and health below 1.5, 1.2 and 1.05. The health rows are written by the protocol's keeper, so they arrive only while it runs and only for loans health applies to. Reward-entry final notice and expiry rows go to the entry's owner. A row is a pointer, never a figure: the loan page reads the chain. An answer for another network or wallet is refused, rows that cannot be read are counted, and a kind the app does not know is shown by name. The header count is the index's own count of rows whose id is above the newest one recorded as seen in this browser, taken over every row; ids only grow in write order, so a row stamped with an older block still counts. Opening the page records every row written so far as seen. The seen mark lives in this browser only and only moves forward. Telegram and push, below, are still set up in the current app. A row is history: it says how the loan or entry stood when the row was written, never that it still does, and a reward expiry row means the entry's return to the programme has begun, not that it is complete.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder
@@ -2718,13 +2724,13 @@ The list is the union of `getUserOffersPaginated(wallet)` (the per-creator index
 
 ### The offer book
 
-The book reads the indexer's `GET /offers/active?chainId&limit=50&before=<offerId>`, newest first by offer id, paged by `nextBefore`. The indexer keeps a lapsed offer `active` (expiry is lazy on-chain), so a row whose `expiresAt` has passed is tagged expired. `isSaleVehicle`, `isOffsetVehicle` and `refinanceTargetLoanId` (null = not read) tag the kind, and `positionFlow.movedSinceOpened` a moved bound position (#3205). Every field is parsed exactly; a row that fails is counted as unread. The tab is `assetType` (0 = an ERC-20 loan, otherwise a rental), the side `offerType`. The query is invalidated by the push rail and re-read every 60 s while visible; an index failure is stated, never an empty book.
+The book reads the indexer's `GET /offers/active?chainId&limit=50&before=<offerId>`, newest first by offer id, paged by `nextBefore`. The indexer keeps a lapsed offer `active` (expiry is lazy on-chain), so a row whose `expiresAt` has passed is tagged expired. `isSaleVehicle`, `isOffsetVehicle` and `refinanceTargetLoanId` (null = not read) tag the kind, and `positionFlow.movedSinceOpened` a moved bound position (#3205). Every field is parsed exactly; a row that fails is counted as unread. The tab is `assetType` (0 = an ERC-20 loan, otherwise a rental), the side `offerType`. The query is invalidated by the push rail and re-read every 60 s while visible; an index failure is stated, never an empty book. The book is requested only once a wallet is connected on a served network; before that the page asks for one.
 
 <a id="offer-detail"></a>
 
 ### An offer's page
 
-`/offers/:id` reads, at one block, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` and `getOfferLinkedLoanId(id)`, through the wallet when one is connected and the read-only proxy otherwise. A zero creator means the record was deleted (a cancel with nothing filled) or never written; the protocol keeps no offer count, so the page does not say which. A non-zero linked loan marks a loan sale (a borrower offer) or an offset (a lender offer); a borrower offer's `refinanceTargetLoanId` marks a refinance request. Taking runs the shared `acceptOffer` flow (signed `AcceptTerms`, exact approval, dry run, measured outcome) under its own store key; cancel and clean-up run the shared `cancelOffer` flow. Rentals, NFT collateral, loan sales and offsets link the current app.
+`/offers/:id` reads, at one block, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` and `getOfferLinkedLoanId(id)`, through the connected wallet; nothing is read before a wallet connects. A zero creator means the record was deleted (a cancel with nothing filled) or never written; the protocol keeps no offer count, so the page does not say which. A non-zero linked loan marks a loan sale (a borrower offer) or an offset (a lender offer); a borrower offer's `refinanceTargetLoanId` marks a refinance request. Taking runs the shared `acceptOffer` flow (signed `AcceptTerms`, exact approval, dry run, measured outcome) under its own store key; cancel and clean-up run the shared `cancelOffer` flow. Rentals, NFT collateral, loan sales and offsets link the current app.
 
 <a id="offer-cancel"></a>
 

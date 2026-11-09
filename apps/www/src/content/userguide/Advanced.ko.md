@@ -1239,6 +1239,12 @@ poll하고, 각각의 live Health Factor를 읽은 뒤 unsafe direction으로 ba
 cross하면 configured channels를 통해 한 번 alert를 fire합니다. on-chain state도
 gas도 없습니다. Alerts는 advisory입니다 — funds를 move하지 않습니다.
 
+<a id="alerts-inbox"></a>
+
+### 알림 받은편지함
+
+알림 페이지는 연결된 지갑의 네트워크에서 인덱스의 받은편지함을 최신순으로 한 번에 50행씩 읽습니다. 행은 기록되는 시점에 대출 포지션을 보유한 지갑 앞으로 기록됩니다. 대출 시작, 부분 및 전액 상환(조기 상환, 재융자, 스왑 상환, 담보 매각에 의한 종료 포함), 채무 불이행 또는 청산, 내부 매칭에 의한 종료, 끝난 것은 보았지만 어떻게 끝났는지 인덱스가 알 수 없는 대출, 만기 7일 전과 1일 전 알림, 유예 기간 시작과 종료, 그리고 건전성이 1.5, 1.2, 1.05 아래로 떨어진 경우입니다. 건전성 행은 프로토콜의 키퍼가 기록하므로 키퍼가 작동하는 동안에만, 건전성이 적용되는 대출에 대해서만 도착합니다. 보상 항목의 최종 알림과 만료 행은 해당 항목의 소유자에게 갑니다. 행은 금액이 아니라 가리키는 표시입니다. 대출 페이지가 체인을 읽습니다. 다른 네트워크나 지갑에 대한 응답은 거부되고, 읽을 수 없는 행은 개수로 표시되며, 알 수 없는 종류는 이름 그대로 표시됩니다. 헤더의 숫자는 이 브라우저에서 읽음으로 기록된 가장 최신 ID보다 ID가 큰 행을 인덱스가 모든 행에 대해 직접 센 값입니다. ID는 기록 순서대로만 커지므로 이전 블록으로 기록된 행도 셉니다. 페이지를 열면 그때까지 기록된 모든 행이 읽음으로 기록됩니다. 읽음 표시는 이 브라우저에만 저장되며 앞으로만 움직입니다. 아래의 텔레그램과 푸시는 아직 현재 앱에서 설정합니다. 행은 기록입니다. 행이 작성된 시점의 대출이나 항목 상태를 알려 줄 뿐 지금도 그렇다고 말하지 않으며, 보상 만료 행은 항목의 프로그램 반환이 시작되었다는 뜻이지 완료되었다는 뜻이 아닙니다.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Threshold Ladder
@@ -2232,13 +2238,13 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### 오퍼 북
 
-오퍼 북은 인덱서의 `GET /offers/active?chainId&limit=50&before=<offerId>`를 읽으며, 오퍼 ID 기준 최신순이고 `nextBefore`로 페이지를 넘깁니다. 인덱서는 만료된 오퍼를 `active`로 유지하므로(체인에서 만료는 지연 처리됨) `expiresAt`이 지난 행에는 만료 태그를 붙입니다. `isSaleVehicle`, `isOffsetVehicle`, `refinanceTargetLoanId`(null = 읽지 않음)가 종류를, `positionFlow.movedSinceOpened`가 이동한 연결 포지션을 표시합니다(#3205). 모든 필드는 정확히 파싱하며, 실패한 행은 읽지 못한 것으로 셉니다. 탭은 `assetType`(0 = ERC-20 대출, 그 외는 임대), 쪽은 `offerType`입니다. 쿼리는 푸시 레일로 무효화되고 보이는 동안 60초마다 다시 읽습니다. 인덱스 장애는 그대로 알리며, 빈 오퍼 북으로 보여 주지 않습니다.
+오퍼 북은 인덱서의 `GET /offers/active?chainId&limit=50&before=<offerId>`를 읽으며, 오퍼 ID 기준 최신순이고 `nextBefore`로 페이지를 넘깁니다. 인덱서는 만료된 오퍼를 `active`로 유지하므로(체인에서 만료는 지연 처리됨) `expiresAt`이 지난 행에는 만료 태그를 붙입니다. `isSaleVehicle`, `isOffsetVehicle`, `refinanceTargetLoanId`(null = 읽지 않음)가 종류를, `positionFlow.movedSinceOpened`가 이동한 연결 포지션을 표시합니다(#3205). 모든 필드는 정확히 파싱하며, 실패한 행은 읽지 못한 것으로 셉니다. 탭은 `assetType`(0 = ERC-20 대출, 그 외는 임대), 쪽은 `offerType`입니다. 쿼리는 푸시 레일로 무효화되고 보이는 동안 60초마다 다시 읽습니다. 인덱스 장애는 그대로 알리며, 빈 오퍼 북으로 보여 주지 않습니다. 오퍼 북은 지원되는 네트워크에서 지갑이 연결된 뒤에만 요청하며, 그 전에는 페이지가 지갑 연결을 요청합니다.
 
 <a id="offer-detail"></a>
 
 ### 오퍼 페이지
 
-`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 지갑이 연결되어 있으면 지갑을, 아니면 읽기 전용 프록시를 거칩니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다.
+`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 연결된 지갑을 거치며, 지갑을 연결하기 전에는 아무것도 읽지 않습니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다.
 
 <a id="offer-cancel"></a>
 

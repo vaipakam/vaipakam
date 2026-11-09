@@ -26,6 +26,21 @@
 //      allowance to the limit-order protocol raised by the lot. After the
 //      order's deadline plus the configured cancel grace (the borrower's own
 //      window to cancel), anyone may tear it down. Refused while paused.
+//   4. A VEHICLE OFFER whose position moved (#3336, `OfferCancelFacet.cancelOffer`):
+//      a preclose offset, a lender-sale listing or a refinance request bound
+//      to a position that has changed hands since it was posted (or, for a
+//      refinance request, that a later request displaced). It can never
+//      complete, and until somebody cancels it, it sits in the book and holds
+//      its creator's locked assets. Anyone may cancel it at once; the refund
+//      goes to its creator. Refused while paused.
+//
+// #3336 — MOVED POSITIONS. A prepay listing or an intent whose borrower
+// position changed hands since it was posted can never fill either, so the
+// contract lets anyone clear it at once, without the grace or cancel-grace
+// wait. The pass finds those with the Diamond's own dead-route reads
+// (`VaipakamNFTFacet.isPositionRouteDead` for a listing or an intent,
+// `OfferCancelFacet.isOfferRouteDead` for a vehicle offer), the rule each
+// teardown applies, so it spends no simulation on a flow that is still live.
 //
 // Per chain, per run (hourly, at :06):
 //
@@ -38,36 +53,43 @@
 //      an intent once it is at or past the order's deadline plus the chain's
 //      `getIntentCancelGraceSeconds`. Live prepay listings and intents exist
 //      only on active loans (every closing path clears both first), so the
-//      active list is where they are.
+//      active list is where they are. A listing or intent not yet due by time
+//      is due anyway once its route is dead: for those loans the pass reads
+//      the borrower position (`getLoanDetails`) and the Diamond's dead-route
+//      read for it, at the same block.
 //   b. A bounded walk of the active-offer list (`getActiveOffersPaginated`),
 //      starting at a point that moves each run (`rotate.pagedWalk`), at one
 //      pinned block. A lender-sale listing is a borrower-side offer linked to
 //      a loan (`getOfferLinkedLoanId`; a preclose offset is linked too, but is
 //      a lender-side offer). It is due when it is not accepted and its loan
 //      is closed, or its loan is live and its expiry is zero or has passed.
+//      Every walked offer is also read through `isOfferRouteDead`; a dead
+//      vehicle not already due as a sale listing is due for `cancelOffer`.
 //   c. Up to the step's attempts of each, successive runs taking successive
 //      ones (`pickBatch`), go to the contract: each is simulated on the
 //      current state and sent only when the simulation succeeds. Prepay and
-//      sale go first, the intents last, because only the intent teardown is
-//      refused while the protocol is paused, and a pause stops the run's
-//      sends.
+//      sale go first, the vehicle cancels and the intents last, because only
+//      those two are refused while the protocol is paused, and a pause stops
+//      the run's sends.
 //
 // Every landed teardown is named from its own receipt: the
 // `PrepayListingCanceled`, `LoanSaleListingTornDown` or
-// `SwapToRepayIntentCancelled` event for that loan. A landed call whose event
-// was not in the receipt is said apart, never counted as a teardown.
+// `SwapToRepayIntentCancelled` event for that loan, or the `OfferCanceled`
+// event for that offer. A landed call whose event was not in the receipt is said apart, never counted as a teardown.
 //
 // What it leaves alone, deliberately:
 //   - A prepay listing during its loan's grace window. That window is the
 //     grace auto-list pass's (`prepayAutoList.ts`), which rotates a dead or
 //     above-floor listing to the floor; this pass waits until grace has
 //     ended, so the two never act on one listing.
-//   - A Dutch prepay listing whose auction ended BEFORE its loan's grace. The
-//     contract allows that teardown, but the auction's end is recorded only
-//     on the listing's pinned executor, which the Diamond does not expose, so
-//     finding one would take a simulation of every such listing every run;
-//     and the one it frees is the lister's own position, which the lister can
-//     cancel at any time. Once grace begins the auto-list pass rotates it.
+//   - A Dutch prepay listing whose auction ended BEFORE its loan's grace, on
+//     a position that has not moved. The contract allows that teardown, but
+//     the auction's end is recorded only on the listing's pinned executor,
+//     which the Diamond does not expose, so finding one would take a
+//     simulation of every such listing every run; and the one it frees is the
+//     lister's own position, which the lister can cancel at any time. Once
+//     grace begins the auto-list pass rotates it. (A moved one is caught by
+//     its dead route, above.)
 //   - A sale listing whose offer has left the active-offer list while its
 //     link to the loan remains. Nothing in the open book names it.
 //
@@ -81,6 +103,7 @@ import {
   NFTPrepayListingFacetABI,
   OfferCancelFacetABI,
   SwapToRepayIntentFacetABI,
+  VaipakamNFTFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -101,6 +124,7 @@ export const ABI = [
   ...(OfferCancelFacetABI as Abi),
   ...(MetricsFacetABI as Abi),
   ...(LoanFacetABI as Abi),
+  ...(VaipakamNFTFacetABI as Abi),
 ] as Abi;
 
 /** The pass's cadence, in seconds; the scheduler reads it from here. Every
@@ -109,13 +133,13 @@ export const ABI = [
 export const PASS_CADENCE_SEC = 60 * 60;
 
 /** The pass's steps, in the order a run sends them. */
-export const STEPS = ['prepay', 'sale', 'intent'] as const;
+export const STEPS = ['prepay', 'sale', 'vehicle', 'intent'] as const;
 export type Step = (typeof STEPS)[number];
 
 /** Items sent to the contract per step per chain per run: simulated, and sent
  *  when the simulation succeeds. Each is a share of its own, so a long queue
  *  in one step never leaves another with nothing. */
-export const ATTEMPTS_PER_STEP: Readonly<Record<Step, number>> = { prepay: 4, sale: 4, intent: 4 };
+export const ATTEMPTS_PER_STEP: Readonly<Record<Step, number>> = { prepay: 4, sale: 4, vehicle: 4, intent: 4 };
 /** Sends per chain per run: every step's share. */
 export const MAX_SENDS_PER_RUN = STEPS.reduce((n, s) => n + ATTEMPTS_PER_STEP[s], 0);
 export const RECEIPT_TIMEOUT_MS = 30_000;
@@ -131,17 +155,28 @@ const LOAN_ACTIVE = 0;
 const LOAN_FALLBACK_PENDING = 4;
 /** `LibVaipakam.OfferType.Borrower`: a lender-sale vehicle is one. */
 const OFFER_BORROWER = 1;
+/** `LibPositionNFT.RouteReason`: the routes a prepay listing and an intent
+ *  hold on the borrower position. */
+export const ROUTE_PREPAY_LISTING = 3;
+export const ROUTE_SWAP_TO_REPAY_INTENT = 4;
 
 const FUNCTION: Readonly<Record<Step, string>> = {
   prepay: 'cancelExpiredPrepayListing',
   sale: 'teardownStaleSaleListing',
+  vehicle: 'cancelOffer',
   intent: 'cancelExpiredIntent',
 };
 
 export const PAUSED_REFUSAL = 'EnforcedPause';
 /** Refusals that mean the item is already gone: another caller, the owner or a
  *  closing path got there first. Skipped, not refused. */
-export const RACES: ReadonlySet<string> = new Set(['PrepayListingNotFound', 'NoStaleSaleListing', 'IntentNoCommit']);
+export const RACES: ReadonlySet<string> = new Set([
+  'PrepayListingNotFound',
+  'NoStaleSaleListing',
+  'IntentNoCommit',
+  'OfferAlreadyAccepted',
+  'OfferAlreadyConsumedBySale',
+]);
 /** Refusals that mean the item is not yet due at the current block (the scan
  *  read an earlier one): named on the run's line, and tried again later. */
 export const NOT_YET: ReadonlyMap<string, string> = new Map([
@@ -149,6 +184,10 @@ export const NOT_YET: ReadonlyMap<string, string> = new Map([
   ['AuctionWindowStillOpen', 'its Dutch auction has not ended at the current block'],
   ['SaleListingLoanStillLive', 'its loan is live and the listing has not expired at the current block'],
   ['IntentNotPastCancelGrace', 'its cancel grace has not ended at the current block'],
+  // A vehicle the scan read as dead that the contract no longer reads so: its
+  // route was reopened, or the offer is already gone (a deleted offer has no
+  // creator and no route, so its cancel is refused the same way).
+  ['NotCreatorOrNotExpired', 'the contract no longer reads its route as dead at the current block (or it is already gone)'],
 ]);
 
 /** What one chain's run reads and signs with. Injected so a run is testable. */
@@ -192,9 +231,12 @@ export interface TeardownReport {
   stopped: string | null;
 }
 
-/** A due item: the loan the call takes, and how the line names it. */
+/** A due item: the id the call takes (a loan, or for a vehicle an offer),
+ *  what it is (`loan 3`, `offer 9`: the key its refusals are filed under),
+ *  and how the line names it. */
 interface Due {
-  loanId: bigint;
+  arg: bigint;
+  subject: string;
   label: string;
 }
 
@@ -271,7 +313,7 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
       races: RACES,
       pausedRefusal: PAUSED_REFUSAL,
       unrecorded: new Set(NOT_YET.keys()),
-      describe: (s) => `loan ${s}`,
+      describe: (s) => String(s),
       spends: 'the gas',
     },
     { context: deps.context, sendDeadline: deps.sendDeadline },
@@ -280,7 +322,7 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
     chainId,
     window: null,
     offers: null,
-    steps: { prepay: emptyStep(), sale: emptyStep(), intent: emptyStep() },
+    steps: { prepay: emptyStep(), sale: emptyStep(), vehicle: emptyStep(), intent: emptyStep() },
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -288,13 +330,17 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
   // Each read stage stops early enough to leave the stages after it their
   // time (runWindow.ts, rule 3): the offer records by the read cutoff, which
   // reserves the sends' time; the offer list a stage reserve before that; the
+  // moved positions' dead-route reads a stage reserve before that; their loan
+  // details (which give the position token) a stage reserve before that; the
   // per-loan reads a stage reserve before that; the loan window a stage
-  // reserve before those.
+  // reserve before those. So a slow stage never leaves a later one no time.
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const offerListCutoff = priorStageCutoffMs(readCutoff);
-  const loanReadsCutoff = priorStageCutoffMs(offerListCutoff);
+  const routesCutoff = priorStageCutoffMs(offerListCutoff);
+  const detailsCutoff = priorStageCutoffMs(routesCutoff);
+  const loanReadsCutoff = priorStageCutoffMs(detailsCutoff);
   const windowCutoff = priorStageCutoffMs(loanReadsCutoff);
-  const due: Record<Step, Due[]> = { prepay: [], sale: [], intent: [] };
+  const due: Record<Step, Due[]> = { prepay: [], sale: [], vehicle: [], intent: [] };
 
   // The RPC must answer for this chain: a deterministic deployment can put a
   // Diamond at the same address on another chain.
@@ -311,7 +357,7 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
   if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
 
   // a. The loan window: prepay listings and intents. b. The offer walk:
-  // lender-sale listings. A stage that cannot finish its reads finds nothing
+  // lender-sale listings and dead vehicles. A stage that cannot finish its reads finds nothing
   // this run and says why; the other stage's findings are still worked.
   const stage = async (key: string, what: string, work: () => Promise<void>) => {
     try {
@@ -320,7 +366,7 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
       sender.noteUnread(key, err instanceof PastRunDeadline ? `the run deadline passed during ${what}` : `${what} (${shortErr(err)})`);
     }
   };
-  await stage('loans', 'the active-loan reads', () => scanLoans(diamond, deps, sender, report, due, { windowCutoff, loanReadsCutoff }));
+  await stage('loans', 'the active-loan reads', () => scanLoans(diamond, deps, sender, report, due, { windowCutoff, loanReadsCutoff, detailsCutoff, routesCutoff }));
   await stage('sales', 'the active-offer reads', () => scanSales(diamond, deps, sender, report, due, { offerListCutoff, readCutoff }));
 
   // c. The contract decides, step by step.
@@ -328,17 +374,17 @@ export async function teardownOnce(chainId: number, diamond: Address, deps: Tear
     const s = report.steps[step];
     s.due = due[step].length;
     // The loan steps rotate by this window's own visit count, so each visit
-    // to it takes the next batch however many windows the book has; the sale
-    // step by the run, since its walk already starts somewhere new each run.
-    const round = step === 'sale' ? deps.visit : (report.window?.round ?? 0);
+    // to it takes the next batch however many windows the book has; the offer
+    // steps by the run, since their walk already starts somewhere new each run.
+    const round = step === 'sale' || step === 'vehicle' ? deps.visit : (report.window?.round ?? 0);
     const { picked, deferred } = pickBatch(due[step], round, ATTEMPTS_PER_STEP[step]);
     s.deferred = deferred.length;
     for (const item of picked) {
       if (sender.stopped) break;
       // eslint-disable-next-line no-await-in-loop
-      const res = await sender.call(step, String(item.loanId), FUNCTION[step], [item.loanId]);
+      const res = await sender.call(step, item.subject, FUNCTION[step], [item.arg]);
       if (res === 'landed') {
-        const ev = teardownEvent(step, diamond, item.loanId, sender.receipt?.logs ?? []);
+        const ev = teardownEvent(step, diamond, item.arg, sender.receipt?.logs ?? []);
         if (ev === null) s.landedUnread.push(item.label);
         else s.torndown.push(ev);
         continue;
@@ -363,7 +409,7 @@ async function scanLoans(
   sender: StepSender,
   report: TeardownReport,
   due: Record<Step, Due[]>,
-  cut: { windowCutoff: number; loanReadsCutoff: number },
+  cut: { windowCutoff: number; loanReadsCutoff: number; detailsCutoff: number; routesCutoff: number },
 ): Promise<void> {
   const scan = await readActiveWindow(deps.readClient, diamond, deps.visit, cut.windowCutoff);
   report.window = scan.window;
@@ -398,15 +444,97 @@ async function scanLoans(
     scan.blockNumber,
   );
   let unread = 0;
+  // #3336 — a listing or intent not due by time, whose route may be dead.
+  const live: LiveRoute[] = [];
   for (const id of scan.ids) {
     const [deadlines, orderHash, commit] = reads.get(id) ?? [];
     const listing = prepayDue(deadlines, orderHash, now);
     const intent = graceSec === null ? null : intentDue(commit, graceSec, now);
     if (listing === undefined || (graceSec !== null && intent === undefined)) unread += 1;
-    if (listing) due.prepay.push({ loanId: id, label: `loan ${id}` });
-    if (intent) due.intent.push({ loanId: id, label: `loan ${id}` });
+    if (listing) due.prepay.push({ arg: id, subject: `loan ${id}`, label: `loan ${id}` });
+    else if (hasListing(orderHash)) live.push({ loanId: id, reason: ROUTE_PREPAY_LISTING, step: 'prepay' });
+    if (intent) due.intent.push({ arg: id, subject: `loan ${id}`, label: `loan ${id}` });
+    else if (hasCommit(commit)) live.push({ loanId: id, reason: ROUTE_SWAP_TO_REPAY_INTENT, step: 'intent' });
   }
   if (unread > 0) sender.noteUnread('loans', `the listing or intent records of ${unread} loan(s) in the window`);
+  if (live.length > 0) await scanMovedRoutes(diamond, deps, sender, due, live, cut, scan.window.round, scan.blockNumber);
+}
+
+/** A listing or intent that is not due by time: its loan, the route it holds
+ *  on the borrower position, and the step that tears it down. */
+interface LiveRoute {
+  loanId: bigint;
+  reason: number;
+  step: 'prepay' | 'intent';
+}
+
+/** #3336 — which of the listings and intents not yet due by time sit on a
+ *  borrower position whose route is dead (it moved, or another flow replaced
+ *  the route): due now, by the Diamond's own dead-route read, at the scan's
+ *  block. The teardown still decides each one. The two reads are separate
+ *  stages with their own cutoffs (runWindow.ts, rule 3), so details that run
+ *  to their cutoff still leave the route reads time. */
+async function scanMovedRoutes(
+  diamond: Address,
+  deps: TeardownDeps,
+  sender: StepSender,
+  due: Record<Step, Due[]>,
+  live: readonly LiveRoute[],
+  cut: { detailsCutoff: number; routesCutoff: number },
+  round: number,
+  blockNumber: bigint,
+): Promise<void> {
+  const loanIds = [...new Set(live.map((l) => l.loanId))];
+  const details = await settledChunkedRead(
+    deps.readClient,
+    loanIds,
+    READ_CHUNK,
+    (id) => ({ address: diamond, abi: ABI, functionName: 'getLoanDetails', args: [id] }),
+    'expiredTeardown loan positions',
+    cut.detailsCutoff,
+    round,
+    blockNumber,
+  );
+  let unread = 0;
+  const withToken: { item: LiveRoute; tokenId: bigint }[] = [];
+  for (const item of live) {
+    const d = details.get(item.loanId);
+    if (d?.status !== 'success') {
+      unread += 1;
+      continue;
+    }
+    withToken.push({ item, tokenId: BigInt((d.result as { borrowerTokenId: bigint | number }).borrowerTokenId) });
+  }
+  const dead = await settledChunkedRead(
+    deps.readClient,
+    withToken,
+    READ_CHUNK,
+    (w) => ({ address: diamond, abi: ABI, functionName: 'isPositionRouteDead', args: [w.tokenId, w.item.reason] }),
+    'expiredTeardown dead routes',
+    cut.routesCutoff,
+    round,
+    blockNumber,
+  );
+  for (const w of withToken) {
+    const r = dead.get(w);
+    if (r?.status !== 'success') {
+      unread += 1;
+      continue;
+    }
+    if (r.result === true) due[w.item.step].push({ arg: w.item.loanId, subject: `loan ${w.item.loanId}`, label: `loan ${w.item.loanId} (its position moved)` });
+  }
+  if (unread > 0) sender.noteUnread('moved', `the position or route of ${unread} listing(s) or intent(s) not yet due by time`);
+}
+
+/** Whether a loan's listing read shows a recorded listing. Pure. */
+export function hasListing(orderHash: BatchResult | undefined): boolean {
+  return orderHash?.status === 'success' && BigInt(orderHash.result as Hex) !== 0n;
+}
+
+/** Whether a loan's intent read shows a commit (`getIntentCommit` reverts when
+ *  there is none). Pure. */
+export function hasCommit(commit: BatchResult | undefined): boolean {
+  return commit?.status === 'success';
 }
 
 /** Whether a loan's prepay listing is due for teardown at `now`: it has one,
@@ -462,11 +590,15 @@ async function scanSales(
     }
   }
   report.offers.read = ids.length;
-  const links = await settledChunkedRead(
+  const links = await settledGroupedRead(
     deps.readClient,
     ids,
     READ_CHUNK,
-    (id) => ({ address: diamond, abi: ABI, functionName: 'getOfferLinkedLoanId', args: [id] }),
+    (id) => [
+      { address: diamond, abi: ABI, functionName: 'getOfferLinkedLoanId', args: [id] },
+      // #3336 — an offset, sale or refinance vehicle whose route is dead.
+      { address: diamond, abi: ABI, functionName: 'isOfferRouteDead', args: [id] },
+    ],
     'expiredTeardown offer links',
     cut.readCutoff,
     deps.visit,
@@ -474,13 +606,13 @@ async function scanSales(
   );
   let unread = 0;
   const linked: { offerId: bigint; loanId: bigint }[] = [];
+  const deadVehicles: bigint[] = [];
   for (const id of ids) {
-    const r = links.get(id);
-    if (r?.status !== 'success') {
-      unread += 1;
-      continue;
-    }
-    const loanId = BigInt(r.result as bigint);
+    const [link, dead] = links.get(id) ?? [];
+    if (link?.status !== 'success' || dead?.status !== 'success') unread += 1;
+    if (dead?.status === 'success' && dead.result === true) deadVehicles.push(id);
+    if (link?.status !== 'success') continue;
+    const loanId = BigInt(link.result as bigint);
     if (loanId !== 0n) linked.push({ offerId: id, loanId });
   }
   const records = await settledGroupedRead(
@@ -497,6 +629,7 @@ async function scanSales(
     blockNumber,
   );
   const loans = new Set<bigint>();
+  const saleOffers = new Set<bigint>();
   for (const l of linked) {
     const [offer, loan] = records.get(l) ?? [];
     if (offer?.status !== 'success' || loan?.status !== 'success') {
@@ -506,10 +639,16 @@ async function scanSales(
     const why = saleDue(offer.result as OfferRecord, Number((loan.result as { status: number | bigint }).status), now);
     if (why !== null && !loans.has(l.loanId)) {
       loans.add(l.loanId);
-      due.sale.push({ loanId: l.loanId, label: `loan ${l.loanId} offer ${l.offerId} (${why})` });
+      saleOffers.add(l.offerId);
+      due.sale.push({ arg: l.loanId, subject: `loan ${l.loanId}`, label: `loan ${l.loanId} offer ${l.offerId} (${why})` });
     }
   }
-  if (unread > 0) sender.noteUnread('sales', `the link or records of ${unread} offer(s) in the walk`);
+  // A dead vehicle the sale step already takes is left to it: on a live loan
+  // that teardown also starts the seller's relist cooldown.
+  for (const id of deadVehicles) {
+    if (!saleOffers.has(id)) due.vehicle.push({ arg: id, subject: `offer ${id}`, label: `offer ${id} (its position moved)` });
+  }
+  if (unread > 0) sender.noteUnread('sales', `the link, route or records of ${unread} offer(s) in the walk`);
 }
 
 /** Why a linked offer is a lender-sale listing due for teardown at `now`, or
@@ -529,15 +668,17 @@ export function saleDue(offer: OfferRecord, loanStatus: number, now: bigint): st
 const STEP_EVENTS: Readonly<Record<Step, { abi: Abi; eventName: string }>> = {
   prepay: { abi: NFTPrepayListingFacetABI as Abi, eventName: 'PrepayListingCanceled' },
   sale: { abi: OfferCancelFacetABI as Abi, eventName: 'LoanSaleListingTornDown' },
+  vehicle: { abi: OfferCancelFacetABI as Abi, eventName: 'OfferCanceled' },
   intent: { abi: SwapToRepayIntentFacetABI as Abi, eventName: 'SwapToRepayIntentCancelled' },
 };
 
 /** The teardown a landed call made, from its receipt's own event for this
- *  loan, as the run's line names it; null when the receipt does not carry it. */
+ *  loan (or, for a vehicle, this offer), as the run's line names it; null
+ *  when the receipt does not carry it. */
 export function teardownEvent(
   step: Step,
   diamond: Address,
-  loanId: bigint,
+  id: bigint,
   logs: readonly { address: Address; data: Hex; topics: readonly Hex[] }[],
 ): string | null {
   const { abi, eventName } = STEP_EVENTS[step];
@@ -551,9 +692,13 @@ export function teardownEvent(
     }
     if (ev.eventName !== eventName) continue;
     const a = ev.args as unknown as Record<string, unknown>;
-    if (a.loanId !== loanId) continue;
-    if (step === 'sale') return `loan ${loanId} offer ${a.saleOfferId as bigint}`;
-    return `loan ${loanId} order ${String(a.orderHash).slice(0, 10)}`;
+    if (step === 'vehicle') {
+      if (a.offerId === id) return `offer ${id}`;
+      continue;
+    }
+    if (a.loanId !== id) continue;
+    if (step === 'sale') return `loan ${id} offer ${a.saleOfferId as bigint}`;
+    return `loan ${id} order ${String(a.orderHash).slice(0, 10)}`;
   }
   return null;
 }

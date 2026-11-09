@@ -1011,6 +1011,17 @@ serves. Each ships switched off behind its own flag.
   listing is left to the grace auto-list duty, so the two never act on the
   same listing. Each teardown is reported from the protocol's own record of
   it. The duty ships switched off behind its own flag and pays only gas.
+- Once a position changes hands, every flow bound to it that the former
+  holder started can never complete: a prepay listing, a swap-to-repay
+  intent, a preclose offset, a lender's sale listing, and a refinance request
+  (which also ends when a later request replaces it). Anyone may clear such a
+  flow at once, with no window to wait for, and the refund of anything it
+  locked goes to whoever posted it. The same hourly duty clears them. It
+  finds them with the protocol's own answer to whether a flow's route is
+  dead, so a flow that is still live costs nothing, and it still asks the
+  protocol whether each teardown would succeed before sending it. Clearing
+  an offer is refused while the protocol is paused, so those go last, with
+  the intents.
 
 ## Applying vault-beacon changes once their delay has passed
 
