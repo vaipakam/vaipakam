@@ -38,6 +38,7 @@ import {
 import { accountFor, type Role } from './wallets';
 import { increaseTime } from './anvil';
 import { fetchSignedBook } from './signed';
+import { ensureWeth } from './seed';
 
 export const TLIQ = MOCKS!.liquidToken as `0x${string}`;
 /** Second liquid faucet mock (deployments key `liquidToken2`): mUSDC —
@@ -173,6 +174,9 @@ export async function seedDeskOffer(opts: {
   const [token, locked] = isLend
     ? [WETH, amount]
     : ([collateralAsset, collateralMax] as const);
+  // The escrowed leg is pulled from the wallet, which the suite drains
+  // (see {@link ensureWeth}); collateral tLIQ is seeded far beyond any spec.
+  if (token === WETH) await ensureWeth(opts.role, locked);
   const approveHash = await wallet.writeContract({
     address: token,
     abi: ERC20_MIN_ABI,
