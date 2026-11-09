@@ -598,7 +598,7 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        uses: ./.github/actions/setup-foundry  # cached + digest-pinned; see its header
         with:
           # PINNED, not `stable` (#2603), and in lockstep with the other job
           # that shares this forge cache (contracts-fast and slither). Foundry
@@ -827,7 +827,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        uses: ./.github/actions/setup-foundry  # cached + digest-pinned; see its header
         with:
           # PINNED, not `stable` (#2603), and in lockstep with the other job
           # that shares this forge cache (contracts-fast and slither). Foundry
@@ -953,7 +953,7 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        uses: ./.github/actions/setup-foundry  # cached + digest-pinned; see its header
         with:
           # PINNED to the last mdbook-era release, NOT `stable` (#2010):
           # Foundry v1.8.0 (2026-08-27) migrated `forge doc` from
