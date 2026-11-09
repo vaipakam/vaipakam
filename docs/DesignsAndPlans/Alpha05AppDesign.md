@@ -1685,7 +1685,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   The receipt states what the renter gets (the right to use the NFT, which
   stays in the owner's vault), the rent rule, what comes back on a timely
   close, the late fee from the buffer, the grace as today's setting, that a
-  rental never closes by itself, that this app cannot close one yet (the
+  rental closes by itself only once every agreed day has been settled
+  (which anyone may do, and which returns the buffer to the renter as a
+  claim) and otherwise needs the renter's close or a default, that this
+  app cannot close one yet (the
   position page links a rental to its page in the current app), and what a
   default takes. A listing that fixed no buffer says the protocol applies
   today's setting at the start: the app re-reads it just before sending, a
@@ -1744,8 +1747,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   vault with the buffer share the request fixed, what the owner receives
   (the rent less the protocol's share, fixed at this start, paid into the
   owner's vault as each finished day is settled, the rest at close as a
-  claim) and what a default does; a token the wallet does not hold, or too few units, is said
-  before any wallet step. The terms are signed, the approval is the one
+  claim), the three ways a rental ends (every agreed day settled, the
+  renter's close, a default) and what a default does; a token the wallet
+  does not hold, or too few units, is said before any wallet step. The terms are signed, the approval is the one
   ERC-721 token (or for an ERC-1155 the operator approval for this rental
   alone, taken back afterwards whatever happens), and the acceptance is
   sent only after a dry run with that signature; the outcome is measured

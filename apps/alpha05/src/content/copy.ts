@@ -3205,7 +3205,7 @@ export const copy = {
     requestButton: B('Post a rental request'),
     whySummary: B('How renting an NFT works'),
     why: C(
-      "Renting gives you the right to use an NFT for a set number of days, never the NFT itself: it stays in its owner's vault, and the owner's vault records you as its user until the rental ends. You pay the daily fee for the whole term up front, plus a buffer, a small share of the rent the listing fixes when it is posted; both move from your wallet into your own vault and pay the owner as the rent falls due. With pro-rata rent you pay for the days you use, a part day counted as a whole day, and the unused rent comes back to you when you close; with full-term rent the whole term is owed. The buffer comes back too when you close on time. A rental does not close by itself: close it from its position page before the grace period ends, or it defaults, and then the rent goes to the owner and the buffer to the protocol. A rental has no collateral and no health factor, so no price can liquidate it; the protocol's risk check looks only at the token you pay with.",
+      "Renting gives you the right to use an NFT for a set number of days, never the NFT itself: it stays in its owner's vault, and the owner's vault records you as its user until the rental ends. You pay the daily fee for the whole term up front, plus a buffer, a small share of the rent the listing fixes when it is posted; both move from your wallet into your own vault and pay the owner as the rent falls due. With pro-rata rent you pay for the days you use, a part day counted as a whole day, and the unused rent comes back to you when you close; with full-term rent the whole term is owed. The buffer comes back too when you close on time. Once every agreed day has been settled, which anyone may do, the rental closes by itself and the buffer is yours to claim. Until then you can close it from its position page; after the grace period anyone can close it as a default, and then the rent goes to the owner and the buffer to the protocol. A rental has no collateral and no health factor, so no price can liquidate it; the protocol's risk check looks only at the token you pay with.",
       'rent-review',
     ),
   },
@@ -3266,7 +3266,7 @@ export const copy = {
       'The rent and buffer stay in your own vault for this rental. They pay the owner as the rent falls due and cannot be withdrawn while the rental is open.',
     ),
     loseNoAutoClose: A(
-      'A rental does not close by itself at the end of its term, and this app cannot close one yet: close it from its page in the current app, or it defaults when the grace period ends.',
+      'Once every agreed day has been settled, which anyone may do, the rental closes by itself and your buffer is yours to claim. Until then this app cannot close it: close it from its page in the current app, or after the grace period it can be closed as a default.',
     ),
     loseLate: A('Closing after the term but within the grace period costs a late fee, taken from the buffer.'),
     loseDefault: A('If it defaults, the rent left in your vault goes to the owner and the whole buffer to the protocol; nothing comes back to you.'),
@@ -3454,7 +3454,7 @@ export const copy = {
     loseOpen: A('The listing never lapses: it stays open until a renter takes it or you cancel it.'),
     loseLapse: A('When the listing lapses it can no longer be rented, but the NFT stays in your vault until you, or anyone, closes the listing; it then returns only to your wallet.'),
     loseUse: A('Once rented, the renter holds the right to use the NFT until the rental ends; you keep ownership, but cannot take that right back early.'),
-    loseNoAutoClose: A('A rental does not close by itself: the renter closes it, or after the grace period anyone can close it as a default.'),
+    loseNoAutoClose: A('Once every agreed day has been settled, which anyone may do, the rental closes by itself and the renter can claim the buffer back. Until then the renter can close it, or after the grace period anyone can close it as a default.'),
     loseOperator: A('Your wallet lets the protocol move every {{collection}} token you hold until the step that takes it back confirms.'),
     blockDistrusted: A('The protocol does not trust the price of {{asset}} right now, so new rentals paid in it are closed.'),
     blockNoToken: A('No NFT #{{id}} exists in this collection. Check the token number.'),
