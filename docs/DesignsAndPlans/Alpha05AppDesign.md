@@ -1708,6 +1708,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   the one ERC-721 token, or for an ERC-1155 the operator approval for this
   listing alone, taken back afterwards whatever happens; the outcome is
   measured (the listing recorded and the NFT in the owner's vault).
+  A click on review that cannot go on always says why: a field's own
+  error, a failed read of the network's longest term (stated with a
+  retry), or that a read the listing needs has not answered yet.
 
 ## 3. Companion specifications
 

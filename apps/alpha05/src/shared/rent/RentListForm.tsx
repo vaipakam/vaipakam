@@ -148,6 +148,11 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
     payment !== null &&
     tokenId !== null &&
     quantity !== null;
+  // A click that cannot go on always says why: a field's own error, the
+  // term limit's failed read (stated with a retry below the term), or, when
+  // neither stands, that a read the listing needs has not answered yet.
+  const fieldErrors = [nftError, tokenIdError, quantityError, payError, feeError, daysError, expiryError];
+  const stillReading = touched && !ready && maxDays.state !== 'failed' && fieldErrors.every((e) => e === null);
 
   const submit = async () => {
     setTouched(true);
@@ -290,6 +295,14 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
           <input id={id} inputMode="numeric" value={input.days} onChange={(e) => set({ days: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid="rent-list-days" />
         )}
       </FormField>
+      {maxDays.state === 'failed' && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="rent-list-days-unread">{format('rentList.errDaysUnread', { reason: maxDays.error ?? 'no answer' })}</span>{' '}
+          <button type="button" className="btn" onClick={maxDays.refetch} data-testid="rent-list-days-retry">
+            {text('consent.retry')}
+          </button>
+        </Notice>
+      )}
 
       <fieldset className="field">
         <legend>{text('rent.rowRule')}</legend>
@@ -320,6 +333,11 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
         </FormField>
       )}
 
+      {stillReading && (
+        <Notice tone="info" tier="A">
+          <span data-testid="rent-list-still-reading">{text('rentList.stillReading')}</span>
+        </Notice>
+      )}
       {opening !== null && (
         <Notice tone="warn" tier="A">
           {format('flow.unreadable', { reason: opening })}
