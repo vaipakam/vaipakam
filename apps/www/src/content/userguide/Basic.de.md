@@ -1485,3 +1485,15 @@ Unter Mieten öffnet „NFT zur Miete anbieten“ ein kurzes Formular: die Samml
 ### Mieten: Risiken des Anbietens
 
 Das NFT bleibt in Ihrem Vault, solange das Angebot offen ist und solange es vermietet ist, und Sie können es erst abheben, wenn Angebot oder Miete enden. Solange niemand es gemietet hat, können Sie das Angebot nach seinen ersten fünf Minuten auf seiner Seite stornieren. Ist es vermietet, hat der Mieter bis zum Ende der Miete das Nutzungsrecht, und Sie können es nicht vorzeitig zurücknehmen. Eine Miete schließt sich nicht von selbst: Der Mieter schließt sie, oder nach der Nachfrist kann jeder sie als Ausfall schließen; dann geht die Miete an Sie und der Puffer an das Protokoll. Ein abgelaufenes Angebot lässt das NFT in Ihrem Vault, bis es geschlossen wird.
+
+<a id="rent-request"></a>
+
+### Mieten: Ein NFT zur Miete anfragen
+
+Unter Mieten öffnet Mietanfrage stellen dasselbe kurze Formular wie ein Angebot, formuliert für Sie als Mieter: die Sammlung und die Nummer des Tokens (bei einer Multi-Token-Sammlung auch die Menge), der Token, in dem Sie zahlen, die Tagesgebühr als eine einzige Zahl, die Laufzeit in Tagen, die Mietregel und wie lange die Anfrage offen bleibt. Die Prüfung zeigt, dass die Miete für die ganze Laufzeit und ein Puffer jetzt von Ihrer Wallet in Ihren eigenen Vault gehen, den Pufferanteil, den diese Anfrage zur heutigen Einstellung festlegt, dass die Laufzeit beginnt, wenn ein Eigentümer die Anfrage annimmt, und dass ein Eigentümer, der sie annimmt, die Miete sofort startet, ohne weiteren Schritt von Ihnen. Hält Ihre Wallet zu wenig oder schon genau dieses NFT, sagt die Prüfung das vor jedem Wallet-Schritt; ein Token, den es noch nicht gibt, wird vermerkt. Danach genehmigt Ihre Wallet genau die Miete und den Puffer und stellt die Anfrage, die die App zuerst als Probelauf prüft. Anschließend prüft die App auf der Chain, dass die Anfrage erfasst wurde und Miete und Puffer in Ihrem Vault angekommen sind, und verlinkt die Seite der Anfrage.
+
+<a id="rent-request-risks"></a>
+
+### Mieten: Risiken einer Mietanfrage
+
+Miete und Puffer bleiben in Ihrem Vault, solange die Anfrage offen ist, und Sie können sie erst abheben, wenn Sie sie stornieren oder sie endet. Solange kein Eigentümer sie angenommen hat, können Sie die Anfrage nach ihren ersten fünf Minuten auf ihrer Seite stornieren, und beides kommt in Ihre Wallet zurück. Ein Eigentümer, der sie annimmt, startet die Miete sofort zu genau diesen Bedingungen: Sie halten das Recht, das NFT zu nutzen, nie das NFT selbst. Eine Miete endet nicht von selbst: Beenden Sie sie auf ihrer Positionsseite. Wer zu spät beendet, zahlt eine Verspätungsgebühr aus dem Puffer, und bei einem Ausfall geht die Miete an den Eigentümer und der Puffer an das Protokoll. Eine abgelaufene Anfrage lässt Miete und Puffer in Ihrem Vault, bis sie geschlossen wird. Der Pufferanteil ist die Einstellung des Protokolls, wenn die Anfrage auf der Chain landet: Ändert sie sich nach Ihrer Prüfung, wird ein höherer Anteil abgelehnt, wenn Ihre Wallet genau diesen Betrag freigegeben hat, und eingezogen, wenn eine frühere Freigabe ihn deckt; das Ergebnis nennt, was bewegt wurde.

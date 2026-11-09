@@ -64,7 +64,7 @@ test('an empty rental book offers the faucet; an owner lists an NFT and a renter
   await expect(page.getByTestId('offer-book-tabs')).toHaveCount(0);
   await expect(page.getByTestId('rent-empty')).toContainText('No NFT is listed for rent', { timeout: 60_000 });
   await expect(page.getByTestId('rent-faucet')).toHaveAttribute('href', '/#faucet');
-  await expect(page.getByTestId('rent-list')).toContainText('comes here next');
+  await expect(page.getByTestId('rent-request-open')).toBeVisible();
   await fitsWidth(page);
 
   // The owner lists an NFT for rent: 2 tokens a day for 5 days.

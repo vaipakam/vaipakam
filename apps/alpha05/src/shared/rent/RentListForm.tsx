@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -69,7 +69,43 @@ function chosen(value: string, pasted: string): Hex | null {
   return value === '' ? null : (value as Hex);
 }
 
+/** Which form: an owner's listing (NFT-01) or a renter's request (NFT-02).
+ *  Both carry the same terms; the words and the test ids differ. */
+export type RentFormSide = 'list' | 'request';
+
+const SIDE_KEYS = {
+  list: {
+    title: 'rentList.formTitle',
+    lead: 'rentList.formLead',
+    quantity: 'rentList.quantityLabel',
+    pay: 'rentList.payLabel',
+    expiry: 'rentList.rowExpiry',
+    expiryDays: 'rentList.expiryDaysLabel',
+    multiHint: 'rentList.multiHint',
+    continue: 'rentList.continue',
+    proRata: 'rentList.ruleProRata',
+    fullTerm: 'rentList.ruleFullTerm',
+    whySummary: 'rentList.whySummary',
+    why: 'rentList.why',
+  },
+  request: {
+    title: 'rentRequest.formTitle',
+    lead: 'rentRequest.formLead',
+    quantity: 'rentRequest.quantityLabel',
+    pay: 'rentRequest.payLabel',
+    expiry: 'rentRequest.rowExpiry',
+    expiryDays: 'rentRequest.expiryDaysLabel',
+    multiHint: 'rentRequest.multiHint',
+    continue: 'rentRequest.continue',
+    proRata: 'rent.ruleProRata',
+    fullTerm: 'rent.ruleFullTerm',
+    whySummary: 'rentRequest.whySummary',
+    why: 'rentRequest.why',
+  },
+} as const;
+
 interface RentListFormProps {
+  side?: RentFormSide;
   formKey: string;
   chain: SupportedChain;
   own: OwnStateClient;
@@ -78,7 +114,8 @@ interface RentListFormProps {
 }
 
 /**
- * NFT-01 — the owner's listing form: which NFT (a suggested test collection
+ * NFT-01 / NFT-02 — the owner's listing form, and the renter's request form
+ * on the same terms: which NFT (a suggested test collection
  * on a test network, or a pasted collection address, and the token's
  * number; a quantity for a multi-token collection), the token the renter
  * pays in, the daily fee, the term, the rent rule and how long the listing
@@ -86,12 +123,20 @@ interface RentListFormProps {
  * neither. Every figure is checked here for shape only; whether the protocol
  * takes the listing is its own answer, read in the review.
  */
-export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentListFormProps) {
+export function RentListForm({ side = 'list', formKey, chain, own, onReview, onCancel }: RentListFormProps) {
   const { text, format } = useCopy();
+  const keys = SIDE_KEYS[side];
+  const tid = (name: string) => `rent-${side}-${name}`;
   const ids = { nft: useId(), pay: useId() };
   const [stored, setStored] = useStoredValue<ListInput>(`${formKey}:input`);
   const input = stored ?? DEFAULT_INPUT;
-  const set = (patch: Partial<ListInput>) => setStored({ ...input, ...patch });
+  const queued = useRef(false);
+  // Any edit withdraws a click that was waiting on reads: it stands for the
+  // form as it was, never for one changed since.
+  const set = (patch: Partial<ListInput>) => {
+    queued.current = false;
+    setStored({ ...input, ...patch });
+  };
   const [touched, setTouched] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
 
@@ -152,10 +197,17 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
   // term limit's failed read (stated with a retry below the term), or, when
   // neither stands, that a read the listing needs has not answered yet.
   const fieldErrors = [nftError, tokenIdError, quantityError, payError, feeError, daysError, expiryError];
-  const stillReading = touched && !ready && maxDays.state !== 'failed' && fieldErrors.every((e) => e === null);
+  const waitingOnReads = !ready && maxDays.state !== 'failed' && fieldErrors.every((e) => e === null);
+  const stillReading = touched && waitingOnReads;
 
   const submit = async () => {
     setTouched(true);
+    // A click while only reads are outstanding is kept, and goes on by
+    // itself once they answer, so the page never needs a second click.
+    if (waitingOnReads) {
+      queued.current = true;
+      return;
+    }
     if (!ready || nft === null || payment === null || tokenId === null || quantity === null || !fee?.ok || !days?.ok) return;
     setOpening(null);
     try {
@@ -176,18 +228,26 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
     }
   };
 
+  useEffect(() => {
+    if (!queued.current || !ready) return;
+    queued.current = false;
+    void submit();
+    // submit reads this render's values; `ready` turning true is the signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
   return (
     <form
-      className="card rent-list-form"
-      data-testid="rent-list-form"
+      className={`card rent-${side}-form`}
+      data-testid={tid('form')}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
       noValidate
     >
-      <h3>{text('rentList.formTitle')}</h3>
-      <p className="tier-b">{text('rentList.formLead')}</p>
+      <h3>{text(keys.title)}</h3>
+      <p className="tier-b">{text(keys.lead)}</p>
 
       <div className="field">
         <label htmlFor={ids.nft}>{text('rentList.nftLabel')}</label>
@@ -199,7 +259,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
             set({ nft: v === OTHER ? nftPasted || OTHER : v });
             if (v !== OTHER) setNftPasted('');
           }}
-          data-testid="rent-list-nft"
+          data-testid={tid('nft')}
         >
           {nftSuggested.map((a) => (
             <option key={a} value={a}>
@@ -223,29 +283,29 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
               aria-invalid={invalid}
               autoComplete="off"
               spellCheck={false}
-              data-testid="rent-list-nft-address"
+              data-testid={tid('nft-address')}
             />
           )}
         </FormField>
       )}
       {nftChoice !== OTHER && show(nftError) && <p className="tier-a field-error">{nftError}</p>}
-      {standard.data === 'erc1155' && <p className="tier-b field-hint">{text('rentList.multiHint')}</p>}
+      {standard.data === 'erc1155' && <p className="tier-b field-hint">{text(keys.multiHint)}</p>}
 
       <FormField label={text('rentList.tokenIdLabel')} error={show(tokenIdError)}>
         {({ id, describedBy, invalid }) => (
-          <input id={id} inputMode="numeric" value={input.tokenId} onChange={(e) => set({ tokenId: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid="rent-list-token-id" />
+          <input id={id} inputMode="numeric" value={input.tokenId} onChange={(e) => set({ tokenId: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid={tid('token-id')} />
         )}
       </FormField>
       {multi && (
-        <FormField label={text('rentList.quantityLabel')} error={show(quantityError)}>
+        <FormField label={text(keys.quantity)} error={show(quantityError)}>
           {({ id, describedBy, invalid }) => (
-            <input id={id} inputMode="numeric" value={input.quantity} onChange={(e) => set({ quantity: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid="rent-list-quantity" />
+            <input id={id} inputMode="numeric" value={input.quantity} onChange={(e) => set({ quantity: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid={tid('quantity')} />
           )}
         </FormField>
       )}
 
       <div className="field">
-        <label htmlFor={ids.pay}>{text('rentList.payLabel')}</label>
+        <label htmlFor={ids.pay}>{text(keys.pay)}</label>
         <select
           id={ids.pay}
           value={payChoice}
@@ -254,7 +314,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
             set({ payment: v === OTHER ? payPasted || OTHER : v });
             if (v !== OTHER) setPayPasted('');
           }}
-          data-testid="rent-list-pay"
+          data-testid={tid('pay')}
         >
           {paySuggested.map((a) => (
             <option key={a} value={a}>
@@ -278,7 +338,7 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
               aria-invalid={invalid}
               autoComplete="off"
               spellCheck={false}
-              data-testid="rent-list-pay-address"
+              data-testid={tid('pay-address')}
             />
           )}
         </FormField>
@@ -287,18 +347,18 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
 
       <FormField label={format('rentList.feeLabel', { token: payment ? assetName(payment, meta) : '' })} hint={text('rentList.feeHint')} error={show(feeError)}>
         {({ id, describedBy, invalid }) => (
-          <input id={id} inputMode="decimal" value={input.fee} onChange={(e) => set({ fee: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid="rent-list-fee" />
+          <input id={id} inputMode="decimal" value={input.fee} onChange={(e) => set({ fee: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid={tid('fee')} />
         )}
       </FormField>
       <FormField label={text('rentList.daysLabel')} hint={max === null ? undefined : format('request.durationHint', { max: String(max) })} error={show(daysError)}>
         {({ id, describedBy, invalid }) => (
-          <input id={id} inputMode="numeric" value={input.days} onChange={(e) => set({ days: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid="rent-list-days" />
+          <input id={id} inputMode="numeric" value={input.days} onChange={(e) => set({ days: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid={tid('days')} />
         )}
       </FormField>
       {maxDays.state === 'failed' && (
         <Notice tone="warn" tier="A">
-          <span data-testid="rent-list-days-unread">{format('rentList.errDaysUnread', { reason: maxDays.error ?? 'no answer' })}</span>{' '}
-          <button type="button" className="btn" onClick={maxDays.refetch} data-testid="rent-list-days-retry">
+          <span data-testid={tid('days-unread')}>{format('rentList.errDaysUnread', { reason: maxDays.error ?? 'no answer' })}</span>{' '}
+          <button type="button" className="btn" onClick={maxDays.refetch} data-testid={tid('days-retry')}>
             {text('consent.retry')}
           </button>
         </Notice>
@@ -307,16 +367,16 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
       <fieldset className="field">
         <legend>{text('rent.rowRule')}</legend>
         <label>
-          <input type="radio" name={`${formKey}-rule`} checked={!input.fullTerm} onChange={() => set({ fullTerm: false })} data-testid="rent-list-prorata" /> {text('rentList.ruleProRata')}
+          <input type="radio" name={`${formKey}-rule`} checked={!input.fullTerm} onChange={() => set({ fullTerm: false })} data-testid={tid('prorata')} /> {text(keys.proRata)}
         </label>
         <label>
-          <input type="radio" name={`${formKey}-rule`} checked={input.fullTerm} onChange={() => set({ fullTerm: true })} data-testid="rent-list-fullterm" /> {text('rentList.ruleFullTerm')}
+          <input type="radio" name={`${formKey}-rule`} checked={input.fullTerm} onChange={() => set({ fullTerm: true })} data-testid={tid('fullterm')} /> {text(keys.fullTerm)}
         </label>
       </fieldset>
 
-      <FormField label={text('rentList.rowExpiry')}>
+      <FormField label={text(keys.expiry)}>
         {({ id }) => (
-          <select id={id} value={input.expiry} onChange={(e) => set({ expiry: e.target.value as ExpiryChoice })} data-testid="rent-list-expiry">
+          <select id={id} value={input.expiry} onChange={(e) => set({ expiry: e.target.value as ExpiryChoice })} data-testid={tid('expiry')}>
             {EXPIRY_CHOICES.map((c) => (
               <option key={c} value={c}>
                 {text(EXPIRY_LABEL[c])}
@@ -326,16 +386,16 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
         )}
       </FormField>
       {input.expiry === 'custom' && (
-        <FormField label={text('rentList.expiryDaysLabel')} error={show(expiryError)}>
+        <FormField label={text(keys.expiryDays)} error={show(expiryError)}>
           {({ id, describedBy, invalid }) => (
-            <input id={id} inputMode="numeric" value={input.expiryDays} onChange={(e) => set({ expiryDays: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid="rent-list-expiry-days" />
+            <input id={id} inputMode="numeric" value={input.expiryDays} onChange={(e) => set({ expiryDays: e.target.value })} aria-describedby={describedBy} aria-invalid={invalid} data-testid={tid('expiry-days')} />
           )}
         </FormField>
       )}
 
       {stillReading && (
         <Notice tone="info" tier="A">
-          <span data-testid="rent-list-still-reading">{text('rentList.stillReading')}</span>
+          <span data-testid={tid('still-reading')}>{text('rentList.stillReading')}</span>
         </Notice>
       )}
       {opening !== null && (
@@ -343,12 +403,12 @@ export function RentListForm({ formKey, chain, own, onReview, onCancel }: RentLi
           {format('flow.unreadable', { reason: opening })}
         </Notice>
       )}
-      <WhyLink summaryKey="rentList.whySummary" detailKey="rentList.why" />
+      <WhyLink summaryKey={keys.whySummary} detailKey={keys.why} />
       <p className="form-actions">
-        <button type="submit" className="btn btn-primary" data-testid="rent-list-continue">
-          {text('rentList.continue')}
+        <button type="submit" className="btn btn-primary" data-testid={tid('continue')}>
+          {text(keys.continue)}
         </button>{' '}
-        <button type="button" className="btn btn-link" onClick={onCancel} data-testid="rent-list-cancel">
+        <button type="button" className="btn btn-link" onClick={onCancel} data-testid={tid('cancel')}>
           {text('rentList.cancel')}
         </button>
       </p>

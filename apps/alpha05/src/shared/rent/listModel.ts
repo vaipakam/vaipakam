@@ -7,7 +7,7 @@
  * rate. Posting moves the NFT from the owner's wallet into the owner's own
  * vault, where it stays while the listing is open and while it is rented.
  */
-import { ASSET_ERC721, ASSET_ERC1155, OFFER_TYPE_LENDER, ZERO } from '../post/postModel';
+import { ASSET_ERC721, ASSET_ERC1155, OFFER_TYPE_BORROWER, OFFER_TYPE_LENDER, ZERO } from '../post/postModel';
 
 type Hex = `0x${string}`;
 
@@ -65,6 +65,16 @@ export function listParams(d: ListDraft) {
 }
 
 export type ListParams = ReturnType<typeof listParams>;
+
+/** The protocol's `CreateOfferParams` for a renter's request (NFT-02): the
+ *  same rental terms on a renter-side offer. The NFT stays with its owner
+ *  until one takes the request; posting moves the rent for the whole term
+ *  and the buffer from the renter's wallet into the renter's own vault. */
+export function requestParams(d: ListDraft) {
+  return { ...listParams(d), offerType: OFFER_TYPE_BORROWER } as const;
+}
+
+export type RequestParams = ReturnType<typeof requestParams>;
 
 /** A whole number of units, at least one, as typed. */
 export function parseUnits(text: string): bigint | null {

@@ -2600,3 +2600,15 @@ El formulario lee el estándar de la colección con ERC-165 `supportsInterface` 
 ### Alquilar: riesgos de ofrecer
 
 El NFT se queda en tu bóveda mientras la oferta está abierta y mientras está alquilado, y no puedes retirarlo hasta que termine la oferta o el alquiler. Mientras nadie lo haya alquilado, puedes cancelar la oferta desde su página pasados sus primeros cinco minutos. Una vez alquilado, el arrendatario tiene el derecho a usar el NFT hasta que termine el alquiler, y no puedes retirárselo antes. Un alquiler no se cierra solo: lo cierra el arrendatario, o pasado el periodo de gracia cualquiera puede cerrarlo como impago; entonces el alquiler va a ti y el margen al protocolo. Una oferta que caduca deja el NFT en tu bóveda hasta que se cierra.
+
+<a id="rent-request"></a>
+
+### Alquilar: pedir un NFT en alquiler
+
+El formulario lee el estándar de la colección con ERC-165 `supportsInterface` y el plazo más largo de `getProtocolConfigBundle`. La revisión lee el titular del token con `ownerOf` (un ERC-1155 no tiene lista de titulares), la clase del token de pago de `getAssetPriceStatus` y la comprobación de liquidez, el `balanceOf` y el `allowance` de la billetera en el token de pago, la parte de margen de `getRiskConfig` y el periodo de gracia de `getEffectiveGraceSeconds`, y después simula `createOffer` con `offerType` 1, `assetType` 1 o 2, `amount` y `amountMax` iguales a la tarifa diaria, todos los campos de garantía y de tipo a cero y `prepayAsset` igual al token de pago. Publicar registra `rentalBufferBpsAtCreate` y lleva la tarifa diaria por el plazo más esa parte a la bóveda del arrendatario; el resultado se lee del registro `OfferCreated` de la transacción y del registro `Transfer` del token de pago hacia la bóveda.
+
+<a id="rent-request-risks"></a>
+
+### Alquilar: riesgos de una solicitud de alquiler
+
+El alquiler y el margen se quedan en tu bóveda mientras la solicitud está abierta, y no puedes retirarlos hasta que la canceles o termine. Mientras ningún propietario la haya aceptado, puedes cancelar la solicitud desde su página pasados sus primeros cinco minutos, y vuelven a tu billetera. Un propietario que la acepta inicia el alquiler de inmediato con exactamente estas condiciones: tienes el derecho a usar el NFT, nunca el NFT en sí. Un alquiler no se cierra solo: ciérralo desde su página de posición. Cerrar tarde cuesta un recargo por retraso tomado del margen, y si entra en impago el alquiler va al propietario y el margen al protocolo. Una solicitud que caduca deja el alquiler y el margen en tu bóveda hasta que se cierre. La parte del margen es el ajuste del protocolo cuando la solicitud se registra: si cambia después de tu revisión, uno más alto se rechaza cuando tu billetera aprobó exactamente este importe y se cobra cuando una aprobación anterior lo cubre, y el resultado indica lo que se movió.
