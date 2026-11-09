@@ -1578,6 +1578,25 @@ above. Each resolves here, so a route reviewer needs no private file:
   tab. When the browser will not keep the report for the reload, the page
   does not reload: it shows the report and says why. The confirmation says what erasure does not reach: the chain, the
   alert service's records, the marketing site and the wallet app.
+- **RB-RISK-SETTINGS** — Settings › Risk access (ACC-33) states, for the
+  connected wallet on its network and from one block's reads, the level
+  that counts in words, and why it differs from the level chosen: a raise
+  still in its waiting period, with the time it counts, or new risk terms,
+  under which it counts as blue-chip until confirmed. It says whether this
+  network enforces levels at all; where it does not, the page and every
+  receipt say a change is saved and counts only if the check is switched on.
+  Strict mode is stated as on, off, or switched off and still applying until
+  a stated time. A level stopped by new risk terms is confirmed in one step
+  in either mode; changing the level or strict mode is Advanced. Each change
+  is one signed transaction through RB-CONFIDENCE (what counts now and after,
+  its reach, when it counts, no funds moved); a level change names the change
+  counter and terms version it was read with, so a write from elsewhere or
+  new terms refuse it and change nothing. A raise still waiting is never
+  offered again; lowering says pairs above the new level close to new offers
+  and requests, the wallet's own open ones included, and that open loans are
+  not affected; switching strict mode off says it is a check removed and
+  when it stops applying. Per-pair agreements and acknowledgements stay in
+  the flows that need them (RB-RISK-STEP).
 
 ## 3. Companion specifications
 
