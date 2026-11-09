@@ -1,4 +1,4 @@
-## Thread — alpha05 sets up Telegram, push and health warnings (PR #<n>)
+## Thread — alpha05 sets up Telegram, push and health warnings (PR #3420)
 
 The new app (alpha05) now sets up the alerts that reach a wallet outside the
 app. The Alerts page has a section under the inbox for Telegram, push, health
