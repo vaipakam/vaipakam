@@ -56,6 +56,14 @@ contract CollateralMonotonicityInvariant is Test {
 
             if (released[loanId]) continue;
 
+            // #3241: a periodic-interest settlement sells collateral from a loan that stays
+            // Active (spec "Periodic Interest Payments"), so a loan it sold from leaves the
+            // monotonic set the way a terminal loan does.
+            if (handler.ghostPeriodicSold(loanId)) {
+                released[loanId] = true;
+                continue;
+            }
+
             if (L.status != LibVaipakam.LoanStatus.Active) {
                 // Exited Active — stop tracking. Collateral may now legally
                 // zero out through settlement/default/repay flows.
