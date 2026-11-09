@@ -49,7 +49,7 @@ test('the inbox lists the wallet’s alerts, counts the new ones on the bell, an
         .filter({ hasText: `Loan #${id}` })
         .getByRole('link', { name: `Open loan #${id}` }),
     ).toHaveAttribute('href', `/positions/${id}`);
-    await expect(page.getByTestId('alerts-channels')).toContainText('Telegram and push alerts are still set up in the current app.');
+    await expect(page.getByTestId('alert-channels')).toContainText('Telegram, push and warnings');
     await fitsWidth(page);
 
     // Opening the page recorded what it showed: the bell counts nothing new.

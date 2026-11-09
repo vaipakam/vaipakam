@@ -1475,9 +1475,49 @@ above. Each resolves here, so a route reviewer needs no private file:
   centre clears its count when opened), states how many were new, and
   marks those it shows as New for the visit. When the latest count failed,
   the bell says the alerts could not be read and shows no count, even with
-  an earlier count in hand. The
-  page says Telegram and push alerts are still set up in the current app
-  until that part is built here.
+  an earlier count in hand. Telegram, push, health warnings and payment
+  reminders are set up below the inbox (RB-ALERT-CHANNELS).
+- **RB-ALERT-CHANNELS** — Alerts › Telegram, push and warnings (ACC-50,
+  ACC-52) sets up the alerts that reach a wallet outside the app. Every
+  change is a free signature over a plain message that names what it does,
+  taken from the one shared source the alert service rebuilds it from; the
+  service accepts each signed request once, and a repeat is refused with
+  "sign again". A settings save carries only the setting it changes, and an
+  absent setting keeps its stored value. The page states in one sentence
+  what the service stores (the wallet, the network, the settings and, once
+  linked, the Telegram chat id). The service does not report back what it
+  holds, so each card states what THIS browser has done, with its time, and
+  says a link or setting made on another device may exist. Telegram is
+  linked with a one-time code that lasts ten minutes, opened in the bot
+  through the service's link when it gives one (a link of any other shape is
+  not shown); the link is called proven only once a test alert reaches the
+  chat, and a test before the bot has the code says so. Unlinking states the
+  scope the service applied: every network for an ordinary wallet, this
+  network only for a smart account; a network whose protected mode holds
+  the chat names it and says the chat keeps every alert until the delay
+  ends, with the time the service gives, or says the delay has not started
+  because the chat has not yet been told. Those holds are kept apart from
+  the link's state, so a new code or a test alert never erases them; only a
+  later unlink answer replaces them (a one-network answer only that
+  network's). Push is offered only when the
+  service's current answer, read successfully, says it can send now; when
+  its answer covers the reminder sender only, the page says warnings may not
+  reach push; when it cannot send, push is not offered, the service's
+  reason and the sender it concerns are named, a setup reason is said to be
+  this deployment's configuration rather than an outage, and an earlier
+  switch-on made here is said to stay stored; when the service cannot be
+  asked, that is said and push is not offered. Push also needs the channel
+  subscription in the wallet's push app, and it stops by unsubscribing
+  there, which the page says. Health warnings are always on once a channel
+  is set up and have no off switch; the three lines (the service's 1.5, 1.2
+  and 1.05 unless changed) are fixed in Basic and editable in Advanced,
+  each above the next and the last above 1.0; a warning is not a promise
+  that anyone will act. Payment reminders switch off and on. Linking
+  Telegram and switching push on ask for the Terms first (ACC-15), and the
+  action asked for survives leaving the page mid-acceptance; switching
+  anything off never does. A declined signature sends nothing,
+  and every refusal has its own words and remedy. A build with no alert
+  service says Telegram and push alerts are not set up and sends nothing.
 
 ## 3. Companion specifications
 
