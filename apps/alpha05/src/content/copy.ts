@@ -413,7 +413,7 @@ export const copy = {
     title: B('Repay loan #{{id}} in full'),
     unknown: A('Whether this loan can be repaid now could not be read, so repaying is not offered yet.'),
     notRunning: B('This loan is not running, so there is nothing to repay.'),
-    rentalLater: B('Repaying a rental comes in a later update: its rent comes from the prepayment.'),
+    rentalLater: B('Closing a rental comes to this app later; close it in the current app for now.'),
     ownLoan: B('You hold the lender side, and the protocol does not let a lender repay their own loan.'),
     unread: A('What repaying depends on could not be read, so repaying is not offered yet.'),
     pastGrace: A('The grace period ended at {{time}}, so the protocol no longer accepts a repayment; the loan goes to default.'),
@@ -3259,14 +3259,16 @@ export const copy = {
     loseHeld: A(
       'The rent and buffer stay in your own vault for this rental. They pay the owner as the rent falls due and cannot be withdrawn while the rental is open.',
     ),
-    loseNoAutoClose: A('A rental does not close by itself at the end of its term: close it from its position page, or it defaults when the grace period ends.'),
+    loseNoAutoClose: A(
+      'A rental does not close by itself at the end of its term, and this app cannot close one yet: close it from its page in the current app, or it defaults when the grace period ends.',
+    ),
     loseLate: A('Closing after the term but within the grace period costs a late fee, taken from the buffer.'),
     loseDefault: A('If it defaults, the rent left in your vault goes to the owner and the whole buffer to the protocol; nothing comes back to you.'),
     losePause: A(
       'If the protocol pauses, the end of the term and the grace period move later by the length of the pause. Rent is still counted by the days that pass, never past the term.',
     ),
     loseBufferToday: A(
-      "This listing recorded no buffer of its own, so the protocol takes today's setting when the rental starts. If governance changes it first, the acceptance is refused and nothing moves.",
+      "This listing recorded no buffer of its own, so the protocol takes today's setting when the rental starts. The app re-reads it just before sending, but governance could still change it before the rental lands. A higher buffer is then refused where your wallet approves exactly this amount, and taken where an earlier approval of yours already covers it. A lower one costs you less. The outcome states what moved.",
     ),
     loseBinding: A('Signing records a binding agreement for the life of the rental.'),
     signWhy: C(

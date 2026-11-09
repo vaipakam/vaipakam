@@ -119,7 +119,9 @@ export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; ren
           <p className="tier-b" data-testid="offer-book-count">
             {format(book.hasNextPage ? 'offerBook.countMore' : 'offerBook.countAll', { shown: String(rows.length), read: String(all.length) })}
           </p>
-          {rows.length === 0 && !book.hasNextPage && empty}
+          {/* "Nothing listed" only from a complete, current read with every
+              record understood; otherwise the failure or unread notice stands. */}
+          {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && empty}
           {rows.length > 0 && (
             <ul className="rows offers-list" data-testid="offer-book-rows">
               {rows.map((r) => (

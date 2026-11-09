@@ -1678,7 +1678,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   The receipt states what the renter gets (the right to use the NFT, which
   stays in the owner's vault), the rent rule, what comes back on a timely
   close, the late fee from the buffer, the grace as today's setting, that a
-  rental never closes by itself, and what a default takes. A wallet short of
+  rental never closes by itself, that this app cannot close one yet (the
+  position page links a rental to its page in the current app), and what a
+  default takes. A listing that fixed no buffer says the protocol applies
+  today's setting at the start: the app re-reads it just before sending, a
+  change after that is refused under an exact approval and taken under an
+  earlier one that covers it, and the outcome states what moved. A wallet short of
   rent plus buffer is told so before any wallet step. The flow is the
   acceptance's (sign the exact terms, approve exactly, dry run, send, put an
   unused approval back), and the outcome is measured: the rental opened,

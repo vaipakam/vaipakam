@@ -149,7 +149,7 @@ test('an empty rental book offers the faucet; an owner lists an NFT and a renter
   await expect(receipt).toContainText('Unused rent and the whole buffer come back to you as a claim');
   await expect(receipt).toContainText('None: a rental has no collateral and no health factor');
   await expect(receipt).toContainText('You never own this NFT');
-  await expect(receipt).toContainText('does not close by itself');
+  await expect(receipt).toContainText('does not close by itself at the end of its term, and this app cannot close one yet');
   await expect(receipt).toContainText('Wallet prompts: 3.');
   await fitsWidth(page);
 
