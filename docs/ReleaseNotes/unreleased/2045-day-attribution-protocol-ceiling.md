@@ -1,4 +1,4 @@
-## Rewards mesh — one chain's absurd report can no longer stop the day (PR #<n>)
+## Rewards mesh — one chain's absurd report can no longer stop the day (PR #3471)
 
 Every chain's daily report carries two recycled figures: its lifetime total and the credit it names for the closing day. The canonical chain caps a day's accepted credit at whatever that lifetime total has not yet attributed. That cap is only as strong as the lifetime total, and the total comes from the reporting chain itself. A faulty or compromised chain that reported a near-maximum total together with a near-maximum day credit therefore had the whole day credit accepted. The day's finalization then overflowed while summing the credit of the chains it counts, and stopped. That left the day unfinalized for every chain, not just the one that misreported.
 
