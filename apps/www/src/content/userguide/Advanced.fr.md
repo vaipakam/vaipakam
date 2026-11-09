@@ -1431,6 +1431,12 @@ direction dangereuse déclenche une fois via les canaux
 configurés. Pas d'état on-chain ni de gas. Les alertes sont
 consultatives — elles ne déplacent pas de fonds.
 
+<a id="alerts-inbox"></a>
+
+### La boîte des Alertes
+
+La page Alertes lit la boîte de l'index pour le wallet connecté sur son réseau, les plus récentes d'abord, cinquante lignes à la fois. Une ligne est écrite pour le wallet qui détient la position du prêt au moment de l'écriture : prêt démarré ; remboursement partiel et total, y compris clôture anticipée, refinancement, swap-to-repay et clôture par vente de la garantie ; défaut ou liquidation ; clôture par appariement interne ; un prêt dont l'index a vu la fin sans pouvoir dire comment ; les avis d'échéance à 7 jours et à 1 jour ; entrée et fin du délai de grâce ; et santé sous 1,5, 1,2 et 1,05. Les lignes de santé sont écrites par le keeper du protocole : elles n'arrivent que tant qu'il tourne, et seulement pour les prêts auxquels la santé s'applique. Les lignes de dernier avis et d'expiration d'une entrée de récompense vont à son propriétaire. Une ligne est un pointeur, jamais un montant : la page du prêt lit la chaîne. Une réponse pour un autre réseau ou un autre wallet est refusée, les lignes illisibles sont comptées, et un type inconnu est affiché par son nom. Le compteur de l'en-tête est le décompte fait par l'index lui-même, sur toutes les lignes, des lignes dont l'id dépasse le plus récent noté comme vu dans ce navigateur ; les ids ne font que croître dans l'ordre d'écriture, donc une ligne portant un bloc plus ancien compte aussi. Ouvrir la page note comme vues toutes les lignes écrites jusque-là. La marque de lecture vit dans ce navigateur seulement et ne fait qu'avancer. Telegram et push, plus bas, se configurent encore dans l'application actuelle. Une ligne est un historique : elle dit où en était le prêt ou l'entrée quand elle a été écrite, jamais que c'est encore le cas, et une ligne d'expiration de récompense signifie que le retour de l'entrée au programme a commencé, pas qu'il est terminé.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Échelle de seuils

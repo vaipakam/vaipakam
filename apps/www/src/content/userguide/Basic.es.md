@@ -658,6 +658,12 @@ pequeño servicio off-chain vigila tus préstamos cada cinco minutos y
 te envía un ping en el momento en que la puntuación cruza una banda
 de peligro. No hay coste de gas; nada ocurre on-chain.
 
+<a id="alerts-inbox"></a>
+
+### La bandeja de Alertas
+
+La página Alertas muestra los avisos que el índice del protocolo guarda para tu wallet en la red en la que estás, los más recientes primero. Es gratis y no hay que darse de alta en nada. Se escribe un aviso cuando un préstamo empieza, se devuelve en parte o del todo, entra en impago o se liquida, se acerca a su vencimiento, entra en su periodo de gracia o sale de él, o su salud baja de 1,5, 1,2 o 1,05, y cuando una entrada de recompensa se acerca a su plazo de reclamación o lo pasa. Cada aviso abre el préstamo, cuya página lo lee de la cadena, o Claims para una recompensa. La campana junto a tu wallet, arriba, cuenta los avisos llegados desde la última vez que abriste la página en este navegador. Si el índice no se puede leer, la página lo dice en lugar de mostrar una bandeja vacía. Los avisos por Telegram y push, descritos abajo, todavía se configuran en la app actual. Cada alerta describe cómo estaban las cosas cuando se escribió; abra el préstamo para ver cómo está ahora.
+
 <a id="alerts.threshold-ladder"></a>
 
 ### Escalera de umbrales
