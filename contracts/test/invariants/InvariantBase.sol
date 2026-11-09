@@ -53,6 +53,10 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
+import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
+import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
+import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title InvariantBase
@@ -186,7 +190,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](39);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -372,8 +376,29 @@ contract InvariantBase is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireConfigFacetSelectors()
         });
+        // #3241 - the handlers drive a refinance: the borrower sets its refinance caps
+        // (AutoLifecycleFacet), posts a refinance request and attaches its payoff permit
+        // (RefinancePayoffFacet), and a lender's accept completes it (RefinanceFacet).
+        cuts[39] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RefinanceFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinanceFacetSelectors()
+        });
+        cuts[40] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RefinancePayoffFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
+        });
+        cuts[41] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(AutoLifecycleFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getAutoLifecycleFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // The payoff permit is pulled through Permit2; the mock moves tokens on the owner's
+        // approval of it and holds nothing itself.
+        RefinancePayoffPermitHelper.install();
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
     }

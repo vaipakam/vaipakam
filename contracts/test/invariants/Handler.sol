@@ -23,6 +23,8 @@ import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirect
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {LibSwap} from "../../src/libraries/LibSwap.sol";
+import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title Handler
@@ -74,6 +76,8 @@ contract Handler is Test {
     mapping(uint256 => bool) public ghostPeriodicSold;
     /// @dev #3241 — the loan an offset offer was posted to close (0 for an ordinary offer).
     mapping(uint256 => uint256) public ghostOffsetOf;
+    /// @dev #3241 — the loan a refinance request was posted to replace (0 for an ordinary offer).
+    mapping(uint256 => uint256) public ghostRefinanceOf;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -341,6 +345,67 @@ contract Handler is Test {
             lenderOfferIds.push(offerId);
             ghostOffsetOf[offerId] = loanId;
         } catch {}
+    }
+
+    /// @notice #3241 — the borrower of an active loan asks to refinance it: it consents to a rate
+    ///         cap, posts a refinance request for the loan's principal on the loan's own
+    ///         collateral (carried over, so nothing is pledged again), and attaches the payoff
+    ///         permit that pays what the new lender's principal does not cover. Nothing crosses
+    ///         parties. When a lender accepts the request, the replacement loan opens and the
+    ///         original closes in the same transaction, so `acceptBorrowerOffer` completes it.
+    function refinanceRequest(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        callCount["refinanceRequest"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+        rateBps = bound(rateBps, 100, 2000);
+        durationDays = bound(durationDays, 1, 365);
+
+        LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: L.principalAsset,
+            amount: L.principal,
+            interestRateBps: rateBps,
+            collateralAsset: L.collateralAsset,
+            collateralAmount: L.collateralAmount,
+            durationDays: durationDays,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: L.prepayAsset,
+            collateralAssetType: L.collateralAssetType,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: true,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: L.principal,
+            interestRateBpsMax: rateBps,
+            collateralAmountMax: L.collateralAmount,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Aon, // a refinance request is all-or-nothing
+            refinanceTargetLoanId: loanId,
+            useFullTermInterest: false
+        });
+
+        vm.startPrank(L.borrower);
+        try AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+            loanId, true, uint16(rateBps), uint64(block.timestamp + 400 days)
+        ) {
+            try OfferCreateFacet(diamond).createOffer(p) returns (uint256 offerId) {
+                vm.stopPrank();
+                RefinancePayoffPermitHelper.attach(diamond, L.borrower, L.principalAsset, offerId);
+                borrowerOfferIds.push(offerId);
+                ghostRefinanceOf[offerId] = loanId;
+                return;
+            } catch {}
+        } catch {}
+        vm.stopPrank();
     }
 
     /// @notice The lender of an active loan sells the position into a standing

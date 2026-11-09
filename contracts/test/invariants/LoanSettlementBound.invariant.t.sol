@@ -44,15 +44,22 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *         offers carry a monthly cadence), both accept directions, full and partial repayment,
  *         the direct preclose, collateral top-up, the lender's direct sale, the periodic-interest
  *         settlement, time-based default and HF liquidation (both name the failing venue, so
- *         they reach the in-kind fallback), the preclose offset and both claims. An offset
+ *         they reach the in-kind fallback), the preclose offset, the refinance and both claims.
+ *         An offset
  *         accept is one action over two loans: the ledger gives the new loan exactly its
  *         origination (so its LIF is checked as on any accept) and books every other movement
  *         against the loan it closes, whose lender cap then runs to the end of the original
  *         term (the offset pays the rest of the term's interest the new offer does not earn).
  *         One offset accept is not driven: an acceptor that already holds the closing loan's
  *         lender side, whose single delta cannot be split between its two roles.
- *         Refinance and rentals are not yet driven; #3241 tracks them, and the vault outflow
- *         seam (#3205) is where this check is meant to bind every one of them.
+ *         A refinance accept is also one action over two loans, with the borrower on both: the
+ *         replacement loan's borrower is credited the net principal the contract states it
+ *         paid the original lender, so the replacement's LIF is checked as on any lender accept,
+ *         and the rest of the borrower's delta is the original loan's payoff, which must be
+ *         exact when it closes on time with no partial. The same two-role case is not driven
+ *         (an acceptor already on the closing loan's lender side).
+ *         Rentals are not yet driven; #3241 tracks them, and the vault outflow seam (#3205) is
+ *         where this check is meant to bind every path.
  *
  * @dev    Run: `forge test --match-path test/invariants/LoanSettlementBound.invariant.t.sol`
  *         (the `cifast` profile does not compile `test/invariants`).
@@ -83,6 +90,7 @@ contract LoanSettlementBoundInvariant is Test {
         assertEq(ledger.interestViolations(), 0, why);
         assertEq(ledger.periodicViolations(), 0, why);
         assertEq(ledger.offsetViolations(), 0, why);
+        assertEq(ledger.refinanceViolations(), 0, why);
     }
 
     /// @notice S2-S6 over every booked loan.
@@ -163,6 +171,7 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("periodic just-stamps", ledger.periodicStamped());
         console.log("periodic sales", ledger.periodicSold());
         console.log("offset closes", ledger.offsetLanded());
+        console.log("refinances", ledger.refinanceLanded());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -285,6 +294,29 @@ contract LoanSettlementBoundInvariant is Test {
 
         ledger.claimAsLender(0);
         ledger.claimAsBorrower(0);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksARefinance() public {
+        // Borrower 1 borrows from lender 1 for 60 days, then asks to refinance at 8% for 30 days
+        // on the same collateral, and lender 2 takes the request.
+        ledger.createBorrowerOffer(1, 1_000 ether, 60, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        uint256 checksBefore = ledger.interestChecks();
+        ledger.warp(5 days);
+        ledger.refinanceRequest(0, 800, 30);
+        ledger.acceptBorrowerOffer(2, 0);
+        assertEq(ledger.refinanceLanded(), 1, "refinance did not close the original loan");
+        assertEq(ledger.bookedLoanCount(), 2, "the replacement loan was not booked");
+        assertEq(ledger.interestChecks(), checksBefore + 1, "the original's payoff was not checked exactly");
+
+        ledger.claimAsLender(0);
+        ledger.warp(10 days);
+        ledger.repay(1);
+        ledger.claimAsLender(1);
+        ledger.claimAsBorrower(1);
 
         invariant_PerActionChecksHold();
         invariant_NoLoanPaysOutMoreThanEnteredIt();

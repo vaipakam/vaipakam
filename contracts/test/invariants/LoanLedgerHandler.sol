@@ -10,6 +10,8 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /**
  * @title  LoanLedgerHandler
@@ -121,6 +123,7 @@ contract LoanLedgerHandler is Test {
     uint256 public interestViolations;
     uint256 public periodicViolations;
     uint256 public offsetViolations;
+    uint256 public refinanceViolations;
     string public firstViolation;
 
     // ── Coverage counters: how often each per-action check actually ran ──
@@ -133,6 +136,7 @@ contract LoanLedgerHandler is Test {
     uint256 public periodicStamped;
     uint256 public periodicSold;
     uint256 public offsetLanded;
+    uint256 public refinanceLanded;
 
     /// @dev Set only while a periodic-interest sale is booked: the one action the market may trade in.
     bool internal marketOpen;
@@ -200,9 +204,37 @@ contract LoanLedgerHandler is Test {
 
     function acceptBorrowerOffer(uint256 lenderSeed, uint256 offerIdx) external {
         uint256 n = inner.loanIdsLength();
+        uint256 refinanceOf = _pickedRefinanceLoan(offerIdx);
+        if (refinanceOf == 0) {
+            Snap memory before0 = _snap();
+            inner.acceptBorrowerOffer(lenderSeed, offerIdx);
+            _afterAccept(n, before0, false);
+            return;
+        }
+        // A refinance accept by a lender who already holds the closing loan's lender side puts
+        // one party on both loans, and its delta cannot be split between them. Not driven.
+        address acceptor = base.lenderAt(lenderSeed);
+        LoanBook storage b1 = books[refinanceOf];
+        if (acceptor == b1.lender || b1.lenderSide[acceptor]) return;
+        LibVaipakam.Loan memory pre = _loan(refinanceOf);
         Snap memory before = _snap();
+        vm.recordLogs();
         inner.acceptBorrowerOffer(lenderSeed, offerIdx);
-        _afterAccept(n, before, false);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        if (inner.loanIdsLength() == n) {
+            _requireNoMovement(before, "refinance accept (no loan)");
+            return;
+        }
+        _afterRefinanceAccept(n, refinanceOf, pre, before, logs);
+    }
+
+    /// @notice #3241: the borrower asks to refinance a loan. Consenting to the rate cap, posting
+    ///         the request on the loan's own collateral and attaching the payoff permit move
+    ///         nothing.
+    function refinanceRequest(uint256 loanIdx, uint256 rateBps, uint256 durationDays) external {
+        Snap memory before = _snap();
+        inner.refinanceRequest(loanIdx, rateBps, durationDays);
+        _requireNoMovement(before, "refinanceRequest");
     }
 
     function repay(uint256 loanIdx) external {
@@ -644,6 +676,118 @@ contract LoanLedgerHandler is Test {
         b1.offsetClosed = true;
         b1.hadPartial = true; // closed by the offset, not by an on-time repayment
         offsetLanded++;
+    }
+
+    /// @dev The loan a refinance request was posted to replace, replaying the inner handler's
+    ///      pick over the open borrower offers; 0 when the picked offer is an ordinary one.
+    function _pickedRefinanceLoan(uint256 offerIdx) internal view returns (uint256 loanId) {
+        uint256 len = inner.borrowerOfferIdsLength();
+        if (len == 0) return 0;
+        loanId = inner.ghostRefinanceOf(inner.borrowerOfferIds(_boundView(offerIdx, 0, len - 1)));
+        if (!books[loanId].known) return 0;
+    }
+
+    /// @dev #3241: accepting a refinance request is ONE action over TWO loans. It opens the
+    ///      replacement loan (the acceptor C lends to the borrower B) and closes the original
+    ///      (its lender side L is paid off). B is a party to both, so its delta is split. C's
+    ///      net principal never reaches B: it pays L, vault to vault, and B's wallet pays the
+    ///      rest of L's payoff and the treasury cut. The contract's `RefinancePayoffSettled`
+    ///      states that net principal, and it is used for one thing only, to apportion B's
+    ///      single delta: the replacement loan's borrower is credited the net principal (so its
+    ///      Loan Initiation Fee and C's matcher share are checked as on any lender accept), and
+    ///      everything else B moved is the original loan's payoff, which must then be exactly
+    ///      principal plus interest to the second when it closes on time with no partial. The
+    ///      totals across the two books stay exactly what was observed.
+    function _afterRefinanceAccept(
+        uint256 lenBefore,
+        uint256 oldLoanId,
+        LibVaipakam.Loan memory pre,
+        Snap memory before,
+        Vm.Log[] memory logs
+    ) internal {
+        uint256 newLoanId = inner.loanIdAt(lenBefore);
+        _register(newLoanId);
+        LoanBook storage b1 = books[oldLoanId];
+        LoanBook storage b2 = books[newLoanId];
+        bookedActions++;
+        b1.lastActionTs = block.timestamp;
+        b2.lastActionTs = block.timestamp;
+        if (b2.borrower != b1.borrower) {
+            refinanceViolations++;
+            _flag("refinance: the replacement loan's borrower is not the original loan's borrower");
+        }
+        (bool found, uint256 net) = _refinanceNet(logs, oldLoanId, newLoanId);
+        if (!found) {
+            refinanceViolations++;
+            _flag("refinance: the accept opened a loan but stated no payoff for the original");
+        }
+        Snap memory s = _snap();
+        int256[2] memory dB2;
+        dB2[USDC] = int256(net);
+        for (uint256 a = 0; a < 2; a++) {
+            int256 dCNew;
+            for (uint256 i = 0; i < 6; i++) {
+                int256 d = _delta(s.actor[i][a], before.actor[i][a]);
+                if (actors[i] == b2.lender) {
+                    dCNew = d;
+                } else if (actors[i] == b1.borrower) {
+                    b1.dBorrower[a] += d - dB2[a];
+                } else if (actors[i] == b1.lender || b1.lenderSide[actors[i]]) {
+                    b1.dLender[a] += d;
+                } else if (d != 0) {
+                    isolationViolations++;
+                    _flag("refinance accept: a non-party's holdings moved");
+                }
+            }
+            int256 diamondNew = -(dCNew + dB2[a]);
+            b2.dLender[a] += dCNew;
+            b2.dBorrower[a] += dB2[a];
+            b2.dDiamond[a] += diamondNew;
+            b1.dDiamond[a] += _delta(s.diamond[a], before.diamond[a]) - diamondNew;
+            b1.dCaller[a] += _delta(s.caller[a], before.caller[a]);
+            if (s.market[a] != before.market[a]) {
+                isolationViolations++;
+                _flag("refinance accept: the market traded outside a periodic sale");
+            }
+            if (s.outside[a] != before.outside[a]) {
+                perimeterViolations++;
+                _flag("refinance accept: tokens crossed the tracked perimeter");
+            }
+        }
+        _checkAccept(newLoanId, dB2, false);
+
+        if (_loan(oldLoanId).status != LibVaipakam.LoanStatus.Repaid) {
+            refinanceViolations++;
+            _flag("refinance accept: the request was taken but the original loan did not close");
+            return;
+        }
+        // The original loan's own share of this action, for the exact on-time interest check.
+        int256[2] memory dBOld;
+        for (uint256 i = 0; i < 6; i++) {
+            if (actors[i] != b1.borrower) continue;
+            for (uint256 a = 0; a < 2; a++) {
+                dBOld[a] = _delta(s.actor[i][a], before.actor[i][a]) - dB2[a];
+            }
+        }
+        _checkExactInterest(oldLoanId, pre, dBOld);
+        refinanceLanded++;
+    }
+
+    /// @dev The net principal `RefinancePayoffSettled` states moved from the new lender to the
+    ///      original loan's lender, for this pair of loans.
+    function _refinanceNet(Vm.Log[] memory logs, uint256 oldLoanId, uint256 newLoanId)
+        internal
+        view
+        returns (bool found, uint256 net)
+    {
+        bytes32 topic = RefinanceFacet.RefinancePayoffSettled.selector;
+        for (uint256 i = 0; i < logs.length; i++) {
+            Vm.Log memory l = logs[i];
+            if (l.emitter != diamond || l.topics.length != 4 || l.topics[0] != topic) continue;
+            if (uint256(l.topics[1]) != oldLoanId || uint256(l.topics[2]) != newLoanId) continue;
+            (net,,) = abi.decode(l.data, (uint256, uint256, uint256));
+            return (true, net);
+        }
     }
 
     /// @dev Books the change since `before` against `loanId`, flags isolation and perimeter
