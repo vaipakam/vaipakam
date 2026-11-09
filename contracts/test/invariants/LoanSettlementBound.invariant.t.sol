@@ -7,6 +7,9 @@ import {InvariantBase} from "./InvariantBase.sol";
 import {LoanLedgerHandler} from "./LoanLedgerHandler.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC4907} from "../../src/interfaces/IERC4907.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 
 /**
  * @title  LoanSettlementBoundInvariant
@@ -44,15 +47,22 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *         offers carry a monthly cadence), both accept directions, full and partial repayment,
  *         the direct preclose, collateral top-up, the lender's direct sale, the periodic-interest
  *         settlement, time-based default and HF liquidation (both name the failing venue, so
- *         they reach the in-kind fallback), the preclose offset and both claims. An offset
+ *         they reach the in-kind fallback), the preclose offset, the refinance and both claims.
+ *         An offset
  *         accept is one action over two loans: the ledger gives the new loan exactly its
  *         origination (so its LIF is checked as on any accept) and books every other movement
  *         against the loan it closes, whose lender cap then runs to the end of the original
  *         term (the offset pays the rest of the term's interest the new offer does not earn).
  *         One offset accept is not driven: an acceptor that already holds the closing loan's
  *         lender side, whose single delta cannot be split between its two roles.
- *         Refinance and rentals are not yet driven; #3241 tracks them, and the vault outflow
- *         seam (#3205) is where this check is meant to bind every one of them.
+ *         A refinance accept is also one action over two loans, with the borrower on both: the
+ *         replacement loan's borrower is credited the net principal the contract states it
+ *         paid the original lender, so the replacement's LIF is checked as on any lender accept,
+ *         and the rest of the borrower's delta is the original loan's payoff, which must be
+ *         exact when it closes on time with no partial. The same two-role case is not driven
+ *         (an acceptor already on the closing loan's lender side).
+ *         Rentals are not yet driven; #3241 tracks them, and the vault outflow seam (#3205) is
+ *         where this check is meant to bind every path.
  *
  * @dev    Run: `forge test --match-path test/invariants/LoanSettlementBound.invariant.t.sol`
  *         (the `cifast` profile does not compile `test/invariants`).
@@ -83,6 +93,8 @@ contract LoanSettlementBoundInvariant is Test {
         assertEq(ledger.interestViolations(), 0, why);
         assertEq(ledger.periodicViolations(), 0, why);
         assertEq(ledger.offsetViolations(), 0, why);
+        assertEq(ledger.refinanceViolations(), 0, why);
+        assertEq(ledger.rentalViolations(), 0, why);
     }
 
     /// @notice S2-S6 over every booked loan.
@@ -118,6 +130,12 @@ contract LoanSettlementBoundInvariant is Test {
             assertGe(dB, -posted, "S4: borrower lost more collateral than was posted");
         }
 
+        (bool isRental,,,,) = ledger.loanRental(loanId);
+        if (isRental) {
+            _checkRental(loanId);
+            return;
+        }
+
         // S5 / S6 -- principal asset
         {
             (int256 dL, int256 dB,,) = ledger.loanDeltas(loanId, USDC);
@@ -151,6 +169,45 @@ contract LoanSettlementBoundInvariant is Test {
         }
     }
 
+    /// @dev S9 -- an NFT rental. Its money is the USDC prepayment: the lender side never receives
+    ///      more than it (the whole term's rent plus the buffer, which is what the late fee is
+    ///      drawn from), and the renter never pays more than it nor nets any USDC. The rented NFT
+    ///      never leaves the lender: it is in the lender's vault or, once claimed back, its
+    ///      wallet. And a rental that has closed has taken the renter's user rights with it,
+    ///      unless the same renter has since rented the token again.
+    function _checkRental(uint256 loanId) internal view {
+        (, uint256 tokenId, uint256 prepay, address lender, address borrower) = ledger.loanRental(loanId);
+        (int256 dL, int256 dB,,) = ledger.loanDeltas(loanId, USDC);
+        assertLe(dL, int256(prepay), "S9: a rental paid its lender more than the prepayment");
+        assertGe(dB, -int256(prepay), "S9: a renter paid more than its prepayment");
+        assertLe(dB, 0, "S9: a renter netted principal asset");
+        address diamond = address(base.diamond());
+        address nft = base.mockNft();
+        address holder = IERC721(nft).ownerOf(tokenId);
+        assertTrue(
+            holder == lender || holder == VaultFactoryFacet(diamond).getUserVaultAddress(lender),
+            "S9: the rented NFT left its lender"
+        );
+        LibVaipakam.Loan memory L = LoanFacet(diamond).getLoanDetails(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active && IERC4907(nft).userOf(tokenId) == borrower) {
+            assertTrue(_rentedAgainBy(tokenId, borrower), "S9: a closed rental left the renter its user rights");
+        }
+    }
+
+    /// @dev Whether an Active booked rental of `tokenId` is held by `borrower`.
+    function _rentedAgainBy(uint256 tokenId, address borrower) internal view returns (bool) {
+        uint256 n = ledger.bookedLoanCount();
+        for (uint256 i = 0; i < n; i++) {
+            uint256 id = ledger.bookedLoanIds(i);
+            (bool r, uint256 t,,, address b) = ledger.loanRental(id);
+            if (!r || t != tokenId || b != borrower) continue;
+            if (LoanFacet(address(base.diamond())).getLoanDetails(id).status == LibVaipakam.LoanStatus.Active) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// @notice Coverage readout: an invariant over a path the run never took proves nothing.
     function afterInvariant() external view {
         console.log("booked loans", ledger.bookedLoanCount());
@@ -163,6 +220,11 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("periodic just-stamps", ledger.periodicStamped());
         console.log("periodic sales", ledger.periodicSold());
         console.log("offset closes", ledger.offsetLanded());
+        console.log("refinances", ledger.refinanceLanded());
+        console.log("rentals opened", ledger.rentalsOpened());
+        console.log("rent deductions", ledger.rentDeductions());
+        console.log("rentals closed by their last deduction", ledger.rentalsFullyDeducted());
+        console.log("exact rental settlements", ledger.rentalChecks());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -283,6 +345,106 @@ contract LoanSettlementBoundInvariant is Test {
         (bool closed,) = ledger.loanOffset(oldLoanId);
         assertTrue(closed, "original loan not marked offset-closed");
 
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksARefinance() public {
+        // Borrower 1 borrows from lender 1 for 60 days, then asks to refinance at 8% for 30 days
+        // on the same collateral, and lender 2 takes the request.
+        ledger.createBorrowerOffer(1, 1_000 ether, 60, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        uint256 checksBefore = ledger.interestChecks();
+        ledger.warp(5 days);
+        ledger.refinanceRequest(0, 800, 30);
+        ledger.acceptBorrowerOffer(2, 0);
+        assertEq(ledger.refinanceLanded(), 1, "refinance did not close the original loan");
+        assertEq(ledger.bookedLoanCount(), 2, "the replacement loan was not booked");
+        assertEq(ledger.interestChecks(), checksBefore + 1, "the original's payoff was not checked exactly");
+
+        ledger.claimAsLender(0);
+        ledger.warp(10 days);
+        ledger.repay(1);
+        ledger.claimAsLender(1);
+        ledger.claimAsBorrower(1);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksARentalEndToEnd() public {
+        // Lender 0 rents out an NFT at 10 USDC a day for 7 days; borrower 1 rents it, two days'
+        // rent is deducted, and the rental closes early on day 4 (3.5 days used, so 4 owed).
+        ledger.createRentalOffer(0, 0, 10 ether, 7);
+        ledger.acceptRentalOffer(1, 0);
+        assertEq(ledger.rentalsOpened(), 1, "rental did not open");
+        ledger.warp(1 days + 1);
+        ledger.autoDeductDaily(0);
+        ledger.warp(1 days);
+        ledger.autoDeductDaily(0);
+        assertEq(ledger.rentDeductions(), 2, "the daily deductions did not run");
+        ledger.warp(1.5 days);
+        ledger.repay(0);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+        assertEq(ledger.rentalChecks(), 2, "the rental's settlement was not checked exactly");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksAPreclosedRental() public {
+        // A direct preclose is the spec's Option 1: the renter owes the whole agreed term (5 days
+        // at 4 USDC), however early it closes, and the ledger checks both sides against that.
+        ledger.createRentalOffer(1, 2, 4 ether, 5);
+        ledger.acceptRentalOffer(2, 0);
+        ledger.warp(1 days + 1);
+        ledger.autoDeductDaily(0);
+        ledger.warp(6 hours);
+        ledger.precloseDirect(0);
+        assertEq(ledger.precloseLanded(), 1, "the rental preclose did not land");
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+        assertEq(ledger.rentalChecks(), 2, "the preclosed rental's settlement was not checked exactly");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksARentalPaidByItsDeductions() public {
+        // A 3-day rental whose every day is paid by the daily deduction: the third deduction
+        // closes it, and the ledger checks both sides against the whole term's rent. The fee
+        // does not divide by the treasury's share, so each deduction floors its share and the
+        // lender ends a few wei above the single split of the whole rent.
+        ledger.createRentalOffer(0, 1, 1 ether + 25, 3);
+        ledger.acceptRentalOffer(1, 0);
+        for (uint256 d = 0; d < 3; d++) {
+            ledger.warp(1 days + 1);
+            ledger.autoDeductDaily(0);
+        }
+        assertEq(ledger.rentDeductions(), 3, "the daily deductions did not run");
+        assertEq(ledger.rentalsFullyDeducted(), 1, "the last deduction did not close the rental");
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+        assertEq(ledger.rentalChecks(), 2, "the deducted rental's settlement was not checked exactly");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    function test_LedgerBooksADefaultedRental() public {
+        ledger.createRentalOffer(2, 3, 5 ether, 3);
+        ledger.acceptRentalOffer(0, 0);
+        ledger.warp(30 days);
+        ledger.triggerDefault(0);
+        assertTrue(
+            LoanFacet(address(base.diamond())).getLoanDetails(ledger.bookedLoanIds(0)).status
+                != LibVaipakam.LoanStatus.Active,
+            "the rental did not default"
+        );
         ledger.claimAsLender(0);
         ledger.claimAsBorrower(0);
 
