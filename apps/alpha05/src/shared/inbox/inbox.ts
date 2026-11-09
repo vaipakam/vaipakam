@@ -65,6 +65,9 @@ export interface InboxPage {
   nextBefore: string | null;
   /** Rows on this page whose shape could not be read. */
   unreadable: number;
+  /** The ids of those unreadable rows whose id itself could be read, so the
+   *  page can tell a new row it could not show from one not yet loaded. */
+  unreadableIds: number[];
 }
 
 const KINDS = new Set<string>(INBOX_KINDS);
@@ -117,12 +120,18 @@ export async function readInboxPage(indexer: IndexerClient, chainId: number, acc
   if (nextBefore === undefined) throw new IndexerUnavailable('shape', 'The index’s page cursor could not be read.');
   const rows: InboxRow[] = [];
   let unreadable = 0;
+  const unreadableIds: number[] = [];
   for (const raw of res.notifications) {
     const row = parseInboxRow(raw);
-    if (row === null) unreadable++;
-    else rows.push(row);
+    if (row !== null) {
+      rows.push(row);
+      continue;
+    }
+    unreadable++;
+    const id = typeof raw === 'object' && raw !== null ? wholeNumber((raw as Record<string, unknown>).id) : null;
+    if (id !== null) unreadableIds.push(id);
   }
-  return { rows, nextBefore, unreadable };
+  return { rows, nextBefore, unreadable, unreadableIds };
 }
 
 export interface InboxNewer {

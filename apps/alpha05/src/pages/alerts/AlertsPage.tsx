@@ -54,7 +54,16 @@ export function AlertsPage() {
     markSeen(chain.chainId, account, newestId);
   }, [ready, chain, account, newestId, newer.isPending]);
   const fresh = newer.data ? `${newer.data.count}${newer.data.capped ? '+' : ''}` : null;
-  const freshBelow = seenAtOpen !== null && newer.data !== undefined && query.hasNextPage && newer.data.count > rows.filter((r) => r.id > seenAtOpen).length;
+  // New rows still below the loaded pages are claimed only when the loaded
+  // pages cannot account for the count: every new row shown, every new row
+  // counted as unreadable, and every unreadable row whose id is unknown (it
+  // may be one of the new ones) is set against it first.
+  const loadedNew =
+    seenAtOpen === null
+      ? 0
+      : rows.filter((r) => r.id > seenAtOpen).length +
+        pages.reduce((n, p) => n + p.unreadableIds.filter((id) => id > seenAtOpen).length + (p.unreadable - p.unreadableIds.length), 0);
+  const freshBelow = seenAtOpen !== null && newer.data !== undefined && query.hasNextPage && newer.data.count > loadedNew;
 
   const failed = !indexed || query.status === 'error';
   const reason = inboxReason(query.error, indexed, text);

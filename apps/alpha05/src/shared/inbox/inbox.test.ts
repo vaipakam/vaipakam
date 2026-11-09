@@ -66,6 +66,12 @@ describe('readInboxPage', () => {
     expect(p.nextBefore).toBe('9:0:6');
   });
 
+  it('keeps the id of an unreadable row when the id itself reads, so a new row it cannot show is still placed', async () => {
+    const p = await readInboxPage(client(answer([row({ id: 12, createdAt: null }), row({ id: 'x' }), row({ id: 8, kind: 'hf_alert' })], null)), 84532, ACCOUNT);
+    expect(p.unreadable).toBe(2);
+    expect(p.unreadableIds).toEqual([12]);
+  });
+
   it.each([
     ['another network', { chainId: 1 }],
     ['another wallet', { address: '0x0000000000000000000000000000000000000001' }],
