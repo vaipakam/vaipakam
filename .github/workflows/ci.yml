@@ -293,8 +293,11 @@ jobs:
           # predeploy-check compares, the Deployment type it checks facet
           # keys against, and the manifest ExportedFacetParityTest pins.
           # A PR touching only one of those used to skip the job whose
-          # whole purpose is to compare it.
-          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$|packages/contracts/src/abis/|packages/contracts/src/deployments\.(json|ts)$|packages/contracts/scripts/diamond-facets\.json$)'
+          # whole purpose is to compare it. Also the shared Foundry
+          # installer (.github/actions/setup-foundry): contracts-fast,
+          # slither and build-docs are the only consumers of its v1.8.3 and
+          # v1.7.1 pins, so a change to it must run them.
+          CONTRACTS_RE='^(contracts/|\.gitmodules$|\.github/workflows/(ci|mainnet-gate)\.yml$|\.github/actions/setup-foundry/|packages/contracts/src/abis/|packages/contracts/src/deployments\.(json|ts)$|packages/contracts/scripts/diamond-facets\.json$)'
           if echo "$CHANGED" | grep -Eq "$CONTRACTS_RE"; then
             echo "contracts=true" >> "$GITHUB_OUTPUT"
           else
