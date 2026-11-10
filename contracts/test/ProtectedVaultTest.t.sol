@@ -537,9 +537,12 @@ contract ProtectedVaultTest is Test {
         _enable();
         bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
-        // #3379 B2 — the old nominee may still record its acceptance, but the
-        // addition belongs to the cleared posture and can never be applied.
-        P.call(address(diamond), user, s2, abi.encodeCall(VaultProtection.signerChange, (uint8(2), s2, P.direct(s2))));
+        // The old nominee's acceptance belongs to the cleared posture: it is
+        // refused, and the addition can never be applied.
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(s2);
+        vm.expectRevert(VaultProtection.NotRequested.selector);
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(2), s2, P.direct(s2))));
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
     }
@@ -855,7 +858,7 @@ contract ProtectedVaultTest is Test {
     /// @dev #3379 B2 — the switch-off waits the delay. (The "no open rows"
     ///      half of the old test is not enforced by the vault's switch-off;
     ///      see the port report.)
-    function testDisableWaitsTheDelay() public {
+    function testDisableWaitsTheDelayAndNeedsNoOpenRows() public {
         _deposit20(10 ether);
         _enable();
         uint256 id = _queue(1 ether, user);
@@ -864,6 +867,12 @@ contract ProtectedVaultTest is Test {
         P.finalizeSettings(address(diamond), user);
         assertTrue(_enabled(), "not before the delay");
         vm.warp(block.timestamp + 1);
+        // The switch-off waits while a row is queued: it was the one change
+        // due, so it says so rather than succeed doing nothing.
+        address v = address(P.vaultOf(address(diamond), user));
+        vm.expectRevert(VaultProtection.PendingRowsExist.selector);
+        VaipakamVaultImplementation(v).protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        assertTrue(_enabled(), "not while a row is queued");
         _pay().releasePayout(id);
         P.finalizeSettings(address(diamond), user);
         assertFalse(_enabled());

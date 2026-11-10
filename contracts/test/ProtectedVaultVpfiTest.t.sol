@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -90,8 +91,12 @@ contract ProtectedVaultVpfiTest is SetupTest {
         _addSigner(s1);
         _addSigner(s2);
         _addSigner(s3);
+        VaipakamVaultImplementation aliceVault = LibTestProtection.vaultOf(address(diamond), alice);
+        vm.prank(s1);
         vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadNominee.selector, s2));
-        LibTestProtection.propose(address(diamond), alice, s1, s2);
+        aliceVault.protect(
+            abi.encodeCall(VaultProtection.replacement, (uint8(1), s2, LibTestProtection.direct(s1)))
+        );
         LibTestProtection.propose(address(diamond), alice, s1, nominee);
         LibTestProtection.approve(address(diamond), alice, s2, nominee);
         vm.warp(block.timestamp + DELAY);

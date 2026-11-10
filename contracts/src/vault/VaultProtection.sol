@@ -274,7 +274,6 @@ contract VaultProtection {
                 revert PendingRowsExist();
             }
         }
-        if (!applied) revert NotRequested();
     }
 
     function _noOpenRows() private view returns (bool) {

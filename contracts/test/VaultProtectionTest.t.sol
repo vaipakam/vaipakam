@@ -125,10 +125,11 @@ contract VaultProtectionTest is SetupTest {
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (makeAddr("d3"), _signed(acct, expiry, late))));
 
         // The acct burns nonce 1: a signature given with it is void.
-        uint64 e2 = uint64(block.timestamp + 1 hours);
+        uint64 e2 = uint64(vm.getBlockTimestamp() + 1 hours);
         bytes memory burned = _addSig(makeAddr("d4"), 1, e2);
+        uint8 addPurpose = code.PURPOSE_ALLOWLIST_ADD();
         vm.prank(acct);
-        vault.protect(abi.encodeCall(VaultProtection.burnNonce, (code.PURPOSE_ALLOWLIST_ADD())));
+        vault.protect(abi.encodeCall(VaultProtection.burnNonce, (addPurpose)));
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (makeAddr("d4"), _signed(acct, e2, burned))));
