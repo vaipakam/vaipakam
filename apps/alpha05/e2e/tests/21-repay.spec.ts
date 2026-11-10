@@ -38,8 +38,10 @@ async function fitsWidth(page: Page): Promise<void> {
 test('the borrower repays in full: the payoff now and at most, an exact approval, then the loan repaid, the amount paid and the approval put back', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.3', collateralTliq: '1500', rateBps: 600, days: 30 });
-  // The borrower received the principal less the fee; the interest is on top.
-  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.2'));
+  // The principal less the fee went to the borrower's vault, not the wallet,
+  // so the wallet is funded for the whole payoff here: every test starts
+  // from the same chain, with nothing an earlier spec left in the wallet.
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.35'));
   const borrower = sc.address('borrower');
   // Below the payoff, so the flow raises it; whatever it was is what the
   // flow puts back. A larger one is the next test's case.
@@ -97,7 +99,7 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
 test('an unlimited standing approval is lowered to exactly the most the repayment can take, then put back', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30 });
-  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.06'));
   const borrower = sc.address('borrower');
   await setAllowance(sc.diamond, maxUint256);
 
@@ -127,7 +129,7 @@ test('an unlimited standing approval is lowered to exactly the most the repaymen
 test('full-term interest: the payoff does not grow, so the review says a later confirmation can still go through', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30, fullTermInterest: true });
-  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.06'));
 
   const { page } = await launchWallet('borrower');
   await page.goto(`/positions/${loanId}`);
