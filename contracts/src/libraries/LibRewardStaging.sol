@@ -125,7 +125,7 @@ library LibRewardStaging {
     event StagingRecordClosed(bytes32 indexed key, bool paid);
     /// @notice A multi-chunk claim DOMAIN opened for `user` on `side` (A2-ii):
     ///         its committed extent `[firstDay, lastDay]` and the settlement
-    ///         chunks it spans.
+    ///         chunks it spans (#1787: the preparation calls its work meter needs).
     /// @custom:event-category state-change/reward-staging
     event StagingDomainOpened(bytes32 indexed domainKey, address indexed user, uint8 side, uint64 firstDay, uint64 lastDay, uint256 chunks);
     /// @notice The claimant bound the venue domain `domainKey`'s days deliver to — by
@@ -1171,7 +1171,10 @@ library LibRewardStaging {
         dom.openedAt = uint64(block.timestamp);
         dom.deadline = 0;
         dom.lifecycleVersionAtCommit = s.rewardLifecycleVersion[user][uint8(side)];
-        dom.chunks = (last - first + 1 + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1) / LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        // #1787 — the preparation CALLS the claim's work meter needs: a call
+        // carries as many whole days as fit its budget, so a chunk is a call,
+        // no longer a fixed number of days.
+        dom.chunks = LibClaimWork.prepCalls(last - first + 1, entryIds.length, LibVaipakam.MAX_INTERACTION_CLAIM_DAYS);
         dom.leaseAccum = 0;
         dom.venueSet = false;
         dom.entryIds = entryIds;

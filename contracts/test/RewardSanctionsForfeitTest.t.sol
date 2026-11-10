@@ -2764,6 +2764,19 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         (, phase, , , , , , , , , , , ) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
     }
 
+    /// @dev #1787 — claim until the domain is prepared through its last day: a
+    ///      preparation call carries as many whole days as the work meter fits.
+    function _prepareAllDomain() internal {
+        uint256 calls;
+        while (true) {
+            _claim();
+            (, , , uint64 lastDay, uint64 prepared, , , , , , , , ) =
+                _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
+            if (prepared >= lastDay) return;
+            assertLt(++calls, 8, "the domain prepares");
+        }
+    }
+
     function _reserveAllDomain() internal {
         uint256 calls;
         while (!_domain().reserveDomainPage(_dk())) {
@@ -3297,8 +3310,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
     function test_sanc_T20_aDomainClaimantHolds_thenSetsApartEveryPreFlagDay() public {
         _longScene(DAYS);
         _liveFresh(20e18);
-        _claim();
-        _claim();
+        _prepareAllDomain();
         _reserveAllDomain();
         assertEq(_domPhase(), uint8(LibVaipakam.DomainPhase.Resolving), "fixture LIVE: an irrevocable domain");
         oracle.setFlagged(alice, true);

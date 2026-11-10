@@ -101,6 +101,24 @@ library LibClaimWork {
         return (BUDGET - WALK_DAY) / WALK_ENTRY_FIRST;
     }
 
+    /// @notice How many claim calls a domain's preparation needs: `days_`
+    ///         days, each a record over at most `entries` entries, prepared by
+    ///         calls that each carry as many WHOLE days as the meter fits
+    ///         (the first costed cold, the rest warm) and at most `maxDays`.
+    ///         The domain's deadline grants one retry cadence per call, so it
+    ///         counts the calls the meter actually needs, not days per
+    ///         `maxDays`. A model, not a promise: it assumes every day carries
+    ///         every entry and the call's whole budget is the preparation's,
+    ///         which is the costliest shape of its own extent.
+    function prepCalls(uint256 days_, uint256 entries, uint256 maxDays) internal pure returns (uint256 calls) {
+        uint256 first = PREP_DAY + entries * PREP_ENTRY_FIRST;
+        uint256 again = PREP_DAY + entries * PREP_ENTRY_DAY;
+        uint256 perCall = first > BUDGET ? 1 : 1 + (BUDGET - first) / again;
+        if (perCall > maxDays) perCall = maxDays;
+        if (perCall == 0) perCall = 1;
+        calls = (days_ + perCall - 1) / perCall;
+    }
+
     /// @notice The first `k` ids of `set` (a copy; `set` is unchanged).
     function prefix(uint256[] memory set, uint256 k) internal pure returns (uint256[] memory out) {
         if (k >= set.length) return set;
