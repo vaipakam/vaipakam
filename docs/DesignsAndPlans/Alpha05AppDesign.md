@@ -1570,8 +1570,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   transaction's own event. A change open or in flight keeps its panel, finish
   card included, even after a cancel clears the offer's terms. Where the
   network's protocol has no guard yet,
-  the creator is told so and nobody else sees a section. Arming a guard at
-  posting is later work.
+  the creator is told so and nobody else sees a section. A guard can also be
+  armed at posting (Advanced, a token against token collateral only): the
+  post is then the protocol's batch of the arm and the create, as one
+  transaction, and the review's dry run and the write send exactly that
+  batch, so its verdict covers the guard. Because that dry run stops at the
+  token pull while an approval is owed, both tokens' prices are also read on
+  their own, and a pair that cannot be priced is named as a blocker with
+  its remedy (post without a guard). The receipt carries the limit as a
+  bound row and the guard's consequences; the finish card reads the guard
+  from the transaction's event for the offer it created.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

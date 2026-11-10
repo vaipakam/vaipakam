@@ -27,6 +27,7 @@ import { isRanged, lenderPostFigures, partCollateral, ZERO, type ParsedPost } fr
 import { ltvText, needsApproval, promptCount, stakeOfDraft, type PostReview } from './postReview';
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
 import { tariffConsequences, tariffRows } from './tariffReview';
+import { guardConsequences, guardRows } from './guardPost';
 
 type Hex = `0x${string}`;
 
@@ -98,6 +99,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'lendAccept.fullTermPartial' : 'lendAccept.fullTerm') : 'lendAccept.proRata'), true),
     ...scheduleRows(r, meta, copy, advanced, keeper),
     ...tariffRows(r.tariff, parsed, copy, 'lender'),
+    ...guardRows(parsed, copy),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'lendAccept.partialYes' : 'lendAccept.partialNo'), true),
     textRow('accept.rowPrepayListing', text('accept.prepayListingNo'), true),
     textRow('accept.rowParallelSale', text('accept.parallelNo'), true),
@@ -130,6 +132,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     ...matchConsequences(r, meta, copy),
     ...scheduleConsequences(r, copy),
     ...tariffConsequences(r.tariff, copy, 'lender'),
+    ...guardConsequences(parsed, copy),
     text('lendAccept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('lendAccept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('lendAccept.loseIlliquidCollateral')] : []),

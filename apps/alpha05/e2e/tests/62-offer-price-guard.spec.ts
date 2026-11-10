@@ -8,11 +8,13 @@
  * it says the guard would not refuse a fill. Another wallet sees the guard and why a fill
  * would be refused, with no way to change it. The creator changes the limit
  * and removes the guard; a review left open while the offer is cancelled
- * elsewhere stays, refused, until the reader closes it. Runs on the desktop and the phone; the suite
- * reverts the chain after every test.
+ * elsewhere stays, refused, until the reader closes it. A lender also posts
+ * a new offer with a guard armed in the same transaction (Advanced), and the
+ * offer is on the book guarded from the start. Runs on the desktop and the
+ * phone; the suite reverts the chain after every test.
  */
 import type { Page } from '@playwright/test';
-import { parseAbi } from 'viem';
+import { erc20Abi, parseAbi, parseEther } from 'viem';
 import { postLenderOffer, WETH } from '@vaipakam/anvil-harness/lending';
 import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
@@ -140,4 +142,60 @@ test('the creator guards an open offer, the page says when a fill is refused, an
   await flow.getByRole('button', { name: 'Cancel' }).click();
   await expect(flow).toHaveCount(0);
   expect(flags.sentTransactions).toBe(sent + 3);
+});
+
+test('a lender posts an offer with a price-move guard armed in the same transaction', async ({ launchWallet }) => {
+  test.setTimeout(240_000);
+  const sc = scenario({ lender: 'freshLender' });
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  await sc.write('lender', WETH, parseAbi(['function deposit() payable']), 'deposit', [], parseEther('0.2'));
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, 0n]);
+
+  const { page, flags } = await launchWallet('freshLender', { advanced: true });
+  await page.goto('/lend');
+  await connectWallet(page);
+  await page.getByTestId('pick-lending').locator('select').selectOption(WETH);
+  await page.getByTestId('pick-collateral').locator('select').selectOption(tliq);
+  await page.getByTestId('lend-offer-open').click();
+  await expect(page.getByTestId('request-duration')).toContainText('30 days', { timeout: 60_000 });
+  await page.getByTestId('request-amount').fill('0.2');
+  await page.getByTestId('request-rate').fill('6');
+  await page.getByTestId('request-collateral').fill('1500');
+
+  // The guard's limit is checked in the form, before any review.
+  const field = page.getByTestId('request-guard');
+  await field.getByTestId('request-guard-opt').check();
+  await field.getByTestId('request-guard-input').fill('60');
+  await field.getByTestId('request-guard-input').blur();
+  await expect(field).toContainText('Enter a limit between 0.5% and 50%');
+  await field.getByTestId('request-guard-input').fill('5');
+  await fitsWidth(page);
+  await page.getByTestId('request-review').click();
+
+  const flow = page.locator('.post-request');
+  const receipt = flow.locator('.receipt');
+  await expect(receipt).toContainText('Post your lending offer', { timeout: 60_000 });
+  await expect(receipt).toContainText('Guard limit');
+  await expect(receipt).toContainText('5%, from the prices when this posts');
+  await expect(receipt).toContainText('moved more than 5% from its level when this posts');
+  await expect(receipt).toContainText('Until the hourly price checks cover this pair, no one can fill the offer.');
+  await fitsWidth(page);
+  await flow.getByTestId('request-consent').check();
+  const sent = flags.sentTransactions;
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const finish = flow.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await expect(finish).toContainText('The guard is set at 5%');
+  await expect(finish).toContainText('0.2 WETH locked in your vault');
+  // The approval, then the one transaction that arms the guard and posts.
+  expect(flags.sentTransactions).toBe(sent + 2);
+
+  const id = BigInt((await finish.textContent())!.match(/Offer #(\d+)/)![1]!);
+  expect((await sc.read<Guard>('getOfferPriceGuard', [id])).maxMoveBps).toBe(500);
+  await page.goto(`/offers/${id}`);
+  await connectWallet(page);
+  const guard = page.getByTestId('guard');
+  await expect(guard).toHaveAttribute('data-on', 'true', { timeout: 60_000 });
+  await expect(guard.getByTestId('guard-limit')).toContainText('more than 5%');
+  await fitsWidth(page);
 });
