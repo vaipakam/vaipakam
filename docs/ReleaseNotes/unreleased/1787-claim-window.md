@@ -1,4 +1,4 @@
-## Thread — Reward claims read a bounded part of a large wallet (PR #<n>)
+## Thread — Reward claims read a bounded part of a large wallet (PR #3487)
 
 The first half of #1787 made every claim do a bounded amount of settlement work, but each claim still read every unsettled reward entry the wallet held, at about 18 thousand gas per entry. A wallet past roughly 500 unsettled entries therefore still could not claim in one transaction. Entries can also be moved onto a wallet by others, because a position NFT can be transferred to it, so the wallet's owner does not control that number.
 
