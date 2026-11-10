@@ -6,6 +6,8 @@ A vault now signs only orders it hashed itself. The platform hands the vault a l
 
 A new `swapOut` lets a vault sell at most a stated amount through a swap adapter in one call and requires the recipient to receive at least a floor. The vault measures both balances around the call and closes the adapter's allowance before it returns. The plain transfer to a swap adapter is retired.
 
+The listing conduit has one deploy input, its Seaport conduit key; the conduit address is resolved from it through Seaport's conduit controller, and the launch check refuses vault code whose key does not resolve to its conduit.
+
 The backstop vault is now provisioned by the deploy itself, before the vault code, because the vault code fixes its address. The deploy records it as `backstopVault`. Design: `docs/DesignsAndPlans/VaultOutflowPolicyDesign.md` (Stage B1 build notes).
 
 > Caveat: a listing's payment legs are not yet checked by the vault. They are bound to the owner's signed terms in Stage B3; until then the platform builds them and the marketplace zone checks them at fill.

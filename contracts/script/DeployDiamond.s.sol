@@ -63,6 +63,7 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -1531,14 +1532,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      Builds the price guard (#3272), then seeds TREASURY and
     ///      PRICE_GUARD, and refuses a registry that does not name both: an
     ///      empty registry would leave every vault refusing every fee.
-    /// @dev #3431 — the endpoints the vault code fixes. Seaport 1.6, the
-    ///      1inch order protocol (the v6 router, which hosts LOP v4) and the
-    ///      OpenSea conduit share one address on every chain they serve, so
-    ///      they are the defaults; `VAULT_SEAPORT`, `VAULT_ORDER_PROTOCOL`,
-    ///      `VAULT_LISTING_CONDUIT` and `VAULT_LISTING_CONDUIT_KEY` override
-    ///      them. The price guard is the #3447 guard this deploy built in
-    ///      5c-ii (read from #3268 on). A production chain must find
-    ///      code at the Seaport, order protocol and conduit it fixes.
+    /// @dev #3431 — the endpoints the vault code fixes. Seaport 1.6 and the
+    ///      1inch order protocol (the v6 router, which hosts LOP v4) share one
+    ///      address on every chain they serve, so they are the defaults;
+    ///      `VAULT_SEAPORT` and `VAULT_ORDER_PROTOCOL` override them. The
+    ///      listing conduit has ONE input, its Seaport conduit key
+    ///      (`VAULT_LISTING_CONDUIT_KEY`, OpenSea's by default): the conduit
+    ///      address is resolved from it through that Seaport's conduit
+    ///      controller, so the two can never disagree. Only a local chain
+    ///      whose Seaport has no code (a test or Anvil) keeps the default
+    ///      conduit address unresolved; a production chain never does. The
+    ///      price guard is the #3447 guard this deploy built in 5c-ii.
     function _vaultEndpoints(address treasury, address backstop)
         internal
         view
@@ -1548,15 +1552,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
         e.backstop = backstop;
         e.seaport = vm.envOr("VAULT_SEAPORT", address(0x0000000000000068F116a894984e2DB1123eB395));
         e.orderProtocol = vm.envOr("VAULT_ORDER_PROTOCOL", address(0x111111125421cA6dc452d289314280a0f8842A65));
-        e.conduit = vm.envOr("VAULT_LISTING_CONDUIT", address(0x1E0049783F008A0085193E00003D00cd54003c71));
         e.conduitKey = vm.envOr(
             "VAULT_LISTING_CONDUIT_KEY", bytes32(0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000)
         );
         e.priceGuard = priceGuard; // #3447, built in 5c-ii
-        if (Deployments.requiresProductionGovernance()) {
+        bool production = Deployments.requiresProductionGovernance();
+        if (production) {
             require(e.seaport.code.length != 0, "DeployDiamond: no code at the vault's Seaport");
             require(e.orderProtocol.code.length != 0, "DeployDiamond: no code at the vault's order protocol");
-            require(e.conduit.code.length != 0, "DeployDiamond: no code at the vault's listing conduit");
+        }
+        if (e.seaport.code.length != 0) {
+            address controller = ISeaportOrderHash(e.seaport).conduitController();
+            (address conduit, bool exists) = IConduitController(controller).getConduit(e.conduitKey);
+            require(exists && conduit != address(0), "DeployDiamond: the vault's conduit key is not deployed on its Seaport");
+            e.conduit = conduit;
+        } else {
+            require(!production, "DeployDiamond: no code at the vault's Seaport");
+            e.conduit = 0x1E0049783F008A0085193E00003D00cd54003c71; // local only: OpenSea's conduit, unresolved
         }
     }
 

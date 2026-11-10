@@ -95,6 +95,16 @@ interface ILaunchVaultCode {
     function SEAPORT() external view returns (address);
     function ORDER_PROTOCOL() external view returns (address);
     function CONDUIT() external view returns (address);
+    function CONDUIT_KEY() external view returns (bytes32);
+}
+
+/// @dev Seaport's conduit controller, reached through the vault's Seaport.
+interface ILaunchSeaport {
+    function conduitController() external view returns (address);
+}
+
+interface ILaunchConduitController {
+    function getConduit(bytes32 conduitKey) external view returns (address conduit, bool exists);
 }
 
 /// @dev The listing executor's Seaport and conduit allow-list.
@@ -296,7 +306,8 @@ library LibLaunchReadiness {
     ///      Diamond's, its backstop the Diamond's backstop vault, its order
     ///      protocol the Diamond's 1inch protocol, and, once a listing
     ///      executor is configured, its Seaport the executor's and its conduit
-    ///      one the executor allows.
+    ///      one the executor allows. Its conduit key must resolve, through its
+    ///      Seaport's conduit controller, to its conduit.
     function _vaultEndpoints(address diamond) private view returns (Check memory c) {
         c.label = "vault endpoints match";
         ILaunchReadableDiamond d = ILaunchReadableDiamond(diamond);
@@ -341,6 +352,10 @@ library LibLaunchReadiness {
                 return c;
             }
         } catch {}
+        if (!_conduitKeyResolves(v)) {
+            c.detail = "the vault code's CONDUIT_KEY does not resolve to its CONDUIT: every listing would be refused";
+            return c;
+        }
         try d.getCollateralListingExecutor() returns (address executor) {
             if (executor != address(0)) {
                 ILaunchListingExecutor x = ILaunchListingExecutor(executor);
@@ -356,6 +371,24 @@ library LibLaunchReadiness {
         } catch {}
         c.met = true;
         c.detail = "the vault code's treasury, backstop, order protocol, Seaport and conduit match the Diamond's";
+    }
+
+    /// @dev #3431 — whether the vault code's conduit key resolves, through
+    ///      its own Seaport's conduit controller, to the conduit it fixes. A
+    ///      Seaport without code (a local chain) has nothing to resolve against
+    ///      and passes; any failed read does not.
+    function _conduitKeyResolves(ILaunchVaultCode v) private view returns (bool) {
+        address seaport = v.SEAPORT();
+        if (seaport.code.length == 0) return true;
+        try ILaunchSeaport(seaport).conduitController() returns (address controller) {
+            try ILaunchConduitController(controller).getConduit(v.CONDUIT_KEY()) returns (address conduit, bool exists) {
+                return exists && conduit != address(0) && conduit == v.CONDUIT();
+            } catch {
+                return false;
+            }
+        } catch {
+            return false;
+        }
     }
 
     function _treasury(address diamond) private view returns (Check memory c) {

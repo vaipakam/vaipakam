@@ -816,6 +816,9 @@ checks what actually happens instead.
    ("vault endpoints match") holds the vault constants to the Diamond's own
    settings: the treasury, the backstop vault, the 1inch order protocol,
    and, once a listing executor is set, its Seaport and an allowed conduit.
+   The conduit has one input, its key: the deploy resolves the conduit
+   address through Seaport's conduit controller, and the readiness check
+   refuses a vault code whose key does not resolve to its conduit.
 
 ## 9. Order of work
 

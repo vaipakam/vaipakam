@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {MockConduitController} from "../mocks/MockConduitController.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {
     DeployDiamondVerificationProbe,
@@ -227,13 +228,20 @@ contract DeployArtifactCompletenessTest is Test {
         vm.etch(i.weth, hex"00");
         vm.etch(i.ethUsdFeed, hex"00");
         script.setPriceGuardInputs(PAUSER_SAFE, i);
-        // #3431 — a production chain's vault code fixes Seaport, the 1inch
-        // order protocol and the listing conduit, and the deploy refuses one
-        // without code. This test runs on no fork, so the canonical addresses
-        // get a byte of code.
-        vm.etch(0x0000000000000068F116a894984e2DB1123eB395, hex"00");
+        // #3431 — a production chain's vault code fixes Seaport and the 1inch
+        // order protocol (each must have code) and resolves its conduit from
+        // the conduit key through Seaport's controller. This test runs on no
+        // fork, so the canonical Seaport gets a stand-in whose controller
+        // knows OpenSea's key, and the order protocol a byte of code.
+        MockConduitController controller = new MockConduitController();
+        controller.register(
+            0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000,
+            0x1E0049783F008A0085193E00003D00cd54003c71
+        );
+        address seaport = 0x0000000000000068F116a894984e2DB1123eB395;
+        vm.etch(seaport, hex"00");
+        vm.mockCall(seaport, abi.encodeWithSignature("conduitController()"), abi.encode(address(controller)));
         vm.etch(0x111111125421cA6dc452d289314280a0f8842A65, hex"00");
-        vm.etch(0x1E0049783F008A0085193E00003D00cd54003c71, hex"00");
     }
 
     /// @dev TRUE when `needle` is the value of some key under `.facets`.
