@@ -678,14 +678,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   longest term and highest loan-to-value they take. The line always says
   that a matching service fills a request against them only when its terms
   fit a lender's limits, so a fill is likely but neither instant nor
-  guaranteed. That line needs both of the network's switches a fill against
-  an intent passes, the matching switch and the standing-intent switch, and
-  the network's keepers running: with either switch off the page says no
-  request is filled against them now; with every keeper paused it says the
+  guaranteed. That line needs the protocol not paused, both of the
+  network's switches a fill against an intent passes, the matching switch
+  and the standing-intent switch, and the network's keepers running: with
+  the protocol paused the page says no request is posted or filled against
+  them until it resumes; with either switch off it says no request is
+  filled against them now; with every keeper paused it says the
   matching service fills none until they resume, while a lender can still
   fill from its own standing offer and anyone can for a lender that has not
-  limited who fills it; and with any of the three unread it says whether a
-  fill would come is not known. The reader's own intents are never counted,
+  limited who fills it; and with any of these unread it says whether a
+  fill would come is not known. While the network's aggregator lenders are
+  paused, the intents those lenders own are left out of the figures, since
+  the protocol refuses a fill against them; if which owners are aggregator
+  lenders cannot be read, that too is said as not known. The reader's own intents are never counted,
   since the protocol refuses a match with oneself. A lender that lets only
   fillers it has chosen fill against it is stated apart, with its own
   figures, and the likely fill is never claimed for it: whether the

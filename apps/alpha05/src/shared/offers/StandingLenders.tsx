@@ -64,15 +64,16 @@ export function StandingLenders({
   const { isAdvanced } = useMode();
   const read = useOwnRead(['borrow', 'intents', diamond.toLowerCase()], (c) => readLenderIntents(c, diamond));
   const partial = read.data !== null && BigInt(read.data.scanned) < read.data.total;
-  const ready = read.data ? standingReady(read.data.intents, lending, collateral, account) : null;
-  const open = read.data ? standingReady(read.data.intents, lending, collateral, account, false) : null;
-  const limited = read.data ? standingReady(read.data.intents, lending, collateral, account, true) : null;
+  const opts = { exclude: account, unavailable: read.data?.pausedOwners };
+  const ready = read.data ? standingReady(read.data.intents, lending, collateral, opts) : null;
+  const open = read.data ? standingReady(read.data.intents, lending, collateral, { ...opts, limited: false }) : null;
+  const limited = read.data ? standingReady(read.data.intents, lending, collateral, { ...opts, limited: true }) : null;
   const figures = (r: StandingReady) => ({
     count: String(r.lenders),
     amount: tokenAmount(r.largest, lending, meta, format),
     rate: formatBps(r.minRateBps),
   });
-  const matching = read.data ? intentMatching(read.data.switches) : 'unknown';
+  const matching = read.data ? intentMatching(read.data) : 'unknown';
   const stale = read.data !== null && read.error !== null;
   const blocked = request ? intentRequestBlock(request) : null;
 
@@ -84,6 +85,12 @@ export function StandingLenders({
       ) : (
         <p className="tier-b">{text('borrow.standingReading')}</p>
       );
+  } else if (matching === 'halted') {
+    body = (
+      <p className="tier-a" data-testid="standing-halted">
+        {text('borrow.standingHalted')}
+      </p>
+    );
   } else if (matching === 'off') {
     body = <p className="tier-a">{text('borrow.standingOff')}</p>;
   } else if (ready === null) {

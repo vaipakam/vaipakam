@@ -2430,6 +2430,7 @@ export const copy = {
     standingPaused: A(
       'The protocol has paused every keeper on this network, its matching service included, so no fill is expected until they resume. A lender can still fill a request from its own standing offer, and anyone can for a lender that has not limited who fills it.',
     ),
+    standingHalted: A('The protocol is paused on this network, so no request is posted or filled against standing lenders until it resumes.'),
     standingOff: A('Matching against standing lenders is switched off on this network, so no request is filled against them now; a request waits for a lender to take it.'),
     standingStale: A('The latest re-read failed ({{reason}}); these lenders are from the read before and may have changed.'),
     standingTerms: B('They fill only requests with full-term interest, no partial repayment and no interest schedule.'),

@@ -189,6 +189,26 @@ test('with every keeper paused, the matching service is said to fill none and ot
   await fitsWidth(page);
 });
 
+test('with the protocol paused, nothing is said to fill against the standing lenders', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true]);
+  await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+  await sc.diamondWrite('admin', 'pause');
+
+  const { page } = await launchWallet('borrower');
+  await openPair(page, tliq);
+  const ways = page.getByRole('region', { name: 'Two ways to borrow' });
+  await expect(ways.getByTestId('standing-halted')).toContainText('The protocol is paused on this network', { timeout: 60_000 });
+  await expect(ways.getByTestId('standing-ready')).toHaveCount(0);
+  await expect(ways).not.toContainText('a fill is likely');
+  await fitsWidth(page);
+});
+
 test('a lender that chooses its fillers is stated apart, without a likely fill', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;

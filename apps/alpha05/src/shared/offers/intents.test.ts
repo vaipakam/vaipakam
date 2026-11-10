@@ -48,8 +48,8 @@ describe('what lenders stand ready to lend on a pair', () => {
   });
   it('leaves out the reader’s own intents, which can never fill their own request', () => {
     const me = '0x2222222222222222222222222222222222222222' as Hex;
-    expect(standingReady([intent({ owner: me })], WETH, TLIQ, me.toUpperCase().replace('0X', '0x') as Hex)).toBeNull();
-    expect(standingReady([intent({ owner: me }), intent()], WETH, TLIQ, me)?.lenders).toBe(1);
+    expect(standingReady([intent({ owner: me })], WETH, TLIQ, { exclude: me.toUpperCase().replace('0X', '0x') as Hex })).toBeNull();
+    expect(standingReady([intent({ owner: me }), intent()], WETH, TLIQ, { exclude: me })?.lenders).toBe(1);
   });
 });
 
@@ -57,9 +57,13 @@ describe('lenders that choose their fillers', () => {
   it('are kept apart from the lenders any filler may fill against', () => {
     const rows = [intent(), intent({ requiresKeeperAuth: true, minRateBps: 100n })];
     expect(standingReady(rows, WETH, TLIQ)?.lenders).toBe(2);
-    expect(standingReady(rows, WETH, TLIQ, null, false)?.minRateBps).toBe(intent().minRateBps);
-    expect(standingReady(rows, WETH, TLIQ, null, true)?.minRateBps).toBe(100n);
-    expect(standingReady([intent()], WETH, TLIQ, null, true)).toBeNull();
+    expect(standingReady(rows, WETH, TLIQ, { limited: false })?.minRateBps).toBe(intent().minRateBps);
+    expect(standingReady(rows, WETH, TLIQ, { limited: true })?.minRateBps).toBe(100n);
+    expect(standingReady([intent()], WETH, TLIQ, { limited: true })).toBeNull();
+  });
+  it('leaves out the intents of owners that cannot fill now', () => {
+    const agg = '0x3333333333333333333333333333333333333333' as Hex;
+    expect(standingReady([intent({ owner: agg }), intent()], WETH, TLIQ, { unavailable: [agg.toLowerCase()] })?.lenders).toBe(1);
   });
 });
 
@@ -84,50 +88,75 @@ describe('request terms every intent fill requires', () => {
 });
 
 describe('reading the intents', () => {
-  it('pages until every intent is read, and says how many were', async () => {
-    const all = Array.from({ length: INTENT_PAGE + 3 }, () => intent());
-    const calls: bigint[] = [];
+  /** A client whose gates read as given (open unless named), with an
+   *  optional list and a set of aggregator owners. */
+  const gated = (gates: Partial<Record<string, boolean | Error>>, rows: IntentSummary[] = [], aggregators: string[] | Error = []) => {
+    const open: Record<string, boolean> = {
+      paused: false,
+      getPartialFillEnabled: true,
+      isLenderIntentEnabled: true,
+      keepersPaused: false,
+      aggregatorAdaptersPaused: false,
+    };
     const blocks: (bigint | undefined)[] = [];
     const client = {
       getBlockNumber: async () => 77n,
-      readContract: async ({ functionName, args, blockNumber }: { functionName: string; args: [bigint, bigint]; blockNumber?: bigint }) => {
+      readContract: async ({ functionName, args, blockNumber }: { functionName: string; args: readonly unknown[]; blockNumber?: bigint }) => {
         blocks.push(blockNumber);
-        if (functionName === 'keepersPaused') return false;
-        if (functionName !== 'getActiveLenderIntents') return true;
-        calls.push(args[0]);
-        return [all.slice(Number(args[0]), Number(args[0] + args[1])), BigInt(all.length)];
+        if (functionName === 'getActiveLenderIntents') {
+          const [o, n] = args as [bigint, bigint];
+          return [rows.slice(Number(o), Number(o + n)), BigInt(rows.length)];
+        }
+        if (functionName === 'isAggregatorAdapter') {
+          if (aggregators instanceof Error) throw aggregators;
+          return aggregators.includes(String(args[0]).toLowerCase());
+        }
+        const v = functionName in gates ? gates[functionName]! : open[functionName];
+        if (v instanceof Error) throw v;
+        return v;
       },
     } as unknown as PublicClient;
+    return { client, blocks };
+  };
+
+  it('pages until every intent is read, and reads every page and gate at one block', async () => {
+    const all = Array.from({ length: INTENT_PAGE + 3 }, () => intent());
+    const { client, blocks } = gated({}, all);
     const r = await readLenderIntents(client, WETH);
-    expect(calls).toEqual([0n, BigInt(INTENT_PAGE)]);
     expect(r.scanned).toBe(all.length);
     expect(r.total).toBe(BigInt(all.length));
-    // Every page and all three switches are read at one block.
-    expect(blocks).toHaveLength(5);
+    // Two pages and five gates, all at one block.
+    expect(blocks).toHaveLength(7);
     expect(new Set(blocks)).toEqual(new Set([77n]));
-    expect(intentMatching(r.switches)).toBe('on');
+    expect(intentMatching(r)).toBe('on');
   });
 
-  it('says matching is off when either switch is off, paused while the keepers are, and unknown when one could not be read', async () => {
-    const client = (matching: boolean | Error, intents: boolean | Error, paused: boolean | Error = false) =>
-      ({
-        getBlockNumber: async () => 1n,
-        readContract: async ({ functionName }: { functionName: string }) => {
-          if (functionName === 'getActiveLenderIntents') return [[], 0n];
-          const v = functionName === 'getPartialFillEnabled' ? matching : functionName === 'isLenderIntentEnabled' ? intents : paused;
-          if (v instanceof Error) throw v;
-          return v;
-        },
-      }) as unknown as PublicClient;
-    const said = async (...a: Parameters<typeof client>) => intentMatching((await readLenderIntents(client(...a), WETH)).switches);
-    expect(await said(false, true)).toBe('off');
-    expect(await said(true, false)).toBe('off');
-    expect(await said(new Error('x'), true)).toBe('unknown');
-    expect(await said(new Error('x'), false)).toBe('off');
-    expect(await said(true, true, true)).toBe('paused');
-    expect(await said(true, true, new Error('x'))).toBe('unknown');
-    // A switch off outranks the pause: no fill at all, not a fill by others.
-    expect(await said(false, true, true)).toBe('off');
-    expect(await said(true, true, false)).toBe('on');
+  it('says halted, off, paused or unknown from the gates, in the protocol’s order', async () => {
+    const said = async (gates: Partial<Record<string, boolean | Error>>) => intentMatching(await readLenderIntents(gated(gates).client, WETH));
+    const x = new Error('x');
+    expect(await said({ paused: true })).toBe('halted');
+    // The global pause outranks a switch off, and a switch off the keeper pause.
+    expect(await said({ paused: true, getPartialFillEnabled: false })).toBe('halted');
+    expect(await said({ getPartialFillEnabled: false })).toBe('off');
+    expect(await said({ isLenderIntentEnabled: false })).toBe('off');
+    expect(await said({ isLenderIntentEnabled: false, keepersPaused: true })).toBe('off');
+    expect(await said({ keepersPaused: true })).toBe('paused');
+    expect(await said({ paused: x })).toBe('unknown');
+    expect(await said({ getPartialFillEnabled: x, isLenderIntentEnabled: false })).toBe('off');
+    expect(await said({ keepersPaused: x })).toBe('unknown');
+    expect(await said({ aggregatorAdaptersPaused: x })).toBe('unknown');
+    expect(await said({})).toBe('on');
+  });
+
+  it('names the aggregator owners only while aggregators are paused', async () => {
+    const agg = '0x3333333333333333333333333333333333333333' as Hex;
+    const rows = [intent({ owner: agg }), intent()];
+    expect((await readLenderIntents(gated({}, rows, [agg.toLowerCase()]).client, WETH)).pausedOwners).toEqual([]);
+    const paused = await readLenderIntents(gated({ aggregatorAdaptersPaused: true }, rows, [agg.toLowerCase()]).client, WETH);
+    expect(paused.pausedOwners).toEqual([agg.toLowerCase()]);
+    expect(intentMatching(paused)).toBe('on');
+    const unread = await readLenderIntents(gated({ aggregatorAdaptersPaused: true }, rows, new Error('x')).client, WETH);
+    expect(unread.pausedOwners).toBeNull();
+    expect(intentMatching(unread)).toBe('unknown');
   });
 });

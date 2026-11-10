@@ -7,12 +7,13 @@
  * the page states what is ready and never promises a fill.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
 import type { LifecycleTerms } from '../post/postModel';
 import { CONFIG, METRICS } from './reads';
 
 const INTENT = LenderIntentFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
+const FACTORY = AggregatorAdapterFactoryFacetABI as Abi;
 
 type Hex = `0x${string}`;
 
@@ -42,60 +43,99 @@ export interface IntentsRead {
   /** How many of them were read: fewer than `total` when the list is longer
    *  than this view reads, which the page states. */
   scanned: number;
-  /** What a fill against an intent needs from the network, read at the
-   *  same block as the list: the matching switch and the standing-intent
-   *  switch (the protocol refuses every intent fill with either off), and
-   *  the keeper pause (the protocol's matching service fills nothing while
-   *  it is on, though a lender or another filler still may). Null when one
-   *  could not be read. */
-  switches: { matching: boolean | null; intents: boolean | null; keepersPaused: boolean | null };
+  /** Each network gate below, read at the same block as the list: true when
+   *  it is closed, null when it could not be read. */
+  closed: Record<IntentGate, boolean | null>;
+  /** The owners (lower-cased) that are lending aggregators, whose intents
+   *  cannot fill while the aggregator gate is closed: read only then, empty
+   *  while it is open, and null when they could not be read. */
+  pausedOwners: readonly string[] | null;
 }
 
-/** Whether a request can be filled against the standing lenders now: both
- *  switches on and the matching service running; either switch off (no
- *  fill at all); the service paused (a fill only by a lender or another
- *  filler); or not known because one of the three was unread. */
-export type IntentMatching = 'on' | 'off' | 'paused' | 'unknown';
+/**
+ * Every network-level guard the protocol's intent fill applies, in its
+ * order, and what a closed one stops: every fill (`all`: the global pause,
+ * then the matching and standing-intent switches); only the protocol's own
+ * matching service (`service`: the keeper pause, which the service obeys
+ * while a lender or another filler may still fill); or only the intents a
+ * lending aggregator owns (`aggregators`). `closedWhen` is the value that
+ * closes it. Every gate is read from this one list, so a guard added here
+ * reaches both the read and the verdict.
+ */
+export const INTENT_GATES = {
+  protocolPaused: { abi: 'admin', fn: 'paused', closedWhen: true, stops: 'all' },
+  matching: { abi: 'config', fn: 'getPartialFillEnabled', closedWhen: false, stops: 'all' },
+  intents: { abi: 'intent', fn: 'isLenderIntentEnabled', closedWhen: false, stops: 'all' },
+  keepers: { abi: 'admin', fn: 'keepersPaused', closedWhen: true, stops: 'service' },
+  aggregators: { abi: 'admin', fn: 'aggregatorAdaptersPaused', closedWhen: true, stops: 'aggregators' },
+} as const;
 
-export function intentMatching(s: IntentsRead['switches']): IntentMatching {
-  if (s.matching === false || s.intents === false) return 'off';
-  if (s.matching === null || s.intents === null) return 'unknown';
-  if (s.keepersPaused === true) return 'paused';
-  if (s.keepersPaused === null) return 'unknown';
+export type IntentGate = keyof typeof INTENT_GATES;
+
+const GATE_ABI: Readonly<Record<(typeof INTENT_GATES)[IntentGate]['abi'], Abi>> = { admin: ADMIN, config: CONFIG, intent: INTENT };
+
+/** Whether a request can be filled against the standing lenders now: every
+ *  gate open (`on`); the protocol paused, so nothing is filled or posted
+ *  (`halted`); a switch off, so no intent fill at all (`off`); only the
+ *  matching service stopped, so a lender or another filler still may
+ *  (`paused`); or not known, because a gate that decides it was unread. */
+export type IntentMatching = 'on' | 'halted' | 'off' | 'paused' | 'unknown';
+
+export function intentMatching(r: Pick<IntentsRead, 'closed' | 'pausedOwners'>): IntentMatching {
+  const c = r.closed;
+  if (c.protocolPaused === true) return 'halted';
+  if (c.matching === true || c.intents === true) return 'off';
+  if (c.protocolPaused === null || c.matching === null || c.intents === null) return 'unknown';
+  if (c.keepers === true) return 'paused';
+  if (c.keepers === null || c.aggregators === null || r.pausedOwners === null) return 'unknown';
   return 'on';
 }
 
 /**
  * Reads the network's active lender intents, up to the view's cap, and
- * what a fill against them needs from the network. Every page and every
- * switch is read at one block: the list is a swap-and-pop set, so pages read at
- * different blocks could skip an intent that moved between them and still
- * look complete.
+ * every gate a fill against them passes. Everything is read at one block:
+ * the list is a swap-and-pop set, so pages read at different blocks could
+ * skip an intent that moved between them and still look complete, and a
+ * gate read at another block could describe a different moment.
  */
 export async function readLenderIntents(client: PublicClient, diamond: Hex): Promise<IntentsRead> {
   const blockNumber = await client.getBlockNumber();
-  const flag = (abi: Abi, functionName: string) =>
-    (client.readContract({ address: diamond, abi, functionName, blockNumber }) as Promise<boolean>).catch((): boolean | null => null);
-  const switchesRead = Promise.all([flag(CONFIG, 'getPartialFillEnabled'), flag(INTENT, 'isLenderIntentEnabled'), flag(ADMIN, 'keepersPaused')]);
+  const read = <T>(abi: Abi, functionName: string, args?: readonly unknown[]) =>
+    client.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>;
+  const gateKeys = Object.keys(INTENT_GATES) as IntentGate[];
+  const gatesRead = Promise.all(
+    gateKeys.map((k) => {
+      const g = INTENT_GATES[k];
+      return read<boolean>(GATE_ABI[g.abi], g.fn).then(
+        (v) => v === g.closedWhen,
+        (): boolean | null => null,
+      );
+    }),
+  );
   const intents: IntentSummary[] = [];
   let total = 0n;
   let scanned = 0;
   for (let page = 0; page < INTENT_PAGES; page++) {
     const offset = BigInt(page * INTENT_PAGE);
-    const [rows, all] = (await client.readContract({
-      address: diamond,
-      abi: METRICS,
-      functionName: 'getActiveLenderIntents',
-      args: [offset, BigInt(INTENT_PAGE)],
-      blockNumber,
-    })) as readonly [readonly IntentSummary[], bigint];
+    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(METRICS, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
     total = all;
     intents.push(...rows);
     scanned += rows.length;
     if (BigInt(scanned) >= all || rows.length < INTENT_PAGE) break;
   }
-  const [matching, intentSwitch, keepersPaused] = await switchesRead;
-  return { intents, total, scanned, switches: { matching, intents: intentSwitch, keepersPaused } };
+  const values = await gatesRead;
+  const closed = Object.fromEntries(gateKeys.map((k, i) => [k, values[i]])) as Record<IntentGate, boolean | null>;
+  let pausedOwners: string[] | null = [];
+  if (closed.aggregators === true) {
+    const owners = [...new Set(intents.map((i) => i.owner.toLowerCase()))];
+    try {
+      const flags = await Promise.all(owners.map((o) => read<boolean>(FACTORY, 'isAggregatorAdapter', [o])));
+      pausedOwners = owners.filter((_, i) => flags[i]);
+    } catch {
+      pausedOwners = null;
+    }
+  }
+  return { intents, total, scanned, closed, pausedOwners };
 }
 
 /** What lenders hold ready for one pair, from their intents on it. */
@@ -120,18 +160,27 @@ const same = (a: Hex, b: Hex) => a.toLowerCase() === b.toLowerCase();
  * Narrows the read to the pair; null when no lender stands ready on it. The
  * reader's own intents are left out (`exclude`): the protocol refuses a match
  * whose two sides share a creator, so they can never fill the reader's own
- * request. `limited` keeps only the intents whose lender lets only fillers it
- * has chosen fill against them (`requiresKeeperAuth`, true) or only the rest,
- * which any filler may fill (false); left out, it keeps both. The two are
- * stated apart, because whether the matching service is among a lender's
- * chosen fillers is not something this read knows.
+ * request. So are the intents of `unavailable` owners (a lending aggregator
+ * while aggregators are paused), which cannot fill now. `limited` keeps only
+ * the intents whose lender lets only fillers it has chosen fill against them
+ * (`requiresKeeperAuth`, true) or only the rest, which any filler may fill
+ * (false); left out, it keeps both. The two are stated apart, because
+ * whether the matching service is among a lender's chosen fillers is not
+ * something this read knows.
  */
-export function standingReady(intents: readonly IntentSummary[], lending: Hex, collateral: Hex, exclude?: Hex | null, limited?: boolean): StandingReady | null {
+export function standingReady(
+  intents: readonly IntentSummary[],
+  lending: Hex,
+  collateral: Hex,
+  opts: { exclude?: Hex | null; limited?: boolean; unavailable?: readonly string[] | null } = {},
+): StandingReady | null {
+  const { exclude, limited, unavailable } = opts;
   let out: StandingReady | null = null;
   for (const i of intents) {
     if (!same(i.lendingAsset, lending) || !same(i.collateralAsset, collateral)) continue;
     if (exclude && same(i.owner, exclude)) continue;
     if (limited !== undefined && i.requiresKeeperAuth !== limited) continue;
+    if (unavailable?.includes(i.owner.toLowerCase())) continue;
     const room = i.maxExposure > i.livePrincipal ? i.maxExposure - i.livePrincipal : 0n;
     const ready = room < i.availableCapital ? room : i.availableCapital;
     // Less than the lender's smallest fill cannot be lent at all.
