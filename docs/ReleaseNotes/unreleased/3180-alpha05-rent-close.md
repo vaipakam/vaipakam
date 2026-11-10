@@ -1,4 +1,4 @@
-## Thread — alpha05 can close a rental (PR #<n>)
+## Thread — alpha05 can close a rental (PR #3472)
 
 A renter can now close a running rental in the new app. The rental's own
 page offers "Close the rental" to whoever holds the renter position, in
