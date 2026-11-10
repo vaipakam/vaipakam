@@ -715,9 +715,11 @@ and the limit), not calm, no checkpoint, or no readable price.
 What it does not cover: a gasless signed offer, which is put on the book
 only at its fill, cannot carry a guard until its signed terms can (#3327).
 The guard depends on the hourly checkpoints, which anyone may write and a
-keeper pass backs; until that pass also covers the pairs of guarded offers,
-a guarded offer in a pair nothing else checkpoints cannot be filled, and the
-view says why.
+keeper pass backs. That pass records the assets of every open guarded offer
+as well as those of active loans, so a guarded offer's pair is checkpointed
+whether or not any loan uses it. While the pass is off, or for an hour it
+misses, a guarded offer in a pair nothing else checkpoints cannot be filled,
+and the view says why.
 
 ### Creation modes — on-chain and gasless signed offers (v0.5)
 
