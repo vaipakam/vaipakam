@@ -313,7 +313,7 @@ export const EXEMPT_GROUPS = {
   screening:
     "Sanctions screening evidence, and the KYC and country records the retail deploy leaves dormant. A flagged wallet is told by the app's banner, never by a feed row; the funds consequences that are the wallet's own are rows (see PARTIES).",
   rewardInternal:
-    "Reward bookkeeping that restates or prepares another row's outcome: index compaction, tier caches and broadcasts, a delivery record being opened, a payout's accounting companion.",
+    "Reward bookkeeping that restates or prepares another row's outcome: index compaction, the claim window moving on, tier caches and broadcasts, a delivery record being opened, a payout's accounting companion.",
 } as const;
 
 export type ExemptGroup = keyof typeof EXEMPT_GROUPS;
@@ -471,6 +471,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'MirrorTierCacheWritten',
       'ProtocolTierBroadcastSent',
       'ProtocolTierBroadcastSkipped',
+      'RewardClaimWindowAdvanced',
       'RewardEntryIndexCompacted',
       'StagingDomainOpened',
       'StagingPaid',
