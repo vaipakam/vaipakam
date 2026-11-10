@@ -9,7 +9,7 @@ import { TakeRequest } from '../../shared/rent/TakeRequest';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { CancelOffer, useCancelOfferHeld } from '../../shared/offers/CancelOffer';
-import { PriceGuardSection, useGuardHeld } from '../../shared/offers/PriceGuard';
+import { HeldGuardFlow, PriceGuardSection, useGuardHeld } from '../../shared/offers/PriceGuard';
 import { readPriceGuard } from '../../shared/offers/priceGuard';
 import { roleTerms } from '../../shared/offers/acceptTerms';
 import { detailAction, readOfferDetail, type OfferDetail } from '../../shared/offers/offerDetail';
@@ -138,6 +138,7 @@ export function OfferPage() {
               {held.take && <TakeAction id={id} chain={walletChain} own={heldOwn} meta={meta} lend={held.rental !== 'request'} rental={held.rental} />}
             </section>
           )}
+          {d?.kind !== 'offer' && walletChain && heldOwn && <HeldGuardFlow id={id} chain={walletChain} own={heldOwn} />}
           {d?.kind === 'offer' && <OfferBody detail={d} walletChain={connected ? walletChain : null} own={connected && walletChain ? own : null} meta={meta} />}
         </>
       )}
@@ -175,9 +176,14 @@ function OfferBody({
   const guardable = erc20 && erc20Collateral;
   const guardDiamond = (walletChain?.diamondAddress ?? '0x') as Hex;
   const guardHeld = useGuardHeld(d.id);
-  const guard = useOwnRead(['offerGuard', guardDiamond, d.id.toString()], (c) => readPriceGuard(c, guardDiamond, d.id), {
+  // Read at the detail's own block, so the guard and the terms are one snapshot.
+  const guard = useOwnRead(['offerGuard', guardDiamond, d.id.toString(), d.block.toString()], (c) => readPriceGuard(c, guardDiamond, d.id, d.block), {
     enabled: guardable && walletChain !== null && own !== null,
   });
+  // Settled: read (a null answer is a guard the contract would not report,
+  // shown as unread) or failed (shown as unread). Nothing is shown while the
+  // first read is in flight.
+  const guardShown = guard.state === 'failed' || guard.state === 'ready' || guardHeld.bps !== null;
   const offersPage = PAGES.find((p) => p.path === '/offers/:id');
   const currentHref = offersPage ? currentAppHref(offersPage, { id: d.id.toString() }) : null;
 
@@ -224,7 +230,7 @@ function OfferBody({
       {d.state === 'sale-consumed' && <p className="tier-a">{text('offers.soldNote')}</p>}
       {d.state === 'cancelled' && <p className="tier-b">{text('offerPage.cancelledNote')}</p>}
       {d.state === 'expired' && <p className="tier-a">{text('offers.expiredHolds')}</p>}
-      {guardable && walletChain && own && (guard.data !== null || guard.state === 'failed' || guardHeld.bps !== null) && (
+      {guardable && walletChain && own && guardShown && (
         <PriceGuardSection
           id={d.id}
           guard={guard.state === 'failed' ? null : guard.data}

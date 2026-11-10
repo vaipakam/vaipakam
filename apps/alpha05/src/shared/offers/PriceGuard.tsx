@@ -82,7 +82,10 @@ export function PriceGuardSection({ id, guard, canChange, mine, chain, own, onDo
       </p>
     ) : null;
   }
-  if (!on && !canChange && held.bps === null && !held.inFlight) return null;
+  // An unread guard is shown to everyone: it may be on, and a taker must not
+  // read silence as "no guard". A guard read as off is shown only to whoever
+  // can set one, or while a change is open.
+  if (guard !== null && !on && !canChange && held.bps === null && !held.inFlight) return null;
   return (
     <section className="home-section" aria-labelledby="guard-title" data-testid="guard" data-on={String(on)} data-status={g?.status ?? 'unread'}>
       <h2 id="guard-title">{text('priceGuard.title')}</h2>
@@ -157,6 +160,17 @@ interface FlowProps {
   own: OwnStateClient;
   bps: number;
   onClose: () => void;
+}
+
+/**
+ * A guard change open or in flight for an offer whose terms the page can no
+ * longer show (a cancel under it cleared them): its panel, finish card and
+ * Close stay reachable until the reader closes it.
+ */
+export function HeldGuardFlow({ id, chain, own }: { id: bigint; chain: SupportedChain; own: OwnStateClient }) {
+  const held = useGuardHeld(id);
+  if (held.bps === null) return null;
+  return <GuardActionFlow id={id} chain={chain} own={own} bps={held.bps} onClose={() => held.open(null)} />;
 }
 
 /** The creator's guard change: review, the protocol's dry run, sign, and the

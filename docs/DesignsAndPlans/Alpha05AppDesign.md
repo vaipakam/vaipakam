@@ -1549,11 +1549,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   stated as nothing returned.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
-  Read at the page's block, it states the limit, when it was set, and whether
+  Read at the offer's own block, it states the limit, when it was set, and whether
   a fill is allowed now or refused, and why: the price moved past the limit
   (by how much), the pair's hourly price checks are missing, the pair is not
   calm, or a price cannot be read. A taker sees the same, so a refusal is
-  never a surprise at signing. Only the creator of an open offer may set,
+  never a surprise at signing, and a guard that could not be read is said to
+  everyone, never shown as no guard. Only the creator of an open offer may set,
   change or remove it, from 0.5% to 50%, through one flow keyed by the offer:
   the review is read at one block (the offer, its guard, the pause), then the
   protocol's dry run, and a non-creator, an ended or NFT offer, a pause, a
@@ -1564,7 +1565,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   prices are recorded at the change; that the guard only refuses fills and
   moves nothing; that a first guard leaves the time since posting unguarded
   and a change replaces the guard. The finish card reads the change from the
-  transaction's own event. Where the network's protocol has no guard yet,
+  transaction's own event. A change open or in flight keeps its panel, finish
+  card included, even after a cancel clears the offer's terms. Where the
+  network's protocol has no guard yet,
   the creator is told so and nobody else sees a section. Arming a guard at
   posting is later work.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions

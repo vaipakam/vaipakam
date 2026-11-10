@@ -7,7 +7,8 @@
  * says a fill is refused for missing checks; once two hourly checks exist
  * it says a fill is allowed. Another wallet sees the guard and why a fill
  * would be refused, with no way to change it. The creator changes the limit
- * and removes the guard. Runs on the desktop and the phone; the suite
+ * and removes the guard; a review left open while the offer is cancelled
+ * elsewhere stays, refused, until the reader closes it. Runs on the desktop and the phone; the suite
  * reverts the chain after every test.
  */
 import type { Page } from '@playwright/test';
@@ -124,4 +125,19 @@ test('the creator guards an open offer, the page says when a fill is refused, an
   await expect(guard).toHaveAttribute('data-on', 'false', { timeout: 60_000 });
   expect(flags.sentTransactions).toBe(sent + 3);
   await fitsWidth(page);
+
+  // A guard change under review when the creator cancels the offer elsewhere:
+  // the cancel clears the terms, and the review stays, refused, until closed.
+  await guard.getByTestId('guard-input').fill('5');
+  await guard.getByTestId('guard-set').click();
+  const flow = page.getByTestId('guard-panel');
+  await expect(flow.locator('.receipt')).toContainText('Put a price-move guard on this offer', { timeout: 60_000 });
+  await sc.diamondWrite('lender', 'cancelOffer', [offerId]);
+  await expect(page.getByTestId('offer-no-terms')).toBeVisible({ timeout: 90_000 });
+  await expect(flow).toContainText('This offer has no stored terms, so there is nothing to guard.', { timeout: 60_000 });
+  await fitsWidth(page);
+  await expect(flow.getByRole('button', { name: 'Confirm in wallet' })).toBeDisabled();
+  await flow.getByRole('button', { name: 'Cancel' }).click();
+  await expect(flow).toHaveCount(0);
+  expect(flags.sentTransactions).toBe(sent + 3);
 });
