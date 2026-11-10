@@ -1432,6 +1432,12 @@ Die Seite Protection, verlinkt von der Karte Kontosicherheit, speichert die Adre
 
 Bei eingeschaltetem geschützten Modus zeigt die Seite Protection auch Ihre Auszahlungsziele: neben Ihrer eigenen Wallet höchstens fünf Adressen, an die eine geschützte Auszahlung gehen darf. Ein Ziel wird nur aus Ihren gespeicherten Adressen gewählt. Die Anfrage, eines hinzuzufügen, ändert zunächst nichts: Es wird nach der Verzögerung Ihres Kontos nutzbar, muss dann innerhalb einer weiteren Verzögerung aktiviert werden und verfällt sonst; danach kann es erneut angefragt werden. Sie oder ein zweiter Unterzeichner können eine wartende Anfrage abbrechen, und eine Sperre bricht jede Anfrage ab. Das Entfernen eines Ziels wirkt sofort und bricht jede an es gereihte Auszahlung ab; die Werte bleiben in Ihrem Vault. Jede Änderung fragt Ihre Wallet einmal, ihre Prüfung zeigt die Adresse vollständig, und die Abschlusskarte zeigt, was das Protokoll erfasst hat. Ist der geschützte Modus aus, gehen Auszahlungen nur an Ihre Wallet, und die Seite sagt, dass Ziele nicht gelten.
 
+<a id="protection-signers"></a>
+
+### Zweitsignierer
+
+Bei eingeschaltetem Schutzmodus listet die Protection-Seite auch Ihre Zweitsignierer: andere Wallets, die Sie besitzen, etwa eine Hardware-Wallet, und die das Konto absichern. Ein Signierer kann jede wartende Änderung abbrechen, das Konto sperren, eine eingereihte Auszahlung abbrechen oder sie mitsignieren, wenn Mitsignaturen verlangt sind, ein Auszahlungsziel entfernen und gemeinsam mit den anderen Signierern dem Ersetzen Ihrer Haupt-Wallet zustimmen. Er kann nie etwas aus Ihrem Vault bewegen, keine Position eröffnen und kein Auszahlungsziel und keinen Signierer hinzufügen. Ein Signierer wird nur aus Ihren gespeicherten Wallets gewählt, die ihre Kontrolle durch eine Signatur bewiesen haben. Die Anfrage ändert zunächst nichts: Die Seite zeigt einen Link, den die angefragte Wallet öffnet, um mit ihrem eigenen Schlüssel anzunehmen. Sobald Ihre Wartezeit vorbei ist und sie angenommen hat, muss die Anfrage innerhalb einer weiteren Wartezeit aktiviert werden, sonst verfällt sie und muss abgebrochen werden, bevor Sie erneut fragen. Auch das Entfernen eines Signierers wartet Ihre Wartezeit ab, und ein anderer Signierer kann es abbrechen. Sie können außerdem für jede Auszahlung die Mitsignatur eines Signierers verlangen: Das Einschalten gilt sofort, das Ausschalten wartet Ihre Wartezeit ab, und das Entfernen Ihres letzten Signierers schaltet es ebenfalls aus. Sie können höchstens fünf Signierer haben.
+
 <a id="my-offers"></a>
 
 ### Ihre Angebote
@@ -1455,6 +1461,12 @@ Jedes Angebot hat seine eigene Seite, die aus der Chain gelesen wird, sobald ein
 ### Ein Angebot stornieren
 
 Stornieren bei einem offenen Angebot, das Sie erstellt haben, nimmt es aus dem Buch und gibt zurück, was es noch in Ihrem Vault sperrt: den nicht verliehenen Betrag oder das NFT eines Leihangebots, die ungenutzte Sicherheit einer Anfrage oder die vorausbezahlte Gebühr samt Puffer einer Mietanfrage. Ein Angebot, das noch nichts erfüllt hat, kann in seinen ersten fünf Minuten nicht storniert werden, damit eine Stornierung nie mit einer Annahme konkurriert; die Prüfung nennt den Zeitpunkt und hebt die Sperre von selbst auf. Ein bereits erfüllter Teil bleibt erfüllt. Ein abgelaufenes Angebot hat die Schaltfläche Aufräumen, die ebenso zurückgibt, was es sperrte; jeder darf ein abgelaufenes Angebot aufräumen, und die Rückgabe geht immer an seinen Ersteller. Die Prüfung sagt, was zurückkommt und wohin: ohne geschützten Modus sofort an Ihre Wallet; mit ihm wartet es die Verzögerung Ihres Kontos in der Auszahlungswarteschlange ab oder bleibt in Ihrem Vault, solange das Konto gesperrt ist. Kann die App die Rückgabe nicht beziffern, etwa bei einem Angebot, das an einen laufenden Kredit gebunden ist, sagt die Prüfung das, und die Abschlusskarte zeigt, was bewegt wurde. Solange das Protokoll pausiert ist, ist das Stornieren geschlossen. Nichts verlässt Ihre Wallet und keine Freigabe wird verlangt, daher fragt Ihre Wallet einmal.
+
+<a id="offers-price-guard"></a>
+
+### Preisbewegungsschutz
+
+Ein Angebot eines Tokens gegen Token-Sicherheiten kann einen Preisbewegungsschutz tragen. Während Ihr Angebot im Orderbuch wartet, bewegen sich die Preise, und jemand könnte es genau dann annehmen, wenn sich der Markt zu seinen Gunsten bewegt hat. Auf der Seite des Angebots können Sie ein Limit zwischen 0,5 % und 50 % setzen: Das Angebot lehnt dann eine Annahme ab, solange sich das Verhältnis von Sicherheit zu Kapital seit dem Setzen des Schutzes um mehr als dieses Limit bewegt hat oder der Markt des Paares nicht ruhig ist. Wer das Angebot ansieht, sieht den Schutz und ob er eine Annahme jetzt zulässt. Auf einem bereits eingestellten Angebot schützt er erst ab dem Moment, in dem er erfasst wird. Er bewegt nie etwas, und Sie können ihn ändern oder entfernen, solange das Angebot offen ist.
 
 <a id="risk-access"></a>
 

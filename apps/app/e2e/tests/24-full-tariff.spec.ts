@@ -25,6 +25,7 @@ import {
   postLenderOffer,
   newestOfferIdFor,
   newestLoanIdFor,
+  openOfferToAccept,
 } from '../lib/flows';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
 import { setFeeEntitlementEnabled } from '../lib/feeEntitlement';
@@ -38,7 +39,7 @@ const FEE_MODE_FULL = 2;
  *  shows the "couldn't find that offer" alert, so retry with a reload
  *  until the review renders (the offer IS on chain). */
 async function openAcceptReview(page: Page, offerId: bigint): Promise<void> {
-  await page.goto(`/borrow?offer=${offerId}`, { waitUntil: 'domcontentloaded' });
+  await openOfferToAccept(page, 'borrow', offerId);
   await connectWallet(page);
   const accept = page.getByRole('button', { name: /borrow this now/i });
   const notFound = page.getByText(/find that offer/i);

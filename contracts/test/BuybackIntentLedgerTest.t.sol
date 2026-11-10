@@ -470,6 +470,8 @@ contract BuybackIntentLedgerTest is SetupTest {
         // Codex round-3 P1 #1 — minVpfiOut floor enforced.
         uint128 minVpfiOut = 100e18;
         _seedBaseBudget(AMOUNT);
+        // #908 — the floor needs top-up headroom to commit.
+        _t().setRewardEmissionsTopUpTarget(20_000e18);
         _t().commitBuybackIntent(
             ORDER,
             address(token),

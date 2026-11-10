@@ -2260,6 +2260,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 이 영역은 한 블록에서 `getProtectedAccount`, `getAllowlist`, `getPendingAllowlistAdditions`(각 요청과 그 `maturesAt`), `getProtectedSigners`, `paused`, 그리고 `getPendingPayoutIds`에서 수신자별 대기 지급을 읽습니다. 블록 시간에 그 뒤 지난 초를 더한 기준으로, 요청은 `maturesAt` 전에는 대기, `maturesAt + delay`까지는 준비, 그 뒤에는 만료입니다. 네 가지 변경은 `addAllowlisted`, `cancelAddAllowlisted`, `finalizeAddAllowlisted`, `removeAllowlisted`이며 모두 `(account, destination)`을 받습니다. 검토는 한 블록에서 읽히며, facet이 거부할 경우를 지갑을 열기 전에 거부합니다. 일시 중지나 잠금(추가와 활성화 시), 자기 지갑, 이미 활성이거나 대기 중인 주소, 이미 다섯 개의 지급 대상이나 다섯 개의 요청, 플래그된 주소, 아직 만기가 안 됐거나 만료된 요청입니다. 각 호출은 시뮬레이션되고, 지갑을 열기 직전에 다시 확인되며, 자체 `AllowlistAddRequested`, `AllowlistAddCancelled`, `AllowlistAdded`, `AllowlistRemoved` 로그로 측정됩니다. 제거는 그로 인해 생긴 `PayoutCancelled` 로그도 셉니다.
 
+<a id="protection-signers"></a>
+
+### 보조 서명자
+
+이 섹션은 한 블록에서 `getProtectedAccount`(`requireCosign`, `pendingCosignOffAt` 포함), 각 서명자의 `removeAt`을 위한 `getSignerChange`와 함께 `getProtectedSigners`, `getPendingSignerAdditions`(요청받은 각 지갑과 그 `maturesAt`, `accepted`), `paused`를 읽습니다. 변경은 `addSigner`, `cancelAddSigner`, `finalizeAddSigner`, `requestRemoveSigner`, `cancelRemoveSigner`, `finalizeRemoveSigner`(각각 `(account, signer)`), 요청받은 지갑이 수락 링크(`/protection?signer=<account>&chain=<id>`)에서 보내는 `acceptSignerRole(account)`, 그리고 `setRequireCosign(account, on)`입니다. 검토는 facet이 거부할 것을 지갑보다 먼저 거부합니다. 일시 중지(취소 제외), 잠금 또는 새 기본 지갑의 쿨다운(요청, 제거, 공동 서명 끄기), 본인 지갑, 이미 서명자이거나 이미 요청받은 지갑, 취소하지 않은 만료된 요청, 이미 다섯 명의 서명자 또는 다섯 건의 요청, 수락하지 않은 지갑, 끝나지 않은 대기 또는 지난 기간, 서명자 없는 공동 서명입니다. 각 호출은 시험 실행되고, 지갑이 열리기 직전에 다시 확인되며, 자체 `SignerAddRequested`, `SignerAccepted`, `SignerAddCancelled`, `SignerAdded`, `SignerRemoveRequested`, `SignerRemoveCancelled`, `SignerRemoved`, `CosignRequirementSet` 또는 `SettingChangeRequested` 로그로 측정됩니다. 대기 중인 요청 지갑은 주소 검사의 알려진 주소 목록에 들어갑니다.
+
 <a id="my-offers"></a>
 
 ### 내 오퍼
@@ -2283,6 +2289,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 ### 오퍼 취소
 
 검토 화면은 한 블록에서 `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()`, 생성자의 `getProtectedAccount`를 읽은 뒤 `OfferCancelFacet.cancelOffer(id)`를 시험 실행합니다. 파셋은 생성자의 관리자에게는 언제든, `expiresAt`이 지나면 누구에게나 취소를 허용합니다. `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`를 거부하고, `amountFilled == 0`인 오퍼가 300초 미만이며 만료되지 않았으면 `CancelCooldownActive`로 거부하며, `whenNotPaused`입니다. 반환액은 파셋 자체의 분기로 계산합니다. ERC-20 대출 오퍼는 대출 자산의 `(amountMax 또는 amount) - amountFilled`, NFT 대출 오퍼는 그 토큰 또는 ERC-1155 수량, 차입 요청은 쓰지 않은 담보 `(collateralAmountMax 또는 collateralAmount) - collateralAmountFilled` 또는 그 NFT(`refinanceCarryOver`가 담보를 대출에 남기면 없음), 대여 요청은 `amount × durationDays`에 `rentalBufferBpsAtCreate` 버퍼를 더한 값입니다. `getOfferLinkedLoanId`로 대출에 묶인 오퍼나 기록된 버퍼가 0인 대여 요청(이 경우 프로토콜은 현재 비율을 씀)은 서명 전에 계산하지 않습니다. 모든 반환은 볼트 출금을 통해 생성자의 볼트를 떠나므로, 보호 모드는 대기열에 넣거나 계정이 잠긴 동안 볼트에 둡니다. 포지션 토큰은 폐기됩니다. 완료 카드는 `OfferCanceled(offerId, creator)`, 생성자에 대한 프로토콜의 지급 기록, 생성자에게 간 토큰 자체의 전송을 읽습니다.
+
+<a id="offers-price-guard"></a>
+
+### 가격 변동 보호
+
+ERC-20 담보에 대한 ERC-20의 열린 오퍼에서는 작성자가 오퍼 페이지에서 가격 변동 보호를 설정, 변경, 해제할 수 있습니다. 기록될 때 프로토콜은 두 토큰의 오라클 가격을 적어 두고, 그 뒤로는 담보 대비 원금 비율이 그 수준에서 한도(0.5%~50%, 어느 방향이든)보다 많이 움직인 동안, 페어가 최근 두 번의 시간별 가격 점검 중 하나에 비해 안정 범위를 넘어 움직인 동안, 또는 현재 가격이나 그 점검 중 하나가 없는 동안 모든 체결이 거부됩니다. 점검은 대출 생성 시점에 이루어지므로 직접 체결과 매칭 모두에 적용되며, 페이지는 모두에게 한도, 비율이 얼마나 움직였는지, 지금 체결이 가능한지를 보여 줍니다. 시간별 점검은 누구나 기록할 수 있고, 프로토콜의 키퍼는 열린 보호 오퍼의 자산에 대해 이를 기록하도록 되어 있습니다. 두 토큰 모두에 대해 점검이 있기 전까지는 누구도 오퍼를 받을 수 없습니다. 올린 오퍼에 건 보호는 기록된 블록부터 보호하며 그 이전은 보호하지 않습니다. 변경하면 가격이 다시 기록됩니다. 아무것도 옮기지 않고 어떤 조건도 바꾸지 않습니다.
 
 <a id="risk-access"></a>
 

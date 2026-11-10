@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
@@ -2057,14 +2058,11 @@ contract ConfigFacet is DiamondAccessControl {
     ///         stored-zero default already reads as Tier 1, and demoting
     ///         *below* the no-keeper baseline isn't a thing (use
     ///         `AdminFacet.pauseAsset` to take an asset out entirely).
-    function setKeeperTier(address asset, uint8 tier)
-        external
-        onlyRole(LibAccessControl.KEEPER_ROLE)
-    {
-        // #633 — the global keeper pause must also freeze this risk-affecting
-        // keeper write (it feeds loan-init LTV limits); else a compromised keeper
-        // key could still move tiers while keepers appear paused.
-        if (LibVaipakam.cfgKeepersPaused()) revert IVaipakamErrors.KeeperAccessRequired();
+    function setKeeperTier(address asset, uint8 tier) external {
+        // #633 / #1638 — KEEPER_ROLE, and the global keeper pause is off: this
+        // risk-affecting write feeds loan-init LTV limits, so a compromised
+        // keeper key must not move tiers while keepers appear paused.
+        LibAuth.requireActiveKeeper();
         if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
         if (tier == 0 || tier > LibVaipakam.MAX_LIQUIDITY_TIER) revert InvalidLiquidityTier(tier);
         // Capture pre-write value so the emitted event carries the full

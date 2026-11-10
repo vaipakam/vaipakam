@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibAccessControl} from "./LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
@@ -47,6 +48,18 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *      current NFT holder.
  */
 library LibAuth {
+    /// @notice #1638 — the one gate for a `KEEPER_ROLE` entry point: the
+    ///         caller holds the role, and the global keeper pause is off.
+    /// @dev    Every `KEEPER_ROLE` entry point calls this instead of the bare
+    ///         `onlyRole(KEEPER_ROLE)`, so `keepersPaused` freezes them all
+    ///         and a new one cannot be added outside the pause. The role is
+    ///         checked first, so a non-keeper sees the role error whether or
+    ///         not the pause is on.
+    function requireActiveKeeper() internal view {
+        LibAccessControl.checkRole(LibAccessControl.KEEPER_ROLE, msg.sender);
+        if (LibVaipakam.cfgKeepersPaused()) revert IVaipakamErrors.KeepersPaused();
+    }
+
     function requireBorrower(LibVaipakam.Loan storage loan) internal view {
         if (loan.borrower != msg.sender) revert IVaipakamErrors.NotBorrower();
     }

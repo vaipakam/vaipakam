@@ -12,6 +12,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
@@ -675,6 +676,32 @@ contract RewardRemittanceFacetTest is SetupTest {
         vm.prank(keeper);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
         assertGt(rlens.getRewardBudgetRemittedGlobal(), 0, "keeper remitted");
+    }
+
+    /// @dev #1638 — the global keeper pause stops the remittance keeper EOA,
+    ///      leaves ADMIN able to remit, and the keeper's refused batch goes
+    ///      through once the pause lifts.
+    function test_Remit_KeeperRefusedWhileKeepersPaused_AdminStillRemits() public {
+        _finalizeDay1();
+        remit.setRewardRemittanceKeeper(keeper);
+        AdminFacet(address(diamond)).setKeepersPaused(true);
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.KeepersPaused.selector);
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), 0, "keeper refused, nothing moved");
+
+        AdminFacet(address(diamond)).setKeepersPaused(false);
+        vm.prank(keeper);
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        assertGt(rlens.getRewardBudgetRemittedGlobal(), 0, "keeper remits after unpause");
+    }
+
+    function test_Remit_AdminRemitsWhileKeepersPaused() public {
+        _finalizeDay1();
+        AdminFacet(address(diamond)).setKeepersPaused(true);
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        assertGt(rlens.getRewardBudgetRemittedGlobal(), 0, "admin unaffected by the keeper pause");
     }
 
     function test_SetKeeper_RequiresAdmin() public {

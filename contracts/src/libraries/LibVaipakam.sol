@@ -8281,6 +8281,29 @@ library LibVaipakam {
         ///      `LibOfferPriceGuard`, read at every fill of the offer.
         ///      Appended — append-only.
         mapping(uint256 => OfferPriceGuard) offerPriceGuard;
+        /// @dev #908 — the reward-emissions + keeper top-up headroom held for
+        ///      the VPFI floors of every pending buyback order: the sum, over
+        ///      pending orders, of `minVpfiOut` less what the order has
+        ///      already delivered (never below zero). A commit is refused
+        ///      unless the free headroom covers its floor, a fill may use
+        ///      only its own floor plus free headroom, and a target may not
+        ///      be lowered below what is held, so every committed order can
+        ///      always settle at its floor. Written only by
+        ///      `LibTreasuryBuyback`. Always the sum of
+        ///      `buybackVpfiFloorHeld` over pending orders. Appended —
+        ///      append-only.
+        uint256 buybackVpfiFloorReserved;
+        /// @dev #908 — the part of `buybackVpfiFloorReserved` each pending
+        ///      buyback order holds, keyed by order hash: its `minVpfiOut`
+        ///      at commit, less the floor its fills have met. An order
+        ///      releases exactly what it recorded here, never a figure
+        ///      recomputed from its terms, so an order committed before
+        ///      this record existed (a Diamond refreshed in place with
+        ///      orders pending) holds and releases nothing, and the
+        ///      aggregate can never underflow. Cleared when the order
+        ///      fills or expires. Written only by `LibTreasuryBuyback`.
+        ///      Appended — append-only.
+        mapping(bytes32 => uint256) buybackVpfiFloorHeld;
         /// @dev #3443 — the minimum age, in seconds, of an offer's or lender
         ///      intent's terms at fill. 0 = the default
         ///      (`LibTiming.DEFAULT_MIN_TERMS_AGE_SEC`); read only through

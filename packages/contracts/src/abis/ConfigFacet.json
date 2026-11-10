@@ -2989,7 +2989,7 @@
   },
   {
     "type": "error",
-    "name": "KeeperAccessRequired",
+    "name": "KeepersPaused",
     "inputs": []
   },
   {

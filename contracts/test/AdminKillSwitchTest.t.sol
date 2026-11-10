@@ -6,6 +6,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 
 /**
  * @title  AdminKillSwitchTest
@@ -47,6 +49,34 @@ contract AdminKillSwitchTest is SetupTest {
             STRANGER, mockERC20, mockCollateralERC20, 100, STRANGER,
             "n", "s", 1e18, 500, 5000, 30, 1e18
         );
+    }
+
+    // ─── Flag 2: keeper pause (#1638 — every KEEPER_ROLE entry) ─────────────
+
+    function test_keepersPaused_blocksSetKeeperTier() public {
+        address asset = makeAddr("tierAsset");
+        vm.prank(owner);
+        AdminFacet(address(diamond)).setKeepersPaused(true);
+        // owner holds KEEPER_ROLE: the pause, not the role, refuses it.
+        vm.prank(owner);
+        vm.expectRevert(IVaipakamErrors.KeepersPaused.selector);
+        ConfigFacet(address(diamond)).setKeeperTier(asset, 2);
+        // A non-keeper still sees the role error while paused.
+        vm.prank(STRANGER);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector,
+                STRANGER,
+                LibAccessControl.KEEPER_ROLE
+            )
+        );
+        ConfigFacet(address(diamond)).setKeeperTier(asset, 2);
+        // Unpaused, the keeper write goes through.
+        vm.prank(owner);
+        AdminFacet(address(diamond)).setKeepersPaused(false);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setKeeperTier(asset, 2);
+        assertEq(ConfigFacet(address(diamond)).getKeeperTier(asset), 2);
     }
 
     // ─── Flag 3: swap-venue pause ───────────────────────────────────────────
