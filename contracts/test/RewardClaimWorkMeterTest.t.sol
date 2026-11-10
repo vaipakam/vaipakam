@@ -238,4 +238,50 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertFalse(capFirst, "within reach: the next claim pays it");
         assertTrue(capLast, "past reach: not this claim's");
     }
+
+    /// @dev The static preview reads the next claim's day as the meter does:
+    ///      a day larger than one call carries counts only its leading
+    ///      entries, so the preview never exceeds what the claim pays.
+    function test_ThePreview_CountsOnlyWhatTheMeterCarries() public {
+        uint256 reach = LibClaimWork.freshWalkCapacity();
+        _scene(reach + 1, 1, type(uint256).max); // no wallet ceiling: each entry's own share
+        (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(alice);
+        assertTrue(_claimOnce());
+        uint256 paid = vpfi.balanceOf(alice);
+        assertGt(previewed, 0);
+        assertLe(previewed, paid, "a lower bound on the claim");
+        assertEq(paid % reach, 0, "one share per entry reached");
+        assertEq(previewed, paid, "the meter's reach, not the whole day");
+    }
+
+    /// @dev While a claim domain stands, its side is the domain's: the claim
+    ///      walks none of the side's days, so an entry outside the snapshot is
+    ///      not the next claim's and its expiry clock waits, in every phase,
+    ///      including after a resolution page has cleared the days it owes.
+    function test_AnEntryOutsideTheDomainSnapshot_ItsClockWaits() public {
+        uint256 n = LibClaimWork.DOMAIN_MAX_ENTRIES + 8;
+        uint256[] memory ids = _scene(n, 40);
+        _claimUntilDone(40);
+        (, uint8 phase, , , , , , , , , , , ) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
+        assertTrue(phase != uint8(LibVaipakam.DomainPhase.None), "a domain stands");
+        _assertWaits(ids[n - 1]);
+        uint256 pages;
+        while (!_domain().reserveDomainPage(_dk())) {
+            _assertWaits(ids[n - 1]);
+            if (++pages > 64) fail();
+        }
+        pages = 0;
+        while (true) {
+            bool done = _domain().resolveDomainPage(_dk());
+            (, phase, , , , , , , , , , , ) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
+            if (phase != uint8(LibVaipakam.DomainPhase.None)) _assertWaits(ids[n - 1]);
+            if (done) break;
+            if (++pages > 128) fail();
+        }
+    }
+
+    function _assertWaits(uint256 id) internal view {
+        (, , , , , bool capHit, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(id);
+        assertTrue(capHit, "outside the snapshot while the domain stands: not the next claim's");
+    }
 }
