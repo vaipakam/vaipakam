@@ -2,6 +2,10 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {MockSeaport} from "../mocks/MockSeaport.sol";
+import {MockConduitController} from "../mocks/MockConduitController.sol";
+import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
+import {VaultOutflowTypes} from "../../src/vault/VaultOutflowTypes.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {Launch} from "../../script/Launch.s.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
@@ -513,19 +517,10 @@ contract LaunchTest is Test {
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
-    /// @dev #3205 part 2 — a swap adapter routed by the Diamond must also be a
-    ///      member of the protocol registry's SWAP_ADAPTERS, or every vault
-    ///      refuses it and the launch refuses (`vault registry seeded`). The
-    ///      deploy seeds only the treasury (#3391 seeds the adapters at
-    ///      construction), so an adapter added after deploy joins through the
-    ///      registry's real delayed add: proposed by its owner (admin, under
-    ///      the caller's prank), executed once the delay has passed.
+    /// @dev A swap adapter the Diamond routes (#3431: the vault reads no
+    ///      adapter list; a swap leaves a vault only through `swapOut`).
     function _addAdapter(address a) internal {
         AdminFacet(diamond).addSwapAdapter(a);
-        ProtocolRegistry r = ProtocolRegistry(address(LibTestVaultBeacon.registryOf(diamond)));
-        r.proposeAdd(RegistryKeys.SWAP_ADAPTERS, a);
-        vm.warp(block.timestamp + r.delay());
-        r.executeAdd(RegistryKeys.SWAP_ADAPTERS, a);
     }
 
     /// @dev Configure the four Diamond-side requirements, and the VPFI token
@@ -681,6 +676,29 @@ contract LaunchTest is Test {
         Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
         assertFalse(AdminFacet(diamond).paused());
+    }
+
+    /// @notice #3431 — the vault code's conduit key must resolve, through its
+    ///         own Seaport's conduit controller, to the conduit it fixes; a
+    ///         key that resolves elsewhere is refused, a matching one passes.
+    function test_Testnet_RefusesAVaultConduitKeyThatResolvesElsewhere() public {
+        vm.chainId(84532);
+        _configure();
+        MockConduitController controller = new MockConduitController();
+        bytes32 key = keccak256("launch-conduit-key");
+        controller.register(key, makeAddr("resolvedConduit"));
+        VaultOutflowTypes.VaultEndpoints memory e = LibTestVaultBeacon.endpointsOf(diamond);
+        e.seaport = address(new MockSeaport(address(controller)));
+        e.conduitKey = key;
+        e.conduit = makeAddr("otherConduit");
+        LibTestVaultBeacon.setEndpoints(diamond, e);
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+
+        e.conduit = makeAddr("resolvedConduit");
+        LibTestVaultBeacon.setEndpoints(diamond, e);
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+        assertEq(uint8(o), uint8(Launch.Outcome.Unpaused), "a key that resolves to the conduit passes");
     }
 
     function test_Testnet_RefusesALaneLessPool() public {

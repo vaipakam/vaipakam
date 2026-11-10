@@ -131,10 +131,16 @@ describe('openPushRail', () => {
     onclose: (() => void) | null = null;
     onerror: (() => void) | null = null;
     closed = false;
+    /** 0 while opening, 1 once `open()` ran, as a real socket reports. */
+    readyState = 0;
     readonly url: string;
     constructor(url: string) {
       this.url = url;
       FakeSocket.last = this;
+    }
+    open() {
+      this.readyState = 1;
+      this.onopen?.();
     }
     close() {
       this.closed = true;
@@ -187,7 +193,7 @@ describe('openPushRail', () => {
   };
   it('stays connecting on open until hello says the chain is scanned, then goes live and arms the heartbeat', () => {
     const { t, states, ws } = open();
-    ws.onopen?.();
+    ws.open();
     expect(states).toEqual(['connecting']);
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
     expect(states).toEqual(['connecting', 'live']);
@@ -195,21 +201,21 @@ describe('openPushRail', () => {
   });
   it('reads an inactive hello as inactive, with no heartbeat expected', () => {
     const { t, states, ws } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: false, cursor: null, scanCadenceSec: null });
     expect(states).toEqual(['connecting', 'inactive']);
     expect(t.pending()).toEqual([]);
   });
   it('arms the stall timer at the deadline the cursor itself sets, not a full grace from the frame', () => {
     const { t, states, ws } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: { lastBlock: 9, updatedAt: NOW - 500 }, scanCadenceSec: 300 });
     expect(states.at(-1)).toBe('live');
     expect(t.pending().map((q) => q.ms)).toEqual([(300 * HEARTBEAT_GRACE - 500) * 1000]);
   });
   it('turns stalled when the cursor is overdue and live again only on a heartbeat carrying a recent timestamp', () => {
     const { t, states, ws, clock } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: { lastBlock: 10, updatedAt: NOW }, scanCadenceSec: 300 });
     clock.sec = NOW + 300 * HEARTBEAT_GRACE + 1;
     t.fire();
@@ -225,21 +231,21 @@ describe('openPushRail', () => {
   });
   it('a hello whose cursor is already past the grace reads as stalled at connect', () => {
     const { t, states, ws } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: { lastBlock: 9, updatedAt: NOW - 3_600 }, scanCadenceSec: 300 });
     expect(states).toEqual(['connecting', 'stalled']);
     expect(t.pending()).toEqual([]);
   });
   it('a cursor frame re-arms the deadline instead of adding a second one', () => {
     const { t, ws } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
     ws.frame({ t: 'cursor', chainId: 84532, lastBlock: '11', updatedAt: NOW, scanCadenceSec: 300 });
     expect(t.pending()).toHaveLength(1);
   });
   it('a drop clears the heartbeat, announces unavailable and schedules the reconnect', () => {
     const { t, states, ws } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
     ws.onclose?.();
     expect(states.at(-1)).toBe('unavailable');
@@ -247,12 +253,21 @@ describe('openPushRail', () => {
   });
   it('close() cancels every timer and announces closed once', () => {
     const { t, states, handle, ws } = open();
-    ws.onopen?.();
+    ws.open();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
     handle.close();
     handle.close();
     expect(ws.closed).toBe(true);
     expect(t.pending()).toEqual([]);
     expect(states.filter((s) => s === 'closed')).toHaveLength(1);
+  });
+  it('a socket still opening is closed once it opens, never mid-handshake, and reports nothing after', () => {
+    const { states, handle, ws } = open();
+    handle.close();
+    expect(ws.closed).toBe(false);
+    expect(ws.onmessage).toBeNull();
+    ws.open();
+    expect(ws.closed).toBe(true);
+    expect(states.at(-1)).toBe('closed');
   });
 });

@@ -212,6 +212,18 @@ stops the action, the approval is put back to what it was (best effort, and
 only if nothing else changed it), and a failure to put it back is said
 beside the reason, never left silent; approval resets are named honestly.
 
+The numeraire equivalent (#3225) is one shared line under a typed amount,
+and the same words in a review's rows. It is the protocol's own valuation
+now, by the rule it uses for loan-to-value (a principal rounded up, a
+collateral rounded down), in the numeraire's own symbol, read once typing
+pauses rather than on every keystroke. An asset the protocol gives no price
+is said to be valued at nothing, a price the protocol's sources dispute is
+said to be why no value is shown, and a value that could not be read is said
+to be unread: the line never shows a figure the protocol would not stand
+behind. In a review the rows are informational, never binding, since the
+price moves after signing. The borrow and lend forms and the take-an-offer
+review carry it.
+
 ### RB-MODE — mode is defined per capability
 
 Basic is the default. A capability is Basic when a first-time user needs it
@@ -364,6 +376,16 @@ button that would fail. A feature whose prerequisite cannot be verified is
 never an actionable signing step; an unavailable convenience may ship with
 its gap disclosed.
 
+A transaction that mined and reverted is reported as changing nothing, and
+the finish card adds why where the chain lets it be read (#3482): when the
+receipt spent the whole gas allowance, it names that allowance and says it
+most likely ran out of gas; otherwise it replays the call on the state just
+before its block and states the protocol's refusal as the likely reason,
+since a transaction earlier in the same block, or the block's own later
+time, can change it. A replay that goes through says that one of those two
+changed what the call relied on, without claiming which; a replay that
+cannot run says so. The reason never changes the verdict.
+
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant
 digits below one, cut toward zero and never rounded up, so a small amount
@@ -403,6 +425,18 @@ a compromised deployment, which serves its own policy, or against software
 on the user's own device such as a browser extension. This is a deployment
 acceptance criterion (§3.2): a route does not reach parity on a deployment
 without it.
+
+The review is taken with a wallet connected, since some destinations are
+reached only then (#3476). A connected session must reach no host outside
+the list, and a third-party library must not reach one on the app's behalf.
+The wallet picker is used only to connect. The connected account surface
+(the full address, a copy action, the network, a switch to each other
+served network, and disconnect) is the app's own, because the picker's
+connected surfaces look up a name-service name on a network the app does
+not serve, from an endpoint the page does not name. The app shows the
+address itself. The committed live driver `e2e/live/console-watch.cjs` walks
+the main routes connected, on desktop and phone, and fails on any app console
+error or warning, any report and any failed request.
 
 ### RB-GOVERNANCE-QUEUE — queued governance changes are public
 

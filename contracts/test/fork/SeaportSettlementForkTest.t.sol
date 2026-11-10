@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "../SetupTest.t.sol";
+import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibPrepayOrder} from "../../src/libraries/LibPrepayOrder.sol";
 import {ISeaportOrderHash, OrderComponents} from "../../src/seaport/ISeaportOrderHash.sol";
@@ -272,6 +273,10 @@ contract SeaportSettlementForkTest is SetupTest {
             .setPrepayListingEnabled(true);
         forkExecutor.addApprovedConduit(forkConduit);
         vm.stopPrank();
+        // #3431 — the vault code fixes the Seaport and conduit it signs for
+        // (test convenience: in place of new vault code).
+        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setConduit(address(diamond), forkConduit, testConduitKey);
 
         forkEnabled = true;
     }
@@ -395,9 +400,9 @@ contract SeaportSettlementForkTest is SetupTest {
         // the Phase-2c fulfillment would revert even though the
         // diamond mirror slot looked correct.
         assertEq(
-            VaipakamVaultImplementation(phase2BorrowerVault).getListingExecutor(recordedHash),
-            address(forkExecutor),
-            "vault's ERC-1271 binding must point at the executor for the recorded orderHash"
+            VaipakamVaultImplementation(phase2BorrowerVault).orderVerifier(recordedHash),
+            VaipakamVaultImplementation(phase2BorrowerVault).SEAPORT(),
+            "the vault answers Seaport for the recorded orderHash"
         );
         (
             uint96 ctxLoanId,

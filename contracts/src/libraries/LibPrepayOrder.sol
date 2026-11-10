@@ -14,6 +14,8 @@ import {
 } from "../seaport/ISeaportOrderHash.sol";
 import {ItemType} from "../seaport/ISeaportZone.sol";
 import {FeeLeg, OfferContext} from "../seaport/PrepayTypes.sol";
+import {LibListingEscrow} from "./LibListingEscrow.sol";
+import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 
 /**
  * @title LibPrepayOrder
@@ -61,6 +63,35 @@ import {FeeLeg, OfferContext} from "../seaport/PrepayTypes.sol";
  *         and the payout always follows the holders at fill time.
  */
 library LibPrepayOrder {
+    /// @notice #3431 — who lists: the vault that holds the collateral and the
+    ///         listing's key. The order's offerer is derived from them (the
+    ///         vault for an ERC-721, its escrow for the listing for an
+    ///         ERC-1155), and the vault registers the order from its terms.
+    struct Lister {
+        address vault;
+        bytes32 key;
+    }
+
+    /// @notice The lister of loan `loanId`'s collateral listing: the
+    ///         borrower's vault and the loan-keyed listing key.
+    function loanLister(uint256 loanId) internal view returns (Lister memory) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return Lister({vault: s.userVaipakamVaults[s.loans[loanId].borrower], key: LibListingEscrow.key(false, loanId)});
+    }
+
+    /// @notice The lister of offer `offerId`'s parallel-sale listing.
+    function offerLister(address vault, uint256 offerId) internal pure returns (Lister memory) {
+        return Lister({vault: vault, key: LibListingEscrow.key(true, offerId)});
+    }
+
+    /// @dev #3431 — THE one place a listing order becomes signable: the vault
+    ///      checks the terms and computes the hash itself, so the Diamond can
+    ///      never hand it a hash of something else.
+    function _register(Lister memory l, OrderComponents memory c) private returns (bytes32) {
+        bytes32 escrowKey = c.offerer == l.vault ? bytes32(0) : l.key;
+        return VaipakamVaultImplementation(l.vault).registerSeaportOrder(c, escrowKey);
+    }
+
     /// @dev #656a — the scalar order-spec values that thread through the
     ///      canonical `OrderComponents` builder, bundled into a MEMORY struct so
     ///      they're read on-demand (one `mload` each at use) instead of living
@@ -97,14 +128,15 @@ library LibPrepayOrder {
     ///      submission-time enforcement sees the expected shape.
     function buildAndHash(
         IVaipakamPrepayContext.PrepayContext memory pctx,
-        address vault,
+        Lister memory lister,
         address executor,
         address seaport,
         uint256 askPrice,
         uint256 salt,
         bytes32 conduitKey,
         FeeLeg[] calldata feeLegs
-    ) internal view returns (bytes32 orderHash) {
+    ) internal returns (bytes32 orderHash) {
+        address vault = LibListingEscrow.offerer(lister.vault, pctx.collateralAssetType, lister.key);
         OrderComponents memory components = _componentsAtCalldata(
             pctx,
             vault,
@@ -121,7 +153,7 @@ library LibPrepayOrder {
             }),
             feeLegs
         );
-        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+        orderHash = _register(lister, components);
     }
 
     /// @dev T-086 Round-6 / Block D (#345) — memory-typed sibling
@@ -130,14 +162,15 @@ library LibPrepayOrder {
     ///      data location alone, so a distinct name.
     function buildAndHashMem(
         IVaipakamPrepayContext.PrepayContext memory pctx,
-        address vault,
+        Lister memory lister,
         address executor,
         address seaport,
         uint256 askPrice,
         uint256 salt,
         bytes32 conduitKey,
         FeeLeg[] memory feeLegs
-    ) internal view returns (bytes32 orderHash) {
+    ) internal returns (bytes32 orderHash) {
+        address vault = LibListingEscrow.offerer(lister.vault, pctx.collateralAssetType, lister.key);
         OrderComponents memory components = fixedPriceComponentsMem(
             pctx,
             vault,
@@ -148,7 +181,7 @@ library LibPrepayOrder {
             ISeaportOrderHash(seaport).getCounter(vault),
             feeLegs
         );
-        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+        orderHash = _register(lister, components);
     }
 
     /// @dev The canonical fixed-price components a listing opened at this
@@ -203,7 +236,7 @@ library LibPrepayOrder {
     ///      terminal-time boundary").
     function buildAndHashDutch(
         IVaipakamPrepayContext.PrepayContext memory pctx,
-        address vault,
+        Lister memory lister,
         address executor,
         address seaport,
         uint256 startAskPrice,
@@ -212,7 +245,8 @@ library LibPrepayOrder {
         uint256 salt,
         bytes32 conduitKey,
         FeeLeg[] calldata feeLegs
-    ) internal view returns (bytes32 orderHash) {
+    ) internal returns (bytes32 orderHash) {
+        address vault = LibListingEscrow.offerer(lister.vault, pctx.collateralAssetType, lister.key);
         OrderComponents memory components = _componentsAtCalldata(
             pctx,
             vault,
@@ -229,7 +263,7 @@ library LibPrepayOrder {
             }),
             feeLegs
         );
-        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+        orderHash = _register(lister, components);
     }
 
     /// @dev Resolve the deployed conduit ADDRESS for a given
@@ -478,23 +512,23 @@ library LibPrepayOrder {
         LibVaipakam.AssetType collateralAssetType,
         uint256 collateralTokenId,
         uint256 collateralQuantity,
-        address diamond,
+        Lister memory lister,
         address executor,
         address seaport,
         FeeLeg[] memory feeLegs
-    ) internal view returns (bytes32 orderHash) {
+    ) internal returns (bytes32 orderHash) {
         OrderComponents memory components = _componentsOfferAtMemory(
             ctx,
             collateralAsset,
             collateralAssetType,
             collateralTokenId,
             collateralQuantity,
-            diamond,
+            address(this),
             executor,
             ISeaportOrderHash(seaport).getCounter(ctx.borrowerVault),
             feeLegs
         );
-        orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
+        orderHash = _register(lister, components);
     }
 
     /// @notice T-086 Round-8 (#358) Step 7 — public wrapper around

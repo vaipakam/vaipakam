@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {RegistryKeys} from "./RegistryKeys.sol";
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibLaunchCrossChainReadiness} from "./LibLaunchCrossChainReadiness.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
@@ -85,8 +84,30 @@ interface ILaunchVaultBeacon {
     function implementation() external view returns (address);
 }
 
+/// @dev #3431 — the endpoints a vault implementation fixes in its code.
 interface ILaunchVaultCode {
-    function REGISTRY() external view returns (address);
+    function TREASURY() external view returns (address);
+    function BACKSTOP() external view returns (address);
+    function SEAPORT() external view returns (address);
+    function ORDER_PROTOCOL() external view returns (address);
+    function CONDUIT() external view returns (address);
+    function CONDUIT_KEY() external view returns (bytes32);
+    function PRICE_GUARD() external view returns (address);
+}
+
+/// @dev Seaport's conduit controller, reached through the vault's Seaport.
+interface ILaunchSeaport {
+    function conduitController() external view returns (address);
+}
+
+interface ILaunchConduitController {
+    function getConduit(bytes32 conduitKey) external view returns (address conduit, bool exists);
+}
+
+/// @dev The listing executor's Seaport and conduit allow-list.
+interface ILaunchListingExecutor {
+    function seaport() external view returns (address);
+    function approvedConduits(address conduit) external view returns (bool);
 }
 
 /// @dev #3272 — what the readiness check reads of the price guard, the one
@@ -98,12 +119,6 @@ interface ILaunchPriceGuard {
     function PAD_DENOMINATOR() external view returns (address);
     // forge-lint: disable-next-line(mixed-case-function)
     function ETH_DENOMINATOR() external view returns (address);
-}
-
-interface ILaunchRegistry {
-    function pointer(bytes32 key) external view returns (address);
-    function isMember(bytes32 set, address member) external view returns (bool);
-    function memberCount(bytes32 set) external view returns (uint256);
 }
 
 library LibLaunchReadiness {
@@ -254,7 +269,7 @@ library LibLaunchReadiness {
         checks[7] = _feedRegistry(diamond, declared.feedRegistry);
         checks[8] = _lapseSchedule(diamond);
         checks[9] = _rewardRole(diamond, declared.rewardRole);
-        checks[10] = _vaultRegistry(diamond);
+        checks[10] = _vaultEndpoints(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -291,28 +306,23 @@ library LibLaunchReadiness {
 
     // ─── The requirements ──────────────────────────────────────────────
 
-    /// @dev Fees and treasury shares need somewhere to go.
-    /// @dev #3205 part 2 — every vault checks a treasury, swap-adapter,
-    ///      order-protocol or conduit destination against the protocol
-    ///      registry its CODE names. A registry left empty (or a vault built
-    ///      against none) would refuse every fee, every swap-to-repay fill and
-    ///      every listing fill, each with a named error but only once a user
-    ///      tried. So the launch refuses first, here: the registry must exist,
-    ///      name the Diamond's treasury, carry every swap adapter and the
-    ///      1inch order protocol the Diamond routes through, and hold at least
-    ///      one conduit once a listing executor is configured.
-    function _vaultRegistry(address diamond) private view returns (Check memory c) {
-        c.label = "vault registry seeded";
+    /// @dev #3431 — every vault pays or approves only the endpoints fixed in
+    ///      its CODE. One that differs from the Diamond's own setting would
+    ///      refuse every fee, backstop payment, swap-to-repay fill or listing
+    ///      fill, each with a named error but only once a user tried. So the
+    ///      launch refuses first: the vault code's treasury must be the
+    ///      Diamond's, its backstop the Diamond's backstop vault, its order
+    ///      protocol the Diamond's 1inch protocol, and, once a listing
+    ///      executor is configured, its Seaport the executor's and its conduit
+    ///      one the executor allows. Its conduit key must resolve, through its
+    ///      Seaport's conduit controller, to its conduit.
+    function _vaultEndpoints(address diamond) private view returns (Check memory c) {
+        c.label = "vault endpoints match";
         ILaunchReadableDiamond d = ILaunchReadableDiamond(diamond);
-        address registry;
+        address impl;
         try d.getVaultBeacon() returns (address beacon) {
-            try ILaunchVaultBeacon(beacon).implementation() returns (address impl) {
-                try ILaunchVaultCode(impl).REGISTRY() returns (address r) {
-                    registry = r;
-                } catch {
-                    c.detail = "the vault code names no registry (REGISTRY() unreadable)";
-                    return c;
-                }
+            try ILaunchVaultBeacon(beacon).implementation() returns (address i) {
+                impl = i;
             } catch {
                 c.detail = "the vault beacon's implementation() is unreadable";
                 return c;
@@ -321,50 +331,80 @@ library LibLaunchReadiness {
             c.detail = "getVaultBeacon() unreadable";
             return c;
         }
-        c.checkable = true;
-        if (registry == address(0)) {
-            c.detail = "the vault code is built against no protocol registry: every treasury, adapter and conduit outflow would be refused";
-            return c;
-        }
-        ILaunchRegistry r = ILaunchRegistry(registry);
-        try d.getTreasury() returns (address t) {
-            if (t == address(0) || r.pointer(RegistryKeys.TREASURY) != t) {
-                c.detail = "the registry's TREASURY is not the Diamond's treasury";
+        ILaunchVaultCode v = ILaunchVaultCode(impl);
+        try v.TREASURY() returns (address vt) {
+            c.checkable = true;
+            try d.getTreasury() returns (address t) {
+                if (t == address(0) || vt != t) {
+                    c.detail = "the vault code's TREASURY is not the Diamond's treasury";
+                    return c;
+                }
+            } catch {
+                c.checkable = false;
+                c.detail = "getTreasury() unreadable";
                 return c;
             }
         } catch {
-            c.checkable = false;
-            c.detail = "getTreasury() unreadable";
+            c.detail = "the vault code fixes no endpoints (TREASURY() unreadable)";
             return c;
         }
         try d.getBackstopVault() returns (address b) {
-            if (b != address(0) && r.pointer(RegistryKeys.BACKSTOP) != b) {
-                c.detail = "the registry's BACKSTOP is not the Diamond's backstop";
+            if (b != v.BACKSTOP()) {
+                c.detail = "the vault code's BACKSTOP is not the Diamond's backstop vault";
                 return c;
             }
         } catch {}
-        try d.getSwapAdapters() returns (address[] memory adapters) {
-            for (uint256 i; i < adapters.length; ++i) {
-                if (!r.isMember(RegistryKeys.SWAP_ADAPTERS, adapters[i])) {
-                    c.detail = "a swap adapter the Diamond routes through is not in the registry's SWAP_ADAPTERS";
+        try d.getFusionLimitOrderProtocol() returns (address lop) {
+            if (lop != address(0) && lop != v.ORDER_PROTOCOL()) {
+                c.detail = "the vault code's ORDER_PROTOCOL is not the Diamond's 1inch order protocol: every swap-to-repay commit would be refused";
+                return c;
+            }
+        } catch {}
+        // #3272 part 2 — the vault code's price guard is the one the Diamond
+        // prices through (the registry's PRICE_GUARD, read by the Diamond).
+        try d.getPriceGuard() returns (address g) {
+            if (g != v.PRICE_GUARD()) {
+                c.detail = "the vault code's PRICE_GUARD is not the guard the Diamond prices through";
+                return c;
+            }
+        } catch {}
+        if (!_conduitKeyResolves(v)) {
+            c.detail = "the vault code's CONDUIT_KEY does not resolve to its CONDUIT: every listing would be refused";
+            return c;
+        }
+        try d.getCollateralListingExecutor() returns (address executor) {
+            if (executor != address(0)) {
+                ILaunchListingExecutor x = ILaunchListingExecutor(executor);
+                if (x.seaport() != v.SEAPORT()) {
+                    c.detail = "the vault code's SEAPORT is not the listing executor's: no listing could be signed";
+                    return c;
+                }
+                if (!x.approvedConduits(v.CONDUIT())) {
+                    c.detail = "the listing executor does not allow the vault code's CONDUIT: every listing would be refused";
                     return c;
                 }
             }
         } catch {}
-        try d.getFusionLimitOrderProtocol() returns (address lop) {
-            if (lop != address(0) && !r.isMember(RegistryKeys.SWAP_ADAPTERS, lop)) {
-                c.detail = "the 1inch order protocol is not in the registry's SWAP_ADAPTERS: every swap-to-repay fill would be refused";
-                return c;
-            }
-        } catch {}
-        try d.getCollateralListingExecutor() returns (address executor) {
-            if (executor != address(0) && r.memberCount(RegistryKeys.CONDUITS) == 0) {
-                c.detail = "a listing executor is configured but the registry holds no CONDUITS: every listing fill would be refused";
-                return c;
-            }
-        } catch {}
         c.met = true;
-        c.detail = "the registry names the treasury and carries the routed adapters, order protocol and conduits";
+        c.detail = "the vault code's treasury, backstop, order protocol, price guard, Seaport and conduit match the Diamond's";
+    }
+
+    /// @dev #3431 — whether the vault code's conduit key resolves, through
+    ///      its own Seaport's conduit controller, to the conduit it fixes. A
+    ///      Seaport without code (a local chain) has nothing to resolve against
+    ///      and passes; any failed read does not.
+    function _conduitKeyResolves(ILaunchVaultCode v) private view returns (bool) {
+        address seaport = v.SEAPORT();
+        if (seaport.code.length == 0) return true;
+        try ILaunchSeaport(seaport).conduitController() returns (address controller) {
+            try ILaunchConduitController(controller).getConduit(v.CONDUIT_KEY()) returns (address conduit, bool exists) {
+                return exists && conduit != address(0) && conduit == v.CONDUIT();
+            } catch {
+                return false;
+            }
+        } catch {
+            return false;
+        }
     }
 
     function _treasury(address diamond) private view returns (Check memory c) {

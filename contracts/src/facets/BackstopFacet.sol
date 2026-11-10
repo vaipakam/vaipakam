@@ -178,18 +178,24 @@ contract BackstopFacet is
     /// @notice Provision the single backstop vault proxy over the shared impl.
     /// @dev NOT `nonReentrant`: the proxy `initialize` callback runs in the
     ///      Diamond's shared-lock context (mirrors the adapter factory).
+    ///      #3431 — not paused-gated: the deploy provisions it while the
+    ///      Diamond is still paused, before the vault code fixes its address
+    ///      as the only backstop-class owner. It moves nothing and stays the
+    ///      vault admin's alone, once.
     function provisionBackstopVault()
         external
-        whenNotPaused
         onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
         returns (address vault)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.backstopVaultTemplate == address(0)) revert BackstopTemplateNotSet();
         if (s.backstopVault != address(0)) revert BackstopAlreadyProvisioned();
+        // #3431 — the Diamond is `address(this)` (delegatecall context), read
+        // directly: the deploy provisions the backstop before anything sets
+        // `s.diamondAddress`.
         bytes memory data = abi.encodeCall(
             BackstopVaultImplementation.initialize,
-            (s.diamondAddress)
+            (address(this))
         );
         vault = address(new ERC1967Proxy(s.backstopVaultTemplate, data));
         s.backstopVault = vault;

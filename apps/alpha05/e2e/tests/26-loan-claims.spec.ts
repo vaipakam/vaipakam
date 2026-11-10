@@ -13,27 +13,11 @@
 import { erc20Abi } from 'viem';
 import { openLoan, repayInFull, WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
-import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 type Hex = `0x${string}`;
 type Claimable = readonly [Hex, bigint, boolean, number, bigint, bigint, bigint, boolean];
-
-// The chain as each test found it: later specs (the phone project's
-// included) count on the lender holding no WETH and the borrower none of the
-// collateral token beyond what they hold now. A revert leaves the head at the
-// snapshot's timestamp while the next block mines at the wall clock, so a
-// block is mined at once: a later repay estimated in the stale head would
-// mine short of gas, since interest accrues per second.
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-});
-test.afterEach(async () => {
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
 
 /** Move within the app without reloading it, as a link would. */
 async function softNavigate(page: Page, path: string): Promise<void> {

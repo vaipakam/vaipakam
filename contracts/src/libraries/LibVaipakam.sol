@@ -8643,6 +8643,8 @@ library LibVaipakam {
         ///      was committed (addenda 1–2): equal now means nothing moved.
         uint256 lifecycleVersionAtCommit;
         /// @dev The settlement chunks the extent needs — the deadline's base.
+        ///      #1787: a chunk is one preparation call of the claim's work
+        ///      meter ({LibClaimWork.prepCalls}), no longer a fixed day count.
         uint256 chunks;
         /// @dev The day records' own lease growth, accumulated (each record's
         ///      deadline moves are added here; the domain's deadline is its

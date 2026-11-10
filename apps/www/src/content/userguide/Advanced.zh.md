@@ -1689,7 +1689,7 @@ wallet 的提供方，再经由只读 RPC 代理，最后经由网络的公共�
 同步行会注明作出响应的来源，以及页面上最早一次读取距今多久；
 "刷新"会重新读取全部内容。索引只用于全局数字（市场和历史），
 并显示其区块高度和时效。处于不支持网络上的 wallet 在切换之前
-看不到任何属于自己的内容。
+看不到任何属于自己的内容。地址标签会打开应用自己的账户面板：带复制操作的完整地址、network、切换到其他每个受支持的 network，以及断开连接。钱包选择器只用于连接。连接后应用不进行任何名称服务查询，因此已连接的会话不会读取 Ethereum mainnet 上的任何内容，也不会访问页面 connect-src 列表之外的任何主机。
 
 <a id="deployments"></a>
 
@@ -1810,7 +1810,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow: 审核与签名
 
-审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。
+审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。审核会按预览金额加入本金和抵押品的 `getNumeraireValue`，作为不具约束力的行。
 
 <a id="borrow-fee"></a>
 
@@ -1828,7 +1828,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow：发布你自己的请求
 
-请求是从借款人钱包发送的 `createOffer`，`offerType` 为 1，两侧均为 ERC-20。它把 `collateralAmount` 转入借款人的金库（若没有金库则先创建），并发出 `OfferCreated(offerId, creator, 1)`。出借人用 `acceptOffer` 接受：扣除费用后的本金进入借款人钱包，费用中归发送者的份额归发送交易的出借人。`cancelOffer` 在创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起对创建者开放，请求过期后对任何人开放；抵押品始终退回创建者。
+请求是从借款人钱包发送的 `createOffer`，`offerType` 为 1，两侧均为 ERC-20。它把 `collateralAmount` 转入借款人的金库（若没有金库则先创建），并发出 `OfferCreated(offerId, creator, 1)`。出借人用 `acceptOffer` 接受：扣除费用后的本金进入借款人钱包，费用中归发送者的份额归发送交易的出借人。`cancelOffer` 在创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起对创建者开放，请求过期后对任何人开放；抵押品始终退回创建者。在每个输入的金额下方，表单以 `getNumeraireSymbol` 的单位显示 `getNumeraireValue(asset, amount, roundUp)`（本金向上取整，抵押品向下取整），在输入暂停时读取；非流动资产显示为估值为零，有争议的价格显示为无值，读取失败显示为未读。
 
 <a id="borrow-request-terms"></a>
 

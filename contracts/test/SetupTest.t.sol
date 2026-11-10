@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
+import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -608,7 +609,7 @@ contract SetupTest is Test {
         helperTest = new HelperTest();
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
+        vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond. #229 closes the test-vs-prod drift
         // that #168 Track A narrowed: 28 → 37 cut[] entries, matching

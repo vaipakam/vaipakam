@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -81,6 +82,8 @@ contract BackstopAbsorbTest is SetupTest {
         // Provision the backstop vault (Role A PR1 prerequisite).
         BackstopFacet(address(diamond)).initializeBackstopVaultImplementation();
         vault = BackstopFacet(address(diamond)).provisionBackstopVault();
+        // #3431 — the vault code fixes the backstop (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         // Role B governance: enable master + absorb, set the cap, seed cash.
         BackstopFacet(address(diamond)).setBackstopEnabled(true);
         BackstopFacet(address(diamond)).setBackstopAbsorbEnabled(true);

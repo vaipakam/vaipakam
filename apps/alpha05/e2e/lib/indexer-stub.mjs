@@ -401,6 +401,7 @@ const server = http.createServer(async (req, res) => {
           '/notifications/:address',
           '/ws/chain/:chainId (503)',
           '/rpc/:chainId',
+          '/__stub/reset',
           '/__stub/index-posture',
           '/__stub/unplaced',
           '/__stub/notifications',
@@ -408,6 +409,16 @@ const server = http.createServer(async (req, res) => {
           '/__stub/agent',
         ],
       });
+      return;
+    }
+    if (url.pathname === '/__stub/reset' && req.method === 'POST') {
+      // Every setting a spec can change, back to how the stand-in started:
+      // the suite calls this after every test, as it reverts the chain.
+      posture = 'live';
+      unplaced = { count: 0, capped: false };
+      addedNotifications = [];
+      agent = freshAgent();
+      json(res, 200, { reset: true });
       return;
     }
     if (url.pathname === '/__stub/index-posture' && req.method === 'POST') {

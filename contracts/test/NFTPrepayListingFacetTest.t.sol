@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -124,6 +125,10 @@ contract NFTPrepayListingFacetTest is SetupTest {
         vm.startPrank(owner);
         PrepayListingFacet(address(diamond))
             .setCollateralListingExecutor(address(mockExecutor));
+        // #3431 — the vault code fixes the Seaport and the conduit it signs
+        // for and approves (test convenience: in place of new vault code).
+        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setConduit(address(diamond), conduit, conduitKey);
         ConfigFacet(address(diamond))
             .setPrepayListingBufferBps(TEST_BUFFER_BPS);
         ConfigFacet(address(diamond))
@@ -776,9 +781,9 @@ contract NFTPrepayListingFacetTest is SetupTest {
         , _emptyFeeLegs());
 
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
-            address(mockExecutor),
-            "vault pins orderHash to executor"
+            VaipakamVaultImplementation(borrowerVaultAddr).orderVerifier(derivedHash),
+            LibTestVaultBeacon.endpointsOf(address(diamond)).seaport,
+            "the vault answers Seaport for the order it hashed"
         );
     }
 
@@ -795,7 +800,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Vault binding cleared.
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
+            VaipakamVaultImplementation(borrowerVaultAddr).orderVerifier(derivedHash),
             address(0),
             "vault binding cleared on cancel"
         );
@@ -910,8 +915,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         assertEq(collateralNFT.getApproved(COLLATERAL_TOKEN_ID), address(0));
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
-            address(mockExecutor)
+            VaipakamVaultImplementation(borrowerVaultAddr).orderVerifier(derivedHash),
+            LibTestVaultBeacon.endpointsOf(address(diamond)).seaport
         );
         assertEq(
             uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
@@ -935,7 +940,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "conduit approval revoked"
         );
         assertEq(
-            VaipakamVaultImplementation(borrowerVaultAddr).getListingExecutor(derivedHash),
+            VaipakamVaultImplementation(borrowerVaultAddr).orderVerifier(derivedHash),
             address(0),
             "vault orderHash binding cleared"
         );

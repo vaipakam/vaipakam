@@ -82,8 +82,10 @@ contract RewardClaimFacet is
     /**
      * @notice Claim accrued interaction rewards across finalized days
      *         since the caller's last claim. Windowed by
-     *         `MAX_INTERACTION_CLAIM_DAYS`; repeat the call to catch up
-     *         beyond one window.
+     *         `MAX_INTERACTION_CLAIM_DAYS` and by the call's work meter
+     *         ({LibClaimWork}, #1787), which stops the walk once the next
+     *         day's entries would not fit one transaction; repeat the call
+     *         to catch up beyond one window or one meter's worth.
      *
      *      Reverts `InteractionEmissionsNotStarted` before launch,
      *      `VPFITokenNotSet` when VPFI isn't registered,

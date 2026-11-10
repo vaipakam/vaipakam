@@ -28,7 +28,8 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
-import {LibLopDomain} from "../libraries/LibLopDomain.sol";
+import {Address} from "@1inch/solidity-utils/contracts/libraries/AddressLib.sol";
+import {MakerTraits} from "@1inch/limit-order-protocol/contracts/libraries/MakerTraitsLib.sol";
 
 /**
  * @title SwapToRepayIntentFacet
@@ -245,6 +246,9 @@ contract SwapToRepayIntentFacet is
     ///      allowPartialFills / allowMultipleFills / expiration).
     /// @param reasonHash short identifier of which bit failed.
     error IntentMakerTraitsMismatch(bytes32 reasonHash);
+    /// @dev #3431 — the pinned 1inch order protocol is not the one fixed in
+    ///      the borrower vault's code, so the vault could never sign the order.
+    error IntentOrderProtocolMismatch(address pinned);
     /// @dev #2322 — even the loan's WHOLE collateral, valued at the oracle
     ///      less the borrower-facing slippage cap, does not cover the debt
     ///      floor plus the auction buffer, so no lot can back a repayment.
@@ -324,27 +328,6 @@ contract SwapToRepayIntentFacet is
     /// @dev Expiration sub-field: bits 80-119 (40-bit uint).
     uint256 private constant _EXPIRATION_OFFSET = 80;
     uint256 private constant _UINT40_MASK = (1 << 40) - 1;
-
-    /// @dev EIP-712 typehash for the 1inch LOP v4 `Order` struct —
-    ///      hardcoded from
-    ///      `lib/limit-order-protocol/contracts/OrderLib.sol:34`. The
-    ///      LOP library's `OrderLib.hash` uses inline-assembly
-    ///      `calldatacopy` which is unusable from a memory-built
-    ///      order; we recompute via `abi.encode` against the same
-    ///      typehash and the LOP's domain separator (fetched at
-    ///      commit time from `cfgFusionLimitOrderProtocol`).
-    bytes32 private constant _LIMIT_ORDER_TYPEHASH = keccak256(
-        "Order("
-            "uint256 salt,"
-            "address maker,"
-            "address receiver,"
-            "address makerAsset,"
-            "address takerAsset,"
-            "uint256 makingAmount,"
-            "uint256 takingAmount,"
-            "uint256 makerTraits"
-        ")"
-    );
 
     /// @dev Field-identifier hashes used in `IntentOrderFieldsMismatch`
     ///      reverts so an off-chain decoder can map back to the
@@ -576,29 +559,27 @@ contract SwapToRepayIntentFacet is
         // writes it (0 = vault-held), and both ways out refuse a non-zero
         // one (owner decision O1: fresh deploy only).
 
-        // ── §5.1 step 9: compute canonical 1inch LOP v4 orderHash ───
-        // Replicates `OrderLib.hash`: EIP-712 over the 8-field Order
-        // struct under the LOP's own domain, read from the pinned
-        // `cfgFusionLimitOrderProtocol` the way the deployed LOP declares
-        // it (ERC-5267 `eip712Domain()`; #2449: the deployed v4 LOP has no
-        // `DOMAIN_SEPARATOR()` getter).
-        bytes32 lopDomainSeparator = LibLopDomain.separator(s.cfgFusionLimitOrderProtocol);
-        // #1566 S3e — the maker is `loan.borrower`'s vault, read from storage
-        // (no sanctions screen: a must-complete close-out).
+        // ── §5.1 step 9 (#3431): the vault hashes its own order ─────
+        // The maker is `loan.borrower`'s vault, read from storage (no
+        // sanctions screen: a must-complete close-out). The vault checks it
+        // is the maker and asks the 1inch order protocol fixed in its code
+        // for the hash, so it answers ERC-1271 only for this order and only
+        // to that protocol. The pinned protocol must be the vault's, or the
+        // fill could never verify: refused by name rather than committed.
         address vault = s.userVaipakamVaults[loan.borrower];
-        bytes32 structHash = keccak256(abi.encode(
-            _LIMIT_ORDER_TYPEHASH,
-            params.salt,
-            uint256(uint160(vault)),                 // maker = the borrower's vault
-            uint256(uint160(address(this))),         // receiver = diamond
-            uint256(uint160(loan.collateralAsset)),  // makerAsset
-            uint256(uint160(loan.principalAsset)),   // takerAsset
-            lot,                                     // makingAmount = the lot the LOP takes from the vault
-            params.takerAmount,                      // takingAmount
-            params.makerTraits
-        ));
-        bytes32 orderHash = keccak256(
-            abi.encodePacked(bytes2(0x1901), lopDomainSeparator, structHash)
+        if (VaipakamVaultImplementation(vault).ORDER_PROTOCOL() != s.cfgFusionLimitOrderProtocol)
+            revert IntentOrderProtocolMismatch(s.cfgFusionLimitOrderProtocol);
+        bytes32 orderHash = VaipakamVaultImplementation(vault).registerLimitOrder(
+            IOrderMixin.Order({
+                salt: params.salt,
+                maker: Address.wrap(uint256(uint160(vault))),                // maker = the borrower's vault
+                receiver: Address.wrap(uint256(uint160(address(this)))),     // receiver = diamond
+                makerAsset: Address.wrap(uint256(uint160(loan.collateralAsset))),
+                takerAsset: Address.wrap(uint256(uint160(loan.principalAsset))),
+                makingAmount: lot,                                           // the lot the LOP takes from the vault
+                takingAmount: params.takerAmount,
+                makerTraits: MakerTraits.wrap(params.makerTraits)
+            })
         );
 
         // ── §5.1 step 6 (deferred): orderHash uniqueness ────────────
@@ -612,15 +593,11 @@ contract SwapToRepayIntentFacet is
         if (s.orderHashKind[orderHash] != bytes32(0))
             revert IntentOrderHashAlreadyInUse(orderHash);
 
-        // ── §5.1 step 10 (#1566 S3e): the vault signs ────────────────
-        // The vault, not this Diamond, is the order's maker: register the
-        // hash on it with this Diamond as the validator (the registry the
-        // Seaport listings use), so its ERC-1271 answers through
-        // `IntentDispatchFacet.isOrderValid`. #3205 part 2 — no allowance is
-        // set here: the fill's pre-hook grants exactly the lot for that one
-        // transaction and its post-hook closes it, so the vault holds no
-        // allowance between transactions.
-        VaipakamVaultImplementation(vault).registerListingOrderHash(orderHash, address(this));
+        // ── §5.1 step 10 (#1566 S3e, #3431): the vault signs ─────────
+        // The vault registered the order in step 9. #3205 part 2 — no
+        // allowance is set here: the fill's pre-hook grants exactly the lot
+        // for that one transaction and its post-hook closes it, so the vault
+        // holds no allowance between transactions.
 
         // ── §5.1 step 11: record commit + reverse index + extension
         //    bytes + bump live count + emit ─────────────────────────────

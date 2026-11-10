@@ -1047,12 +1047,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](3);
         selectors[0] = IntentDispatchFacet.preInteraction.selector;
         selectors[1] = IntentDispatchFacet.postInteraction.selector;
         selectors[2] = IntentDispatchFacet.isValidSignature.selector;
-        // #1566 S3e — the borrower vault's ERC-1271 validator for a swap order.
-        selectors[3] = IntentDispatchFacet.isOrderValid.selector;
+        // #3431 — the vault's ERC-1271 no longer asks the Diamond (the
+        // retired `isOrderValid` validator); it signs for the order it hashed.
     }
 
     /// @notice T-092 Phase 1 (#499) — AutoLifecycleFacet selectors.

@@ -6,6 +6,12 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
+/// @dev #3431 — the one read an escrow makes of its vault: the Seaport fixed
+///      in the vault's code.
+interface IEscrowVaultSeaport {
+    function SEAPORT() external view returns (address);
+}
+
 /**
  * @title  ListingEscrow
  * @author Vaipakam Developer Team
@@ -70,6 +76,9 @@ contract ListingEscrow is IERC1155Receiver, IERC1271 {
 
     /// @notice ERC-1271, answered by the vault's own record of the listing.
     function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
+        // #3431 — the escrow answers only Seaport (the vault's own constant),
+        // and only with the vault's answer for an order the vault hashed.
+        if (msg.sender != IEscrowVaultSeaport(vault).SEAPORT()) return 0xffffffff;
         return IERC1271(vault).isValidSignature(hash, signature);
     }
 

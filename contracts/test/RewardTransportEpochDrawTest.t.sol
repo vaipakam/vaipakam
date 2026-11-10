@@ -1584,6 +1584,30 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(userPaid, paid, "the bound meets the claim");
     }
 
+    /// @dev #1787 — a lender side that pays its front day and has a later day
+    ///      pending walks on, spending the call's work meter and days by an
+    ///      amount the static read does not price, so the read cannot say the
+    ///      borrower day is reached: it counts the lender day, stops, and says
+    ///      a day is left uncounted. It stays a lower bound on the claim.
+    function test_TheUserRead_StopsBehindALenderSideThatWalksOn() public {
+        _scene(NEED); // lender day 1
+        _armedDay(2, NEED);
+        _loanSideOpen(2);
+        _entry(2, 3); // a second lender day
+        _twoSidedDay(1);
+        _borrowerEntry(1, 2);
+        _ready();
+        _liveOf(1e18, 1, 999, keccak256("live"));
+        (uint256 needL, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Lender, 1);
+        (uint256 needB, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Borrower, 1);
+        assertGt(needB, 0, "fixture: the borrower day prices");
+        (uint256 armed, bool cap, uint256 userPaid) = _userRead();
+        assertEq(armed, needL, "the lender front day only");
+        assertTrue(cap, "the borrower day is left uncounted, and the read says so");
+        (uint256 paid, , ) = previewByExecution(alice);
+        assertLe(userPaid, paid, "a lower bound on the claim");
+    }
+
     /// @dev A2-iii — an unattested epoch at the cursor is withheld from the
     ///      static read exactly as from the draw: no coverage until its split
     ///      is attested, then coverage.

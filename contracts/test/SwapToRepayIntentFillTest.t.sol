@@ -35,7 +35,6 @@ import {LibLopDomain} from "../src/libraries/LibLopDomain.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
-import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 /**
  * @title  TakerReentry
@@ -239,6 +238,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 nonce = (r.makerTraits >> NONCE_SHIFT) & NONCE_MASK;
         address vault = _vaultOf(loanId);
         assertEq(r.maker, vault, "fixture-live: the order's maker is the borrower's vault");
+        vm.prank(address(lopFill)); // #3431: the vault answers only its order protocol
         assertEq(
             IERC1271(vault).isValidSignature(orderHash, ""),
             IERC1271.isValidSignature.selector,
@@ -333,8 +333,10 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCustody(loanId), 0, "the custody stamp is 0");
         IOrderMixin.Order memory order = _order(r);
         assertEq(r.maker, vault, "the order's maker is the borrower's vault");
+        bytes32 lotHash = lopFill.hashOrder(order);
+        vm.prank(address(lopFill)); // #3431: the vault answers only its order protocol
         assertEq(
-            IERC1271(vault).isValidSignature(lopFill.hashOrder(order), ""),
+            IERC1271(vault).isValidSignature(lotHash, ""),
             IERC1271.isValidSignature.selector,
             "the vault signs for the order whose making amount is the lot"
         );
@@ -342,8 +344,10 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         // grants exactly the lot inside the fill, and its post-hook closes it.
         assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "and approves nothing standing");
         order.makingAmount = 0;
+        bytes32 zeroHash = lopFill.hashOrder(order);
+        vm.prank(address(lopFill));
         assertEq(
-            IERC1271(vault).isValidSignature(lopFill.hashOrder(order), ""),
+            IERC1271(vault).isValidSignature(zeroHash, ""),
             bytes4(0xffffffff),
             "straddle: not for a zero making amount"
         );
@@ -510,9 +514,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     function test_I5c_reentryFromTheUnwrappedEthPayout_isRefused() public {
         MockLopFill lopW = new MockLopFill(weth);
         IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(address(lopW));
-        // #3205 part 2 — the vault grants the order protocol only as a member
-        // of the registry's SWAP_ADAPTERS set.
-        LibTestVaultBeacon.registryOf(address(diamond)).setMember(RegistryKeys.SWAP_ADAPTERS, address(lopW), true);
+        // #3431 — the vault code fixes the 1inch order protocol it signs for
+        // and approves: bring it to the Diamond's (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         (uint256 other, address otherBorrower) = _otherActiveLoan();
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -748,16 +752,19 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(uint8(_status(other)), uint8(LibVaipakam.LoanStatus.Repaid), "and the other loan repaid");
     }
 
-    /// @notice I13. A Vaipakam fill nested inside another is refused (the recorded trade-off): the
-    ///         LOP's signature check on the inner order asks the inner order's vault, whose validator
-    ///         read cannot reach the Diamond mid-fill, so the inner fill reverts `BadSignature` and its
-    ///         order stays live. The Diamond's own refusal is shown directly by a second fill whose
-    ///         taker interaction makes that validator read.
+    /// @notice I13. A Vaipakam fill nested inside another is refused (the recorded trade-off):
+    ///         #3431 — the inner order's vault signs for the order it hashed (it asks the
+    ///         Diamond nothing), so the LOP proceeds to the inner order's pre-hook, which the
+    ///         Diamond refuses mid-fill (`FillInProgress`); the inner fill reverts and its order
+    ///         stays live.
     function test_I13_aNestedVaipakamFill_isRefused() public {
         uint256 inner = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory ri = _read(inner);
+        bytes32 innerHash = lopFill.hashOrder(_order(ri));
+        address innerVault = _vaultOf(inner);
+        vm.prank(address(lopFill)); // #3431: the vault answers only its order protocol
         assertEq(
-            IERC1271(_vaultOf(inner)).isValidSignature(lopFill.hashOrder(_order(ri)), ""),
+            IERC1271(innerVault).isValidSignature(innerHash, ""),
             IERC1271.isValidSignature.selector,
             "fixture-live: outside a fill the vault signs for the inner order"
         );
@@ -770,17 +777,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
 
         _fill(ro, abi.encodePacked(address(takerHook)));
 
-        assertEq(takerHook.lastRevertSelector(), MockLopFill.BadSignature.selector, "the inner fill is refused");
+        assertEq(takerHook.lastRevertSelector(), LibFillLock.FillInProgress.selector, "the inner fill is refused at its pre-hook");
         assertEq(uint8(_status(outer)), uint8(LibVaipakam.LoanStatus.Repaid), "the outer fill settled");
         assertEq(_read(inner).makerAmount, ri.makerAmount, "the inner order is still live");
-
-        uint256 third = _commitWeth();
-        takerHook.arm(
-            address(diamond), address(0),
-            abi.encodeCall(IntentDispatchFacet.isOrderValid, (lopFill.hashOrder(_order(ri))))
-        );
-        _fill(_read(third), abi.encodePacked(address(takerHook)));
-        assertEq(takerHook.lastRevertSelector(), LibFillLock.FillInProgress.selector, "the Diamond refuses the validator read mid-fill");
     }
 
     // ============================================================================================
@@ -933,6 +932,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
             if (v != vault) otherVault = v;
         }
         assertTrue(otherVault != address(0), "fixture-live: another borrower's vault");
+        vm.prank(address(lopFill)); // #3431: the vault answers only its order protocol
         assertEq(
             IERC1271(vault).isValidSignature(orderHash, ""),
             IERC1271.isValidSignature.selector,
@@ -944,17 +944,18 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
             bytes4(0xffffffff),
             "the Diamond signs for no swap order itself"
         );
-        vm.prank(vault);
-        assertTrue(IntentDispatchFacet(address(diamond)).isOrderValid(orderHash), "straddle: answered for the maker vault");
-        vm.prank(otherVault);
-        assertFalse(IntentDispatchFacet(address(diamond)).isOrderValid(orderHash), "not for another vault");
+        vm.prank(address(lopFill));
+        assertEq(
+            IERC1271(otherVault).isValidSignature(orderHash, ""), bytes4(0xffffffff), "straddle: another vault does not sign it"
+        );
 
         _fill(r, "");
 
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "fixture-live: the fill settled");
+        vm.prank(address(lopFill));
         assertEq(IERC1271(vault).isValidSignature(orderHash, ""), bytes4(0xffffffff), "the vault no longer signs");
         assertEq(
-            VaipakamVaultImplementation(vault).getListingExecutor(orderHash), address(0), "its registration is gone"
+            VaipakamVaultImplementation(vault).orderVerifier(orderHash), address(0), "its registration is gone"
         );
     }
 
@@ -987,14 +988,14 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
 
         bytes32 hashA = lopFill.hashOrder(_order(ra));
         assertEq(
-            VaipakamVaultImplementation(vault).getListingExecutor(hashA), address(diamond), "fixture-live: registered"
+            VaipakamVaultImplementation(vault).orderVerifier(hashA), address(lopFill), "fixture-live: registered for the order protocol"
         );
         vm.warp(ra.deadline); // the inclusive instant: the first is cancellable, the second still fillable
         vm.prank(LoanFacet(address(diamond)).getLoanDetails(a).borrower);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(a);
         assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "a teardown leaves nothing standing");
         assertEq(
-            VaipakamVaultImplementation(vault).getListingExecutor(hashA), address(0), "and revokes its registration"
+            VaipakamVaultImplementation(vault).orderVerifier(hashA), address(0), "and revokes its registration"
         );
 
         _fill(rb, "");

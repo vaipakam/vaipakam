@@ -13,11 +13,9 @@ import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
-import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
-import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
 
 /**
  * @title  VaultOutflowPolicyTest
@@ -28,7 +26,7 @@ import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
  *           with layer 1 bypassed (the vault called directly as the Diamond).
  *         - Own wallet only: without protected mode a withdrawal pays only the
  *           account's own wallet.
- *         - Just-in-time grants: registry spenders only, one at a time, the
+ *         - Just-in-time grants: the spender the vault code fixes only, one at a time, the
  *           vault refuses every other outflow while one is open, and anyone
  *           may close it, which measures what the spender took.
  *         - The ERC-1155 listing escrow: the lot moves only into this vault's
@@ -41,12 +39,10 @@ contract VaultOutflowPolicyTest is SetupTest {
     ERC20Mock internal token;
     address internal alice = makeAddr("alice");
     address internal stranger = makeAddr("stranger");
-    MockProtocolRegistry internal registry;
 
     function setUp() public {
         setupHelper();
         token = new ERC20Mock("Outflow", "OUT", 18);
-        registry = LibTestVaultBeacon.registryOf(address(diamond));
         _fund(alice, 1000 ether);
     }
 
@@ -139,7 +135,7 @@ contract VaultOutflowPolicyTest is SetupTest {
     /// @notice The treasury class pays the configured treasury, never the
     ///         recipient the caller names, through both struct and scalars.
     function test_treasuryClassPaysTheTreasuryThroughEveryEntry() public {
-        address treasury = registry.requirePointer(RegistryKeys.TREASURY);
+        address treasury = LibTestVaultBeacon.endpointsOf(address(diamond)).treasury;
         for (uint8 entry; entry < 2; ++entry) {
             uint256 before = token.balanceOf(treasury);
             _run(entry, alice, _outflow(VaultOutflowTypes.OutflowClass.Treasury, stranger, 3 ether));
@@ -236,7 +232,7 @@ contract VaultOutflowPolicyTest is SetupTest {
         );
     }
 
-    function test_aGrantNamesOnlyARegistrySpender() public {
+    function test_aGrantNamesOnlyTheSpenderTheVaultCodeFixes() public {
         vm.expectRevert(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.GrantRefused.selector, VaultOutflowTypes.GrantClass.OrderTaker, stranger
@@ -254,7 +250,7 @@ contract VaultOutflowPolicyTest is SetupTest {
     ///         does not survive between a test's top-level calls on forge 1.8+).
     function test_anOpenGrantBlocksEveryOtherOutflow_andOnlyTheDiamondClosesItInItsTx() public {
         address taker = makeAddr("orderProtocol");
-        registry.setMember(RegistryKeys.SWAP_ADAPTERS, taker, true);
+        _setEndpoint(taker, address(0));
         this.oneFill(taker);
         // After the fill the vault is open for outflows again.
         _run(0, alice, _outflow(VaultOutflowTypes.OutflowClass.Owner, alice, 1 ether));
@@ -304,7 +300,7 @@ contract VaultOutflowPolicyTest is SetupTest {
         // The address the vault predicts is where it creates the escrow.
         address predicted = VaipakamVaultImplementation(v).listingEscrowAddress(key);
         address conduit = makeAddr("conduit");
-        registry.setMember(RegistryKeys.CONDUITS, conduit, true);
+        _setEndpoint(address(0), conduit);
         vm.prank(address(diamond));
         address escrow = VaipakamVaultImplementation(v).openListingEscrow(key, address(coll), conduit);
         assertEq(escrow, predicted, "CREATE2: the order can name the escrow before it exists");
@@ -323,11 +319,11 @@ contract VaultOutflowPolicyTest is SetupTest {
         assertEq(coll.balanceOf(v, 7), 3);
     }
 
-    /// @notice Codex #3387 r1 — every spender right the vault grants or causes
-    ///         passes ONE registry rule: a conduit outside CONDUITS is refused
+    /// @notice Codex #3387 r1 / #3431 — every spender right the vault grants or
+    ///         causes passes ONE rule: a conduit other than the vault code's is refused
     ///         for an ERC-721 listing grant and for an ERC-1155 listing
     ///         escrow alike, whoever asked for it.
-    function test_aConduitOutsideTheRegistryIsRefusedForEveryListingKind() public {
+    function test_aConduitOtherThanTheVaultCodesIsRefusedForEveryListingKind() public {
         address rogue = makeAddr("rogueConduit");
         address v = _vault(alice);
         // ERC-721 listing grant.
@@ -372,7 +368,7 @@ contract VaultOutflowPolicyTest is SetupTest {
         address v = _vault(alice);
         bytes32 key = keccak256("liened-listing");
         address conduit = makeAddr("conduit1155");
-        registry.setMember(RegistryKeys.CONDUITS, conduit, true);
+        _setEndpoint(address(0), conduit);
         vm.prank(address(diamond));
         address escrow = VaipakamVaultImplementation(v).openListingEscrow(key, address(coll), conduit);
         VaultOutflowTypes.Outflow memory o = _outflow(VaultOutflowTypes.OutflowClass.ListingEscrow, escrow, 10);
@@ -391,39 +387,16 @@ contract VaultOutflowPolicyTest is SetupTest {
         assertEq(coll.balanceOf(alice, 7), 2, "and the owner withdraws them");
     }
 
-    /// @notice The property the registry exists for, on a REAL
-    ///         ProtocolRegistry (not the test mirror): an order protocol the
-    ///         Diamond is configured with, but that the registry does not list
-    ///         in SWAP_ADAPTERS, is refused at the vault's grant. A member the
-    ///         registry was built with is accepted.
-    function test_aRealRegistryRefusesAnOrderProtocolTheDiamondConfiguredButItDoesNotList() public {
+    /// @notice #3431 — the vault code fixes the order protocol it approves;
+    ///         a protocol the Diamond is configured with, but that the code
+    ///         does not fix, is refused at the vault's grant. The vault reads
+    ///         no registry and asks the Diamond nothing to decide it.
+    function test_theVaultRefusesAnOrderProtocolTheDiamondConfiguredButItsCodeDoesNotFix() public {
         address lop = makeAddr("configuredLop");
-        address listed = makeAddr("listedAdapter");
+        address fixedLop = makeAddr("fixedLop");
         IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(lop);
-
-        bytes32[] memory keys = new bytes32[](1);
-        address[] memory values = new address[](1);
-        keys[0] = RegistryKeys.TREASURY;
-        values[0] = address(diamond);
-        bytes32[] memory sets = new bytes32[](1);
-        address[] memory members = new address[](1);
-        sets[0] = RegistryKeys.SWAP_ADAPTERS;
-        members[0] = listed;
-        address real = deployCode(
-            "ProtocolRegistry.sol:ProtocolRegistry",
-            abi.encode(address(this), address(this), uint256(3 days), keys, values, sets, members)
-        );
-        address impl = deployCode(
-            "VaipakamVaultImplementation.sol:VaipakamVaultImplementation",
-            abi.encode(address(LibTestPositionNFT.core(address(diamond))), real)
-        );
-        address beacon = deployCode(
-            "VaultBeacon.sol:VaultBeacon", abi.encode(address(this), address(diamond), address(this), impl)
-        );
-        address v = deployCode(
-            "BeaconProxy.sol:BeaconProxy",
-            abi.encode(beacon, abi.encodeCall(VaipakamVaultImplementation.initialize, (address(diamond), alice)))
-        );
+        _setEndpoint(fixedLop, address(0));
+        address v = _vault(alice);
 
         VaultOutflowTypes.Grant memory g = VaultOutflowTypes.Grant({
             kind: VaultOutflowTypes.AssetKind.ERC20,
@@ -440,10 +413,18 @@ contract VaultOutflowPolicyTest is SetupTest {
         vm.prank(address(diamond));
         VaipakamVaultImplementation(v).grantAllowance(g);
 
-        g.spender = listed;
+        g.spender = fixedLop;
         vm.prank(address(diamond));
         VaipakamVaultImplementation(v).grantAllowance(g);
-        assertEq(token.allowance(v, listed), 1 ether, "a listed adapter is granted");
+        assertEq(token.allowance(v, fixedLop), 1 ether, "the protocol the vault code fixes is granted");
+    }
+
+    /// @dev Set the vault code's order protocol and/or conduit (0 = keep).
+    function _setEndpoint(address orderProtocol, address conduit) internal {
+        VaultOutflowTypes.VaultEndpoints memory e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        if (orderProtocol != address(0)) e.orderProtocol = orderProtocol;
+        if (conduit != address(0)) e.conduit = conduit;
+        LibTestVaultBeacon.setEndpoints(address(diamond), e);
     }
 
     // ─── Claim custody: reserved until the claim ─────────────────────────

@@ -215,6 +215,12 @@ hooks.
 
 ### 3.6 The registry (adapters, conduits, treasury, backstop)
 
+> **Superseded for the vault by #3431 (Stage B1, 2026-11-09).** The vault no
+> longer reads the registry. The endpoints it may pay or approve are
+> constants in its own code, and its order and swap checks look at outcomes
+> rather than at which contract is asking. See build notes, part 2 Stage B1.
+> The text below is kept as the record of the Stage A design.
+
 **Default: a small, separate registry contract owned by the Timelock**,
 whose address is an immutable of the vault implementation. A Diamond facet
 bug cannot write to it. Changing it needs the Timelock, the same as
@@ -735,6 +741,84 @@ coordinator's approval of each.
         adapter factory's upgrade.
       
       On a fresh deploy, each ships with it.
+
+### Build notes, part 2 Stage B1: outcome checks, no registry trust in the vault (2026-11-09)
+
+Stage B is four stacked PRs under #3379 (owner, 2026-11-09). B1 is the
+#3431 hardening: the vault stops trusting any address it is told about and
+checks what actually happens instead.
+
+1. **Endpoints are constants in the vault code.** The implementation's
+   constructor takes one record: the treasury, the backstop vault, Seaport,
+   the 1inch order protocol, the listing conduit and its Seaport conduit
+   key, and the price guard (#3447, read from #3268 on). They are
+   immutables, readable through `vaultEndpoints()`. The vault reads no
+   registry. Changing any of them means new vault code through the
+   VaultBeacon, which is the Timelock's, the same as any other vault code
+   change. A Diamond setting that differs from the vault's constant fails
+   closed: the vault refuses the outflow or the grant. The launch readiness
+   check compares the two and names any mismatch.
+2. **The backstop exists before the vault code.** The backstop vault is now
+   provisioned in `DeployDiamond` (step 5c-iii), before step 5d builds the
+   vault code with its address. Provisioning no longer waits for the
+   Diamond to be unpaused; it is still the vault admin's alone. Its upgrade
+   keeps the proxy's address, so the constant stays true.
+3. **Spender rights name a constant.** A conduit grant and a listing
+   escrow's approval must name the listing conduit. An order-taker grant must
+   name the 1inch order protocol. Nothing else can be approved.
+4. **Order signatures answer only to their protocol, for orders the vault
+   hashed itself.** The Diamond no longer hands the vault an order hash. It
+   hands it the order terms:
+   - For a Seaport listing, the vault checks that the offerer is itself or
+     one of its own listing escrows and that the conduit key is the
+     constant's key, then asks Seaport for the hash of those terms.
+   - For a swap-to-repay limit order, the vault checks that it is the maker
+     and asks the 1inch order protocol for the hash.
+   
+   The vault records which protocol each hash belongs to. Its ERC-1271
+   answer is valid only when that protocol is the caller (for an escrow,
+   the escrow asks on Seaport's behalf, and the escrow itself answers only
+   Seaport). It no longer asks a validator contract the Diamond named.
+   Every teardown still revokes the hash.
+5. **What B1 does not yet check on an order.** It does not check the order's
+   payment legs (who receives the proceeds, and how much). The vault cannot
+   judge those without the owner's own terms, and those arrive in B3 with
+   the owner-signed liens and the listing-hash rule. Until then, layer 1
+   (the Diamond) builds the payment legs, as it does on main, and the
+   Seaport zone checks them at fill.
+6. **`swapOut`: one atomic swap, judged by its result.** The vault sells at
+   most `maxIn` of one asset through an adapter on the fixed swap adapter
+   interface and requires the recipient's balance of the output asset to
+   rise by at least `minOut`. It refuses an adapter that is itself or the
+   asset being sold, and it measures both sides around the call, so a
+   faulty adapter can neither take more than it was offered nor deliver less
+   than the floor. The allowance it opens for the adapter is closed in the
+   same call. The recipient must be a destination the vault can establish
+   for itself (its own owner, or the vault of a position's current holder).
+   The forced sale still moves the lot to the Diamond and sells there
+   (class DiamondTransient). Moving it onto `swapOut` needs the vault to
+   know the floor, which is the price guard's job from #3268.
+
+   **The stated residual.** Until #3268, the floor (`minOut`) and the
+   adapter are the platform's choice: the vault enforces whatever floor it
+   is given, but it cannot judge that the floor is fair. Nothing calls
+   `swapOut` yet. A faulty platform module could already move value through
+   the DiamondTransient class, so `swapOut` adds no new exposure. From
+   #3268 the vault checks the floor against the price guard itself.
+7. **The swap-to-repay order still pays the Diamond.** Its receiver is the
+   Diamond, which repays the loan inside the fill's post-hook. B1 keeps that
+   and states it: the vault checks that it is the maker, and the order's
+   receiver is checked by layer 1 and by the order protocol's hooks.
+8. **The registry stays the Diamond's.** The protocol registry keeps the
+   endpoints the Diamond itself reads, seeded at construction, and the
+   deploy refuses a registry whose seeded set is empty. The treasury pointer
+   is kept there as the published record. The launch readiness check
+   ("vault endpoints match") holds the vault constants to the Diamond's own
+   settings: the treasury, the backstop vault, the 1inch order protocol,
+   and, once a listing executor is set, its Seaport and an allowed conduit.
+   The conduit has one input, its key: the deploy resolves the conduit
+   address through Seaport's conduit controller, and the readiness check
+   refuses a vault code whose key does not resolve to its conduit.
 
 ## 9. Order of work
 

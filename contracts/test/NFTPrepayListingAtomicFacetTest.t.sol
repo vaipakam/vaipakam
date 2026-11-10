@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
@@ -103,6 +104,10 @@ contract NFTPrepayListingAtomicFacetTest is SetupTest {
         vm.startPrank(owner);
         PrepayListingFacet(address(diamond))
             .setCollateralListingExecutor(address(mockExecutor));
+        // #3431 — the vault code fixes the Seaport and the conduit it signs
+        // for and approves (test convenience: in place of new vault code).
+        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setConduit(address(diamond), conduit, conduitKey);
         ConfigFacet(address(diamond))
             .setPrepayListingBufferBps(TEST_BUFFER_BPS);
         ConfigFacet(address(diamond))

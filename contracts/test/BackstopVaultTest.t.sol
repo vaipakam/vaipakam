@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {BackstopVaultImplementation} from "../src/BackstopVaultImplementation.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -135,6 +136,8 @@ contract BackstopVaultTest is SetupTest {
         // Provision the single backstop vault + register the (lend, coll) intent.
         BackstopFacet(address(diamond)).initializeBackstopVaultImplementation();
         vault = BackstopFacet(address(diamond)).provisionBackstopVault();
+        // #3431 — the vault code fixes the backstop (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         BackstopFacet(address(diamond)).setBackstopIntent(
             mockERC20,
             mockCollateralERC20,
