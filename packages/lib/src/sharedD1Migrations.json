@@ -82,5 +82,6 @@
   "0083_protected_lock_requests.sql",
   "0084_alert_channel_changes.sql",
   "0085_position_flow_moves.sql",
-  "0086_notifications_unread_index.sql"
+  "0086_notifications_unread_index.sql",
+  "0087_asset_rankings.sql"
 ]

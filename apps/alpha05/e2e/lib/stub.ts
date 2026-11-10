@@ -76,3 +76,18 @@ export async function agentState(): Promise<{ requests: AgentRequest[]; threshol
   if (!res.ok) throw new Error(`stub refused agent state: ${res.status}`);
   return res.json();
 }
+
+/** One list's state as `/assets/rankings` states it. */
+export interface StubRankingSource {
+  listFetchedAt: number | null;
+  lastRun: { fetchedAt: number; ok: boolean; rowCount: number; detail: string | null } | null;
+}
+
+/** Store a rankings answer for one token chain (#3446), or make the route
+ *  answer 503 with `{ down: true }`. The suite's reset clears both. */
+export async function setRankings(
+  control: { chainId: number; sources: { cg: StubRankingSource; cp: StubRankingSource }; assets: { address: string; ranks: Record<string, { rank: number; name: string; symbol: string }> }[] } | { down: true },
+): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/rankings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
+  if (!res.ok) throw new Error(`stub refused rankings: ${res.status} ${await res.text()}`);
+}
