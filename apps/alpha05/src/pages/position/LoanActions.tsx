@@ -4,6 +4,7 @@ import { useCopy } from '../../shared/copy/useCopy';
 import { AddCollateral, addCollateralKey } from '../../shared/collateral/AddCollateral';
 import { TakeBack, takeBackKey } from '../../shared/collateral/TakeBack';
 import { addCollateralVerdict } from '../../shared/eligibility/addCollateral';
+import { closeRentalVerdict } from '../../shared/eligibility/closeRental';
 import { partialRepayVerdict } from '../../shared/eligibility/partialRepay';
 import { repayVerdict } from '../../shared/eligibility/repay';
 import { takeBackVerdict } from '../../shared/eligibility/takeBack';
@@ -13,12 +14,9 @@ import type { LoanView, Role } from '../../shared/positions/loanView';
 import type { TokenMetaMap } from '../../shared/reads/tokens';
 import { PartialRepay, partialKey } from '../../shared/repay/PartialRepay';
 import { RepayLoan, repayKey } from '../../shared/repay/RepayLoan';
+import { CloseRental, closeRentalKey } from '../../shared/rent/CloseRental';
 import { holdsFlow, useStoredValue, useTxEntry } from '../../shared/tx/txStore';
 import { useNow } from '../../shared/ui/useNow';
-import { PAGES, currentAppHref } from '../../routes/pageMap';
-
-/** The current app's page for this position: where a rental is closed until this app can (RB-RENT). */
-const CURRENT_POSITION = PAGES.find((p) => p.path === '/positions/:id');
 
 interface LoanActionsProps {
   loanId: bigint;
@@ -49,6 +47,11 @@ interface LoanActionsProps {
  * stated only where no action above already said it (the protocol pause,
  * nothing above the loan's limits, a refinance request or an unpriced token
  * not already named). The flows never run at once.
+ *
+ * A rental is never repaid: its renter closes it (NFT-05), paid from the rent
+ * and buffer prepaid into the renter's own vault, so the repayment rows give
+ * way to that one action. Anyone else reading a rental is told the three
+ * ways it ends instead.
  */
 
 /** Refusals that close paying part but not repaying in full: the only ones
@@ -74,13 +77,17 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   const tKey = takeBackKey(loanId);
   const tEntry = useTxEntry(tKey);
   const [tOpen, setTOpen] = useStoredValue<boolean>(`${tKey}:open`);
+  const cKey = closeRentalKey(loanId);
+  const cEntry = useTxEntry(cKey);
+  const [cOpen, setCOpen] = useStoredValue<boolean>(`${cKey}:open`);
   const nowMs = useNow();
   const live = isLiveStatus(v.loan.status);
-  const inRepay = open === true || holdsFlow(entry.phase);
-  const inPartial = !inRepay && (pOpen === true || holdsFlow(pEntry.phase));
-  const inAdd = !inRepay && !inPartial && (aOpen === true || holdsFlow(aEntry.phase));
-  const inTake = !inRepay && !inPartial && !inAdd && (tOpen === true || holdsFlow(tEntry.phase));
-  if (!live && !inRepay && !inPartial && !inAdd && !inTake) return null;
+  const inClose = cOpen === true || holdsFlow(cEntry.phase);
+  const inRepay = !inClose && (open === true || holdsFlow(entry.phase));
+  const inPartial = !inClose && !inRepay && (pOpen === true || holdsFlow(pEntry.phase));
+  const inAdd = !inClose && !inRepay && !inPartial && (aOpen === true || holdsFlow(aEntry.phase));
+  const inTake = !inClose && !inRepay && !inPartial && !inAdd && (tOpen === true || holdsFlow(tEntry.phase));
+  if (!live && !inClose && !inRepay && !inPartial && !inAdd && !inTake) return null;
 
   const lenderOnly = role?.lender === true && role.borrower !== true;
   const l = v.loan;
@@ -149,6 +156,10 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   );
   const borrower = role?.borrower === true;
   const erc20 = l.assetType === 0;
+  const rentClose =
+    v.chainNow === null
+      ? unknownVerdict(text('rentClose.unread'))
+      : closeRentalVerdict({ status: l.status, assetType: l.assetType, borrowerHolder: v.holders.borrower, graceEnd: v.deadlines?.graceEnd ?? null, chainNow: v.chainNow }, own.account, copy, nowMs);
   const addCode = add.refusals[0]?.code;
   const partialCode = partial.refusals[0]?.code;
   const takeCode = take.refusals[0]?.code;
@@ -191,7 +202,25 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   return (
     <section className="home-section position-actions" aria-labelledby="position-actions">
       <h2 id="position-actions">{text('position.actionsTitle')}</h2>
-      {inRepay ? (
+      {inClose ? (
+        <CloseRental loanId={loanId} chain={chain} own={own} meta={meta} onClose={() => setCOpen(null)} />
+      ) : !erc20 ? (
+        borrower && rentClose.state === 'open' ? (
+          <div className="position-action-row">
+            <button type="button" className="btn btn-primary" onClick={() => setCOpen(true)} data-testid="rent-close-open">
+              {text('rentClose.action')}
+            </button>
+          </div>
+        ) : borrower ? (
+          <p className={rentClose.state === 'unknown' ? 'tier-a' : 'tier-b'} data-testid="rent-close-refusal" data-code={rentClose.refusals[0]?.code}>
+            {rentClose.state === 'unknown' ? text('rentClose.unknown') : rentClose.refusals[0]?.reason}
+          </p>
+        ) : (
+          <p className="tier-b" data-testid="rent-close-ends">
+            {text('rentClose.endsNote')}
+          </p>
+        )
+      ) : inRepay ? (
         <RepayLoan loanId={loanId} chain={chain} own={own} meta={meta} onClose={() => setOpen(null)} />
       ) : inPartial ? (
         <PartialRepay loanId={loanId} chain={chain} own={own} meta={meta} asset={l.principalAsset} principal={l.principal} onClose={() => setPOpen(null)} />
@@ -228,14 +257,6 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
           {!lenderOnly && verdict.state !== 'open' && (
             <p className={verdict.state === 'unknown' ? 'tier-a' : 'tier-b'} data-testid="repay-refusal" data-code={verdict.refusals[0]?.code}>
               {verdict.state === 'unknown' ? text('repay.unknown') : verdict.refusals[0]?.reason}
-              {verdict.state !== 'unknown' && verdict.refusals[0]?.code === 'RentalNotHere' && (
-                <>
-                  {' '}
-                  <a href={CURRENT_POSITION ? (currentAppHref(CURRENT_POSITION, { id: loanId.toString() }) ?? undefined) : undefined} target="_blank" rel="noreferrer" data-testid="rental-close-elsewhere">
-                    {text('vault.openCurrent')}
-                  </a>
-                </>
-              )}
             </p>
           )}
           {partialNote}

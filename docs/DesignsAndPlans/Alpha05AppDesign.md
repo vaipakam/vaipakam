@@ -1687,10 +1687,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   close, the late fee from the buffer, the grace as today's setting, that a
   rental closes by itself only once every agreed day has been settled
   (which anyone may do, and which returns the buffer to the renter as a
-  claim) and otherwise needs the renter's close or a default, that this
-  app cannot close one yet (the
-  position page links a rental to its page in the current app), and what a
-  default takes. A listing that fixed no buffer says the protocol applies
+  claim) and otherwise needs the renter's close (RB-RENT-CLOSE) or a
+  default, and what a default takes. A listing that fixed no buffer says the protocol applies
   today's setting at the start: the app re-reads it just before sending, a
   change after that is refused under an exact approval and taken under an
   earlier one that covers it, and the outcome states what moved. A wallet short of
@@ -1754,6 +1752,25 @@ above. Each resolves here, so a route reviewer needs no private file:
   alone, taken back afterwards whatever happens), and the acceptance is
   sent only after a dry run with that signature; the outcome is measured
   (the rental, the NFT in the owner's vault, the renter as its user).
+
+- **RB-RENT-CLOSE** — The renter closes a running rental (NFT-05) from its
+  position page with "Close the rental"; a rental is never offered a
+  repayment, and anyone else reading it is told the three ways it ends.
+  The rule is the protocol's: the renter-position holder only, the rental
+  running, and not past the end of its grace period. The close is the
+  protocol's repayment of a rental, paid from the rent and buffer already
+  in the renter's own vault, so the review states that nothing leaves the
+  wallet and asks for no approval. It states the rent owed now and at the
+  latest moment it reaches, counted by the protocol's own rule from the
+  rental as stored (the protocol publishes no figure for it, and the
+  review says how it is counted), the days already settled, the late fee
+  as the protocol quotes it now and at that moment, what comes back to the
+  renter as a claim, what the owner receives (the rent and late fee less
+  the protocol's share, as a claim), and that the use ends when the close
+  lands. A prepayment that cannot cover the close is refused before the
+  wallet opens. One prompt, sent only after a dry run; the outcome is
+  measured from the close's own log, the renter's claim (inside the range
+  the review stated) and the owner's vault no longer naming the renter.
 
 ## 3. Companion specifications
 

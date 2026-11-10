@@ -46,7 +46,7 @@ describe('repayVerdict', () => {
     expect(verdict({ borrowerLock: null }).state).toBe('unknown');
     expect(verdict({ graceEnd: null }).state).toBe('unknown');
   });
-  it('has nothing to repay on an ended loan, and leaves a rental to a later update', () => {
+  it('has nothing to repay on an ended loan, and sends a rental to its own close', () => {
     expect(verdict({ status: 1 }).refusals[0]?.code).toBe('InvalidLoanStatus');
     expect(verdict({ assetType: 1 }).refusals[0]?.code).toBe('RentalNotHere');
   });
