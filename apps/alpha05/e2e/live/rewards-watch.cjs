@@ -7,7 +7,7 @@
 // VPFI in its wallet, counted, free, held and uncounted) and the consent. The
 // watch wallet cannot sign, so nothing is deposited or withdrawn, and the
 // signed deposit (RW-03) is never offered; all three are covered by the
-// CI-Anvil spec (53-rewards.spec.ts).
+// CI-Anvil spec (54-rewards.spec.ts).
 // Usage: node e2e/live/rewards-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed
 // origin; $LIVE_CHAIN_ID picks the network, as in watch-wallet.cjs)
