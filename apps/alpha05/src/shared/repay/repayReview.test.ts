@@ -16,7 +16,7 @@ const review: RepayReview = {
   maturity: 4_000n,
   borrowerLock: 0,
   refinance: { offerId: 0n, live: false },
-  payoff: { now: 101n, chainNow: 1_000n, atBy: 105n, by: 2_800n },
+  payoff: { now: 101n, chainNow: 1_000n, chainReadAt: 0, atBy: 105n, by: 2_800n },
   capped: false,
   balance: 200n,
   allowance: 0n,

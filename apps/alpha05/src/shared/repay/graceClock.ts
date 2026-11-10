@@ -30,16 +30,18 @@ export interface GraceDates {
   maturity: bigint | null;
   /** The effective end of grace; null when unread or in fallback. */
   graceEnd: bigint | null;
-  /** The block timestamp the review read. */
+  /** The block timestamp last read. */
   chainNow: bigint;
-  /** When the review was read, in unix milliseconds. */
-  readAt: number;
+  /** When that block timestamp was read, in unix milliseconds. Always the
+   *  time paired with `chainNow`, never the review's own read time, which
+   *  an unchanged refresh keeps while `chainNow` moves on. */
+  chainReadAt: number;
 }
 
 /** The chain's clock now, in unix seconds: the block timestamp read plus
  *  the whole seconds elapsed since the read (never less than the read). */
-export function estimatedChainNow(d: Pick<GraceDates, 'chainNow' | 'readAt'>, nowMs: number): bigint {
-  return d.chainNow + BigInt(Math.max(0, Math.floor((nowMs - d.readAt) / 1000)));
+export function estimatedChainNow(d: Pick<GraceDates, 'chainNow' | 'chainReadAt'>, nowMs: number): bigint {
+  return d.chainNow + BigInt(Math.max(0, Math.floor((nowMs - d.chainReadAt) / 1000)));
 }
 
 export function graceClock(d: GraceDates, nowMs: number): GraceClock {

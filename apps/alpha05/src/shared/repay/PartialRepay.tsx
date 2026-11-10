@@ -405,7 +405,7 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
                 {b}
               </Notice>
             ))}
-            <GraceClock dates={{ maturity: review.maturity, graceEnd: review.graceEnd, chainNow: review.payoff.chainNow, readAt: review.readAt }} />
+            <GraceClock dates={{ maturity: review.maturity, graceEnd: review.graceEnd, chainNow: review.payoff.chainNow, chainReadAt: review.payoff.chainReadAt }} />
             <WhyLink summaryKey="partial.whySummary" detailKey="partial.why" />
             <button type="button" className="btn btn-link" onClick={changeAmount} data-testid="partial-change">
               {text('partial.changeAmount')}

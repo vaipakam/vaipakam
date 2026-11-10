@@ -4,7 +4,7 @@ import { GRACE_URGENT_SECONDS, estimatedChainNow, graceClock } from './graceCloc
 const READ_AT = 1_700_000_000_000;
 const DUE = 1_000_000n;
 const END = DUE + 3n * 86_400n;
-const at = (chainNow: bigint, maturity: bigint | null = DUE, graceEnd: bigint | null = END) => ({ maturity, graceEnd, chainNow, readAt: READ_AT });
+const at = (chainNow: bigint, maturity: bigint | null = DUE, graceEnd: bigint | null = END) => ({ maturity, graceEnd, chainNow, chainReadAt: READ_AT });
 
 describe('the grace clock on a repayment', () => {
   it('shows nothing before the due date, in fallback or with the dates unread', () => {
@@ -40,5 +40,15 @@ describe('the grace clock on a repayment', () => {
     expect(graceClock(d, READ_AT + 121_000)).toEqual({ kind: 'ended', endsAt: END });
     // A local clock behind the read never moves the chain clock back.
     expect(estimatedChainNow(d, READ_AT - 5_000)).toBe(END - 120n);
+  });
+
+  it('counts from the latest block read, not from the review’s first read', () => {
+    // An unchanged refresh a minute after the first read brings a block
+    // timestamp a minute later; the review keeps its first read time, but
+    // the clock pairs the new timestamp with the time it was read, so the
+    // minute is counted once.
+    const refreshed = { ...at(END - 60n), chainReadAt: READ_AT + 60_000 };
+    expect(graceClock(refreshed, READ_AT + 60_000)).toEqual({ kind: 'urgent', endsAt: END, leftSeconds: 60 });
+    expect(graceClock(refreshed, READ_AT + 90_000)).toEqual({ kind: 'urgent', endsAt: END, leftSeconds: 30 });
   });
 });
