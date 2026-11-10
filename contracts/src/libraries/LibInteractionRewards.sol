@@ -13,6 +13,7 @@ import {LibPausable} from "./LibPausable.sol";
 // library calls, which solc inlines — no runtime cycle.
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
+import {LibClaimWork} from "./LibClaimWork.sol";
 import {LibRewardStaging} from "./LibRewardStaging.sol";
 import {LibRewardSanctions} from "./LibRewardSanctions.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -2414,6 +2415,7 @@ library LibInteractionRewards {
             pruned: false,
             capHit: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS,
+            workLeft: LibClaimWork.BUDGET,
             transport: TransportLegs({
                 userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0, userEraFresh: 0, treasuryEraFresh: 0
             }),
@@ -2566,6 +2568,12 @@ library LibInteractionRewards {
         if (dom.phase == LibVaipakam.DomainPhase.None) {
             (uint256 first, uint256 last) = _sideExtent(s, work);
             if (last - first + 1 <= LibVaipakam.MAX_INTERACTION_CLAIM_DAYS) return false;
+            // #1787 — the snapshot takes at most DOMAIN_MAX_ENTRIES entries, so
+            // each of its days fits one call in every step that walks it; the
+            // rest wait for the next domain, as an entry accruing after the
+            // commit does. The extent is the snapshot's own.
+            work = LibClaimWork.prefix(work, LibClaimWork.DOMAIN_MAX_ENTRIES);
+            (first, last) = _sideExtent(s, work);
             LibRewardStaging.openDomain(s, dk, dom, user, side, work, first, last);
         } else if (dom.phase != LibVaipakam.DomainPhase.Staging) {
             // Reserving, resolving or unwinding: the side is the domain's.
@@ -2644,6 +2652,11 @@ library LibInteractionRewards {
         uint256 last = dom.lastDay;
         while (d <= last && ctx.daysLeft != 0) {
             uint256[] memory set = _entriesCoveringDay(s, dom.entryIds, d);
+            // #1787 — a domain day is one record holding its whole set, so it
+            // is prepared whole or not this call. The snapshot bound
+            // ({LibClaimWork.DOMAIN_MAX_ENTRIES}) keeps every day within a
+            // fresh call's budget, so the preparation always moves.
+            if (set.length != 0 && !_meterPrepDay(ctx, set)) break;
             if (set.length != 0) {
                 DayContext memory dc = _dayContext();
                 dc.domainKey = dk;
@@ -2690,7 +2703,11 @@ library LibInteractionRewards {
         while (ctx.daysLeft != 0) {
             uint256 d = _lowestPendingDay(s, work);
             if (d == type(uint256).max) break;
-            uint256[] memory set = _entriesAtDay(s, work, d);
+            // #1787 — the day's set as far as this call's work meter reaches
+            // (all of it, or the leading entries when the day is larger than
+            // what is left); empty when not even one fits: stop, the rest is
+            // the next call's.
+            uint256[] memory set = _meterWalkDay(ctx, _entriesAtDay(s, work, d));
             if (set.length == 0) break;
 
             DayContext memory dc = _dayContext();
@@ -2898,6 +2915,37 @@ library LibInteractionRewards {
             ctx.advanced = true;
             unchecked { --ctx.daysLeft; }
         }
+    }
+
+    /// @dev #1787 — one walk day through the call's work meter: the leading
+    ///      entries of `set` the meter can carry (every entry when it can carry
+    ///      the day), charged and marked touched; empty when not even the first
+    ///      fits. The order is the worklist's, so the entries left for the next
+    ///      call are the same ones a re-run would leave.
+    function _meterWalkDay(WalkCtx memory ctx, uint256[] memory set)
+        private
+        returns (uint256[] memory taken)
+    {
+        if (set.length == 0) return set;
+        (uint256 k, uint256 cost) = LibClaimWork.fit(
+            set, ctx.workLeft, LibClaimWork.WALK_DAY, LibClaimWork.WALK_ENTRY_FIRST, LibClaimWork.WALK_ENTRY_DAY
+        );
+        taken = LibClaimWork.prefix(set, k);
+        ctx.workLeft -= cost;
+        LibClaimWork.touch(taken);
+    }
+
+    /// @dev #1787 — one domain preparation day through the call's work meter:
+    ///      charged and marked touched when the WHOLE day fits (a day record
+    ///      holds its whole set), false and untouched otherwise.
+    function _meterPrepDay(WalkCtx memory ctx, uint256[] memory set) private returns (bool) {
+        (uint256 k, uint256 cost) = LibClaimWork.fit(
+            set, ctx.workLeft, LibClaimWork.PREP_DAY, LibClaimWork.PREP_ENTRY_FIRST, LibClaimWork.PREP_ENTRY_DAY
+        );
+        if (k < set.length) return false;
+        ctx.workLeft -= cost;
+        LibClaimWork.touch(set);
+        return true;
     }
 
     /// @dev Lowest day any live entry in `work` still owes; `max` when none do.
@@ -3346,8 +3394,21 @@ library LibInteractionRewards {
                 return need;
             }
         }
+        // #1787 — and only where the next claim's work meter reaches it: a
+        // day larger than a fresh call carries is paid over successive calls,
+        // its leading entries first, so an entry past that reach is not this
+        // call's either.
+        uint256[] memory set = _entriesAtDay(s, work, d);
+        uint256 reach = LibClaimWork.freshWalkCapacity();
+        for (uint256 i = reach; i < set.length; ) {
+            if (set[i] == id) {
+                need.capHit = true;
+                return need;
+            }
+            unchecked { ++i; }
+        }
         (uint256 pf, uint256 pr) = LibRewardCustody.cursorBatchRooms(s, d);
-        _fillDayStatic(s, e.user, e.side, d, _entriesAtDay(s, work, d), pool, need, pf, pr);
+        _fillDayStatic(s, e.user, e.side, d, LibClaimWork.prefix(set, reach), pool, need, pf, pr);
     }
 
     /// @notice The GROSS needs of ONE obligation-day — `user`'s entries on
@@ -7649,8 +7710,9 @@ library LibInteractionRewards {
     /// @dev Per-claim walk state, threaded by reference through both side
     ///      walks.
     /// @param daysLeft Days this CALL may still process, shared across both
-    ///        side walks. `MAX_INTERACTION_CLAIM_DAYS` bounds the per-call gas
-    ///        envelope, so it has to be a per-call budget: a counter local to
+    ///        side walks. `MAX_INTERACTION_CLAIM_DAYS` bounds the per-call DAY
+    ///        window (the gas envelope is the work meter's, `workLeft`,
+    ///        #1787: days alone never bounded it), so it has to be a per-call budget: a counter local to
     ///        {_walkSideDays} would let a claimant with both lender- and
     ///        borrower-side entries process the full allowance TWICE in one
     ///        transaction, doubling the envelope the constant exists to cap
@@ -7667,6 +7729,13 @@ library LibInteractionRewards {
         ///      which cannot simulate the prune, describes what the claim did.
         bool capHit;
         uint256 daysLeft;
+        /// @dev #1787 — the call's WORK meter ({LibClaimWork}), shared by both
+        ///      sides and by a domain's preparation for the same reason
+        ///      `daysLeft` is: a per-call envelope cannot be a local. Days
+        ///      alone never bounded the call, since a day's cost grows with the
+        ///      entries on it; the meter charges each day its modelled cost and
+        ///      the walk stops, its progress kept, when the next one does not fit.
+        uint256 workLeft;
         /// @dev 3b-ii-A — the transport-paid legs the walk drew, folded per day.
         TransportLegs transport;
         /// @dev 3b-ii-A2 (Codex #2308 r6) — the venue the claimant named,
