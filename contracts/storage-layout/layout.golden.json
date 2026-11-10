@@ -1792,7 +1792,7 @@
     "L|vaipakam|692|6|uint16|saleFloorCfg.calmMoveBps",
     "L|vaipakam|692|8|uint16|saleFloorCfg.cushionBps",
     "L|vaipakam|696|0|address|protocolRegistry",
-    "L|vaipakam|696|20|uint32|cfgMinTermsAgeSec",
+    "L|vaipakam|699|0|uint32|cfgMinTermsAgeSec",
     "L|vaipakam|6|0|address|allowanceTarget",
     "L|vaipakam|7|0|address|retiredNumeraireChainlinkDenominator",
     "L|vaipakam|80|0|address|retiredSequencerUptimeFeed",

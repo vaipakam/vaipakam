@@ -1414,6 +1414,17 @@
   },
   {
     "type": "error",
+    "name": "DeadlinePassed",
+    "inputs": [
+      {
+        "name": "validUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -1470,17 +1481,6 @@
     "inputs": [
       {
         "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SignedOfferSigExpired",
-    "inputs": [
-      {
-        "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
       }
