@@ -43,7 +43,9 @@ import {IFeedRegistryPairBase} from "../interfaces/IFeedRegistryPairBase.sol";
  *            its open loans, which is worse than a stale price, so there is
  *            no instant removal. A Chainlink deprecation is handled as a
  *            replace onto the successor feed, proposed before the shutdown.
- *            On a production chain the delay is 1 to 14 days, 3 by default;
+ *            On a production chain the delay is 7 to 14 days, 7 by default:
+ *            the price guard reads its feeds here, so a feed change waits
+ *            as long as a guard setting and a vault code change;
  *            a testnet may set 0 so its mock rig registers in one batch.
  *
  *         3. **The proposer's scope is the routine feeds only.** Chainlink
@@ -151,9 +153,9 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     address public constant ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Bounds on the delay of a production chain.
-    uint64 public constant MIN_DELAY = 1 days;
+    uint64 public constant MIN_DELAY = 7 days;
     uint64 public constant MAX_DELAY = 14 days;
-    uint64 public constant DEFAULT_DELAY = 3 days;
+    uint64 public constant DEFAULT_DELAY = 7 days;
     /// @notice The most changes one proposal may carry, so a batch's
     ///         execution stays inside one block's gas.
     uint256 public constant MAX_CHANGES = 64;

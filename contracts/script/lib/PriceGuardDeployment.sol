@@ -34,7 +34,7 @@ import {ArtifactDeploy} from "./ArtifactDeploy.sol";
  *           own USD and ETH denominators, so a lookup never misses a feed by
  *           asking under a different sentinel. An industrial fork builds its
  *           own guard with its own numeraire.
- *         - delay: `PRICE_GUARD_DELAY_SECONDS`, 3 days by default on a
+ *         - delay: `PRICE_GUARD_DELAY_SECONDS`, 7 days by default on a
  *           production chain and 0 on a testnet.
  *         - entries: the feed registry, then from the env, resolved as the
  *           configure step resolves them (`<CHAIN>_KEY`, else `KEY`):
@@ -52,7 +52,7 @@ import {ArtifactDeploy} from "./ArtifactDeploy.sol";
 library PriceGuardDeployment {
     Vm private constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-    uint64 internal constant PRODUCTION_DEFAULT_DELAY = 3 days;
+    uint64 internal constant PRODUCTION_DEFAULT_DELAY = 7 days;
 
     /// @notice What the deploy reads from its config. A zero address is a
     ///         missing entry; unset inputs mean a testnet guard with no delay
