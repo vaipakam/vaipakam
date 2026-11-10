@@ -48,6 +48,7 @@ import { readNumeraireSymbol } from '../reads/numeraire';
 import { NumeraireLine } from '../ui/NumeraireLine';
 import { belowFloor, capStanding, readMinOfferAmount, readOpenOffers } from '../offers/offerBook';
 import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../offers/fullTariff';
+import { bpsPercent, GUARD_BPS_MAX, GUARD_BPS_MIN, parsePercent } from '../offers/priceGuard';
 
 /** The store keys each page's posting flow is kept under (the typed form,
  *  the draft, the review and its tracker), so a navigation away and back, or
@@ -75,6 +76,7 @@ const ADVANCED_NAME = {
   fill: 'request.advancedFill',
   cadence: 'request.advancedCadence',
   tariff: 'request.advancedTariff',
+  guard: 'request.advancedGuard',
 } as const satisfies Record<string, CopyKey>;
 
 const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
@@ -141,8 +143,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   const input: PostInput = { ...DEFAULT_INPUT, ...stored };
   const set = (patch: Partial<PostInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
-  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'part' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling', boolean>>({
+  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'part' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling' | 'guard', boolean>>({
     ceiling: false,
+    guard: false,
     part: false,
     amount: false,
     amountMax: false,
@@ -235,6 +238,12 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       : null;
   const partShape = lender && amount?.ok && minPart?.ok ? partError(minPart.value, amount.value) : null;
   const fillBlock = fillModeBlock(fillMode, ranged, input.expiry);
+  // #3358: a price-move guard armed with the post. Only an ERC-20 against
+  // ERC-20 offer can carry one; its limit is in the protocol's range.
+  const guardTyped = input.guard ? parsePercent(input.guardPercent) : null;
+  const guardBps = guardTyped !== null && guardTyped >= GUARD_BPS_MIN && guardTyped <= GUARD_BPS_MAX ? guardTyped : null;
+  const guardRange = { min: bpsPercent(GUARD_BPS_MIN), max: bpsPercent(GUARD_BPS_MAX) };
+  const guardBlock = !input.guard ? null : named ? text('priceGuard.notErc20') : guardBps === null ? format('priceGuard.outOfRange', guardRange) : null;
   const effective = advancedSet({ ...input, ranged });
   /** Names joined as the catalog joins two: "a, b and c". */
   const listOf = (names: string[]): string =>
@@ -402,6 +411,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     fillBlock === null &&
     cadenceBlock === null &&
     tariffBlock === null &&
+    guardBlock === null &&
     !floorShort &&
     capNow !== 'full' &&
     inputs.data !== null;
@@ -452,6 +462,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           fillMode,
           cadence,
           tariff: tariffChosen && ceilingValue !== null ? { maxCStar: ceilingValue, allowDowngrade: input.tariffDowngrade } : null,
+          guardBps: input.guard ? guardBps : null,
           rateBps: rate.value,
           durationDays,
           expiry: input.expiry,
@@ -614,6 +625,44 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         </Notice>
       )}
       <WhyLink summaryKey={k.tariffSummary} detailKey={k.tariffWhy} />
+    </fieldset>
+  );
+  /** #3358: a price-move guard armed with the post, so the offer is never
+   *  on the book unguarded; changed or removed later on the offer's page. */
+  const guardFieldset = (
+    <fieldset className="choice-group" data-testid="request-guard">
+      <legend>{text('priceGuard.title')}</legend>
+      <label className="choice">
+        <input type="checkbox" checked={input.guard} onChange={(e) => set({ guard: e.target.checked })} data-testid="request-guard-opt" />
+        <span>{text('request.guardOption')}</span>
+      </label>
+      {input.guard && !named && (
+        <FormField
+          label={text('priceGuard.inputSet')}
+          hint={format('priceGuard.inputHint', guardRange)}
+          error={show('guard') && guardBps === null ? format('priceGuard.outOfRange', guardRange) : null}
+        >
+          {({ id, describedBy, invalid }) => (
+            <input
+              id={id}
+              inputMode="decimal"
+              autoComplete="off"
+              aria-describedby={describedBy}
+              aria-invalid={invalid}
+              value={input.guardPercent}
+              onChange={(e) => set({ guardPercent: e.target.value })}
+              onBlur={() => leave('guard')}
+              data-testid="request-guard-input"
+            />
+          )}
+        </FormField>
+      )}
+      {input.guard && named && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="request-guard-block">{text('priceGuard.notErc20')}</span>
+        </Notice>
+      )}
+      <WhyLink summaryKey="priceGuard.whySummary" detailKey="priceGuard.why" />
     </fieldset>
   );
   const rangeToggle = (
@@ -970,6 +1019,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           {fillFieldset}
           {cadenceFieldset}
           {tariffFieldset}
+          {guardFieldset}
         </section>
       ) : !lender && isAdvanced ? (
         <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
@@ -1044,6 +1094,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           {fillFieldset}
           {cadenceFieldset}
           {tariffFieldset}
+          {guardFieldset}
           <p className="tier-b field-hint" data-testid="request-backstop">
             {text('request.backstopGap')}
           </p>
@@ -1059,7 +1110,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
               type="button"
               className="btn"
               onClick={() =>
-                set({ ranged: false, amountMax: '', minPart: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false })
+                set({ ranged: false, amountMax: '', minPart: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false, guard: false, guardPercent: '' })
               }
               data-testid="request-advanced-clear"
             >

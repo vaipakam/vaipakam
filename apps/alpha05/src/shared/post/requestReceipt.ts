@@ -14,6 +14,7 @@ import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, postFigures, ZERO, type ParsedPost } from './postModel';
 import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type PostReview, type StartGate } from './postReview';
 import { tariffConsequences, tariffRows } from './tariffReview';
+import { guardConsequences, guardRows } from './guardPost';
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
 
 type Hex = `0x${string}`;
@@ -111,6 +112,7 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'), true),
     ...scheduleRows(r, meta, copy, advanced, keeper),
     ...tariffRows(r.tariff, parsed, copy),
+    ...guardRows(parsed, copy),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
     textRow('accept.rowPrepayListing', text('accept.prepayListingNo'), true),
     textRow('accept.rowParallelSale', text('accept.parallelNo'), true),
@@ -154,6 +156,7 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     ...matchConsequences(r, meta, copy),
     ...scheduleConsequences(r, copy),
     ...tariffConsequences(r.tariff, copy),
+    ...guardConsequences(parsed, copy),
     text('accept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),

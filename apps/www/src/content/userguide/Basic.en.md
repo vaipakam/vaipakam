@@ -1417,7 +1417,7 @@ Cancel on an open offer you made takes it off the book and returns what it still
 
 ### Price-move guard
 
-An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open.
+An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open. In Advanced mode you can also add the guard while posting an offer, so it is guarded from the moment it is on the book.
 
 <a id="risk-access"></a>
 
