@@ -57,3 +57,14 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# ACC-11. The service worker is fetched fresh on every check, so a deploy's
+# worker (and its list of files) replaces the last one at once; the manifest
+# is revalidated the same way.
+
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Cache-Control: public, max-age=0, must-revalidate
+  Content-Type: application/manifest+json

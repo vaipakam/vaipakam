@@ -6,6 +6,7 @@ import { WhyLink } from '../../shared/help/WhyLink';
 import {
   browserSources,
   clearCookie,
+  deleteCache,
   deleteDatabase,
   downloadBody,
   eraseAll,
@@ -34,8 +35,8 @@ function readReport(): EraseReport | null {
  * Terms. States what this browser keeps for the app and how many items an
  * erasure would remove before the reader confirms; the download carries the
  * app's own records and names the wallet addresses in it; erasure ends the
- * wallet connection, sweeps this site's storage, databases and the shared
- * language cookie, then reloads so every preference visibly resets, and the
+ * wallet connection, sweeps this site's storage, databases, the service
+ * worker's saved files and the shared language cookie, then reloads so every preference visibly resets, and the
  * report of what was removed and what could not be survives the reload in
  * this tab.
  */
@@ -115,6 +116,7 @@ export function DataRights() {
         return getConnections(config).length === 0;
       },
       deleteDatabase,
+      deleteCache,
       clearCookie: (name) => clearCookie(name),
     });
     try {
@@ -152,6 +154,8 @@ export function DataRights() {
             {format('settings.dataHeld', { app: String(inv.app.length), connector: String(inv.connector), session: String(inv.session) })}{' '}
             {inv.databases === 'unknown' ? text('settings.dataDatabasesUnknown') : format('settings.dataDatabases', { count: String(inv.databases.length) })}{' '}
             {text(inv.langCookie ? 'settings.dataCookieSet' : 'settings.dataCookieUnset')}
+            {inv.cacheFiles === 'unknown' && ` ${text('settings.dataCacheUnknown')}`}
+            {typeof inv.cacheFiles === 'number' && inv.cacheFiles > 0 && ` ${format('settings.dataCacheFiles', { count: String(inv.cacheFiles) })}`}
           </p>
           {inv.unreadable.length > 0 && <p className="tier-a">{text('settings.dataUnreadable')}</p>}
           <div className="form-actions">
@@ -159,7 +163,19 @@ export function DataRights() {
               {text('settings.dataDownload')}
             </button>
             {!confirming && (
-              <button type="button" className="btn" onClick={() => (refresh(), setConfirming(true))} data-testid="settings-data-erase">
+              <button
+                type="button"
+                className="btn"
+                // The confirmation opens on a count taken now, never the
+                // last one: the wallet libraries write items as they run.
+                onClick={() =>
+                  void takeInventory().then((fresh) => {
+                    setInv(fresh);
+                    setConfirming(true);
+                  })
+                }
+                data-testid="settings-data-erase"
+              >
                 {text('settings.dataErase')}
               </button>
             )}
@@ -206,10 +222,12 @@ function EraseOutcome({ report }: { report: EraseReport }) {
           databases: String(r.databases),
         })}{' '}
         {r.langCookie && `${text('settings.dataErasedCookie')} `}
+        {r.cacheFiles > 0 && `${format('settings.dataErasedCache', { count: String(r.cacheFiles) })} `}
         {report.disconnected === true && `${text('settings.dataErasedSignedOut')} `}
         {report.kept > 0 && `${format('settings.dataErasedKept', { count: String(report.kept) })} `}
         {report.disconnected === false && `${text('settings.dataErasedStillConnected')} `}
         {report.databasesUnknown && `${text('settings.dataErasedDatabasesUnknown')} `}
+        {report.cachesUnknown && `${text('settings.dataErasedCacheUnknown')} `}
         {report.refused.map((f, i) => (
           <span key={i} className="data-refused">
             {f.what === 'marker'

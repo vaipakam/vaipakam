@@ -4,7 +4,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, type Hex, type PublicClient } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { LABELLED_KNOB_KEYS, PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKnobs';
+import {
+  LABELLED_KNOB_KEYS,
+  PRICE_GUARD_KNOB_GETTERS,
+  PROTOCOL_KNOB_GETTERS,
+  abiOutputNames,
+} from '@vaipakam/lib/protocolKnobs';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   CONSOLE_SNAPSHOT_MAX_AGE_SEC,
@@ -27,6 +32,7 @@ function allKnobs(): Record<string, unknown> {
     tierThresholds: ['1', '2', '3', '4'],
     tierDiscountBps: ['10', '20', '30', '40'],
     ...Object.fromEntries(PROTOCOL_KNOB_GETTERS.map((k) => [k.key, '1'])),
+    ...Object.fromEntries(PRICE_GUARD_KNOB_GETTERS.map((k) => [k.key, '1'])),
   };
 }
 
@@ -51,7 +57,11 @@ describe('rendered values', () => {
     // Otherwise no snapshot could ever be complete, and the page would read
     // the chain on every visit while calling the snapshot incomplete.
     const bundle = new Set(abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? []);
-    const knobs = new Set<string>([...PROTOCOL_KNOB_GETTERS.map((k) => k.key), ...LABELLED_KNOB_KEYS]);
+    const knobs = new Set<string>([
+      ...PROTOCOL_KNOB_GETTERS.map((k) => k.key),
+      ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key),
+      ...LABELLED_KNOB_KEYS,
+    ]);
     expect([...RENDERED_KEYS].filter((k) => !bundle.has(k) && !knobs.has(k))).toEqual([]);
   });
 
@@ -95,6 +105,15 @@ describe('snapshotGap', () => {
     expect(
       snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: ['minHealthFactor'] }), NOW),
     ).toBeNull();
+  });
+
+  it('calls a snapshot complete when the price guard was not read and its settings are named unreported (#3272 part 2)', () => {
+    const values = { ...allKnobs() } as Record<string, unknown>;
+    const guardKeys = PRICE_GUARD_KNOB_GETTERS.map((k) => k.key);
+    for (const k of guardKeys) delete values[k];
+    expect(snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: guardKeys }), NOW)).toBeNull();
+    // Missing and not named: incomplete, as for any other setting.
+    expect(snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: [] }), NOW)).toBe('incomplete');
   });
 });
 

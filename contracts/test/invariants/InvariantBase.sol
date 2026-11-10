@@ -59,6 +59,7 @@ import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title InvariantBase
@@ -454,7 +455,7 @@ contract InvariantBase is Test {
 
     function _mockPrice(address asset, uint256 price, uint8 decs) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decs)
         );

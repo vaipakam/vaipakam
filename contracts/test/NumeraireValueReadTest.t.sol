@@ -14,6 +14,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /// @dev Test-only facet exposing the best-effort read and the fee log, cut
 ///      into the test Diamond so both run in the Diamond's context.
@@ -127,7 +128,7 @@ contract NumeraireValueReadTest is SetupTest {
         assertEq(v, 0);
 
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, usd0),
             ""
         );

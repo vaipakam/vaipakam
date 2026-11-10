@@ -200,11 +200,18 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
   // The borrower's leg: mint the faucet collateral, sign, accept.
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'mint', [sc.address(t.borrower), collateral]);
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'approve', [sc.diamond, collateral]);
+  return acceptPostedOffer(sc, t.borrower, offerId);
+}
+
+/** `who` signs the acceptance terms of a posted offer exactly as it stands
+ *  and accepts it, whatever it carries (a loan offer or a rental listing);
+ *  the caller funds and approves whatever the acceptance pulls first. */
+export async function acceptPostedOffer(sc: ScenarioChain, who: Party, offerId: bigint): Promise<OpenedLoan> {
   const o = await sc.read<Record<string, unknown>>('getOffer', [offerId]);
   const linkedLoanId = await sc.read<bigint>('getOfferLinkedLoanId', [offerId]);
   const riskTermsHash = await sc.read<Hex>('getCurrentRiskTermsHash').catch(() => ZERO_HASH);
   const chainNow = BigInt(await sc.now());
-  const acceptor = sc.address(t.borrower);
+  const acceptor = sc.address(who);
   const terms = {
     acceptor,
     offerCreator: o.creator as Address,
@@ -241,14 +248,14 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
   };
-  const signature = await sc.wallet(t.borrower).signTypedData({
-    account: sc.wallet(t.borrower).account!,
+  const signature = await sc.wallet(who).signTypedData({
+    account: sc.wallet(who).account!,
     domain: { name: 'Vaipakam AcceptOffer', version: '1', chainId: sc.chain.id, verifyingContract: sc.diamond },
     types: ACCEPT_TERMS_TYPES,
     primaryType: 'AcceptTerms',
     message: terms,
   });
-  const accepted = await sc.diamondWrite(t.borrower, 'acceptOffer', [offerId, terms, signature]);
+  const accepted = await sc.diamondWrite(who, 'acceptOffer', [offerId, terms, signature]);
   const loanEv = sc.decodeDiamondLogs(accepted.logs).find((e) => e.eventName === 'LoanInitiated');
   if (!loanEv) throw new Error('acceptOffer emitted no LoanInitiated');
   return { loanId: BigInt(loanEv.args.loanId as bigint), offerId, acceptBlock: accepted.blockNumber };

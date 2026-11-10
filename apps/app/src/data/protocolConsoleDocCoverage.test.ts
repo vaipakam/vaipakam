@@ -8,7 +8,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { LABELLED_KNOB_KEYS, PROTOCOL_KNOB_GETTERS } from '@vaipakam/lib/protocolKnobs';
+import { LABELLED_KNOB_KEYS, PRICE_GUARD_KNOB_GETTERS, PROTOCOL_KNOB_GETTERS } from '@vaipakam/lib/protocolKnobs';
 import { DOC_COVERAGE } from './protocolConsoleDocCoverage';
 import { GRACE_DOCUMENTED_DEFAULT_SCHEDULE, RENDERED_KEYS } from './protocolConsoleRows';
 
@@ -57,6 +57,10 @@ describe('Protocol Console coverage of the knob reference', () => {
     // #2680 — the parts of multi-part reads too.
     for (const k of LABELLED_KNOB_KEYS) {
       expect(RENDERED_KEYS.has(k as never), k).toBe(true);
+    }
+    // #3272 part 2 — and the price guard's settings.
+    for (const k of PRICE_GUARD_KNOB_GETTERS) {
+      expect(RENDERED_KEYS.has(k.key as never), k.key).toBe(true);
     }
   });
 

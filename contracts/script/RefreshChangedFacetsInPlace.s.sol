@@ -7,6 +7,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
+import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {RefreshAllFacetsInPlace, IOwnable} from "./RefreshAllFacetsInPlace.s.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -129,6 +130,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
         _requirePositionNFTDiamond(diamond);
+        PriceGuardCrossing.requireRecorded(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see

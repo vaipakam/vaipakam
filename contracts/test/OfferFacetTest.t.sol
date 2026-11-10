@@ -73,6 +73,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 contract OfferFacetTest is Test {
     VaipakamDiamond diamond;
@@ -113,7 +114,7 @@ contract OfferFacetTest is Test {
         uint8 decimals
     ) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );
@@ -427,7 +428,7 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -435,6 +436,9 @@ contract OfferFacetTest is Test {
         // LibRiskMath.minCollateralForLending) reads the collateral's effective
         // liquidity tier, so this bespoke diamond must cut the selector too.
         selectors[3] = OracleFacet.getEffectiveLiquidityTier.selector;
+        // #910 — a liquid loan's origination stamps its discounted-liquidation
+        // tier from the close-out read, and that read is not swallowed.
+        selectors[4] = OracleFacet.getCloseOutLiquidityTier.selector;
         return selectors;
     }
 
@@ -2860,7 +2864,7 @@ contract OfferFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(illiquidERC20)),
             abi.encode(uint256(1e8), uint8(8))
         );

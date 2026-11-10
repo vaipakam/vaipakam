@@ -25,6 +25,7 @@ import {PartialFillSwapAdapter} from "./mocks/PartialFillSwapAdapter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /**
  * @title SwapToRepayFacetTest
@@ -117,7 +118,7 @@ contract SwapToRepayFacetTest is SetupTest {
 
     function _mockAssetPrice(address asset, uint256 price, uint8 feedDecimals) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, feedDecimals)
         );

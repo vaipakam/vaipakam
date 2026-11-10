@@ -47,8 +47,10 @@ import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.so
  */
 library FacetSelectors {
     /// @notice Full external selector surface of {OracleFacet} (20).
+    /// @dev    #3272 part 2 retired `getSequencerUptimeFeed`: the feed is the
+    ///         price guard's `SequencerFeed` entry.
     function oracle() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](20);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -56,21 +58,20 @@ library FacetSelectors {
         s[4] = OracleFacet.getAssetRiskProfile.selector;
         s[5] = OracleFacet.getIlliquidAssets.selector;
         s[6] = OracleFacet.isAssetSupported.selector;
-        s[7] = OracleFacet.getSequencerUptimeFeed.selector;
-        s[8] = OracleFacet.sequencerHealthy.selector;
-        s[9] = OracleFacet.captureDailyPriceSnapshot.selector;
-        s[10] = OracleFacet.getHistoricalAssetPrice.selector;
-        s[11] = OracleFacet.getLiquidityTier.selector;
-        s[12] = OracleFacet.getEffectiveLiquidityTier.selector;
-        s[13] = OracleFacet.tryGetAssetPrice.selector;
-        s[14] = OracleFacet.refreshTierLtvCache.selector;
-        s[15] = OracleFacet.getTierLtvCacheEntry.selector;
-        s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
-        s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
-        s[18] = OracleFacet.getAssetPriceStatus.selector;
-        s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
+        s[7] = OracleFacet.sequencerHealthy.selector;
+        s[8] = OracleFacet.captureDailyPriceSnapshot.selector;
+        s[9] = OracleFacet.getHistoricalAssetPrice.selector;
+        s[10] = OracleFacet.getLiquidityTier.selector;
+        s[11] = OracleFacet.getEffectiveLiquidityTier.selector;
+        s[12] = OracleFacet.tryGetAssetPrice.selector;
+        s[13] = OracleFacet.refreshTierLtvCache.selector;
+        s[14] = OracleFacet.getTierLtvCacheEntry.selector;
+        s[15] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
+        s[16] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        s[17] = OracleFacet.getAssetPriceStatus.selector;
+        s[18] = OracleFacet.isLiquidityQuoteUsable.selector;
         // #3359 — the close-out depth tier the forced-sale floor reads.
-        s[20] = OracleFacet.getCloseOutLiquidityTier.selector;
+        s[19] = OracleFacet.getCloseOutLiquidityTier.selector;
     }
 
     /// @notice Full external selector surface of {VaultFactoryFacet} (34).

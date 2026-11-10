@@ -3,6 +3,11 @@ pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/// @dev The VPFI hard supply cap (230M VPFI), stated once. The canonical
+///      token's `TOTAL_SUPPLY_CAP` is this value, and the reward mesh bounds a
+///      chain's daily recycled attribution by it (#2045).
+uint256 constant VPFI_TOTAL_SUPPLY_CAP = 230_000_000 ether;
+
 /**
  * @title IVPFIToken
  * @author Vaipakam Developer Team

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useConfig } from 'wagmi';
 import { zeroAddress } from 'viem';
 import { watchAsset, writeContract } from 'wagmi/actions';
@@ -64,6 +64,13 @@ export function Faucet() {
   const [pick, setPick] = useState<MintPick | null>(null);
   const [watch, setWatch] = useState<'idle' | 'asked' | 'declined'>('idle');
   const account = (own?.account ?? '0x') as Hex;
+  // Reached from another page's "get test assets" link (an empty rental
+  // book, NFT-38): bring the faucet into view once it is on the page.
+  const { hash } = useLocation();
+  const shown = assets !== null && assets.length > 0;
+  useEffect(() => {
+    if (hash === '#faucet' && shown) document.getElementById('faucet')?.scrollIntoView({ block: 'start' });
+  }, [hash, shown]);
 
   const tx = useTrackedTx({
     key: 'home.faucet',

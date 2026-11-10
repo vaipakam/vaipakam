@@ -35,7 +35,9 @@ export interface OperatorApproval {
   read: (block?: bigint) => Promise<Erc1155State>;
   /** Grants the protocol the operator approval (the caller names the
    *  prompt) and resolves with the block it mined in. Throws a stated
-   *  refusal when it was granted meanwhile, or the step did not land. */
+   *  refusal when it was granted meanwhile, or the step did not land. A
+   *  grant that mined but could not be read back is taken back before it
+   *  throws, so no ending leaves it standing unstated. */
   grant: () => Promise<bigint>;
   /** Takes the approval back, only while it still reads granted, reading
    *  no earlier than `since` (the block the grant mined in), and says what
@@ -76,6 +78,18 @@ export function operatorApproval(d: OperatorApprovalDeps, asset: Hex, tokenId: b
     if (before.approvedForAll) throw new StatedRefusal({ code: 'OperatorApprovalChanged', reason: text('operatorApproval.moved'), reopensAt: null, remedy: null });
     const r = await setTo(true);
     if (r.landed && r.at !== null) return r.at;
+    if (r.hash !== null && r.at !== null) {
+      // Mined, but what it set could not be read: the caller holds nothing
+      // to take back yet, so the approval is taken back here (read no
+      // earlier than the block it mined in) and the outcome is stated.
+      const back = await revoke(r.at);
+      throw new StatedRefusal({
+        code: 'OperatorApprovalUnverified',
+        reason: `${format('operatorApproval.unreadMined', { hash: r.hash })} ${back.sentence}`,
+        reopensAt: null,
+        remedy: null,
+      });
+    }
     throw new StatedRefusal({
       code: r.hash !== null ? 'OperatorApprovalUnverified' : 'OperatorApprovalNotSet',
       reason: r.hash !== null ? format('operatorApproval.unread', { hash: r.hash, collection: d.collection }) : format('operatorApproval.notSet', { collection: d.collection }),

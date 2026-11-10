@@ -19,6 +19,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /**
  * @title  FallbackPricedSplitTest
@@ -201,7 +202,7 @@ contract FallbackPricedSplitTest is SetupTest {
             uint256(500)
         );
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             crossCheck
         );
@@ -224,7 +225,7 @@ contract FallbackPricedSplitTest is SetupTest {
     ///      sees exactly that failure.
     function _priceRevertsWith(address asset, bytes4 selector) internal {
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encodeWithSelector(selector)
         );

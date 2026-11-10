@@ -88,6 +88,11 @@ export interface LoanDetails extends LoanSummary {
   quantity: bigint;
   prepayAsset: Hex;
   prepayAmount: bigint;
+  /** A rental's buffer, prepaid beside the rent; it funds the late fee only. */
+  bufferAmount: bigint;
+  /** A rental's settled-through moment: it moves on one day per daily
+   *  settlement, so the days already paid are counted from it. */
+  lastDeductTime: bigint;
 }
 
 /** The protocol's collateral lien (`getLoanCollateralLien`): what the

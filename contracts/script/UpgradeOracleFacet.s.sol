@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
@@ -54,6 +55,9 @@ contract UpgradeOracleFacet is Script {
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`).
         StorageLayoutRecord.requireAppendOnly("UpgradeOracleFacet", diamond);
+        // #3272 part 2 - an oracle refreshed onto a Diamond from before the
+        // price guard would refuse every price: fresh deploy only.
+        PriceGuardCrossing.requireRecorded(diamond);
 
         // ── Deployer: fund admin gas (if low) + deploy new facet ────────
         vm.startBroadcast(deployerKey);

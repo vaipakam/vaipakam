@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPriceGuard} from "./LibPriceGuard.sol";
+import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
 import {LibPausable} from "./LibPausable.sol";
 // #1499 (Codex #1970 r1 P1) — the claim reads its room from
 // {LibVpfiRecycle.backingPosition}; the horizon must read the SAME
@@ -7024,7 +7026,17 @@ library LibInteractionRewards {
         view
         returns (uint256 price, uint8 feedDec)
     {
-        address feed = LibVaipakam.storageSlot().ethNumeraireFeed;
+        // #3272 — the ETH reference feed is the price guard's. A Diamond
+        // that cannot find its guard reads as "feed unavailable", the same
+        // as an unset feed: the cap is best-effort and never blocks a claim.
+        (bool found, IPriceGuard guard) = LibPriceGuard.tryGuard();
+        if (!found) return (0, 0);
+        address feed;
+        try guard.ethNumeraireFeed() returns (address f) {
+            feed = f;
+        } catch {
+            return (0, 0);
+        }
         if (feed == address(0)) return (0, 0);
 
         int256 answer;

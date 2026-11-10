@@ -124,7 +124,7 @@ contract ForcedSalePreviewFacet {
             p.status = LibDiscountedLiquidation.Status.InternalMatchWindow;
             return p;
         }
-        (p.tier, p.discountBps) = LibDiscountedLiquidation.discountFor(loan.collateralAsset);
+        (p.tier, p.discountBps) = LibDiscountedLiquidation.discountFor(loan);
         if (p.tier == 0) {
             p.status = LibDiscountedLiquidation.Status.Untiered;
             return p;

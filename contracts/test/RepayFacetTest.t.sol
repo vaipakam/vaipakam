@@ -69,6 +69,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 contract RepayFacetTest is Test {
     VaipakamDiamond diamond;
@@ -102,7 +103,7 @@ contract RepayFacetTest is Test {
         uint8 decimals
     ) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );

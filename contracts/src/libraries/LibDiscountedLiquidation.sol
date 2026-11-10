@@ -5,7 +5,6 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 import {LibFallback} from "./LibFallback.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
 
 /**
  * @title  LibDiscountedLiquidation
@@ -36,8 +35,8 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         For such a token the previewed seizure is an UPPER BOUND on what
  *         the recipient receives, and a reader must check what arrived.
  *
- *         THE RULE, with `D` the debt and `d` the collateral's per-tier
- *         discount:
+ *         THE RULE, with `D` the debt and `d` the discount for the
+ *         collateral's liquidity tier, stamped when the loan started:
  *         - `D` = the borrow balance (principal plus accrued interest, net of
  *           interest already settled) plus the late fee — the figure every
  *           forced close-out of the whole loan settles;
@@ -93,12 +92,17 @@ library LibDiscountedLiquidation {
         uint256 surplus;
     }
 
-    /// @notice The collateral's effective liquidity tier and that tier's
-    ///         discount. Tier 0 (unclassified) carries no discount, and the
-    ///         liquidation refuses it.
-    function discountFor(address collateralAsset) internal view returns (uint8 tier, uint16 discountBps) {
-        tier = OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset);
-        discountBps = LibVaipakam.effectiveTierLiqDiscountBps(tier);
+    /// @notice The loan's liquidity tier and discount, as stamped when the
+    ///         loan started ({LibVaipakam.Loan.liqDiscountTierAtInit}).
+    ///         Tier 0 carries no discount, and the liquidation refuses it.
+    /// @dev    #910 / #3351: never the live tier. A live read could be
+    ///         lowered in the liquidation's own block (a pushed price trips
+    ///         the admission read's price checks and drops a deep pool) or by
+    ///         a later keeper-tier change, and a lower tier is a WIDER
+    ///         discount taken from the borrower's surplus.
+    function discountFor(LibVaipakam.Loan storage loan) internal view returns (uint8 tier, uint16 discountBps) {
+        tier = loan.liqDiscountTierAtInit;
+        discountBps = tier == 0 ? 0 : loan.liqDiscountBpsAtInit;
     }
 
     /// @notice `D` for `loan` now.

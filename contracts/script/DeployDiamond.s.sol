@@ -1089,8 +1089,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Diamond routes is in its set.
         //
         // #3272 — and PRICE_GUARD: the one price source the Diamond and the
-        // vaults read (nothing reads it until the Diamond's oracle moves onto
-        // it, #3272 PR 2). The guard is built in the same step, with its whole
+        // vaults read. The guard is built in the same step, with its whole
         // starting config, because the registry that points at it is built
         // here (owner decision 2026-11-09, "Set at deploy, checked once"). So
         // the chain's feed registry, the guard's feed source, is created here
@@ -1098,6 +1097,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // testnet's delay.
         _deployProtocolRegistry(admin, treasury);
         console.log("Protocol registry:", protocolRegistry);
+
+        // 5c-iii. #3272 part 2 — the Diamond records the registry, once, and
+        // with it the guard's numeraire. Every price the Diamond reads comes
+        // from the guard the registry points at, and a guard in any other
+        // numeraire is refused (owner decision 2026-11-09, "Fix numeraire at
+        // deploy").
+        OracleAdminFacet(diamond).initializeProtocolRegistry(protocolRegistry);
+        console.log("Protocol registry recorded on the Diamond.");
 
         // 5d. #3204 — the vault code and the VaultBeacon every vault resolves
         // it through. The implementation's initializers must be disabled at
@@ -1711,109 +1718,68 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](20);
         s[0] = OracleFacet.checkLiquidity.selector;
+        // #3272 part 2 — the price selectors forward to the price guard.
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
         s[3] = OracleFacet.checkLiquidityOnActiveNetwork.selector;
         s[4] = OracleFacet.getAssetRiskProfile.selector;
         s[5] = OracleFacet.getIlliquidAssets.selector;
         s[6] = OracleFacet.isAssetSupported.selector;
-        s[7] = OracleFacet.getSequencerUptimeFeed.selector;
-        s[8] = OracleFacet.sequencerHealthy.selector;
+        s[7] = OracleFacet.sequencerHealthy.selector;
         // AnalyticalGettersDesign §3.4 — daily price-snapshot ring
         // buffer for historical TVL reconstruction.
-        s[9] = OracleFacet.captureDailyPriceSnapshot.selector;
-        s[10] = OracleFacet.getHistoricalAssetPrice.selector;
+        s[8] = OracleFacet.captureDailyPriceSnapshot.selector;
+        s[9] = OracleFacet.getHistoricalAssetPrice.selector;
         // Depth-tiered LTV (Piece B) — the on-chain liquidity-tier
         // authority + the keeper-min effective tier the loan-init LTV
         // cap consults. See
         // docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2.
-        s[11] = OracleFacet.getLiquidityTier.selector;
-        s[12] = OracleFacet.getEffectiveLiquidityTier.selector;
+        s[10] = OracleFacet.getLiquidityTier.selector;
+        s[11] = OracleFacet.getEffectiveLiquidityTier.selector;
         // Phase 2 of AutonomousLtvAndOracleFallback.md — try-wrapped
         // `getAssetPrice` for callers (LibFallback) that need to detect
         // oracle-quorum unavailability without reverting.
-        s[13] = OracleFacet.tryGetAssetPrice.selector;
+        s[12] = OracleFacet.tryGetAssetPrice.selector;
         // Phase 4 of AutonomousLtvAndOracleFallback.md — autonomous
         // tier-LTV cache. Permissionless refresh + the two views the
         // loan-init gate / protocol-console consume.
-        s[14] = OracleFacet.refreshTierLtvCache.selector;
-        s[15] = OracleFacet.getTierLtvCacheEntry.selector;
-        s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
+        s[13] = OracleFacet.refreshTierLtvCache.selector;
+        s[14] = OracleFacet.getTierLtvCacheEntry.selector;
+        s[15] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
         // #638 — read-only live-secondary-feed counter, consumed only by the
         // backstop oracle-coverage gate (LibBackstopOracleGate).
-        s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        s[16] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
         // #666 — the price read that tells a missing price from a
         // distrusted one (LibFallback's failed-swap split reads it).
-        s[18] = OracleFacet.getAssetPriceStatus.selector;
+        s[17] = OracleFacet.getAssetPriceStatus.selector;
         // #2747 — the tier search's quote-leg test, read by the launch
         // readiness check's WETH quote-route gate.
-        s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
+        s[18] = OracleFacet.isLiquidityQuoteUsable.selector;
         // #3359 — the close-out depth tier the forced-sale floor reads.
-        s[20] = OracleFacet.getCloseOutLiquidityTier.selector;
+        s[19] = OracleFacet.getCloseOutLiquidityTier.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](36);
-        s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        s[3] = OracleAdminFacet.setWethContract.selector;
-        s[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        s[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        s[6] = OracleAdminFacet.setStableTokenFeed.selector;
-        s[7] = OracleAdminFacet.setSequencerUptimeFeed.selector;
-        // Phase 3.1 — per-feed override: tighten staleness or set a
-        // minimum-valid-answer floor for a specific Chainlink
-        // aggregator. Only ever stricter than the global default;
-        // the override never loosens.
-        s[8] = OracleAdminFacet.setFeedOverride.selector;
-        s[9] = OracleAdminFacet.getFeedOverride.selector;
-        // Phase 7b.2 — Soft 2-of-N secondary oracle quorum across
-        // Tellor + API3 + DIA. Each address can be unset on chains
-        // where the secondary isn't deployed; when EVERY secondary
-        // is unavailable the protocol falls back to Chainlink-only
-        // (graceful) per OracleFacet._enforceSecondaryQuorum.
-        s[10] = OracleAdminFacet.setTellorOracle.selector;
-        s[11] = OracleAdminFacet.getTellorOracle.selector;
-        s[12] = OracleAdminFacet.setApi3ServerV1.selector;
-        s[13] = OracleAdminFacet.getApi3ServerV1.selector;
-        s[14] = OracleAdminFacet.setDIAOracleV2.selector;
-        s[15] = OracleAdminFacet.getDIAOracleV2.selector;
-        s[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
-        s[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
-        s[18] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
-        s[19] = OracleAdminFacet.getSecondaryOracleMaxStaleness.selector;
-        // Phase 7b.3 — Pyth cross-check + per-knob single-value getters
-        // consumed by the protocol-console knob registry.
-        s[20] = OracleAdminFacet.setPythOracle.selector;
-        s[21] = OracleAdminFacet.getPythOracle.selector;
-        s[22] = OracleAdminFacet.setPythCrossCheckFeedId.selector;
-        s[23] = OracleAdminFacet.getPythNumeraireFeedId.selector;
-        s[24] = OracleAdminFacet.setPythMaxStalenessSeconds.selector;
-        s[25] = OracleAdminFacet.getPythMaxStalenessSeconds.selector;
-        s[26] = OracleAdminFacet.setPythCrossCheckMaxDeviationBps.selector;
-        s[27] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
-        s[28] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
-        s[29] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
+        s = new bytes4[](8);
+        s[0] = OracleAdminFacet.setUniswapV3Factory.selector;
         // Phase 3 of AutonomousLtvAndOracleFallback.md — per-chain
         // peer-lending-protocol addresses the autonomous tier-LTV cache
         // reads (Aave V3 PoolDataProvider, Compound V3 Comet, Morpho-Blue).
-        // Set via owner-only setter; Phase 4 builds the refresh function
-        // on top of these addresses.
-        s[30] = OracleAdminFacet.setPeerProtocolAddresses.selector;
-        s[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
+        s[1] = OracleAdminFacet.setPeerProtocolAddresses.selector;
+        s[2] = OracleAdminFacet.getPeerProtocolAddresses.selector;
         // Phase 4 of AutonomousLtvAndOracleFallback.md — per-tier
         // reference asset list (constitution-level governance set).
-        s[32] = OracleAdminFacet.setTierReferenceAssets.selector;
-        s[33] = OracleAdminFacet.getTierReferenceAssets.selector;
-        // #945 — the launch readiness check prices WETH through the
-        // Diamond's own oracle, so it reads which WETH is configured.
-        s[34] = OracleAdminFacet.getWethContract.selector;
-        // #2880 — the launch readiness check reads the feed registry the
-        // oracle prices through and the two quote keys it asks it under.
-        s[35] = OracleAdminFacet.getFeedRegistryLookup.selector;
+        s[3] = OracleAdminFacet.setTierReferenceAssets.selector;
+        s[4] = OracleAdminFacet.getTierReferenceAssets.selector;
+        // #3272 part 2 — where the Diamond finds its price guard: the
+        // protocol registry, recorded once at deploy (step 5c-iii), and the
+        // guard it points at, which the launch readiness check reads WETH
+        // and the feed registry from. Every price setting is the guard's.
+        s[5] = OracleAdminFacet.initializeProtocolRegistry.selector;
+        s[6] = OracleAdminFacet.getProtocolRegistry.selector;
+        s[7] = OracleAdminFacet.getPriceGuard.selector;
     }
 
     function _getNftSelectors() internal pure returns (bytes4[] memory s) {
@@ -3270,11 +3236,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         s[22] = ConfigFacet.setMaxOfferDurationDays.selector;
-        // T-032 / Numeraire generalization (Phase 1) — notification fee knob (now in
-        // numeraire-units) + bundled getter. The per-knob
-        // `setNotificationFeeUsdOracle` was retired; the protocol's
-        // reference currency is the global numeraireOracle (set via
-        // setNumeraire on the T-034 surface).
+        // T-032 — the notification fee knob (a VPFI quantity since #1346) +
+        // bundled getter. The per-knob `setNotificationFeeUsdOracle` was
+        // retired.
         s[23] = ConfigFacet.setNotificationFee.selector;
         s[24] = ConfigFacet.getNotificationFeeConfig.selector;
         // Single-field fee getters added for the protocol-console knob
@@ -3412,41 +3376,25 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // (ConfigFacet hit the EIP-170 ceiling).
     }
 
-    /// T-034 / T-048 numeraire / PAD / periodic-interest config
-    /// selectors. Carved off `ConfigFacet` (#394 Codex #647) into the
-    /// sibling `NumeraireConfigFacet` to keep ConfigFacet under the
-    /// EIP-170 24,576-byte runtime limit.
+    /// T-034 periodic-interest and numeraire-threshold config selectors.
+    /// Carved off `ConfigFacet` (#394 Codex #647) into the sibling
+    /// `NumeraireConfigFacet` to keep ConfigFacet under the EIP-170
+    /// 24,576-byte runtime limit. #3272 part 2 retired the numeraire and PAD
+    /// setters and getters: the numeraire is the price guard's fixed
+    /// identity, recorded once at deploy.
     function _getNumeraireConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
-        // T-034 Periodic Interest Payment knobs + master kill-switches +
-        // per-knob single-value getters consumed by the protocol-console
-        // knob registry.
-        s[0] = NumeraireConfigFacet.setNumeraire.selector;
-        s[1] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
-        s[2] = NumeraireConfigFacet.setPreNotifyDays.selector;
-        s[3] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
-        s[4] = NumeraireConfigFacet.setNumeraireSwapEnabled.selector;
-        s[5] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
-        s[6] = NumeraireConfigFacet.getNumeraireSymbol.selector;
-        s[7] = NumeraireConfigFacet.getEthNumeraireFeed.selector;
-        s[8] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
-        s[9] = NumeraireConfigFacet.getPreNotifyDays.selector;
-        s[10] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
-        s[11] = NumeraireConfigFacet.getNumeraireSwapEnabled.selector;
-        // T-048 Predominantly Available Denominator (PAD) — atomic
-        // rotation setter + per-asset numeraire-direct override setter
-        // + 5 individual getters consumed by the protocol-console
-        // knob registry.
-        s[12] = NumeraireConfigFacet.setPredominantDenominator.selector;
-        s[13] = NumeraireConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
-        s[14] = NumeraireConfigFacet.getPredominantDenominator.selector;
-        s[15] = NumeraireConfigFacet.getPredominantDenominatorSymbol.selector;
-        s[16] = NumeraireConfigFacet.getEthPadFeed.selector;
-        s[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
-        s[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        s = new bytes4[](10);
+        s[0] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
+        s[1] = NumeraireConfigFacet.setPreNotifyDays.selector;
+        s[2] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
+        s[3] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
+        s[4] = NumeraireConfigFacet.getNumeraireSymbol.selector;
+        s[5] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
+        s[6] = NumeraireConfigFacet.getPreNotifyDays.selector;
+        s[7] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
         // #3242 — the offer value floor.
-        s[19] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
-        s[20] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
+        s[8] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
+        s[9] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay config

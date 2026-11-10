@@ -44,6 +44,7 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title Scenario8_BorrowerPreclose
@@ -93,7 +94,7 @@ contract Scenario8_BorrowerPreclose is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset), abi.encode(status));
     }
     function mockPrice(address asset, uint256 price, uint8 dec) internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset), abi.encode(price, dec));
     }
     function mockHealthFactor(uint256 loanId, uint256 hf) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(hf));

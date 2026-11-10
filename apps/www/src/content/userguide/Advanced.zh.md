@@ -2125,3 +2125,71 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 设置汇集了你只需设定一次的内容。模式和主题保存在此浏览器为本网站提供的存储中，语言保存在那里以及平台各网站共享的 `vaipakam_lang` Cookie 中；在译文发布前，页面自身的语言属性保持为英文。条款一行读取已连接网络上的 `getCurrentTos` 和钱包的接受状态：没有生效的条款；已接受，并显示版本和文本指纹；或已生效但未接受，会在第一个受限操作时询问。读取失败显示“无法确认”并可重试，绝不显示为“未接受”。手续费折扣开关是 `setVPFIDiscountConsent`，与首页的流程相同。此版本不包含任何诊断采集。浏览器还会保存已查看的提醒、提醒渠道记录、上一次签名提醒请求的时间、上一次选择的代币组合、已关闭的新手卡片以及钱包连接器的上一次连接；绝不保存密钥或签名。下载会把应用自己的记录（以 `app.` 或 `alpha05.` 开头的键，以及语言）写入一个 JSON 文件，写明这些记录所属的钱包地址，并只统计、不复制钱包连接器的会话项和此网站的数据库。清除会先断开每个钱包连接，使连接器无法写回其记录，然后删除此网站的本地存储和标签页存储，在浏览器能列出数据库时删除这些数据库，并在可能设置过 `vaipakam_lang` Cookie 的每个域上使其过期；随后重新加载，并在该标签页中显示删除了什么，以及浏览器拒绝了什么及其原因。它只写回钱包连接器的“已断开”标记，因此重新加载不会重新连接仍授权本站的钱包；如果浏览器在重新加载时不保留报告，页面会停留并直接显示报告。
 
 风险访问在同一个区块中读取 `getVaultRiskTier`、`getEffectiveRiskTier`、等级的条款版本与 `getCurrentRiskTermsVersion` 的对比、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown`、`getRiskStrictMode`、`getStrictModeStrictUntil` 和 `getRiskAccessGateEnabled`。它说明当前计算的等级，以及它与所选等级不同的原因：仍在等待的提高（附开始计算的时间），或条款变更（在确认之前按蓝筹计算）。等级更改是 `setVaultRiskTierChecked`，会写明读取时的更改计数器和条款版本，因此来自别处的写入或新条款会拒绝它且不做任何改变；提高需等待期限，等待期间绝不会再次提供；降低立即生效。该检查只在发起时执行，因此降低会对新的报价和请求关闭高于它的交易对（你自己尚未成交的那些将无法被接受），而不影响未结贷款。严格模式是 `setRiskStrictMode`：开启立即生效；关闭后在期限内仍然适用，页面会说明到何时为止。在检查已关闭的网络上，更改会被保存，只有在检查开启后才会计算。按交易对的同意和确认仍保留在需要它们的流程中。
+
+授权在同一个区块中读取每个 ERC-20 的 `allowance(wallet, Diamond)`、在已部署 Permit2 的网络上读取 Permit2 的 `allowance(wallet, token, Diamond)`（已过期的不列出）、每个 NFT 系列的 `isApprovedForAll(wallet, Diamond)`，以及头寸所涉及且钱包仍持有的每个 ERC-721 代币的 `getApproved`。检查的资产包括建议的资产、`getDepositoryAssets` 中的每项资产、`getUserLoansPaginated` 中每笔贷款和 `getUserOffersPaginated` 中每个报价的双方、每个常设报价的出借资产，以及你添加的任何合约。达到或超过 2^255（通过 Permit2 为 2^159）的授权显示为无限制。撤回时发送 `approve(Diamond, 0)`、Permit2 的 `approve(token, Diamond, 0, 0)`、`setApprovalForAll(Diamond, false)` 或 `approve(0x0, tokenId)`；在打开钱包前以及在收据所在区块会再次读取该行。未读完的记录或没有响应的资产会被说明，绝不会显示为没有授权。常设报价要求的抵押资产也会被检查；钱包持有但 `getApproved` 无应答的代币计为未知。收据在与该行相同的区块读取同一资产的另一项授权（单个代币读 `isApprovedForAll`，系列读已找到代币的 `getApproved`，ERC-20 读 Permit2 的 `allowance`，Permit2 授权读 ERC-20 的 `allowance`），并说明它仍然有效，或说明其未知；钱包打开前它若发生变化，签名会被停止。
+
+Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`，以及每个已批准 keeper（最多五个）的 `getKeeperActions`。操作就是协议的位。完成出借方头寸的出售（0x01）、通过抵消完成提前结清（0x02）、发起出借方头寸的出售（0x04）、发起提前结清（0x08）以及在约定范围内展期（0x20），只有在贷款或报价也启用了该 keeper 时才作用于贷款；成交要求 keeper 的常设出借报价（0x40）、把已还款的资金重新投入常设报价（0x80）以及锁定受保护账户（0x100），一旦访问开启就作用于整个账户。位 0x10 已停用并会被拒绝。更改会发送 `setKeeperAccess`、`approveKeeper`、`setKeeperActions` 或 `revokeKeeper`；给予 keeper 更多权限的更改在有生效版本时要求接受条款，撤回则从不要求；协议暂停期间，包括移除在内的所有更改都会被拒绝。本应用的 keeper 依据部署记录给出。
+
+应用附带一个 Web 清单（`/manifest.webmanifest`），包含这四个快捷方式和一个可遮罩图标。在设置 › 安装应用中，只有在浏览器触发其 `beforeinstallprompt` 事件之后才会出现按钮，并打开该提示；否则页面会说明情况（已安装、iOS 或未提供）。已部署的版本会注册 `/sw.js`，它由该版本的输出生成：页面第一次请求该版本某个带哈希的 `/assets/` 文件时保留一份副本，之后对该文件的请求从副本响应，接管时删除旧版本的存储，并且从不响应页面导航、对其他源的请求或不在其列表中的文件。“你在此浏览器中的数据”会统计并清除这些存储。
+
+<a id="rent-review"></a>
+
+### 租用：租一个 NFT
+
+确认页用 `getOffer`（其 `rentalBufferBpsAtCreate`）读取挂单，用 `previewAccept` 读取协议的判定和日租金，只有挂单没有记录自己的缓冲金时才读取 `getRiskConfig`。总额是 `amount × durationDays` 加上该份额，按协议的方式向下取整，试运行证明两者一致。租用是带已签名 `AcceptTerms` 的 `acceptOffer`，其中把 NFT 列为已确认的非流动一侧，且没有抵押一侧；使用权在回执所在区块从所有者的金库中用 `vaultGetNFTUserOf` 读回，ERC-1155 则用 `vaultGetNFTQuantity`。
+
+<a id="rent-risks"></a>
+
+### 租用：风险
+
+你永远不会拥有租来的 NFT，使用它的权利随租期结束而结束。租金和缓冲金为这次租用留在你的金库中，租用未结束时不能提取。约定的每一天都结算完后（任何人都可以结算），租用会自动结束，你可以领回缓冲金。在此之前请自己在它的持仓页面结束。在宽限期内结束要从缓冲金中扣除逾期费；超过宽限期，租用即违约，你金库中剩余的租金归所有者，缓冲金归协议，你拿不回任何东西。按全期计租时，即使提前结束也要支付整个租期。
+
+<a id="rent-list"></a>
+
+### 租用：把你的 NFT 挂出出租
+
+表单用 ERC-165 `supportsInterface` 读取合集的标准，用 `getProtocolConfigBundle` 读取最长租期。确认页用 `ownerOf`、`getApproved` 和 `isApprovedForAll`（ERC-1155 用 `balanceOf`）读取代币，用 `getAssetPriceStatus` 和流动性检查读取支付代币的类别，用 `getRiskConfig` 读取缓冲金比例，用 `getEffectiveGraceSeconds` 读取宽限期，用 `getTreasuryFeeBps` 读取协议份额，然后试运行 `createOffer`：`assetType` 为 1 或 2，`amount` 和 `amountMax` 都等于日租金，所有抵押与利率字段为零，`prepayAsset` 为支付代币。发布会记录 `rentalBufferBpsAtCreate`；结果从交易的 `OfferCreated` 日志和 NFT 自身转入所有者金库的 `Transfer`（或 `TransferSingle`）日志读取。
+
+<a id="rent-list-risks"></a>
+
+### 租用：挂出出租的风险
+
+挂单开放期间和出租期间，NFT 都留在你的金库中，挂单或租用结束前不能提取。在无人租用时，你可以在挂单的头五分钟过后从其页面取消。出租后，租户在租期结束前拥有使用该 NFT 的权利，你不能提前收回。每结算一个已结束的日子，扣除协议份额后的租金就转入你的金库；任何人都可以结算。约定的每一天都结算完后，租用会自动结束，租户可以领回缓冲金。在此之前，由租户结束，或在宽限期过后任何人都可以按违约结束。如果租户结束租用，你可以领取尚未结算的租金和任何逾期费（扣除协议份额），剩余缓冲金退还租户。如果违约，你可以领取剩余租金（扣除该份额），缓冲金归协议。暂停期间每日结算停止，逾期费和违约的日期顺延，但租户的使用期限不会延长。已过期的挂单会把 NFT 留在你的金库中，直到它被关闭。
+
+<a id="rent-request"></a>
+
+### 租用：申请租用一个 NFT
+
+表单通过 ERC-165 `supportsInterface` 读取系列的标准，并从 `getProtocolConfigBundle` 读取最长期限。审核通过 `ownerOf` 读取代币的持有者（ERC-1155 没有持有者列表），通过 `getAssetPriceStatus` 和流动性检查读取支付代币的类别，读取钱包在支付代币上的 `balanceOf` 和 `allowance`，从 `getRiskConfig` 读取缓冲比例，从 `getEffectiveGraceSeconds` 读取宽限期，然后试运行 `createOffer`：`offerType` 为 1，`assetType` 为 1 或 2，`amount` 和 `amountMax` 均为日租金，所有抵押和利率字段为零，`prepayAsset` 为支付代币。发布会记录 `rentalBufferBpsAtCreate`，并把日租金乘以期限再加上该比例的金额拉入租户的金库；结果从交易的 `OfferCreated` 日志和支付代币转入金库的 `Transfer` 日志中读取。
+
+<a id="rent-request-risks"></a>
+
+### 租用：租用请求的风险
+
+请求开放期间，租金和缓冲金留在你的金库中，在你取消请求或请求结束之前不能提取。在没有业主接受时，你可以在请求的头五分钟过后从其页面取消，两者会回到你的钱包。接受请求的业主会按完全相同的条款立即开始租用：你持有的是使用该 NFT 的权利，而从来不是 NFT 本身。约定的每一天都结算完后（任何人都可以结算），租用会自动结束，你可以领回缓冲金；在此之前，请在其仓位页面结束它。逾期结束会从缓冲金中扣除逾期费；若违约，租金归业主，缓冲金归协议。已过期的请求会把租金和缓冲金留在你的金库中，直到它被关闭。缓冲金比例取请求上链时协议的设置：若在你审阅后发生变化，当你的钱包只批准了这一确切金额时，更高的比例会被拒绝；若之前的批准足以覆盖，则会被扣取；结果会说明实际转移了什么。
+
+<a id="rent-take"></a>
+
+### 租用：接受租户的请求
+
+审核通过 `getOffer` 读取请求（其 `rentalBufferBpsAtCreate`），从 `previewAccept` 读取协议的判定，读取双方的风险设置，从 `getEffectiveGraceSeconds` 读取宽限期，从 `getTreasuryFeeBps` 读取协议份额，仅对没有记录缓冲金的请求读取 `getRiskConfig`。`previewAccept` 不检查谁持有该 NFT，因此应用通过 `ownerOf`、`getApproved` 和 `isApprovedForAll`（ERC-1155 则为 `balanceOf` 和 `isApprovedForAll`）读取。接受请求即带签名 `AcceptTerms` 的 `acceptOffer`：协议把 NFT 从所有者的钱包转入其金库，并把租户登记为使用者直至期限结束。结果从交易日志（由此请求开启的租用，以及 NFT 转入所有者金库的 `Transfer` 或 `TransferSingle`）和收据所在区块的 `vaultGetNFTUserOf` 读取。每个已结束的日子由 `autoDeductDaily(loanId)` 支付，协议未暂停时任何人都可以调用，付到持有所有者头寸 NFT 的人的金库；其余在结束时领取。
+
+<a id="rent-take-risks"></a>
+
+### 租用：接受请求的风险
+
+整个租期内 NFT 都留在你的金库中，租用未结束时不能提取。租户在租期结束前拥有使用它的权利，你不能提前收回。条款是请求本身的：日租金、期限、租金规则和缓冲金都不能更改。每结算一个已结束的日子，扣除协议份额后的租金就转入你的金库；任何人都可以结算。约定的每一天都结算完后，租用会自动结束，租户可以领回缓冲金。在此之前，由租户结束，或在宽限期过后任何人都可以按违约结束。如果租户结束租用，你可以领取尚未结算的租金和任何逾期费（扣除协议份额），剩余缓冲金退还租户。如果违约，你可以领取剩余租金（扣除该份额），缓冲金归协议。暂停期间每日结算停止，逾期费和违约的日期顺延，但租户的使用期限不会延长。没有记录自己缓冲比例的请求，会在租用开始时采用当天的设置。
+
+<a id="rent-close"></a>
+
+### 租用：结束租用
+
+进行中的租用页面会向作为租用人的你提供“结束租用”。结束时，所欠租金和逾期费从你预先存入自己金库的租金和缓冲金中支付，所以不会从你的钱包扣款，也不需要授权。审核会显示现在结束以及稍后某一时刻结束时所欠的租金，按计租规则计算（按天计：自开始起使用的天数，不足一天按一天算，减去已结算的天数；全期：所有尚未结算的约定天数），并显示已结算的天数、逾期费、作为待领款项退还给你的金额，以及所有者收到的金额：租金和逾期费扣除协议的份额。如果预付款不足以结束，审核会在你的钱包打开前说明。然后你的钱包只请求一次结束租用，应用会先试运行。之后应用会在链上核对租用已结束、为你记录的待领款项，以及你的使用权已结束。退还的金额请在 Claims 页面领取。
+
+审核用 `getLoanDetails` 读取租用，用 `getLoanDeadlines` 读取日期，用 `calculateRepaymentAmount` 读取逾期费；对租用而言，这个数只含逾期费。协议不公布租金数额，所以应用按 `repayLoan` 采用的规则，用 `startTime`、`lastDeductTime` 和 `durationDays` 计算。结束就是调用 `repayLoan(loanId)`，只有租用人能在宽限期结束前调用。结果从 `LoanRepaid` 日志、`getClaimable(loanId, false)` 以及回执区块上的 `vaultGetNFTUserOf` 读取。
+
+<a id="rent-close-risks"></a>
+
+### 租用：结束的风险
+
+结束会立即终止你使用该 NFT 的权利，即使还有约定天数，而且无法撤销。租金按结束上链的时刻计算，所以在此之前开始的一天按整天支付；按全期计租时，无论多早结束，所有尚未结算的约定天数都要支付。租期结束后会从你的缓冲金中扣除逾期费：全部租金的 1%，每逾期一天再加 0.5%，最多 5%，且绝不超过缓冲金。超过宽限期后，协议会拒绝结束；此后租用要么在剩余天数逐日结算完时结束（任何人都可以结算），要么以违约告终，以先发生者为准。审核显示的稍后时刻既不是截止时间也不是上限：较晚上链的结束按那时计算，因此可能扣除更多租金或更高的逾期费，退还给你的会更少。退还的金额作为待领款项留在你自己的金库中，直到你领取。
