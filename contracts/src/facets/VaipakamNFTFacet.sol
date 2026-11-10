@@ -197,8 +197,9 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
 
     /**
      * @notice When `tokenId` may next move: the block of the latest value-out
-     *         on its loan or offer (it may not move in that block) and the
-     *         earliest time after it. Both 0 when nothing has left it.
+     *         on its position (it may not move in that block) and the
+     *         earliest time after it. Both 0 when nothing has left it. A loan
+     *         token reads its loan; only an offer's own token reads the offer.
      */
     function positionTransferCooldown(uint256 tokenId) external view returns (uint64 valueOutBlock, uint64 readyAt) {
         return LibPositionNFT.cooldownOf(tokenId);
