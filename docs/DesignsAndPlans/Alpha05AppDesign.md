@@ -678,8 +678,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   longest term and highest loan-to-value they take. The line always says
   that a matching service fills a request against them only when its terms
   fit a lender's limits, so a fill is likely but neither instant nor
-  guaranteed; a list longer than the page reads is stated, and an unread
-  list is stated as unread, never as no lenders.
+  guaranteed. That line needs both of the network's switches a fill against
+  an intent passes, the matching switch and the standing-intent switch: with
+  either off the page says no request is filled against them now, and with
+  either unread it says whether one would be is not known. The list and both
+  switches are read at one block, so an intent that moves while the pages
+  are read is never skipped by a list that looks complete. A list longer
+  than the page reads is stated, an unread list is stated as unread, never
+  as no lenders, and a failed re-read keeps the last answer and says it may
+  have changed.
 - **RB-LEND-POST** — Borrow and Lend post the reader's own offer through
   one shared flow (form, review, signing, measured outcome) whose side is
   the poster's: a borrower posts a request, a lender posts an offer. The

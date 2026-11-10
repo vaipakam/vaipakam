@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
-import { INTENT_PAGE, readLenderIntents, standingReady, type IntentSummary } from './intents';
+import { INTENT_PAGE, intentMatching, readLenderIntents, standingReady, type IntentSummary } from './intents';
 
 type Hex = `0x${string}`;
 const WETH = '0x4200000000000000000000000000000000000006' as Hex;
@@ -51,8 +51,12 @@ describe('reading the intents', () => {
   it('pages until every intent is read, and says how many were', async () => {
     const all = Array.from({ length: INTENT_PAGE + 3 }, () => intent());
     const calls: bigint[] = [];
+    const blocks: (bigint | undefined)[] = [];
     const client = {
-      readContract: async ({ args }: { args: [bigint, bigint] }) => {
+      getBlockNumber: async () => 77n,
+      readContract: async ({ functionName, args, blockNumber }: { functionName: string; args: [bigint, bigint]; blockNumber?: bigint }) => {
+        blocks.push(blockNumber);
+        if (functionName !== 'getActiveLenderIntents') return true;
         calls.push(args[0]);
         return [all.slice(Number(args[0]), Number(args[0] + args[1])), BigInt(all.length)];
       },
@@ -61,5 +65,26 @@ describe('reading the intents', () => {
     expect(calls).toEqual([0n, BigInt(INTENT_PAGE)]);
     expect(r.scanned).toBe(all.length);
     expect(r.total).toBe(BigInt(all.length));
+    // Every page and both switches are read at one block.
+    expect(blocks).toHaveLength(4);
+    expect(new Set(blocks)).toEqual(new Set([77n]));
+    expect(intentMatching(r.switches)).toBe('on');
+  });
+
+  it('says matching is off when either switch is off, and unknown when one could not be read', async () => {
+    const client = (matching: boolean | Error, intents: boolean | Error) =>
+      ({
+        getBlockNumber: async () => 1n,
+        readContract: async ({ functionName }: { functionName: string }) => {
+          if (functionName === 'getActiveLenderIntents') return [[], 0n];
+          const v = functionName === 'getPartialFillEnabled' ? matching : intents;
+          if (v instanceof Error) throw v;
+          return v;
+        },
+      }) as unknown as PublicClient;
+    expect(intentMatching((await readLenderIntents(client(false, true), WETH)).switches)).toBe('off');
+    expect(intentMatching((await readLenderIntents(client(true, false), WETH)).switches)).toBe('off');
+    expect(intentMatching((await readLenderIntents(client(new Error('x'), true), WETH)).switches)).toBe('unknown');
+    expect(intentMatching((await readLenderIntents(client(new Error('x'), false), WETH)).switches)).toBe('off');
   });
 });

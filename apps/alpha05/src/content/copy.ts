@@ -2412,6 +2412,9 @@ export const copy = {
     standingFill: A(
       "A matching service fills a request against them when its terms fit a lender's limits, so a fill is likely but neither instant nor guaranteed.",
     ),
+    standingFillUnknown: A('Whether this network’s matching is switched on could not be read, so whether a request is filled against them is not known.'),
+    standingOff: A('Matching against standing lenders is switched off on this network, so no request is filled against them now; a request waits for a lender to take it.'),
+    standingStale: A('The latest re-read failed ({{reason}}); these lenders are from the read before and may have changed.'),
     standingLimits: B('Their limits reach {{days}} days and {{ltv}}% loan-to-value at most.'),
     standingPart: B('Read from the first {{shown}} of {{total}} standing lenders on this network.'),
     matchesStale: B('The latest re-read failed; this list is from the read before.'),

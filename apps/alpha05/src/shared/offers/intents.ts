@@ -6,8 +6,11 @@
  * request against it when the request's terms fit the lender's limits, so
  * the page states what is ready and never promises a fill.
  */
-import type { PublicClient } from 'viem';
-import { METRICS } from './reads';
+import type { Abi, PublicClient } from 'viem';
+import { LenderIntentFacetABI } from '@vaipakam/contracts/abis';
+import { CONFIG, METRICS } from './reads';
+
+const INTENT = LenderIntentFacetABI as Abi;
 
 type Hex = `0x${string}`;
 
@@ -37,10 +40,34 @@ export interface IntentsRead {
   /** How many of them were read: fewer than `total` when the list is longer
    *  than this view reads, which the page states. */
   scanned: number;
+  /** The network's two switches a fill against an intent needs, read at the
+   *  same block as the list: the matching switch and the standing-intent
+   *  switch. Null when one could not be read. */
+  switches: { matching: boolean | null; intents: boolean | null };
 }
 
-/** Reads the network's active lender intents, up to the view's cap. */
+/** Whether a request can be filled against the standing lenders now: both
+ *  switches on, either one off, or not known because one was unread. */
+export type IntentMatching = 'on' | 'off' | 'unknown';
+
+export function intentMatching(s: IntentsRead['switches']): IntentMatching {
+  if (s.matching === false || s.intents === false) return 'off';
+  if (s.matching === null || s.intents === null) return 'unknown';
+  return 'on';
+}
+
+/**
+ * Reads the network's active lender intents, up to the view's cap, and the
+ * two switches a fill against them needs. Every page and both switches are
+ * read at one block: the list is a swap-and-pop set, so pages read at
+ * different blocks could skip an intent that moved between them and still
+ * look complete.
+ */
 export async function readLenderIntents(client: PublicClient, diamond: Hex): Promise<IntentsRead> {
+  const blockNumber = await client.getBlockNumber();
+  const flag = (abi: Abi, functionName: string) =>
+    (client.readContract({ address: diamond, abi, functionName, blockNumber }) as Promise<boolean>).catch((): boolean | null => null);
+  const switchesRead = Promise.all([flag(CONFIG, 'getPartialFillEnabled'), flag(INTENT, 'isLenderIntentEnabled')]);
   const intents: IntentSummary[] = [];
   let total = 0n;
   let scanned = 0;
@@ -51,13 +78,15 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
       abi: METRICS,
       functionName: 'getActiveLenderIntents',
       args: [offset, BigInt(INTENT_PAGE)],
+      blockNumber,
     })) as readonly [readonly IntentSummary[], bigint];
     total = all;
     intents.push(...rows);
     scanned += rows.length;
     if (BigInt(scanned) >= all || rows.length < INTENT_PAGE) break;
   }
-  return { intents, total, scanned };
+  const [matching, intentSwitch] = await switchesRead;
+  return { intents, total, scanned, switches: { matching, intents: intentSwitch } };
 }
 
 /** What lenders hold ready for one pair, from their intents on it. */

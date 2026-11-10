@@ -91,6 +91,9 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  // A fill against an intent needs both network switches on.
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
 
   const { page } = await launchWallet('borrower', { advanced: true });
   await openPair(page, tliq);
@@ -115,5 +118,25 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await ways.getByTestId('request-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Your borrow request' })).toBeVisible();
   await expect(page.getByTestId('standing-ready')).toContainText(/ready for this pair/, { timeout: 60_000 });
+  await fitsWidth(page);
+});
+
+test('with the standing-intent switch off, the lenders are not offered as a likely fill', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true]);
+  await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [false]);
+
+  const { page } = await launchWallet('borrower');
+  await openPair(page, tliq);
+  const ways = page.getByRole('region', { name: 'Two ways to borrow' });
+  const standing = ways.getByTestId('standing-lenders');
+  await expect(standing).toContainText('Matching against standing lenders is switched off on this network', { timeout: 60_000 });
+  await expect(standing.getByTestId('standing-ready')).toHaveCount(0);
+  await expect(ways).not.toContainText('a fill is likely');
   await fitsWidth(page);
 });
