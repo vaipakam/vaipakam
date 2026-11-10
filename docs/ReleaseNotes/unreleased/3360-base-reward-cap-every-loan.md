@@ -5,8 +5,9 @@ reward ceiling when it opens, whatever fee mode either party chose. Before
 this change only a loan where someone opted into the Full tariff recorded
 it, so an ordinary loan earned with no per-loan ceiling once the
 fee-linked cap was armed, and only the per-wallet daily share bounded it.
-Two wallets of one person could lend to each other and earn more VPFI than
-the fees they paid. Recording the ceiling charges nothing: a party who did
+Two wallets of one person could lend to each other and earn VPFI with no
+per-loan limit tied to the fees they paid. The ceiling bounds that per
+loan; it does not remove every margin, as the last paragraph states. Recording the ceiling charges nothing: a party who did
 not choose Full still pays only the usual fee in the lending asset.
 
 The launch gate gains a check. On the canonical reward chain the first
