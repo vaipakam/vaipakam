@@ -1482,9 +1482,10 @@ contract RedeployFacets is Script {
     ///      a Replace that misses an already-routed selector leaves it on the
     ///      old implementation (split Diamond).
     function _accumulatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+        s[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
     }
 }

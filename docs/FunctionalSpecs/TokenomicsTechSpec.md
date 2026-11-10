@@ -852,6 +852,9 @@ Discount application:
 - On Base, settlement reads the canonical effective tier. On mirrors, settlement reads the mirror cache.
 - If the user's shared fee-discount consent is disabled, the effective discount is `0` even if the user has sufficient vaulted VPFI balance.
 - The dapp should distinguish "balance qualifies for a raw tier" from "effective tier is active now." During the min-history window, a user may see that their vaulted balance qualifies for a tier while the fee path still applies tier `0`.
+- The holding rules must be publicly readable as they are set, not as documented defaults. One public read returns the minimum holding period, the average's window, its recent-day count and recent weight, and the look-back cap, each with the governance bounds its setter enforces, so an app states the rule in force on that chain.
+- A public read must explain any user's tier. It reports the balance counted toward a tier and the tier that balance alone would reach; when the current continuous holding started and when its minimum period ends; the weighted average and the tier it reaches; the lowest tier in the look-back; the effective tier and discount; and which rule, if any, holds the effective tier below the balance tier: no current holding, the minimum holding period, the weighted average, or a dip in the look-back. On a mirror chain it states that the rules run on Base and reports the cached tier instead.
+- The explanation reports what the tier rules decide and leaves consent out, because consent is a separate gate the app states on its own. With consent on, the explained tier and discount equal what the fee path applies at that moment.
 
 Governance effects:
 

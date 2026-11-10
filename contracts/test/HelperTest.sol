@@ -1878,7 +1878,7 @@ contract HelperTest {
         // #687-A: fixed-rate SALE surface removed — mirror of production's
         // pruned _getVpfiDiscountSelectors (kept discount surface + the renamed
         // getVPFIDiscountConfig / setVPFIDiscountRate price config).
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[1] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
         selectors[2] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
@@ -1901,6 +1901,8 @@ contract HelperTest {
         selectors[14] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
         // #1383 — secondary-settlement lender yield-fee resolve host.
         selectors[15] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
+        // #3459 — the tier holding rules and their bounds.
+        selectors[16] = VPFIDiscountFacet.getTwaConfig.selector;
         return selectors;
     }
 
@@ -1913,11 +1915,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view.
         selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+        // #3459 — the rule-by-rule tier explanation (public read).
+        selectors[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
         return selectors;
     }
 

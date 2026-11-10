@@ -659,6 +659,54 @@ contract VPFIDiscountFacet is
         return (s.vpfiDiscountWeiPerVpfi, s.vpfiDiscountEthPriceAsset);
     }
 
+    /// @notice #3459 — the holding rules that decide a fee-discount tier, in
+    ///         force on this network, with the bounds each may be set within.
+    /// @dev    Each value is the effective one: a setting never written reads
+    ///         as its default, exactly as the tier resolution reads it.
+    ///         - minStakedDays: the current holding must be at least this
+    ///           old (continuous non-zero holding) before any tier applies.
+    ///         - windowDays / recentDays / recentWeight: the tier follows the
+    ///           average counted balance over the last `windowDays` days of
+    ///           the current holding, the last `recentDays` of them counting
+    ///           `recentWeight` times.
+    ///         - lookbackCapDays: the tier is also held to the lowest tier
+    ///           the balance touched over the current holding, looking back
+    ///           at most this many days (the day ring buffer).
+    ///         The two look-backs are separate rules with separate lengths.
+    struct TwaConfig {
+        uint8 minStakedDays;
+        uint8 windowDays;
+        uint8 recentDays;
+        uint8 recentWeight;
+        uint8 lookbackCapDays;
+        uint8 minStakedDaysMin;
+        uint8 minStakedDaysMax;
+        uint8 windowDaysMin;
+        uint8 windowDaysMax;
+        uint8 recentDaysMin;
+        uint8 recentDaysMax;
+        uint8 recentWeightMin;
+        uint8 recentWeightMax;
+    }
+
+    /// @notice #3459 — read {TwaConfig}: the tier holding rules on this
+    ///         network and their setter bounds.
+    function getTwaConfig() external view returns (TwaConfig memory c) {
+        c.minStakedDays = LibVaipakam.cfgTwaMinStakedDaysEffective();
+        c.windowDays = LibVaipakam.cfgTwaWindowDaysEffective();
+        c.recentDays = LibVaipakam.cfgTwaRecentDaysEffective();
+        c.recentWeight = LibVaipakam.cfgTwaRecentWeightEffective();
+        c.lookbackCapDays = LibVaipakam.TWA_RING_DAYS;
+        c.minStakedDaysMin = LibVaipakam.TWA_MIN_STAKED_DAYS_MIN;
+        c.minStakedDaysMax = LibVaipakam.TWA_MIN_STAKED_DAYS_MAX;
+        c.windowDaysMin = LibVaipakam.TWA_WINDOW_DAYS_MIN;
+        c.windowDaysMax = LibVaipakam.TWA_WINDOW_DAYS_MAX;
+        c.recentDaysMin = LibVaipakam.TWA_RECENT_DAYS_MIN;
+        c.recentDaysMax = LibVaipakam.TWA_RECENT_DAYS_MAX;
+        c.recentWeightMin = LibVaipakam.TWA_RECENT_WEIGHT_MIN;
+        c.recentWeightMax = LibVaipakam.TWA_RECENT_WEIGHT_MAX;
+    }
+
     /// @notice Set the VPFI price anchor used by the fee-discount quote —
     ///         ETH wei per 1 VPFI (18 dec). There is NO default: the slot
     ///         starts at zero and the quote stays disabled until an
