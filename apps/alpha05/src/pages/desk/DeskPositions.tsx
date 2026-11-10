@@ -130,7 +130,10 @@ export function DeskHistory({ viewer, copy }: { viewer: Hex; copy: CopyAccess })
       {loaded && (
         <>
           {unread > 0 && <p className="tier-a">{format('desk.historyUnread', { count: String(unread) })}</p>}
-          {rows.length === 0 && unread === 0 && !history.hasNextPage && (
+          {/* An empty or ended list is a claim about the index's record, so
+              it is made only from a read that just succeeded; after a failed
+              refresh the cached list stands under the warning, claiming nothing. */}
+          {!failed && rows.length === 0 && unread === 0 && !history.hasNextPage && (
             <p className="tier-b home-empty" data-testid="desk-history-none">
               {text('desk.historyNone')}
             </p>
@@ -158,6 +161,7 @@ export function DeskHistory({ viewer, copy }: { viewer: Hex; copy: CopyAccess })
               {text(history.isFetchingNextPage ? 'desk.historyOlderReading' : 'desk.historyOlder')}
             </button>
           ) : (
+            !failed &&
             rows.length > 0 && (
               <p className="tier-b" data-testid="desk-history-end">
                 {text('desk.historyEnd')}

@@ -75,7 +75,7 @@ test('a market lists the viewer’s live loans in it, and the history lists ever
 });
 
 test('a wallet with no desk loan sees that it has none, and with the index down the history says it could not be read', async ({ launchWallet }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, string>).liquidToken!;
   await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.02', collateralTliq: '100', rateBps: 480, days: 14 });
@@ -89,6 +89,10 @@ test('a wallet with no desk loan sees that it has none, and with the index down 
   await fitsWidth(page);
 
   await setIndexPosture('down');
+  // The next poll fails over the cached empty list: the warning stands and the
+  // list no longer claims the index holds nothing.
+  await expect(page.getByTestId('desk-history-failed')).toContainText('could not be re-read', { timeout: 150_000 });
+  await expect(page.getByTestId('desk-history-none')).toHaveCount(0);
   await page.reload();
   await expect(page.getByTestId('desk-history-failed')).toContainText('nothing here means no loans', { timeout: 60_000 });
   await expect(page.getByTestId('desk-history-none')).toHaveCount(0);
