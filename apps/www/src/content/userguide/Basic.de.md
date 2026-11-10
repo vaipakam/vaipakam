@@ -1298,7 +1298,7 @@ Positions listet jeden Kredit, den Sie in diesem Netzwerk vergeben oder aufgenom
 
 Alle, Verliehen und Geliehen grenzen alle drei Listen zugleich ein. Positions sagt nur dann, dass Sie nichts haben, wenn alles gelesen wurde; konnte eine Liste nicht vollständig gelesen werden, steht das dort. Jeder Kredit öffnet seine eigene Seite, die zeigt, welche Aktionen Ihnen offenstehen. Die Liste selbst signiert nie etwas.
 
-Bei zwei oder mehr laufenden Krediten steht eine Übersicht an erster Stelle. Für jede Seite nennt sie das noch geschuldete oder noch verliehene Kapital je Token (Beträge in verschiedenen Token werden nie zusammengezählt, NFT-Vermietungen werden gezählt), den nächsten Fälligkeitstermin einer Zahlung mit einem Link zu seinem Kredit sowie die überfälligen Kredite und die Kredite im Fallback, jeweils verlinkt. Zinsen sind in diesen Summen nicht enthalten; die Seite jedes Kredits zeigt, was die Rückzahlung jetzt kostet.
+Bei zwei oder mehr laufenden Krediten steht eine Übersicht an erster Stelle. Für jede Seite nennt sie das noch geschuldete oder noch verliehene Kapital je Token (Beträge in verschiedenen Token werden nie zusammengezählt, NFT-Vermietungen werden gezählt), den nächsten Fälligkeitstermin einer Zahlung mit einem Link zu seinem Kredit sowie die überfälligen Kredite und die Kredite im Fallback, jeweils verlinkt. Zinsen sind in diesen Summen nicht enthalten; die Seite jedes Kredits zeigt, was die Rückzahlung jetzt kostet. Bei einer Vermietung ist dieses Datum das Ende der Miete, die im Voraus bezahlt ist; es heißt daher nie Rückzahlung.
 
 <a id="position"></a>
 

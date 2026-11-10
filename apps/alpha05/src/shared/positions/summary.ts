@@ -19,6 +19,8 @@ import { ASSET_ERC20, loanObligations, type Deadlines, type LiveLoanRow } from '
 
 type Hex = `0x${string}`;
 
+export type NextKind = 'repayment' | 'rental-close' | 'interest';
+
 export interface TokenTotal {
   asset: Hex;
   amount: bigint;
@@ -27,8 +29,12 @@ export interface TokenTotal {
 export interface NextDate {
   loanId: bigint;
   at: number;
-  /** The loan's final repayment, or an owed periodic-interest checkpoint. */
-  kind: 'repayment' | 'interest';
+  /**
+   * What falls due: a token loan's final repayment, an NFT rental's close
+   * (it closes on its prepaid rent, so nothing is repaid), or an owed
+   * periodic-interest checkpoint.
+   */
+  kind: NextKind;
 }
 
 export interface SideSummary {
@@ -93,7 +99,8 @@ export function bookSummary(rows: readonly LiveLoanRow[], deadlinesOf: (row: Liv
     if (stage.kind === 'grace-over' || interest?.kind === 'interest-overdue') side.pastGrace.push(l.id);
     else if (stage.kind === 'in-grace' || interest?.kind === 'interest-in-grace') side.inGrace.push(l.id);
 
-    if (stage.kind === 'running' || stage.kind === 'due-soon') side.next = earlier(side.next, { loanId: l.id, at: stage.dueAt, kind: 'repayment' });
+    if (stage.kind === 'running' || stage.kind === 'due-soon')
+      side.next = earlier(side.next, { loanId: l.id, at: stage.dueAt, kind: l.assetType === ASSET_ERC20 ? 'repayment' : 'rental-close' });
     if (interest && (interest.kind === 'interest-later' || interest.kind === 'interest-soon'))
       side.next = earlier(side.next, { loanId: l.id, at: interest.dueAt, kind: 'interest' });
   }

@@ -289,6 +289,7 @@ export const copy = {
     summaryNextRepayBorrower: B('Next repayment due {{when}}, on loan #{{id}}.'),
     summaryNextInterestBorrower: B('Next interest payment due {{when}}, on loan #{{id}}.'),
     summaryNextRepayLender: B('Next repayment expected {{when}}, on loan #{{id}}.'),
+    summaryNextRentalClose: B('Next rental due to close {{when}}, on loan #{{id}}.'),
     summaryNextInterestLender: B('Next interest payment expected {{when}}, on loan #{{id}}.'),
     summaryUndated: A('Loans whose dates could not be read, so the next date may be earlier: {{count}}.'),
     summaryPastGrace: A('Grace period over ({{count}}):'),

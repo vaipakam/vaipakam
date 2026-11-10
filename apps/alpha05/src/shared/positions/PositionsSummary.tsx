@@ -7,7 +7,7 @@ import { formatUtc } from '../ui/format';
 import { useNow } from '../ui/useNow';
 import { positionKey } from './model';
 import type { LiveLoans } from './reads';
-import { bookSummary, type SideSummary } from './summary';
+import { bookSummary, type NextKind, type SideSummary } from './summary';
 
 /**
  * #3320 — one card over the wallet's live loans, above the lists: per side,
@@ -38,6 +38,13 @@ export function PositionsSummary({ read, meta }: { read: OwnRead<LiveLoans>; met
   );
 }
 
+/** The sentence for the next date, by what falls due and the reader's side. */
+const NEXT_COPY: Record<NextKind, Record<'borrower' | 'lender', CopyKey>> = {
+  repayment: { borrower: 'positions.summaryNextRepayBorrower', lender: 'positions.summaryNextRepayLender' },
+  'rental-close': { borrower: 'positions.summaryNextRentalClose', lender: 'positions.summaryNextRentalClose' },
+  interest: { borrower: 'positions.summaryNextInterestBorrower', lender: 'positions.summaryNextInterestLender' },
+};
+
 function SideBlock({ side, borrowerSide, meta }: { side: SideSummary; borrowerSide: boolean; meta: TokenMetaMap | null }) {
   const { format } = useCopy();
   const amounts = side.principal.map((t) => tokenAmount(t.amount, t.asset, meta, format)).join(', ');
@@ -50,15 +57,7 @@ function SideBlock({ side, borrowerSide, meta }: { side: SideSummary; borrowerSi
       : borrowerSide
         ? 'positions.summaryBorrowed'
         : 'positions.summaryLent';
-  const nextKey: CopyKey | null = side.next
-    ? side.next.kind === 'repayment'
-      ? borrowerSide
-        ? 'positions.summaryNextRepayBorrower'
-        : 'positions.summaryNextRepayLender'
-      : borrowerSide
-        ? 'positions.summaryNextInterestBorrower'
-        : 'positions.summaryNextInterestLender'
-    : null;
+  const nextKey: CopyKey | null = side.next ? NEXT_COPY[side.next.kind][borrowerSide ? 'borrower' : 'lender'] : null;
   return (
     <div className="summary-side" data-side={borrowerSide ? 'borrowed' : 'lent'}>
       <p className="tier-b summary-head">{format(head, { amounts, count })}</p>

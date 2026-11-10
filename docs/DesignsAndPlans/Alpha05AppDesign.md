@@ -787,8 +787,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   up, per side (borrowed, lent): the principal still owed or still out, per
   token, never added across tokens (comparing values at today's prices is
   the exposure line's, which counts what it cannot price); NFT rentals
-  counted, never totalled; the next date a payment falls due, repayment or
-  interest checkpoint, with a link to its loan; and the loans that need the
+  counted, never totalled; the next date something falls due (a repayment,
+  an interest checkpoint, or a rental's close, which is never called a
+  repayment since a rental closes on its prepaid rent), with a link to its
+  loan; and the loans that need the
   reader now, each linked (grace period over, past due in the grace period,
   in fallback; a loan in more than one stage is named once, under the more
   severe), plus a count of loans whose dates could not be read, since the

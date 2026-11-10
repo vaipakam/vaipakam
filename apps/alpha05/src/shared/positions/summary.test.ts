@@ -72,6 +72,12 @@ describe('the summary over a wallet’s live loans', () => {
     expect(s.next).toEqual({ loanId: 2n, at: NOW + 5 * 86_400, kind: 'interest' });
   });
 
+  it('names a rental’s date as its close, never as a repayment', () => {
+    const deadlines: Record<string, Deadlines> = { '1': dl(NOW + 20 * 86_400, NOW + 23 * 86_400), '2': dl(NOW + 10 * 86_400, NOW + 13 * 86_400) };
+    const rows = [row(1, false), row(2, false, { assetType: 1, tokenId: 9n })];
+    expect(bookSummary(rows, (r) => deadlines[r.loan.id.toString()]!, NOW).lent!.next).toEqual({ loanId: 2n, at: NOW + 10 * 86_400, kind: 'rental-close' });
+    expect(bookSummary([rows[0]!], (r) => deadlines[r.loan.id.toString()]!, NOW).lent!.next?.kind).toBe('repayment');
+  });
   it('lists loans in grace, past grace and in fallback by id, each once, and counts undated ones', () => {
     const overdueInterest = { periodEndAt: BigInt(NOW - 10 * 86_400), graceEndsAt: BigInt(NOW - 86_400), shortfall: 1n, enforced: true };
     const deadlines: Record<string, Deadlines | null> = {
