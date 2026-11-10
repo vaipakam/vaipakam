@@ -537,8 +537,14 @@ and the loan or offer it belongs to.
   paid into the payee's vault as funds the payee owns, and the payee then
   withdraws them under the rule above. A claim's payee is whoever holds the
   position NFT at the moment of payment.
-- **A payout to a position's holder** reaches only the vault whose own
-  record names that holder, read from the position-NFT contract.
+- **A payout to a position's holder** reaches only the vault created for
+  that holder: every vault sits at an address derived from the wallet it was
+  created for (#3393), and the vault checks the payee's address against that
+  derivation, never against the platform's word. The holder is read from the
+  position-NFT contract. The vault created for the holder stays the payee
+  after a verified primary replacement moves its owner record (#3379), so a
+  replaced wallet's positions keep paying the vault the recovered owner now
+  controls, rather than a vault the old key could still reach.
 - **The treasury, the backstop, the marketplace (Seaport and its listing
   conduit) and the 1inch order protocol** are fixed in the vault code itself
   (#3431). A vault reads them from no registry and from no platform setting,

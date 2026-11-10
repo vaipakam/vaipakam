@@ -526,17 +526,6 @@
   },
   {
     "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
   },
@@ -2762,17 +2751,6 @@
         "name": "actual",
         "type": "uint8",
         "internalType": "enum LibVaipakam.LoanStatus"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

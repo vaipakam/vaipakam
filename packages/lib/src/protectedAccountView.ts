@@ -15,7 +15,7 @@
  */
 
 import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem';
-import { VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { VaultProtectionABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 
 /** The two fields under the names consumers use. */
 export interface ProtectedAccountNftFields {
@@ -90,36 +90,13 @@ export type VaultProtectionState = readonly [
 ];
 
 /**
- * The vault views added after the exported ABI was generated (#3379 B2):
- * the pending setting times and the lock time, and the replacement's tally.
- * TODO(#3379): drop once `VaipakamVaultImplementation.json` is re-exported
- * with them, and read them from `VaipakamVaultImplementationABI`.
+ * The vault's protected-mode views the readers need beyond `protectionState`
+ * (#3379 B2): the pending setting times and the lock time, and the
+ * replacement's tally — taken from the exported vault ABI.
  */
-export const VAULT_PROTECTION_VIEWS_ABI = [
-  {
-    type: 'function',
-    name: 'protectionPending',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [
-      { name: 'pendingDelay', type: 'uint32' },
-      { name: 'pendingDelayAt', type: 'uint64' },
-      { name: 'pendingUnlockAt', type: 'uint64' },
-      { name: 'pendingDisableAt', type: 'uint64' },
-      { name: 'lockedAt', type: 'uint64' },
-    ],
-  },
-  {
-    type: 'function',
-    name: 'replacementTally',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [
-      { name: 'approvals', type: 'uint256' },
-      { name: 'threshold', type: 'uint256' },
-    ],
-  },
-] as const;
+export const VAULT_PROTECTION_VIEWS_ABI = (VaipakamVaultImplementationABI as Abi).filter(
+  (item) => item.type === 'function' && (item.name === 'protectionPending' || item.name === 'replacementTally'),
+);
 
 /** `vault.protectionPending()`, positional (0 = none). */
 export type VaultProtectionPending = readonly [
