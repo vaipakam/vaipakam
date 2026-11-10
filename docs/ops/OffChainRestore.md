@@ -1682,6 +1682,8 @@ DELETE FROM signed_request_use; \
 DELETE FROM protected_lock_requests; \
 DELETE FROM protected_lock_readiness; \
 DELETE FROM alert_channel_changes; \
+DELETE FROM asset_ranking; \
+DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
@@ -1716,6 +1718,14 @@ table cannot leave new requests below a stale position. Clearing it has one
 stated cost: a `LOCK` sent in the last minute or so before the clear, not yet
 handled, is lost, and the owner gets no answer for it; the owner can send it
 again or lock from the app.
+
+`asset_ranking` and `asset_ranking_run` (#3446) hold the public market-cap
+rankings the app's asset trust tiers read, and the keeper's record of each
+day's fetch. Nothing in them is born here: with the run record empty, every
+source and chain is due, and the keeper's `assetRankings` pass refetches them
+on its next hourly run (it must be armed). Until then the app shows no tier,
+and its own-risk warning, for every asset. Keeping a restored copy would show
+tiers no fetch has checked.
 
 `alert_channel_changes` (#3246) holds the pending removals of a Telegram
 alert chat under protected mode. Clearing it only cancels a pending change,
