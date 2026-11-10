@@ -1135,7 +1135,15 @@ library LibInteractionRewards {
     ///         slice of the wallet's entries, so no entry waits on others that
     ///         stay open: each is read once every `ceil(total / window)` claims.
     ///         Bookkeeping only; moves no value.
-    function retireAndAdvanceClaimWindow(LibVaipakam.Storage storage s, address user) internal {
+    ///         A moved window is the claim's progress even when the window it
+    ///         read paid nothing, so it marks `res.advancedAnyDay` and the
+    ///         claim stands instead of reverting: otherwise a window whose
+    ///         entries have nothing claimable yet would hold the window in
+    ///         place, and the entries beyond it, claimable or not, would never
+    ///         be read.
+    /// @param  res The claim's entry result, whose progress flag it sets.
+    function retireAndAdvanceClaimWindow(address user, ClaimEntriesResult memory res) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (uint256 from, ) = claimWindow(s, user);
         _retireSettledFrom(s, user, from, CLAIM_WINDOW_ENTRIES);
         uint256 n = s.userRewardEntryIds[user].length;
@@ -1148,6 +1156,7 @@ library LibInteractionRewards {
         if (next != start) {
             s.rewardClaimWindowStart[user] = next;
             emit RewardClaimWindowAdvanced(user, next, n);
+            res.advancedAnyDay = true;
         }
     }
 

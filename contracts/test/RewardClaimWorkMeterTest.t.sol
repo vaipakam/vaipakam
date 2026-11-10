@@ -343,4 +343,33 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertFalse(capIn, "inside the window and the meter's reach");
         assertTrue(capOut, "outside the window: not the next claim's");
     }
+    /// @dev A window whose entries have nothing claimable yet does not hold the
+    ///      rest of the index: the claim that read it still moves the window
+    ///      (a zero-pay claim, not a revert), and the next claim reads the
+    ///      window behind it and pays.
+    function test_AWindowWithNothingClaimable_DoesNotHoldTheRest() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        // The first window: open positions whose first reward day is still to
+        // come, so nothing in it is claimable now.
+        for (uint256 i; i < w; ++i) {
+            _mut().pushRewardEntry(alice, uint64(10_000 + i), LibVaipakam.RewardSide.Lender, 1e18, 10_000);
+        }
+        uint256[] memory ids = _scene(20, 1, type(uint256).max);
+        (uint256 from, uint256 to, uint256 total) = _window();
+        assertEq(from, 0);
+        assertEq(to, w);
+        assertEq(total, w + 20);
+
+        assertTrue(_claimOnce(), "a claim whose window paid nothing still moves the window");
+        assertEq(vpfi.balanceOf(alice), 0, "nothing in the first window was claimable");
+        (from, to, total) = _window();
+        assertEq(from, w, "the next claim reads the window behind it");
+        assertEq(to, w + 20);
+
+        assertTrue(_claimOnce());
+        assertEq(_processedCount(ids), 20, "the entries behind the first window are reached");
+        assertGt(vpfi.balanceOf(alice), 0, "and paid");
+        (from, , ) = _window();
+        assertEq(from, 0, "the window comes back to the start");
+    }
 }
