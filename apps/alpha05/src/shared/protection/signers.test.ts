@@ -114,6 +114,12 @@ describe('signerBlockers', () => {
     expect(first(review('add', { mode: { ...ON, enabled: false } }))).toBe('signer.modeOff');
     expect(first(review('add', { mode: 'absent' }))).toBe('safety.unavailable');
   });
+
+  it('keeps a retired account’s nominee able to accept, and its original wallet from managing', () => {
+    const retired = { mode: { ...ON, retired: true }, pending: [{ signer: SIGNER, maturesAt: NOW + DAY, accepted: false }] };
+    expect(first(review('accept', retired))).toBeNull();
+    expect(first(review('add', { mode: { ...ON, retired: true } }, OTHER))).toBe('safety.retired');
+  });
 });
 
 describe('measureSigner', () => {

@@ -90,14 +90,14 @@ export function AcceptSigner({ accountParam, chainParam }: { accountParam: strin
         </Notice>
       ) : (
         <>
-          {p.accepted ? (
-            <p className="tier-b" data-testid="signer-accept-done">
-              {format('signer.acceptedWaits', { at: formatUtc(p.maturesAt) })}
-            </p>
-          ) : s === 'expired' && m !== null ? (
+          {s === 'expired' && m !== null ? (
             <Notice tone="warn" tier="A">
               {format('signer.expired', { at: formatUtc(p.maturesAt + m.delaySeconds) })}
             </Notice>
+          ) : p.accepted ? (
+            <p className="tier-b" data-testid="signer-accept-done">
+              {format('signer.acceptedWaits', { at: formatUtc(p.maturesAt) })}
+            </p>
           ) : (
             <p className="actions">
               <button type="button" className="btn btn-primary" onClick={() => held.open({ action: 'accept', signer: me })} data-testid="signer-accept">

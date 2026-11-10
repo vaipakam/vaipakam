@@ -171,7 +171,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
       setFound(result);
       return;
     }
-    await tx.run({ identity: reviewedFor, chainId: Number(reviewedFor.split(':')[0]), receipt, explorer, where: location.pathname });
+    await tx.run({ identity: reviewedFor, chainId: Number(reviewedFor.split(':')[0]), receipt, explorer, where: location.pathname + location.search });
   };
 
   // Past the review, everything shown is about the wallet that confirmed

@@ -235,7 +235,11 @@ export function signerBlockers(r: SignerReview, copy: Copy): string[] {
   const m = f.mode;
   if (m === 'absent') return [text('safety.unavailable')];
   if (m !== null) {
-    if (m.retired) return [text('safety.retired')];
+    // Retirement ends the original wallet's management, not the account's
+    // signers: the nominee still accepts, and the permissionless steps
+    // still apply.
+    const actsAsManager = !(r.action === 'accept' || r.action === 'applyAdd' || r.action === 'applyRemove');
+    if (m.retired && actsAsManager) return [text('safety.retired')];
     if (!m.enabled) return [text('signer.modeOff')];
   }
   const now = signerClock(f, Date.now());
