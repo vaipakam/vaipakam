@@ -2,14 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
-import { ClaimFacetABI, LoanFacetABI, RepayFacetABI } from '@vaipakam/contracts/abis';
+import { ClaimFacetABI, RepayFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { WhyLink } from '../help/WhyLink';
 import { assetAmount } from '../positions/assetAmount';
-import type { LoanDetails } from '../positions/loanView';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { repaidStatus } from '../repay/repaidLog';
 import type { AnchoredReader } from '../tx/anchored';
@@ -23,18 +22,15 @@ import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { closeReceipt } from './closeReceipt';
 import { closeBlockers, closeChangedBetween, readCloseReview, type CloseReview } from './closeReview';
-import { readRentalUse } from './rentReads';
+import { isRevoked, rentalUpdate } from './rentalLog';
 
 type Hex = `0x${string}`;
 
 const REPAY_ABI = RepayFacetABI as Abi;
-const LOAN_ABI = LoanFacetABI as Abi;
 const CLAIM_ABI = ClaimFacetABI as Abi;
 
 /** `LibVaipakam.LoanStatus.Repaid`: the status a rental's close leaves it in. */
 const STATUS_REPAID = 1;
-/** `LibVaipakam.AssetType.ERC1155`, by enum position. */
-const ASSET_ERC1155 = 2;
 
 /** The store key a rental's close keeps its state under: one per rental. */
 export function closeRentalKey(loanId: bigint): string {
@@ -57,8 +53,8 @@ interface CloseRentalProps {
  * once. Nothing is taken from the wallet, so there is no approval: one
  * prompt, sent only after a dry run passes. The outcome is measured from
  * the transaction's own log (the status the close left the rental in), from
- * the claim it recorded for the renter, and from the owner's vault, which
- * no longer names the renter as the NFT's user.
+ * the claim it recorded for the renter, and from the rental update it
+ * logged, which revokes the renter's use.
  */
 export function CloseRental({ loanId, chain, own, meta, onClose }: CloseRentalProps) {
   const copy = useCopy();
@@ -92,7 +88,7 @@ export function CloseRental({ loanId, chain, own, meta, onClose }: CloseRentalPr
   });
 
   /** What the close left: the rental's status (its own log), the renter's
-   *  claim, and who the owner's vault names as the NFT's user. */
+   *  claim, and the rental update its own log records. */
   const measure = async (r: CloseReview, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
     const l = r.loan;
     const pay = l.prepayAsset;
@@ -129,25 +125,13 @@ export function CloseRental({ loanId, chain, own, meta, onClose }: CloseRentalPr
       legs.push({ status: 'unknown', label: format('rentClose.legClaim', { amount: text('receipt.unknown') }), reason: refusalFromError(e).reason });
     }
 
-    // The renter's use: the owner's vault (the owner as the rental records
-    // them at that block) no longer names this renter.
+    // The renter's use: the close's own log for this rental. The owner's
+    // vault totals are no measure of it (an expired rental is already out of
+    // them, and another rental of the token can move them in the same block).
     const nft = assetAmount({ asset: l.principalAsset, assetType: l.assetType, amount: 0n, tokenId: l.tokenId, quantity: l.quantity }, meta, format);
     const useLabel = format('rentClose.legUse', { nft });
-    try {
-      const owner = await at.read(async (c, b) => ((await c.readContract({ address: diamond, abi: LOAN_ABI, functionName: 'getLoanDetails', args: [loanId], blockNumber: b.blockNumber })) as LoanDetails).lender);
-      if (l.assetType === ASSET_ERC1155) {
-        const [before, after] = await Promise.all([
-          at.read((c, b) => readRentalUse(c, diamond, owner, l.principalAsset, l.tokenId, { blockNumber: b.blockNumber - 1n })),
-          at.read((c, b) => readRentalUse(c, diamond, owner, l.principalAsset, l.tokenId, b)),
-        ]);
-        legs.push(after.quantity + l.quantity <= before.quantity ? { status: 'done', label: useLabel } : { status: 'unknown', label: useLabel, reason: text('rentClose.useOther') });
-      } else {
-        const use = await at.read((c, b) => readRentalUse(c, diamond, owner, l.principalAsset, l.tokenId, b));
-        legs.push(use.user.toLowerCase() !== account.toLowerCase() ? { status: 'done', label: useLabel } : { status: 'not-done', label: useLabel, reason: text('rentClose.useOther') });
-      }
-    } catch (e) {
-      legs.push({ status: 'unknown', label: useLabel, reason: refusalFromError(e).reason });
-    }
+    const update = rentalUpdate(logs, diamond, loanId);
+    legs.push(update !== null && isRevoked(update) ? { status: 'done', label: useLabel } : { status: 'not-done', label: useLabel, reason: text('rentClose.useOther') });
     return legs;
   };
 

@@ -32,7 +32,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { formatUtc, shortAddress } from '../ui/format';
 import { Notice } from '../ui/Notice';
-import { readRentalUse } from './rentReads';
+import { rentalUpdate } from './rentalLog';
 import { takeReceipt } from './takeReceipt';
 import { readTakeReview, takeApprovalPrompts, takeBlockers, takeChangedBetween, takePromptCount, type TakeReview } from './takeReview';
 
@@ -242,24 +242,16 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
           : { status: 'not-done', label, reason: format('request.unitsNotLocked', { moved: String(units), expected: String(o.quantity), id: String(o.tokenId) }) },
       );
     }
-    // The user right, read from this owner's vault at the receipt's block.
-    try {
-      if (r.holding.kind === 'erc1155') {
-        const [before, after] = await Promise.all([
-          at.read((c, b) => readRentalUse(c, diamond, account, o.lendingAsset, o.tokenId, { blockNumber: b.blockNumber - 1n })),
-          at.read((c, b) => readRentalUse(c, diamond, account, o.lendingAsset, o.tokenId, b)),
-        ]);
-        const useLabel = format('rentTake.useMulti', { nft, quantity: after.quantity.toString() });
-        legs.push(after.quantity >= before.quantity + o.quantity ? { status: 'done', label: useLabel } : { status: 'unknown', label: useLabel, reason: text('rent.useMultiOther') });
-      } else {
-        const use = await at.read((c, b) => readRentalUse(c, diamond, account, o.lendingAsset, o.tokenId, b));
-        const theirs = use.user.toLowerCase() === o.creator.toLowerCase();
-        const useLabel = format('rentTake.legUse', { nft, until: use.expires > 0n ? formatUtc(Number(use.expires)) : text('receipt.unknown') });
-        legs.push(theirs ? { status: 'done', label: useLabel } : { status: opened ? 'unknown' : 'not-done', label: useLabel, reason: text('rentTake.useOther') });
-      }
-    } catch (e) {
-      legs.push({ status: 'unknown', label: format('rentTake.legUse', { nft, until: text('receipt.unknown') }), reason: refusalFromError(e).reason });
-    }
+    // The user right, from this transaction's own rental update for the
+    // rental it opened: the renter it names, until when, and (an ERC-1155)
+    // the units it rents. This vault's totals are no measure of it, since
+    // another rental of the same token can move them in the same block.
+    const update = opened ? rentalUpdate(logs, diamond, opened.loanId) : null;
+    const multi = r.holding.kind === 'erc1155';
+    const theirs = update !== null && update.user.toLowerCase() === o.creator.toLowerCase() && update.quantity === (multi ? o.quantity : 1n);
+    const until = update !== null && update.expires > 0n ? formatUtc(Number(update.expires)) : text('receipt.unknown');
+    const useLabel = multi && update !== null ? format('rentTake.useMulti', { nft, quantity: update.activeTotal.toString() }) : format('rentTake.legUse', { nft, until });
+    legs.push(theirs ? { status: 'done', label: useLabel } : { status: 'not-done', label: useLabel, reason: text('rentTake.useOther') });
     return legs;
   };
 

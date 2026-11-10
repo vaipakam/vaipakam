@@ -134,6 +134,7 @@ test('a renter closes a rental: nothing from the wallet, the rent and claim stat
   await expect(receipt).toContainText('Closing ends your right to use the NFT at once');
   await expect(receipt).toContainText('a day that begins before then is paid as a whole day');
   await expect(receipt).toContainText('Closing after the term ends costs a late fee');
+  await expect(receipt).toContainText('are not a deadline or a limit');
   await expect(receipt).toContainText('Wallet prompts: 1.');
   await fitsWidth(page);
 

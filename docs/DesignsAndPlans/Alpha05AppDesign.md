@@ -1757,7 +1757,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   position page with "Close the rental"; a rental is never offered a
   repayment, and anyone else reading it is told the three ways it ends.
   The rule is the protocol's: the renter-position holder only, the rental
-  running, and not past the end of its grace period. The close is the
+  running, and not past the end of its grace period. After that the
+  review says the rental ends by its remaining days being settled one at
+  a time (anyone may) or by a default, whichever comes first, never by a
+  default alone. The close is the
   protocol's repayment of a rental, paid from the rent and buffer already
   in the renter's own vault, so the review states that nothing leaves the
   wallet and asks for no approval. It states the rent owed now and at the
@@ -1767,10 +1770,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   as the protocol quotes it now and at that moment, what comes back to the
   renter as a claim, what the owner receives (the rent and late fee less
   the protocol's share, as a claim), and that the use ends when the close
-  lands. A prepayment that cannot cover the close is refused before the
-  wallet opens. One prompt, sent only after a dry run; the outcome is
-  measured from the close's own log, the renter's claim (inside the range
-  the review stated) and the owner's vault no longer naming the renter.
+  lands. The later moment is not a limit: the close carries no deadline
+  or minimum refund, so the review says that a close landing later is
+  counted then and can take more. A prepayment that cannot cover the close
+  is refused before the wallet opens. One prompt, sent only after a dry
+  run; the outcome is measured from the close's own log (the rental's
+  status and its rental update revoking the renter, never the owner's
+  vault totals, which expired and same-block rentals move) and the
+  renter's claim (inside the range the review stated).
 
 ## 3. Companion specifications
 

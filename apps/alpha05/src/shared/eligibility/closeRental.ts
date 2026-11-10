@@ -13,7 +13,8 @@
  *   record to whoever holds the position, so the holder is the reader's own
  *   test, and the dry run catches a record that could not be moved);
  * - a rental past the end of its grace period: the protocol refuses a close
- *   then, and the rental can only end as a default.
+ *   then; the rental ends by its remaining days being settled one at a time
+ *   (anyone may) or by a default, whichever comes first.
  * Deliberately NOT held: the protocol pause (a close is a close-out and stays
  * open), the sanctions screen (likewise), and the prepayment's size (the
  * review states the rent and late fee against it and refuses a shortfall

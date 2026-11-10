@@ -54,7 +54,7 @@ export function closeReceipt(r: CloseReview, meta: TokenMetaMap | null, copy: Pi
     ...(r.maturity !== null && r.late.chainNow > r.maturity ? [text('rentClose.loseLate')] : [text('rentClose.loseLateLater')]),
     ...(r.capped ? [format('rentClose.loseGraceEnd', { time: by })] : []),
     ...(r.now.refund !== null && r.atBy.refund === null ? [format('rentClose.loseShortBy', { time: by })] : []),
-    text('rentClose.loseBinding'),
+    format('rentClose.loseNoLimit', { time: by }),
   ];
 
   return {
