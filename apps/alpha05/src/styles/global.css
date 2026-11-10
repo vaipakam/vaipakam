@@ -2143,3 +2143,43 @@ a.btn {
 .destinations .actions .btn {
   min-height: var(--taptarget);
 }
+
+/* ── ACC-07: the orientation card on top of an Advanced page ─────────── */
+.orientation {
+  max-width: 728px;
+  margin: 24px max(16px, calc((100% - 728px) / 2)) 0;
+}
+.orientation h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+/* ── OFF-73: the rate desk's ladder, two sides side by side when there is
+   room, stacked on a phone ─────────────────────────────────────────── */
+.ladder-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 12px;
+}
+@media (min-width: 640px) {
+  .ladder-sides {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.ladder-sides h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  color: var(--text-strong);
+}
+.ladder-offers {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.ladder-offers .badge {
+  margin-inline-start: 6px;
+}

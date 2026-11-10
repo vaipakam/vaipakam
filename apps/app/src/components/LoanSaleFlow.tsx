@@ -1,6 +1,6 @@
 /**
  * Lender Option-2 sale — list the position at the seller's own rate
- * (EarlyWithdrawalFacet.createLoanSaleOfferBound, #1810). A buyer accepting the
+ * (EarlyWithdrawalFacet.createLoanSaleOffer, bound since #1810). A buyer accepting the
  * listing pays the outstanding principal into escrow, and the completion in
  * the same transaction deducts the settlement (the larger of the interest the
  * seller gives up and the rate top-up owed to the buyer) before paying the
@@ -33,9 +33,11 @@
  * simulation.
  *
  * #1810 adds two selectors the flow now needs on the same chains:
- * `quoteSellerBounds` and `createLoanSaleOfferBound`. Both were loupe-checked
+ * `quoteSellerBounds` and `createLoanSaleOfferBound` (now `createLoanSaleOffer`). Both were loupe-checked
  * as routed on Base Sepolia and Arb Sepolia on 2026-10-23; a chain added here
- * must route them too.
+ * must route them too. #3412 then merged the bound listing back into
+ * `createLoanSaleOffer` with a trailing transaction deadline, so a chain here
+ * must route THAT signature — a Diamond deployed before #3412 refuses it.
  */
 const LOAN_SALE_LISTING_CHAINS: ReadonlySet<number> = new Set([
   84532, // Base Sepolia — #959 cut 2026-07-04, sim-verified
@@ -54,6 +56,7 @@ import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { loanEndTimeOf, type LoanLive } from '../contracts/loanLive';
+import { PREVIEW_VALID_UNTIL, readTxValidUntil } from '../contracts/txDeadline';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
   readSellerBoundsQuote,
@@ -202,8 +205,15 @@ export function LoanSaleFlow({
       to: walletChain.diamondAddress,
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
-        functionName: 'createLoanSaleOfferBound',
-        args: boundListingArgs(row.loanId, { rateBps, listingSeconds }, reviewed),
+        functionName: 'createLoanSaleOffer',
+        // An advisory dry run, never sent: the send carries the deadline
+        // read from chain time at submit.
+        args: boundListingArgs(
+          row.loanId,
+          { rateBps, listingSeconds },
+          reviewed,
+          PREVIEW_VALID_UNTIL,
+        ),
       }),
       value: 0n,
     };
@@ -278,9 +288,11 @@ export function LoanSaleFlow({
         setError(refusal.reason);
         return;
       }
+      // The transaction deadline (#3412), read from chain time at the send.
+      const validUntil = await readTxValidUntil(publicClient);
       const { receipt } = await write(
-        'createLoanSaleOfferBound',
-        boundListingArgs(row.loanId, { rateBps, listingSeconds }, reviewed),
+        'createLoanSaleOffer',
+        boundListingArgs(row.loanId, { rateBps, listingSeconds }, reviewed, validUntil),
       );
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,

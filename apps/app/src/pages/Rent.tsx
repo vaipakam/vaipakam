@@ -37,6 +37,7 @@ import { getSupportedChain } from '../chain/chains';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
+import { PREVIEW_VALID_UNTIL, readTxValidUntil } from '../contracts/txDeadline';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import {
   lifecycleFromOffer,
@@ -287,7 +288,9 @@ function ListNftFlow() {
         data: encodeFunctionData({
           abi: DIAMOND_ABI_VIEM,
           functionName: 'createOffer',
-          args: [toCreateOfferPayload(form, {})],
+          // Advisory dry run, never sent: the send carries the deadline
+          // read from chain time at submit (#3412).
+          args: [toCreateOfferPayload(form, {}), PREVIEW_VALID_UNTIL],
         }),
         value: 0n,
         allowNftApprovalRevert: true,
@@ -429,9 +432,12 @@ function ListNftFlow() {
         operator: walletChain.diamondAddress,
         onPrompt: () => stepper.next('approve'),
       });
+      // The transaction deadline (#3412), read from chain time after the
+      // approval mined, immediately before the send.
+      const validUntil = await readTxValidUntil(publicClient);
       stepper.next('send');
       const payload = toCreateOfferPayload(form, {});
-      const { hash } = await write('createOffer', [payload]);
+      const { hash } = await write('createOffer', [payload, validUntil]);
       setTxHash(hash);
       setStep('done');
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });

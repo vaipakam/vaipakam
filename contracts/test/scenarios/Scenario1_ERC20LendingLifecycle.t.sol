@@ -341,7 +341,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Step 2: Borrower accepts the offer (creates loan)
@@ -431,7 +432,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Step 2: Borrower accepts with illiquid consent = true
@@ -524,7 +526,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Step 2: Borrower accepts the offer

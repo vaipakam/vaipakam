@@ -567,7 +567,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
@@ -624,7 +625,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -658,7 +660,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // LibVaipakam.Offer memory offer = LibVaipakam.storageSlot().offers[offerId];
@@ -724,7 +727,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // No KYC (Tier0 by default) → revert because $3000 > Tier0 threshold ($1000)
@@ -792,7 +796,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user3, offerId, true, 0);
@@ -832,7 +837,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         assertEq(
             IERC721(mockNft721).ownerOf(1),
@@ -890,7 +896,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         uint256 balanceBefore = ERC20(mockERC20).balanceOf(user1);
@@ -939,7 +946,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Both events are expected: the rich detail one + the legacy.
@@ -1020,7 +1028,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1074,7 +1083,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // No KYC (Tier0) → revert because $2010 > Tier0 threshold ($1000)
@@ -1134,7 +1144,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1179,7 +1190,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1219,7 +1231,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1254,7 +1267,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
@@ -1300,7 +1314,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         vm.expectRevert(
@@ -1351,7 +1366,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Mock initiateLoan so acceptOffer succeeds
@@ -1425,7 +1441,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         vm.mockCall(
@@ -1478,7 +1495,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // user2 accepts but passes acceptorRiskAndTermsConsent=false → revert
@@ -1524,7 +1542,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // NFT should now be in lender vault
@@ -1572,7 +1591,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // #664 — the cancel cooldown applies to every fresh offer.
@@ -1623,7 +1643,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // NFT should be in vault now
@@ -1678,7 +1699,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // ERC-1155 should be in vault now
@@ -1732,7 +1754,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // user1 (US) accepts as lender; user2 (FR) is borrower — US<->FR allowed
@@ -1780,7 +1803,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // user2 (FR) queries; US<->FR is allowed, so should see the offer
@@ -1821,7 +1845,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         // offerId = 1; user1 is lender
 
@@ -1876,7 +1901,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         LibVaipakam.Offer memory offer2 = OfferCancelFacet(address(diamond)).getOffer(offerId2);
@@ -1933,7 +1959,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Mock vaultWithdrawERC1155 to succeed
@@ -1995,7 +2022,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Mock vaultWithdrawERC721 and burnNFT to succeed
@@ -2051,7 +2079,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
@@ -2095,7 +2124,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
@@ -2139,7 +2169,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.deliversAll(address(diamond));
@@ -2206,7 +2237,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         assertGt(offerId, 0);
         vm.clearMockedCalls();
@@ -2243,7 +2275,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
@@ -2290,7 +2323,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Mock acceptOffer path: vaultSetRentalUser (for NFT), initiateLoan
@@ -2343,7 +2377,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
@@ -2396,7 +2431,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
@@ -2445,7 +2481,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower ERC721 offer deposited ERC-20 prepayment, so mock ERC20 withdrawal to fail
@@ -2502,7 +2539,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower ERC1155 offer deposited ERC-20 prepayment, so mock ERC20 withdrawal to fail
@@ -2552,7 +2590,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Ensure vaults exist first
@@ -2614,7 +2653,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         vm.mockCallRevert(
@@ -2701,7 +2741,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         vm.clearMockedCalls();
     }
@@ -2743,7 +2784,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         vm.clearMockedCalls();
     }
@@ -2787,7 +2829,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         deal(mockERC20, user3, 2000);
@@ -2841,7 +2884,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // user1 (has NFT 1) accepts the borrower offer
@@ -2903,7 +2947,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Set KYC tier2 for both
@@ -2971,7 +3016,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         ProfileFacet(address(diamond)).updateKYCTier(user1, LibVaipakam.KYCTier.Tier2);
@@ -3023,7 +3069,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Accept the offer so it's marked accepted
@@ -3093,7 +3140,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
@@ -3151,13 +3199,13 @@ contract OfferFacetTest is Test {
         });
         vm.prank(user1);
         vm.expectRevert(OfferCreateFacet.RentalQuantityAboveVaultRange.selector);
-        OfferCreateFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         assertEq(nft1155.balanceOf(lenderVault, 1), 0, "no units moved");
 
         // The vault's own bound is the accepted edge.
         p.quantity = type(uint128).max;
         vm.prank(user1);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         assertEq(OfferCancelFacet(address(diamond)).getOffer(offerId).quantity, type(uint128).max);
     }
 
@@ -3204,7 +3252,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         deal(mockERC20, user2, 2000);
@@ -3264,7 +3313,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         deal(mockERC20, user2, 2000);
@@ -3327,7 +3377,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // user1 (lender) accepts — should custody ERC1155 in lender's vault
@@ -3388,7 +3439,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
@@ -3438,7 +3490,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
@@ -3515,7 +3568,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
@@ -3592,7 +3646,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         TestMutatorFacet(address(diamond)).setOffsetOfferToLoanIdRaw(offerId, 99);
@@ -3655,7 +3710,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         TestMutatorFacet(address(diamond)).setOffsetOfferToLoanIdRaw(offerId, 99);
@@ -3723,7 +3779,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // The sale-vehicle shape carries no collateral of its own, which no
@@ -3811,7 +3868,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Mock vaultWithdrawERC20 to succeed but initiateLoan to revert
@@ -3870,7 +3928,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
@@ -3924,7 +3983,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         assertGt(offerId, 0, "Borrower offer with ERC721 collateral should succeed");
@@ -3971,7 +4031,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         assertGt(offerId, 0, "Borrower offer with ERC1155 collateral should succeed");
@@ -4015,7 +4076,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower approves NFT to diamond
@@ -4073,7 +4135,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         vm.prank(user2);
@@ -4131,7 +4194,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // user1 (lender) accepts: must approve NFT to diamond
@@ -4187,7 +4251,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Cancel: should unlock ERC20 prepay (amount*days + 5% buffer)
@@ -4241,7 +4306,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
@@ -4295,7 +4361,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         assertGt(offerId, 0, "Borrower ERC1155 rental offer should succeed");
@@ -4345,7 +4412,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower accepts by paying prepay
@@ -4401,7 +4469,8 @@ contract OfferFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);

@@ -217,7 +217,7 @@ contract AnvilNewPartialFlows is Script {
         // Leg 1: fully-filled lender offer (closed).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 filledOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 filledOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t1 =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), filledOfferId, true, 0);
@@ -242,7 +242,7 @@ contract AnvilNewPartialFlows is Script {
         rangeP.collateralAmountMax = 5 * COLLATERAL_AMOUNT;
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT * 5);
-        uint256 rangeOfferId = OfferCreateFacet(diamond).createOffer(rangeP);
+        uint256 rangeOfferId = OfferCreateFacet(diamond).createOffer(rangeP, type(uint64).max);
         vm.stopBroadcast();
 
         // Borrower posts a [1k, 1k] borrower offer matching at the
@@ -251,7 +251,7 @@ contract AnvilNewPartialFlows is Script {
         bP.collateralAmount = COLLATERAL_AMOUNT;
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(bP);
+        uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(bP, type(uint64).max);
         vm.stopBroadcast();
         // The offer-age rule (#3412): a fill waits until the terms have stood
         // the minimum age. Steps a simulation only; see {LibTestTiming}.
@@ -284,7 +284,7 @@ contract AnvilNewPartialFlows is Script {
         p.allowsPartialRepay = true;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
 
         LibAcceptTerms.AcceptTerms memory _t2 =
@@ -326,7 +326,7 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
 
         LibAcceptTerms.AcceptTerms memory _t3 =
@@ -364,7 +364,7 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
 
         LibAcceptTerms.AcceptTerms memory _t4 =
@@ -411,7 +411,7 @@ contract AnvilNewPartialFlows is Script {
         // Step 1: original loan.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 origOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 origOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t5 =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), origOfferId, true, 0);
@@ -426,7 +426,7 @@ contract AnvilNewPartialFlows is Script {
         refiP.interestRateBps = INTEREST_BPS / 2;
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 refiOfferId = OfferCreateFacet(diamond).createOffer(refiP);
+        uint256 refiOfferId = OfferCreateFacet(diamond).createOffer(refiP, type(uint64).max);
         vm.stopBroadcast();
 
         LibVaipakam.Offer memory refi = OfferCancelFacet(diamond).getOffer(refiOfferId);
@@ -517,7 +517,7 @@ contract AnvilNewPartialFlows is Script {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t6 =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);

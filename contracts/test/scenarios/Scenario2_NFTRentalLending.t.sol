@@ -398,7 +398,8 @@ contract Scenario2_NFTRentalLending is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower accepts offer

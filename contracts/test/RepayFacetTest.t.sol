@@ -479,7 +479,8 @@ contract RepayFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(
@@ -521,7 +522,8 @@ contract RepayFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         loanId = LibAcceptTestSigner.signAndAccept(
@@ -907,7 +909,8 @@ contract RepayFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         uint256 loanId = LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId
@@ -966,7 +969,8 @@ contract RepayFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
@@ -2020,7 +2024,8 @@ contract RepayFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         loanId = LibAcceptTestSigner.signAndAccept(
@@ -2258,7 +2263,8 @@ contract RepayFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
         loanId = LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId

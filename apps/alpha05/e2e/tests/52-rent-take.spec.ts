@@ -14,7 +14,7 @@
  */
 import { parseAbi, parseEther, type Hex } from 'viem';
 import type { Page } from '@playwright/test';
-import { scenario } from '../lib/chain';
+import { scenario, txDeadline } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 import { ageOffer } from '@vaipakam/anvil-harness/lending';
@@ -79,6 +79,7 @@ test('an owner takes a renter’s request: a token not held is refused in the re
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
     },
+    await txDeadline(sc),
   ]);
   const offerId = BigInt(sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated')!.args.offerId as bigint);
   await ageOffer(sc, offerId);

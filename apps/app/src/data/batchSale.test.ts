@@ -13,6 +13,7 @@ import { LoanStatus } from '../lib/types';
 const reads = vi.hoisted(() => ({
   status: {} as Record<number, number | 'unreadable'>,
   simulate: null as unknown,
+  simulatedArgs: [] as unknown[][],
   blocks: [] as (bigint | undefined)[],
 }));
 
@@ -33,7 +34,8 @@ const DIAMOND = '0x000000000000000000000000000000000000d1a0' as const;
 const OTHER = '0x000000000000000000000000000000000000beef' as const;
 const ctx: SaleListingCtx = {
   publicClient: {
-    simulateContract: async () => {
+    simulateContract: async (call: { args: unknown[] }) => {
+      reads.simulatedArgs.push(call.args);
       if (reads.simulate) throw reads.simulate;
       return { result: undefined };
     },
@@ -42,6 +44,8 @@ const ctx: SaleListingCtx = {
   holder: '0x00000000000000000000000000000000000000b0',
 };
 const TERMS = { rateBps: 1_000, listingSeconds: 86_400n };
+/** The deadline the batch's listings were sent with (#3412). */
+const VALID_UNTIL = 1_800n;
 const plan = (loanId: number) => ({ loanId, bounds: { minSellerNet: 1n, maxHeld: 0n } });
 
 const linkedLog = (address: `0x${string}`, loanId: bigint, saleOfferId: bigint): Log =>
@@ -64,6 +68,7 @@ const linkedLog = (address: `0x${string}`, loanId: bigint, saleOfferId: bigint):
 beforeEach(() => {
   reads.status = {};
   reads.simulate = null;
+  reads.simulatedArgs = [];
   reads.blocks = [];
 });
 
@@ -87,7 +92,7 @@ describe('readBackListings', () => {
     const out = await readBackListings(ctx, [plan(4), plan(5), plan(6)], TERMS, {
       block: 9n,
       logs: [linkedLog(DIAMOND, 4n, 40n)],
-    });
+    }, VALID_UNTIL);
     expect(out[0]).toEqual({ loanId: 4, kind: 'listed', offerId: '40' });
     expect(out[1]).toEqual({ loanId: 5, kind: 'changed' });
     expect(out[2]).toMatchObject({ loanId: 6, kind: 'open' });
@@ -96,8 +101,10 @@ describe('readBackListings', () => {
 
   it('says a skipped loan can be listed now when its call would pass', async () => {
     reads.status = { 6: LoanStatus.Active };
-    const out = await readBackListings(ctx, [plan(6)], TERMS, { block: 9n, logs: [] });
+    const out = await readBackListings(ctx, [plan(6)], TERMS, { block: 9n, logs: [] }, VALID_UNTIL);
     expect(out).toEqual([{ loanId: 6, kind: 'open', reason: copy.batchSale.skippedRetry }]);
+    // The read-back asks about the call the send made, deadline included (#3412).
+    expect(reads.simulatedArgs[0]?.at(-1)).toBe(VALID_UNTIL);
   });
 
   it('is pending for every loan behind a pending send, without reading its status', async () => {
@@ -105,7 +112,7 @@ describe('readBackListings', () => {
     // listed by the pending send and then defaulted, so "not listed" would
     // be a claim its status cannot make.
     reads.status = { 6: LoanStatus.Active, 7: LoanStatus.Defaulted };
-    const out = await readBackListings(ctx, [plan(6), plan(7)], TERMS, { pending: true });
+    const out = await readBackListings(ctx, [plan(6), plan(7)], TERMS, { pending: true }, VALID_UNTIL);
     expect(out).toEqual([
       { loanId: 6, kind: 'pending' },
       { loanId: 7, kind: 'pending' },
@@ -115,13 +122,13 @@ describe('readBackListings', () => {
 
   it('says not listed for a loan no longer active after a send that did not run', async () => {
     reads.status = { 7: LoanStatus.Defaulted };
-    const out = await readBackListings(ctx, [plan(7)], TERMS, { failure: 'rejected' });
+    const out = await readBackListings(ctx, [plan(7)], TERMS, { failure: 'rejected' }, VALID_UNTIL);
     expect(out).toEqual([{ loanId: 7, kind: 'changed' }]);
   });
 
   it('carries the send’s failure, and is unknown when the loan cannot be read', async () => {
     reads.status = { 6: LoanStatus.Active, 7: 'unreadable' };
-    const out = await readBackListings(ctx, [plan(6), plan(7)], TERMS, { failure: 'rejected' });
+    const out = await readBackListings(ctx, [plan(6), plan(7)], TERMS, { failure: 'rejected' }, VALID_UNTIL);
     expect(out).toEqual([
       { loanId: 6, kind: 'open', reason: 'rejected' },
       { loanId: 7, kind: 'unknown' },

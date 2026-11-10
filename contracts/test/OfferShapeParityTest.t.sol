@@ -74,7 +74,8 @@ contract OfferShapeParityTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.CollateralMustBePositive.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 0, 0)
+            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 0, 0),
+            type(uint64).max
         );
     }
 
@@ -82,7 +83,8 @@ contract OfferShapeParityTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(LibOfferShape.CollateralMustBePositive.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 0, 0)
+            _params(LibVaipakam.OfferType.Borrower, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 0, 0),
+            type(uint64).max
         );
     }
 
@@ -90,11 +92,12 @@ contract OfferShapeParityTest is SetupTest {
     function test_mutate_collateralToZero_refused() public {
         vm.prank(lender);
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 5000 ether, 5000 ether)
+            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 5000 ether, 5000 ether),
+            type(uint64).max
         );
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.CollateralMustBePositive.selector);
-        OfferMutateFacet(address(diamond)).setOfferCollateral(id, 0, 0);
+        OfferMutateFacet(address(diamond)).setOfferCollateral(id, 0, 0, type(uint64).max);
     }
 
     // ─── #2749 — an all-or-nothing offer stays single-value ────────────────
@@ -102,7 +105,8 @@ contract OfferShapeParityTest is SetupTest {
     function _aonLenderOffer() internal returns (uint256 id) {
         vm.prank(lender);
         id = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether, 5000 ether, 5000 ether)
+            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether, 5000 ether, 5000 ether),
+            type(uint64).max
         );
     }
 
@@ -110,7 +114,7 @@ contract OfferShapeParityTest is SetupTest {
         uint256 id = _aonLenderOffer();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.AonRequiresSingleValueAmount.selector);
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 1, 1000 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 1, 1000 ether, type(uint64).max);
     }
 
     function test_modifyOffer_aonToRange_refused() public {
@@ -126,7 +130,8 @@ contract OfferShapeParityTest is SetupTest {
                 interestRateBpsMax: 500,
                 collateralAmount: 5000 ether,
                 collateralAmountMax: 5000 ether
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -135,7 +140,7 @@ contract OfferShapeParityTest is SetupTest {
     function test_setOfferAmount_aonSingleValue_allowed() public {
         uint256 id = _aonLenderOffer();
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 800 ether, 800 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 800 ether, 800 ether, type(uint64).max);
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 800 ether, "amount");
         assertEq(o.amountMax, 800 ether, "amountMax");
@@ -147,10 +152,11 @@ contract OfferShapeParityTest is SetupTest {
     function test_setOfferAmount_partialRange_allowed() public {
         vm.prank(lender);
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 5000 ether, 5000 ether)
+            _params(LibVaipakam.OfferType.Lender, LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether, 5000 ether, 5000 ether),
+            type(uint64).max
         );
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 100 ether, 1000 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 100 ether, 1000 ether, type(uint64).max);
         assertEq(OfferCancelFacet(address(diamond)).getOffer(id).amount, 100 ether, "range edit kept");
     }
 }

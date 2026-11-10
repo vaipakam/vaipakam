@@ -1518,8 +1518,7 @@ interface IVaipakamErrors {
     ///         the seller reviewed, so state moved against them between quote
     ///         and listing (a partial repayment is enough — it disqualifies
     ///         the paid-through mark and widens the forfeiture).
-    /// @dev    Raised only by `createLoanSaleOfferBound`; the unbound entry
-    ///         records whatever the arithmetic comes to. Adverse drift only —
+    /// @dev    Raised only by `createLoanSaleOffer`. Adverse drift only —
     ///         a floor above the reviewed one passes.
     /// @param recorded The floor the listing would record now.
     /// @param reviewed The floor the seller was quoted.

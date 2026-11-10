@@ -68,7 +68,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, 500, LibVaipakam.FillMode.Partial, 0, 0)
+            _params(LibVaipakam.OfferType.Lender, 500, LibVaipakam.FillMode.Partial, 0, 0),
+            type(uint64).max
         );
         loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
@@ -118,7 +119,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
         vm.prank(borrower);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, expiresAt)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, expiresAt),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
@@ -148,13 +150,13 @@ contract RefinanceRequestGuardTest is SetupTest {
         calls = new bytes[](6);
         calls[0] = abi.encodeCall(RepayFacet.repayPartial, (loanId, 1));
         calls[1] = abi.encodeCall(PrecloseFacet.precloseDirect, (loanId));
-        calls[2] = abi.encodeCall(PrecloseFacet.transferObligationViaOffer, (loanId, 0));
+        calls[2] = abi.encodeCall(PrecloseFacet.transferObligationViaOffer, (loanId, 0, type(uint64).max));
         calls[3] = abi.encodeCall(
             PrecloseFacet.offsetWithNewOffer,
-            (loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20)
+            (loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20, type(uint64).max)
         );
         calls[4] = abi.encodeCall(PartialWithdrawalFacet.partialWithdrawCollateral, (loanId, 1));
-        calls[5] = abi.encodeCall(SwapToRepayPartialFacet.swapToRepayPartial, (loanId, 1, none));
+        calls[5] = abi.encodeCall(SwapToRepayPartialFacet.swapToRepayPartial, (loanId, 1, none, type(uint64).max));
     }
 
     // ─── the index ───────────────────────────────────────────────────
@@ -172,7 +174,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestOpen.selector, loanId, first));
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0),
+            type(uint64).max
         );
     }
 
@@ -324,7 +327,8 @@ contract RefinanceRequestGuardTest is SetupTest {
             loanId, true, 600, uint64(block.timestamp + 365 days)
         );
         uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0),
+            type(uint64).max
         );
         assertEq(_recorded(loanId), r2, "a former holder's request is displaced");
         // #664 — the cancel cooldown applies to every fresh offer.
@@ -358,7 +362,8 @@ contract RefinanceRequestGuardTest is SetupTest {
 
         vm.prank(borrower);
         uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0),
+            type(uint64).max
         );
         assertEq(_live(loanId), r2);
         _acceptExpectingRevert(r1, _notRecorded(loanId, r1));
@@ -379,7 +384,8 @@ contract RefinanceRequestGuardTest is SetupTest {
             abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotCancelled.selector, loanId, r1)
         );
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0),
+            type(uint64).max
         );
 
         vm.prank(borrower);
@@ -399,7 +405,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
         AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 600, uint64(block.timestamp + 365 days)
@@ -408,14 +415,16 @@ contract RefinanceRequestGuardTest is SetupTest {
             abi.encodeWithSelector(IVaipakamErrors.RefinanceBlockedByOffset.selector, loanId, offsetOfferId)
         );
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0),
+            type(uint64).max
         );
         // Once the offset is withdrawn, the request may be posted.
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
         uint256 r = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0),
+            type(uint64).max
         );
         vm.stopPrank();
         assertEq(_live(loanId), r);
@@ -449,7 +458,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 r1 = _request(loanId, 0);
         vm.prank(lender);
         uint256 lenderOffer = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, 400, LibVaipakam.FillMode.Partial, 0, 0)
+            _params(LibVaipakam.OfferType.Lender, 400, LibVaipakam.FillMode.Partial, 0, 0),
+            type(uint64).max
         );
         assertTrue(
             OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1, address(this), address(this)).errorCode
@@ -573,7 +583,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
         uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
         assertGt(offsetOfferId, 0, "precondition: the offset is open");
         LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
@@ -611,7 +622,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
         uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
         vm.stopPrank();
         uint256 deposited = OfferCancelFacet(address(diamond)).getOffer(offsetOfferId).amountMax;

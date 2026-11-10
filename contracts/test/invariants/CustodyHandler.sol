@@ -942,7 +942,7 @@ contract CustodyHandler is Test {
             useFullTermInterest: false
         });
         vm.prank(lender_);
-        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {
             return (true, id);
         } catch (bytes memory err) {
             _noteRevert("openLoan.create", err);

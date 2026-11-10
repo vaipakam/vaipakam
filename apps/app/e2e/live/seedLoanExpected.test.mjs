@@ -38,6 +38,9 @@ const LENDER = '0x648897f2c549956eFfF626D57fBc3E39761e6792';
 const WETH = '0x4200000000000000000000000000000000000006';
 const TILQ = '0xa3beBf673f7b16d88295930193d7dbd80C8f8664';
 const NOW = 1_792_000_000n;
+/** The request's transaction deadline as the app sends it (#3412): its chain
+ *  read at the send, here the anchor itself, plus the shared window. */
+const VALID_UNTIL = NOW + 1_800n;
 // The fixture's legs as checkLiquidity classifies them: WETH liquid, tILQ illiquid.
 const LEGS = { lending: false, collateral: true };
 const INTENT = {
@@ -219,6 +222,7 @@ describe('seedLoanExpected — the whole plan, in order', () => {
       borrower: BORROWER,
       lender: LENDER,
       riskTermsHash: ZERO_HASH,
+      borrowerAnchor: () => NOW,
       lenderAnchor: () => NOW,
       illiquidLegs: LEGS,
       requestId: () => requestId,
@@ -267,7 +271,7 @@ describe('seedLoanExpected — the whole plan, in order', () => {
     expect(plan.offer('borrower', 'tx', mintTx).ok).toBe(true);
     expect(plan.offer('borrower', 'tx', send(tx(BORROWER, TILQ, erc20Abi, 'approve', [DIAMOND, INTENT.collateralAmount]))).ok).toBe(true);
     const params = requestParams(INTENT);
-    expect(plan.offer('borrower', 'tx', send(tx(BORROWER, DIAMOND, ABI, 'createOffer', [params]))).ok).toBe(true);
+    expect(plan.offer('borrower', 'tx', send(tx(BORROWER, DIAMOND, ABI, 'createOffer', [params, VALID_UNTIL]))).ok).toBe(true);
     plan.close();
 
     // The lender cannot sign before the request is pinned.
@@ -308,7 +312,7 @@ describe('seedLoanExpected — the whole plan, in order', () => {
 
     const second = planFor({ needsMint: false });
     second.plan.arm('borrower');
-    expect(second.plan.offer('borrower', 'tx', send(tx(BORROWER, DIAMOND, ABI, 'createOffer', [requestParams(INTENT)]))).ok).toBe(true);
+    expect(second.plan.offer('borrower', 'tx', send(tx(BORROWER, DIAMOND, ABI, 'createOffer', [requestParams(INTENT), VALID_UNTIL]))).ok).toBe(true);
     second.plan.close();
     second.pin(7n);
     second.plan.arm('lender');
@@ -331,7 +335,7 @@ describe('seedLoanExpected — the whole plan, in order', () => {
     const r = plan.offer(
       'borrower',
       'tx',
-      send(tx(BORROWER, DIAMOND, ABI, 'createOffer', [{ ...requestParams(INTENT), allowsPartialRepay: true }])),
+      send(tx(BORROWER, DIAMOND, ABI, 'createOffer', [{ ...requestParams(INTENT), allowsPartialRepay: true }, VALID_UNTIL])),
     );
     expect(r.ok).toBe(false);
     expect(r.why).toMatch(/allowsPartialRepay/);

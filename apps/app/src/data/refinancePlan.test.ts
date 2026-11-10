@@ -208,17 +208,17 @@ describe('checkRefinanceRequest', () => {
     reads.caps = { enabled: true, maxRateBps: 1_000, maxNewExpiry: 10_000n * DAY };
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
     expect(plan.caps).toBeNull();
-    expect(refinanceCalls(plan).map((c) => c.functionName)).toEqual(['createOffer']);
+    expect(refinanceCalls(plan, 99n).map((c) => c.functionName)).toEqual(['createOffer']);
   });
 
-  it('puts the guardrail write before the request it needs', async () => {
+  it('puts the guardrail write before the request it needs, the deadline last on the request', async () => {
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
-    expect(refinanceCalls(plan)).toEqual([
+    expect(refinanceCalls(plan, 99n)).toEqual([
       {
         functionName: 'setAutoRefinanceCaps',
         args: [7n, true, 900, plan.caps!.maxNewExpiry],
       },
-      { functionName: 'createOffer', args: [plan.payload] },
+      { functionName: 'createOffer', args: [plan.payload, 99n] },
     ]);
   });
 

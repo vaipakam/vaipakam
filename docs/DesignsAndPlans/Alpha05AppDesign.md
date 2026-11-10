@@ -2080,6 +2080,37 @@ above. Each resolves here, so a route reviewer needs no private file:
   The same Terms gate, pause, sanctions and protected-mode statements apply
   as on the approval route.
 
+- **RB-DESK-LADDER** — The rate desk's market list and rate ladder
+  (OFF-73), read from the index once a wallet is connected on a served
+  network, as the offer book is. A market is one lending token against one
+  collateral token for one term, both legs fungible, as the index groups
+  the open book; the list states each side's count and best rate, says
+  when the index listed only its deepest markets, and counts rows it could
+  not read. One completeness note stands above every view: the index lags
+  the chain, and its market counts include signed orders, which the desk
+  does not list yet; where a market's count differs from what its ladder
+  lists, the ladder states both numbers. The ladder reads the market's own
+  open offers a bounded number of pages deep and says when the market held
+  more. A lender's offer stands at its lowest accepted rate and a
+  borrower's request at its highest, the rate each side is held to when the
+  other takes it. Each rate step states how many offers stand at it and
+  their open amounts added up, as depth: every offer is still taken on its
+  own, so a step's total is never offered as one amount. Expired offers,
+  sale and early-close vehicles, offers bound to a loan position that
+  moved, offers with nothing left open and offers on other terms are left
+  out and counted by reason. The middle rate is worked out from the best
+  two rates and labelled so; a crossed ladder is stated, never acted on.
+  Every offer opens its own page, which reads it from the chain before
+  anything is offered. A failed read is a degraded-source warning pointing
+  to the guided pages, never an empty desk.
+- **RB-ORIENTATION** — A Basic reader on an Advanced page (ACC-07) sees a
+  card on top of it saying what the page is, linking the guided pages that
+  do the same job, and offering the switch to Advanced. It is never shown
+  in Advanced mode, hides for good per page once dismissed (for the visit
+  where browser storage is blocked), and hides nothing on the page under
+  it. A page shows the card once its own entry names what it is and its
+  guided equivalent.
+
 ## 3. Companion specifications
 
 ### 3.1 Deployment and service capabilities

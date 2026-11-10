@@ -192,7 +192,8 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         vm.startBroadcast(lenderKey);
         LenderIntentFacet(diamond).setLenderIntent(
             address(usdc), address(weth), MAX_EXPOSURE, INTEREST_BPS, MAX_INIT_LTV_BPS,
-            uint32(DURATION_DAYS), MIN_FILL, false, true
+            uint32(DURATION_DAYS), MIN_FILL, false, true,
+            type(uint64).max
         );
         vm.stopBroadcast();
         LibVaipakam.LenderIntent memory intent =
@@ -227,7 +228,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         request.collateralAmountMax = REQUEST_COLLATERAL;
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, REQUEST_COLLATERAL);
-        uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
+        uint256 requestId = OfferCreateFacet(diamond).createOffer(request, type(uint64).max);
         vm.stopBroadcast();
         // The offer-age rule (#3412): a fill waits until the terms have stood
         // the minimum age. Steps a simulation only; see {LibTestTiming}.

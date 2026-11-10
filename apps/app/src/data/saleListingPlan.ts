@@ -1,6 +1,6 @@
 /**
  * The per-loan sale-listing plan (#126 slice 2) — ONE copy of the live
- * checks a lender's listing (`createLoanSaleOfferBound`, #1810) runs before
+ * checks a lender's listing (`createLoanSaleOffer`, bound since #1810) runs before
  * anything is signed, shared by the loan page's listing form and the
  * "List all for sale" batch on Positions.
  *
@@ -23,6 +23,7 @@ import type { PublicClient } from 'viem';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../content/copy';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
 import { captureTxError } from '../lib/errors';
 import { formatDateTime } from '../lib/format';
 import { AssetType } from '../lib/types';
@@ -82,12 +83,15 @@ export interface ListingRefusal {
   boundsMoved: boolean;
 }
 
-/** The exact call a listing makes, with consent given. */
+/** The exact call a listing makes, with consent given. `validUntil` is the
+ *  transaction deadline (#3412): the chain refuses the listing if it lands
+ *  after it (`contracts/txDeadline.ts`). */
 export function boundListingArgs(
   loanId: number,
   terms: SaleListingTerms,
   bounds: ListingBounds,
-): readonly [bigint, number, boolean, bigint, bigint, bigint] {
+  validUntil: bigint,
+): readonly [bigint, number, boolean, bigint, bigint, bigint, bigint] {
   return [
     BigInt(loanId),
     terms.rateBps,
@@ -95,6 +99,7 @@ export function boundListingArgs(
     terms.listingSeconds,
     bounds.minSellerNet,
     bounds.maxHeld,
+    validUntil,
   ];
 }
 
@@ -109,7 +114,14 @@ export function reviewedBoundsMoved(err: unknown): boolean {
   // reviewed figures are no longer known to hold: treat it the same way.
   if (err instanceof TxNotSettledError) return err.reason === 'reverted';
   const name = revertOf(err)?.data?.errorName;
-  return name === 'ListingFloorBelowReviewed' || name === 'ListingHeldAboveReviewed';
+  return (
+    name === 'ListingFloorBelowReviewed' ||
+    name === 'ListingHeldAboveReviewed' ||
+    // The listing's deadline passed before it ran (#3412). Its window is the
+    // quote's confirmation allowance, so the reviewed figures are no longer
+    // known to hold either: review again rather than resend them.
+    name === 'DeadlinePassed'
+  );
 }
 
 function revertOf(err: unknown): ContractFunctionRevertedError | null {
@@ -191,8 +203,10 @@ export async function checkSaleListing(
     await publicClient.simulateContract({
       address: diamond,
       abi: DIAMOND_ABI_VIEM,
-      functionName: 'createLoanSaleOfferBound',
-      args: boundListingArgs(loan.loanId, terms, bounds),
+      functionName: 'createLoanSaleOffer',
+      // The deadline from the same chain time the checks above read, so
+      // the simulation answers for a transaction sent now.
+      args: boundListingArgs(loan.loanId, terms, bounds, txValidUntil(latestBlock.timestamp)),
       account: holder,
     });
   } catch (simErr) {

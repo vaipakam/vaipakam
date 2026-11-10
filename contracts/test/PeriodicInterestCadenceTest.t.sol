@@ -106,7 +106,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.CreateOfferParams memory p
     ) internal returns (uint256) {
         vm.prank(lender);
-        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;
     }
@@ -434,7 +434,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         _allowTwoYears();
         uint256 offerId = _create(_baseLenderParams(1000 ether, 730, NONE_C));
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether, type(uint64).max);
     }
 
     /// @dev Mutation reads the whole rule: with the switch turned off after
@@ -448,7 +448,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(false);
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
-        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 900 ether, 1000 ether, type(uint64).max);
     }
 
     // ─── #3025 — the rule runs again when a loan opens ───────────────────────
@@ -508,7 +508,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.CreateOfferParams memory b = _baseLenderParams(1000 ether, 730, NONE_C);
         b.offerType = LibVaipakam.OfferType.Borrower;
         vm.prank(borrower);
-        uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(b);
+        uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(b, type(uint64).max);
         LibTestTiming.waitOutTermsAge(address(diamond), borrowerOfferId); // #3443
         _enableFeature();
         LibOfferMatch.MatchResult memory r = OfferMatchFacet(address(diamond)).previewMatch(
@@ -564,7 +564,8 @@ contract PeriodicInterestCadenceTest is SetupTest {
             uint256 snap = vm.snapshotState();
             vm.prank(lender);
             try OfferCreateFacet(address(diamond)).createOffer(
-                _baseLenderParams(amount, duration, pv.cadences[i].cadence)
+                _baseLenderParams(amount, duration, pv.cadences[i].cadence),
+                type(uint64).max
             ) {
                 assertTrue(pv.cadences[i].admitted, "create admitted what the preview refused");
             } catch (bytes memory reason) {

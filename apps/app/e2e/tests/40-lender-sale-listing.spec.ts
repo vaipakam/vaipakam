@@ -46,7 +46,9 @@ test("listing form states the minimum, lists bound to it, and the card reports e
 }) => {
   for (const sig of [
     "function quoteSellerBounds(uint256,uint256,uint256)",
-    "function createLoanSaleOfferBound(uint256,uint256,bool,uint64,uint256,uint256)",
+    // #3412 merged the bound listing into `createLoanSaleOffer`, with the
+    // transaction deadline last.
+    "function createLoanSaleOffer(uint256,uint256,bool,uint64,uint256,uint256,uint64)",
   ]) {
     expect(await routed(sig), `the current Diamond must route ${sig}`).toBe(
       true,

@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContractFunctionRevertedError, encodeErrorResult, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { TX_DEADLINE_SECONDS } from '@vaipakam/lib/txDeadline';
 import { copy } from '../content/copy';
 import { AssetType, LoanStatus } from '../lib/types';
 import { TxNotSettledError } from '../contracts/ownReceipt';
@@ -101,7 +102,7 @@ const revert = (errorName: string, args: readonly unknown[]) =>
   new ContractFunctionRevertedError({
     abi: DIAMOND_ABI_VIEM,
     data: encodeErrorResult({ abi: DIAMOND_ABI_VIEM, errorName, args } as never),
-    functionName: 'createLoanSaleOfferBound',
+    functionName: 'createLoanSaleOffer',
   });
 
 beforeEach(() => {
@@ -127,8 +128,10 @@ describe('checkSaleListing', () => {
     expect(await checkSaleListing(ctx, LOAN, TERMS, BOUNDS)).toBeNull();
     expect(reads.simulated).toHaveLength(1);
     expect(reads.simulated[0]).toMatchObject({
-      functionName: 'createLoanSaleOfferBound',
-      args: [7n, 1_000, true, 7n * DAY, 900n, 0n],
+      functionName: 'createLoanSaleOffer',
+      // The deadline is the chain's latest block time plus the shared
+      // window (#3412), never the device clock.
+      args: [7n, 1_000, true, 7n * DAY, 900n, 0n, reads.now + BigInt(TX_DEADLINE_SECONDS)],
       account: ctx.holder,
     });
   });
@@ -177,19 +180,22 @@ describe('reviewedBoundsMoved', () => {
     expect(reviewedBoundsMoved(new TxNotSettledError('reverted', hash, 'x'))).toBe(true);
     expect(reviewedBoundsMoved(new TxNotSettledError('cancelled', hash, 'x'))).toBe(false);
     expect(reviewedBoundsMoved(revert('ListingHeldAboveReviewed', [5n, 1n]))).toBe(true);
+    // #3412 — a listing whose deadline passed was reviewed too long ago.
+    expect(reviewedBoundsMoved(revert('DeadlinePassed', [5n]))).toBe(true);
     expect(reviewedBoundsMoved(new Error('rpc'))).toBe(false);
   });
 });
 
 describe('boundListingArgs', () => {
-  it('always sends consent as given', () => {
-    expect(boundListingArgs(3, TERMS, { minSellerNet: 1n, maxHeld: 2n })).toEqual([
+  it('always sends consent as given, with the deadline last', () => {
+    expect(boundListingArgs(3, TERMS, { minSellerNet: 1n, maxHeld: 2n }, 99n)).toEqual([
       3n,
       1_000,
       true,
       7n * DAY,
       1n,
       2n,
+      99n,
     ]);
   });
 });
@@ -205,7 +211,9 @@ describe('planSaleListingForBatch', () => {
       settlementNow: 42n,
       notes: [],
     });
-    expect(reads.simulated[0]).toMatchObject({ args: [7n, 1_000, true, 7n * DAY, 950n, 10n] });
+    expect(reads.simulated[0]).toMatchObject({
+      args: [7n, 1_000, true, 7n * DAY, 950n, 10n, reads.now + BigInt(TX_DEADLINE_SECONDS)],
+    });
   });
 
   it('leaves out an NFT-collateral loan without reading anything', async () => {

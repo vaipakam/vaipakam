@@ -10,7 +10,7 @@
  * start it.
  */
 import { DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, txValidUntil, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -35,13 +35,13 @@ export async function run() {
     const { loanId } = await openLoan({ lender, borrower, borrowerCanRepayFromWallet: false });
     const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
 
-    const impostor = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, VENUE_ROUTE, loan.collateralAmount], outsider.address);
+    const impostor = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, VENUE_ROUTE, loan.collateralAmount, await txValidUntil()], outsider.address);
     expectRefusal('A11.1', 'only the borrower can sell their own collateral to repay', impostor, 'NotNFTOwner');
 
-    const overCap = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, VENUE_ROUTE, loan.collateralAmount + 1n], borrower.address);
+    const overCap = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, VENUE_ROUTE, loan.collateralAmount + 1n, await txValidUntil()], borrower.address);
     expectRefusal('A11.2', 'a collateral cap larger than the collateral held is refused', overCap, 'InvalidAmount');
 
-    const noRoute = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, [], loan.collateralAmount], borrower.address);
+    const noRoute = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, [], loan.collateralAmount, await txValidUntil()], borrower.address);
     expectRefusal('A11.3', 'with no swap route, the repayment is refused rather than attempted', noRoute, 'NoEnabledSwapRoute');
 
     // The debt, fixed before the sale from the payoff quote (principal + the
@@ -75,9 +75,9 @@ export async function run() {
     const CAP = (debtSized + loan.collateralAmount) / 2n;
     const fullPos = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
-    const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, VENUE_ROUTE, CAP], borrower.address);
+    const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, VENUE_ROUTE, CAP, await txValidUntil()], borrower.address);
     if (!sim.ok) cannotContinue('A11.4 full swap-to-repay', sim.name);
-    const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.swapToRepay, functionName: 'swapToRepayFull', args: [loanId, VENUE_ROUTE, CAP] }, 'swapToRepayFull');
+    const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.swapToRepay, functionName: 'swapToRepayFull', args: [loanId, VENUE_ROUTE, CAP, await txValidUntil()] }, 'swapToRepayFull');
     const after = await snapshot(tokens, holders);
     const closed = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     const d = delta(before, after);
@@ -149,7 +149,7 @@ export async function run() {
   // ------------------------------------------------------------- partial
   {
     const { loanId: noPartial } = await openLoan({ lender, borrower, borrowerCanRepayFromWallet: false });
-    const refused = await simulate(DIAMOND, ABIS.swapToRepayPartial, 'swapToRepayPartial', [noPartial, parseUnits('0.1', 18), VENUE_ROUTE], borrower.address);
+    const refused = await simulate(DIAMOND, ABIS.swapToRepayPartial, 'swapToRepayPartial', [noPartial, parseUnits('0.1', 18), VENUE_ROUTE, await txValidUntil()], borrower.address);
     expectRefusal('A11.7', 'a partial swap on a loan that never allowed partial repayment is refused', refused, 'PartialRepayNotAllowed');
 
     const { loanId } = await openLoan({ lender, borrower, allowsPartialRepay: true, borrowerCanRepayFromWallet: false });
@@ -171,10 +171,10 @@ export async function run() {
     const hfBefore = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanBefore = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     const partialPos = await positionOf(loanId);
-    const sim = await simulate(DIAMOND, ABIS.swapToRepayPartial, 'swapToRepayPartial', [loanId, parseUnits('0.1', 18), VENUE_ROUTE], borrower.address);
+    const sim = await simulate(DIAMOND, ABIS.swapToRepayPartial, 'swapToRepayPartial', [loanId, parseUnits('0.1', 18), VENUE_ROUTE, await txValidUntil()], borrower.address);
     if (!sim.ok) cannotContinue('A11.8 partial swap-to-repay', sim.name);
     const before = await snapshot(tokens, holders);
-    const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.swapToRepayPartial, functionName: 'swapToRepayPartial', args: [loanId, parseUnits('0.1', 18), VENUE_ROUTE] }, 'swapToRepayPartial');
+    const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.swapToRepayPartial, functionName: 'swapToRepayPartial', args: [loanId, parseUnits('0.1', 18), VENUE_ROUTE, await txValidUntil()] }, 'swapToRepayPartial');
     const after = await snapshot(tokens, holders);
     const hfAfter = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanAfter = await read(ABIS.loan, 'getLoanDetails', [loanId]);

@@ -6,10 +6,14 @@
  * swallowed one and never an invented reason (RB-FUNDS).
  */
 import { FRIENDLY_ERROR_MESSAGES, KNOWN_ERROR_SELECTORS, extractRevertName, extractRevertSelector, humanizeErrorName } from '@vaipakam/lib/decodeContractError';
+import { copy } from '../../content/copy';
 import type { Refusal } from './types';
 
 export const USER_REJECTED = 'UserRejected';
 export const UNRECOGNISED = 'Unrecognised';
+/** #3412 — the protocol's refusal of a price-exposed transaction that landed
+ *  after the deadline it carried (`LibTiming.DeadlinePassed`). */
+export const DEADLINE_PASSED = 'DeadlinePassed';
 
 function isUserRejection(err: unknown): boolean {
   let node: unknown = err;
@@ -41,6 +45,10 @@ export function refusalFromError(err: unknown, remedy: Refusal['remedy'] = null)
   const selector = extractRevertSelector(err);
   // The selector table names a signature (`Name(uint256)`); the code is the name.
   const name = extractRevertName(err) ?? (selector ? KNOWN_ERROR_SELECTORS[selector]?.replace(/\(.*\)$/, '') : undefined);
+  // A deadline that ran out is worded in the app's own copy: it is the one
+  // refusal every price-exposed flow shares, and what it asks of the reader
+  // (review and send again) is the same everywhere.
+  if (name === DEADLINE_PASSED) return { code: name, reason: copy.flow.deadlinePassed.text, reopensAt: null, remedy };
   if (name) {
     const friendly = FRIENDLY_ERROR_MESSAGES[name] ?? humanizeErrorName(name);
     return { code: name, reason: `The protocol refused this step: ${friendly}`, reopensAt: null, remedy };

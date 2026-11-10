@@ -20,6 +20,7 @@ import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFact
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {AggregatorAdapterImplementation} from "../src/AggregatorAdapterImplementation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC4907Mock} from "./mocks/ERC4907Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -198,8 +199,12 @@ contract AggregatorAdapterTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
+        // #3443 — let the new offer's terms (and the adapter's intent) stand
+        // the minimum age, so the keeper's fill lands in a later block.
+        vm.warp(vm.getBlockTimestamp() + LibTiming.DEFAULT_MIN_TERMS_AGE_SEC);
     }
 
     /// @dev Keeper fills the adapter's intent against a fresh borrower for
@@ -645,7 +650,8 @@ contract AggregatorAdapterTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
         vm.prank(keeper);
         vm.expectRevert(AggregatorAdapterImplementation.SelfTrade.selector);

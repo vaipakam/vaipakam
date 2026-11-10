@@ -23,6 +23,7 @@ import { nftApproval } from '../tx/nftApproval';
 import { operatorApproval } from '../tx/operatorApproval';
 import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
+import { readValidUntil } from '../tx/deadline';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -153,14 +154,17 @@ export function ListForRent({ draft, chain, own, meta, terms, onEdit, onClose }:
 
       // 2. The dry run with the approval in place: the protocol's verdict on
       //    the whole listing, the NFT's move into the vault included.
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params], account }));
+      //    The deadline (#3412) is read from the chain's clock now, so the
+      //    dry run and the write carry the same one.
+      const validUntil = await readValidUntil(own);
+      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], account }));
       if (dry.kind === 'reverted') return stop(format('rentList.dryRunRefused', { reason: listRefusal(dry.error, copy) }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 
       // 3. The listing.
       say(text('rentList.stepSend'));
       try {
-        return await writeContract(config, { address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params], chainId: chain.chainId, account });
+        return await writeContract(config, { address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], chainId: chain.chainId, account });
       } catch (e) {
         return stop(format('rentList.stoppedAfterApproval', { reason: listRefusal(e, copy) }));
       }

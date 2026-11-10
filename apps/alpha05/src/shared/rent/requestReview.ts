@@ -24,6 +24,7 @@ import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { needFromRefusal, type RiskNeed } from '../risk/riskAccess';
 import { allowanceSteps } from '../tx/approval';
 import { askThrough } from '../tx/simulate';
+import { chainValidUntil } from '../tx/deadline';
 import { shortAddress } from '../ui/format';
 import { requestParams, type ListDraft, type RequestParams } from './listModel';
 import { rentalCost, type RentalCost } from './rental';
@@ -81,7 +82,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
       ? 0
       : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, draft.payment, account, diamond, amount)) }, funds.allowance, total)).length;
   const covers = funds.allowance >= total && funds.balance >= total;
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params], account }));
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params, await chainValidUntil(c)], account }));
   return {
     identity,
     account,

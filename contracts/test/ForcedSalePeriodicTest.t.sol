@@ -103,7 +103,8 @@ contract ForcedSalePeriodicTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
@@ -438,7 +439,8 @@ contract ForcedSalePeriodicTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         ERC20Mock(mockERC20).mint(borrower, 2_000 ether);
         LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
@@ -454,7 +456,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         vm.expectEmit(true, true, true, true, address(diamond));
         emit LibCloseoutFreeze.BorrowerHeldExtraPaid(LOAN, borrower, mockERC20, held);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId, type(uint64).max);
 
         assertEq(LoanFacet(address(diamond)).getLoanDetails(LOAN).borrower, incoming);
         assertEq(_held(), 0, "the held row is spent");
@@ -489,7 +491,7 @@ contract ForcedSalePeriodicTest is SetupTest {
             0
         );
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId, type(uint64).max);
         assertEq(_held(), 0);
     }
 

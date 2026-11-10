@@ -211,7 +211,8 @@ contract SepoliaOpenOffers is Script {
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-        }));
+        }),
+        type(uint64).max);
         vm.stopBroadcast();
     }
 
@@ -248,7 +249,8 @@ contract SepoliaOpenOffers is Script {
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-        }));
+        }),
+        type(uint64).max);
         vm.stopBroadcast();
     }
 

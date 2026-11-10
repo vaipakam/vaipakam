@@ -100,7 +100,7 @@ contract AssetLtvCeilingTest is SetupTest {
     function test_unsetCeiling_liquidLoanOpens() public {
         _clearCeiling(mockCollateralERC20);
         vm.prank(lender);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_params(2000 ether));
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_params(2000 ether), type(uint64).max);
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
@@ -121,7 +121,7 @@ contract AssetLtvCeilingTest is SetupTest {
         _clearCeiling(mockCollateralERC20);
         vm.prank(lender);
         vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
-        OfferCreateFacet(address(diamond)).createOffer(_params(1500 ether));
+        OfferCreateFacet(address(diamond)).createOffer(_params(1500 ether), type(uint64).max);
     }
 
     // ─── A set ceiling ───────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ contract AssetLtvCeilingTest is SetupTest {
         RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 4000, 300);
         vm.prank(lender);
         vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
-        OfferCreateFacet(address(diamond)).createOffer(_params(2000 ether));
+        OfferCreateFacet(address(diamond)).createOffer(_params(2000 ether), type(uint64).max);
     }
 
     /// @dev The setter takes no reserve factor any more (retired, #2696), and

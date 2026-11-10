@@ -98,7 +98,8 @@ contract OfferCollateralLockTest is SetupTest {
     {
         vm.prank(borrower);
         return OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerParams(collateralAmount, collateralAmountMax)
+            _borrowerParams(collateralAmount, collateralAmountMax),
+            type(uint64).max
         );
     }
 
@@ -198,7 +199,7 @@ contract OfferCollateralLockTest is SetupTest {
         // Shrink the collateral ceiling 5000 → 3000; the 2000 delta refunds
         // — only possible because the lock decrements BEFORE the refund.
         vm.prank(borrower);
-        OfferMutateFacet(address(diamond)).setOfferCollateral(id, 3000 ether, 3000 ether);
+        OfferMutateFacet(address(diamond)).setOfferCollateral(id, 3000 ether, 3000 ether, type(uint64).max);
 
         assertEq(_collateralLock(), 3000 ether, "lock follows the new ceiling");
         assertEq(
@@ -214,7 +215,7 @@ contract OfferCollateralLockTest is SetupTest {
 
         // Grow the collateral ceiling 5000 → 8000: 3000 more pulled + locked.
         vm.prank(borrower);
-        OfferMutateFacet(address(diamond)).setOfferCollateral(id, 8000 ether, 8000 ether);
+        OfferMutateFacet(address(diamond)).setOfferCollateral(id, 8000 ether, 8000 ether, type(uint64).max);
 
         assertEq(_collateralLock(), 8000 ether, "lock grows with the ceiling");
         assertEq(

@@ -162,7 +162,7 @@ contract BaseSepoliaPartialFlows is Script {
         console.log("=== SCENARIO A: Open Lender Offer ===");
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerA = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
+        uint256 offerA = OfferCreateFacet(diamond).createOffer(_lenderOfferParams(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Open lender offer id:", offerA);
         console.log("Action: have a borrower accept this from the UI.");
@@ -174,7 +174,7 @@ contract BaseSepoliaPartialFlows is Script {
         console.log("=== SCENARIO B: Open Borrower Offer ===");
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 offerB = OfferCreateFacet(diamond).createOffer(_borrowerOfferParams());
+        uint256 offerB = OfferCreateFacet(diamond).createOffer(_borrowerOfferParams(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Open borrower offer id:", offerB);
         console.log("Action: have a lender accept this from the UI.");
@@ -188,7 +188,7 @@ contract BaseSepoliaPartialFlows is Script {
         console.log("=== SCENARIO C: Active Liquid Loan ===");
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerC = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
+        uint256 offerC = OfferCreateFacet(diamond).createOffer(_lenderOfferParams(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _tC =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerC, true, 0);
@@ -209,7 +209,7 @@ contract BaseSepoliaPartialFlows is Script {
         console.log("=== SCENARIO D: Repaid-But-Unclaimed Loan ===");
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerD = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
+        uint256 offerD = OfferCreateFacet(diamond).createOffer(_lenderOfferParams(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _tD =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerD, true, 0);
@@ -263,7 +263,8 @@ contract BaseSepoliaPartialFlows is Script {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         vm.stopBroadcast();
         // Lender accepts. Post-Option-A `_acceptOffer` pulls the
@@ -321,7 +322,8 @@ contract BaseSepoliaPartialFlows is Script {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         vm.stopBroadcast();
         uint256 totalPrepay = DAILY_FEE * 7 + (DAILY_FEE * 7 * 500) / 10000; // 5% buffer

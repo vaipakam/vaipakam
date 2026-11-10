@@ -331,7 +331,8 @@ contract Scenario4_IlliquidCollateral is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Step 2: Borrower accepts with illiquid consent = true

@@ -43,14 +43,16 @@ function batchAbi(create: Abi): Abi {
   return out as Abi;
 }
 
-/** The post as one contract call: `createOffer(params)` alone, or, with a
- *  guard, the batch arming it first. The dry run and the write both take
- *  this, so the review is the protocol's verdict on what is sent. */
-export function postCall(create: Abi, params: unknown, guardBps: number | null) {
-  if (guardBps === null) return { abi: create, functionName: 'createOffer', args: [params] as const };
+/** The post as one contract call: `createOffer(params, validUntil)` alone,
+ *  or, with a guard, the batch arming it first. The dry run and the write
+ *  both take this, so the review is the protocol's verdict on what is sent.
+ *  `validUntil` is the transaction deadline (#3412), read from the chain's
+ *  clock right before the call is built (`../tx/deadline`). */
+export function postCall(create: Abi, params: unknown, guardBps: number | null, validUntil: bigint) {
+  if (guardBps === null) return { abi: create, functionName: 'createOffer', args: [params, validUntil] as const };
   const calls = [
     { callData: encodeFunctionData({ abi: PRICE_GUARD, functionName: 'armOfferPriceGuard', args: [guardBps] }), allowFailure: false },
-    { callData: encodeFunctionData({ abi: create, functionName: 'createOffer', args: [params] }), allowFailure: false },
+    { callData: encodeFunctionData({ abi: create, functionName: 'createOffer', args: [params, validUntil] }), allowFailure: false },
   ];
   return { abi: batchAbi(create), functionName: 'multicall', args: [calls] as const };
 }

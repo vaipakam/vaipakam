@@ -79,7 +79,7 @@ contract OfferFillModeTest is SetupTest {
 
     function _create(LibVaipakam.CreateOfferParams memory p) internal returns (uint256) {
         vm.prank(lender);
-        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;
     }
@@ -116,7 +116,7 @@ contract OfferFillModeTest is SetupTest {
             useFullTermInterest: false
         });
         vm.prank(borrower);
-        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;
     }
@@ -136,7 +136,8 @@ contract OfferFillModeTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.AonRequiresSingleValueAmount.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1500 ether, 0)
+            _lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1500 ether, 0),
+            type(uint64).max
         );
     }
 
@@ -164,7 +165,8 @@ contract OfferFillModeTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(OfferCreateFacet.IocRequiresExpiry.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _lenderParams(LibVaipakam.FillMode.Ioc, 1000 ether, 1000 ether, 0)
+            _lenderParams(LibVaipakam.FillMode.Ioc, 1000 ether, 1000 ether, 0),
+            type(uint64).max
         );
     }
 

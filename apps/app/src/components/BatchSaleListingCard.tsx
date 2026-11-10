@@ -41,6 +41,7 @@ import {
   type SaleListingTerms,
 } from '../data/saleListingPlan';
 import { readBackListings, type SaleBatchOutcome } from '../data/batchSale';
+import { readTxValidUntil } from '../contracts/txDeadline';
 import { rememberLoanSaleOffer } from '../data/loanSalePending';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { ConfirmReceipt } from './ConfirmReceipt';
@@ -201,6 +202,9 @@ export function BatchSaleListingCard({
         const go = late.filter((p): p is ReadyPlan => p.kind === 'ready');
         if (go.length === 0) continue;
         setStage({ kind: 'sending', step: 'submitting' });
+        // The deadline every listing in this send carries (#3412), read
+        // from chain time immediately before the send is built.
+        const validUntil = await readTxValidUntil(ctx.publicClient);
         let submitted: `0x${string}` | null = null;
         let mined: Mined;
         try {
@@ -209,8 +213,8 @@ export function BatchSaleListingCard({
             [
               encodeBestEffort(
                 go.map((p) => ({
-                  functionName: 'createLoanSaleOfferBound',
-                  args: boundListingArgs(p.loanId, terms, p.bounds),
+                  functionName: 'createLoanSaleOffer',
+                  args: boundListingArgs(p.loanId, terms, p.bounds, validUntil),
                 })),
               ),
             ],
@@ -221,7 +225,7 @@ export function BatchSaleListingCard({
           mined = await settleFailedSend(ctx.publicClient, submitted, err);
         }
         sendPending = 'pending' in mined;
-        const read = await readBackListings(ctx, go, terms, mined);
+        const read = await readBackListings(ctx, go, terms, mined, validUntil);
         for (const o of read) {
           // The loan page finds its listing's id for cancel from this.
           if (o.kind === 'listed') rememberLoanSaleOffer(walletChain.chainId, o.loanId, o.offerId);

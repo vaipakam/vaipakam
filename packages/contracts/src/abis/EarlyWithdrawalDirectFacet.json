@@ -12,24 +12,6 @@
         "name": "buyOfferId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sellLoanViaBuyOfferBound",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "buyOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
         "name": "reviewedMinSellerNet",
@@ -42,7 +24,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "deadline",
+        "name": "validUntil",
         "type": "uint64",
         "internalType": "uint64"
       }

@@ -526,7 +526,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
             useFullTermInterest: false
         });
         vm.prank(lender_);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower_, borrowerPk_, offerId);
         _plSetRisk(loanId, PL_HF_HEALTHY, PL_LTV_HEALTHY);
         assertEq(uint8(_plStatus(loanId)), uint8(LibVaipakam.LoanStatus.Active), "fixture-live: the loan opened Active");

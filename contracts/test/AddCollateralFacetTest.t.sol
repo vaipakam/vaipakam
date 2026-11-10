@@ -362,7 +362,8 @@ contract AddCollateralFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId
@@ -401,7 +402,8 @@ contract AddCollateralFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId

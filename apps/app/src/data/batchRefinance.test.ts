@@ -22,6 +22,7 @@ import { LoanStatus } from '../lib/types';
 const reads = vi.hoisted(() => ({
   status: {} as Record<number, number | 'unreadable'>,
   simulate: null as unknown,
+  simulatedArgs: [] as unknown[][],
   blocks: [] as (bigint | undefined)[],
 }));
 
@@ -50,10 +51,13 @@ import type { RefinanceCtx, RefinanceRequestReady } from './refinancePlan';
 const DIAMOND = '0x000000000000000000000000000000000000d1a0' as const;
 const OTHER = '0x000000000000000000000000000000000000beef' as const;
 const HOLDER = '0x00000000000000000000000000000000000000b0' as const;
+/** The deadline a send's requests carry (#3412). */
+const VALID_UNTIL = 1_800n;
 const TOKEN = '0x00000000000000000000000000000000000000a1' as const;
 const ctx: RefinanceCtx = {
   publicClient: {
-    simulateContract: async () => {
+    simulateContract: async (call: { args: unknown[] }) => {
+      reads.simulatedArgs.push(call.args);
       if (reads.simulate) throw reads.simulate;
       return { result: undefined };
     },
@@ -118,6 +122,7 @@ function createdLog(
 beforeEach(() => {
   reads.status = {};
   reads.simulate = null;
+  reads.simulatedArgs = [];
   reads.blocks = [];
 });
 
@@ -185,7 +190,7 @@ describe('readBackRequests', () => {
     const out = await readBackRequests(ctx, [plan(4), plan(5), plan(6)], {
       block: 9n,
       logs: [createdLog(DIAMOND, 40n, HOLDER, 4n)],
-    });
+    }, VALID_UNTIL);
     expect(out[0]).toEqual({ loanId: 4, kind: 'posted', offerId: '40' });
     expect(out[1]).toEqual({ loanId: 5, kind: 'changed' });
     expect(out[2]).toMatchObject({ loanId: 6, kind: 'open' });
@@ -194,13 +199,15 @@ describe('readBackRequests', () => {
 
   it('says a skipped loan can take its request now when the request would pass', async () => {
     reads.status = { 6: LoanStatus.Active };
-    const out = await readBackRequests(ctx, [plan(6)], { block: 9n, logs: [] });
+    const out = await readBackRequests(ctx, [plan(6)], { block: 9n, logs: [] }, VALID_UNTIL);
     expect(out).toEqual([{ loanId: 6, kind: 'open', reason: copy.batchRefinance.skippedRetry }]);
+    // The read-back asks about the call the send made, deadline included (#3412).
+    expect(reads.simulatedArgs[0]?.at(-1)).toBe(VALID_UNTIL);
   });
 
   it('is pending for every loan behind a pending send, without reading its status', async () => {
     reads.status = { 6: LoanStatus.Active, 7: LoanStatus.Defaulted };
-    const out = await readBackRequests(ctx, [plan(6), plan(7)], { pending: true });
+    const out = await readBackRequests(ctx, [plan(6), plan(7)], { pending: true }, VALID_UNTIL);
     expect(out).toEqual([
       { loanId: 6, kind: 'pending' },
       { loanId: 7, kind: 'pending' },
@@ -212,7 +219,7 @@ describe('readBackRequests', () => {
     reads.status = { 6: LoanStatus.Active, 7: 'unreadable', 8: LoanStatus.Repaid };
     const out = await readBackRequests(ctx, [plan(6), plan(7), plan(8)], {
       failure: 'rejected',
-    });
+    }, VALID_UNTIL);
     expect(out).toEqual([
       { loanId: 6, kind: 'open', reason: 'rejected' },
       { loanId: 7, kind: 'unknown' },
@@ -237,7 +244,7 @@ describe('noRequestPosted', () => {
 
 describe('packing', () => {
   it('keeps each loan’s guardrail write right before its request', () => {
-    expect(refinanceSendCalls([plan(1, { caps: true }), plan(2)]).map((c) => c.functionName)).toEqual(
+    expect(refinanceSendCalls([plan(1, { caps: true }), plan(2)], VALID_UNTIL).map((c) => c.functionName)).toEqual(
       ['setAutoRefinanceCaps', 'createOffer', 'createOffer'],
     );
   });

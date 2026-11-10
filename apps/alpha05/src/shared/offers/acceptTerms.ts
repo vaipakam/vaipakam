@@ -11,6 +11,7 @@
  * test reads `LibAcceptTerms.sol` and refuses any drift.
  */
 import { encodeAbiParameters, keccak256 } from 'viem';
+import { TX_DEADLINE_SECONDS } from '@vaipakam/lib/txDeadline';
 
 type Hex = `0x${string}`;
 
@@ -226,5 +227,7 @@ export function freshNonce(random: (bytes: Uint8Array<ArrayBuffer>) => Uint8Arra
   return bytes.reduce((acc, b) => (acc << 8n) | BigInt(b), 0n);
 }
 
-/** How long a signed acceptance stays valid, counted from the chain's clock. */
-export const ACCEPT_DEADLINE_SECONDS = 30 * 60;
+/** How long a signed acceptance stays valid, counted from the chain's clock:
+ *  the one transaction-deadline window (`@vaipakam/lib/txDeadline`, #3412), so
+ *  an acceptance never carries a window of its own. */
+export const ACCEPT_DEADLINE_SECONDS = TX_DEADLINE_SECONDS;

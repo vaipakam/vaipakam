@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
+import { ABIS, NO_DRIFT_SALE_BOUNDS, STATUS, claimAndExpect, txValidUntil, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
@@ -140,18 +140,18 @@ export async function run() {
   // ---------------------------------------------------- lender loan sale
   {
     const { loanId } = await openLoan({ lender, borrower });
-    const ok = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, BigInt(3 * 86_400)], lender.address);
+    const ok = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, BigInt(3 * 86_400), ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()], lender.address);
     check('A4.8', 'the lender can list an open position for sale', ok.ok, ok.ok ? `loanId=${loanId}` : ok.name);
 
-    const perpetual = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, 0n], lender.address);
+    const perpetual = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, 0n, ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()], lender.address);
     expectRefusal('A4.9', 'a zero listing window is refused — every sale listing carries a finite expiry', perpetual, 'SaleListingWindowInvalid');
 
-    const impostor = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, BigInt(3 * 86_400)], outsider.address);
+    const impostor = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, BigInt(3 * 86_400), ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()], outsider.address);
     expectRefusal('A4.10', 'a third party cannot list someone else\'s position', impostor, 'KeeperAccessRequired');
 
     if (ok.ok) {
       const beforeList = await snapshot(tokens, holders);
-      const receipt = await tx(lender, { address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer', args: [loanId, 600n, true, BigInt(3 * 86_400)] }, 'createLoanSaleOffer');
+      const receipt = await tx(lender, { address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer', args: [loanId, 600n, true, BigInt(3 * 86_400), ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()] }, 'createLoanSaleOffer');
       const afterList = await snapshot(tokens, holders);
       // A listing is an offer for the lender's POSITION, not a transfer: it
       // escrows nothing (the buyer pays at the fill).

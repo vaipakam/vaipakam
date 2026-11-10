@@ -29,11 +29,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, maxUint256 } from 'viem';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { PREVIEW_VALID_UNTIL, readTxValidUntil } from '../contracts/txDeadline';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -58,6 +59,20 @@ import {
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
+
+/**
+ * The seller-economics bounds this direct sale sends (#3412 merged the bound
+ * and unbound entries into one). This flow holds no chain quote of those
+ * figures (`RiskPreviewFacet.quoteSellerBounds`) yet, so it sends the
+ * NO-BOUND values: the chain's net-floor and held-ceiling checks pass
+ * whatever they are. What protects the seller here is unchanged: the live
+ * re-check in `submit` (the payout may not fall more than two days' interest
+ * below the reviewed figure) and the transaction deadline, which bounds how
+ * long after that re-check the sale can land. Binding the sale to a chain
+ * quote, as the listing route does, is a follow-up.
+ */
+const UNBOUND_MIN_SELLER_NET = 0n;
+const UNBOUND_MAX_HELD = maxUint256;
 import type { TokenMeta } from '../contracts/erc20';
 
 
@@ -163,7 +178,16 @@ export function EarlyExitFlow({
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
         functionName: 'sellLoanViaBuyOffer',
-        args: [BigInt(row.loanId), BigInt(selected.offerId)],
+        // An advisory dry run, never sent: the bounds are the ones the send
+        // carries (see `submit`), and the deadline is the send's own, read
+        // from chain time at submit.
+        args: [
+          BigInt(row.loanId),
+          BigInt(selected.offerId),
+          UNBOUND_MIN_SELLER_NET,
+          UNBOUND_MAX_HELD,
+          PREVIEW_VALID_UNTIL,
+        ],
       }),
       value: 0n,
     };
@@ -293,9 +317,15 @@ export function EarlyExitFlow({
       if (liveEcon.toSeller + twoDaysInterest < reviewedToSeller) {
         throw new Error(copy.match.termsChanged);
       }
+      // The transaction deadline (#3412), read from chain time at the send:
+      // a sale that waits in a queue past it is refused, never filled late.
+      const validUntil = await readTxValidUntil(publicClient);
       await write('sellLoanViaBuyOffer', [
         BigInt(row.loanId),
         BigInt(selected.offerId),
+        UNBOUND_MIN_SELLER_NET,
+        UNBOUND_MAX_HELD,
+        validUntil,
       ]);
       onSold();
       setSelectedId(null);

@@ -75,7 +75,7 @@ contract PositiveFlowsKeeperAutomation is PositiveFlowsBase {
         // Step 1: take a fresh loan.
         vm.startBroadcast(bobKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t5 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), offerId, true, 0);
         bytes memory _sig5 = LibAcceptTestSigner.sign(diamond, _t5, aliceKey);

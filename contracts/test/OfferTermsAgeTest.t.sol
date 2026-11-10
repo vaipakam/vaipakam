@@ -120,14 +120,16 @@ contract OfferTermsAgeTest is SetupTest {
     function _createLender(uint64 expiresAt) internal returns (uint256) {
         vm.prank(lender);
         return OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderParams(expiresAt)
+            _buildLenderParams(expiresAt),
+            type(uint64).max
         );
     }
 
     function _createBorrower(uint64 expiresAt) internal returns (uint256) {
         vm.prank(borrower);
         return OfferCreateFacet(address(diamond)).createOffer(
-            _buildBorrowerParams(expiresAt)
+            _buildBorrowerParams(expiresAt),
+            type(uint64).max
         );
     }
 
@@ -194,7 +196,7 @@ contract OfferTermsAgeTest is SetupTest {
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         uint256 editedAt = vm.getBlockTimestamp();
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferRate(id, 600, 600);
+        OfferMutateFacet(address(diamond)).setOfferRate(id, 600, 600, type(uint64).max);
         assertEq(
             OfferCancelFacet(address(diamond)).getOffer(id).termsSetAt,
             uint64(editedAt),

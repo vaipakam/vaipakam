@@ -32,6 +32,7 @@ import {
   usePermit2Signing,
 } from '../../contracts/usePermit2Signing';
 import { useTxSimulation, type TxSimInput } from '../../contracts/useTxSimulation';
+import { PREVIEW_VALID_UNTIL, readTxValidUntil } from '../../contracts/txDeadline';
 import { SimulationPreview } from '../SimulationPreview';
 import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import { CollateralPrecheck } from '../CollateralPrecheck';
@@ -490,7 +491,9 @@ export function OrderTicket({
         data: encodeFunctionData({
           abi: DIAMOND_ABI_VIEM,
           functionName: 'createOffer',
-          args: [payload],
+          // Advisory dry run, never sent: the send carries the deadline
+          // read from chain time at submit (#3412).
+          args: [payload, PREVIEW_VALID_UNTIL],
         }),
         value: 0n,
         allowAllowanceRevert: true,
@@ -522,7 +525,9 @@ export function OrderTicket({
         data: encodeFunctionData({
           abi: DIAMOND_ABI_VIEM,
           functionName: 'createOffer',
-          args: [payload],
+          // Advisory dry run, never sent: the send carries the deadline
+          // read from chain time at submit (#3412).
+          args: [payload, PREVIEW_VALID_UNTIL],
         }),
         value: 0n,
         allowAllowanceRevert: true,
@@ -741,11 +746,16 @@ export function OrderTicket({
             // — a lapsed deadline is not a Permit2 failure and must
             // not trip the session breaker).
             await assertExpiryStillValidLive(publicClient, payload.expiresAt);
+            // The transaction deadline (#3412), read from chain time at
+            // the send — outside the catch too: a failed read is not a
+            // Permit2 failure.
+            const validUntil = await readTxValidUntil(publicClient);
             try {
               const { hash } = await write('createOfferWithPermit', [
                 payload,
                 signed.permit,
                 signed.signature,
+                validUntil,
               ]);
               afterPost(hash);
               return;
@@ -767,7 +777,9 @@ export function OrderTicket({
       // Last look AFTER the (possible) approval mined: the deadline
       // may have lapsed while the approval sat in the wallet/mempool.
       await assertExpiryStillValidLive(publicClient, payload.expiresAt);
-      const { hash } = await write('createOffer', [payload]);
+      // The transaction deadline (#3412), read from chain time at the send.
+      const validUntil = await readTxValidUntil(publicClient);
+      const { hash } = await write('createOffer', [payload, validUntil]);
       afterPost(hash);
     } catch (err) {
       setError(captureTxError(err));

@@ -97,7 +97,8 @@ contract BaseSepoliaSellerClaim is Script {
         ERC20Mock(mUsdc).mint(lender, principal);
         ERC20Mock(mUsdc).approve(diamond, principal);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(
-            _lenderOffer(mUsdc, principal, tLiq, collateral, rateBps)
+            _lenderOffer(mUsdc, principal, tLiq, collateral, rateBps),
+            type(uint64).max
         );
         vm.stopBroadcast();
 
@@ -130,7 +131,7 @@ contract BaseSepoliaSellerClaim is Script {
         vm.startBroadcast(buyerKey);
         ERC20Mock(loan.principalAsset).mint(buyer, loan.principal);
         ERC20Mock(loan.principalAsset).approve(diamond, loan.principal);
-        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_buyOffer(loan));
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_buyOffer(loan), type(uint64).max);
         vm.stopBroadcast();
         // The offer-age rule (#3412): steps a simulation only; under
         // --broadcast it refuses before sending anything (#3502).
@@ -141,7 +142,7 @@ contract BaseSepoliaSellerClaim is Script {
             RiskPreviewFacet(diamond).quoteSellerBounds(loanId, loan.interestRateBps, deadline);
         console.log("Quoted bounds (min seller net, max held):", minSellerNet, maxHeld);
         vm.startBroadcast(lenderKey);
-        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(
             loanId, buyOfferId, minSellerNet, maxHeld, deadline
         );
         vm.stopBroadcast();

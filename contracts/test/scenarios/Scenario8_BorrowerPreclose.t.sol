@@ -345,7 +345,8 @@ contract Scenario8_BorrowerPreclose is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
@@ -389,7 +390,8 @@ contract Scenario8_BorrowerPreclose is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Record balances before transfer
@@ -415,7 +417,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Original borrower transfers obligation
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, borrowerOfferId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, borrowerOfferId, type(uint64).max);
 
         // Verify: loan.borrower is now newBorrower
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -465,7 +467,8 @@ contract Scenario8_BorrowerPreclose is Test {
 
         vm.prank(borrower);
         uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
         assertEq(newOfferId, expectedNewOfferId, "Returned offerId should match expected");
 

@@ -85,7 +85,7 @@ contract RefinanceIlliquidLiveForkTest is Test {
         // 1. The loan to refinance: illiquid collateral, both parties consenting.
         _fundWallet(borrower, collateral, COLLATERAL);
         vm.prank(borrower);
-        uint256 openingRequest = OfferCreateFacet(diamond).createOffer(_request(0));
+        uint256 openingRequest = OfferCreateFacet(diamond).createOffer(_request(0), type(uint64).max);
         _fundLender(lenderA, PRINCIPAL * 4);
         uint256 oldLoanId = LibAcceptTestSigner.signAndAccept(diamond, lenderA, lenderAPk, openingRequest);
         LibVaipakam.Loan memory oldLoan = LoanFacet(diamond).getLoanDetails(oldLoanId);
@@ -105,7 +105,7 @@ contract RefinanceIlliquidLiveForkTest is Test {
             oldLoanId, true, uint16(RATE_BPS), uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
-        uint256 taggedRequest = OfferCreateFacet(diamond).createOffer(_request(oldLoanId));
+        uint256 taggedRequest = OfferCreateFacet(diamond).createOffer(_request(oldLoanId), type(uint64).max);
         _fundWallet(borrower, weth, PRINCIPAL * 2);
         RefinancePayoffPermitHelper.attachSignedIfRouted(
             diamond, borrowerPk, weth, oldLoanId, taggedRequest, uint256(keccak256("forkIlliquidPayoff"))

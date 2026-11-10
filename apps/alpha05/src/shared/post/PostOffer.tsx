@@ -19,6 +19,7 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
+import { readValidUntil } from '../tx/deadline';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -224,7 +225,9 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       // 2. The dry run with the approval in place: the protocol's verdict
       //    on the whole request, collateral pull included.
       //    With a guard, the post is the batch that arms it (guardPost).
-      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps);
+      //    The deadline (#3412) is read from the chain's clock now, so the
+      //    dry run and the write carry the same one.
+      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps, await readValidUntil(own));
       const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       if (dry.kind === 'reverted') return stop(format(k.dryRunRefused, { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));

@@ -98,7 +98,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
 

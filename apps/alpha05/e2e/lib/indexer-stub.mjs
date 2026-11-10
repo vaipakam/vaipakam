@@ -26,7 +26,17 @@
 //    book: every offer the chain's `OfferCreated` logs name, read back from
 //    the Diamond and filed `active` while the protocol reports it open or
 //    lazily expired (as the indexer files it, expiry being lazy on-chain),
-//    newest first, paged by id. Also refused while the posture is `down`;
+//    newest first, paged by id. The rate desk's market scope is honoured as
+//    the indexer honours it (`lendingAsset`, `collateralAsset`,
+//    `durationDays`, and the opt-in `excludeExpired`, `excludeSaleVehicles`
+//    and `excludeOffsetVehicles`). Also refused while the posture is `down`;
+//  - the indexer's `GET /offers/markets?chainId`, the rate desk's market
+//    list: the open token-against-token offers above, unexpired and without
+//    the sale and early-close vehicles, grouped by both tokens and the term,
+//    with each side's count and best rate (a lender's lowest rate, a
+//    borrower's highest ceiling), deepest market first. The fixture posts
+//    no signed orders, so the stand-in has none to count. Refused while the
+//    posture is `down`;
 //  - the indexer's `GET /loans/recent?chainId&limit&lendingAsset&
 //    collateralAsset&durationDays&excludeSaleVehicles`, the recent loans the
 //    rate warning compares against: every loan the chain's `LoanInitiated`
@@ -137,19 +147,75 @@ async function offerRow(id) {
   };
 }
 
-/** `/offers/active`: the open offers, newest first, `limit` per page. */
+/** Every offer id the chain's `OfferCreated` logs name, newest first. */
+async function offerIds() {
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [OFFER_CREATED] }]);
+  return [...new Set(logs.map((l) => BigInt(l.topics[1])))].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+}
+
+/** The indexer's expiry test: 0 never expires; wall-clock time, as the
+ *  Worker reads it. */
+const unexpired = (row) => row.expiresAt === 0 || row.expiresAt > Math.floor(Date.now() / 1000);
+
+/** `/offers/active`: the open offers, newest first, `limit` per page, in
+ *  the market scope and with the exclusions asked for. */
 async function activeOffers(url) {
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
   const before = url.searchParams.get('before');
-  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [OFFER_CREATED] }]);
-  const ids = [...new Set(logs.map((l) => BigInt(l.topics[1])))].filter((id) => before === null || id < BigInt(before)).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  const lending = url.searchParams.get('lendingAsset')?.toLowerCase() ?? null;
+  const collateral = url.searchParams.get('collateralAsset')?.toLowerCase() ?? null;
+  const days = url.searchParams.get('durationDays');
+  const keep = (row) =>
+    (lending === null || row.lendingAsset === lending) &&
+    (collateral === null || row.collateralAsset === collateral) &&
+    (days === null || row.durationDays === Number(days)) &&
+    (url.searchParams.get('excludeExpired') !== '1' || unexpired(row)) &&
+    (url.searchParams.get('excludeSaleVehicles') !== '1' || !row.isSaleVehicle) &&
+    (url.searchParams.get('excludeOffsetVehicles') !== '1' || !row.isOffsetVehicle);
   const offers = [];
-  for (const id of ids) {
+  for (const id of await offerIds()) {
     if (offers.length === limit) break;
+    if (before !== null && id >= BigInt(before)) continue;
     const row = await offerRow(id);
-    if (row !== null) offers.push(row);
+    if (row !== null && keep(row)) offers.push(row);
   }
   return { chainId: CHAIN_ID, offers, nextBefore: offers.length === limit ? offers[offers.length - 1].offerId : null };
+}
+
+/** `/offers/markets`: the open token-against-token offers grouped into
+ *  markets, deepest first, ties broken on the market's own terms. */
+async function offerMarkets() {
+  const by = new Map();
+  for (const id of await offerIds()) {
+    const row = await offerRow(id);
+    if (row === null || row.assetType !== 0 || row.collateralAssetType !== 0 || row.isSaleVehicle || row.isOffsetVehicle || !unexpired(row)) continue;
+    const key = `${row.lendingAsset}|${row.collateralAsset}|${row.durationDays}`;
+    const m = by.get(key) ?? {
+      lendingAsset: row.lendingAsset,
+      collateralAsset: row.collateralAsset,
+      durationDays: row.durationDays,
+      lenderOffers: 0,
+      borrowerOffers: 0,
+      bestAskBps: null,
+      bestBidBps: null,
+    };
+    if (row.offerType === 0) {
+      m.lenderOffers += 1;
+      m.bestAskBps = m.bestAskBps === null ? row.interestRateBps : Math.min(m.bestAskBps, row.interestRateBps);
+    } else {
+      m.borrowerOffers += 1;
+      m.bestBidBps = m.bestBidBps === null ? row.interestRateBpsMax : Math.max(m.bestBidBps, row.interestRateBpsMax);
+    }
+    by.set(key, m);
+  }
+  const markets = [...by.values()].sort(
+    (a, b) =>
+      b.lenderOffers + b.borrowerOffers - (a.lenderOffers + a.borrowerOffers) ||
+      a.lendingAsset.localeCompare(b.lendingAsset) ||
+      a.collateralAsset.localeCompare(b.collateralAsset) ||
+      a.durationDays - b.durationDays,
+  );
+  return { chainId: CHAIN_ID, markets, truncated: false };
 }
 
 /** `/loans/recent` in the indexer's scoped shape: newest first, filtered to
@@ -402,6 +468,7 @@ const server = http.createServer(async (req, res) => {
           '/health/ingest',
           '/activity (seller and reserve kinds)',
           '/offers/active',
+          '/offers/markets',
           '/loans/recent',
           '/notifications/:address',
           '/ws/chain/:chainId (503)',
@@ -650,6 +717,14 @@ const server = http.createServer(async (req, res) => {
       }
       const out = await actorActivity(url);
       json(res, out.status, out.body);
+      return;
+    }
+    if (url.pathname === '/offers/markets' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      json(res, 200, await offerMarkets());
       return;
     }
     if (url.pathname === '/offers/active' && req.method === 'GET') {

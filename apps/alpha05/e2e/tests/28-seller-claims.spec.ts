@@ -10,12 +10,12 @@
  * card reports what the transaction's own logs show. Runs on the desktop and
  * the phone project; the chain is reverted after each test.
  */
-import { erc20Abi, parseEther } from 'viem';
+import { erc20Abi, maxUint256, parseEther } from 'viem';
 import { openLoan, postLenderOffer, repayInFull, waitOutTermsAge, WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
-import { scenario } from '../lib/chain';
+import { scenario, txDeadline } from '../lib/chain';
 import { setIndexPosture } from '../lib/stub';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -38,7 +38,11 @@ async function soldLoan(sc: ReturnType<typeof scenario>): Promise<{ loanId: bigi
   // #3443 — the buy offer is filled only once its terms have stood the minimum age.
   const { termsSetAt } = await sc.read<{ termsSetAt: bigint }>('getOffer', [buyOfferId]);
   await waitOutTermsAge(sc, termsSetAt);
-  await sc.diamondWrite('lender', 'sellLoanViaBuyOffer', [loanId, buyOfferId]);
+  // #3412 — the one direct sale carries the seller's reviewed bounds and a
+  // deadline. This setup has no review to bind (the spec is about the claim
+  // the sale leaves), so it passes the no-drift-check bounds: no floor on the
+  // net, no ceiling on the held balance.
+  await sc.diamondWrite('lender', 'sellLoanViaBuyOffer', [loanId, buyOfferId, 0n, maxUint256, await txDeadline(sc)]);
   const [, , , claims] = await sc.read<Ledger>('getInterestLedger', [loanId]);
   const mine = claims.find((c) => c.seller.toLowerCase() === sc.address('lender').toLowerCase());
   expect(mine).toBeDefined();

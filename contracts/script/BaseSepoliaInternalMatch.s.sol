@@ -609,7 +609,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         ERC20Mock(lendAsset).mint(vm.addr(lenderKey), principal);
         ERC20Mock(lendAsset).approve(diamond, principal);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(
-            _offerParams(lendAsset, principal, collAsset, collateral, rateBps)
+            _offerParams(lendAsset, principal, collAsset, collateral, rateBps),
+            type(uint64).max
         );
         vm.stopBroadcast();
 

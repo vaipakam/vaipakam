@@ -70,7 +70,8 @@ contract OfferBookBoundsTest is SetupTest {
     function _lend(uint256 amount) internal returns (uint256 offerId) {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, mockERC20, amount, amount * 2)
+            _params(LibVaipakam.OfferType.Lender, mockERC20, amount, amount * 2),
+            type(uint64).max
         );
     }
 
@@ -101,7 +102,8 @@ contract OfferBookBoundsTest is SetupTest {
         );
         vm.prank(lender);
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, mockERC20, 1, 10)
+            _params(LibVaipakam.OfferType.Lender, mockERC20, 1, 10),
+            type(uint64).max
         );
     }
 
@@ -110,7 +112,8 @@ contract OfferBookBoundsTest is SetupTest {
     function test_floorNeverRefusesAnIlliquidPrincipal() public {
         vm.prank(borrower);
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, mockIlliquidERC20, 1 ether, 100 ether)
+            _params(LibVaipakam.OfferType.Borrower, mockIlliquidERC20, 1 ether, 100 ether),
+            type(uint64).max
         );
         assertGt(id, 0);
     }
@@ -165,7 +168,7 @@ contract OfferBookBoundsTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibOfferAdmission.OfferBelowMinimumValue.selector, 4e18, 10e18)
         );
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 4 ether, 4 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 4 ether, 4 ether, type(uint64).max);
     }
 
     // ── the open-offer cap ──────────────────────────────────────────────────
@@ -183,7 +186,8 @@ contract OfferBookBoundsTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(LibOfferAdmission.TooManyOpenOffers.selector, 5, 5));
         OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, mockERC20, 20 ether, 40 ether)
+            _params(LibVaipakam.OfferType.Lender, mockERC20, 20 ether, 40 ether),
+            type(uint64).max
         );
 
         // Past the cancel cooldown a fresh offer carries.
@@ -203,7 +207,8 @@ contract OfferBookBoundsTest is SetupTest {
         for (uint256 i; i < 5; ++i) _lend(20 ether);
         vm.prank(borrower);
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, mockERC20, 20 ether, 100 ether)
+            _params(LibVaipakam.OfferType.Borrower, mockERC20, 20 ether, 100 ether),
+            type(uint64).max
         );
         assertGt(id, 0);
         (, , uint256 open) = _book().getOfferBookBounds(borrower);

@@ -263,7 +263,7 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         // Step 4: take a loan.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t9 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
         bytes memory _sig9 = LibAcceptTestSigner.sign(diamond, _t9, borrowerKey);
