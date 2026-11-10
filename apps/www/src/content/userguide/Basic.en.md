@@ -1542,3 +1542,9 @@ Where your wallet has already approved Permit2 for VPFI, a shared contract many 
 ### Rate Desk: Markets and Rate Ladders
 
 The Rate desk, under Advanced in the menu, shows the open token loan offers on this network grouped into markets: one token lent against one token as collateral, for one term. Each market shows how many lenders' offers and borrowers' requests it holds and the best rate on each side. Choosing a market shows its rate ladder: lenders' offers from the lowest rate up, and borrowers' requests from the highest rate down. Each rate shows how many offers stand at it and their open amounts added up. That total is depth, not one amount you can take: every offer is still taken on its own, with its own collateral and terms. The middle rate sits halfway between the best two rates; the app works it out, the protocol does not report it. The desk reads the protocol's index, which can lag the chain by a few minutes, and an offer's own page checks it on the chain before you take it. Signed orders are counted in the markets but not listed on the ladder yet. In Basic mode a card on top says what the page is and links Borrow and Lend, which do the same job step by step.
+
+<a id="offer-terms-wait"></a>
+
+### When an Offer Was Just Posted or Changed
+
+An offer or request can be taken only once its terms have stood a few seconds since it was posted or last changed. If you open one sooner, the review says how long the terms must stand and about how long is left, and shows no step to sign. You do not need to do anything: the review checks again on its own and lets you continue once the time is up. Nothing is sent while you wait.

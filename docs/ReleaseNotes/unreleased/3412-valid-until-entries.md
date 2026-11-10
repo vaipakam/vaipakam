@@ -12,4 +12,6 @@ Rescue actions are unchanged and take no deadline: repaying, a partial repayment
 
 The apps set every deadline 30 minutes past the chain's current time, the same window acceptances already use, and show the two refusals in plain words.
 
+The app now also sends every protocol action with a gas limit 30% above the node's estimate, the margin the keeper, the test harness and the deploy scripts already use. An estimate is the least gas that works at the latest block's time, and an action mines a moment later; some price reads cost a little more by then, and an action sent at the bare estimate could run out of gas and fail with no reason. Unused gas is not charged.
+
 > Caveat: this changes the call shape of thirteen actions, so it reaches the testnets at the next fresh deploy. The curated facet refresh refuses a Diamond built before it.

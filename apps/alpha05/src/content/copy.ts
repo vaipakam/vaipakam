@@ -3119,6 +3119,9 @@ export const copy = {
     blockCreatorGate: A(
       "The borrower's own risk setting no longer covers this pair, so this request cannot be funded until the borrower changes it. Nothing in your account would change that.",
     ),
+    termsWait: A(
+      'This request was posted or changed moments ago. A request can be funded only once its terms have stood {{min}}, and at the last block read {{left}} was left. This review reads the chain again each block, and this refusal lifts by itself when the time is up. Nothing was sent.',
+    ),
     err: {
       OfferAlreadyAccepted: A('Another lender has already funded this request.'),
       SanctionedCreator: A("The borrower's wallet is flagged by the sanctions screen, so this request cannot be funded."),
@@ -3465,6 +3468,9 @@ export const copy = {
       "The lender's own risk setting no longer covers this pair, so this offer cannot be taken until the lender changes it. Nothing in your account would change that.",
     ),
     blockState: A('This offer can no longer be taken: {{state}}'),
+    termsWait: A(
+      'This offer was posted or changed moments ago. An offer can be taken only once its terms have stood {{min}}, and at the last block read {{left}} was left. This review reads the chain again each block, and this refusal lifts by itself when the time is up. Nothing was sent.',
+    ),
     err: {
       OfferAlreadyAccepted: A('Someone has already taken this offer.'),
       SanctionedAcceptor: A(
