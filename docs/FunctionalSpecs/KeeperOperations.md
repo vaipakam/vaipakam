@@ -1054,15 +1054,22 @@ serves. Each ships switched off behind its own flag.
   rate now is close to its rate at both of the last two hourly checkpoints.
   Anyone may write a checkpoint; until someone does, every forced sale uses
   the full slippage allowance. The keeper writes them so the floor can work.
+- The maker's price-move guard on an offer reads the same checkpoints, the
+  other way round: a guarded offer fills only when both its assets have a
+  checkpoint for each of the last two hours, so a missing checkpoint refuses
+  the fill however calm the market is.
 - Twice an hour, on each chain whose Diamond carries the floor, the keeper
   records the hour's checkpoint for every asset that is a token leg of an
-  active loan, has none for the current hour yet, and has an oracle price
-  that reads. It simulates first and sends a bounded batch per transaction;
+  active loan or of an open offer that carries a price-move guard, has none
+  for the current hour yet, and has an oracle price that reads. Which open
+  offers carry a guard is read from the chain, not assumed; on a Diamond
+  without the guard the keeper says so and still records the loans' assets. It simulates first and sends a bounded batch per transaction;
   the second run in the hour sends only what the first left.
 - An asset whose price does not read is not sent. A missed hour can only
   return a sale to the full allowance for the next two hours, never make a
   floor tighter. A checkpoint stores only the oracle's own reading and moves
-  no value. Each run reports the hour, what was already recorded, what it
+  no value. Each run reports the hour, how many open offers carry a guard
+  (or why that could not be read), what was already recorded, what it
   recorded, what landed in the next hour, what another caller recorded first
   and what had no price.
 - The duty ships switched off behind its own flag and pays only gas.

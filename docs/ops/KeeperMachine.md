@@ -452,8 +452,9 @@ journalctl -u vaipakam-keeper -f
    applies VaultBeacon proposals, pins and pin-delay lowerings once due),
    `PRICE_CHECKPOINT_ENABLED` (`priceCheckpoint`, at :11 and :41: writes
    each UTC hour's price checkpoint for the assets of active ERC-20 loans,
-   which the #3359 forced-sale floor reads; while it is unarmed every forced
-   sale uses the full slippage cap),
+   which the #3359 forced-sale floor reads, and of open offers carrying a
+   #3358 price-move guard; while it is unarmed every forced sale uses the
+   full slippage cap and a guarded offer cannot be filled),
    `ASSET_RANKINGS_ENABLED` (`assetRankings`, hourly at :56: once a UTC day
    per source and mainnet chain, writes the top 500 tokens by market-cap rank
    from two public market-data sources to the shared `asset_ranking` table

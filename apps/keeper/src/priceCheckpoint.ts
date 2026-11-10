@@ -16,18 +16,31 @@
 //
 // Each run (twice an hour, at :11 and :41), per chain with a Diamond:
 //
-//   1. Which assets: every lending and collateral asset of an ACTIVE loan
-//      whose two legs are both ERC-20, from the shared indexer's `loans`
-//      table. Only such a loan can reach a forced sale that reads the floor,
-//      and the calm test needs BOTH legs' checkpoints. The indexer only
-//      nominates: a stale or wrong row costs one asset's gas and records the
-//      oracle's own price, and an asset it misses keeps that pair on the full
-//      cap. Assets of open offers are left out on purpose: a loan opened in a
-//      pair no other loan uses reads `NoCheckpoint` for its first two hours,
-//      which is the full cap, the safe direction.
+//   1. Which assets, from two readers of the hourly checkpoints:
+//      a. The forced-sale floor: every lending and collateral asset of an
+//         ACTIVE loan whose two legs are both ERC-20, from the shared
+//         indexer's `loans` table. Only such a loan can reach a forced sale
+//         that reads the floor, and the calm test needs BOTH legs'
+//         checkpoints. A loan opened in a pair nothing else checkpoints reads
+//         `NoCheckpoint` for its first two hours, which is the full cap, the
+//         safe direction.
+//      b. The maker's price-move guard (#3358): both assets of every OPEN
+//         offer that carries a guard. A guarded offer fills only when both
+//         its assets have a checkpoint in each of the last two hours, so here
+//         a missing checkpoint is not the safe direction: it refuses every
+//         fill of the offer, however calm the market. The indexer's `offers`
+//         table nominates the open offers whose two legs are both ERC-20 (a
+//         guard cannot be set on any other) and the Diamond decides which
+//         carry a guard (`getOfferPriceGuard`, read at the run's block). A
+//         Diamond from before #3358 does not answer it, and the run says so
+//         and still writes the floor's assets.
+//      The indexer only nominates: a stale or wrong row costs a read or one
+//      asset's gas and records the oracle's own price, and an asset it misses
+//      keeps that loan on the full cap or that offer unfillable for the hour.
 //   2. Whether the Diamond carries the floor at all (`getSaleFloorConfig`).
 //      A Diamond from before #3359 refuses it, and the pass says so rather
-//      than sending a call that would revert.
+//      than sending a call that would revert. The checkpoint writer lives on
+//      the floor's facet, so the guard's assets need it too.
 //   3. The UTC hour of the head block (the contract files a checkpoint under
 //      `block.timestamp / 1 hours`), then, at that block, each asset's
 //      checkpoint for the hour and its oracle price (`getAssetPrice`, the
@@ -48,7 +61,7 @@
 // Gated by KEEPER_ENABLED + PRICE_CHECKPOINT_ENABLED. Ships disarmed.
 
 import { createPublicClient, decodeEventLog, http, type Abi, type Address, type Hex, type Log, type PublicClient } from 'viem';
-import { OracleFacetABI, SaleFloorFacetABI } from '@vaipakam/contracts/abis';
+import { OfferPriceGuardFacetABI, OracleFacetABI, SaleFloorFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
@@ -61,7 +74,7 @@ import { walkFrom } from './rotate';
 import { StepSender } from './stepSender';
 import { snapshotAssets } from './dailyOracleSnapshot';
 
-export const ABI = [...(SaleFloorFacetABI as Abi), ...(OracleFacetABI as Abi)] as Abi;
+export const ABI = [...(SaleFloorFacetABI as Abi), ...(OracleFacetABI as Abi), ...(OfferPriceGuardFacetABI as Abi)] as Abi;
 
 /** Twice an hour: the first run writes the hour, the second retries what it
  *  left. Scheduled FROM this constant (passSchedule.ts). */
@@ -77,8 +90,13 @@ export const MAX_SENDS_PER_RUN = 4;
 
 export const RECEIPT_TIMEOUT_MS = 30_000;
 
-/** Calls in one multicall of the per-asset reads (two per asset). */
+/** Calls in one multicall of the per-asset reads (two per asset) and of the
+ *  per-offer guard reads (one per offer). */
 const READ_CHUNK = 100;
+
+/** `LibOfferPriceGuard.Status.NoOffer`: a guard row left behind by an offer
+ *  that is gone, which no fill can read. */
+const GUARD_STATUS_NO_OFFER = 1;
 
 /** The checkpoint call takes no pause and refuses nothing it is given; these
  *  are named for the sender's contract and never expected. */
@@ -92,8 +110,16 @@ export interface CheckpointReport {
   skipped?: string;
   /** The UTC hour index (`timestamp / 3600`) of the block the run read at. */
   hour: number | null;
-  /** Assets the indexer named. */
+  /** Assets this run worked: the union of the two readers' assets. */
   tracked: number;
+  /** Open offers the Diamond reports a price-move guard on (#3358), or null
+   *  when the guards were not read (`guardNote` says why). */
+  guardedOffers: number | null;
+  /** Why the open offers' guards were not read, when they were not. */
+  guardNote: string | null;
+  /** Open offers whose guard read did not come back: `guardedOffers` counts
+   *  only the guards confirmed, so these are unknown, not unguarded. */
+  guardsUnread: number;
   /** Already checkpointed for the hour when read. */
   alreadyRecorded: number;
   /** Not sent: the oracle price did not read, so the contract would skip it. */
@@ -124,8 +150,17 @@ export interface CheckpointDeps {
   sendDeadline: number;
   /** Which run this is (`runIndex`): where the asset order starts. */
   visit: number;
-  /** The candidate assets for this chain (the indexer's view). */
+  /** The active loans' assets for this chain (the indexer's view). */
   assets: () => Promise<readonly string[]>;
+  /** The open offers that could carry a guard (the indexer's view). */
+  offers: () => Promise<readonly GuardCandidate[]>;
+}
+
+/** An open offer whose two legs are both ERC-20, as the indexer names it. */
+export interface GuardCandidate {
+  offerId: bigint;
+  lendingAsset: string;
+  collateralAsset: string;
 }
 
 export async function runPriceCheckpoint(env: Env, tick: PassTick): Promise<void> {
@@ -146,6 +181,7 @@ export async function runPriceCheckpoint(env: Env, tick: PassTick): Promise<void
           sendDeadline,
           visit,
           assets: () => trackedPairAssets(env, chain.id),
+          offers: () => openGuardCandidates(env, chain.id, Math.floor(Date.now() / 1000)),
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -173,14 +209,48 @@ export async function trackedPairAssets(env: Env, chainId: number): Promise<Addr
   return snapshotAssets((rows.results ?? []).map((r) => r.asset), chainId, 'priceCheckpoint');
 }
 
+/**
+ * The chain's open offers whose two legs are both ERC-20 and that have not
+ * expired: the only offers a price-move guard can be set on and a fill can
+ * still read. A stub row (details not yet fetched) is left out, since its
+ * assets are placeholders; the next run reads it once the indexer has them.
+ */
+export async function openGuardCandidates(env: Env, chainId: number, nowSec: number): Promise<GuardCandidate[]> {
+  const rows = await env.DB.prepare(
+    `SELECT offer_id, lending_asset, collateral_asset FROM offers
+       WHERE chain_id = ?1 AND status = 'active' AND is_stub = 0
+         AND asset_type = 0 AND collateral_asset_type = 0
+         AND (expires_at = 0 OR expires_at > ?2)`,
+  )
+    .bind(chainId, nowSec)
+    .all<{ offer_id: number | string; lending_asset: string; collateral_asset: string }>();
+  return (rows.results ?? []).map((r) => ({
+    offerId: BigInt(r.offer_id),
+    lendingAsset: r.lending_asset,
+    collateralAsset: r.collateral_asset,
+  }));
+}
+
+/** Whether a `getOfferPriceGuard` result is a guard a fill reads: a limit is
+ *  set and the offer is still there. Pure. */
+export function isGuarded(read: BatchResult | undefined): boolean | undefined {
+  if (read?.status !== 'success') return undefined;
+  const v = read.result as { maxMoveBps: number | bigint; status: number | bigint };
+  return Number(v.maxMoveBps) !== 0 && Number(v.status) !== GUARD_STATUS_NO_OFFER;
+}
+
 /** The run's one line for a chain. */
 export function describeReport(r: CheckpointReport): string {
   const head = `[keeper] priceCheckpoint chain=${r.chainId}`;
-  if (r.skipped) return `${head}: not worked this run: ${r.skipped}`;
+  const unread = r.unread.size > 0 ? ` unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}` : '';
+  if (r.skipped) return `${head}: not worked this run: ${r.skipped}${unread}`;
   const parts = [
     head,
     `hour=${r.hour ?? 'unread'}`,
     `tracked=${r.tracked}`,
+    r.guardedOffers === null
+      ? `guarded-offers=unread (${r.guardNote ?? 'not read'})`
+      : `guarded-offers=${r.guardedOffers}${r.guardsUnread > 0 ? ` (+${r.guardsUnread} unread)` : ''}`,
     `already=${r.alreadyRecorded}`,
     `due=${r.due}`,
     `recorded=${r.recorded.length}`,
@@ -189,7 +259,7 @@ export function describeReport(r: CheckpointReport): string {
     ...(r.unpriced.length > 0 ? [`no-price=${r.unpriced.join(',')}`] : []),
     ...(r.deferred > 0 ? [`deferred=${r.deferred} (taken first next run)`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
-    ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
+    ...(unread ? [unread.trim()] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
   ];
   return parts.join(' ');
@@ -251,6 +321,9 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
     chainId,
     hour: null,
     tracked: 0,
+    guardedOffers: null,
+    guardNote: null,
+    guardsUnread: 0,
     alreadyRecorded: 0,
     unpriced: [],
     due: 0,
@@ -266,26 +339,37 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   // time; the probes before them a stage reserve earlier (runWindow.ts, rule 3).
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const probeCutoff = priorStageCutoffMs(readCutoff);
+  // The chain id and the two sources' reads come a stage before the probes.
+  const sourceCutoff = priorStageCutoffMs(probeCutoff);
 
   // The RPC must answer for this chain: a deterministic deployment can put a
   // Diamond at the same address on another chain.
   let served: number;
   try {
-    served = await boundedCall(probeCutoff, 'the chain id', () => deps.client.getChainId());
+    served = await boundedCall(sourceCutoff, 'the chain id', () => deps.client.getChainId());
   } catch (err) {
     return { ...report, skipped: err instanceof PastRunDeadline ? 'the run deadline passed during its first reads' : `the RPC's chain id could not be read (${shortErr(err)})` };
   }
   if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
 
-  let assets: Address[];
-  try {
-    assets = snapshotAssets(await boundedCall(probeCutoff, "the active loans' assets", deps.assets), chainId, 'priceCheckpoint');
-  } catch (err) {
-    if (err instanceof PastRunDeadline) return { ...report, skipped: 'the run deadline passed during its first reads' };
-    return { ...report, skipped: `the active loans' assets could not be read from the indexer (${shortErr(err)})` };
+  // The two readers' candidates, each read on its own and by its own cutoff,
+  // a stage ahead of the probes: a source that stalls or fails leaves the
+  // other's assets worked, and is named in the run line.
+  const [loanRead, offerRead] = await Promise.allSettled([
+    boundedCall(sourceCutoff, "the active loans' assets", deps.assets),
+    boundedCall(sourceCutoff, 'the open offers', deps.offers),
+  ]);
+  const why = (r: PromiseRejectedResult) => (r.reason instanceof PastRunDeadline ? 'still in flight at its cutoff' : shortErr(r.reason));
+  const loanAssets = loanRead.status === 'fulfilled' ? snapshotAssets(loanRead.value, chainId, 'priceCheckpoint') : [];
+  const loanFailure = loanRead.status === 'rejected' ? `the active loans' assets could not be read from the indexer (${why(loanRead)})` : null;
+  const candidates = offerRead.status === 'fulfilled' ? offerRead.value : [];
+  if (offerRead.status === 'rejected') report.guardNote = `the open offers could not be read from the indexer (${why(offerRead)})`;
+  if (loanAssets.length === 0 && candidates.length === 0) {
+    if (loanFailure) return { ...report, skipped: loanFailure };
+    if (report.guardNote) return { ...report, skipped: report.guardNote };
+    return { ...report, guardedOffers: 0, skipped: 'no active loan and no open offer with two ERC-20 legs, so nothing reads a checkpoint' };
   }
-  report.tracked = assets.length;
-  if (assets.length === 0) return { ...report, skipped: 'no active loan with two ERC-20 legs, so no pair reads the sale floor' };
+  if (loanFailure) sender.noteUnread('loan assets', loanFailure);
 
   // Whether this Diamond carries the #3359 floor.
   try {
@@ -313,6 +397,26 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   }
   const hour = Number(block.timestamp / 3600n);
   report.hour = hour;
+
+  // Which open offers carry a guard, at the run's block. A Diamond from before
+  // #3358 is told apart from an unread guard by one probe (offer 0 never
+  // exists, and the view answers it with no guard).
+  const guardAssets = candidates.length > 0 ? await readGuardAssets(diamond, deps, candidates, chainId, block.number, probeCutoff, report) : [];
+  if (offerRead.status === 'fulfilled' && candidates.length === 0) report.guardedOffers = 0;
+
+  const assets = snapshotAssets([...loanAssets, ...guardAssets], chainId, 'priceCheckpoint');
+  report.tracked = assets.length;
+  if (assets.length === 0) {
+    return {
+      ...report,
+      skipped:
+        report.guardedOffers === null
+          ? `no active loan with two ERC-20 legs, and the open offers' guards were not read (${report.guardNote})`
+          : report.guardsUnread > 0
+            ? `no active loan with two ERC-20 legs and no guard confirmed on the open offers read, but the guards of ${report.guardsUnread} open offer(s) were not read, so whether any of them needs a checkpoint is unknown this run`
+            : 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint',
+    };
+  }
 
   const reads = await settledGroupedRead(
     deps.readClient,
@@ -363,4 +467,63 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   }
   report.stopped = sender.stopped ? sender.stopReason : null;
   return report;
+}
+
+/**
+ * Both assets of every candidate offer the Diamond reports a guard on, read
+ * at `blockNumber`. Sets `report.guardedOffers`, or leaves it null with
+ * `report.guardNote` saying why the guards were not read. An offer whose
+ * guard did not come back is counted in the run line and its assets are not
+ * nominated this run; the next run reads it again.
+ */
+async function readGuardAssets(
+  diamond: Address,
+  deps: CheckpointDeps,
+  candidates: readonly GuardCandidate[],
+  chainId: number,
+  blockNumber: bigint | null,
+  cutoff: number,
+  report: CheckpointReport,
+): Promise<string[]> {
+  try {
+    await boundedCall(cutoff, 'the price-move guard', () =>
+      deps.client.readContract({ address: diamond, abi: ABI, functionName: 'getOfferPriceGuard', args: [0n] }),
+    );
+  } catch (err) {
+    if (err instanceof PastRunDeadline) {
+      report.guardNote = 'the run deadline passed before the guards were read';
+      return [];
+    }
+    const c = classify(err);
+    report.guardNote =
+      'refused' in c
+        ? `this Diamond does not answer getOfferPriceGuard (${c.refused}), so it carries no #3358 price-move guard`
+        : `the price-move guard could not be probed (${c.unread})`;
+    return [];
+  }
+  const reads = await settledGroupedRead(
+    deps.readClient,
+    candidates,
+    READ_CHUNK,
+    (o) => [{ address: diamond, abi: ABI, functionName: 'getOfferPriceGuard', args: [o.offerId] }],
+    `priceCheckpoint guards chain=${chainId}`,
+    cutoff,
+    deps.visit,
+    blockNumber ?? undefined,
+  );
+  const out: string[] = [];
+  let guarded = 0;
+  let unread = 0;
+  for (const o of candidates) {
+    const g = isGuarded(reads.get(o)?.[0]);
+    if (g === undefined) unread += 1;
+    else if (g) {
+      guarded += 1;
+      out.push(o.lendingAsset, o.collateralAsset);
+    }
+  }
+  report.guardedOffers = guarded;
+  report.guardsUnread = unread;
+  if (unread > 0) report.unread.set('guards', `the guard of ${unread} open offer(s)`);
+  return out;
 }
