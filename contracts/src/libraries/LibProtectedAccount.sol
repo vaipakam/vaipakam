@@ -229,18 +229,22 @@ library LibProtectedAccount {
         c.retired = owner != account;
     }
 
-    /// @notice Whether protected account mode is on for `account`.
-    function isEnabled(address account) internal view returns (bool) {
-        // #3379 B2 — through its host, so callers near EIP-170 carry no copy
-        // of the vault read.
-        (bool ok, bytes memory ret) =
-            address(this).staticcall(abi.encodeWithSignature("isProtectionOn(address)", account));
+    /// @dev #3379 B2 — a protected-mode read through its host on
+    ///      ProtectedAccountFacet (a self-call), so a facet near EIP-170
+    ///      carries no copy of the vault read; bubbles the host's revert.
+    function _viaHost(bytes memory call) private view returns (bytes memory ret) {
+        bool ok;
+        (ok, ret) = address(this).staticcall(call);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(ret, 0x20), mload(ret))
             }
         }
-        return abi.decode(ret, (bool));
+    }
+
+    /// @notice Whether protected account mode is on for `account`.
+    function isEnabled(address account) internal view returns (bool) {
+        return abi.decode(_viaHost(abi.encodeWithSignature("isProtectionOn(address)", account)), (bool));
     }
 
     /// @notice Whether `account`'s positions are held against leaving it:
@@ -257,7 +261,7 @@ library LibProtectedAccount {
     ///         (the account wallet, or the wallet a verified replacement
     ///         moved it to).
     function manager(address account) internal view returns (address) {
-        return core(account).manager;
+        return abi.decode(_viaHost(abi.encodeWithSignature("protectionManagerOf(address)", account)), (address));
     }
 
     /// @notice The one authority rule for an owner action on `account`: the
@@ -320,15 +324,7 @@ library LibProtectedAccount {
     ///         intent, a signed fill, a sale or offset listing) for a locked
     ///         or retired account. Loan servicing is never refused.
     function requireCanOpen(address account) internal view {
-        // #3379 B2 — one self-call to the rule's host, so the vault read is
-        // compiled once (ProtectedAccountFacet) and not into every caller.
-        (bool ok, bytes memory ret) =
-            address(this).staticcall(abi.encodeWithSignature("requireCanOpenFor(address)", account));
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(ret, 0x20), mload(ret))
-            }
-        }
+        _viaHost(abi.encodeWithSignature("requireCanOpenFor(address)", account));
     }
 
     /// @notice The rule {requireCanOpen} applies, run in its host.

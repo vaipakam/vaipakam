@@ -1427,7 +1427,7 @@ contract HelperTest {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function getProtectedAccountFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](13);
         selectors[0] = ProtectedAccountFacet.applyProtection.selector;
         selectors[1] = ProtectedAccountFacet.cancelSettingChange.selector;
         selectors[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
@@ -1438,8 +1438,9 @@ contract HelperTest {
         selectors[7] = ProtectedAccountFacet.lockPositionNfts.selector;
         selectors[8] = ProtectedAccountFacet.lockVaultFor.selector;
         selectors[9] = ProtectedAccountFacet.setRequireCosign.selector;
-        selectors[10] = ProtectedAccountFacet.requireCanOpenFor.selector;
-        selectors[11] = ProtectedAccountFacet.isProtectionOn.selector;
+        selectors[10] = ProtectedAccountFacet.isProtectionOn.selector;
+        selectors[11] = ProtectedAccountFacet.protectionManagerOf.selector;
+        selectors[12] = ProtectedAccountFacet.requireCanOpenFor.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
