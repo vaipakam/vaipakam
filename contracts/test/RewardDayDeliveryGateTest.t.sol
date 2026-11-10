@@ -1510,9 +1510,17 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_cursor(), 4, "stored: the fold rests before the held day");
 
         for (uint256 d = 5; d <= n; ++d) _liveOf(1e18, d, 140 + d, keccak256(abi.encode("gate-11d", d)));
-        assertEq(_claim(), 0, "delivered: the same claim resumes the preparation");
-        (phase, prepared, , records) = _domainOf();
-        assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging), "still preparing, nothing paid");
+        // #1787 — each prepared day costs work on the claim's meter, so the
+        // rest of the extent may take more than one claim; each one resumes
+        // where the last stopped and pays nothing.
+        uint256 calls;
+        do {
+            assertEq(_claim(), 0, "delivered: the claim resumes the preparation");
+            (phase, prepared, , records) = _domainOf();
+            assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging), "still preparing, nothing paid");
+            assertGt(prepared, 4, "the preparation moved past the once-held day");
+            if (++calls > 4) fail();
+        } while (prepared < n);
         assertEq(prepared, n, "stored: through the extent's last day");
         assertEq(records, n, "a record per day");
         assertEq(_recordPhase(5), uint8(LibVaipakam.StagingPhase.Staging), "the once-held day is staged");
