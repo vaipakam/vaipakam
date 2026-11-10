@@ -2090,6 +2090,18 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 提示在同一区块读取 `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手动暂停的开始时间加上它开始时的逃生期限；没有生效的暂停或 Diamond 从未启动时为零）和 `getProtectedAccount(wallet)`，并按区块时间倒计时。暂停且通道关闭时，`withdrawFromVault` 以 `EnforcedPause` 回退，审阅页说明暂停阻止了它。一旦 `isEscapeOpen` 为真，受保护账户仍使用 `withdrawFromVault`，继续排队；其他钱包的提取调用 `escapeWithdraw(kind, asset, tokenId, amount)`，它拒绝受保护账户（`EscapeNotForProtected`），拒绝被禁止的收款方，受钱包自身存入余额和可自由提取数字的限制，并付款给调用者。完成卡片读取 `EscapeWithdrawal(account, asset, tokenId, amount)` 以及代币自身从金库到钱包的转账。如果暂停状态、通道或通道开启时的模式无法读取，则不会发送任何提取。
 
+<a id="protection-addresses"></a>
+
+### 已保存的地址
+
+地址簿按链 ID 和钱包保存在 `localStorage` 中，从不上链。钱包须在域 `{name: 'Vaipakam Address Check', version: '1', chainId, verifyingContract: Diamond}` 中对 `AddressControl{account, destination, purpose, nonce, issuedAt}` 签名后才能加入，附带随机的 32 字节 nonce，有效期七天。请求以 `/protection?prove=<code>` 的形式传递。签名页面会拒绝本应用不支持的网络或 Diamond 以及已失效的请求，并且只在已连接账户正是该链上的该地址时才签名。粘贴回来的答复通过已连接钱包自己的读取连接用 `verifyTypedData` 校验，因此智能钱包通过 ERC-1271 作答；只有答复的正是同一请求时才会保存。地址输入框完整显示地址并把首尾字符单独标出，拒绝错误的 EIP-55 校验和，并且不可绕过地拒绝前三位和后三位十六进制数字与该钱包已在使用的地址（自身地址、已保存和待验证的条目、有效和等待中的目的地、受保护签名人、已批准的 keeper 以及本网络的 keeper）相同而其余不同的任何地址。首次使用的地址需要明确勾选，任何修改都会清除该勾选。
+
+<a id="protection-destinations"></a>
+
+### 付款目的地
+
+本部分在同一区块读取 `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（每个请求及其 `maturesAt`）、`getProtectedSigners`、`paused`，以及从 `getPendingPayoutIds` 得出的按收款方排队的付款。按区块时间加上此后经过的秒数计算，请求在 `maturesAt` 之前处于等待，直到 `maturesAt + delay` 为就绪，此后失效。四种更改是 `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted` 和 `removeAllowlisted`，参数均为 `(account, destination)`。审核在同一区块读取，并在打开钱包前拒绝 facet 会拒绝的情形：暂停或锁定（添加和激活时）、您自己的钱包、已有效或等待中的地址、已有五个目的地或五个请求、被标记的地址、尚未到期或已失效的请求。每次调用都会先模拟执行，在打开钱包前再核对一次，并以其自身的 `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded` 或 `AllowlistRemoved` 日志计量；移除还会统计它引发的 `PayoutCancelled` 日志。
+
 <a id="my-offers"></a>
 
 ### 你的报价

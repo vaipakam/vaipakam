@@ -56,6 +56,11 @@ test('all off at first; in Advanced: access on, approve, change actions, remove,
 
   const add = section.getByTestId('settings-keepers-add');
   await add.locator('#keepers-add-input').fill(keeper);
+  // #3415: a first-time address is shown in full and needs an explicit check.
+  const entry = add.getByTestId('settings-keepers-add-entry');
+  await expect(entry).toHaveAttribute('data-candidate', 'new');
+  await expect(entry.getByTestId('settings-keepers-add-entry-full')).toHaveText(keeper);
+  await entry.getByTestId('settings-keepers-add-entry-checked').check();
   const picker = add.getByTestId('settings-keepers-add-actions');
   await picker.locator('input[data-bit="1"]').check();
   await picker.locator('input[data-bit="32"]').check();
