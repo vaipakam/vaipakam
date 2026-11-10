@@ -303,6 +303,8 @@ FACETS=(
   "SaleFloorFacet"
   "VaultOutflowFacet"
   "ForcedSalePreviewFacet"
+  # The maker's price-move guard on an offer (#3358).
+  "OfferPriceGuardFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

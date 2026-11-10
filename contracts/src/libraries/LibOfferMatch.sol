@@ -89,7 +89,14 @@ library LibOfferMatch {
         // `OfferPreviewFacet.requireOriginationCadenceAdmitted`'s revert for
         // the borrower offer and `matchAmount`. Appended last to keep every
         // prior ordinal ABI-stable.
-        CadenceNotAdmitted
+        CadenceNotAdmitted,
+        // #3358 — a price-move guard on either offer would refuse the fill
+        // (loan creation checks both makers' guards). Reported only by
+        // `OfferMatchFacet.previewMatch`, after the cadence check, in loan
+        // creation's order. The exact refusal is
+        // `OfferPriceGuardFacet.requireOfferPriceGuardsClear`'s revert for the
+        // two offers. Appended last to keep every prior ordinal ABI-stable.
+        PriceGuardRefused
     }
 
     /// @notice Structured return from `previewMatch`. Bots check

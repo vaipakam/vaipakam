@@ -184,6 +184,10 @@
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts"
     },
+    "OfferPriceGuardFacet.armOfferPriceGuard(uint16)": {
+      "class": "user",
+      "why": "arms a price-move guard for the caller's own next offer in this transaction (transient, keyed by the caller); no step waits on it"
+    },
     "OfferCreateFacet.createOffer(struct:LibVaipakam.CreateOfferParams)": {
       "class": "user",
       "why": "the offer creator's own offer"
