@@ -10,10 +10,6 @@ import { mine } from '../lib/anvil';
 import { setIndexPosture } from '../lib/stub';
 import { expect, test } from '../lib/wallet';
 
-test.afterEach(async () => {
-  await setIndexPosture('live');
-});
-
 test('a live index is stamped with its block and age, and push is named unavailable while refused', async ({ launchWallet }) => {
   const { page } = await launchWallet('visitor');
   await page.goto('/');

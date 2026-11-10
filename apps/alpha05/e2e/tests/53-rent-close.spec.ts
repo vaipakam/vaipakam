@@ -15,7 +15,7 @@
 import { parseAbi, parseEther, type Hex } from 'viem';
 import type { Page } from '@playwright/test';
 import { acceptPostedOffer } from '@vaipakam/anvil-harness/lending';
-import { anvilRpc, increaseTime, mine } from '../lib/anvil';
+import { increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
@@ -23,15 +23,6 @@ import { connectWallet, expect, test } from '../lib/wallet';
 const NFT_ABI = parseAbi(['function mint(address to, uint256 tokenId)', 'function approve(address to, uint256 tokenId)']);
 const TOKEN_ABI = parseAbi(['function mint(address to, uint256 amount)', 'function approve(address spender, uint256 amount)']);
 const ZERO: Hex = '0x0000000000000000000000000000000000000000';
-
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-});
-test.afterEach(async () => {
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

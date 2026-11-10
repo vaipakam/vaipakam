@@ -2,6 +2,14 @@
 export const STUB_PORT = Number(process.env.ALPHA05_E2E_STUB_PORT ?? 8789);
 export const STUB_ORIGIN = `http://127.0.0.1:${STUB_PORT}`;
 
+/** Put every stand-in setting back as it started: the index live, no
+ *  unplaced loans, no added inbox rows, a fresh alert service. The suite
+ *  calls it after every test (`lib/wallet.ts`); a spec need not. */
+export async function resetStandIns(): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/reset`, { method: 'POST' });
+  if (!res.ok) throw new Error(`stub refused reset: ${res.status}`);
+}
+
 export type IndexPosture = 'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending';
 
 /** Put the stand-in index into a posture: `stale` reports a cursor half an
