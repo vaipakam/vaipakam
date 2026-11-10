@@ -205,7 +205,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     ) external nonReentrant returns (uint256 queuedId) {
         if (
             LibPausable.paused()
-                && !(LibProtectedAccount.isEnabled(account)
+                && !(LibProtectedAccount.isProtected(account)
                     && LibProtectedAccount.escapeOpen())
         ) revert LibPausable.EnforcedPause();
         LibProtectedAccount.requireManager(account);
@@ -225,7 +225,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         // Debited when asked for, paid or queued: a queued payout that is
         // later cancelled is credited back (`LibProtectedAccount.cancelPayout`).
         LibDepositoryLedger.debit(account, asset, tokenId, amount);
-        if (LibProtectedAccount.isEnabled(account)) {
+        if (LibProtectedAccount.isProtected(account)) {
             queuedId = LibProtectedAccount.queuePayout(account, kind, asset, tokenId, amount, recipient);
             emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, true);
             return queuedId;

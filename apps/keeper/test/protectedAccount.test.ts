@@ -122,6 +122,10 @@ class FakeDiamond {
   signerless = new Set<Address>();
   unverified = new Set<Address>();
   needsCosign(p: Payout): boolean {
+    // The release cancels a row whose destination is no longer allowed
+    // before it reads the co-signature (Codex #3489 r3).
+    const allowed = p.recipient === p.user || (this.allowlist.get(p.user)?.has(p.recipient) ?? false);
+    if (!allowed) return false;
     const acct = this.acct(p.user);
     return (acct.requireCosign && !this.signerless.has(p.user)) || this.unverified.has(p.recipient);
   }
@@ -574,12 +578,23 @@ describe('a run', () => {
       d.accounts.set(ALICE, account({ requireCosign: false }));
       d.accounts.set(BOB, account({ requireCosign: true }));
       d.unverified.add(DEST);
+      d.allowlist.set(ALICE, new Set([DEST]));
       d.signerless.add(BOB);
       queuePayout(1n, { recipient: DEST });
       queuePayout(2n, { user: BOB, recipient: BOB });
       const r = await run();
       expect(d.sent.map((s) => s.args[0])).toEqual([2n]);
       expect(r.waiting.get('payout-needs-cosign')).toBe(1);
+    });
+
+    it('releases a row whose destination was removed, so the release cancels it (Codex #3489 r3)', async () => {
+      const GONE = '0x00000000000000000000000000000000000000e6' as Address;
+      d.accounts.set(ALICE, account({ requireCosign: true }));
+      d.unverified.add(GONE);
+      queuePayout(1n, { recipient: GONE });
+      const r = await run();
+      expect(d.sent.map((s) => [s.fn, s.args[0]])).toEqual([['releasePayout', 1n]]);
+      expect(r.cancelled).toEqual([1n]);
     });
 
     it('starts each run at a different row of the page, so slow refusals at its top cannot starve a row below them', async () => {

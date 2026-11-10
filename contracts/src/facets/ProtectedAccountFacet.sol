@@ -164,7 +164,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     function lockVaultFor(address account) external nonReentrant {
         LibAuth.requireKeeperForPrincipal(LibVaipakam.KEEPER_ACTION_LOCK_VAULT, account);
         address vault = LibVaipakam.storageSlot().userVaipakamVaults[account];
-        if (vault == address(0) || !LibProtectedAccount.isEnabled(account)) {
+        if (vault == address(0) || !LibProtectedAccount.core(account).enabled) {
             revert LibProtectedAccount.ProtectedModeOff(account);
         }
         IVaultProtect(vault).protect(abi.encodeCall(IVaultProtectionLock.lockByPlatform, (account)));
@@ -268,10 +268,12 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @notice #3379 B2 — the hosts of the protected-mode reads every rule
-    ///         self-calls (`LibProtectedAccount.isEnabled`, `manager`,
+    ///         self-calls (`LibProtectedAccount.isProtected`, `manager`,
     ///         `requireCanOpen`), so the vault read is compiled here only.
+    /// @dev Protected mode governs the account's payouts: switched on, or
+    ///      permanently once a replacement retired it ({LibProtectedAccount.isProtected}).
     function isProtectionOn(address account) external view returns (bool) {
-        return LibProtectedAccount.core(account).enabled;
+        return LibProtectedAccount.governs(LibProtectedAccount.core(account));
     }
 
     /// @notice The wallet that manages `account`: its vault's owner record.

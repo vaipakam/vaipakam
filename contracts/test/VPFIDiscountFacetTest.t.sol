@@ -1156,6 +1156,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 loanId = _openSaleLoan();
         address holder = makeAddr("cleanBorrowerHolder");
         uint256 borrowerTokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), borrowerTokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, holder, borrowerTokenId);
 

@@ -1010,6 +1010,7 @@ contract DefaultedFacetTest is Test {
         // exactly the case the `ownerOf` keying at DefaultedFacet:497 exists for.
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address dHolder = makeAddr("defaultHolder1955");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), l0.lenderTokenId);
         vm.prank(l0.lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(
             l0.lender, dHolder, l0.lenderTokenId

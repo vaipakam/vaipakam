@@ -106,13 +106,14 @@ contract VaultProtection {
         keccak256("SettingCancel(uint8 action,uint256 nonce,uint64 expiry)");
     bytes32 public constant SIGNER_CHANGE_TYPEHASH =
         keccak256("SignerChange(uint8 action,address signer,uint256 nonce,uint64 expiry)");
+    /// @dev Codex #3489 r2/r3 — ONE signed shape for every replacement
+    ///      action (propose, approve, cancel), bound to the proposal ROUND in
+    ///      force when it is submitted, so no action's signature outlives the
+    ///      proposal it was given for: a cancel or an approval held from an
+    ///      earlier round is refused after a re-proposal, even of the same
+    ///      nominee. A proposal signs the round it replaces (0 for none).
     bytes32 public constant REPLACEMENT_TYPEHASH =
-        keccak256("Replacement(uint8 action,address nominee,uint256 nonce,uint64 expiry)");
-    /// @dev Codex #3489 r2 — a cancel names the proposal it cancels: its
-    ///      nominee AND its round, so a cancel signed for one proposal never
-    ///      aborts a later one, even a re-proposal of the same nominee.
-    bytes32 public constant REPLACEMENT_CANCEL_TYPEHASH =
-        keccak256("ReplacementCancel(address nominee,uint32 round,uint256 nonce,uint64 expiry)");
+        keccak256("Replacement(uint8 action,address nominee,uint32 round,uint256 nonce,uint64 expiry)");
     bytes32 public constant LOCK_TYPEHASH = keccak256("Lock(uint256 nonce,uint64 expiry)");
     /// @dev #3415 — the destination names the account (the vault's creation
     ///      owner), the Diamond and, through the domain, the chain and vault.
@@ -514,10 +515,9 @@ contract VaultProtection {
     ///         cancel; the owner may not while a lock a signer placed holds.
     function replacement(uint8 action, address nominee, Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
-        uint256 nonce = _nonce(auth.key, PURPOSE_REPLACEMENT);
-        bytes32 h = action == REPLACE_CANCEL
-            ? keccak256(abi.encode(REPLACEMENT_CANCEL_TYPEHASH, nominee, l.round, nonce, auth.expiry))
-            : keccak256(abi.encode(REPLACEMENT_TYPEHASH, action, nominee, nonce, auth.expiry));
+        bytes32 h = keccak256(
+            abi.encode(REPLACEMENT_TYPEHASH, action, nominee, l.round, _nonce(auth.key, PURPOSE_REPLACEMENT), auth.expiry)
+        );
         address owner = _owner();
         bool bySigner = auth.key != owner;
         if (bySigner) {
@@ -550,7 +550,7 @@ contract VaultProtection {
             _approve(l, auth.key);
         } else if (action == REPLACE_CANCEL) {
             // A cancel acts only on the proposal it names (Codex #3489 r2):
-            // the nominee is checked here and the round is in the signed hash.
+            // the nominee is checked here, the round is in the signed hash.
             if (l.nominee == address(0) || l.nominee != nominee) revert NoProposal();
             emit ReplacementCancelled(l.nominee, auth.key);
             _clearProposal(l);

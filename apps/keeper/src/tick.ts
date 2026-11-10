@@ -117,9 +117,10 @@ export async function runKeeperTick(
 
   // #1896 — name the RESOLVED chain set, once per tick.
   //
-  // A chain drops out silently: `readSecret` collapses an absent binding or
-  // a failing Secrets Store fetch to `undefined` (deliberately — see its
-  // comment), and `getChainConfigs` then skips any chain with no RPC. The
+  // A chain drops out silently: `readSecrets` (@vaipakam/lib/secretsStore)
+  // collapses an absent binding or a failing Secrets Store fetch to
+  // `undefined` (deliberately; it logs the failed names, not per pass), and
+  // `getChainConfigs` then skips any chain with no RPC. The
   // passes log per-chain, so a dropped chain produces NO line at all, and
   // absence is not something an operator can read off a tail.
   //

@@ -60,6 +60,7 @@ export {
   VAULT_SETTING,
   VAULT_SIGNER,
   VAULT_REPLACE,
+  replacementArgs,
   type VaultProtectionAuth,
 } from './vaultProtectionAuth';
 

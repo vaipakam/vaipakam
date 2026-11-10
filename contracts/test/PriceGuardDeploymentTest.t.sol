@@ -33,7 +33,7 @@ contract PriceGuardDeploymentHarness {
  * @title  PriceGuardDeploymentTest
  * @notice The guard's starting config as the Diamond deploy builds it (#3272):
  *         a production chain's guard starts complete or not at all, and its
- *         delay defaults to 3 days.
+ *         delay defaults to 7 days.
  * @dev    Only `test_TheInputsComeFromTheChainPrefixedEnv` touches the env,
  *         under `OPTIMISM_…` keys, which win over a bare key another suite
  *         may have set in this process; every other case names its inputs.
@@ -57,7 +57,7 @@ contract PriceGuardDeploymentTest is Test {
         PriceGuardDeployment.Inputs memory i = h.fromEnv();
         assertEq(i.weth, weth);
         assertEq(i.ethUsdFeed, ethUsd);
-        assertEq(i.delay, 3 days, "production default");
+        assertEq(i.delay, 7 days, "production default");
         vm.chainId(421614);
         assertEq(h.fromEnv().delay, 0, "testnet default");
     }
@@ -65,7 +65,7 @@ contract PriceGuardDeploymentTest is Test {
     function test_AProductionGuardStartsComplete() public {
         vm.chainId(10);
         PriceGuardDeployment.Inputs memory i;
-        i.delay = 3 days;
+        i.delay = 7 days;
         i.weth = _code("weth");
         i.ethUsdFeed = _code("ethUsd");
         i.sequencerFeed = _code("sequencer");
@@ -75,7 +75,7 @@ contract PriceGuardDeploymentTest is Test {
         assertEq(id.ethDenominator, VaipakamFeedRegistry(feeds).ETH());
         assertEq(id.numeraireSymbol, bytes32("usd"));
         assertEq(id.padDenominator, address(0));
-        assertEq(delay, 3 days);
+        assertEq(delay, 7 days);
         assertEq(c.length, 4);
         assertEq(uint8(c[0].kind), uint8(PriceGuard.Kind.FeedRegistry));
         assertEq(address(uint160(uint256(c[0].value))), feeds);
@@ -90,14 +90,14 @@ contract PriceGuardDeploymentTest is Test {
         assertEq(g.weth(), i.weth);
         assertEq(g.ethNumeraireFeed(), i.ethUsdFeed);
         assertEq(g.sequencerFeed(), i.sequencerFeed);
-        assertEq(g.delay(), 3 days);
+        assertEq(g.delay(), 7 days);
         assertFalse(g.TESTNET());
     }
 
     function test_AProductionGuardRefusesAMissingLoadBearingEntry() public {
         vm.chainId(10);
         PriceGuardDeployment.Inputs memory i;
-        i.delay = 3 days;
+        i.delay = 7 days;
         i.weth = _code("weth2");
         // An address with no code is as missing as none.
         i.ethUsdFeed = makeAddr("eoa");

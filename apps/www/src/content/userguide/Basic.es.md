@@ -1110,11 +1110,15 @@ Para pedir prestado, aceptas la oferta abierta de un prestamista: una cantidad d
 
 Primero elige qué pedir prestado y qué bloquear. La app sugiere tokens de la red, o puedes pegar una dirección de token; no se hace ninguna revisión de seguridad de tokens, así que revisa tú mismo una dirección pegada. Para cada token, la app lee lo que el protocolo dice de él ahora. Un token líquido tiene precio, así que el préstamo tiene un factor de salud y puede liquidarse si la garantía pierde valor. Un token ilíquido se valora en cero y, en caso de impago, el prestamista recibe la propia garantía. Cuando el protocolo no confía en el precio de un token, los préstamos nuevos sobre él se cierran hasta que vuelva a confiar; los préstamos ya abiertos no se ven afectados.
 
+Cada token que elige muestra también su puesto por valor de mercado, según dos listas públicas de tokens. La coincidencia se hace por la dirección de contrato del token en la red, nunca por su nombre. Un blue chip está en el top 20 y el protocolo le pone precio; luego vienen el top 100, 200, 300 y 500. Un token fuera del top 500 se marca como usado bajo su propio riesgo. Un token que comparte el nombre o el símbolo de un token clasificado en otra dirección se marca como posible copia, con la dirección del token real, y cuando las dos listas no coinciden en dónde está un token, se marca como no verificado. Se muestra la fecha de las listas, y se indica una actualización fallida. En una red de prueba, los tokens no tienen valor de mercado ni clasificación. Para encontrar un token, escriba su nombre o símbolo en el campo Otro token: los tokens clasificados aparecen primero, cada uno con su nivel y su dirección completa, y al elegir uno se rellena la dirección. Compruebe la dirección, no el nombre. El nivel es solo una guía y no cambia nada de lo que hace el protocolo.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Elegir una oferta
 
 La página muestra las ofertas abiertas de prestamistas para tus dos tokens, leídas del propio protocolo. Cada una indica la cantidad, la tasa y el plazo, la garantía pedida, la relación préstamo-valor a los precios de hoy, cómo se cobran los intereses, el calendario de intereses si lo hay, cuándo termina la oferta y lo que recibirías tras la comisión. Una oferta se acepta entera, por la cantidad completa del prestamista y su tasa más baja. Si el protocolo rechazaría una oferta, la página dice por qué y no muestra botón. El orden es una ayuda, no un consejo.
+
+Primero la página nombra las dos formas de pedir prestado: tomar una oferta ahora, o fijar tu propia tasa con una solicitud y esperar a un prestamista. Las ofertas se agrupan por tasa, la más baja primero, y cada escalón muestra cuántas ofertas contiene y el importe de cada una; los importes nunca se suman, porque tomas una oferta entera. Puedes escribir la tasa más alta que aceptas, que solo oculta ofertas e indica cuántas. Junto a la solicitud, la página muestra los prestamistas listos para tu par: un servicio de emparejamiento llena una solicitud con sus fondos cuando sus condiciones caben en sus límites, así que es probable que se llene, pero no es inmediato ni está garantizado. Si esta red tiene desactivado el emparejamiento con estos prestamistas, la página lo dice en su lugar, y si eso no se puede leer, dice que no se sabe si una solicitud se llenaría. Tus propias ofertas permanentes nunca se cuentan. Los prestamistas permanentes solo llenan solicitudes que cobran el interés del plazo completo y no admiten reembolso parcial; en el formulario de solicitud, una elección que los excluye se indica. Si el protocolo ha pausado todos los keepers de esta red, la página dice que el servicio de emparejamiento no llena ninguna hasta que se reanuden, aunque un prestamista aún puede llenar una solicitud desde su propia oferta permanente. Los prestamistas permanentes tampoco llenan una solicitud que paga intereses según un calendario. Un prestamista que solo deja llenar contra él a quienes ha elegido se muestra aparte, sin el llenado probable, porque no se sabe si el servicio de emparejamiento es uno de ellos. Mientras el protocolo está en pausa, la página dice que no se publica ni se llena ninguna solicitud contra ellos hasta que se reanude.
 
 <a id="borrow-review"></a>
 
@@ -1274,6 +1278,8 @@ Positions muestra cada préstamo que prestaste o tomaste en esta red, a partir d
 
 Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que no tienes nada solo después de leerlo todo; si una lista no se pudo leer entera, lo indica. Cada préstamo abre su propia página, que muestra las acciones disponibles para ti. La lista nunca firma nada.
 
+Con dos o más préstamos activos, primero aparece un resumen. Para cada lado indica el principal que aún se debe o que sigue prestado, por token (los importes en tokens distintos nunca se suman, y los alquileres de NFT se cuentan), la próxima fecha de vencimiento de un pago con un enlace a su préstamo, y los préstamos vencidos o en fallback, cada uno enlazado. Los intereses no están en estos totales; la página de cada préstamo muestra lo que cuesta pagarlo ahora. En un alquiler, esa fecha es su cierre con la renta pagada por adelantado, así que nunca se llama reembolso.
+
 <a id="position"></a>
 
 ### Position: un préstamo
@@ -1289,6 +1295,8 @@ Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actu
 En un préstamo activo, la página ofrece pagarlo completo. Cualquiera puede pagar excepto el prestamista. Si no tienes la posición de prestatario, pagar no te da ningún derecho sobre la garantía: solo su titular puede cobrarla. El pago queda retenido una vez terminado el período de gracia (el préstamo pasa entonces a impago) y mientras haya una orden de swap-to-repay pendiente.
 
 Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si ya habías aprobado más, incluso una cantidad ilimitada, se reduce a esa cifra para el pago, porque el pago no fija por sí mismo ningún máximo. La aprobación limita el importe, no el tiempo: un pago que se confirma más tarde solo se ejecuta mientras lo que debes siga cabiendo en ella; si no, se rechaza y nada se mueve. En un préstamo que cobra el plazo completo, el importe no crece antes del vencimiento, así que un pago posterior aún puede ejecutarse. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
+
+Si el préstamo ya pasó su fecha de vencimiento y está en su periodo de gracia, la revisión cuenta hacia atrás hasta el fin de la gracia según el reloj de la cadena. Después, el protocolo rechaza un reembolso y cualquiera puede declarar un impago; gana la transacción que se mine primero, así que envíe su reembolso con tiempo. Con una hora o menos, la revisión le dice que lo envíe ahora. Un pago parcial muestra la misma cuenta atrás.
 
 <a id="interest-schedule"></a>
 
@@ -1389,6 +1397,18 @@ La tarjeta Seguridad de la cuenta en la página Bóveda muestra si tu cuenta usa
 ### Cuando el protocolo está en pausa
 
 Mientras el protocolo está en pausa, la página Bóveda lo dice arriba: los retiros están cerrados, mientras que el pago total y parcial y añadir garantía siguen abiertos. Si es una pausa administrativa, también dice cuándo se abre su vía de escape, según lo informa el protocolo, con una cuenta atrás. Una vez abierta la vía, Retirar en cualquier activo con algo libre devuelve lo tuyo directamente a tu billetera; la revisión dice que pasa por la vía de escape, y la vía nunca devuelve lo que retiene un préstamo, una oferta o un reclamo. Con el modo protegido activo, tus retiros siguen esperando el plazo de tu cuenta en la cola de pagos, como siempre. Una pausa automática, o un protocolo aún no lanzado, no abre ninguna vía de escape, y la página dice que no hay ninguna prevista.
+
+<a id="protection-addresses"></a>
+
+### Direcciones guardadas
+
+La página Protection, enlazada desde la tarjeta Seguridad de la cuenta, guarda las direcciones a las que confía sus pagos, para cada red y billetera. La lista se guarda solo en este navegador; otro navegador o dispositivo tiene la suya. Para guardar una billetera que usted controla, póngale un nombre y pegue su dirección: la página la muestra completa y le pide marcar que la comprobó. Luego crea un enlace. Ábralo en la aplicación de billetera que tiene esa dirección, conecte esa billetera y firme; firmar no mueve nada ni cuesta nada. Pegue en la página el código que muestra, y la billetera queda guardada como verificada. Una dirección de depósito de un exchange no puede firmar, así que se guarda sin verificar con el nombre del exchange una vez que acepta tres riesgos: con una dirección equivocada se pierde lo enviado, el exchange puede no acreditar un depósito enviado desde su bóveda, y el exchange puede asignar la dirección a otra persona más adelante. Allí donde la aplicación recibe una dirección para fondos o control, rechaza la que coincide en sus tres primeros y tres últimos caracteres con una dirección que ya usa mientras el resto difiere, porque así el envenenamiento de direcciones atrapa a quien copia de su historial.
+
+<a id="protection-destinations"></a>
+
+### Destinos de pago
+
+Con el modo protegido activado, la página Protection también muestra sus destinos de pago: además de su propia billetera, como máximo cinco direcciones a las que puede ir un pago protegido. Un destino se elige solo entre sus direcciones guardadas. Pedir añadir uno no cambia nada al principio: se puede usar tras el retraso de su cuenta, después debe activarse dentro de otro retraso y, si no, caduca y puede pedirse de nuevo. Usted, o un firmante secundario, puede cancelar una solicitud mientras espera, y un bloqueo cancela todas las solicitudes. Quitar un destino surte efecto al instante y cancela cada pago en cola hacia él; los activos se quedan en su bóveda. Cada cambio pide su billetera una vez, su revisión muestra la dirección completa y la tarjeta final muestra lo que registró el protocolo. Con el modo protegido desactivado, los pagos van solo a su billetera y la página indica que los destinos no se aplican.
 
 <a id="my-offers"></a>
 

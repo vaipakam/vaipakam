@@ -93,6 +93,8 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // ── Offers and their sale routes.
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
+  // #3358 — the maker's price-move guard set, changed or cleared on their offer.
+  ['OfferPriceGuardSet', ['creator']],
   ['OfferSaleProceedsCredited', ['borrower']],
   ['CollateralSaleProceedsSplit', ['lender', 'borrower']],
   ['PostParallelSaleListing', ['borrower']],
@@ -284,7 +286,7 @@ export const EXEMPT_GROUPS = {
   screening:
     "Sanctions screening evidence, and the KYC and country records the retail deploy leaves dormant. A flagged wallet is told by the app's banner, never by a feed row; the funds consequences that are the wallet's own are rows (see PARTIES).",
   rewardInternal:
-    "Reward bookkeeping that restates or prepares another row's outcome: index compaction, tier caches and broadcasts, a delivery record being opened, a payout's accounting companion.",
+    "Reward bookkeeping that restates or prepares another row's outcome: index compaction, the claim window moving on, tier caches and broadcasts, a delivery record being opened, a payout's accounting companion.",
 } as const;
 
 export type ExemptGroup = keyof typeof EXEMPT_GROUPS;
@@ -442,6 +444,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'MirrorTierCacheWritten',
       'ProtocolTierBroadcastSent',
       'ProtocolTierBroadcastSkipped',
+      'RewardClaimWindowAdvanced',
       'RewardEntryIndexCompacted',
       'StagingDomainOpened',
       'StagingPaid',

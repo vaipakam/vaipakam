@@ -11,13 +11,13 @@
  * borrower is told that paying gives no right to the collateral; the lender
  * is not offered the action; a loan past its grace period says the protocol
  * no longer accepts a repayment. Runs on the desktop and the phone project;
- * each run opens its own loans, and the clock is moved only inside a
- * snapshot the test reverts.
+ * each run opens its own loans, and the suite reverts the chain (and the
+ * clock a test moves) after every test.
  */
 import { createWalletClient, erc20Abi, formatEther, http, maxUint256, parseEther } from 'viem';
 import { openLoan, WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
-import { ANVIL_URL, anvilRpc, increaseTime, mine } from '../lib/anvil';
+import { ANVIL_URL, increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
@@ -38,8 +38,10 @@ async function fitsWidth(page: Page): Promise<void> {
 test('the borrower repays in full: the payoff now and at most, an exact approval, then the loan repaid, the amount paid and the approval put back', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.3', collateralTliq: '1500', rateBps: 600, days: 30 });
-  // The borrower received the principal less the fee; the interest is on top.
-  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.2'));
+  // The principal less the fee went to the borrower's vault, not the wallet,
+  // so the wallet is funded for the whole payoff here: every test starts
+  // from the same chain, with nothing an earlier spec left in the wallet.
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.35'));
   const borrower = sc.address('borrower');
   // Below the payoff, so the flow raises it; whatever it was is what the
   // flow puts back. A larger one is the next test's case.
@@ -97,7 +99,7 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
 test('an unlimited standing approval is lowered to exactly the most the repayment can take, then put back', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30 });
-  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.06'));
   const borrower = sc.address('borrower');
   await setAllowance(sc.diamond, maxUint256);
 
@@ -127,7 +129,7 @@ test('an unlimited standing approval is lowered to exactly the most the repaymen
 test('full-term interest: the payoff does not grow, so the review says a later confirmation can still go through', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30, fullTermInterest: true });
-  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.06'));
 
   const { page } = await launchWallet('borrower');
   await page.goto(`/positions/${loanId}`);
@@ -174,19 +176,14 @@ test('another wallet may repay but is told it gains no right to the collateral; 
 test('past the grace period the protocol no longer accepts a repayment, and the page says so', async ({ launchWallet }) => {
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30 });
-  const snapshot = await anvilRpc<string>('evm_snapshot');
-  try {
-    // Thirty days and a grace period that is at most thirty more.
-    await increaseTime(61 * 24 * 60 * 60);
-    await mine();
-    const { page } = await launchWallet('borrower');
-    await page.goto(`/positions/${loanId}`);
-    await connectWallet(page);
-    const refusal = page.getByTestId('repay-refusal');
-    await expect(refusal).toHaveAttribute('data-code', 'RepaymentPastGracePeriod', { timeout: 60_000 });
-    await expect(refusal).toContainText(/The grace period ended at .* UTC, so the protocol no longer accepts a repayment; the loan goes to default\./);
-    await expect(page.getByTestId('repay-open')).toHaveCount(0);
-  } finally {
-    await anvilRpc('evm_revert', [snapshot]);
-  }
+  // Thirty days and a grace period that is at most thirty more.
+  await increaseTime(61 * 24 * 60 * 60);
+  await mine();
+  const { page } = await launchWallet('borrower');
+  await page.goto(`/positions/${loanId}`);
+  await connectWallet(page);
+  const refusal = page.getByTestId('repay-refusal');
+  await expect(refusal).toHaveAttribute('data-code', 'RepaymentPastGracePeriod', { timeout: 60_000 });
+  await expect(refusal).toContainText(/The grace period ended at .* UTC, so the protocol no longer accepts a repayment; the loan goes to default\./);
+  await expect(page.getByTestId('repay-open')).toHaveCount(0);
 });

@@ -125,6 +125,7 @@ import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -533,6 +534,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3205 part 2 — the forced-sale previews, split off ForcedSaleFacet.
         ForcedSalePreviewFacet forcedSalePreviewFacet =
             ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
+        // #3358 — the maker's price-move guard on an offer.
+        OfferPriceGuardFacet offerPriceGuardFacet =
+            OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -581,7 +585,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](113);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](114);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -696,6 +700,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[110] = _buildCut(address(saleFloorFacet), _getSaleFloorSelectors());
         cuts[111] = _buildCut(address(vaultOutflowFacet), _getVaultOutflowSelectors());
         cuts[112] = _buildCut(address(forcedSalePreviewFacet), _getForcedSalePreviewSelectors());
+        cuts[113] = _buildCut(address(offerPriceGuardFacet), _getOfferPriceGuardSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1431,6 +1436,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("forcedSalePreviewFacet", address(forcedSalePreviewFacet));
+        Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -1858,7 +1864,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // transfer check and royalty). The token's metadata (tokenURI,
         // contractURI and their image / external_url configuration) is cut
         // to VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](14);
+        s = new bytes4[](17);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -1874,6 +1880,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         // #3336 — the dead-route read the keeper's teardown sweep uses.
         s[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
+        // #3413 — the transfer cooldown after a value-out.
+        s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
+        s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
+        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -2023,11 +2033,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      #3025 adds the origination check loan creation and the accept and
     ///      match previews call.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
+        // #3358 — the match preview's origination checks (cadence, then guards).
+        s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -2963,7 +2975,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31); // #3012 +getRewardEntrySettlementProgress +getStagingRecordMark
+        s = new bytes4[](32); // #1787 +getRewardClaimWindow
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -3002,6 +3014,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[28] = InteractionRewardsLensFacet.getUserSoonestRewardExpiry.selector; // #2489 r16: the on-chain soonest deadline over a page
         s[29] = InteractionRewardsLensFacet.getRewardEntrySettlementProgress.selector; // #3012: an entry's settlement progress
         s[30] = InteractionRewardsLensFacet.getStagingRecordMark.selector; // #3012: a staging record's progress mark
+        s[31] = InteractionRewardsLensFacet.getRewardClaimWindow.selector; // #1787: the next claim's window
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
@@ -3780,6 +3793,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #3205 part 2 — the forced-sale previews (read / write split).
     function _getForcedSalePreviewSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.forcedSalePreview();
+    }
+
+    /// @dev #3358 — the maker's price-move guard: arm before posting, set or
+    ///      clear on a posted offer, the view, and the check loan creation
+    ///      and the accept and match previews self-call.
+    function _getOfferPriceGuardSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
+        s[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
+        s[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
+        s[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
     }
 
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {

@@ -1800,11 +1800,15 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 每种代币的类别实时读取：先读 `getAssetPriceStatus(asset)`（Divergent 视为不受信任并关闭新贷款），再读 `checkLiquidityOnActiveNetwork(asset)`（0 为有流动性，1 为无流动性）。以 `OraclePriceDivergence` 或 `OracleCrossCheckDivergence` 回滚视为不受信任；其他任何失败都显示为无法读取并附上原因。推荐列表为部署记录中的包装原生代币和测试代币；粘贴的地址只检查格式。
 
+信任等级从索引读取 `GET /assets/rankings?chainId=<token chain>`，索引提供 keeper 每日抓取的两份公开市值列表（各取前 500 名）：每个地址一条记录，包含每份列表的排名、名称和符号，以及每份列表的 `listFetchedAt` 和上次运行情况。应用以小写地址为键，取各列表中的最佳排名：排名 ≤ 20 且 `getAssetPriceStatus(asset)` 为已定价时为蓝筹，其后为 ≤ 100、200、300 和 500。如果另一份列表把同一符号排在另一个地址上，且没有任何列表同时排名这两个地址，该代币即为未验证；未排名代币的 `symbol()` 或 `name()` 与已排名的符号或名称相同时，为可能的仿冒；其余为未排名。部署记录中的测试代币标注为测试；没有存储列表的链在测试网上显示为测试网络，在主网上显示为无列表。在 `listFetchedAt` 之后失败的 `lastRun` 会被说明。等级仅用于显示，不改变任何链上处理。搜索按子串匹配已排名的符号和名称，最佳排名在前，然后按符号匹配推荐代币；以 `0x` 开头的文本则按地址解析。
+
 <a id="borrow-offers"></a>
 
 ### Borrow: 选择报价
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 返回该交易对的公开报价 id 和总数。对每个 id，页面读取 `getOffer`、`getOfferState`，有钱包时还读取 `previewAccept(offerId, wallet)`，其中 `errorCode` 即协议的拒绝原因。贷款价值比为按今日价格计算的 `calculateLTV`；无流动性或无价格的一侧会说明为何没有。直接接受按出借人的 `amountMax` 和 `interestRateBps` 绑定。借款请求、带 NFT 一侧的报价和自己的报价只计数，不列出。
+
+应用按接受时绑定的利率（`interestRateBps`）对行分组，最低的在前；同一档内保持列表顺序。最高利率以及 Advanced 模式下的最高贷款价值比只筛选已读取的行；`calculateLTV` 不是数值的行会保留并计数。待命出借人一行读取 `getActiveLenderIntents(offset, 50)`，最多四页，保留该币对的意向，并对每个意向取 `availableCapital` 与 `maxExposure` 减 `livePrincipal` 中较小者，低于 `minFillAmount` 的意向被剔除。它显示数量、最大的单个数值和最低的 `minRateBps`，Advanced 模式下还显示最高的 `maxDurationDays` 和 `maxInitLtvBps`。撮合服务只在这些限制内用某个意向成交请求，因此成交并无保证。 这一行要求 `getPartialFillEnabled` 和 `isLenderIntentEnabled` 都为 true，并与列表每一页在同一区块读取；任一为 false 时，页面会说明不会针对它们成交任何请求；任一未能读取时，页面会说明这一点未知。重新读取失败时会保留上一次的结果，并说明它可能已经变化。 `owner` 为当前连接账户的 intent 会被剔除（与自己撮合会作为 self-trade 被拒绝）。每次 intent 成交还要求请求的 `useFullTermInterest`，并拒绝 `allowsPartialRepay`（`LenderIntentFullTermRequired`、`LenderIntentPartialRepayNotAllowed`）；该方式说明了这两点，请求表单会在不满足其一的选项下以说明代替“可能成交”。`keepersPaused()` 也在同一区块读取：只要它为 true，协议的撮合服务就不会成交任何请求，因此页面会以此替代“很可能成交”的说法，并补充说明出借人仍可用自己的 intent 成交，且任何成交方都可成交未设置 `requiresKeeperAuth` 的 intent；未能读取时，页面会说明这一点未知。intent 成交还要求请求的 `periodicInterestCadence` 为无，因为 intent 的切片不带付息计划，而撮合会拒绝生命周期条款不一致的配对（`LifecycleTermsMismatch`）；请求表单会以所选计划替代“很可能成交”的说法。设置了 `requiresKeeperAuth` 的 intent 会单独汇总和列出，且从不对其使用“很可能成交”的说法：只有出借人或其为 `KEEPER_ACTION_SIGNED_FILL` 授权的 solver 才能成交，而撮合服务是否持有该授权不会被读取，因此页面会说明这一点未知。该判断还会在同一区块读取 `paused()` 和 `aggregatorAdaptersPaused()`：全局暂停优先于其他所有条件，并显示为已停止；聚合器暂停期间，会在该区块用 `isAggregatorAdapter` 检查每个不同的所有者，并剔除其 intent，因为 `matchIntent` 会拒绝它们；若检查未能读取，判断即为未知。
 
 <a id="borrow-review"></a>
 
@@ -1964,6 +1968,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 方向选择按所持一方筛选待领款项、进行中和已结束的行。只有当仓位遍历和待领款项遍历都已完成且最新读取成功时，才会显示“没有”；在上限处停止的遍历会标明不完整。每一行打开 `/positions/<id>`，由资格判定决定每项操作；列表不发送任何交易。
 
+按方向筛选后若有两行或更多进行中的贷款，页面最前面会先显示一张汇总卡片。它按每一方、按每个 ERC-20 `principalAsset` 分别汇总 `principal`，从不跨代币相加（价值比较留给敞口那一行），并把本金为 NFT 的行计为租赁。下一个日期取各行所用阶段中最早且尚未到来的那个：进行中或即将到期的到期日（还款），或即将到来的周期检查点（利息）；日期相同时取贷款 id 较小者。宽限期已结束的贷款（在到期日或某个检查点上）、处于宽限期的贷款以及 FallbackPending 贷款按 id 列出，每笔只在其最严重的阶段下出现一次；期限未能读取的贷款会被计数。利息不包含在内。卡片只使用列表自身的读取结果，并会说明遍历不完整。NFT 本金行的到期是租赁结束（`rental-close`），而不是还款：租赁以预付租金结束，因此摘要与各行的称呼一致。
+
 <a id="position"></a>
 
 ### Position：贷款如何读取
@@ -1981,6 +1987,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），借款人仓位的开放路径为 `SwapToRepayIntent` 期间也暂停（Diamond 上的 `positionRoute(borrowerTokenId)`，#3205 之前的部署则为 `positionLock(borrowerTokenId)`）。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
 
 确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，从其 `LoanRepaid` 日志读取还款使贷款所处的状态（而非该区块的状态，同一区块中随后的领取可能已将其结清），根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。高于该数字的 allowance（包括无限额度）同样会降到这个数字，因为 `repayLoan(loanId)` 不设上限也不设期限；之后的恢复会还原原来的较大值。
+
+在宽限期内（`getLoanDeadlines` 给出的 `maturity ≤ now ≤ graceEnd`），全额与部分还款的审核会按链上时钟倒计时到 `graceEnd`，链上时间以审核读取的区块时间戳加上此后经过的秒数估算。一旦 `block.timestamp > graceEnd`，`repayLoan` 与 `repayPartial` 会以 `RepaymentPastGracePeriod` 回滚，此后任何人都可调用 `triggerDefault`，因此迟到的还款会与违约竞速。剩余一小时或更少时，倒计时提示立即发送。它只作说明：发送前重新读取的判定才是门槛，暂停会把 `graceEnd` 推后。通过塞满区块把还款拖过宽限期，已在威胁模型中记录为可接受的低风险。
 
 <a id="interest-schedule"></a>
 
@@ -2081,6 +2089,18 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 ### 协议暂停时
 
 提示在同一区块读取 `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手动暂停的开始时间加上它开始时的逃生期限；没有生效的暂停或 Diamond 从未启动时为零）和 `getProtectedAccount(wallet)`，并按区块时间倒计时。暂停且通道关闭时，`withdrawFromVault` 以 `EnforcedPause` 回退，审阅页说明暂停阻止了它。一旦 `isEscapeOpen` 为真，受保护账户仍使用 `withdrawFromVault`，继续排队；其他钱包的提取调用 `escapeWithdraw(kind, asset, tokenId, amount)`，它拒绝受保护账户（`EscapeNotForProtected`），拒绝被禁止的收款方，受钱包自身存入余额和可自由提取数字的限制，并付款给调用者。完成卡片读取 `EscapeWithdrawal(account, asset, tokenId, amount)` 以及代币自身从金库到钱包的转账。如果暂停状态、通道或通道开启时的模式无法读取，则不会发送任何提取。
+
+<a id="protection-addresses"></a>
+
+### 已保存的地址
+
+地址簿按链 ID 和钱包保存在 `localStorage` 中，从不上链。钱包须在域 `{name: 'Vaipakam Address Check', version: '1', chainId, verifyingContract: Diamond}` 中对 `AddressControl{account, destination, purpose, nonce, issuedAt}` 签名后才能加入，附带随机的 32 字节 nonce，有效期七天。请求以 `/protection?prove=<code>` 的形式传递。签名页面会拒绝本应用不支持的网络或 Diamond 以及已失效的请求，并且只在已连接账户正是该链上的该地址时才签名。粘贴回来的答复通过已连接钱包自己的读取连接用 `verifyTypedData` 校验，因此智能钱包通过 ERC-1271 作答；只有答复的正是同一请求时才会保存。地址输入框完整显示地址并把首尾字符单独标出，拒绝错误的 EIP-55 校验和，并且不可绕过地拒绝前三位和后三位十六进制数字与该钱包已在使用的地址（自身地址、已保存和待验证的条目、有效和等待中的目的地、受保护签名人、已批准的 keeper 以及本网络的 keeper）相同而其余不同的任何地址。首次使用的地址需要明确勾选，任何修改都会清除该勾选。
+
+<a id="protection-destinations"></a>
+
+### 付款目的地
+
+本部分在同一区块读取 `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（每个请求及其 `maturesAt`）、`getProtectedSigners`、`paused`，以及从 `getPendingPayoutIds` 得出的按收款方排队的付款。按区块时间加上此后经过的秒数计算，请求在 `maturesAt` 之前处于等待，直到 `maturesAt + delay` 为就绪，此后失效。四种更改是 `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted` 和 `removeAllowlisted`，参数均为 `(account, destination)`。审核在同一区块读取，并在打开钱包前拒绝 facet 会拒绝的情形：暂停或锁定（添加和激活时）、您自己的钱包、已有效或等待中的地址、已有五个目的地或五个请求、被标记的地址、尚未到期或已失效的请求。每次调用都会先模拟执行，在打开钱包前再核对一次，并以其自身的 `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded` 或 `AllowlistRemoved` 日志计量；移除还会统计它引发的 `PayoutCancelled` 日志。
 
 <a id="my-offers"></a>
 

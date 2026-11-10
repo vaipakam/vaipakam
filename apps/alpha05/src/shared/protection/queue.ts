@@ -115,20 +115,24 @@ type RawPayout = {
 };
 type RawMode = { enabled: boolean; locked: boolean; requireCosign: boolean; retired: boolean; delaySeconds: number | bigint; controller: Hex };
 
-/** The account's queue and every fact its rules read, in one go. A row
- *  whose read failed stays in the list, said so. */
-export async function readAccountQueue(c: PublicClient, diamond: Hex, account: Hex): Promise<AccountQueue> {
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
-  // #3379 B2: the mode, its signers and its allowlist are the vault's record.
-  const [block, record, paused, escapeOpen, escapeOpensAt, ids] = await Promise.all([
-    c.getBlock(),
-    answerOrNull(readProtectedRecord(c, diamond, account)),
+/** The account's queue and every fact its rules read, at one block (the
+ *  latest, or `blockNumber`), so the rows and the facts they are judged by
+ *  never come from two states of the chain. A row whose read failed stays
+ *  in the list, said so. #3379 B2: the mode, its signers and its allowlist
+ *  are the vault's record. */
+export async function readAccountQueue(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<AccountQueue> {
+  const block = blockNumber === undefined ? await c.getBlock({ blockTag: 'latest' }) : await c.getBlock({ blockNumber });
+  const at = block.number;
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
+    answerOrNull(c.readContract({ address: diamond, abi, functionName, args, blockNumber: at }) as Promise<T>);
+  const [record, paused, escapeOpen, escapeOpensAt, ids] = await Promise.all([
+    answerOrNull(readProtectedRecord(c, diamond, account, at)),
     read<boolean>(ADMIN, 'paused'),
     read<boolean>(PAYOUT, 'isEscapeOpen'),
     read<bigint>(PAYOUT, 'escapeOpensAt'),
     read<readonly bigint[]>(PAYOUT, 'getPendingPayoutIds', [account]),
   ]);
-  const rows = ids === null ? null : await Promise.all(ids.map((id) => readQueueRow(c, diamond, id)));
+  const rows = ids === null ? null : await Promise.all(ids.map((id) => readQueueRow(c, diamond, id, at)));
   const mode: RawMode | null = record === null ? null : record.record;
   const signers = record === null ? null : record.signers;
   const allowlist = record === null ? null : record.allowlist;
@@ -158,8 +162,9 @@ export async function readAccountQueue(c: PublicClient, diamond: Hex, account: H
 
 /** One row by its id, in whatever state it is: the row and its request
  *  code, each null when its read failed. */
-export async function readQueueRow(c: PublicClient, diamond: Hex, id: bigint): Promise<QueueRow> {
-  const read = <T>(functionName: string) => answerOrNull(c.readContract({ address: diamond, abi: PAYOUT, functionName, args: [id] }) as Promise<T>);
+export async function readQueueRow(c: PublicClient, diamond: Hex, id: bigint, blockNumber?: bigint): Promise<QueueRow> {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const read = <T>(functionName: string) => answerOrNull(c.readContract({ address: diamond, abi: PAYOUT, functionName, args: [id], ...at }) as Promise<T>);
   const [p, code, needs] = await Promise.all([read<RawPayout>('getPendingPayout'), read<number | bigint>('requestCode'), read<boolean>('payoutNeedsCosign')]);
   return {
     id,

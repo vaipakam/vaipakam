@@ -13,6 +13,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
@@ -1316,6 +1318,32 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
     ///        reverts — the clock would run through an outage she cannot claim
     ///        in. (The fail-open screen, false on an unreadable oracle, would
     ///        read the same here; that substitution was not run.)
+    /// @notice #3379 B2, Codex #3489 r3 — a replacement's routing is
+    ///         permanent: after the new wallet switches protected mode off, the
+    ///         retired wallet's claim "to its wallet" is still paid into the
+    ///         account's vault, never to the retired wallet.
+    function test_B2_aRetiredWalletsClaimIsPaidIntoTheVaultAfterASwitchOff() public {
+        _seed(bob, LOAN_B);
+        address nominee = makeAddr("b2RetiredNominee");
+        LibTestProtection.enable(address(diamond), bob, 2 days);
+        LibTestProtection.propose(address(diamond), bob, bob, nominee);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        LibTestProtection.finalizeReplacement(address(diamond), bob);
+        vm.warp(vm.getBlockTimestamp() + 2 days + 1); // past the cool-down
+        LibTestProtection.requestDisable(address(diamond), bob, nominee);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        LibTestProtection.finalizeSettings(address(diamond), bob);
+        address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(bob);
+        (bool on,,,,,,) = VaipakamVaultImplementation(vault).protectionState();
+        assertFalse(on, "fixture: protected mode is off");
+        uint256 wallet0 = vpfi.balanceOf(bob);
+        uint256 vault0 = vpfi.balanceOf(vault);
+        uint256 paid = _claimWallet(bob);
+        assertGt(paid, 0, "fixture: something to claim");
+        assertEq(vpfi.balanceOf(bob), wallet0, "nothing reached the retired wallet");
+        assertEq(vpfi.balanceOf(vault) - vault0, paid, "paid into the account's vault");
+    }
+
     function test_sanc_1499_anOutageBarsTheMarkedOnBothReaders_andClearsTheUnmarked() public {
         uint256 idA = _seed(alice, LOAN_A);
         uint256 idB = _seed(bob, LOAN_B);
@@ -2764,6 +2792,19 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
         (, phase, , , , , , , , , , , ) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
     }
 
+    /// @dev #1787 — claim until the domain is prepared through its last day: a
+    ///      preparation call carries as many whole days as the work meter fits.
+    function _prepareAllDomain() internal {
+        uint256 calls;
+        while (true) {
+            _claim();
+            (, , , uint64 lastDay, uint64 prepared, , , , , , , , ) =
+                _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
+            if (prepared >= lastDay) return;
+            assertLt(++calls, 8, "the domain prepares");
+        }
+    }
+
     function _reserveAllDomain() internal {
         uint256 calls;
         while (!_domain().reserveDomainPage(_dk())) {
@@ -3297,8 +3338,7 @@ contract RewardSanctionsForfeitStagedTest is RewardSanctionsMirrorBase {
     function test_sanc_T20_aDomainClaimantHolds_thenSetsApartEveryPreFlagDay() public {
         _longScene(DAYS);
         _liveFresh(20e18);
-        _claim();
-        _claim();
+        _prepareAllDomain();
         _reserveAllDomain();
         assertEq(_domPhase(), uint8(LibVaipakam.DomainPhase.Resolving), "fixture LIVE: an irrevocable domain");
         oracle.setFlagged(alice, true);

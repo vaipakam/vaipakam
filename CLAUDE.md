@@ -374,6 +374,22 @@ runs half of it on old code:
   starts with the build that introduced it: on a Diamond refreshed in place,
   offers opened before the refresh are not counted.
 
+- **OfferPriceGuardFacet + LoanFacet + OfferBookFacet + OfferPreviewFacet +
+  OfferMatchFacet + RiskPreviewFacet + EarlyWithdrawalDirectFacet +
+  PrecloseFacet — the maker's price-move guard (#3358).** Every step that
+  fills an offer runs `LibOfferPriceGuard.requireClear`, which self-calls
+  `requireOfferPriceGuardsClear` for a guarded offer: loan creation (both
+  makers' offers in a match), the direct loan sale (the buyer's offer) and
+  the obligation handover (the incoming borrower's offer). The offer book records a guard armed before posting,
+  and the accept, match and standing-intent previews ask the same entry
+  (the match preview and `RiskPreviewFacet.previewIntent` through
+  `OfferPreviewFacet.previewOriginationRefusal`). An unguarded fill
+  makes no self-call, so a Diamond without the host fills unguarded offers
+  as before, but a guarded offer's fill reverts `FunctionDoesNotExist` there
+  (a hard revert, never an unchecked fill). The calm rule is
+  `LibPairCalm`, shared with `SaleFloorFacet`. Reaches a chain by fresh
+  deploy or `RefreshAllFacetsInPlace`.
+
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
   `LibLoanClock`, which adds the paused time since the loan started (from the
@@ -1319,7 +1335,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_REMIT_ACK_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `KEEPER_FEE_BALANCE_ALERT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `KEEPER_FEE_BALANCE_ALERT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1354,6 +1370,8 @@ artifacts and stay in their respective env / config:
   `vaultBeaconUpkeep` (#3282) on `VAULT_BEACON_UPKEEP_ENABLED`,
   `priceCheckpoint` (#3384, the hourly price checkpoints the #3359
   forced-sale floor reads) on `PRICE_CHECKPOINT_ENABLED`,
+  `assetRankings` (#3446, off-chain only: the daily market-cap rankings
+  the app's asset trust tiers read) on `ASSET_RANKINGS_ENABLED`,
   `keeperFeeBalance` (#3365, read-only: an ops alert when the keeper
   wallet cannot pay for its liquidation reserve) on
   `KEEPER_FEE_BALANCE_ALERT_ENABLED`,

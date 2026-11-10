@@ -7,6 +7,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {LibPairCalm} from "../libraries/LibPairCalm.sol";
 
 /**
  * @title SaleFloorFacet
@@ -108,7 +109,7 @@ contract SaleFloorFacet is DiamondAccessControl {
         for (uint256 i; i < assets.length; ++i) {
             address asset = assets[i];
             if (asset == address(0) || book[asset][hour] != 0) continue;
-            (bool ok, uint256 p) = _price1e18(asset);
+            (bool ok, uint256 p) = LibPairCalm.price1e18(asset);
             if (!ok) continue;
             book[asset][hour] = p;
             emit HourlyPriceCheckpointed(asset, hour, p);
@@ -147,26 +148,23 @@ contract SaleFloorFacet is DiamondAccessControl {
             return f;
         }
 
-        (bool okC, uint256 pC) = _price1e18(collateralAsset);
-        (bool okP, uint256 pP) = _price1e18(principalAsset);
+        (bool okC, uint256 pC) = LibPairCalm.price1e18(collateralAsset);
+        (bool okP, uint256 pP) = LibPairCalm.price1e18(principalAsset);
         if (!okC || !okP) {
             f.reason = FloorReason.Unpriced;
             return f;
         }
 
-        // Calm: the rate now against each of the last two hours' rates.
-        uint256 hour = block.timestamp / 1 hours;
-        for (uint256 back = 1; back <= 2; ++back) {
-            uint256 cC = LibVaipakam.storageSlot().hourlyPrice1e18[collateralAsset][hour - back];
-            uint256 cP = LibVaipakam.storageSlot().hourlyPrice1e18[principalAsset][hour - back];
-            if (cC == 0 || cP == 0) {
-                f.reason = FloorReason.NoCheckpoint;
-                return f;
-            }
-            if (_moved(pC, pP, cC, cP, c.calmMoveBps)) {
-                f.reason = FloorReason.Moving;
-                return f;
-            }
+        // Calm: the rate now against each of the last two hours' rates (the
+        // one rule, shared with the maker's price-move guard, #3358).
+        LibPairCalm.Calm calm = LibPairCalm.calmNow(collateralAsset, principalAsset, pC, pP, c.calmMoveBps);
+        if (calm == LibPairCalm.Calm.NoCheckpoint) {
+            f.reason = FloorReason.NoCheckpoint;
+            return f;
+        }
+        if (calm == LibPairCalm.Calm.Moving) {
+            f.reason = FloorReason.Moving;
+            return f;
         }
 
         // Cushion: the collateral's value in the numeraire against the
@@ -249,33 +247,6 @@ contract SaleFloorFacet is DiamondAccessControl {
     }
 
     // ─── Internals ───────────────────────────────────────────────────────
-
-    /// @dev `asset`'s oracle price scaled to 1e18, or false when it cannot be
-    ///      read (any reason the strict reader refuses) or reads zero.
-    function _price1e18(address asset) private view returns (bool ok, uint256 p) {
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (uint256 price, uint8 dec) {
-            if (price == 0) return (false, 0);
-            p = dec <= 18 ? price * 10 ** (18 - dec) : price / 10 ** (dec - 18);
-            ok = p != 0;
-        } catch {
-            return (false, 0);
-        }
-    }
-
-    /// @dev Whether the collateral/principal rate moved more than `boundBps`
-    ///      between the checkpoint (`cC / cP`) and now (`pC / pP`), measured
-    ///      against the checkpoint rate. Cross-multiplied at full width.
-    function _moved(uint256 pC, uint256 pP, uint256 cC, uint256 cP, uint256 boundBps)
-        private
-        pure
-        returns (bool)
-    {
-        // now / then = (pC * cP) / (pP * cC); compare it with 1 ± bound.
-        uint256 nowScaled = Math.mulDiv(pC, cP * LibVaipakam.BASIS_POINTS, pP);
-        uint256 thenScaled = cC * LibVaipakam.BASIS_POINTS;
-        uint256 diff = nowScaled > thenScaled ? nowScaled - thenScaled : thenScaled - nowScaled;
-        return diff * LibVaipakam.BASIS_POINTS > thenScaled * boundBps;
-    }
 
     function _inRange(bytes32 name, uint256 value, uint256 lo, uint256 hi) private pure {
         if (value != 0 && (value < lo || value > hi)) {

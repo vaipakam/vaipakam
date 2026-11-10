@@ -91,8 +91,9 @@ contract LiquidationMainnetForkTest is Test {
 
     /// @dev #3272 part 2 — the Diamond prices through a price guard. A fork of
     ///      chain 1 is a production chain to the guard, so it holds a delay
-    ///      of at least a day; its starting config applies at construction,
-    ///      as a deploy's does.
+    ///      of at least the guard's own floor ({PriceGuard.MIN_DELAY}, seven
+    ///      days); its starting config applies at construction, as a
+    ///      deploy's does.
     function _wireOracleInfrastructure() internal {
         PriceGuard.Change[] memory c = new PriceGuard.Change[](3);
         c[0] = _change(PriceGuard.Kind.FeedRegistry, CHAINLINK_FEED_REGISTRY);
@@ -104,7 +105,7 @@ contract LiquidationMainnetForkTest is Test {
                 address(this),
                 address(this),
                 LibTestPriceGuard.identity(USD_DENOM, LibTestPriceGuard.ETH),
-                uint64(1 days),
+                uint64(7 days),
                 c
             )
         );

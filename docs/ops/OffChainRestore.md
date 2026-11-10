@@ -588,6 +588,7 @@ then deploy.
       | `EXPIRED_TEARDOWN_ENABLED` | expired-teardown pass skips — a prepay listing past its loan's grace keeps the borrower position locked and its conduit approval live, a lender-sale listing past its expiry (or on a closed loan) keeps holding the borrower's partial repayment and collateral withdrawal, a swap-to-repay intent past its cancel grace keeps the position locked and the loan out of internal matching, and a listing, intent or vehicle offer (offset, sale, refinance request) whose position moved stays in place until cleared (#3336), unless someone makes the permissionless `cancelExpiredPrepayListing` / `teardownStaleSaleListing` / `cancelExpiredIntent` / `cancelOffer` call by hand (a closing path also clears a prepay listing or an intent) | tearing down expired listings and intents (#3097), and moved-position listings and vehicles (#3336) |
       | `VAULT_BEACON_UPKEEP_ENABLED` | vault-beacon upkeep pass skips — a Timelock current-version or revoke proposal past its delay, a vault owner's signed pin or unpin past its pin delay, and a signed pin-delay lowering past the current delay all stay pending (nothing lapses: each waits for whoever applies it), unless someone makes the permissionless `executeCurrentVersion` / `executeRevoke` / `executePin` / `executePinDelay` call by hand | applying VaultBeacon changes once their delay has passed (#3282) |
       | `PRICE_CHECKPOINT_ENABLED` | price checkpoint pass skips — no hourly price checkpoint is written unless someone calls the permissionless `checkpointHourlyPrices` by hand, so the #3359 forced-sale floor reads no checkpoint and every forced sale uses the full liquidation slippage cap (the behaviour before #3359; nothing is lost, sales just keep the wider floor) | the hourly checkpoints the forced-sale floor's calm test reads (#3384) |
+      | `ASSET_RANKINGS_ENABLED` | asset rankings pass skips — no new market-cap ranking is written, so the app keeps showing each asset's tier from the last list written, with that list's date; nothing on-chain reads the rankings | the daily `asset_ranking` rows the app's asset trust tiers read (#3446) |
       | `REWARD_STAGING_UPKEEP_ENABLED` | reward staging upkeep pass skips — a reward claim day held in a staging record waits for whoever calls the permissionless staging entries by hand: a record or claim domain is not prepared, reserved or resolved, a resolving record (which has no deadline) never pays out, a legacy slice is not stepped, and a released batch's priority window lapses with nobody registered | moving held reward claim days on to payment (#3097) |
       | `REWARD_STAGING_UNWIND_ENABLED` | the reward staging upkeep pass's unwind step skips — a staging record or claim domain past its deadline that cannot be covered, or one the contract finds stale, keeps holding what it reserved until someone calls `unwindStagedDayPage` / `unwindDomainPage` by hand; the pass names each one it left | releasing stuck staging records (#3097) |
 
@@ -1681,6 +1682,8 @@ DELETE FROM signed_request_use; \
 DELETE FROM protected_lock_requests; \
 DELETE FROM protected_lock_readiness; \
 DELETE FROM alert_channel_changes; \
+DELETE FROM asset_ranking; \
+DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
@@ -1715,6 +1718,14 @@ table cannot leave new requests below a stale position. Clearing it has one
 stated cost: a `LOCK` sent in the last minute or so before the clear, not yet
 handled, is lost, and the owner gets no answer for it; the owner can send it
 again or lock from the app.
+
+`asset_ranking` and `asset_ranking_run` (#3446) hold the public market-cap
+rankings the app's asset trust tiers read, and the keeper's record of each
+day's fetch. Nothing in them is born here: with the run record empty, every
+source and chain is due, and the keeper's `assetRankings` pass refetches them
+on its next hourly run (it must be armed). Until then the app shows no tier,
+and its own-risk warning, for every asset. Keeping a restored copy would show
+tiers no fetch has checked.
 
 `alert_channel_changes` (#3246) holds the pending removals of a Telegram
 alert chat under protected mode. Clearing it only cancels a pending change,
@@ -2020,7 +2031,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

@@ -26,3 +26,12 @@ export const VAULT_SETTING = { delay: 2, disable: 3, unlock: 4 } as const;
 export const VAULT_SIGNER = { add: 1, accept: 2, remove: 3, cancel: 4 } as const;
 /** `VaultProtection.REPLACE_*`, the `action` of `replacement`. */
 export const VAULT_REPLACE = { propose: 1, approve: 2, cancel: 3 } as const;
+
+/** The `action` and `nominee` arguments of the vault's `replacement`, the one
+ *  builder every caller uses. Approve and cancel act on the proposal in force
+ *  and must name ITS nominee: the vault refuses any other (Codex #3489 r2/r3),
+ *  so a caller passes the live proposal's nominee, never a placeholder. A
+ *  proposal names the wallet proposed. */
+export function replacementArgs(action: keyof typeof VAULT_REPLACE, nominee: Address): [number, Address] {
+  return [VAULT_REPLACE[action], nominee];
+}

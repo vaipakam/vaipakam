@@ -372,6 +372,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertGt(b, 0, "fixture-live: a borrower slice is retained");
         address holder = makeAddr("fcBorrowerPositionHolder");
         uint256 tokenId = _fcLoan(id).borrowerTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(fcBorrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(fcBorrower, holder, tokenId);
 

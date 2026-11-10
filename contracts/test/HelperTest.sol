@@ -115,6 +115,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
@@ -672,11 +673,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
+        selectors[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
         return selectors;
     }
 
@@ -882,7 +884,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -897,6 +899,10 @@ contract HelperTest {
         selectors[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         selectors[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         selectors[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
+        // #3413 — the transfer cooldown after a value-out.
+        selectors[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
+        selectors[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
+        selectors[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
         return selectors;
     }
 
@@ -2249,7 +2255,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31); // #3012 +getRewardEntrySettlementProgress +getStagingRecordMark
+        selectors = new bytes4[](32); // #1787 +getRewardClaimWindow
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2287,6 +2293,7 @@ contract HelperTest {
         selectors[28] = InteractionRewardsLensFacet.getUserSoonestRewardExpiry.selector; // #2489 r16: the on-chain soonest deadline over a page
         selectors[29] = InteractionRewardsLensFacet.getRewardEntrySettlementProgress.selector; // #3012: an entry's settlement progress
         selectors[30] = InteractionRewardsLensFacet.getStagingRecordMark.selector; // #3012: a staging record's progress mark
+        selectors[31] = InteractionRewardsLensFacet.getRewardClaimWindow.selector; // #1787: the next claim's window
         return selectors;
     }
 
@@ -2732,6 +2739,16 @@ contract HelperTest {
     /// `DeployDiamond._getForcedSalePreviewSelectors`.
     function getForcedSalePreviewFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.forcedSalePreview();
+    }
+
+    /// #3358 — the maker's price-move guard. Mirrors
+    /// `DeployDiamond._getOfferPriceGuardSelectors`.
+    function getOfferPriceGuardFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
+        selectors[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
+        selectors[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
+        selectors[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
     }
 
     /// #3359 - the forced-sale floor rule. Mirrors

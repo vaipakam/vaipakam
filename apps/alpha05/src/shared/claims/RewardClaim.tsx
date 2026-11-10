@@ -22,6 +22,7 @@ import {
   readVaultAddress,
   readVpfiToken,
   vpfiArrivals,
+  type ClaimWindow,
   type PendingRewards,
 } from './rewards';
 
@@ -42,6 +43,8 @@ export interface RewardReady {
   fromDay: bigint;
   toDay: bigint;
   atBlock?: bigint;
+  /** #1787 — the part of the wallet's reward entries the claim reads. */
+  window?: ClaimWindow;
 }
 
 /** The sentence for a preview that is not an exact figure. */

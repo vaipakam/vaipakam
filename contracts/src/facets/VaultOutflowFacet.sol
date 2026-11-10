@@ -237,7 +237,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // moves and the tracked balance is unchanged until a release pays it
         // through this same function.
         if (
-            LibProtectedAccount.isEnabled(user)
+            LibProtectedAccount.isProtected(user)
                 && IVaultOutflowPayoutGate(address(this)).applyPayoutGate(
                     user, _assetType(o.kind), o.asset, o.tokenId, o.amount, o.to
                 )
@@ -372,7 +372,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
                 o.class_ = VaultOutflowTypes.OutflowClass.Owner;
                 return payeeOwner;
             }
-            if (o.to == user || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
+            if (o.to == user || !LibProtectedAccount.isProtected(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
                 revert OutflowRecipientInvalid(c, o.to);
             }
         } else if (c == VaultOutflowTypes.OutflowClass.MatchedCounterparty) {
@@ -405,6 +405,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // A consolidation moves custody under the lien: the move books it.
             // A holder payout is free money for the holder: booked here.
             payeeOwner = holder;
+            // #3413 — value left the position: its tokens cool down, so a sale
+            // cannot fill against a position emptied just before it. A
+            // consolidation keeps the value under the lien and is no payout.
+            if (c != VaultOutflowTypes.OutflowClass.Consolidation) LibPositionNFT.markLoanValueOut(o.ref);
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist
@@ -537,7 +541,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
     function _protectedRecipientVault(address user, address recipient) private view returns (address) {
         if (recipient == user) return address(0);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!LibProtectedAccount.isEnabled(recipient)) return address(0);
+        if (!LibProtectedAccount.isProtected(recipient)) return address(0);
         return s.userVaipakamVaults[recipient];
     }
 

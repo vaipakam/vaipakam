@@ -108,7 +108,26 @@ library LibPositionNFT {
         mapping(uint256 => bool) retired;
         /// @dev The token's transfer count when its open route started.
         mapping(uint256 => uint256) routeTransferCount;
+        // ─── #3413 ───────────────────────────────────────────────────────
+        /// @dev When value last left each loan's positions (a payout to a
+        ///      holder, a collateral withdrawal, a terms change): the block
+        ///      number in the high bits, the timestamp in the low 64 bits
+        ///      ({_stampNow}). One word, so each stamp is one cheap write.
+        mapping(uint256 => uint256) loanValueOut;
+        /// @dev When each offer's terms last changed, packed the same way.
+        mapping(uint256 => uint256) offerValueOut;
+        /// @dev The transfer cooldown in seconds after a value-out; 0 = the
+        ///      default ({DEFAULT_TRANSFER_COOLDOWN_SEC}).
+        uint32 transferCooldownSec;
     }
+
+    /// @notice #3413 — the transfer cooldown when none is set.
+    uint32 internal constant DEFAULT_TRANSFER_COOLDOWN_SEC = 5;
+    /// @notice #3413 — the bounds of a set cooldown. At least one second;
+    ///         at most ten minutes, so a position paid regularly is never
+    ///         held for long.
+    uint32 internal constant MIN_TRANSFER_COOLDOWN_SEC = 1;
+    uint32 internal constant MAX_TRANSFER_COOLDOWN_SEC = 600;
 
     error PositionNFTNotSet();
     error PositionNFTAlreadySet();
@@ -125,6 +144,50 @@ library LibPositionNFT {
         assembly {
             es.slot := position
         }
+    }
+
+    // ─── #3413 transfer cooldown ─────────────────────────────────────────
+
+    /// @notice Record that value left loan `loanId`'s positions now: a payout
+    ///         to a holder, a collateral withdrawal or a terms change. Neither
+    ///         side's token may then move in this block, nor until the
+    ///         cooldown has passed, so a sale cannot fill against a position
+    ///         emptied just before it.
+    function markLoanValueOut(uint256 loanId) internal {
+        _storage().loanValueOut[loanId] = _stampNow();
+    }
+
+    /// @notice As {markLoanValueOut}, for offer `offerId`'s own token: a
+    ///         change to its terms, a match drawing on it, or its end
+    ///         (stamped by {retire}).
+    function markOfferValueOut(uint256 offerId) internal {
+        _storage().offerValueOut[offerId] = _stampNow();
+    }
+
+    /// @notice The transfer cooldown in force, in seconds.
+    function transferCooldownSec() internal view returns (uint32 sec) {
+        sec = _storage().transferCooldownSec;
+        if (sec == 0) sec = DEFAULT_TRANSFER_COOLDOWN_SEC;
+    }
+
+    /// @notice The latest value-out on `tokenId`'s position, and the earliest
+    ///         time the token may move after it. Both 0 when none. The token
+    ///         may not move in block `valueOutBlock` either.
+    /// @dev    A loan token reads its loan's stamp only. A loan slice's token
+    ///         also records the offer it came from, but that offer's later
+    ///         changes or cancel move nothing out of the slice's loan, so only
+    ///         an offer's own token (no loan) reads the offer's stamp.
+    function cooldownOf(uint256 tokenId) internal view returns (uint64 valueOutBlock, uint64 readyAt) {
+        ERC721Storage storage es = _storage();
+        uint256 loanId = es.loanIds[tokenId];
+        uint256 st = loanId != 0 ? es.loanValueOut[loanId] : es.offerValueOut[es.offerIds[tokenId]];
+        if (st == 0) return (0, 0);
+        return (uint64(st >> 64), uint64(st) + uint64(transferCooldownSec()));
+    }
+
+    /// @dev The block number above the timestamp, in one word.
+    function _stampNow() private view returns (uint256) {
+        return (block.number << 64) | block.timestamp;
     }
 
     // ─── The core ────────────────────────────────────────────────────────
@@ -197,8 +260,22 @@ library LibPositionNFT {
     }
 
     /// @notice Mark `tokenId` retired. Idempotent. Clears any open route.
+    /// @dev    #3413 — a retired token's position has closed or passed to a
+    ///         new token: a cancel refunded an offer's deposit, a match used up
+    ///         the rest of it, a final claim paid a side out, or a sale or
+    ///         handover re-minted a side to its new holder (the seller paid).
+    ///         So retiring stamps the token's position, its loan or else its
+    ///         offer, as a value-out: the receipt cannot be sold in the same
+    ///         block, nor within the cooldown, to a buyer who priced the live
+    ///         position. Every retire comes through here, so no exit path can
+    ///         miss it.
     function retire(uint256 tokenId) internal {
         ERC721Storage storage es = _storage();
+        if (!es.retired[tokenId]) {
+            uint256 loanId = es.loanIds[tokenId];
+            if (loanId != 0) es.loanValueOut[loanId] = _stampNow();
+            else if (es.offerIds[tokenId] != 0) es.offerValueOut[es.offerIds[tokenId]] = _stampNow();
+        }
         es.retired[tokenId] = true;
         delete es.routes[tokenId];
         delete es.routeTransferCount[tokenId];

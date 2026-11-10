@@ -12,25 +12,14 @@
  * open stop it before the wallet. Runs on the desktop and the phone; the chain is
  * reverted after each test.
  */
-import { keccak256, toHex, type Hex } from 'viem';
+import { keccak256, toHex } from 'viem';
 import type { Page } from '@playwright/test';
-import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { controlAgent } from '../lib/stub';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 const BASE_SEPOLIA = 84532;
 const VPFI = 10n ** 18n;
-
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-  await controlAgent({ reset: true });
-});
-test.afterEach(async () => {
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

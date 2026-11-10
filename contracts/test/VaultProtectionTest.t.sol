@@ -341,22 +341,41 @@ contract VaultProtectionTest is SetupTest {
         uint64 expiry = uint64(vm.getBlockTimestamp() + 1 hours);
         uint8 purpose = code.PURPOSE_REPLACEMENT();
         uint256 n = vault.protectionNonce(signerA, purpose);
+        uint8 cancel = code.REPLACE_CANCEL();
         bytes memory held = _sig(
-            SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_CANCEL_TYPEHASH(), nominee, uint32(1), n, expiry))
+            SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_TYPEHASH(), cancel, nominee, uint32(1), n, expiry))
         );
         P.propose(address(diamond), acct, acct, nominee); // round 2, same nominee
-        uint8 cancel = code.REPLACE_CANCEL();
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, signerA));
         vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, nominee, _signed(signerA, expiry, held))));
         // Signed for the proposal in force, it cancels.
         bytes memory current = _sig(
-            SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_CANCEL_TYPEHASH(), nominee, uint32(2), n, expiry))
+            SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_TYPEHASH(), cancel, nominee, uint32(2), n, expiry))
         );
         vm.prank(relayer);
         vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, nominee, _signed(signerA, expiry, current))));
         (address pending,,,) = vault.replacementProposal();
         assertEq(pending, address(0), "cancelled");
+    }
+
+    /// @dev Codex #3489 r3 — an approval is bound to its round too: one
+    ///      withheld from a cancelled proposal is refused after the same
+    ///      nominee is proposed again.
+    function test_aHeldApprovalNeverCountsForALaterProposal() public {
+        address[3] memory more = [signerA, s2, s3];
+        for (uint256 i; i < 3; ++i) P.addSigner(address(diamond), acct, acct, more[i], DELAY);
+        P.propose(address(diamond), acct, s2, nominee); // round 1, by a signer
+        uint8 approve = code.REPLACE_APPROVE();
+        uint64 expiry = uint64(vm.getBlockTimestamp() + 1 hours);
+        uint256 n = vault.protectionNonce(signerA, code.PURPOSE_REPLACEMENT());
+        bytes memory held =
+            _sig(SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_TYPEHASH(), approve, nominee, uint32(1), n, expiry)));
+        P.call(address(diamond), acct, s3, abi.encodeCall(VaultProtection.replacement, (code.REPLACE_CANCEL(), nominee, P.direct(s3))));
+        P.propose(address(diamond), acct, s2, nominee); // round 2, same nominee
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, signerA));
+        vault.protect(abi.encodeCall(VaultProtection.replacement, (approve, nominee, _signed(signerA, expiry, held))));
     }
 
     /// @dev A cancel naming another nominee is refused on-chain too.

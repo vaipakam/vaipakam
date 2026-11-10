@@ -66,6 +66,8 @@ export const ACCEPT_ERRORS = [
   'SelfTrade',
   'RefinanceRequestUntakeable',
   'CadenceNotAdmitted',
+  // #3358 — the offer creator's price-move guard refuses the fill now.
+  'PriceGuardRefused',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

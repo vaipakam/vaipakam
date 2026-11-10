@@ -443,6 +443,10 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             )
         ) revert LTVExceeded();
 
+        // #3413 — the lender holder was paid and collateral left the
+        // borrower side: the loan's tokens cool down.
+        LibPositionNFT.markLoanValueOut(loanId);
+
         // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
         // (current borrower-NFT owner, not stale `loan.borrower`)
         // and `actualCollateralConsumed` (not the requested amount).

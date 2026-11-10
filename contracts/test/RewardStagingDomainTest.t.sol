@@ -17,6 +17,7 @@ import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.s
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibClaimWork} from "../src/libraries/LibClaimWork.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -125,6 +126,19 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         (paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
+    /// @dev #1787 — claim until the domain is prepared through its last day:
+    ///      a preparation call carries as many whole days as the claim's work
+    ///      meter fits, so an extent takes as many calls as it needs.
+    function _prepareAll() internal returns (uint256 calls) {
+        while (true) {
+            assertEq(_claim(), 0, "a domain pays nothing while it prepares");
+            ++calls;
+            (, uint64 prepared, uint64 last, , ) = _dom();
+            if (prepared >= last) return calls;
+            if (calls > 8) fail();
+        }
+    }
+
     function _dk() internal view returns (bytes32) {
         return keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender));
     }
@@ -156,19 +170,27 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_AMultiChunkClaim_PreparesADomain_AndPaysNothing() public {
         _longScene(DAYS);
         _liveFresh(20e18);
+        // #1787 — a chunk is one preparation call: as many whole days as the
+        // claim's work meter carries (the first day cold, the rest warm).
+        uint256 perCall = 1
+            + (LibClaimWork.BUDGET - (LibClaimWork.PREP_DAY + LibClaimWork.PREP_ENTRY_FIRST))
+                / (LibClaimWork.PREP_DAY + LibClaimWork.PREP_ENTRY_DAY);
+        uint256 chunks = LibClaimWork.prepCalls(DAYS, 1, 30);
+        assertEq(chunks, (DAYS + perCall - 1) / perCall, "the calls the meter needs");
+        assertGt(chunks, 1, "more than one call");
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit StagingDomainOpened(_dk(), alice, uint8(LibVaipakam.RewardSide.Lender), 1, DAYS, 2);
+        emit StagingDomainOpened(_dk(), alice, uint8(LibVaipakam.RewardSide.Lender), 1, DAYS, chunks);
         assertEq(_claim(), 0, "nothing paid: the side is a domain");
         (uint8 phase, uint64 prepared, uint64 last, uint32 live, uint64 deadline) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging));
-        assertEq(prepared, 30, "one chunk of days prepared");
+        assertEq(prepared, perCall, "one call's worth of days prepared");
         assertEq(last, DAYS);
-        assertEq(live, 30, "a record per prepared day");
+        assertEq(live, perCall, "a record per prepared day");
         assertEq(_view().getStagingRecord(_key(1)).phase, uint8(LibVaipakam.StagingPhase.Staging));
-        assertEq(_view().getStagingRecord(_key(30)).phase, uint8(LibVaipakam.StagingPhase.Staging));
-        assertEq(_view().getStagingRecord(_key(31)).phase, uint8(LibVaipakam.StagingPhase.None), "not yet");
-        assertGt(deadline, block.timestamp + 2 days, "two chunks' cadences plus the grace");
-        assertEq(_claim(), 0, "the second call prepares the rest");
+        assertEq(_view().getStagingRecord(_key(perCall)).phase, uint8(LibVaipakam.StagingPhase.Staging));
+        assertEq(_view().getStagingRecord(_key(perCall + 1)).phase, uint8(LibVaipakam.StagingPhase.None), "not yet");
+        assertGt(deadline, block.timestamp + chunks * 1 days, "one cadence per call plus the grace");
+        _prepareAll(); // the later calls prepare the rest
         (, prepared, , live, ) = _dom();
         assertEq(prepared, DAYS); assertEq(live, DAYS);
         vm.prank(alice);
@@ -183,7 +205,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_TheDomain_ReservesEveryDay_ThenResolvesInOrder_AndClears() public {
         _longScene(DAYS);
         _liveFresh(20e18);
-        _claim(); _claim();
+        _prepareAll();
         uint256 before = vpfi.balanceOf(alice);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingDomainPhaseInvalid.selector, _dk(), uint8(LibVaipakam.DomainPhase.Staging)));
         _domain().resolveDomainPage(_dk()); // not before every day is reserved
@@ -215,7 +237,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_AnOverflowingDayRecord_ReservesOnWhatItHolds_TheDomainSettles() public {
         _longScene(DAYS);
         _liveFresh(20e18);
-        _claim(); _claim(); // the domain is prepared: a record per day, staged from the claim's plan
+        _prepareAll(); // the domain is prepared: a record per day, staged from the claim's plan
         for (uint256 i; i < 140; ++i) { // then day 1's list grows: untyped, unattested, pending
             vm.warp(vm.getBlockTimestamp() + 10);
             bytes32 pid = keccak256(abi.encode("domain-pending", i));
@@ -242,7 +264,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_AShortDay_StopsTheDomainInReserving_WithNothingPaid() public {
         _longScene(DAYS);
         _liveFresh(5e18); // 12 days' worth of 0.4
-        _claim(); _claim();
+        _prepareAll();
         uint256 before = vpfi.balanceOf(alice);
         uint256 calls;
         bool done;
@@ -273,7 +295,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_ALifecycleChangeAfterCommit_SendsTheDomainToUnwind() public {
         uint256 id = _longScene(DAYS);
         _liveFresh(20e18);
-        _claim(); _claim();
+        _prepareAll();
         _mut().closeRewardEntryRaw(id, 10); // closed before the extent's end: days 10.. are no longer the entry's
         // The revalidation is PAGED (a bounded number of days per call): the
         // stale record at day 10 is met on the second page.
@@ -312,7 +334,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_ASecondLifecycleChange_IsRevalidatedToo() public {
         uint256 id = _longScene(DAYS);
         _liveFresh(20e18);
-        _claim(); _claim();
+        _prepareAll();
         uint256 other = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1);
         _mut().closeRewardEntryRaw(other, 2); // an ordinary change: nothing in the domain goes stale
         uint8 phase;
@@ -338,7 +360,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     function test_TheDeadline_LetsAnyoneUnwind_AndTheExtentClears() public {
         _longScene(DAYS);
         _liveFresh(20e18);
-        _claim(); _claim();
+        _prepareAll();
         (, , , , uint64 deadline) = _dom();
         address anyone = makeAddr("anyone");
         vm.prank(anyone);
@@ -354,8 +376,10 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         (uint8 phase, , , uint32 live, ) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.None)); assertEq(live, 0);
         assertEq(_claim(), 0, "the next claim opens a fresh domain");
-        (phase, , , live, ) = _dom();
-        assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging)); assertEq(live, 30);
+        uint64 prepared;
+        (phase, prepared, , live, ) = _dom();
+        assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging));
+        assertGt(live, 0, "and prepares its first days");
     }
 
     /// @dev #1566 PR 1 review (P2-6) — a day no epoch lists has nothing to scan, so its record adds
@@ -371,12 +395,15 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), 0.1e18, 3, CHAIN_BASE, 77, REMITTER, pid);
         LibD8Delivery.attest(address(diamond), REMITTER, 77, 0.1e18, 0);
         uint256 t0 = block.timestamp;
-        _claim();
-        _claim();
+        _prepareAll();
         (, uint64 prepared, , uint32 live, uint64 deadline) = _dom();
         assertEq(prepared, DAYS, "fixture-live: the whole extent prepared");
         assertEq(live, DAYS, "fixture-live: a record per day");
-        assertEq(deadline, t0 + 2 days + 1 days + 3 days, "two chunks, one listed day's page, the grace: nothing per unlisted day");
+        assertEq(
+            deadline,
+            t0 + LibClaimWork.prepCalls(DAYS, 1, 30) * 1 days + 1 days + 3 days,
+            "a cadence per preparation call, one listed day's page, the grace: nothing per unlisted day"
+        );
     }
 
     /// @dev #1566 PR 1 review (P3) — a claim's explicit venue binds the DOMAIN: Alice has a vault, so
@@ -386,10 +413,14 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _longScene(DAYS);
         _liveFresh(20e18);
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
-        vm.prank(alice);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
-        vm.prank(alice);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        uint256 calls;
+        while (true) {
+            vm.prank(alice);
+            RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+            (, uint64 p, uint64 l, , ) = _dom();
+            if (p >= l) break;
+            if (++calls > 8) fail();
+        }
         (, uint64 prepared, , , ) = _dom();
         assertEq(prepared, DAYS, "fixture-live: the whole extent prepared");
         assertFalse(_view().getStagingRecord(_key(1)).venueSet, "a domain record binds no venue of its own");
@@ -427,8 +458,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _mut().setArmedFreshLedgerRaw(0, 0);
         _mut().userClaimFundingNeedRaw(alice);
         _liveFresh(20e18);
-        _claim();
-        _claim();
+        _prepareAll();
         (, uint64 prepared, uint64 last, uint32 live, ) = _dom();
         assertEq(last, DAYS, "fixture-live: one extent over the gap");
         assertEq(prepared, DAYS);
@@ -484,8 +514,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _attestedEpochOn(3, 102);
         _attestedEpochOn(4, 103);
         _liveFresh(20e18);
-        _claim();
-        _claim();
+        _prepareAll();
         for (uint256 d = 2; d <= 4; ++d) _staging().prepareStagedDay(_key(d));
         assertGt(_view().getStagingRecord(_key(2)).batchCount, 0, "fixture-live: day 2 holds a batch");
         uint256 before = vpfi.balanceOf(alice);

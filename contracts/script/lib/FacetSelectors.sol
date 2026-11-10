@@ -159,7 +159,7 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](17);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -175,6 +175,10 @@ library FacetSelectors {
         s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         // #3336 — the dead-route read the keeper's teardown sweep uses.
         s[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
+        // #3413 — the transfer cooldown after a value-out.
+        s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
+        s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
+        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
     }
 
     /// @notice Full external selector surface of {RiskPreviewFacet} (10) —
@@ -410,11 +414,12 @@ library FacetSelectors {
     ///         the preview/accept divergence #1503 exists to remove,
     ///         reintroduced by a partial refresh.
     function offerPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
+        s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
     }
 
     /// @notice Full external selector surface of {FallbackCustodyFacet} (4).

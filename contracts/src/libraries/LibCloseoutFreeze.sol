@@ -151,6 +151,8 @@ library LibCloseoutFreeze {
         // either branch: the claim and the reservation below name `surplus`.
         if (!LibSanctionedLock.mustFreezeParty(s, currentHolder)) {
             LibDelivery.pushExact(loan.principalAsset, currentHolder, surplus);
+            // #3413 — paid to the holder: the loan's tokens cool down.
+            LibPositionNFT.markLoanValueOut(loanId);
             return;
         }
         LibSanctionedLock.depositLockedInFull(
@@ -413,7 +415,10 @@ library LibCloseoutFreeze {
                     (loan.principalAsset, holder, extra)
                 )
             );
-            if (paid) return (false, extra);
+            if (paid) {
+                LibPositionNFT.markLoanValueOut(loanId); // #3413
+                return (false, extra);
+            }
         }
         amount = holdBorrowerExtra(s, loanId, loan, holder, loan.principalAsset, extra);
         held = true;
@@ -602,7 +607,10 @@ library LibCloseoutFreeze {
         address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // #2440 — a wallet reading is trusted only to refuse (see @dev).
-            if (holderAmount > 0) LibDelivery.pushExact(asset, lenderRecipient, holderAmount);
+            if (holderAmount > 0) {
+                LibDelivery.pushExact(asset, lenderRecipient, holderAmount);
+                LibPositionNFT.markLoanValueOut(loanId); // #3413
+            }
             LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
             return amount;
         }
@@ -644,7 +652,10 @@ library LibCloseoutFreeze {
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // #1281-011 — the holder is booked as paid, so the payment must have
             // arrived in full; a short arrival is refused.
-            if (holderAmount > 0) LibDelivery.pullExact(asset, payer, lenderRecipient, holderAmount);
+            if (holderAmount > 0) {
+                LibDelivery.pullExact(asset, payer, lenderRecipient, holderAmount);
+                LibPositionNFT.markLoanValueOut(loanId); // #3413
+            }
             LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
             return;
         }

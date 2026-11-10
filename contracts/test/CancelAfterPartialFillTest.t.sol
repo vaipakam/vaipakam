@@ -15,6 +15,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {PositionNFT} from "../src/PositionNFT.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 /**
  * @title CancelAfterPartialFillTest
@@ -608,5 +611,94 @@ contract CancelAfterPartialFillTest is SetupTest {
             abi.encodeWithSignature("OfferAlreadyAccepted()")
         );
         OfferCancelFacet(address(diamond)).cancelOffer(borrowerOfferId);
+    }
+    // ─── #3413 transfer cooldown at an offer's end ───────────────────────
+
+    /// @dev Move `tokenId` from its holder, expecting `revertData` (empty for
+    ///      success).
+    function _tryMove(uint256 tokenId, bytes memory revertData) internal {
+        PositionNFT nft = LibTestPositionNFT.core(address(diamond));
+        address holder = nft.ownerOf(tokenId);
+        address buyer = makeAddr("buyer");
+        if (revertData.length != 0) vm.expectRevert(revertData);
+        vm.prank(holder);
+        nft.transferFrom(holder, buyer, tokenId);
+    }
+
+    /// @notice A cancel refunds the offer's deposit, so its own token cools
+    ///         down like any value-out: a buyer who priced the live offer
+    ///         cannot receive the empty receipt in the cancel's block. The
+    ///         loan a slice of that offer already made is not touched by the
+    ///         cancel, so that loan's tokens, which also record the offer they
+    ///         came from, move freely. The borrower offer the match filled
+    ///         whole ends at the match, and the same holds for it.
+    function test_cancelHoldsTheOfferTokenNotItsLoansTokens() public {
+        uint256 lenderOfferId = _postLenderOffer({
+            creator: lender,
+            amount: 1_000,
+            amountMax: 10_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralRequired: 500
+        });
+        uint256 borrowerOfferId = _postBorrowerOffer({
+            creator: borrower,
+            amountMin: 5_000,
+            amountMax: 5_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralMin: 500,
+            collateralMax: 500
+        });
+        uint256 lenderOfferToken = OfferCancelFacet(address(diamond)).getOffer(lenderOfferId).positionTokenId;
+        uint256 borrowerOfferToken = OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId).positionTokenId;
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+        uint64 matchBlock = uint64(vm.getBlockNumber());
+        uint64 matchReady = uint64(vm.getBlockTimestamp()) + 5;
+
+        // The lender offer is still open, but the match drew 5k of its
+        // deposit into the loan, so its own token cools down too.
+        _tryMove(
+            lenderOfferToken,
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.PositionCoolingDown.selector, lenderOfferToken, matchBlock, matchReady
+            )
+        );
+        // The filled borrower offer's own token ended at the match.
+        _tryMove(
+            borrowerOfferToken,
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.PositionCoolingDown.selector, borrowerOfferToken, matchBlock, matchReady
+            )
+        );
+
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 10);
+        vm.prank(lender);
+        OfferCancelFacet(address(diamond)).cancelOffer(lenderOfferId);
+        uint64 atBlock = uint64(vm.getBlockNumber());
+        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
+
+        (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(lenderOfferToken);
+        assertEq(b, atBlock, "the cancel stamped the offer's token");
+        assertEq(r, readyAt);
+        _tryMove(
+            lenderOfferToken,
+            abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, lenderOfferToken, atBlock, readyAt)
+        );
+
+        // The loan the offer's slice made: neither token is held.
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        (b, r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.lenderTokenId);
+        assertEq(b, 0, "the offer's cancel does not hold its loan's lender token");
+        assertEq(r, 0);
+        (b, r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
+        assertEq(b, 0, "the filled offer's end does not hold its loan's borrower token");
+        _tryMove(loan.lenderTokenId, "");
+        _tryMove(loan.borrowerTokenId, "");
+
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(readyAt);
+        _tryMove(lenderOfferToken, "");
     }
 }

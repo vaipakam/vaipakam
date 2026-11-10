@@ -25,7 +25,7 @@ import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 import {
   directAuth,
   protectionCall,
-  VAULT_REPLACE,
+  replacementArgs,
   VAULT_SETTING,
   VAULT_SIGNER,
 } from '@vaipakam/lib/protectedAccountView';
@@ -59,7 +59,6 @@ import {
 } from '../data/protectedAccount';
 
 const DAY = 86_400;
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 /**
  * #3379 B2 — protected mode's writes. The record lives in the account's vault:
@@ -898,7 +897,7 @@ function AccountView({
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy}
-                onClick={() => ptx('replacement', [VAULT_REPLACE.approve, repl!.nominee])}
+                onClick={() => ptx('replacement', replacementArgs('approve', repl!.nominee))}
               >
                 {p.approveReplacement}
               </button>
@@ -911,7 +910,7 @@ function AccountView({
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy}
-                onClick={() => ptx('replacement', [VAULT_REPLACE.cancel, ZERO_ADDRESS])}
+                onClick={() => ptx('replacement', replacementArgs('cancel', repl!.nominee))}
               >
                 {p.cancel}
               </button>
@@ -936,7 +935,7 @@ function AccountView({
             placeholder={p.nomineePlaceholder}
             label={p.proposeReplacement}
             disabled={busy}
-            onSubmit={(a) => ptx('replacement', [VAULT_REPLACE.propose, a])}
+            onSubmit={(a) => ptx('replacement', replacementArgs('propose', a))}
           />
         ) : null}
       </section>

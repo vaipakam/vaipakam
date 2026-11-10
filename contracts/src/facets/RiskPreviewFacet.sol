@@ -10,6 +10,7 @@ import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 
 /**
@@ -402,6 +403,22 @@ contract RiskPreviewFacet {
             res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
             res.ok = false;
             return res;
+        }
+        // #3358 — loan creation then asks the borrower offer's origination
+        // rules: the cadence admission and the maker's price-move guard. The
+        // slice is the other side and is minted in the fill, so it carries no
+        // guard a view could read. Same entry the accept and match previews
+        // use, so the three cannot disagree about a refusal.
+        {
+            OfferPreviewFacet.OriginationRefusal refusal = OfferPreviewFacet(address(this))
+                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0);
+            if (refusal != OfferPreviewFacet.OriginationRefusal.None) {
+                res.matchError = refusal == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted
+                    ? LibOfferMatch.MatchError.CadenceNotAdmitted
+                    : LibOfferMatch.MatchError.PriceGuardRefused;
+                res.ok = false;
+                return res;
+            }
         }
         // #1219 review — the fill's capacity charge is its LAST step (after the
         // match), so it is this preview's last check, for the actor the fill's route

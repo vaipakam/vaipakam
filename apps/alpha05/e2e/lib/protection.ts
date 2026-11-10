@@ -64,3 +64,11 @@ export async function protectionMode(sc: ScenarioChain, account: Hex): Promise<{
   const s = (await sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'protectionState' })) as VaultProtectionState;
   return { enabled: s[0], locked: s[1], delaySeconds: Number(s[2]) };
 }
+
+/** The account's active payout destinations, as its vault holds them. */
+export async function allowlistOf(sc: ScenarioChain, account: Hex): Promise<readonly Hex[]> {
+  const vault = await vaultOf(sc, account);
+  if (ZERO.test(vault)) return [];
+  const s = (await sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'protectionState' })) as VaultProtectionState;
+  return s[6] as readonly Hex[];
+}

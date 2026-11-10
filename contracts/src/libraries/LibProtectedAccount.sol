@@ -242,8 +242,20 @@ library LibProtectedAccount {
         }
     }
 
-    /// @notice Whether protected account mode is on for `account`.
-    function isEnabled(address account) internal view returns (bool) {
+    /// @notice The rule {isProtected} applies to a read record: switched on,
+    ///         or retired by a replacement (permanent).
+    function governs(Core memory c) internal pure returns (bool) {
+        return c.enabled || c.retired;
+    }
+
+    /// @notice Whether protected mode governs `account`'s payouts and
+    ///         deliveries: switched on, OR retired by a replacement. A
+    ///         replacement's routing is permanent (Codex #3489 r3): once the
+    ///         account's wallet is replaced, every payout and delivery for it
+    ///         goes through its vault and the delay to the new wallet, even if
+    ///         the new wallet later switches protected mode off. The ONE
+    ///         predicate every payout, delivery and claim-to path reads.
+    function isProtected(address account) internal view returns (bool) {
         return abi.decode(_viaHost(abi.encodeWithSignature("isProtectionOn(address)", account)), (bool));
     }
 
@@ -298,6 +310,16 @@ library LibProtectedAccount {
         return signers.length != 0;
     }
 
+    /// @notice Whether releasing queued row `p` CANCELS it instead of paying:
+    ///         its destination is no longer allowed (an allowlist removal, a
+    ///         replacement). The release checks this first, before the time,
+    ///         the lock or the co-signature, and the payout views read the same
+    ///         rule (Codex #3489 r3), so a row the release would cancel is
+    ///         never reported as waiting on a co-signature.
+    function releaseCancels(LibVaipakam.PendingPayout storage p) internal view returns (bool) {
+        return p.state == ROW_QUEUED && !isAllowed(p.user, p.recipient);
+    }
+
     /// @notice The ONE co-sign rule for a payout from `account` to
     ///         `recipient` (Codex #3489 r2): the account's own co-sign
     ///         setting, which binds only while the account has a signer
@@ -340,7 +362,7 @@ library LibProtectedAccount {
     ///         fill instead of paying a leg the payout queue never saw.
     function listingLegAllowed(address seller, address recipient) internal view returns (bool) {
         Core memory c = core(seller);
-        if (!c.enabled) return true;
+        if (!governs(c)) return true;
         if (c.retired || c.locked) return false;
         return isAllowed(seller, recipient);
     }
@@ -370,7 +392,7 @@ library LibProtectedAccount {
     ///         calls this first, as `withdrawFromVault` already refuses.
     function requirePayoutRoom(address account) internal view {
         Core memory c = core(account);
-        if (!c.enabled) return;
+        if (!governs(c)) return;
         if (c.locked) revert ProtectedVaultLocked(account);
         if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
     }
@@ -478,7 +500,7 @@ library LibProtectedAccount {
         address recipient
     ) internal returns (bool held) {
         Core memory c = core(account);
-        if (!c.enabled) return false;
+        if (!governs(c)) return false;
         if (consumeRelease(account, asset, tokenId, amount, recipient)) return false;
         if (recipient != account && recipient != c.manager) return false;
         // Held, never refused: a protocol settlement must not revert because

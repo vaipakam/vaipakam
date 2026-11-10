@@ -879,13 +879,27 @@ contract VaipakamVaultImplementation is
     }
 
     /// @notice One allowlist entry (#3415 `verified` included).
-    function allowEntry(address destination) external view returns (LibVaultProtectionStorage.Entry memory) {
-        return LibVaultProtectionStorage.layout().allow[destination];
+    ///         A pending addition voided by a lock, a replacement or a
+    ///         switch-off (an earlier epoch) reads as not pending (Codex #3489
+    ///         r3), so every reader sees what the vault would act on.
+    function allowEntry(address destination) external view returns (LibVaultProtectionStorage.Entry memory e) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        e = l.allow[destination];
+        if (!e.active && e.epoch != l.epoch) e.readyAt = 0;
     }
 
-    /// @notice One signer's record.
-    function signerEntry(address who) external view returns (LibVaultProtectionStorage.Signer memory) {
-        return LibVaultProtectionStorage.layout().signer[who];
+    /// @notice One signer's record. A pending addition or removal voided by
+    ///         a lock, a replacement or a switch-off (an earlier epoch) reads
+    ///         as not pending (Codex #3489 r3): the vault refuses to cancel or
+    ///         finalize it, and a fresh request may be made.
+    function signerEntry(address who) external view returns (LibVaultProtectionStorage.Signer memory s) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        s = l.signer[who];
+        if (s.epoch != l.epoch) {
+            s.addAt = 0;
+            s.removeAt = 0;
+            if (!s.active) s.accepted = false;
+        }
     }
 
     /// @notice The open replacement proposal.

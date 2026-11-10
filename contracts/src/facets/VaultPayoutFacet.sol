@@ -115,7 +115,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     function releasePayout(uint256 id) external nonReentrant returns (uint256 delivered) {
         _requireLiveOrEscape();
         LibVaipakam.PendingPayout storage row = LibVaipakam.storageSlot().pendingPayouts[id];
-        if (row.state == LibProtectedAccount.ROW_QUEUED && !LibProtectedAccount.isAllowed(row.user, row.recipient)) {
+        if (LibProtectedAccount.releaseCancels(row)) {
             LibProtectedAccount.cancelPayout(id, address(this));
             return 0;
         }
@@ -187,7 +187,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
      */
     function escapeWithdraw(uint8 kind, address asset, uint256 tokenId, uint256 amount) external nonReentrant {
         if (!_escapeOpen()) revert LibProtectedAccount.EscapeClosed();
-        if (LibProtectedAccount.isEnabled(msg.sender)) revert EscapeNotForProtected(msg.sender);
+        if (LibProtectedAccount.isProtected(msg.sender)) revert EscapeNotForProtected(msg.sender);
         // Funds out: a barred wallet does not escape with them either.
         LibVaipakam.assertRecipientNotBarred(msg.sender);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
@@ -226,11 +226,16 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     ///         enforces ({LibProtectedAccount.cosignNeeded}): the account's
     ///         co-sign setting while it has a signer, or an unverified
     ///         allowlisted destination (#3415). False for a row that is not
-    ///         queued. Whether the co-signature was already given is the row's
-    ///         own `cosigned`.
+    ///         queued, and for one the release would cancel because its
+    ///         destination is no longer allowed
+    ///         ({LibProtectedAccount.releaseCancels}). Whether the
+    ///         co-signature was already given is the row's own `cosigned`.
     function payoutNeedsCosign(uint256 id) external view returns (bool) {
         LibVaipakam.PendingPayout storage p = LibVaipakam.storageSlot().pendingPayouts[id];
         if (p.state != LibProtectedAccount.ROW_QUEUED) return false;
+        // The release cancels such a row before it reads the co-signature, so
+        // anyone's release settles it (Codex #3489 r3).
+        if (LibProtectedAccount.releaseCancels(p)) return false;
         return LibProtectedAccount.cosignNeeded(p.user, p.recipient);
     }
 

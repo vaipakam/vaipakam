@@ -178,6 +178,10 @@ contract InteractionRewardsLensFacet {
      *         frame — {RewardClaimFacet.simulateClaimInteractionRewards}
      *         through `eth_call` — which the app's read path uses; this view
      *         serves the static consumers ({MetricsDashboardFacet}).
+     *         #1787 — like the claim, it reads only the wallet's claim
+     *         window ({getRewardClaimWindow}): for a wallet with more entries
+     *         than the window holds, it is the next claim's figure, not the
+     *         wallet's whole pending reward.
      * @param user    User whose next-window claim is previewed.
      * @return amount  VPFI wei the user would receive now, at least.
      * @return fromDay First day index the preview walks (inclusive).
@@ -512,6 +516,34 @@ contract InteractionRewardsLensFacet {
         returns (uint256[] memory ids)
     {
         return LibVaipakam.storageSlot().userRewardEntryIds[user];
+    }
+
+    /// @notice #1787 — the CLAIM WINDOW: which positions of
+    ///         {getUserRewardEntryIds} the wallet's next claim reads. A claim
+    ///         settles, prices and starts the expiry clock only for entries in
+    ///         `[from, to)`; the window holds at most 128 positions, so a
+    ///         wallet with more entries than that is served over several
+    ///         claims, each moving the window on (back to the start after the
+    ///         last position). An entry outside the window is not lost and its
+    ///         expiry clock does not run: it waits for a claim whose window
+    ///         reaches it. While `total <= 128` the window is the whole index.
+    /// @param  user Address whose claim window to report.
+    /// @return from  First index position the next claim reads.
+    /// @return to    One past the last position the next claim reads.
+    /// @return total The index's length, so a reader can say how much of it
+    ///               the next claim covers.
+    /// @return changedAt When the entries the window holds last changed (0 =
+    ///               never). The expiry clock of every entry of the wallet
+    ///               counts no executable time from before it.
+    function getRewardClaimWindow(address user)
+        external
+        view
+        returns (uint256 from, uint256 to, uint256 total, uint64 changedAt)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (from, to) = LibInteractionRewards.claimWindow(s, user);
+        total = s.userRewardEntryIds[user].length;
+        changedAt = s.rewardClaimWindowChangedAt[user];
     }
 
     /// @notice Codex #2489 r14 — the LIVE entries among `[offset, offset + limit)`

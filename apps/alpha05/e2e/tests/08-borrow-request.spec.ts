@@ -9,7 +9,6 @@
 import { erc20Abi, parseEther, type Hex } from 'viem';
 import { WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
-import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
@@ -46,104 +45,99 @@ interface StoredOffer {
 
 test('a borrower posts their own request: exact figures, an exact approval, and a measured request', async ({ launchWallet }, testInfo) => {
   const sc = scenario();
-  // The request stays open on the shared chain, so it is posted inside a
-  // snapshot the test reverts: later specs (Home lists a wallet's open
-  // offers) and the other project start without it.
-  const snapshot = await anvilRpc<Hex>('evm_snapshot');
-  try {
-    const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
-    const borrower = accountFor('borrower').address;
-    await sc.write('borrower', tliq, MINT_ABI, 'mint', [borrower, parseEther('2000')]);
-    await sc.write('borrower', tliq, erc20Abi, 'approve', [sc.diamond, 0n]);
+  // The request stays open until the suite reverts the chain after the
+  // test, so later specs (Home lists a wallet's open offers) and the other
+  // project start without it.
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  const borrower = accountFor('borrower').address;
+  await sc.write('borrower', tliq, MINT_ABI, 'mint', [borrower, parseEther('2000')]);
+  await sc.write('borrower', tliq, erc20Abi, 'approve', [sc.diamond, 0n]);
 
-    const { page, flags } = await launchWallet('borrower');
-    await openForm(page, tliq);
+  const { page, flags } = await launchWallet('borrower');
+  await openForm(page, tliq);
 
-    // Exact parsing: more decimals than the token has are refused, not rounded.
-    await page.getByTestId('request-amount').fill('0.1234567890123456789');
-    await page.getByTestId('request-amount').blur();
-    await expect(page.getByText('has 18 decimals; enter at most that many.')).toBeVisible();
-    await page.getByTestId('request-amount').fill('0.25');
-    await page.getByTestId('request-collateral').fill('2000');
-    await page.getByTestId('request-rate').fill('7.25');
-    await page.getByTestId('request-duration').getByRole('radio', { name: '14 days' }).check();
-    await page.getByTestId('request-expiry').selectOption('1d');
-    await page.getByTestId('request-partial').check();
-    await expect(page.getByTestId('request-summary')).toContainText("at today's fee");
-    await fitsWidth(page);
+  // Exact parsing: more decimals than the token has are refused, not rounded.
+  await page.getByTestId('request-amount').fill('0.1234567890123456789');
+  await page.getByTestId('request-amount').blur();
+  await expect(page.getByText('has 18 decimals; enter at most that many.')).toBeVisible();
+  await page.getByTestId('request-amount').fill('0.25');
+  await page.getByTestId('request-collateral').fill('2000');
+  await page.getByTestId('request-rate').fill('7.25');
+  await page.getByTestId('request-duration').getByRole('radio', { name: '14 days' }).check();
+  await page.getByTestId('request-expiry').selectOption('1d');
+  await page.getByTestId('request-partial').check();
+  await expect(page.getByTestId('request-summary')).toContainText("at today's fee");
+  await fitsWidth(page);
 
-    // On a phone the primary action rests above the bottom bar, full width.
-    const action = page.locator('.thumb-action');
-    if (testInfo.project.name === 'phone') {
-      expect(await action.evaluate((el) => getComputedStyle(el).position)).toBe('sticky');
-      const button = await page.getByTestId('request-review').boundingBox();
-      expect(button!.width).toBeGreaterThan(300);
-    }
-    await page.getByTestId('request-review').click();
-
-    // The review: what is locked now, what a lender taking it gives and asks
-    // back, every term it binds, and the prompts (approve, post).
-    const receipt = page.locator('.post-request .receipt');
-    await expect(receipt).toContainText('You lock in your vault now', { timeout: 60_000 });
-    await expect(receipt).toContainText('2,000');
-    await expect(receipt).toContainText('Amount you ask to borrow');
-    await expect(receipt).toContainText('All of it by one lender, or not at all');
-    await expect(receipt).toContainText('7.25% a year');
-    await expect(receipt).toContainText('14 days after a lender takes it');
-    await expect(receipt).toContainText("Paid into your vault if a lender takes it, at today's fee rate");
-    await expect(receipt).toContainText('Full term, with partial repayments allowed');
-    await expect(receipt).toContainText('Request open until');
-    await expect(receipt).toContainText('Exactly 2,000');
-    await expect(receipt).toContainText('used up by posting');
-    await expect(receipt).toContainText('A lender who takes the request opens the loan at once');
-    await expect(receipt).toContainText('When the request lapses it can no longer be taken');
-    // The Offers page is built: the review sends nobody elsewhere to follow or cancel it.
-    await expect(receipt).not.toContainText('This app cannot follow or cancel a request yet.');
-    await expect(page.getByTestId('request-manage-link')).toHaveCount(0);
-    await expect(receipt).toContainText('Wallet prompts: 2.');
-    await fitsWidth(page);
-
-    const flow = page.locator('.post-request');
-    const confirm = flow.getByRole('button', { name: 'Confirm in wallet' });
-    await expect(confirm).toBeDisabled();
-    await flow.getByTestId('request-consent').check();
-    await expect(confirm).toBeEnabled();
-
-    const sent = flags.sentTransactions;
-    await confirm.click();
-    const finish = flow.locator('[data-phase="measured"]');
-    await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
-    await expect(finish).toContainText('posted and open for lenders');
-    await expect(finish).toContainText('locked in your vault');
-    expect(flags.sentTransactions).toBe(sent + 2);
-
-    // The chain agrees: the request is stored as typed, the approval was used
-    // up, and the collateral is in the borrower's vault.
-    const id = BigInt((await finish.textContent())!.match(/Request #(\d+)/)![1]!);
-    const offer = await sc.read<StoredOffer>('getOffer', [id]);
-    expect(offer.creator.toLowerCase()).toBe(borrower.toLowerCase());
-    expect(offer.offerType).toBe(1);
-    expect([offer.amount, offer.amountMax]).toEqual([parseEther('0.25'), parseEther('0.25')]);
-    expect(offer.interestRateBps).toBe(725n);
-    expect(offer.collateralAmount).toBe(parseEther('2000'));
-    expect(offer.durationDays).toBe(14n);
-    expect(offer.expiresAt > 0n).toBe(true);
-    expect(offer.useFullTermInterest).toBe(true);
-    expect(offer.allowsPartialRepay).toBe(true);
-    expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(0n);
-    const vault = await sc.read<Hex>('getUserVaultAddress', [borrower]);
-    expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'balanceOf', args: [vault] })).toBeGreaterThanOrEqual(parseEther('2000'));
-    // The finish card hands on to this app's own Offers page.
-    await expect(finish.getByRole('link', { name: 'See it under Offers' })).toHaveAttribute('href', '/offers');
-
-    // Closing returns to the offers, and the next request starts from a clean form.
-    await finish.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByTestId('request-open')).toBeVisible();
-    await page.getByTestId('request-open').click();
-    await expect(page.getByTestId('request-amount')).toHaveValue('');
-  } finally {
-    await anvilRpc('evm_revert', [snapshot]);
+  // On a phone the primary action rests above the bottom bar, full width.
+  const action = page.locator('.thumb-action');
+  if (testInfo.project.name === 'phone') {
+    expect(await action.evaluate((el) => getComputedStyle(el).position)).toBe('sticky');
+    const button = await page.getByTestId('request-review').boundingBox();
+    expect(button!.width).toBeGreaterThan(300);
   }
+  await page.getByTestId('request-review').click();
+
+  // The review: what is locked now, what a lender taking it gives and asks
+  // back, every term it binds, and the prompts (approve, post).
+  const receipt = page.locator('.post-request .receipt');
+  await expect(receipt).toContainText('You lock in your vault now', { timeout: 60_000 });
+  await expect(receipt).toContainText('2,000');
+  await expect(receipt).toContainText('Amount you ask to borrow');
+  await expect(receipt).toContainText('All of it by one lender, or not at all');
+  await expect(receipt).toContainText('7.25% a year');
+  await expect(receipt).toContainText('14 days after a lender takes it');
+  await expect(receipt).toContainText("Paid into your vault if a lender takes it, at today's fee rate");
+  await expect(receipt).toContainText('Full term, with partial repayments allowed');
+  await expect(receipt).toContainText('Request open until');
+  await expect(receipt).toContainText('Exactly 2,000');
+  await expect(receipt).toContainText('used up by posting');
+  await expect(receipt).toContainText('A lender who takes the request opens the loan at once');
+  await expect(receipt).toContainText('When the request lapses it can no longer be taken');
+  // The Offers page is built: the review sends nobody elsewhere to follow or cancel it.
+  await expect(receipt).not.toContainText('This app cannot follow or cancel a request yet.');
+  await expect(page.getByTestId('request-manage-link')).toHaveCount(0);
+  await expect(receipt).toContainText('Wallet prompts: 2.');
+  await fitsWidth(page);
+
+  const flow = page.locator('.post-request');
+  const confirm = flow.getByRole('button', { name: 'Confirm in wallet' });
+  await expect(confirm).toBeDisabled();
+  await flow.getByTestId('request-consent').check();
+  await expect(confirm).toBeEnabled();
+
+  const sent = flags.sentTransactions;
+  await confirm.click();
+  const finish = flow.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await expect(finish).toContainText('posted and open for lenders');
+  await expect(finish).toContainText('locked in your vault');
+  expect(flags.sentTransactions).toBe(sent + 2);
+
+  // The chain agrees: the request is stored as typed, the approval was used
+  // up, and the collateral is in the borrower's vault.
+  const id = BigInt((await finish.textContent())!.match(/Request #(\d+)/)![1]!);
+  const offer = await sc.read<StoredOffer>('getOffer', [id]);
+  expect(offer.creator.toLowerCase()).toBe(borrower.toLowerCase());
+  expect(offer.offerType).toBe(1);
+  expect([offer.amount, offer.amountMax]).toEqual([parseEther('0.25'), parseEther('0.25')]);
+  expect(offer.interestRateBps).toBe(725n);
+  expect(offer.collateralAmount).toBe(parseEther('2000'));
+  expect(offer.durationDays).toBe(14n);
+  expect(offer.expiresAt > 0n).toBe(true);
+  expect(offer.useFullTermInterest).toBe(true);
+  expect(offer.allowsPartialRepay).toBe(true);
+  expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(0n);
+  const vault = await sc.read<Hex>('getUserVaultAddress', [borrower]);
+  expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'balanceOf', args: [vault] })).toBeGreaterThanOrEqual(parseEther('2000'));
+  // The finish card hands on to this app's own Offers page.
+  await expect(finish.getByRole('link', { name: 'See it under Offers' })).toHaveAttribute('href', '/offers');
+
+  // Closing returns to the offers, and the next request starts from a clean form.
+  await finish.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByTestId('request-open')).toBeVisible();
+  await page.getByTestId('request-open').click();
+  await expect(page.getByTestId('request-amount')).toHaveValue('');
 });
 
 test('a request the wallet cannot fund is blocked in place, and changing it keeps what was typed', async ({ launchWallet }) => {

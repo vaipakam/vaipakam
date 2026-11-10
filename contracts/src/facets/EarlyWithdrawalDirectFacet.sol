@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -417,6 +418,11 @@ contract EarlyWithdrawalDirectFacet is
         if (LibVaipakam.isOfferExpired(buyOffer)) {
             revert OfferExpired(buyOfferId, buyOffer.expiresAt);
         }
+        // #3358 — the buyer posted this offer as a maker, so its price-move
+        // guard holds here as on every other fill. The sale opens no loan, so
+        // loan creation's check never sees it; this is that check. Before any
+        // lien release or vault movement below.
+        LibOfferPriceGuard.requireClear(s, buyOfferId, 0);
         // #1001 (S3, Codex #1070 r5 P2) — a linked Preclose Option-3 offset offer
         // is a Lender offer, so it would otherwise pass the shape check above and
         // be consumable here. Consuming it via the direct swap-in marks it

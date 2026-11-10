@@ -2,6 +2,14 @@
 export const STUB_PORT = Number(process.env.ALPHA05_E2E_STUB_PORT ?? 8789);
 export const STUB_ORIGIN = `http://127.0.0.1:${STUB_PORT}`;
 
+/** Put every stand-in setting back as it started: the index live, no
+ *  unplaced loans, no added inbox rows, a fresh alert service. The suite
+ *  calls it after every test (`lib/wallet.ts`); a spec need not. */
+export async function resetStandIns(): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/reset`, { method: 'POST' });
+  if (!res.ok) throw new Error(`stub refused reset: ${res.status}`);
+}
+
 export type IndexPosture = 'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending';
 
 /** Put the stand-in index into a posture: `stale` reports a cursor half an
@@ -67,4 +75,19 @@ export async function agentState(): Promise<{ requests: AgentRequest[]; threshol
   const res = await fetch(`${STUB_ORIGIN}/__stub/agent`);
   if (!res.ok) throw new Error(`stub refused agent state: ${res.status}`);
   return res.json();
+}
+
+/** One list's state as `/assets/rankings` states it. */
+export interface StubRankingSource {
+  listFetchedAt: number | null;
+  lastRun: { fetchedAt: number; ok: boolean; rowCount: number; detail: string | null } | null;
+}
+
+/** Store a rankings answer for one token chain (#3446), or make the route
+ *  answer 503 with `{ down: true }`. The suite's reset clears both. */
+export async function setRankings(
+  control: { chainId: number; sources: { cg: StubRankingSource; cp: StubRankingSource }; assets: { address: string; ranks: Record<string, { rank: number; name: string; symbol: string }> }[] } | { down: true },
+): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/rankings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
+  if (!res.ok) throw new Error(`stub refused rankings: ${res.status} ${await res.text()}`);
 }

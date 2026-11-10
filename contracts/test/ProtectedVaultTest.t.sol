@@ -1464,6 +1464,75 @@ contract ProtectedVaultTest is Test {
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
     }
 
+    /// @dev Codex #3489 r3 — a row the release would cancel (its destination
+    ///      removed) is not reported as waiting on a co-signature, so a
+    ///      keeper's release settles it.
+    function testARowTheReleaseWouldCancelNeedsNoCosign() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        uint256 id = _queue(1 ether, friend);
+        assertTrue(_pay().payoutNeedsCosign(id), "fixture: unverified destination");
+        P.removeAllowed(address(diamond), user, user, friend);
+        assertFalse(_pay().payoutNeedsCosign(id), "the release cancels it first");
+        _pay().releasePayout(id);
+        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled by the release");
+    }
+
+    /// @dev Codex #3489 r3 — a removal voided by a lock or a replacement
+    ///      reads as not pending, and a fresh one can be requested.
+    function testAVoidedSignerRemovalReadsAsNotPending() public {
+        _enable();
+        _addSigner(s1);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        assertGt(v.signerEntry(s1).removeAt, 0, "fixture: removal pending");
+        P.lock(address(diamond), user, user);
+        assertEq(v.signerEntry(s1).removeAt, 0, "a lock voids it");
+        assertTrue(v.signerEntry(s1).active, "still a signer");
+    }
+
+    function testAVoidedSignerRemovalCanBeAskedAgainAfterAReplacement() public {
+        _enable();
+        _addSigner(s1);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        assertEq(v.signerEntry(s1).removeAt, 0, "the replacement voids it");
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the new owner's cool-down
+        P.call(address(diamond), user, nominee, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(nominee))));
+        assertGt(v.signerEntry(s1).removeAt, 0, "asked again");
+    }
+
+    /// @dev Codex #3489 r3 — a replacement's routing is permanent: after the
+    ///      new wallet switches protected mode off, the retired wallet's
+    ///      payouts still go through the vault to the new wallet.
+    function testARetiredAccountStaysRoutedAfterASwitchOff() public {
+        _deposit20(10 ether);
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        P.requestDisable(address(diamond), user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeSettings(address(diamond), user);
+        (bool on,,,,,,) = P.vaultOf(address(diamond), user).protectionState();
+        assertFalse(on, "fixture: switched off");
+        assertTrue(_prot().isProtectionOn(user), "still governed: retired");
+        uint256 before = token.balanceOf(user);
+        vm.prank(nominee);
+        uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, nominee);
+        assertEq(token.balanceOf(nominee), 0, "queued, not paid at once");
+        assertEq(token.balanceOf(user), before, "the retired wallet got nothing");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(nominee), 1 ether, "paid to the new wallet");
+    }
+
     /// @dev An allowlisted destination that has protected mode on is paid
     ///      into its own vault, which the paying vault accepts.
     function testAllowlistedProtectedDestinationIsPaidIntoItsVault() public {

@@ -445,13 +445,18 @@ contract VaipakamFeedRegistryTest is Test {
 
     function test_DelayBoundsOnProduction_ZeroAllowedOnTestnet() public {
         vm.startPrank(OWNER);
-        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.DelayOutOfRange.selector, 0, 1 days, 14 days));
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.DelayOutOfRange.selector, 0, 7 days, 14 days));
         reg.setDelay(0);
         vm.expectRevert(
-            abi.encodeWithSelector(VaipakamFeedRegistry.DelayOutOfRange.selector, 15 days, 1 days, 14 days)
+            abi.encodeWithSelector(VaipakamFeedRegistry.DelayOutOfRange.selector, 15 days, 7 days, 14 days)
         );
         reg.setDelay(15 days);
-        reg.setDelay(1 days);
+        // #3272 — the floor matches the vault code delay: 7 days.
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamFeedRegistry.DelayOutOfRange.selector, 7 days - 1, 7 days, 14 days)
+        );
+        reg.setDelay(7 days - 1);
+        reg.setDelay(7 days);
         vm.stopPrank();
 
         vm.chainId(84532);

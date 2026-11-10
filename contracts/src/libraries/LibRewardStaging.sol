@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibClaimWork} from "./LibClaimWork.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {LibRewardEntryProgress} from "./LibRewardEntryProgress.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
@@ -124,7 +125,7 @@ library LibRewardStaging {
     event StagingRecordClosed(bytes32 indexed key, bool paid);
     /// @notice A multi-chunk claim DOMAIN opened for `user` on `side` (A2-ii):
     ///         its committed extent `[firstDay, lastDay]` and the settlement
-    ///         chunks it spans.
+    ///         chunks it spans (#1787: the preparation calls its work meter needs).
     /// @custom:event-category state-change/reward-staging
     event StagingDomainOpened(bytes32 indexed domainKey, address indexed user, uint8 side, uint64 firstDay, uint64 lastDay, uint256 chunks);
     /// @notice The claimant bound the venue domain `domainKey`'s days deliver to — by
@@ -793,7 +794,7 @@ library LibRewardStaging {
         // for an EOA, a 7702-delegated one included (#2617). A wallet in
         // protected account mode is always paid into its vault.
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
-            || LibProtectedAccount.isEnabled(user)
+            || LibProtectedAccount.isProtected(user)
             || (venue == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
         setApart = setApart || venue == LibVaipakam.RewardDelivery.SanctionsHeld;
         bool vaulted;
@@ -1124,8 +1125,22 @@ library LibRewardStaging {
 
     // ───────────────────────── A2-ii — multi-chunk claim DOMAINS ─────────────────────────
 
-    /// @dev Days a domain page walks per call (reservation, resolution, unwind, revalidation).
-    uint256 internal constant DOMAIN_PAGE_DAYS = 8;
+    /// @dev #1787 — a domain page (reservation, resolution, unwind,
+    ///      revalidation) walks days while the call's work meter
+    ///      ({LibClaimWork}) can carry them, rather than a fixed count of days:
+    ///      a day costs with the entries its record holds, so a fixed count let
+    ///      a page outgrow one transaction. The first day of a page always runs
+    ///      (the snapshot bound keeps any day inside a fresh budget).
+    function _pageDayCost(LibVaipakam.StagingRecord storage r, bytes32 dk) private view returns (uint256) {
+        if (r.phase == LibVaipakam.StagingPhase.None || r.domainKey != dk) return LibClaimWork.PAGE_EMPTY_DAY;
+        return LibClaimWork.PAGE_DAY + LibClaimWork.PAGE_ENTRY * r.entryIds.length;
+    }
+
+    /// @dev Whether a page that has spent `walked` can take a day costing
+    ///      `cost`: always its first day, otherwise only within the budget.
+    function _pageFits(uint256 walked, uint256 cost) private pure returns (bool) {
+        return walked == 0 || walked + cost <= LibClaimWork.BUDGET;
+    }
 
     /// @notice Open the claimant-side's domain over the committed extent (A2-ii):
     ///         the entry set and the last day are a SNAPSHOT; the lifecycle
@@ -1156,7 +1171,10 @@ library LibRewardStaging {
         dom.openedAt = uint64(block.timestamp);
         dom.deadline = 0;
         dom.lifecycleVersionAtCommit = s.rewardLifecycleVersion[user][uint8(side)];
-        dom.chunks = (last - first + 1 + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1) / LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        // #1787 — the preparation CALLS the claim's work meter needs: a call
+        // carries as many whole days as fit its budget, so a chunk is a call,
+        // no longer a fixed number of days.
+        dom.chunks = LibClaimWork.prepCalls(last - first + 1, entryIds.length, LibVaipakam.MAX_INTERACTION_CLAIM_DAYS);
         dom.leaseAccum = 0;
         dom.venueSet = false;
         dom.entryIds = entryIds;
@@ -1238,9 +1256,12 @@ library LibRewardStaging {
             }
         }
         uint256 walked;
-        while (dom.reserveCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+        while (dom.reserveCursor <= dom.lastDay) {
             bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.reserveCursor);
             LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            uint256 cost = _pageDayCost(r, dk);
+            if (!_pageFits(walked, cost)) break;
+            walked += cost;
             // Only the domain's OWN records (#1566 PR 1 review): a sweep's
             // record of an entry outside the snapshot may stand on a gap day
             // of the extent, and it is not this domain's to reserve, resolve,
@@ -1253,7 +1274,7 @@ library LibRewardStaging {
                 }
             }
             // No record (the day priced to nothing) or already reserved: on.
-            unchecked { ++dom.reserveCursor; ++walked; }
+            unchecked { ++dom.reserveCursor; }
         }
         if (dom.reserveCursor <= dom.lastDay) return false;
         // Every day reserved. The O(1) check at the irreversible edge
@@ -1278,9 +1299,12 @@ library LibRewardStaging {
         returns (bool)
     {
         uint256 walked;
-        while (dom.revalidateCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+        while (dom.revalidateCursor <= dom.lastDay) {
             bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.revalidateCursor);
             LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            uint256 cost = _pageDayCost(r, dk);
+            if (!_pageFits(walked, cost)) break;
+            walked += cost;
             if (r.phase != LibVaipakam.StagingPhase.None && r.domainKey == dk) {
                 (bool stale, uint256 entryId) = staleEntry(s, r);
                 if (stale) {
@@ -1289,7 +1313,7 @@ library LibRewardStaging {
                     return false;
                 }
             }
-            unchecked { ++dom.revalidateCursor; ++walked; }
+            unchecked { ++dom.revalidateCursor; }
         }
         if (dom.revalidateCursor <= dom.lastDay) return false;
         // Anchored to the version the pass READ, never the live one: a change that
@@ -1311,9 +1335,12 @@ library LibRewardStaging {
         if (dom.phase != LibVaipakam.DomainPhase.Resolving) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
         uint256 walked;
         bool heavySpent;
-        while (dom.resolveCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+        while (dom.resolveCursor <= dom.lastDay) {
             bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.resolveCursor);
             LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            uint256 cost = _pageDayCost(r, dk);
+            if (!_pageFits(walked, cost)) break;
+            walked += cost;
             if (r.phase != LibVaipakam.StagingPhase.None && r.domainKey == dk) {
                 // ONE record that walks batches per call (#1566 PR 1 review): its
                 // own pages run up to `STAGING_PAGE` batches, and a page of such
@@ -1326,7 +1353,7 @@ library LibRewardStaging {
                 if (!LibRewardCustody.callResolveRecordInDomain(key)) return false; // this record's next page, next call
                 if (heavy) heavySpent = true;
             }
-            unchecked { ++dom.resolveCursor; ++walked; }
+            unchecked { ++dom.resolveCursor; }
         }
         if (dom.resolveCursor <= dom.lastDay || dom.liveRecords != 0) return false;
         emit StagingDomainCleared(dk, true);
@@ -1356,9 +1383,12 @@ library LibRewardStaging {
         }
         uint256 walked;
         bool heavySpent;
-        while (dom.unwindCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+        while (dom.unwindCursor <= dom.lastDay) {
             bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.unwindCursor);
             LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            uint256 cost = _pageDayCost(r, dk);
+            if (!_pageFits(walked, cost)) break;
+            walked += cost;
             LibVaipakam.StagingPhase rp = r.phase;
             if (
                 (rp == LibVaipakam.StagingPhase.Staging || rp == LibVaipakam.StagingPhase.Reserved
@@ -1373,7 +1403,7 @@ library LibRewardStaging {
                 if (!LibRewardCustody.callUnwindRecordInDomain(key)) return false; // this record's next page, next call
                 if (heavy) heavySpent = true;
             }
-            unchecked { ++dom.unwindCursor; ++walked; }
+            unchecked { ++dom.unwindCursor; }
         }
         if (dom.unwindCursor <= dom.lastDay || dom.liveRecords != 0) return false;
         emit StagingDomainCleared(dk, false);

@@ -199,7 +199,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "e",
         "type": "tuple",
         "internalType": "struct LibVaultProtectionStorage.Entry",
         "components": [
@@ -1188,7 +1188,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "s",
         "type": "tuple",
         "internalType": "struct LibVaultProtectionStorage.Signer",
         "components": [

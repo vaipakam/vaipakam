@@ -6291,6 +6291,12 @@ const copySource = {
       // threshold or a leg's liquidity moved since the offer was posted.
       cadenceNotAdmitted:
         'This offer’s interest-payment schedule isn’t allowed on these terms any more: the periodic-interest settings, the size threshold or an asset’s market status changed after it was posted. Its creator needs to cancel it and post it again. Nothing was sent.',
+      // #3358 — the offer's price-move guard: the pair moved past the
+      // creator's limit, is not calm against the hourly checkpoints, or a
+      // price or checkpoint is missing. One sentence covers all four, since
+      // each means the same thing to the taker: not now.
+      priceGuardRefused:
+        'The creator of this offer limited how far the price may move before it is taken. The price has moved past that limit, or it is moving too fast (or can’t be read) to check right now, so the offer can’t be taken. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6817,6 +6823,7 @@ const copySource = {
       NFTMinted: 'Position NFT minted',
       OfferCreatedDetails: 'Offer created',
       OfferCanceledDetails: 'Offer cancelled',
+      OfferPriceGuardSet: 'Offer price guard updated',
       UserVaultCreated: 'Vault created',
       TermsAccepted: 'Terms of use accepted',
       VaultRiskTierSet: 'Risk level changed',
@@ -6910,6 +6917,22 @@ const copySource = {
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
     readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
+    // #1787 — a claim reads one part (window) of a large wallet's reward
+    // entries. The figure above is that claim's; later claims read the rest.
+    windowPart: tmpl('This claim reads reward entries {{from}} to {{to}} of {{total}}; later claims can pay more.', [
+      'from',
+      'to',
+      'total',
+    ]),
+    // #1787 — the part a claim would read has nothing to pay. The claim still
+    // runs and its one effect is to move on to the next part, so it is offered
+    // with exactly that description rather than hidden (hiding it would leave
+    // the rest of the entries out of reach).
+    windowMoveOn: tmpl(
+      'A claim made now pays nothing. Your reward entries are read {{size}} at a time, and the part it would read (entries {{from}} to {{to}} of {{total}}) has nothing to pay yet. Claiming only moves on to the next part, so a later claim can reach the rest, and it still costs a network fee.',
+      ['size', 'from', 'to', 'total'],
+    ),
+    claimMoveOn: 'Move on to the next part',
     // #2489 r2 — a held balance set aside for this wallet, claimable on its own
     // (never through the combined claim alone, which can fail for unrelated
     // reasons). Says nothing about why it was set aside.

@@ -110,14 +110,17 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             result.errorCode == LibOfferMatch.MatchError.Ok
                 && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), matcher, initiator)
         ) result.errorCode = LibOfferMatch.MatchError.CapacityExhausted;
-        // #3025 — the loan the match opens is created from the borrower offer
-        // at the matched amount, and creation re-admits its cadence after
-        // every check above. Asked of the same entry creation calls.
+        // #3025 / #3358 — the loan the match opens is created from the
+        // borrower offer at the matched amount, and creation then re-admits
+        // its cadence and asks both makers' price-move guards, after every
+        // check above. Asked of the preview entry that runs those same checks.
         if (result.errorCode == LibOfferMatch.MatchError.Ok) {
-            try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(
-                borrowerOfferId, result.matchAmount
-            ) {} catch {
+            OfferPreviewFacet.OriginationRefusal r = OfferPreviewFacet(address(this))
+                .previewOriginationRefusal(borrowerOfferId, result.matchAmount, lenderOfferId);
+            if (r == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted) {
                 result.errorCode = LibOfferMatch.MatchError.CadenceNotAdmitted;
+            } else if (r == OfferPreviewFacet.OriginationRefusal.PriceGuardRefused) {
+                result.errorCode = LibOfferMatch.MatchError.PriceGuardRefused;
             }
         }
     }

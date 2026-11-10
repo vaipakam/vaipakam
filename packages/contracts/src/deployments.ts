@@ -231,6 +231,8 @@ export interface DeploymentFacets {
   vaultOutflowFacet?: HexAddress;
   /** #3205 part 2 — the forced-sale previews, split off forcedSaleFacet. */
   forcedSalePreviewFacet?: HexAddress;
+  /** #3358 — the maker's price-move guard on an offer. */
+  offerPriceGuardFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

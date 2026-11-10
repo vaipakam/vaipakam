@@ -158,7 +158,7 @@ library LibDelivery {
     ///      credited to the wallet's vault ({creditIfProtected}), refused
     ///      unless all of it arrived at both hops.
     function pullExact(address token, address from, address to, uint256 amount) internal {
-        if (amount != 0 && LibProtectedAccount.isEnabled(to)) {
+        if (amount != 0 && LibProtectedAccount.isProtected(to)) {
             uint256 held = IERC20(token).balanceOf(address(this));
             // slither-disable-next-line arbitrary-send-erc20
             IERC20(token).safeTransferFrom(from, address(this), amount);
@@ -233,7 +233,7 @@ library LibDelivery {
         internal
         returns (bool credited, uint256 received)
     {
-        if (amount == 0 || !LibProtectedAccount.isEnabled(to)) return (false, 0);
+        if (amount == 0 || !LibProtectedAccount.isProtected(to)) return (false, 0);
         return (true, IProtectedVaultCredit(address(this)).creditOwnerVault(token, to, amount));
     }
 

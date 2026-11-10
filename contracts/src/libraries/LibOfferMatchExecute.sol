@@ -10,6 +10,7 @@ import {LibFacet} from "./LibFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {RefinanceFacet} from "../facets/RefinanceFacet.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {OfferAcceptFacet} from "../facets/OfferAcceptFacet.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
@@ -499,6 +500,12 @@ library LibOfferMatchExecute {
         // for borrower offers (symmetric to this lender-side block).
         LibVaipakam.Offer storage L = s.offers[lenderOfferId];
         L.amountFilled += mr.matchAmount;
+        // #3413 — a match draws on both offers' deposits, partial or whole,
+        // so both offers' own tokens cool down. (A direct accept instead turns
+        // the offer's own token into a loan token, and the facet stamps that
+        // loan as it does.)
+        LibPositionNFT.markOfferValueOut(lenderOfferId);
+        LibPositionNFT.markOfferValueOut(borrowerOfferId);
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
 
         // Auto-close on dust: if the leftover can't satisfy the
