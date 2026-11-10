@@ -1,4 +1,4 @@
-## Thread — alpha05: Borrow names both ways up front and lists offers as a rate ladder (PR #TBD)
+## Thread — alpha05: Borrow names both ways up front and lists offers as a rate ladder (PR #3485)
 
 Once a borrower picks what to borrow and what to lock, the Borrow page in the new app (`apps/alpha05`) now names the two ways to borrow before anything else: borrow now, by taking a lender's open offer whole, or set your own rate, by posting a request and waiting for a lender. Each way has one sentence, so a reader new to on-chain lending no longer has to discover the second way below the list.
 
