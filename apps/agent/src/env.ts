@@ -1,7 +1,7 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import type { RateLimitBinding } from './rateLimit';
-import { redactedError } from '@vaipakam/lib/errorDescription';
+import { readSecrets, type SecretBinding } from '@vaipakam/lib/secretsStore';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -140,7 +140,7 @@ export const WORKER_NAME = 'vaipakam-agent';
  */
 
 /** A Cloudflare Secrets Store secret binding — read with `.get()`. */
-export type SecretBinding = { get(): Promise<string> };
+export type { SecretBinding };
 
 
 /**
@@ -394,78 +394,33 @@ export interface Env extends BaseEnv {
 }
 
 /**
- * Read one Secrets Store binding into a plain string.
- *
- * Tolerates BOTH an absent binding (`b` undefined) AND a failing
- * fetch: a rejected `.get()` — a transient Secrets Store outage, or
- * a secret deleted / deactivated after deploy — resolves to
- * `undefined` rather than rejecting. `resolveEnv` fans every secret
- * through `Promise.all`, so without this catch one unavailable
- * secret would abort the whole resolve and take down the entire
- * cron tick / every HTTP route — including paths that never touch
- * that secret. Collapsing to `undefined` keeps the failure scoped to
- * the one dependent feature: every `Env` secret field is optional
- * and downstream code already handles `undefined` (skip that chain /
- * disable that adapter / 503 that one endpoint).
- * (T-078 — PR #36 Codex review.)
- */
-async function readSecret(
-  b: SecretBinding | undefined,
-): Promise<string | undefined> {
-  if (!b) return undefined;
-  try {
-    return await b.get();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[env] Secrets Store fetch failed; treating as unset:', redactedError(err));
-    return undefined;
-  }
-}
-
-/**
  * Resolve the raw Worker bindings into the plain `Env` that every
  * downstream function expects. All secrets are fetched in parallel.
  * Call this **once** at the Worker entry point — at the top of both
  * `scheduled` and `fetch` — never inside a hot path.
  */
 export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
-  const [
-    base,
-    eth,
-    arb,
-    op,
-    bnb,
-    polygon,
-    sepolia,
-    baseSep,
-    arbSep,
-    opSep,
-    polygonAmoy,
-    bnbTest,
-    tgToken,
-    pushPk,
-    oneInch,
-    openSea,
-    walletHmac,
-  ] = await Promise.all([
-    readSecret(raw.RPC_BASE),
-    readSecret(raw.RPC_ETH),
-    readSecret(raw.RPC_ARB),
-    readSecret(raw.RPC_OP),
-    readSecret(raw.RPC_BNB),
-    readSecret(raw.RPC_POLYGON),
-    readSecret(raw.RPC_SEPOLIA),
-    readSecret(raw.RPC_BASE_SEPOLIA),
-    readSecret(raw.RPC_ARB_SEPOLIA),
-    readSecret(raw.RPC_OP_SEPOLIA),
-    readSecret(raw.RPC_POLYGON_AMOY),
-    readSecret(raw.RPC_BNB_TESTNET),
-    readSecret(raw.TG_BOT_TOKEN),
-    readSecret(raw.PUSH_CHANNEL_PK),
-    readSecret(raw.ONEINCH_API_KEY),
-    readSecret(raw.OPENSEA_API_KEY),
-    readSecret(raw.DIAG_WALLET_HMAC_KEY),
-  ]);
+  // Keyed by binding name, so a failed read is logged by name
+  // (`@vaipakam/lib/secretsStore`).
+  const secrets = await readSecrets({
+    RPC_BASE: raw.RPC_BASE,
+    RPC_ETH: raw.RPC_ETH,
+    RPC_ARB: raw.RPC_ARB,
+    RPC_OP: raw.RPC_OP,
+    RPC_BNB: raw.RPC_BNB,
+    RPC_POLYGON: raw.RPC_POLYGON,
+    RPC_SEPOLIA: raw.RPC_SEPOLIA,
+    RPC_BASE_SEPOLIA: raw.RPC_BASE_SEPOLIA,
+    RPC_ARB_SEPOLIA: raw.RPC_ARB_SEPOLIA,
+    RPC_OP_SEPOLIA: raw.RPC_OP_SEPOLIA,
+    RPC_POLYGON_AMOY: raw.RPC_POLYGON_AMOY,
+    RPC_BNB_TESTNET: raw.RPC_BNB_TESTNET,
+    TG_BOT_TOKEN: raw.TG_BOT_TOKEN,
+    PUSH_CHANNEL_PK: raw.PUSH_CHANNEL_PK,
+    ONEINCH_API_KEY: raw.ONEINCH_API_KEY,
+    OPENSEA_API_KEY: raw.OPENSEA_API_KEY,
+    DIAG_WALLET_HMAC_KEY: raw.DIAG_WALLET_HMAC_KEY,
+  });
   return {
     // Non-secret bindings / config — passed straight through, ALL of them,
     // by spreading the raw env (#2754 r1). This used to be a hand-kept list
@@ -482,23 +437,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     // refusing stub when the binding is absent (#2239).
     DB: resolveD1Binding(raw.DB, WORKER_NAME),
     // Resolved secrets.
-    RPC_BASE: base,
-    RPC_ETH: eth,
-    RPC_ARB: arb,
-    RPC_OP: op,
-    RPC_BNB: bnb,
-    RPC_POLYGON: polygon,
-    RPC_SEPOLIA: sepolia,
-    RPC_BASE_SEPOLIA: baseSep,
-    RPC_ARB_SEPOLIA: arbSep,
-    RPC_OP_SEPOLIA: opSep,
-    RPC_POLYGON_AMOY: polygonAmoy,
-    RPC_BNB_TESTNET: bnbTest,
-    TG_BOT_TOKEN: tgToken,
-    PUSH_CHANNEL_PK: pushPk,
-    ONEINCH_API_KEY: oneInch,
-    OPENSEA_API_KEY: openSea,
-    DIAG_WALLET_HMAC_KEY: walletHmac,
+    ...secrets,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
 }
