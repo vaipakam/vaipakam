@@ -856,6 +856,8 @@ export const copy = {
     pendingEntries: B('Paid from your reward entries, loan by loan, so no day range is named.'),
     pendingZeroEntries: A('A claim made now pays nothing, but it settles reward entries that paid you nothing, so later rewards can be paid.'),
     pendingZero: A('A claim made now pays nothing, but it moves your claim past reward days {{from}} to {{to}}, which paid you nothing, so the days after them can be paid.'),
+    pendingZeroWindow: A('A claim made now pays nothing. Your reward entries are read {{size}} at a time, and the part it would read (entries {{from}} to {{to}} of {{total}}) has nothing to pay yet. Claiming only moves on to the next part, so a later claim can reach the rest, and it still costs a network fee.'),
+    pendingWindow: B('This claim reads reward entries {{from}} to {{to}} of {{total}}; later claims can pay more.'),
     pendingLower: A('Ready to claim: at least {{amount}}. The exact figure could not be worked out ({{reason}}), so claiming is not offered until it can.'),
     pendingUnknown: A('What you can claim could not be worked out ({{reason}}), and the lower bound could not be read either. That is not the same as nothing.'),
     none: B('No rewards available to claim on this chain.'),
@@ -1086,7 +1088,7 @@ export const copy = {
       },
       rewards: {
         unread: A('Your interaction rewards could not be read, so they are left out.'),
-        partial: A('Your interaction rewards could not be read, so they are left out.'),
+        partial: A('The part of your reward entries the next claim reads has nothing to pay yet, so rewards are left out. Claiming them on their own moves on to the next part.'),
       },
       held: {
         unread: A('Whether rewards are held for you could not be read, so they are left out.'),
