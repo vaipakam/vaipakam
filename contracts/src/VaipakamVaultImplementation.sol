@@ -11,6 +11,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 
 /// @dev The one Diamond read a vault makes: whether an address is a Vaipakam
 ///      vault (`VaultDepositoryFacet.getVaultOwner`, zero if not).
@@ -35,6 +36,12 @@ interface IPositionHolderView {
 /// @dev The one read a vault makes of another vault: its recorded owner.
 interface IVaultOwnerView {
     function vaultOwner() external view returns (address);
+    function vaultCreationOwner() external view returns (address);
+}
+
+/// @dev #3393 — the init-code hash every vault proxy of a beacon shares.
+interface IVaultBeaconInitHash {
+    function PROXY_INIT_CODE_HASH() external view returns (bytes32);
 }
 
 /**
@@ -259,6 +266,7 @@ contract VaipakamVaultImplementation is
         __ERC165_init();
         diamond = diamondAddress;
         ownerWallet = vaultOwnerWallet;
+        creationOwner = vaultOwnerWallet;
     }
 
     /// @notice The storage-layout identity of the vault family. The
@@ -502,6 +510,10 @@ contract VaipakamVaultImplementation is
     ///      given, each with the one protocol whose ERC-1271 query it answers
     ///      (Seaport or the 1inch order protocol). 0 = not one of its orders.
     mapping(bytes32 => address) private _orderVerifier;
+
+    /// @dev #3393 — the wallet this vault was created for; its CREATE2 salt.
+    ///      Written once, at initialize.
+    address private creationOwner;
 
     event ListingEscrowOpened(bytes32 indexed key, address indexed escrow, address asset, address conduit);
     event ListingEscrowClosed(bytes32 indexed key, address indexed escrow, uint256 returned);
@@ -762,7 +774,41 @@ contract VaipakamVaultImplementation is
     /// @dev Whether `to` runs the same BeaconProxy code as this vault (§3.4):
     ///      every genuine vault has one code hash, set by the immutable beacon.
     function _isGenuineVault(address to) private view returns (bool) {
-        return to == address(this) || (to.code.length != 0 && to.codehash == address(this).codehash);
+        if (to == address(this)) return true;
+        if (to.code.length == 0 || to.codehash != address(this).codehash) return false;
+        // #3393 — and its address is the one its own creation owner derives
+        // (CREATE2 by the Diamond, salted by that owner, under this vault's
+        // beacon): a BeaconProxy anyone else deployed, whatever owner record
+        // it carries, sits at another address.
+        try IVaultOwnerView(to).vaultCreationOwner() returns (address creator) {
+            return creator != address(0) && to == vaultAddressOf(creator);
+        } catch {
+            return false;
+        }
+    }
+
+    /// @notice #3393 — the address of `owner`'s vault: CREATE2 by the
+    ///         Diamond, salted by `owner`, of a BeaconProxy for this vault's
+    ///         own beacon. Every genuine vault sits at the address its
+    ///         creation owner derives.
+    function vaultAddressOf(address owner) public view returns (address) {
+        address beacon = ERC1967Utils.getBeacon();
+        bytes32 initCodeHash = IVaultBeaconInitHash(beacon).PROXY_INIT_CODE_HASH();
+        return address(
+            uint160(
+                uint256(
+                    keccak256(abi.encodePacked(bytes1(0xff), diamond, bytes32(uint256(uint160(owner))), initCodeHash))
+                )
+            )
+        );
+    }
+
+    /// @notice #3393 — the wallet this vault was created for. Fixed: it is
+    ///         what the vault's address is derived from. The owner record
+    ///         ({vaultOwner}) follows a verified primary replacement; this
+    ///         does not.
+    function vaultCreationOwner() external view returns (address) {
+        return creationOwner;
     }
 
     /// @dev THE rule for every spender right this vault grants or causes (a
@@ -1105,5 +1151,5 @@ contract VaipakamVaultImplementation is
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[42] private __gap;
+    uint256[41] private __gap;
 }

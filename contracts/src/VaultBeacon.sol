@@ -6,6 +6,7 @@ import {IBeacon} from "@openzeppelin/contracts/proxy/beacon/IBeacon.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 
 /// @dev The one Diamond read the beacon makes: whether the protocol is paused.
 ///      A faulty facet can only set it to paused, which lets the guardian move
@@ -197,6 +198,14 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     /// @param firstImplementation The first vault implementation; registered
     ///        as version 1 and made current at once (a fresh deploy has no
     ///        vault to protect yet, and the factory needs code to point at).
+    /// @notice #3393 — the init-code hash of every vault proxy this beacon
+    ///         serves: a BeaconProxy pointing here, constructed with no call
+    ///         data (the factory initializes it in the same transaction). With
+    ///         the Diamond as deployer and the creation owner as salt, a
+    ///         vault's address is a function of its creation owner alone, so a
+    ///         vault can tell a genuine vault from a look-alike by address.
+    bytes32 public immutable PROXY_INIT_CODE_HASH;
+
     constructor(address owner_, address diamond_, address guardian_, address firstImplementation)
         Ownable(owner_)
         EIP712("Vaipakam VaultBeacon", "1")
@@ -204,6 +213,8 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
         if (diamond_ == address(0) || guardian_ == address(0)) revert ZeroAddress();
         diamond = diamond_;
         guardian = guardian_;
+        PROXY_INIT_CODE_HASH =
+            keccak256(abi.encodePacked(type(BeaconProxy).creationCode, abi.encode(address(this), bytes(""))));
         emit GuardianSet(address(0), guardian_);
         uint256 id = _register(firstImplementation);
         currentVersionId = id;
