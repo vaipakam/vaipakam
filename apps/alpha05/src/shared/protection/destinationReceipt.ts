@@ -61,6 +61,9 @@ export function destinationReceipt(r: DestinationReview, saved: SavedAddress | n
       binding: false,
     });
     consequences.push(text('dest.applyWhat'), text('dest.addStill'));
+    // Activation is what makes the address usable, after a wait in which an
+    // exchange may have reassigned it, so its risks are stated again here.
+    if (saved?.kind === 'exchange') consequences.push(format('dest.addExchange', { exchange: saved.exchange ?? '' }));
   } else {
     const queued = f.queuedTo === null ? null : (f.queuedTo[r.destination.toLowerCase()] ?? 0);
     rows.push({

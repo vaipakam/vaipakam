@@ -103,7 +103,7 @@ export async function readDestinationFacts(c: PublicClient, diamond: Hex, accoun
   ]);
   let queuedTo: Record<string, number> | null = null;
   if (ids !== null) {
-    const rows = await Promise.all(ids.map((id) => readQueueRow(c, diamond, id)));
+    const rows = await Promise.all(ids.map((id) => readQueueRow(c, diamond, id, block.number)));
     if (rows.every((r) => r.payout !== null)) {
       queuedTo = {};
       for (const r of rows) {

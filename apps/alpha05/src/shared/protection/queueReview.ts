@@ -67,7 +67,8 @@ export async function readQueueReview(
   const viewer = own.account;
   const { queue, row } = await own
     .read(async (c: PublicClient) => {
-      const [queue, row] = await Promise.all([readAccountQueue(c, diamond, account), readQueueRow(c, diamond, id)]);
+      const block = await c.getBlockNumber({ cacheTime: 0 });
+      const [queue, row] = await Promise.all([readAccountQueue(c, diamond, account, block), readQueueRow(c, diamond, id, block)]);
       return { queue, row };
     })
     .then((x) => x.value);

@@ -1485,6 +1485,7 @@ export const copy = {
     proofBadCode: A('This is not a proof code. Paste the whole code the signing wallet showed.'),
     proofMismatch: A('This code answers a different request. Use the link shown here, and paste the code it gives.'),
     proofExpired: A('This request has lapsed. Drop it and ask again.'),
+    proofSuperseded: A('This request was dropped or replaced while its answer was being checked, so nothing was saved. Use the newest request.'),
     proofBadSignature: A('The signature is not from {{address}}, so the address is not saved.'),
     proofUnread: A('The signature could not be checked now ({{reason}}); nothing was saved. Try again.'),
     proofSaved: B('“{{label}}” saved as a verified wallet.'),

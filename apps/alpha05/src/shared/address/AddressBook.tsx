@@ -16,7 +16,7 @@ import { WhyLink } from '../help/WhyLink';
 import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
 import { AddressEntry, entryReady, FullAddress } from './AddressEntry';
-import { addPending, bookSnapshot, bookStored, dropPending, LABEL_MAX, removeEntry, saveEntry, subscribeBook, type AddressBook, type PendingProof } from './book';
+import { addPending, bookSnapshot, bookStored, dropPending, LABEL_MAX, provePending, removeEntry, saveEntry, subscribeBook, type AddressBook, type PendingProof } from './book';
 import { classifyCandidate, type KnownAddresses } from './lookalike';
 import { CHALLENGE_LIFETIME_S, decodeProof, encodeChallenge, newChallenge, verifyProof } from './proof';
 
@@ -116,7 +116,7 @@ function PendingRow({ chain, own, pending }: { chain: SupportedChain; own: OwnSt
     try {
       const verdict = await own.read((c) => verifyProof(c, proof, pending.challenge)).then((x) => x.value);
       if (verdict.ok) {
-        saveEntry(chain.chainId, own.account, {
+        const saved = provePending(chain.chainId, own.account, pending, {
           address: destination,
           label: pending.label,
           kind: 'wallet',
@@ -124,6 +124,7 @@ function PendingRow({ chain, own, pending }: { chain: SupportedChain; own: OwnSt
           exchange: null,
           savedAt: Date.now(),
         });
+        if (!saved) setNote(text('book.proofSuperseded'));
         return;
       }
       setNote(

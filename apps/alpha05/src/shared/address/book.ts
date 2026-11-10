@@ -153,6 +153,19 @@ export function saveEntry(chainId: number, account: Hex, entry: SavedAddress): A
   });
 }
 
+/**
+ * Save a wallet whose proof answered `p`, only if `p` itself is still the
+ * request waiting for that address (same nonce). A request dropped, or
+ * replaced by a newer one, in this tab or another, while its answer was
+ * being checked no longer counts: nothing is saved and false is returned.
+ */
+export function provePending(chainId: number, account: Hex, p: PendingProof, entry: SavedAddress): boolean {
+  const waiting = readBook(chainId, account).pending.find((x) => same(x.challenge.destination, p.challenge.destination));
+  if (!waiting || waiting.challenge.nonce !== p.challenge.nonce || !same(entry.address, p.challenge.destination)) return false;
+  saveEntry(chainId, account, entry);
+  return true;
+}
+
 export function removeEntry(chainId: number, account: Hex, address: Hex): AddressBook {
   const b = readBook(chainId, account);
   return writeBook(chainId, account, { ...b, entries: b.entries.filter((e) => !same(e.address, address)) });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { addPending, bookSnapshot, parseBook, readBook, removeEntry, saveEntry, subscribeBook } from './book';
+import { addPending, bookSnapshot, dropPending, parseBook, provePending, readBook, removeEntry, saveEntry, subscribeBook } from './book';
 import { newChallenge } from './proof';
 
 type Hex = `0x${string}`;
@@ -38,5 +38,24 @@ describe('the saved-address book', () => {
     removeEntry(84532, ME, DEST);
     expect(readBook(84532, ME).entries).toHaveLength(0);
     off();
+  });
+
+  it('saves a proven wallet only while that exact request is still waiting', () => {
+    const entry = { address: DEST, label: 'Cold', kind: 'wallet' as const, proof: { at: 2, purpose: 'destination' as const }, exchange: null, savedAt: 2 };
+    const ask = () => ({
+      challenge: newChallenge({ chainId: 10, diamond: DIAMOND, account: ME, destination: DEST, purpose: 'destination' }, 1),
+      label: 'Cold',
+    });
+    const first = ask();
+    addPending(10, ME, first);
+    dropPending(10, ME, DEST);
+    expect(provePending(10, ME, first, entry)).toBe(false);
+    addPending(10, ME, first);
+    const second = ask();
+    addPending(10, ME, second);
+    expect(provePending(10, ME, first, entry)).toBe(false);
+    expect(readBook(10, ME).entries).toHaveLength(0);
+    expect(provePending(10, ME, second, entry)).toBe(true);
+    expect(readBook(10, ME)).toMatchObject({ entries: [{ label: 'Cold' }], pending: [] });
   });
 });
