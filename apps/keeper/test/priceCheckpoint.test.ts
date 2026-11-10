@@ -63,6 +63,8 @@ class FakeDiamond {
   hasGuard = true;
   /** offerId → [maxMoveBps, status]; absent = no guard (Off). */
   guards = new Map<bigint, [number, number]>();
+  /** Offers whose guard read fails (an RPC failure, not a refusal). */
+  guardReadFails = new Set<bigint>();
   /** asset → [price, decimals]; absent = the oracle refuses it. */
   prices = new Map<Address, [bigint, number]>();
   /** `asset:hour` → stored 1e18 price. */
@@ -81,6 +83,7 @@ class FakeDiamond {
         return { tier1Bps: 450, tier2Bps: 350, tier3Bps: 250, calmMoveBps: 200, cushionBps: 11000 };
       case 'getOfferPriceGuard': {
         if (!this.hasGuard) throw new ContractFunctionRevertedError({ abi: ABI, data: '0xa9ad62f8', functionName });
+        if (this.guardReadFails.has(a[0] as bigint)) throw new Error('rpc timeout');
         const [maxMoveBps, status] = this.guards.get(a[0] as bigint) ?? [0, 0];
         return { maxMoveBps, setAt: 1n, refCollateralPrice1e18: 1n, refPrincipalPrice1e18: 1n, status, moveBps: 0n, calmMoveBps: 200 };
       }
@@ -329,6 +332,35 @@ describe('guarded offers (#3358)', () => {
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => [offer(7, asset(3), asset(4))] }));
     expect(d.sent).toEqual([]);
     expect(r).toMatchObject({ guardedOffers: 0, skipped: 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint' });
+  });
+
+  it('says a guard it could not read is unknown, not absent, and keeps the failure in a skipped line', async () => {
+    const d = new FakeDiamond();
+    d.guards.set(7n, [300, 2]);
+    d.guardReadFails.add(7n);
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => [offer(7, asset(3), asset(4)), offer(8, asset(5), asset(6))] }));
+    expect(d.sent).toEqual([]);
+    expect(r).toMatchObject({ guardedOffers: 0, guardsUnread: 1 });
+    expect(r.skipped).toMatch(/the guards of 1 open offer\(s\) were not read, so whether any of them needs a checkpoint is unknown this run$/);
+    expect(describeReport(r)).toMatch(/ unread=guards\(the guard of 1 open offer\(s\)\)$/);
+
+    const e = new FakeDiamond();
+    e.prices.set(asset(1), [1n, 0]);
+    e.guardReadFails.add(7n);
+    const worked = await checkpointOnce(CHAIN, DIAMOND, deps(e, [asset(1)], { offers: async () => [offer(7, asset(3), asset(4))] }));
+    expect(describeReport(worked)).toContain('guarded-offers=0 (+1 unread)');
+  });
+
+  it('a source that stalls past its cutoff leaves the other source worked', async () => {
+    const d = new FakeDiamond();
+    d.prices.set(asset(1), [1n, 0]);
+    // The sources' cutoff is three stage reserves before the run deadline
+    // (send, probe, source); this leaves it 400 ms away.
+    const sendDeadline = Date.now() + 10_000 + 5_000 + 5_000 + 400;
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [asset(1)], { sendDeadline, offers: () => new Promise(() => {}) }));
+    expect(r.skipped).toBeUndefined();
+    expect(r.recorded).toEqual([asset(1)]);
+    expect(r.guardNote).toBe('the open offers could not be read from the indexer (still in flight at its cutoff)');
   });
 
   it('works a chain whose only readers are guarded offers', async () => {

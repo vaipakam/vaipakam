@@ -117,6 +117,9 @@ export interface CheckpointReport {
   guardedOffers: number | null;
   /** Why the open offers' guards were not read, when they were not. */
   guardNote: string | null;
+  /** Open offers whose guard read did not come back: `guardedOffers` counts
+   *  only the guards confirmed, so these are unknown, not unguarded. */
+  guardsUnread: number;
   /** Already checkpointed for the hour when read. */
   alreadyRecorded: number;
   /** Not sent: the oracle price did not read, so the contract would skip it. */
@@ -239,12 +242,15 @@ export function isGuarded(read: BatchResult | undefined): boolean | undefined {
 /** The run's one line for a chain. */
 export function describeReport(r: CheckpointReport): string {
   const head = `[keeper] priceCheckpoint chain=${r.chainId}`;
-  if (r.skipped) return `${head}: not worked this run: ${r.skipped}`;
+  const unread = r.unread.size > 0 ? ` unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}` : '';
+  if (r.skipped) return `${head}: not worked this run: ${r.skipped}${unread}`;
   const parts = [
     head,
     `hour=${r.hour ?? 'unread'}`,
     `tracked=${r.tracked}`,
-    r.guardedOffers === null ? `guarded-offers=unread (${r.guardNote ?? 'not read'})` : `guarded-offers=${r.guardedOffers}`,
+    r.guardedOffers === null
+      ? `guarded-offers=unread (${r.guardNote ?? 'not read'})`
+      : `guarded-offers=${r.guardedOffers}${r.guardsUnread > 0 ? ` (+${r.guardsUnread} unread)` : ''}`,
     `already=${r.alreadyRecorded}`,
     `due=${r.due}`,
     `recorded=${r.recorded.length}`,
@@ -253,7 +259,7 @@ export function describeReport(r: CheckpointReport): string {
     ...(r.unpriced.length > 0 ? [`no-price=${r.unpriced.join(',')}`] : []),
     ...(r.deferred > 0 ? [`deferred=${r.deferred} (taken first next run)`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
-    ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
+    ...(unread ? [unread.trim()] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
   ];
   return parts.join(' ');
@@ -317,6 +323,7 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
     tracked: 0,
     guardedOffers: null,
     guardNote: null,
+    guardsUnread: 0,
     alreadyRecorded: 0,
     unpriced: [],
     due: 0,
@@ -332,39 +339,37 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   // time; the probes before them a stage reserve earlier (runWindow.ts, rule 3).
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const probeCutoff = priorStageCutoffMs(readCutoff);
+  // The chain id and the two sources' reads come a stage before the probes.
+  const sourceCutoff = priorStageCutoffMs(probeCutoff);
 
   // The RPC must answer for this chain: a deterministic deployment can put a
   // Diamond at the same address on another chain.
   let served: number;
   try {
-    served = await boundedCall(probeCutoff, 'the chain id', () => deps.client.getChainId());
+    served = await boundedCall(sourceCutoff, 'the chain id', () => deps.client.getChainId());
   } catch (err) {
     return { ...report, skipped: err instanceof PastRunDeadline ? 'the run deadline passed during its first reads' : `the RPC's chain id could not be read (${shortErr(err)})` };
   }
   if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
 
-  // The two readers' candidates, each read on its own: a failed read of one
-  // leaves the other's assets worked and is named in the run line.
+  // The two readers' candidates, each read on its own and by its own cutoff,
+  // a stage ahead of the probes: a source that stalls or fails leaves the
+  // other's assets worked, and is named in the run line.
   const [loanRead, offerRead] = await Promise.allSettled([
-    boundedCall(probeCutoff, "the active loans' assets", deps.assets),
-    boundedCall(probeCutoff, 'the open offers', deps.offers),
+    boundedCall(sourceCutoff, "the active loans' assets", deps.assets),
+    boundedCall(sourceCutoff, 'the open offers', deps.offers),
   ]);
-  if ([loanRead, offerRead].some((r) => r.status === 'rejected' && r.reason instanceof PastRunDeadline)) {
-    return { ...report, skipped: 'the run deadline passed during its first reads' };
-  }
+  const why = (r: PromiseRejectedResult) => (r.reason instanceof PastRunDeadline ? 'still in flight at its cutoff' : shortErr(r.reason));
   const loanAssets = loanRead.status === 'fulfilled' ? snapshotAssets(loanRead.value, chainId, 'priceCheckpoint') : [];
-  if (loanRead.status === 'rejected') {
-    sender.noteUnread('loan assets', `the active loans' assets could not be read from the indexer (${shortErr(loanRead.reason)})`);
-  }
+  const loanFailure = loanRead.status === 'rejected' ? `the active loans' assets could not be read from the indexer (${why(loanRead)})` : null;
   const candidates = offerRead.status === 'fulfilled' ? offerRead.value : [];
-  if (offerRead.status === 'rejected') report.guardNote = `the open offers could not be read from the indexer (${shortErr(offerRead.reason)})`;
+  if (offerRead.status === 'rejected') report.guardNote = `the open offers could not be read from the indexer (${why(offerRead)})`;
   if (loanAssets.length === 0 && candidates.length === 0) {
-    if (loanRead.status === 'rejected') {
-      return { ...report, skipped: `the active loans' assets could not be read from the indexer (${shortErr(loanRead.reason)})` };
-    }
-    if (offerRead.status === 'rejected') return { ...report, skipped: report.guardNote as string };
+    if (loanFailure) return { ...report, skipped: loanFailure };
+    if (report.guardNote) return { ...report, skipped: report.guardNote };
     return { ...report, guardedOffers: 0, skipped: 'no active loan and no open offer with two ERC-20 legs, so nothing reads a checkpoint' };
   }
+  if (loanFailure) sender.noteUnread('loan assets', loanFailure);
 
   // Whether this Diamond carries the #3359 floor.
   try {
@@ -407,7 +412,9 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
       skipped:
         report.guardedOffers === null
           ? `no active loan with two ERC-20 legs, and the open offers' guards were not read (${report.guardNote})`
-          : 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint',
+          : report.guardsUnread > 0
+            ? `no active loan with two ERC-20 legs and no guard confirmed on the open offers read, but the guards of ${report.guardsUnread} open offer(s) were not read, so whether any of them needs a checkpoint is unknown this run`
+            : 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint',
     };
   }
 
@@ -516,6 +523,7 @@ async function readGuardAssets(
     }
   }
   report.guardedOffers = guarded;
+  report.guardsUnread = unread;
   if (unread > 0) report.unread.set('guards', `the guard of ${unread} open offer(s)`);
   return out;
 }
