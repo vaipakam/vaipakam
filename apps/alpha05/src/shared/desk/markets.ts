@@ -254,3 +254,31 @@ export function deskLadder(rows: readonly BookRow[], m: Pick<Market, 'lending' |
     leftOut,
   };
 }
+
+/** One of the viewer's own offers on a ladder, with how much of it was
+ *  taken as the index last recorded it (OFF-75). */
+export interface OwnOrder {
+  id: bigint;
+  lender: boolean;
+  rateBps: bigint;
+  /** The most the offer can lend or borrow. */
+  total: bigint;
+  taken: bigint;
+  open: bigint;
+}
+
+/** The viewer's offers on the ladder, lenders' first, each side by rate as
+ *  the ladder orders it. Offers the ladder leaves out are not orders anyone
+ *  can take, so they are not listed here; the ladder counts them. */
+export function ownOrders(l: Pick<DeskLadder, 'asks' | 'bids'>, viewer: string): OwnOrder[] {
+  const me = viewer.toLowerCase();
+  const out: OwnOrder[] = [];
+  for (const s of [...l.asks, ...l.bids]) {
+    for (const r of s.offers) {
+      if (r.creator.toLowerCase() !== me) continue;
+      const total = r.amountMax > r.amount ? r.amountMax : r.amount;
+      out.push({ id: r.id, lender: r.offerType === OFFER_TYPE_LENDER, rateBps: s.rateBps, total, taken: r.amountFilled, open: openAmount(r) });
+    }
+  }
+  return out;
+}

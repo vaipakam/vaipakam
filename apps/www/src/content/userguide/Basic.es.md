@@ -1567,3 +1567,9 @@ El Rate desk, en Avanzado del menú, muestra las ofertas abiertas de préstamos 
 ### Cuando una oferta se acaba de publicar o cambiar
 
 Una oferta o solicitud solo se puede tomar cuando sus condiciones llevan unos segundos vigentes desde que se publicó o se cambió por última vez. Si la abre antes, la revisión indica cuánto tiempo deben mantenerse las condiciones y aproximadamente cuánto falta, y no muestra ningún paso para firmar. No tiene que hacer nada: la revisión vuelve a comprobar por sí sola y le deja continuar cuando se cumple el tiempo. No se envía nada mientras espera.
+
+<a id="desk-tape"></a>
+
+### Rate desk: sus ofertas, préstamos recientes y tipos acordados
+
+Debajo de la escalera de un mercado, el Rate desk muestra tres cosas más. Primero, sus propias ofertas en esa escalera, con cuánto de cada una se ha tomado y cuánto sigue abierto, según lo registró el índice por última vez; la página propia de una oferta lo comprueba en la cadena. Segundo, los préstamos recientes del mercado, los más nuevos primero: cada línea es un préstamo acordado en este mercado, al tipo y por el importe fijados al abrirse, y los reembolsos o prórrogas posteriores no lo cambian. Tercero, un gráfico de los tipos a los que se acordaron préstamos en los últimos 7, 30 o 90 días, o en todo el período. Cada escalón es el tipo del último préstamo acordado en su periodo, y la barra sombreada abarca el tipo más bajo y el más alto de ese periodo. Un hueco significa que entonces no se acordó ningún préstamo, así que no se dibuja nada sobre él. La línea discontinua es el tipo medio actual de la escalera, calculado por la app, y las mismas cifras aparecen en una tabla bajo el gráfico. Cuando el índice no puede confirmar el plazo de un préstamo, no lo coloca en ningún mercado; el desk indica cuántos préstamos así tiene el par de tokens.

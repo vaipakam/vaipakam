@@ -42,7 +42,14 @@
 //    rate warning compares against: every loan the chain's `LoanInitiated`
 //    logs name, read back from the Diamond, filtered to the scope asked for
 //    and echoing that scope as the indexer does. The agreed rate is the
-//    loan's stored rate (the fixture never refinances a loan it reads here).
+//    loan's stored rate and amount (the fixture never refinances or part-
+//    repays a loan it reads here), filed under the loan's own term.
+//    Refused while the posture is `down`;
+//  - the indexer's `GET /loans/rate-candles?chainId&lendingAsset&
+//    collateralAsset&durationDays&interval&range`, the desk's executed-rate
+//    chart: those loans folded per period (first, high, low and last agreed
+//    rate, the count and the amounts lent), only periods with a loan, the
+//    range counted back from the wall clock as the indexer counts it.
 //    Refused while the posture is `down`;
 //  - the indexer's `GET /notifications/:address?chainId&limit&before`, the
 //    wallet's inbox: a `loan_matched` row for both parties of every
@@ -251,6 +258,13 @@ async function recentLoans(url) {
       durationDays: Number(l.durationDays),
       interestRateBps: Number(l.interestRateBps),
       initRateBps: Number(l.interestRateBps),
+      initPrincipal: l.principal.toString(),
+      initDurationDays: Number(l.durationDays),
+      // The tenor market the index files the loan under: every fixture
+      // loan's terms are the chain's own, so it is the loan's term.
+      marketDurationDays: Number(l.durationDays),
+      assetType: Number(l.assetType ?? 0),
+      collateralAssetType: Number(l.collateralAssetType ?? 0),
       startAt: Number(l.startTime),
       isSaleVehicle,
     });
@@ -265,6 +279,47 @@ async function recentLoans(url) {
     // disclosure.
     unplaced,
   };
+}
+
+/** `/loans/rate-candles` in the indexer's shape: the market's fills (both
+ *  legs ERC-20, no sale vehicles) since the range's start by the wall
+ *  clock, as the indexer reads it, folded per interval into first, high,
+ *  low and last agreed rate, the fill count and the amounts lent; only
+ *  periods with a fill, oldest first. All three market parameters are
+ *  required, and an interval or range outside the indexer's set is a 400. */
+async function rateCandles(url) {
+  const intervals = { '1h': 3600, '4h': 14400, '1d': 86400 };
+  const ranges = { '7d': 7, '30d': 30, '90d': 90, all: null };
+  const lending = url.searchParams.get('lendingAsset');
+  const collateral = url.searchParams.get('collateralAsset');
+  const days = url.searchParams.get('durationDays');
+  if (!lending || !collateral || days === null) return { status: 400, body: { error: 'market-filter-required' } };
+  const intervalRaw = url.searchParams.get('interval') ?? '1h';
+  const rangeRaw = url.searchParams.get('range') ?? '30d';
+  if (!Object.hasOwn(intervals, intervalRaw)) return { status: 400, body: { error: 'bad-interval' } };
+  if (!Object.hasOwn(ranges, rangeRaw)) return { status: 400, body: { error: 'bad-range' } };
+  const step = intervals[intervalRaw];
+  const since = ranges[rangeRaw] === null ? 0 : Math.floor(Date.now() / 1000) - ranges[rangeRaw] * 86400;
+  const q = new URLSearchParams({ limit: '200', lendingAsset: lending, collateralAsset: collateral, durationDays: days, excludeSaleVehicles: '1' });
+  const { loans } = await recentLoans(new URL(`http://stub/loans/recent?${q.toString()}`));
+  const fills = loans
+    .filter((l) => l.assetType === 0 && l.collateralAssetType === 0 && l.startAt >= since)
+    .sort((a, b) => a.startAt - b.startAt || a.loanId - b.loanId);
+  const buckets = [];
+  for (const f of fills) {
+    const t = Math.floor(f.startAt / step) * step;
+    let b = buckets[buckets.length - 1];
+    if (!b || b.t !== t) {
+      b = { t, open: f.initRateBps, high: f.initRateBps, low: f.initRateBps, close: f.initRateBps, fills: 0, principalTotal: '0', unrecordedPrincipalFills: 0 };
+      buckets.push(b);
+    }
+    b.high = Math.max(b.high, f.initRateBps);
+    b.low = Math.min(b.low, f.initRateBps);
+    b.close = f.initRateBps;
+    b.fills += 1;
+    b.principalTotal = (BigInt(b.principalTotal) + BigInt(f.initPrincipal)).toString();
+  }
+  return { status: 200, body: { chainId: CHAIN_ID, buckets, unplaced, truncated: false } };
 }
 
 /** Inbox rows a spec added (`/__stub/notifications`), each for one wallet. */
@@ -470,6 +525,7 @@ const server = http.createServer(async (req, res) => {
           '/offers/active',
           '/offers/markets',
           '/loans/recent',
+          '/loans/rate-candles',
           '/notifications/:address',
           '/ws/chain/:chainId (503)',
           '/rpc/:chainId',
@@ -741,6 +797,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await recentLoans(url));
+      return;
+    }
+    if (url.pathname === '/loans/rate-candles' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const r = await rateCandles(url);
+      json(res, r.status, r.body);
       return;
     }
     const inbox = url.pathname.match(/^\/notifications\/([^/]+)$/);

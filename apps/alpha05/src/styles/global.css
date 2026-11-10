@@ -2183,3 +2183,110 @@ a.btn {
 .ladder-offers .badge {
   margin-inline-start: 6px;
 }
+/* OFF-75: own offers, the fills tape and the executed-rate chart. */
+.order-progress {
+  width: 100%;
+  height: 6px;
+  margin-top: 6px;
+  accent-color: var(--chart-series);
+}
+.tape-rows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-periods {
+  margin: 8px 0 12px;
+}
+.rate-chart {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.rate-chart svg {
+  display: block;
+  overflow: visible;
+}
+.rate-chart text {
+  font-size: 11px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.chart-grid line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chart-range {
+  fill: var(--chart-series);
+  fill-opacity: 0.18;
+}
+.chart-line {
+  fill: none;
+  stroke: var(--chart-series);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chart-dot {
+  fill: var(--chart-series);
+  stroke: var(--surface-raised);
+  stroke-width: 2;
+}
+.chart-middle line {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.chart-cross {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.chart-hit {
+  fill: transparent;
+  cursor: crosshair;
+  outline: none;
+}
+.chart-hit:focus-visible {
+  stroke: var(--focus-ring);
+  stroke-width: 2;
+}
+.chart-tip {
+  position: absolute;
+  min-width: 170px;
+  max-width: 220px;
+  padding: 8px 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-body);
+  font-size: 0.8rem;
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-tip p {
+  margin: 0;
+}
+.chart-table {
+  margin-top: 12px;
+}
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.chart-table table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chart-table th,
+.chart-table td {
+  padding: 4px 8px;
+  text-align: start;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-body);
+}

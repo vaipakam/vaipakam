@@ -48,6 +48,11 @@
 
   /* Motion: the standard easing (quick start, gentle settle) */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Chart series (validated with the dataviz palette check against
+     --surface-raised: lightness band, chroma, >= 3:1). Marks only, never
+     text: labels and values wear the text tokens. */
+  --chart-series: #4f46e5;
 }
 
 :root[data-theme='dark'] {
@@ -75,6 +80,8 @@
 
   --border: #29303d;
   --border-strong: #39414f;
+
+  --chart-series: #7c83f5;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);

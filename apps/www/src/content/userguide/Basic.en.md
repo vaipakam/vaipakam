@@ -1548,3 +1548,9 @@ The Rate desk, under Advanced in the menu, shows the open token loan offers on t
 ### When an Offer Was Just Posted or Changed
 
 An offer or request can be taken only once its terms have stood a few seconds since it was posted or last changed. If you open one sooner, the review says how long the terms must stand and about how long is left, and shows no step to sign. You do not need to do anything: the review checks again on its own and lets you continue once the time is up. Nothing is sent while you wait.
+
+<a id="desk-tape"></a>
+
+### Rate Desk: Your Offers, Recent Loans and Agreed Rates
+
+Below a market's ladder, the Rate desk shows three more things. First, your own offers on that ladder, with how much of each has been taken and how much is still open, as the index last recorded it; an offer's own page checks it on the chain. Second, the market's recent loans, newest first: each line is a loan agreed in this market, at the rate and amount set when it opened, and later repayments or extensions do not change it. Third, a chart of the rates loans were agreed at over the last 7, 30 or 90 days, or all time. Each step is the rate of the last loan agreed in its period, and the shaded bar spans that period's lowest and highest rate. A gap means no loan was agreed then, so nothing is drawn across it. The dashed line is the ladder's middle rate now, worked out by the app, and the same figures are in a table under the chart. When the index cannot confirm a loan's term, it does not place that loan in any market; the desk states how many such loans the token pair has.

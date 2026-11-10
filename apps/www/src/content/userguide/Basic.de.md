@@ -1589,3 +1589,9 @@ Der Rate desk, im Menü unter Erweitert, zeigt die offenen Token-Kreditangebote 
 ### Wenn ein Angebot gerade erstellt oder geändert wurde
 
 Ein Angebot oder eine Anfrage kann erst angenommen werden, wenn seine Bedingungen seit dem Erstellen oder der letzten Änderung einige Sekunden bestanden haben. Öffnen Sie es früher, sagt die Prüfung, wie lange die Bedingungen bestehen müssen und wie lange es ungefähr noch dauert, und zeigt keinen Schritt zum Signieren. Sie müssen nichts tun: Die Prüfung liest von selbst erneut und lässt Sie weitermachen, sobald die Zeit um ist. Während Sie warten, wird nichts gesendet.
+
+<a id="desk-tape"></a>
+
+### Rate desk: Ihre Angebote, letzte Kredite und vereinbarte Zinssätze
+
+Unter der Zinsleiter eines Marktes zeigt der Rate desk drei weitere Dinge. Erstens Ihre eigenen Angebote auf dieser Leiter, mit dem Teil, der davon schon genommen wurde, und dem Teil, der noch offen ist, so wie der Index es zuletzt erfasst hat; die eigene Seite eines Angebots prüft es auf der Chain. Zweitens die letzten Kredite des Marktes, die neuesten zuerst: Jede Zeile ist ein in diesem Markt vereinbarter Kredit, mit dem Zinssatz und dem Betrag, die bei seiner Eröffnung galten; spätere Rückzahlungen oder Verlängerungen ändern daran nichts. Drittens ein Diagramm der Zinssätze, zu denen Kredite in den letzten 7, 30 oder 90 Tagen oder insgesamt vereinbart wurden. Jede Stufe ist der Zinssatz des letzten in ihrem Zeitraum vereinbarten Kredits, und der schattierte Balken reicht vom niedrigsten bis zum höchsten Zinssatz dieses Zeitraums. Eine Lücke bedeutet, dass damals kein Kredit vereinbart wurde; über sie wird nichts gezeichnet. Die gestrichelte Linie ist der aktuelle mittlere Zinssatz der Leiter, von der App berechnet, und dieselben Zahlen stehen in einer Tabelle unter dem Diagramm. Kann der Index die Laufzeit eines Kredits nicht bestätigen, ordnet er ihn keinem Markt zu; der Desk nennt, wie viele solche Kredite das Tokenpaar hat.

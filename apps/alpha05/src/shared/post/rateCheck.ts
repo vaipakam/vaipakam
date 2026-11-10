@@ -17,6 +17,7 @@
  */
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { IndexerUnavailable } from '../reads/world/indexerClient';
+import { unplacedFrom, type Unplaced } from '../reads/world/unplaced';
 
 type Hex = `0x${string}`;
 
@@ -37,15 +38,7 @@ export interface RecentRates {
    *  not confirmed: it cannot place them in a term, so they are in no
    *  market's sample. Stated beside the comparison, so "no loans" never
    *  hides loans whose term is unknown. `capped`: at least `count`. */
-  unplaced: { count: number; capped: boolean };
-}
-
-function unplacedFrom(v: unknown): { count: number; capped: boolean } {
-  const u = v as Record<string, unknown> | null | undefined;
-  if (!u || typeof u !== 'object' || !Number.isSafeInteger(u.count) || (u.count as number) < 0 || typeof u.capped !== 'boolean') {
-    throw new IndexerUnavailable('shape', 'The index did not say how many loans on this pair have unconfirmed terms.');
-  }
-  return { count: u.count as number, capped: u.capped };
+  unplaced: Unplaced;
 }
 
 function bps(v: unknown): bigint | null {
