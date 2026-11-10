@@ -46,7 +46,11 @@ export function OrientationCard({ page }: { page: PageEntry }) {
   const { text } = useCopy();
   const { mode, setMode } = useMode();
   const entry = ORIENTATION[page.path];
-  const [dismissed, setDismissed] = useState(() => readDismissed(page.path));
+  // Hidden in this visit, by path: the card stays mounted across built
+  // pages, so its state must name the page it hid, and storage is read for
+  // the page shown now rather than the one the card first rendered on.
+  const [hiddenNow, setHiddenNow] = useState<readonly string[]>([]);
+  const dismissed = hiddenNow.includes(page.path) || readDismissed(page.path);
   if (entry === undefined || page.tier !== 'advanced' || mode !== 'basic' || dismissed) return null;
   return (
     <aside className="orientation card" aria-labelledby="orientation-title" data-testid="orientation-card">
@@ -73,7 +77,7 @@ export function OrientationCard({ page }: { page: PageEntry }) {
           className="btn"
           onClick={() => {
             writeDismissed(page.path);
-            setDismissed(true);
+            setHiddenNow((h) => [...h, page.path]);
           }}
           data-testid="orientation-dismiss"
         >

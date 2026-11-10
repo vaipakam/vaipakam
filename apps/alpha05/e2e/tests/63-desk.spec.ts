@@ -152,6 +152,17 @@ test('a Basic reader sees the orientation card, which switches to Advanced or hi
   await page.reload();
   await expect(page.getByRole('heading', { level: 1, name: 'Rate desk' })).toBeVisible();
   await expect(card).toHaveCount(0);
+  // Reached from another page in the same visit, without a reload, the
+  // hidden card stays hidden: the card is kept across pages, so its state
+  // must follow the page it is on.
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/desk');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(page.getByRole('heading', { level: 1, name: 'Rate desk' })).toBeVisible();
+  await expect(card).toHaveCount(0);
 
   await setIndexPosture('down');
   await page.reload();
