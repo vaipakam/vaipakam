@@ -134,11 +134,10 @@ export function DestinationsSection({ chain, own, facts, book }: Props) {
                           {text('dest.askAgain')}
                         </button>
                       )}
-                      {s !== 'expired' && (
-                        <button type="button" className="btn" onClick={() => open({ action: 'cancel', destination: p.destination })} data-testid="destination-cancel">
-                          {text('dest.cancel')}
-                        </button>
-                      )}
+                      {/* A lapsed request still holds one of the waiting places until it is cancelled. */}
+                      <button type="button" className="btn" onClick={() => open({ action: 'cancel', destination: p.destination })} data-testid="destination-cancel">
+                        {text('dest.cancel')}
+                      </button>
                     </p>
                   </li>
                 );

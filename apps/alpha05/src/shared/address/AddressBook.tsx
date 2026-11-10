@@ -17,7 +17,7 @@ import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
 import { AddressEntry, entryReady, FullAddress } from './AddressEntry';
 import { addPending, bookSnapshot, bookStored, dropPending, LABEL_MAX, removeEntry, saveEntry, subscribeBook, type AddressBook, type PendingProof } from './book';
-import { classifyCandidate, type KnownAddress } from './lookalike';
+import { classifyCandidate, type KnownAddresses } from './lookalike';
 import { CHALLENGE_LIFETIME_S, decodeProof, encodeChallenge, newChallenge, verifyProof } from './proof';
 
 type Hex = `0x${string}`;
@@ -29,14 +29,6 @@ export function useAddressBook(chainId: number, account: Hex): AddressBook {
     () => bookSnapshot(chainId, account),
     () => bookSnapshot(chainId, account),
   );
-}
-
-/** The book's entries as known addresses, for the look-alike check. */
-export function bookKnown(book: AddressBook): KnownAddress[] {
-  return [
-    ...book.entries.map((e) => ({ address: e.address, source: 'book' as const, label: e.label })),
-    ...book.pending.map((p) => ({ address: p.challenge.destination, source: 'pending' as const, label: p.label })),
-  ];
 }
 
 /** The link that asks the wallet holding an address to sign. */
@@ -58,7 +50,7 @@ interface Props {
   chain: SupportedChain;
   own: OwnStateClient;
   /** Every address the reader already uses, the book's own included. */
-  known: readonly KnownAddress[];
+  known: KnownAddresses;
 }
 
 export function AddressBookSection({ chain, own, known }: Props) {
@@ -139,9 +131,7 @@ function PendingRow({ chain, own, pending }: { chain: SupportedChain; own: OwnSt
           ? text('book.proofMismatch')
           : verdict.reason === 'expired'
             ? text('book.proofExpired')
-            : verdict.reason === 'badSignature'
-              ? format('book.proofBadSignature', { address: destination })
-              : format('book.proofUnread', { reason: verdict.detail }),
+            : format('book.proofBadSignature', { address: destination }),
       );
     } catch (e) {
       setNote(format('book.proofUnread', { reason: (e as Error).message }));
@@ -205,8 +195,8 @@ function AddAddress({ chain, own, known }: Props) {
   const [kind, setKind] = useState<'wallet' | 'exchange'>('wallet');
   const [exchange, setExchange] = useState('');
   const [ack, setAck] = useState(false);
-  const candidate = classifyCandidate(value, known);
-  const ready = entryReady(candidate, checked);
+  const candidate = classifyCandidate(value, known.list);
+  const ready = entryReady(candidate, checked, known);
   // Your own wallet needs no entry, and one already saved needs no second.
   const usable = ready !== null && !(candidate.kind === 'known' && (candidate.entry.source === 'own' || candidate.entry.source === 'book'));
   const named = label.trim() !== '';

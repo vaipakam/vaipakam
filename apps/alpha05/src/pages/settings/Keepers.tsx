@@ -27,8 +27,9 @@ import {
   type KeeperSettings,
 } from '../../shared/keepers/keepers';
 import { AddressEntry, entryReady } from '../../shared/address/AddressEntry';
-import { bookKnown, useAddressBook } from '../../shared/address/AddressBook';
-import { classifyCandidate, mergeKnown, type KnownAddress } from '../../shared/address/lookalike';
+import { useAddressBook } from '../../shared/address/AddressBook';
+import { useKnownAddresses } from '../../shared/address/knownAddresses';
+import { classifyCandidate } from '../../shared/address/lookalike';
 import { readPosture, usePosture } from '../../shared/reads/posture';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -216,7 +217,7 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
         </Notice>
       )}
       {s !== null && !flowOpen && !termsOpen && (
-        <KeeperControls s={s} advanced={isAdvanced} paused={paused} network={network} chainName={chain.name} chainId={chain.chainId} account={account} onChoose={choose} />
+        <KeeperControls s={s} advanced={isAdvanced} paused={paused} network={network} chainName={chain.name} chainId={chain.chainId} diamond={diamond} account={account} onChoose={choose} />
       )}
       {termsOpen && termsGate.session && (
         <TermsPrompt
@@ -280,6 +281,7 @@ function KeeperControls({
   network,
   chainName,
   chainId,
+  diamond,
   account,
   onChoose,
 }: {
@@ -289,6 +291,7 @@ function KeeperControls({
   network: Hex | null;
   chainName: string;
   chainId: number;
+  diamond: Hex;
   account: Hex;
   onChoose: (c: KeeperChange) => void;
 }) {
@@ -321,7 +324,7 @@ function KeeperControls({
           ))}
         </ul>
       )}
-      {!paused && advanced && s.keepers.length < MAX_KEEPERS && <AddKeeper s={s} network={network} chainName={chainName} chainId={chainId} account={account} onChoose={onChoose} />}
+      {!paused && advanced && s.keepers.length < MAX_KEEPERS && <AddKeeper s={s} network={network} chainName={chainName} chainId={chainId} diamond={diamond} account={account} onChoose={onChoose} />}
       {!paused && advanced && s.keepers.length >= MAX_KEEPERS && <p className="tier-b">{format('keepers.fullNote', { max: String(MAX_KEEPERS) })}</p>}
       {!paused && !advanced && <p className="tier-b">{text('keepers.basicPointer')}</p>}
     </>
@@ -357,14 +360,16 @@ function ActionPicker({ initial, submitKey, onSubmit, testId }: { initial: numbe
 
 /** Adding a keeper (#3415, RB-ADDRESS-GUARD): the address is shown in
  *  full, a look-alike of an address this wallet already uses is refused,
- *  and a first-time address waits for "I checked the full address". The
- *  network's own keeper and the saved addresses count as already used. A
+ *  and a first-time address waits for "I checked the full address". Every
+ *  address the wallet uses counts as already used (one list for every box,
+ *  knownAddresses.ts), and nothing can be added until it is all read. A
  *  keeper receives nothing, so no signature from it is asked. */
 function AddKeeper({
   s,
   network,
   chainName,
   chainId,
+  diamond,
   account,
   onChoose,
 }: {
@@ -372,6 +377,7 @@ function AddKeeper({
   network: Hex | null;
   chainName: string;
   chainId: number;
+  diamond: Hex;
   account: Hex;
   onChoose: (c: KeeperChange) => void;
 }) {
@@ -382,13 +388,8 @@ function AddKeeper({
   const [address, setAddress] = useState(networkFree ? network : '');
   const [checked, setChecked] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const known: KnownAddress[] = mergeKnown(
-    [{ address: account, source: 'own', label: null }],
-    network === null ? [] : [{ address: network, source: 'keeper', label: keeperName(network, network, chainName, copy) }],
-    s.keepers.map((k) => ({ address: k.keeper, source: 'keeper' as const, label: null })),
-    bookKnown(book),
-  );
-  const parsed = entryReady(classifyCandidate(address, known), checked);
+  const known = useKnownAddresses({ chainId, chainName, diamond, account, book });
+  const parsed = entryReady(classifyCandidate(address, known.list), checked, known);
   const onSubmit = (e: FormEvent) => e.preventDefault();
   return (
     <form className="approval-add" onSubmit={onSubmit} data-testid="settings-keepers-add">

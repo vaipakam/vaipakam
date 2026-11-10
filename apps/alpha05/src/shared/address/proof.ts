@@ -150,9 +150,7 @@ export type ProofVerdict =
   /** The request waited longer than {@link CHALLENGE_LIFETIME_S}. */
   | { ok: false; reason: 'expired' }
   /** The signature is not the address's. */
-  | { ok: false; reason: 'badSignature' }
-  /** The check itself could not be made (the network did not answer). */
-  | { ok: false; reason: 'unread'; detail: string };
+  | { ok: false; reason: 'badSignature' };
 
 function sameChallenge(a: ControlChallenge, b: ControlChallenge): boolean {
   return (
@@ -168,7 +166,9 @@ function sameChallenge(a: ControlChallenge, b: ControlChallenge): boolean {
 
 /** Check a proof against the request this browser is waiting on: the same
  *  request, still in time, signed by the address itself (an ordinary key,
- *  or a smart-contract wallet answering through its own contract). */
+ *  or a smart-contract wallet answering through its own contract). A source
+ *  that fails to answer throws, so the caller's read rail can try the next
+ *  source; only when every source fails does the caller state it unread. */
 export async function verifyProof(
   client: Pick<PublicClient, 'verifyTypedData'>,
   proof: ControlProof,
@@ -177,10 +177,6 @@ export async function verifyProof(
 ): Promise<ProofVerdict> {
   if (!sameChallenge(proof.challenge, waiting)) return { ok: false, reason: 'mismatch' };
   if (now > waiting.issuedAt + CHALLENGE_LIFETIME_S) return { ok: false, reason: 'expired' };
-  try {
-    const valid = await client.verifyTypedData({ address: waiting.destination, signature: proof.signature, ...controlTypedData(waiting) });
-    return valid ? { ok: true } : { ok: false, reason: 'badSignature' };
-  } catch (e) {
-    return { ok: false, reason: 'unread', detail: (e as Error).message };
-  }
+  const valid = await client.verifyTypedData({ address: waiting.destination, signature: proof.signature, ...controlTypedData(waiting) });
+  return valid ? { ok: true } : { ok: false, reason: 'badSignature' };
 }

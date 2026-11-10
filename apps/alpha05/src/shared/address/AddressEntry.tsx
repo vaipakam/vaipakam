@@ -10,13 +10,16 @@ import type { ReactNode } from 'react';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
 import { Notice } from '../ui/Notice';
-import { addressParts, classifyCandidate, type AddressCandidate, type KnownAddress } from './lookalike';
+import { addressParts, classifyCandidate, type AddressCandidate, type KnownAddress, type KnownAddresses } from './lookalike';
 
 type Hex = `0x${string}`;
 
-/** The address an entry may be used as, or null while it may not: a known
- *  address at once, a new one only once the reader ticked the check. */
-export function entryReady(c: AddressCandidate, checked: boolean): Hex | null {
+/** The address an entry may be used as, or null while it may not: none
+ *  until every address the reader uses has been read (a look-alike of one
+ *  not yet read could pass), then a known address at once and a new one
+ *  only once the reader ticked the check. */
+export function entryReady(c: AddressCandidate, checked: boolean, known: Pick<KnownAddresses, 'state'>): Hex | null {
+  if (known.state !== 'complete') return null;
   if (c.kind === 'known') return c.address;
   if (c.kind === 'new' && checked) return c.address;
   return null;
@@ -39,7 +42,7 @@ interface Props {
   label: ReactNode;
   value: string;
   onChange: (text: string) => void;
-  known: readonly KnownAddress[];
+  known: KnownAddresses;
   checked: boolean;
   onChecked: (checked: boolean) => void;
   testId: string;
@@ -47,7 +50,7 @@ interface Props {
 
 export function AddressEntry({ id, label, value, onChange, known, checked, onChecked, testId }: Props) {
   const { text, format } = useCopy();
-  const c = classifyCandidate(value, known);
+  const c = classifyCandidate(value, known.list);
   const knownLine = (k: KnownAddress) =>
     k.source === 'own' ? text('address.knownOwn') : k.label !== null ? format('address.knownSaved', { label: k.label }) : text('address.knownOther');
   const name = (k: KnownAddress) => (k.source === 'own' ? text('address.ownName') : (k.label ?? text('address.usedName')));
@@ -68,6 +71,16 @@ export function AddressEntry({ id, label, value, onChange, known, checked, onChe
         aria-invalid={c.kind === 'invalid' || c.kind === 'badChecksum' || c.kind === 'lookalike'}
       />
       <p className="tier-b">{text('address.inputHint')}</p>
+      {known.state === 'reading' && (
+        <p className="tier-b" role="status" data-testid={`${testId}-known-reading`}>
+          {text('address.knownReading')}
+        </p>
+      )}
+      {known.state === 'failed' && (
+        <Notice tone="warn" tier="A">
+          <span data-testid={`${testId}-known-failed`}>{text('address.knownFailed')}</span>
+        </Notice>
+      )}
       {c.kind === 'invalid' && value.trim().length >= 42 && (
         <p className="tier-b" role="status">
           {text('address.notAddress')}
@@ -85,7 +98,7 @@ export function AddressEntry({ id, label, value, onChange, known, checked, onChe
           <span data-testid={`${testId}-lookalike`}>{format('address.lookalike', { name: name(c.of), address: c.of.address })}</span>
         </Notice>
       )}
-      {c.kind === 'new' && (
+      {c.kind === 'new' && known.state === 'complete' && (
         <>
           <Notice tone="warn" tier="A">
             {text('address.firstTime')}

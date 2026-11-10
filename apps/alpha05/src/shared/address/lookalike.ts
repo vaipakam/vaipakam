@@ -25,6 +25,16 @@ export interface KnownAddress {
   label: string | null;
 }
 
+/** The addresses a box checks against, and whether every source is in.
+ *  Until it is complete a look-alike of an address not yet read cannot be
+ *  ruled out, so no box lets an address be used (see knownAddresses.ts). */
+export interface KnownAddresses {
+  list: KnownAddress[];
+  /** `reading` until the chain answers; `failed` when it could not be read
+   *  or a source gave no answer; `complete` once every source is in. */
+  state: 'reading' | 'failed' | 'complete';
+}
+
 /** What the text in an address box is, before anything is sent. */
 export type AddressCandidate =
   | { kind: 'empty' }

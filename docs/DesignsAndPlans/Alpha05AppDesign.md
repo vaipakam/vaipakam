@@ -1404,9 +1404,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   refuses a broken checksum, and it refuses, with no override, a look-alike:
   an address whose first three and last three hex digits match one the
   reader already uses (their own wallet, a saved address, a destination, a
-  waiting request, a signer, an approved keeper) while the rest differs. A
-  first-time address needs an explicit "I checked the full address" tick,
-  which editing the address clears. The Protection page (ACC-41) keeps the
+  waiting request, a signer, an approved keeper, the network's own keeper)
+  while the rest differs. Every box checks against that same one list, read
+  from the chain at one block, and lets no address be used until all of it
+  has been read: a list it could not read is stated, never treated as
+  empty. A first-time address needs an explicit "I checked the full
+  address" tick, which editing the address clears. The Protection page (ACC-41) keeps the
   reader's saved addresses, per network and wallet, in this browser only,
   and says so. A wallet joins only after it proves control: the app makes
   an EIP-712 request naming the account, the address, the network and the
@@ -1426,7 +1429,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   payouts a removal cancels, and an exchange address's risks again. The
   page states when protected mode is off and destinations do not apply,
   each request's wait, readiness and lapse by the chain's clock, and the
-  at-most-five limit.
+  at-most-five limit; a lapsed request still holds a waiting place, so it
+  can be cancelled as well as asked for again.
 - **RB-OFFERS-MINE** — the Offers page (OFF-46) lists every offer the
   connected wallet created, from the protocol's own per-creator index
   (which keeps a cancelled id), together with every offer whose position

@@ -2,8 +2,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
-import { AddressBookSection, bookKnown, useAddressBook } from '../../shared/address/AddressBook';
-import { mergeKnown, type KnownAddress } from '../../shared/address/lookalike';
+import { AddressBookSection, useAddressBook } from '../../shared/address/AddressBook';
+import { useKnownAddresses } from '../../shared/address/knownAddresses';
 import { ProveControl } from '../../shared/address/ProveControl';
 import { useCopy } from '../../shared/copy/useCopy';
 import { DestinationsSection } from '../../shared/protection/Destinations';
@@ -33,16 +33,14 @@ export function ProtectionPage() {
   const diamond = chain?.diamondAddress ?? NO_BOOK_ACCOUNT;
   const facts = useOwnRead(['protection', 'destinations', diamond], (c) => readDestinationFacts(c, diamond, own!.account), { enabled: ready });
   const book = useAddressBook(chain?.chainId ?? 0, own?.account ?? NO_BOOK_ACCOUNT);
-  const f = facts.data;
-  const known: KnownAddress[] = own
-    ? mergeKnown(
-        [{ address: own.account, source: 'own', label: null }],
-        bookKnown(book),
-        (f?.destinations ?? []).map((a) => ({ address: a, source: 'destination' as const, label: null })),
-        (f?.pending ?? []).map((p) => ({ address: p.destination, source: 'pending' as const, label: null })),
-        (f?.signers ?? []).map((a) => ({ address: a, source: 'signer' as const, label: null })),
-      )
-    : [];
+  const known = useKnownAddresses({
+    chainId: chain?.chainId ?? 0,
+    chainName: chain?.name ?? '',
+    diamond,
+    account: own?.account ?? NO_BOOK_ACCOUNT,
+    book,
+    enabled: ready,
+  });
   return (
     <main className="page protection" aria-labelledby="protection-title">
       <h1 id="protection-title">{text('protection.title')}</h1>
