@@ -13,9 +13,8 @@
  * removed. Runs on the desktop and the phone; the chain is reverted.
  */
 import { readFile } from 'node:fs/promises';
-import { keccak256, toHex, type Hex } from 'viem';
+import { keccak256, toHex } from 'viem';
 import type { Page } from '@playwright/test';
-import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, openMenu, test } from '../lib/wallet';
 
@@ -130,41 +129,35 @@ test('when the browser will not keep the report for the reload, the page stays a
 test('with a wallet: the Terms state on this network and the fee-discount setting', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
-  const snapshot = await anvilRpc<Hex>('evm_snapshot');
-  try {
-    const { page, account } = await launchWallet('freshLender');
-    await page.goto('/settings');
-    await connectWallet(page);
-    const terms = page.getByTestId('settings-terms');
-    await expect(terms).toHaveAttribute('data-terms', 'none', { timeout: 30_000 });
-    await expect(terms).toContainText('No Terms of Service are in force on');
-    await expect(page.getByTestId('settings-fees').getByTestId('consent-toggle')).toBeVisible({ timeout: 30_000 });
+  const { page, account } = await launchWallet('freshLender');
+  await page.goto('/settings');
+  await connectWallet(page);
+  const terms = page.getByTestId('settings-terms');
+  await expect(terms).toHaveAttribute('data-terms', 'none', { timeout: 30_000 });
+  await expect(terms).toContainText('No Terms of Service are in force on');
+  await expect(page.getByTestId('settings-fees').getByTestId('consent-toggle')).toBeVisible({ timeout: 30_000 });
 
-    await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
-    await page.reload();
-    await expect(terms).toHaveAttribute('data-terms', 'needed', { timeout: 30_000 });
-    await expect(terms).toContainText('Version 1 is in force on');
-    await expect(terms).toContainText('Repaying, claiming and withdrawing never do.');
-    await expect(terms.getByRole('link', { name: 'Read the Terms (version 1)' })).toBeVisible();
-    await fitsWidth(page);
+  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await page.reload();
+  await expect(terms).toHaveAttribute('data-terms', 'needed', { timeout: 30_000 });
+  await expect(terms).toContainText('Version 1 is in force on');
+  await expect(terms).toContainText('Repaying, claiming and withdrawing never do.');
+  await expect(terms.getByRole('link', { name: 'Read the Terms (version 1)' })).toBeVisible();
+  await fitsWidth(page);
 
-    // The download names the connected wallet and leaves the wallet
-    // connection's own items out; erasure ends the connection.
-    const body = await download(page);
-    expect(body.walletAddresses).toContain(account.address.toLowerCase());
-    expect(Number(body.notIncluded.walletConnectionItems)).toBeGreaterThan(0);
-    await erase(page);
-    await expect(page.getByTestId('settings-data-report')).toContainText('Your wallet was disconnected.');
-    await expect(page.getByTestId('settings-data-report')).toContainText('wallet marker(s) were written back so no wallet reconnects by itself');
-    await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.');
-    // The wallet still authorises this site, yet a later load does not
-    // reconnect it: only the kept marker stands between them.
-    await page.reload();
-    await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.', { timeout: 30_000 });
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wagmi.store') ?? '{}') as { state?: { current?: string | null } });
-    expect(stored.state?.current ?? null).toBeNull();
-  } finally {
-    await anvilRpc('evm_revert', [snapshot]);
-    await anvilRpc('evm_mine');
-  }
+  // The download names the connected wallet and leaves the wallet
+  // connection's own items out; erasure ends the connection.
+  const body = await download(page);
+  expect(body.walletAddresses).toContain(account.address.toLowerCase());
+  expect(Number(body.notIncluded.walletConnectionItems)).toBeGreaterThan(0);
+  await erase(page);
+  await expect(page.getByTestId('settings-data-report')).toContainText('Your wallet was disconnected.');
+  await expect(page.getByTestId('settings-data-report')).toContainText('wallet marker(s) were written back so no wallet reconnects by itself');
+  await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.');
+  // The wallet still authorises this site, yet a later load does not
+  // reconnect it: only the kept marker stands between them.
+  await page.reload();
+  await expect(page.getByTestId('settings-legal')).toContainText('Connect a wallet to see which Terms it has accepted.', { timeout: 30_000 });
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wagmi.store') ?? '{}') as { state?: { current?: string | null } });
+  expect(stored.state?.current ?? null).toBeNull();
 });

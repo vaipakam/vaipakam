@@ -16,27 +16,14 @@ import { WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
 import type { Page } from '@playwright/test';
-import { anvilRpc, increaseTime, mine } from '../lib/anvil';
+import { increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
-type Hex = `0x${string}`;
 type Pending = { state: number; cosigned: boolean; releaseAt: bigint; amount: bigint };
 
 const DELAY = 2 * 24 * 60 * 60;
 const AMOUNT = parseEther('0.01');
-
-// The chain as each test found it. A revert leaves the head at the
-// snapshot's timestamp while the next block mines at the wall clock, so a
-// block is mined at once (see 26-loan-claims).
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-});
-test.afterEach(async () => {
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

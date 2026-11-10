@@ -3,13 +3,12 @@
  * Terms gate) through the shared signing flow: receipt, re-check, wallet,
  * progress, MEASURED outcome. Runs on the desktop and the phone project; each
  * run puts the state it starts from in place itself (consent reset through
- * the protocol's public entry point, the Terms version installed inside a
- * chain snapshot and reverted after), so the second project never depends on
- * the first.
+ * the protocol's public entry point; the Terms version installed by the
+ * test, which the suite reverts after every test), so the second project
+ * never depends on the first.
  */
 import { erc20Abi, keccak256, toHex, type Hex } from 'viem';
 import { scenario } from '../lib/chain';
-import { anvilRpc } from '../lib/anvil';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 import type { Page } from '@playwright/test';
@@ -123,53 +122,48 @@ test('the fee discount turns on and off with a measured outcome; with no Terms i
 
 test('with Terms in force, turning the discount on asks for them first; turning it off never does', async ({ launchWallet }) => {
   const sc = scenario();
-  // A Terms version can only move up, so it is installed inside a snapshot
-  // the test reverts: later specs and the other project start with none.
-  const snapshot = await anvilRpc<string>('evm_snapshot');
-  try {
-    await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
-    const hash = keccak256(toHex('alpha05 e2e Terms v1'));
-    await sc.diamondWrite('admin', 'setCurrentTos', [1, hash]);
-    const { page } = await launchWallet('borrower');
-    await page.goto('/');
-    await connectWallet(page);
-    const section = page.getByRole('region', { name: 'Fee discount' });
-    await expect(section).toHaveAttribute('data-consent', 'off', { timeout: 60_000 });
+  // A Terms version can only move up; the suite reverts the chain after
+  // every test, so later specs and the other project start with none.
+  await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
+  const hash = keccak256(toHex('alpha05 e2e Terms v1'));
+  await sc.diamondWrite('admin', 'setCurrentTos', [1, hash]);
+  const { page } = await launchWallet('borrower');
+  await page.goto('/');
+  await connectWallet(page);
+  const section = page.getByRole('region', { name: 'Fee discount' });
+  await expect(section).toHaveAttribute('data-consent', 'off', { timeout: 60_000 });
 
-    await section.getByRole('button', { name: 'Turn on' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('Turning on the fee discount needs the Terms of Service in force on Base Sepolia accepted first.');
-    await expect(dialog.getByRole('link', { name: 'Read the Terms (version 1)' })).toHaveAttribute('href', 'https://vaipakam.com/terms/v1');
-    await expect(dialog.getByRole('link', { name: 'Privacy notice' })).toHaveAttribute('href', 'https://vaipakam.com/privacy');
-    // The whole fingerprint, grouped.
-    await expect(dialog.locator('.receipt')).toContainText(hash.slice(2, 10));
-    await expect(dialog.locator('.receipt')).toContainText(hash.slice(-8));
-    await fitsWidth(page);
-    await dialog.getByRole('button', { name: 'Confirm in wallet' }).click();
-    await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
-    expect(await sc.read('hasAcceptedCurrentTerms', [accountFor('borrower').address])).toBe(true);
-    await dialog.getByRole('button', { name: 'Continue: Turning on the fee discount' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+  await section.getByRole('button', { name: 'Turn on' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Turning on the fee discount needs the Terms of Service in force on Base Sepolia accepted first.');
+  await expect(dialog.getByRole('link', { name: 'Read the Terms (version 1)' })).toHaveAttribute('href', 'https://vaipakam.com/terms/v1');
+  await expect(dialog.getByRole('link', { name: 'Privacy notice' })).toHaveAttribute('href', 'https://vaipakam.com/privacy');
+  // The whole fingerprint, grouped.
+  await expect(dialog.locator('.receipt')).toContainText(hash.slice(2, 10));
+  await expect(dialog.locator('.receipt')).toContainText(hash.slice(-8));
+  await fitsWidth(page);
+  await dialog.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  expect(await sc.read('hasAcceptedCurrentTerms', [accountFor('borrower').address])).toBe(true);
+  await dialog.getByRole('button', { name: 'Continue: Turning on the fee discount' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
-    // The consent review follows at once.
-    await expect(section.locator('.receipt')).toContainText('Turn the fee discount on');
-    await section.getByRole('button', { name: 'Confirm in wallet' }).click();
-    await expect(section.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
-    await section.getByRole('button', { name: 'Close' }).click();
-    await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 30_000 });
+  // The consent review follows at once.
+  await expect(section.locator('.receipt')).toContainText('Turn the fee discount on');
+  await section.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(section.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await section.getByRole('button', { name: 'Close' }).click();
+  await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 30_000 });
 
-    // A newer version: turning OFF still asks nothing.
-    await sc.diamondWrite('admin', 'setCurrentTos', [2, keccak256(toHex('alpha05 e2e Terms v2'))]);
-    await page.reload();
-    await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 60_000 });
-    await section.getByRole('button', { name: 'Turn off' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
-    await section.getByRole('button', { name: 'Confirm in wallet' }).click();
-    await expect(section.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
-  } finally {
-    await anvilRpc('evm_revert', [snapshot]);
-  }
+  // A newer version: turning OFF still asks nothing.
+  await sc.diamondWrite('admin', 'setCurrentTos', [2, keccak256(toHex('alpha05 e2e Terms v2'))]);
+  await page.reload();
+  await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 60_000 });
+  await section.getByRole('button', { name: 'Turn off' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await section.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(section.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
 });
 
 test('a paused protocol closes the toggle in both directions and names the pause', async ({ launchWallet }) => {

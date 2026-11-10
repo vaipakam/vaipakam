@@ -22,18 +22,6 @@ import { connectWallet, expect, test } from '../lib/wallet';
 
 const MINT_ABI = [{ type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [] }] as const;
 
-// See 26-loan-claims: a revert leaves the head at the snapshot's timestamp,
-// so a block is mined at once.
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-});
-test.afterEach(async () => {
-  await setIndexPosture('live');
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
-
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }

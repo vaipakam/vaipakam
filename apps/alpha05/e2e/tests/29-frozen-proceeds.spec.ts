@@ -36,15 +36,6 @@ const OUTAGE = '0x60006000fd' as Hex;
 /** Every address reads clean. */
 const CLEAN = '0x600060005260206000f3' as Hex;
 
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-});
-test.afterEach(async () => {
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
-
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }

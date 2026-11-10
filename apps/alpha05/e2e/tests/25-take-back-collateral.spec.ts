@@ -16,27 +16,10 @@
 import { erc20Abi, parseEther } from 'viem';
 import { openLoan } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
-import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 type Hex = `0x${string}`;
-
-// The chain as each test found it: a later spec counts on the borrower's
-// wallet holding none of the collateral token. A revert leaves the head at
-// the snapshot's timestamp, as old as the test took, while the next block
-// mines at the wall clock; a later write would then be estimated in that
-// stale environment and mine short of gas on a call whose cost grows with
-// elapsed time (interest accrues per second). So a block is mined at once,
-// bringing the head to the present.
-let snapshot: Hex;
-test.beforeEach(async () => {
-  snapshot = await anvilRpc<Hex>('evm_snapshot');
-});
-test.afterEach(async () => {
-  await anvilRpc('evm_revert', [snapshot]);
-  await anvilRpc('evm_mine');
-});
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

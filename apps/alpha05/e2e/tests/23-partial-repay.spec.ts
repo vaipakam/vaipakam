@@ -10,12 +10,12 @@
  * what left the wallet, and the unused approval put back. The lender is not
  * offered the action, and a loan whose terms do not allow it says so. Runs
  * on the desktop and the phone project; each run opens its own loans, and
- * the clock is moved only inside a snapshot the test reverts.
+ * the suite reverts the chain (and the clock a test moves) after every test.
  */
 import { erc20Abi, formatEther, parseEther } from 'viem';
 import { openLoan, WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
-import { anvilRpc, increaseTime, mine } from '../lib/anvil';
+import { increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -103,24 +103,19 @@ test('past the due date the interest reads at most, and the review says why', as
   const sc = scenario();
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30 });
   await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
-  const snapshot = await anvilRpc<string>('evm_snapshot');
-  try {
-    // A day past the due date, inside the grace period.
-    await increaseTime(31 * 24 * 60 * 60);
-    await mine();
-    const { page } = await launchWallet('borrower');
-    await page.goto(`/positions/${loanId}`);
-    await connectWallet(page);
-    await page.getByTestId('partial-open').click({ timeout: 60_000 });
-    await page.getByTestId('partial-amount').fill('0.01');
-    await page.getByTestId('partial-review').click();
-    const receipt = page.getByTestId('partial-panel').locator('.receipt');
-    await expect(receipt).toContainText(/At most (≈ )?0\.\d+ WETH/, { timeout: 60_000 });
-    await expect(receipt).toContainText('Past the due date that also counts a late fee, which a part payment does not charge, so it is an upper bound');
-    await fitsWidth(page);
-  } finally {
-    await anvilRpc('evm_revert', [snapshot]);
-  }
+  // A day past the due date, inside the grace period.
+  await increaseTime(31 * 24 * 60 * 60);
+  await mine();
+  const { page } = await launchWallet('borrower');
+  await page.goto(`/positions/${loanId}`);
+  await connectWallet(page);
+  await page.getByTestId('partial-open').click({ timeout: 60_000 });
+  await page.getByTestId('partial-amount').fill('0.01');
+  await page.getByTestId('partial-review').click();
+  const receipt = page.getByTestId('partial-panel').locator('.receipt');
+  await expect(receipt).toContainText(/At most (≈ )?0\.\d+ WETH/, { timeout: 60_000 });
+  await expect(receipt).toContainText('Past the due date that also counts a late fee, which a part payment does not charge, so it is an upper bound');
+  await fitsWidth(page);
 });
 
 test('the lender is not offered paying part, and a loan whose terms do not allow it says so to the borrower', async ({ launchWallet }) => {

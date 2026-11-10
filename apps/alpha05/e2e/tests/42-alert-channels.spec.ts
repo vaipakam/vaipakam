@@ -13,7 +13,6 @@
 import { keccak256, toHex, verifyMessage, type Hex } from 'viem';
 import type { Page } from '@playwright/test';
 import { buildAlertSettingsMessage, buildTelegramLinkMessage, buildTelegramTestMessage, buildTelegramUnlinkMessage } from '@vaipakam/lib/alertsMessage';
-import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { agentState, controlAgent, type AgentRequest } from '../lib/stub';
 import { connectWallet, expect, test } from '../lib/wallet';
@@ -215,41 +214,35 @@ test('a declined signature sends nothing, and a request already used is refused'
 test('with Terms in force, linking Telegram asks for them first; switching off never does', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
-  const snapshot = await anvilRpc<Hex>('evm_snapshot');
-  try {
-    await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
-    const { page, flags } = await launchWallet('freshLender');
-    await openChannels(page);
+  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  const { page, flags } = await launchWallet('freshLender');
+  await openChannels(page);
 
-    // Switching reminders off is not a sign-up: no Terms asked.
-    await page.getByTestId('alert-due-toggle').click();
-    await expect(page.getByTestId('alert-due-state')).toContainText('Switched off from this browser at', { timeout: 30_000 });
-    expect(flags.sentTransactions).toBe(0);
+  // Switching reminders off is not a sign-up: no Terms asked.
+  await page.getByTestId('alert-due-toggle').click();
+  await expect(page.getByTestId('alert-due-state')).toContainText('Switched off from this browser at', { timeout: 30_000 });
+  expect(flags.sentTransactions).toBe(0);
 
-    // Leaving the page mid-acceptance keeps the action the prompt was for:
-    // back on Alerts it still asks for push, not for a Telegram link.
-    await page.getByRole('link', { name: 'Vaipakam home' }).click();
-    await page.getByTestId('inbox-bell').click();
-    await page.getByTestId('alert-push-enable').click();
-    const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
-    await expect(dialog).toContainText('Switching on push alerts needs the Terms of Service', { timeout: 30_000 });
-    await page.goBack();
-    await expect(page.getByTestId('alert-channels')).toHaveCount(0);
-    await page.goForward();
-    await expect(dialog).toContainText('Switching on push alerts needs the Terms of Service', { timeout: 30_000 });
-    await page.keyboard.press('Escape');
-    await expect(dialog).toHaveCount(0);
+  // Leaving the page mid-acceptance keeps the action the prompt was for:
+  // back on Alerts it still asks for push, not for a Telegram link.
+  await page.getByRole('link', { name: 'Vaipakam home' }).click();
+  await page.getByTestId('inbox-bell').click();
+  await page.getByTestId('alert-push-enable').click();
+  const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+  await expect(dialog).toContainText('Switching on push alerts needs the Terms of Service', { timeout: 30_000 });
+  await page.goBack();
+  await expect(page.getByTestId('alert-channels')).toHaveCount(0);
+  await page.goForward();
+  await expect(dialog).toContainText('Switching on push alerts needs the Terms of Service', { timeout: 30_000 });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
 
-    await page.getByTestId('alert-telegram-link').click();
-    await expect(dialog).toContainText('Linking Telegram alerts needs the Terms of Service', { timeout: 30_000 });
-    expect((await agentState()).requests.filter((r) => r.path === '/link/telegram')).toHaveLength(0);
-    await dialog.getByRole('button', { name: 'Confirm in wallet' }).click();
-    await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
-    await dialog.getByRole('button', { name: 'Continue: Linking Telegram alerts' }).click();
-    await expect(page.getByTestId('alert-telegram-code-value')).toHaveText('E2E00001', { timeout: 30_000 });
-    await fitsWidth(page);
-  } finally {
-    await anvilRpc('evm_revert', [snapshot]);
-    await anvilRpc('evm_mine');
-  }
+  await page.getByTestId('alert-telegram-link').click();
+  await expect(dialog).toContainText('Linking Telegram alerts needs the Terms of Service', { timeout: 30_000 });
+  expect((await agentState()).requests.filter((r) => r.path === '/link/telegram')).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(dialog.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await dialog.getByRole('button', { name: 'Continue: Linking Telegram alerts' }).click();
+  await expect(page.getByTestId('alert-telegram-code-value')).toHaveText('E2E00001', { timeout: 30_000 });
+  await fitsWidth(page);
 });
