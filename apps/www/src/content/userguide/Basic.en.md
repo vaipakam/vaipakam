@@ -1536,3 +1536,9 @@ Below your VPFI, the page shows the fee-discount tier the protocol applies to yo
 ### Rewards: Signing Instead of Approving
 
 Where your wallet has already approved Permit2 for VPFI, a shared contract many apps use to move tokens with a signature, the VPFI deposit review offers Sign instead of approve. You then sign a one-time transfer of exactly the amount, valid for 30 minutes, and send the deposit: two wallet steps and no approval to the protocol. The signature can be used once, only by a transaction your own wallet sends, and only into your own vault; unused, it lapses. The app never asks you to approve Permit2 itself, because that approval is open-ended and shared with other apps. Without it, the review keeps the usual approval of exactly the amount. On a network without Permit2 the choice is not offered.
+
+<a id="desk-markets"></a>
+
+### Rate Desk: Markets and Rate Ladders
+
+The Rate desk, under Advanced in the menu, shows the open token loan offers on this network grouped into markets: one token lent against one token as collateral, for one term. Each market shows how many lenders' offers and borrowers' requests it holds and the best rate on each side. Choosing a market shows its rate ladder: lenders' offers from the lowest rate up, and borrowers' requests from the highest rate down. Each rate shows how many offers stand at it and their open amounts added up. That total is depth, not one amount you can take: every offer is still taken on its own, with its own collateral and terms. The middle rate sits halfway between the best two rates; the app works it out, the protocol does not report it. The desk reads the protocol's index, which can lag the chain by a few minutes, and an offer's own page checks it on the chain before you take it. Signed orders are counted in the markets but not listed on the ladder yet. In Basic mode a card on top says what the page is and links Borrow and Lend, which do the same job step by step.

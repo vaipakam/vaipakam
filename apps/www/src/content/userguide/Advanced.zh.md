@@ -2249,3 +2249,9 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 奖励：以签名代替授权
 
 审核页在自己的区块读取 Permit2 的规范地址上是否有代码，以及钱包为 VPFI 代币授予 Permit2 的 ERC-20 `allowance`。只有当 Permit2 已部署且该 allowance 覆盖金额时，才提供“以签名代替授权”；否则 Advanced 会说明缺少的是哪一项。钱包为 VPFI 代币和恰好该金额签署 Permit2 的 `PermitTransferFrom`，spender 为 Diamond，nonce 为经 `nonceBitmap` 核实未用过的随机值，期限为最新区块之后 30 分钟。应用先带签名试运行 `depositVPFIToVaultWithPermit`，再发送；协议会拒绝针对任何其他代币的 permit。结果从该入口代替 `VaultDeposited` 发出的 `VPFIDepositedToVault`，以及代币转入金库的记录中测得。两条路径对 VPFI 计入等级的方式相同。
+
+<a id="desk-markets"></a>
+
+### Rate desk：市场与利率阶梯
+
+市场列表来自索引的市场汇总：在未过期的公开 ERC-20 对 ERC-20 报价中，排除出售和冲抵载体后，按借出资产、抵押资产和期限的每种组合分组，按深度从大到小排列并设上限，同时给出每一方的数量和最优利率（出借方最低的 `interestRateBps`，借款方最高的 `interestRateBpsMax`）。这些数量包含有效的签名订单；Rate desk 尚未列出签名订单，因此当某个市场的数量与其阶梯列出的数量不同时，阶梯会同时写明两者。阶梯带着 `excludeExpired`、`excludeSaleVehicles` 和 `excludeOffsetVehicles` 从索引读取该市场的公开报价，每页 50 笔，最多四页，若市场中还有更多会说明。出借方报价位于其最低利率，借款方请求位于其上限，即其利率与最高利率中较高者。每一档的未成交金额是各报价的上限金额减去已成交部分之和。应用还会排除并按原因计数：按应用自身时钟已过期的报价、索引仍返回的载体、与开立后已移动的贷款仓位绑定的报价（#3205）、没有未成交部分的报价，以及条款不同的行。中间利率是最优卖价与最优买价的平均值，精确到十分之一个基点；当最优买价等于或高于最优卖价时，阶梯只说明两侧重叠，不做任何操作。每笔报价都链接到它自己的页面，该页面从链上读取其状态和条款。
