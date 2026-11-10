@@ -161,33 +161,123 @@ contract VPFIDiscountAccumulatorFacet {
     ///         EFFECTIVE_BPS via the ring-buffer accumulator —
     ///         post-min-history gate and post-min-tier-over-history
     ///         clamp. Gated to internal cross-facet calls only.
+    /// @dev    #3459 — resolved by {_resolve}, the one body
+    ///         {explainTier} also reads, so the explanation can never
+    ///         describe a different rule from the one the fee path applies.
+    ///         This path stops at the first gate that zeroes the tier.
     function effectiveTierAndBps(address user)
         external
         view
         onlyInternal
         returns (uint8 effTier, uint16 effBps)
     {
+        TierExplanation memory e = _resolve(LibVaipakam.storageSlot(), user, false);
+        return (e.effTier, e.effBps);
+    }
+
+    /// @notice #3459 — which holding rule keeps a tier below the tier the
+    ///         counted balance alone would reach.
+    /// @dev    None: nothing does. NoHolding: there is no current holding.
+    ///         HoldingTooYoung: the current holding is younger than the
+    ///         minimum holding period. Average: the weighted average over the
+    ///         window is in a lower tier. LookbackDip: the balance touched a
+    ///         lower tier during the look-back over the current holding.
+    ///         MirrorCache: this is not the canonical chain; the tier applied
+    ///         here is the one the canonical chain last pushed, and the rules
+    ///         are evaluated there.
+    enum TierLimit {
+        None,
+        NoHolding,
+        HoldingTooYoung,
+        Average,
+        LookbackDip,
+        MirrorCache
+    }
+
+    /// @notice #3459 — how a user's fee-discount tier is resolved, rule by
+    ///         rule. Every field is what the tier resolution itself reads.
+    /// @dev    countedBalance / balanceTier: the VPFI counted toward the tier
+    ///         now and the tier it alone would reach. stakeStartSec: when the
+    ///         current holding began (0 = none). minHoldingEndsSec: when the
+    ///         minimum holding period ends. twa / rawTier: the weighted
+    ///         average and its tier. lookbackTier: the lowest tier over the
+    ///         look-back. effTier / effBps: the tier and discount that apply
+    ///         with the discount consent on, after the uniform discount
+    ///         ceiling (the fee path applies none while consent is off).
+    ///         On a mirror chain only effTier / effBps / heldBy are filled.
+    struct TierExplanation {
+        bool canonical;
+        uint256 countedBalance;
+        uint8 balanceTier;
+        uint40 stakeStartSec;
+        uint40 minHoldingEndsSec;
+        uint256 twa;
+        uint8 rawTier;
+        uint8 lookbackTier;
+        uint8 effTier;
+        uint16 effBps;
+        TierLimit heldBy;
+    }
+
+    /// @notice #3459 — explain `user`'s fee-discount tier: each rule's value
+    ///         and which one, if any, holds it down. Public read, whatever
+    ///         the user's discount consent, so an app can say what would
+    ///         apply with consent on.
+    function explainTier(address user) external view returns (TierExplanation memory e) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        e.countedBalance =
+            LibVPFIDiscount.tierVpfiBalance(user, LibVPFIDiscount.trackedVpfiBalance(user));
+        e.balanceTier = LibVPFIDiscount.tierOf(e.countedBalance);
+        if (!s.isCanonicalVpfiChain) {
+            (e.effTier, e.effBps) = LibVPFIDiscount.effectiveTierAndBps(user);
+            e.heldBy = TierLimit.MirrorCache;
+        } else {
+            TierExplanation memory r = _resolve(s, user, true);
+            e.canonical = true;
+            e.stakeStartSec = r.stakeStartSec;
+            e.minHoldingEndsSec = r.minHoldingEndsSec;
+            e.twa = r.twa;
+            e.rawTier = r.rawTier;
+            e.lookbackTier = r.lookbackTier;
+            e.effTier = r.effTier;
+            e.effBps = r.effBps;
+            if (e.effTier >= e.balanceTier) e.heldBy = TierLimit.None;
+            else if (e.stakeStartSec == 0) e.heldBy = TierLimit.NoHolding;
+            else if (block.timestamp < e.minHoldingEndsSec) e.heldBy = TierLimit.HoldingTooYoung;
+            else if (e.lookbackTier < e.rawTier) e.heldBy = TierLimit.LookbackDip;
+            else e.heldBy = TierLimit.Average;
+        }
+        if (e.effBps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) e.effBps = uint16(LibVaipakam.MAX_FEE_DISCOUNT_BPS);
+    }
+
+    /// @dev The three gates, in order: minimum holding period, weighted
+    ///      average, lowest tier over the look-back. With `full` false it
+    ///      returns as soon as the tier is known to be 0 (the fee path);
+    ///      with `full` true it computes every rule's value for
+    ///      {explainTier}. effTier / effBps are the same either way, and are
+    ///      left uncapped (the fee path caps them where it applies them).
+    function _resolve(LibVaipakam.Storage storage s, address user, bool full)
+        private
+        view
+        returns (TierExplanation memory e)
+    {
+        e.stakeStartSec = s.currentStakeStartSec[user];
+        if (e.stakeStartSec == 0) return e;
+        uint8 minDays = LibVaipakam.cfgTwaMinStakedDaysEffective();
+        e.minHoldingEndsSec = uint40(uint256(e.stakeStartSec) + uint256(minDays) * 1 days);
+        bool young = block.timestamp < uint256(e.minHoldingEndsSec);
+        if (young && !full) return e;
+
         uint16 today = _todayId();
-
-        uint40 startSec = s.currentStakeStartSec[user];
-        if (startSec == 0) return (0, 0);
-        uint256 minWindow =
-            uint256(LibVaipakam.cfgTwaMinStakedDaysEffective()) * 1 days;
-        if (block.timestamp < uint256(startSec) + minWindow) return (0, 0);
-
-        uint256 twa = _computeTwa(s, user, today);
-        uint8 rawTier = LibVPFIDiscount.tierOf(twa);
-        if (rawTier == 0) return (0, 0);
-        uint8 minOverHistory = _computeRingBufferMinTier(
-            s,
-            user,
-            today,
-            LibVaipakam.cfgTwaMinStakedDaysEffective()
-        );
-        effTier = rawTier < minOverHistory ? rawTier : minOverHistory;
-        if (effTier == 0) return (0, 0);
-        effBps = uint16(LibVPFIDiscount.discountBpsForTier(effTier));
+        e.twa = _computeTwa(s, user, today);
+        e.rawTier = LibVPFIDiscount.tierOf(e.twa);
+        if (e.rawTier == 0 && !full) return e;
+        e.lookbackTier = _computeRingBufferMinTier(s, user, today, minDays);
+        if (young) return e;
+        uint8 t = e.rawTier < e.lookbackTier ? e.rawTier : e.lookbackTier;
+        if (t == 0) return e;
+        e.effTier = t;
+        e.effBps = uint16(LibVPFIDiscount.discountBpsForTier(t));
     }
 
     // ─── Private helpers (see LibVPFIDiscount design comments for the

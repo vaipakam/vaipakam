@@ -25,6 +25,82 @@
   },
   {
     "type": "function",
+    "name": "explainTier",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "e",
+        "type": "tuple",
+        "internalType": "struct VPFIDiscountAccumulatorFacet.TierExplanation",
+        "components": [
+          {
+            "name": "canonical",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "countedBalance",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "balanceTier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "stakeStartSec",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "minHoldingEndsSec",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "twa",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "rawTier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lookbackTier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "effTier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "effBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "heldBy",
+            "type": "uint8",
+            "internalType": "enum VPFIDiscountAccumulatorFacet.TierLimit"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTierExpirySec",
     "inputs": [
       {

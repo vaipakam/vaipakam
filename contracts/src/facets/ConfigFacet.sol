@@ -2621,7 +2621,9 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (newValue == 0 || newValue > 14) revert InvalidTwaRecentDays(newValue);
+        if (newValue < LibVaipakam.TWA_RECENT_DAYS_MIN || newValue > LibVaipakam.TWA_RECENT_DAYS_MAX) {
+            revert InvalidTwaRecentDays(newValue);
+        }
         LibVaipakam.storageSlot().cfgTwaRecentDays = newValue;
         emit TwaRecentDaysSet(newValue);
     }
@@ -2633,7 +2635,9 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (newValue < 14 || newValue > 30) revert InvalidTwaWindowDays(newValue);
+        if (newValue < LibVaipakam.TWA_WINDOW_DAYS_MIN || newValue > LibVaipakam.TWA_WINDOW_DAYS_MAX) {
+            revert InvalidTwaWindowDays(newValue);
+        }
         LibVaipakam.storageSlot().cfgTwaWindowDays = newValue;
         emit TwaWindowDaysSet(newValue);
     }
@@ -2645,7 +2649,9 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (newValue == 0 || newValue > 10) revert InvalidTwaRecentWeight(newValue);
+        if (newValue < LibVaipakam.TWA_RECENT_WEIGHT_MIN || newValue > LibVaipakam.TWA_RECENT_WEIGHT_MAX) {
+            revert InvalidTwaRecentWeight(newValue);
+        }
         LibVaipakam.storageSlot().cfgTwaRecentWeight = newValue;
         emit TwaRecentWeightSet(newValue);
     }
@@ -2659,7 +2665,9 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (newValue < 2 || newValue > 14) revert InvalidTwaMinStakedDays(newValue);
+        if (newValue < LibVaipakam.TWA_MIN_STAKED_DAYS_MIN || newValue > LibVaipakam.TWA_MIN_STAKED_DAYS_MAX) {
+            revert InvalidTwaMinStakedDays(newValue);
+        }
         LibVaipakam.storageSlot().cfgTwaMinStakedDays = newValue;
         emit TwaMinStakedDaysSet(newValue);
     }
