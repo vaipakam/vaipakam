@@ -19,6 +19,9 @@
  * - the limit is between 0.5% and 50%;
  * - between the post and this change the offer was not guarded.
  *
+ * A guard armed with the post itself, so the offer is never on the book
+ * unguarded, is `shared/post/guardPost.ts`.
+ *
  * Every fill reads it at loan creation, so a direct take and a match are
  * both covered; the previews report a refusal as `PriceGuardRefused`.
  */
@@ -272,10 +275,20 @@ export function guardReceipt(r: GuardReview, copy: Copy): Receipt {
 /** What the transaction recorded for this offer, from its own logs. */
 export function measureGuard(r: GuardReview, logs: readonly Log[], diamond: Hex, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
-  const events = parseEventLogs({ abi: PRICE_GUARD, logs: logs as Log[], eventName: 'OfferPriceGuardSet', strict: false }).filter(
-    (l) => l.address.toLowerCase() === diamond.toLowerCase() && (l.args as { offerId?: bigint }).offerId === r.facts.offerId,
-  );
   const label = r.bps === 0 ? text('priceGuard.legCleared') : format('priceGuard.legSet', { limit: bpsPercent(r.bps) });
-  const hit = events.find((l) => Number((l.args as { maxMoveBps?: number | bigint }).maxMoveBps ?? -1) === r.bps);
-  return [hit ? { status: 'done', label } : { status: 'not-done', label, reason: text('priceGuard.legMissing') }];
+  return [
+    guardRecorded(logs, diamond, r.facts.offerId, r.bps) ? { status: 'done', label } : { status: 'not-done', label, reason: text('priceGuard.legMissing') },
+  ];
+}
+
+/** Whether the transaction's own logs record `offerId`'s guard at `bps`
+ *  (`OfferPriceGuardSet` from this Diamond; 0 is a removal). The one test
+ *  both the guard change and a guarded post are measured by. */
+export function guardRecorded(logs: readonly Log[], diamond: Hex, offerId: bigint, bps: number): boolean {
+  return parseEventLogs({ abi: PRICE_GUARD, logs: logs as Log[], eventName: 'OfferPriceGuardSet', strict: false }).some(
+    (l) =>
+      l.address.toLowerCase() === diamond.toLowerCase() &&
+      (l.args as { offerId?: bigint }).offerId === offerId &&
+      Number((l.args as { maxMoveBps?: number | bigint }).maxMoveBps ?? -1) === bps,
+  );
 }

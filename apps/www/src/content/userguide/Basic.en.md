@@ -1417,7 +1417,7 @@ Cancel on an open offer you made takes it off the book and returns what it still
 
 ### Price-move guard
 
-An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open.
+An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open. In Advanced mode you can also add the guard while posting an offer, so it is guarded from the moment it is on the book.
 
 <a id="risk-access"></a>
 
@@ -1529,7 +1529,7 @@ Your tier is not your balance today. It is zero until your current holding has l
 
 ### Rewards: Your Fee-Discount Tier
 
-Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown.
+Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown. The page names the holding rule that keeps your tier down, and while your consent is off it says which tier would apply with it on.
 
 <a id="rewards-vpfi-sign"></a>
 

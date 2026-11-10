@@ -1570,8 +1570,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   transaction's own event. A change open or in flight keeps its panel, finish
   card included, even after a cancel clears the offer's terms. Where the
   network's protocol has no guard yet,
-  the creator is told so and nobody else sees a section. Arming a guard at
-  posting is later work.
+  the creator is told so and nobody else sees a section. A guard can also be
+  armed at posting (Advanced, a token against token collateral only): the
+  post is then the protocol's batch of the arm and the create, as one
+  transaction, and the review's dry run and the write send exactly that
+  batch, so its verdict covers the guard. Because that dry run stops at the
+  token pull while an approval is owed, both tokens' prices are also read on
+  their own, and a pair that cannot be priced is named as a blocker with
+  its remedy (post without a guard). The receipt carries the limit as a
+  bound row and the guard's consequences; the finish card reads the guard
+  from the transaction's event for the offer it created.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the
@@ -2033,13 +2041,20 @@ above. Each resolves here, so a route reviewer needs no private file:
   RW-09, RW-10), shown on a network with VPFI set up. The card states the
   tier and discount the protocol's own fee path applies now
   (`getEffectiveDiscount`), never one worked out by the app: none while the
-  consent is off; on VPFI's home network, beside the tier the counted VPFI
-  alone would give, with one line when the holding rules hold the effective
-  tier below it; elsewhere, the copy sent from the home network, or that
-  none applies when none was sent or it lapsed. Which holding rule holds a
-  tier down, and the rules' settings, are not stated: the protocol reports
-  neither (#3459); Advanced says the settings cannot be read yet, and the
-  help names the three look-backs. The table is shown on the home network
+  consent is off, with the tier that would apply with it on (or that it
+  could not be read); on VPFI's home
+  network, with one line naming the holding rule that holds the effective
+  tier below what the counted VPFI alone would give (no holding recorded,
+  the minimum holding period with its end, the weighted average's tier, or
+  the lowest tier in the look-back); elsewhere, the copy sent from the home
+  network, or that none applies when none was sent or it lapsed. The rule
+  comes from the protocol's own explanation (`explainTier`, #3459), read at
+  the same block, and is used only when it resolves the tier the fee path
+  applies; unread or different, the card says why could not be read and
+  names no rule. Advanced shows, on the home network, each rule's figure
+  for the wallet and this network's settings for the rules
+  (`getTwaConfig`), the average's window and the look-back stated as two
+  separate lengths. The table is shown on the home network
   only, where tiers are set: for each tier, its VPFI band with the
   protocol's exact boundaries (tiers 1 to 3 start at their figure, tier 4
   above its own, every digit shown), its discount after the 50% cap, and

@@ -40,8 +40,8 @@ pre-commit install
 
 # Build + test contracts (always under contracts/)
 cd contracts
-nice -n -10 ionice -c 2 -n 0 forge build
-nice -n -10 ionice -c 2 -n 0 forge test
+forge build
+forge test
 
 # Workspace typecheck — DO NOT use `pnpm -r typecheck` (silently
 # skips workspaces without a `typecheck` script); use the explicit
@@ -53,9 +53,10 @@ pnpm --filter @vaipakam/app typecheck
 pnpm --filter @vaipakam/www typecheck
 ```
 
-The `nice -n -10 ionice -c 2 -n 0` prefix on `forge` is convention —
-viaIR runs are long and benefit from higher priority. See
-[`ProjectProcedures.md §9`](docs/procedures/ProjectProcedures.md).
+No priority prefix is needed on `forge`: the owner's machine raises a
+running `solc` process's priority automatically (2026-11-10). Older docs
+that show a `nice -n -10 ionice -c 2 -n 0` prefix describe the retired
+convention.
 
 ## PR workflow
 
