@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OFFER_BORROWER } from '../offers/acceptTerms';
+import { termsWaitSec } from '../offers/reads';
 import { BORROWER, offer } from '../offers/testOffer';
 import { changedBetween, promptCount, reviewBlockers, type AcceptReview } from './acceptReview';
 import { acceptReceipt } from './receipt';
@@ -43,6 +44,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     consent: true,
     positionFlow: 'not-bound',
     values: { principal: { kind: 'value', value: 3n * 10n ** 18n }, collateral: { kind: 'unpriced' }, unit: 'USD' },
+    termsAge: null,
     readAt: 1,
     ...over,
   } as AcceptReview;
@@ -60,6 +62,38 @@ describe('reviewBlockers', () => {
     expect(reviewBlockers(review({ positionFlow: 'not-moved' }), null, copy)).toEqual([]);
     // An ended offer states its own state, not the move.
     expect(reviewBlockers(review({ state: 'cancelled', positionFlow: 'moved' }), null, copy)).toEqual(['accept.blockState']);
+  });
+});
+
+describe('terms too new to fill (#3443)', () => {
+  const fresh = (termsAge: AcceptReview['termsAge'], role: AcceptReview['role'] = 'borrower') =>
+    review({ role, termsAge, preview: { ...review().preview, error: 'TermsTooFresh' } });
+  const said: string[] = [];
+  const tell = {
+    text: (k: string) => k,
+    format: (k: string, v: Record<string, string>) => {
+      said.push(`${v.min}|${v.left}`);
+      return k;
+    },
+  } as unknown as Parameters<typeof reviewBlockers>[2];
+
+  it('says how long the terms must stand and how long was left at the read block', () => {
+    said.length = 0;
+    expect(reviewBlockers(fresh({ setAt: 1_000n, minAgeSec: 60n, chainNow: 1_012n }), null, tell)).toEqual(['accept.termsWait']);
+    expect(said).toEqual(['1 min|48 s']);
+    expect(reviewBlockers(fresh({ setAt: 1_000n, minAgeSec: 5n, chainNow: 1_002n }, 'lender'), null, copy)).toEqual(['lendAccept.termsWait']);
+  });
+
+  it('falls back to the plain refusal when the age is unread, or when nothing was left at that block', () => {
+    expect(reviewBlockers(fresh(null), null, copy)).toEqual(['accept.err.TermsTooFresh']);
+    expect(reviewBlockers(fresh({ setAt: 1_000n, minAgeSec: 5n, chainNow: 1_005n }), null, copy)).toEqual(['accept.err.TermsTooFresh']);
+    expect(reviewBlockers(fresh({ setAt: 0n, minAgeSec: 5n, chainNow: 1_005n }), null, copy)).toEqual(['accept.err.TermsTooFresh']);
+  });
+
+  it('counts the wait from when the terms were set, never below zero', () => {
+    expect(termsWaitSec({ setAt: 100n, minAgeSec: 5n, chainNow: 101n })).toBe(4n);
+    expect(termsWaitSec({ setAt: 100n, minAgeSec: 5n, chainNow: 200n })).toBe(0n);
+    expect(termsWaitSec({ setAt: 0n, minAgeSec: 5n, chainNow: 1n })).toBe(0n);
   });
 });
 
