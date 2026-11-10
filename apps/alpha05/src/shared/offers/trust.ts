@@ -248,13 +248,27 @@ export function listAge(r: AssetRankings, source: RankingSource): { asOf: number
   return { asOf: s.listFetchedAt, failedAt };
 }
 
-/** The oldest list the reader's statement rests on when no single token
- *  names one (an unranked or copied token is unranked in every list). */
-export function oldestList(r: AssetRankings): { source: RankingSource; asOf: number } | null {
-  let out: { source: RankingSource; asOf: number } | null = null;
-  for (const s of storedSources(r)) {
-    const at = r.sources[s].listFetchedAt as number;
-    if (out === null || at < out.asOf) out = { source: s, asOf: at };
+/** What the reader is told about one list a verdict rests on: the date
+ *  of the stored list with any later failed refresh, or, for a list the
+ *  index has never stored, the failed fetch that left it out. */
+export type ListStatus =
+  | { source: RankingSource; kind: 'stored'; asOf: number; failedAt: number | null }
+  | { source: RankingSource; kind: 'unread'; failedAt: number };
+
+/** Every list a verdict rests on, in list order. Every verdict but a test
+ *  token's reads every stored list (the best rank, the agreement check and
+ *  the copy match all look across both), so each one's date and any failed
+ *  refresh is stated; a list never stored whose fetch failed is named as
+ *  left out, so a verdict from one list does not read as from two. */
+export function listStatuses(r: AssetRankings): ListStatus[] {
+  const out: ListStatus[] = [];
+  for (const source of RANKING_SOURCES) {
+    const age = listAge(r, source);
+    if (age) out.push({ source, kind: 'stored', ...age });
+    else {
+      const run = r.sources[source].lastRun;
+      if (run && !run.ok) out.push({ source, kind: 'unread', failedAt: run.fetchedAt });
+    }
   }
   return out;
 }

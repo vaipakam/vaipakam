@@ -18,7 +18,6 @@ import { connectWallet, expect, test } from '../lib/wallet';
 const CHAIN = 84532;
 const NOW = Math.floor(Date.now() / 1000);
 const stored = (at = NOW - 3600): StubRankingSource => ({ listFetchedAt: at, lastRun: { fetchedAt: at, ok: true, rowCount: 2, detail: null } });
-const EMPTY: StubRankingSource = { listFetchedAt: null, lastRun: null };
 const weth = WETH.toLowerCase();
 /** Addresses with no code, standing in for ranked tokens elsewhere. */
 const LOOKALIKE = '0x' + '1'.repeat(40);
@@ -100,17 +99,22 @@ test('a chosen token shows its tier from the public rankings, matched by its add
   await expect(lendingTrust(page)).toContainText('Unverified: the two public lists disagree on where WETH is on Base Sepolia.');
   await expect(lendingTrust(page)).toContainText(LOOKALIKE);
 
-  // Not ranked, from an old list whose last refresh failed: own risk, and
-  // the failed refresh is said rather than the old list shown as current.
+  // Not ranked, from an old list whose last refresh failed while the other
+  // list was never read: own risk, the failed refresh is said rather than
+  // the old list shown as current, and the unread list is named as left out.
   await setRankings({
     chainId: CHAIN,
-    sources: { cg: { listFetchedAt: NOW - 3 * 86_400, lastRun: { fetchedAt: NOW - 3600, ok: false, rowCount: 0, detail: 'timeout' } }, cp: EMPTY },
+    sources: {
+      cg: { listFetchedAt: NOW - 3 * 86_400, lastRun: { fetchedAt: NOW - 3600, ok: false, rowCount: 0, detail: 'timeout' } },
+      cp: { listFetchedAt: null, lastRun: { fetchedAt: NOW - 7200, ok: false, rowCount: 0, detail: 'timeout' } },
+    },
     assets: [{ address: USDC, ranks: { cg: rank(5, 'USDC', 'USD Coin') } }],
   });
   await pick(page, WETH);
   await expect(lendingTrust(page)).toHaveAttribute('data-trust', 'unranked', { timeout: 30_000 });
   await expect(lendingTrust(page)).toContainText('WETH is not in the top 500 by market value on Base Sepolia. Use it at your own risk');
   await expect(lendingTrust(page)).toContainText('The latest refresh of the first public list failed on');
+  await expect(lendingTrust(page)).toContainText('The index holds no copy of the second public list: its fetch on');
 
   // The index cannot answer: no tier, and why.
   await setRankings({ down: true });

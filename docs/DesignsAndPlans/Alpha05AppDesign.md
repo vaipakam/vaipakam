@@ -1567,8 +1567,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   reader's own risk. A test token the deployment record publishes says so;
   a network with no stored list says a test network's tokens have no
   market value, or on a main network that no ranking is stored. Each tier
-  states the list date, and a refresh that failed after it is a warning,
-  so an old list never reads as current; an index that cannot answer is
+  states the date of every list it rests on, and a refresh of either list
+  that failed after its date is a warning, so an old list never reads as
+  current; a list never stored whose fetch failed is named as left out, so
+  a verdict from one list never reads as from two; an index that cannot answer is
   stated with its reason. The lists are named by place, never by provider.
   The tier rule is the app's (the route carries ranks only), and the tier
   is display and warning only: whether the protocol prices and accepts the

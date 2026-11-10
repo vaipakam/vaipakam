@@ -19,8 +19,7 @@ import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
 import {
   classifyAsset,
-  listAge,
-  oldestList,
+  listStatuses,
   rankTier,
   readAssetRankings,
   readPriced,
@@ -65,19 +64,34 @@ const TIER_KEY: Record<RankTier, CopyKey> = {
 /** Which of the two lists, by its place, never by the provider's name. */
 const LIST_KEY: Record<RankingSource, CopyKey> = { cg: 'trust.listOne', cp: 'trust.listTwo' };
 
-/** The date a statement rests on, and a later failed refresh when there is one. */
-function AgeLine({ rankings, source }: { rankings: AssetRankings; source: RankingSource | null }) {
+/** The date of every list a statement rests on, each with any later
+ *  failed refresh, and any list left out because it was never read. */
+function AgeLines({ rankings }: { rankings: AssetRankings }) {
   const { format, text } = useCopy();
-  const s = source ?? oldestList(rankings)?.source ?? null;
-  const age = s ? listAge(rankings, s) : null;
-  if (!age || !s) return null;
-  if (age.failedAt !== null)
-    return (
-      <Notice tone="warn" tier="A">
-        {format('trust.refreshFailed', { list: text(LIST_KEY[s]), date: formatUtc(age.asOf), failed: formatUtc(age.failedAt) })}
-      </Notice>
-    );
-  return <p className="tier-b">{format('trust.asOf', { list: text(LIST_KEY[s]), date: formatUtc(age.asOf) })}</p>;
+  return (
+    <>
+      {listStatuses(rankings).map((l) => {
+        const list = text(LIST_KEY[l.source]);
+        if (l.kind === 'unread')
+          return (
+            <Notice key={l.source} tone="warn" tier="A">
+              {format('trust.listUnread', { list, failed: formatUtc(l.failedAt) })}
+            </Notice>
+          );
+        if (l.failedAt !== null)
+          return (
+            <Notice key={l.source} tone="warn" tier="A">
+              {format('trust.refreshFailed', { list, date: formatUtc(l.asOf), failed: formatUtc(l.failedAt) })}
+            </Notice>
+          );
+        return (
+          <p key={l.source} className="tier-b">
+            {format('trust.asOf', { list, date: formatUtc(l.asOf) })}
+          </p>
+        );
+      })}
+    </>
+  );
 }
 
 /** The trust line for a chosen ERC-20 (an NFT collection has none yet). */
@@ -151,7 +165,7 @@ function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: Suppor
             tier: text(TIER_KEY[t.tier]),
           })}
           {t.tier !== 'blueChip' && t.best.rank <= 20 && priced.state === 'failed' && <p className="tier-b">{text('trust.pricedUnread')}</p>}
-          <AgeLine rankings={rankings} source={t.best.source} />
+          <AgeLines rankings={rankings} />
         </>,
       );
     case 'unverified':
@@ -161,7 +175,7 @@ function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: Suppor
           <Notice tone="danger" tier="A">
             {format('trust.unverified', { symbol: t.best.symbol, chain: chain.name, address: asset, other: t.other.address })}
           </Notice>
-          <AgeLine rankings={rankings} source={t.best.source} />
+          <AgeLines rankings={rankings} />
         </>,
       );
     case 'copy':
@@ -171,7 +185,7 @@ function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: Suppor
           <Notice tone="danger" tier="A">
             {format('trust.copy', { asset: name, ranked: `${t.of.symbol} (${t.of.name})`, rank: String(t.of.rank), address: t.of.address })}
           </Notice>
-          <AgeLine rankings={rankings} source={t.of.source} />
+          <AgeLines rankings={rankings} />
         </>,
       );
     case 'unranked':
@@ -181,7 +195,7 @@ function TrustFor({ asset, chain, meta, testToken }: { asset: Hex; chain: Suppor
           <Notice tone="warn" tier="A">
             {format('trust.unranked', { asset: name, chain: chain.name })}
           </Notice>
-          <AgeLine rankings={rankings} source={null} />
+          <AgeLines rankings={rankings} />
         </>,
       );
   }

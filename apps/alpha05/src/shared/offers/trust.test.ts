@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
-import { classifyAsset, listAge, oldestList, rankTier, readAssetRankings, searchRanked, type AssetRankings } from './trust';
+import { classifyAsset, listAge, listStatuses, rankTier, readAssetRankings, searchRanked, type AssetRankings } from './trust';
 
 const A = '0x' + 'a'.repeat(40);
 const B = '0x' + 'b'.repeat(40);
@@ -108,11 +108,29 @@ describe('classifyAsset', () => {
 });
 
 describe('list age', () => {
-  it('states a refresh that failed after the stored list, and the oldest list', async () => {
+  it('states a refresh that failed after the stored list', async () => {
     const r = await rankings([], { cg: { listFetchedAt: 900, lastRun: { fetchedAt: 2_000, ok: false } }, cp: STORED });
     expect(listAge(r, 'cg')).toEqual({ asOf: 900, failedAt: 2_000 });
     expect(listAge(r, 'cp')).toEqual({ asOf: 1_000, failedAt: null });
-    expect(oldestList(r)).toEqual({ source: 'cg', asOf: 900 });
+  });
+
+  it('states every list a verdict rests on, each with its own failed refresh', async () => {
+    // An older list refreshed fine and a newer one whose refresh failed: both
+    // are stated, so the failure is never hidden behind the other's date.
+    const r = await rankings([], { cg: STORED, cp: { listFetchedAt: 1_500, lastRun: { fetchedAt: 2_000, ok: false } } });
+    expect(listStatuses(r)).toEqual([
+      { source: 'cg', kind: 'stored', asOf: 1_000, failedAt: null },
+      { source: 'cp', kind: 'stored', asOf: 1_500, failedAt: 2_000 },
+    ]);
+    // A list never stored whose fetch failed is named as left out; one never
+    // fetched at all is not mentioned.
+    const one = await rankings([], { cg: STORED, cp: { listFetchedAt: null, lastRun: { fetchedAt: 3_000, ok: false } } });
+    expect(listStatuses(one)).toEqual([
+      { source: 'cg', kind: 'stored', asOf: 1_000, failedAt: null },
+      { source: 'cp', kind: 'unread', failedAt: 3_000 },
+    ]);
+    const quiet = await rankings([], { cg: STORED, cp: { listFetchedAt: null, lastRun: null } });
+    expect(listStatuses(quiet)).toEqual([{ source: 'cg', kind: 'stored', asOf: 1_000, failedAt: null }]);
   });
 });
 

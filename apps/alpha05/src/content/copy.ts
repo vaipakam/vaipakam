@@ -2386,6 +2386,7 @@ export const copy = {
     listTwo: B('the second public list'),
     asOf: B('Rankings from {{list}} of market values, as of {{date}}.'),
     refreshFailed: A('The latest refresh of {{list}} failed on {{failed}}, so these rankings are from {{date}} and may be out of date.'),
+    listUnread: A('The index holds no copy of {{list}}: its fetch on {{failed}} failed, so this check rests on the other list alone.'),
     unverified: A(
       'Unverified: the two public lists disagree on where {{symbol}} is on {{chain}}. One names this address, {{address}}; the other names {{other}}. Check the address with the token’s own project before you use it.',
     ),
