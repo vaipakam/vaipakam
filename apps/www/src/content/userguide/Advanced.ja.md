@@ -2509,7 +2509,7 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### リワード：手数料割引ティア
 
-カードは 1 つのブロックで `getVPFIDiscountConsent`、`isCanonicalVpfiChain`、`getEffectiveDiscount` を読みます。`getEffectiveDiscount` は手数料の計算が適用するティアと割引を返します：同意がオフならゼロ、上限は 50%、ほかのネットワークではホームネットワークから送られたコピーです。ホームネットワークでは `getTrackedVPFIDiscountTier`（計上済み VPFI だけで得られるティア）も読み、有効ティアがそれより低いときにそう示します。どの保有ルールが抑えているかはプロトコルが報告せず、ルールの設定にはまだ読み取り用のビューがないため、どちらも表示しません。表は 1 つのブロックで `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getFeesConfig` を読みます。ティア 1〜3 はそのしきい値から、ティア 4 は自身のしきい値を超えたところから始まります。各手数料は基本手数料に（1 − 上限適用後の割引）を掛けたもので、正確に計算されます。表はティアが決まるホームネットワークでのみ表示されます。
+カードは 1 つのブロックで `getVPFIDiscountConsent`、`isCanonicalVpfiChain`、`getEffectiveDiscount` を読みます。`getEffectiveDiscount` は手数料の計算が適用するティアと割引を返します：同意がオフならゼロ、上限は 50%、ほかのネットワークではホームネットワークから送られたコピーです。同じブロックで `explainTier` と `getTwaConfig` も読みます。`explainTier` は同意の有無にかかわらず、計上済み VPFI だけで得られるティア、各保有ルールの数値、有効ティアをそれより低く抑えているルールを返します。カードがそのルールを示すのは、説明が手数料の計算と同じティアになるときだけで、同意がオフのときは、オンにすればどのティアが適用されるかを示します。Advanced では各ルールの数値と `getTwaConfig` が返す設定を表示し、平均の期間と振り返り期間は別々の長さとして示します。表は 1 つのブロックで `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getFeesConfig` を読みます。ティア 1〜3 はそのしきい値から、ティア 4 は自身のしきい値を超えたところから始まります。各手数料は基本手数料に（1 − 上限適用後の割引）を掛けたもので、正確に計算されます。表はティアが決まるホームネットワークでのみ表示されます。
 
 <a id="rewards-vpfi-sign"></a>
 

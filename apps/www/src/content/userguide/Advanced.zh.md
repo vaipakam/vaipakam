@@ -2242,7 +2242,7 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### 奖励：手续费折扣等级
 
-卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。在主网络上，它还读取 `getTrackedVPFIDiscountTier`（仅凭已计入 VPFI 得到的等级），并在有效等级更低时说明。协议不报告是哪条持有规则压低了等级，而这些规则的设置目前也没有读取视图，因此两者都不显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
+卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。它还在同一区块读取 `explainTier` 和 `getTwaConfig`。无论是否同意，`explainTier` 都返回仅凭已计入 VPFI 得到的等级、每条持有规则的数值，以及把有效等级压在其下的规则；只有当该解释得出与手续费路径相同的等级时，卡片才会指出这条规则；同意关闭时，卡片会说明开启后将适用哪个等级。Advanced 列出每条规则的数值和 `getTwaConfig` 返回的设置，平均值的时间窗口与回看期作为两个不同的长度分别显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
 
 <a id="rewards-vpfi-sign"></a>
 
