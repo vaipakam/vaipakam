@@ -1,4 +1,4 @@
-## Thread — Every Base loan carries the fee-linked reward cap (PR #<n>)
+## Thread — Every Base loan carries the fee-linked reward cap (PR #3514)
 
 Each token loan on the canonical reward chain now records its lifetime
 reward ceiling when it opens, whatever fee mode either party chose. Before
