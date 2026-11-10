@@ -2412,12 +2412,19 @@ export const copy = {
     standingFill: A(
       "A matching service fills a request against them when its terms fit a lender's limits, so a fill is likely but neither instant nor guaranteed.",
     ),
-    standingFillUnknown: A('Whether this network’s matching is switched on could not be read, so whether a request is filled against them is not known.'),
+    standingFillUnknown: A(
+      'Whether this network’s matching is switched on and running could not be read, so whether a request is filled against them is not known.',
+    ),
+    standingPaused: A(
+      'The protocol has paused every keeper on this network, its matching service included, so no fill is expected until they resume. A lender can still fill a request from its own standing offer, and anyone can for a lender that has not limited who fills it.',
+    ),
     standingOff: A('Matching against standing lenders is switched off on this network, so no request is filled against them now; a request waits for a lender to take it.'),
     standingStale: A('The latest re-read failed ({{reason}}); these lenders are from the read before and may have changed.'),
-    standingTerms: B('They fill only requests that charge the full term’s interest and take no partial repayment.'),
+    standingTerms: B('They fill only requests with full-term interest, no partial repayment and no interest schedule.'),
     standingBlockedProRata: A('This request charges interest only for the time used, so no standing lender can fill it; they require the full term’s interest.'),
     standingBlockedPartial: A('This request allows partial repayment, so no standing lender can fill it; they take full repayment only.'),
+    standingBlockedListing: A('This request lets you list the collateral for sale while the loan is open, so no standing lender can fill it; they lend without that permission.'),
+    standingBlockedCadence: A('This request pays interest on a schedule, so no standing lender can fill it; they lend with interest paid at repayment only.'),
     standingLimits: B('Their limits reach {{days}} days and {{ltv}}% loan-to-value at most.'),
     standingPart: B('Read from the first {{shown}} of {{total}} standing lenders on this network.'),
     matchesStale: B('The latest re-read failed; this list is from the read before.'),

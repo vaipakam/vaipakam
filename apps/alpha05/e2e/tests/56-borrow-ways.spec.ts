@@ -7,7 +7,9 @@
  * offers and says how many; and the way to set your own rate states the
  * lenders standing ready for the pair from the protocol's list of active
  * intents, with the plain statement that a fill is likely but neither
- * instant nor guaranteed. Runs on the desktop and the phone project; each
+ * instant nor guaranteed, only while the network's switches are on and its
+ * keepers are not paused, and only for request terms a standing lender can
+ * fill. Runs on the desktop and the phone project; each
  * test posts what it reads, so the second project never depends on the
  * first.
  */
@@ -21,6 +23,10 @@ import { connectWallet, expect, test } from '../lib/wallet';
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
+
+const E18 = 10n ** 18n;
+/** The lowest finer-schedule threshold the protocol accepts (1,000 numeraire units). */
+const THRESHOLD = 1_000n * E18;
 
 const WETH_ABI = [{ type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] }] as const;
 
@@ -94,6 +100,11 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   // A fill against an intent needs both network switches on.
   await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
   await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+  // A monthly schedule is open from the threshold up, so the form can offer it.
+  await sc.diamondWrite('admin', 'setPeriodicInterestEnabled', [true]);
+  await sc.diamondWrite('admin', 'setMinPrincipalForFinerCadence', [THRESHOLD]);
+  const perWeth = await sc.read<bigint>('getNumeraireValue', [WETH, E18, false]);
+  const wholeWeth = (THRESHOLD * 3n) / 2n / perWeth + 1n;
 
   const { page } = await launchWallet('borrower', { advanced: true });
   await openPair(page, tliq);
@@ -122,6 +133,18 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await page.getByTestId('request-prorata').check();
   await expect(page.getByTestId('standing-blocked')).toContainText('so no standing lender can fill it');
   await expect(page.locator('form')).not.toContainText('a fill is likely');
+  // Back to the full term's interest, the likely fill returns…
+  await page.locator('input[name="request-interest"]').first().check();
+  await expect(page.getByTestId('standing-blocked')).toHaveCount(0);
+  await expect(page.locator('form')).toContainText('a fill is likely');
+  // …and an interest schedule rules every standing lender out again.
+  await page.getByTestId('request-amount').fill(String(wholeWeth));
+  await page.getByTestId('request-duration').getByRole('radio', { name: '60 days' }).check();
+  const monthly = page.getByTestId('request-cadence').getByRole('radio', { name: /Every month/ });
+  await expect(monthly).toBeEnabled({ timeout: 60_000 });
+  await monthly.check();
+  await expect(page.getByTestId('standing-blocked')).toContainText('This request pays interest on a schedule, so no standing lender can fill it');
+  await expect(page.locator('form')).not.toContainText('a fill is likely');
   await fitsWidth(page);
 });
 
@@ -141,6 +164,27 @@ test('with the standing-intent switch off, the lenders are not offered as a like
   const standing = ways.getByTestId('standing-lenders');
   await expect(standing).toContainText('Matching against standing lenders is switched off on this network', { timeout: 60_000 });
   await expect(standing.getByTestId('standing-ready')).toHaveCount(0);
+  await expect(ways).not.toContainText('a fill is likely');
+  await fitsWidth(page);
+});
+
+test('with every keeper paused, the matching service is said to fill none and others still may', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true]);
+  await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+  await sc.diamondWrite('admin', 'setKeepersPaused', [true]);
+
+  const { page } = await launchWallet('borrower');
+  await openPair(page, tliq);
+  const ways = page.getByRole('region', { name: 'Two ways to borrow' });
+  await expect(ways.getByTestId('standing-ready')).toContainText(/ready for this pair/, { timeout: 60_000 });
+  await expect(ways.getByTestId('standing-paused')).toContainText('The protocol has paused every keeper on this network, its matching service included');
+  await expect(ways.getByTestId('standing-paused')).toContainText('A lender can still fill a request from its own standing offer');
   await expect(ways).not.toContainText('a fill is likely');
   await fitsWidth(page);
 });

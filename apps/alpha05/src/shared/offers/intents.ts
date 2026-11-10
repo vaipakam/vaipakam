@@ -7,10 +7,12 @@
  * the page states what is ready and never promises a fill.
  */
 import type { Abi, PublicClient } from 'viem';
-import { LenderIntentFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
+import type { LifecycleTerms } from '../post/postModel';
 import { CONFIG, METRICS } from './reads';
 
 const INTENT = LenderIntentFacetABI as Abi;
+const ADMIN = AdminFacetABI as Abi;
 
 type Hex = `0x${string}`;
 
@@ -40,26 +42,33 @@ export interface IntentsRead {
   /** How many of them were read: fewer than `total` when the list is longer
    *  than this view reads, which the page states. */
   scanned: number;
-  /** The network's two switches a fill against an intent needs, read at the
+  /** What a fill against an intent needs from the network, read at the
    *  same block as the list: the matching switch and the standing-intent
-   *  switch. Null when one could not be read. */
-  switches: { matching: boolean | null; intents: boolean | null };
+   *  switch (the protocol refuses every intent fill with either off), and
+   *  the keeper pause (the protocol's matching service fills nothing while
+   *  it is on, though a lender or another filler still may). Null when one
+   *  could not be read. */
+  switches: { matching: boolean | null; intents: boolean | null; keepersPaused: boolean | null };
 }
 
 /** Whether a request can be filled against the standing lenders now: both
- *  switches on, either one off, or not known because one was unread. */
-export type IntentMatching = 'on' | 'off' | 'unknown';
+ *  switches on and the matching service running; either switch off (no
+ *  fill at all); the service paused (a fill only by a lender or another
+ *  filler); or not known because one of the three was unread. */
+export type IntentMatching = 'on' | 'off' | 'paused' | 'unknown';
 
 export function intentMatching(s: IntentsRead['switches']): IntentMatching {
   if (s.matching === false || s.intents === false) return 'off';
   if (s.matching === null || s.intents === null) return 'unknown';
+  if (s.keepersPaused === true) return 'paused';
+  if (s.keepersPaused === null) return 'unknown';
   return 'on';
 }
 
 /**
- * Reads the network's active lender intents, up to the view's cap, and the
- * two switches a fill against them needs. Every page and both switches are
- * read at one block: the list is a swap-and-pop set, so pages read at
+ * Reads the network's active lender intents, up to the view's cap, and
+ * what a fill against them needs from the network. Every page and every
+ * switch is read at one block: the list is a swap-and-pop set, so pages read at
  * different blocks could skip an intent that moved between them and still
  * look complete.
  */
@@ -67,7 +76,7 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
   const blockNumber = await client.getBlockNumber();
   const flag = (abi: Abi, functionName: string) =>
     (client.readContract({ address: diamond, abi, functionName, blockNumber }) as Promise<boolean>).catch((): boolean | null => null);
-  const switchesRead = Promise.all([flag(CONFIG, 'getPartialFillEnabled'), flag(INTENT, 'isLenderIntentEnabled')]);
+  const switchesRead = Promise.all([flag(CONFIG, 'getPartialFillEnabled'), flag(INTENT, 'isLenderIntentEnabled'), flag(ADMIN, 'keepersPaused')]);
   const intents: IntentSummary[] = [];
   let total = 0n;
   let scanned = 0;
@@ -85,8 +94,8 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
     scanned += rows.length;
     if (BigInt(scanned) >= all || rows.length < INTENT_PAGE) break;
   }
-  const [matching, intentSwitch] = await switchesRead;
-  return { intents, total, scanned, switches: { matching, intents: intentSwitch } };
+  const [matching, intentSwitch, keepersPaused] = await switchesRead;
+  return { intents, total, scanned, switches: { matching, intents: intentSwitch, keepersPaused } };
 }
 
 /** What lenders hold ready for one pair, from their intents on it. */
@@ -132,21 +141,37 @@ export function standingReady(intents: readonly IntentSummary[], lending: Hex, c
   return out;
 }
 
-/** The request terms a fill against any standing intent requires. */
-export interface IntentRequestTerms {
-  fullTerm: boolean;
-  allowsPartialRepay: boolean;
-}
+/** A request's lifecycle terms, as the protocol call states them
+ *  (`lifecycleTerms`), widened so any value can be checked. */
+export type IntentRequestTerms = { [K in keyof LifecycleTerms]: LifecycleTerms[K] extends boolean ? boolean : number };
+
+/** Why no standing intent can fill a request, whatever the lender's own
+ *  limits. */
+export type IntentRequestBlock = 'pro-rata' | 'partial-repay' | 'prepay-listing' | 'cadence';
 
 /**
- * Why no standing intent can fill a request with these terms, whatever the
- * lender's own limits; null when the terms allow it. Mirrors the request-wide
- * refusals of the protocol's intent fill: it requires the full term's
- * interest (`LenderIntentFullTermRequired`) and refuses a request that allows
- * partial repayment (`LenderIntentPartialRepayNotAllowed`).
+ * One check per lifecycle term, in the order the protocol's intent fill
+ * applies them: it requires the full term's interest
+ * (`LenderIntentFullTermRequired`), refuses partial repayment
+ * (`LenderIntentPartialRepayNotAllowed`), and then fills only a request
+ * whose lifecycle terms equal the intent's fixed ones, which carry no
+ * listing consent and no interest schedule (`LifecycleTermsMismatch`).
+ * Keyed by the terms the protocol call carries, so a new term there is a
+ * type error here until it has a check.
  */
-export function intentRequestBlock(t: IntentRequestTerms): 'pro-rata' | 'partial-repay' | null {
-  if (!t.fullTerm) return 'pro-rata';
-  if (t.allowsPartialRepay) return 'partial-repay';
+const INTENT_TERM_CHECKS: { readonly [K in keyof IntentRequestTerms]: (v: IntentRequestTerms[K]) => IntentRequestBlock | null } = {
+  useFullTermInterest: (v) => (v ? null : 'pro-rata'),
+  allowsPartialRepay: (v) => (v ? 'partial-repay' : null),
+  allowsPrepayListing: (v) => (v ? 'prepay-listing' : null),
+  periodicInterestCadence: (v) => (v !== 0 ? 'cadence' : null),
+};
+
+/** Why no standing intent can fill a request with these terms; null when
+ *  the terms allow it. */
+export function intentRequestBlock(t: IntentRequestTerms): IntentRequestBlock | null {
+  for (const key of Object.keys(INTENT_TERM_CHECKS) as (keyof IntentRequestTerms)[]) {
+    const block = (INTENT_TERM_CHECKS[key] as (v: IntentRequestTerms[typeof key]) => IntentRequestBlock | null)(t[key]);
+    if (block !== null) return block;
+  }
   return null;
 }

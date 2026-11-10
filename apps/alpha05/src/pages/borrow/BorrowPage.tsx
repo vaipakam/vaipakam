@@ -23,7 +23,7 @@ import { ArmTariff, TARIFF_CONTEXT_KEY, type ArmContext } from '../../shared/pos
 import { PostOffer } from '../../shared/post/PostOffer';
 import { OfferForm, REQUEST_KEY } from '../../shared/post/OfferForm';
 import type { PostDraft } from '../../shared/post/postReview';
-import type { PostAssets } from '../../shared/post/postModel';
+import { lifecycleTerms, type PostAssets } from '../../shared/post/postModel';
 import { useAssetStandard } from '../../shared/nft/useStandard';
 import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
@@ -229,7 +229,7 @@ export function BorrowPage() {
                 collateral={requestPair.collateral}
                 meta={meta}
                 account={address ?? null}
-                request={{ fullTerm: input.fullTerm, allowsPartialRepay: input.allowsPartialRepay }}
+                request={lifecycleTerms(input)}
               />
             )}
           />

@@ -1,12 +1,19 @@
 import type { ReactNode } from 'react';
-import { useCopy } from '../copy/useCopy';
+import { useCopy, type CopyKey } from '../copy/useCopy';
 import { useMode } from '../../app/ModeContext';
 import { useOwnRead } from '../reads/useOwnRead';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps } from '../ui/format';
-import { intentMatching, intentRequestBlock, readLenderIntents, standingReady, type IntentRequestTerms } from './intents';
+import { intentMatching, intentRequestBlock, readLenderIntents, standingReady, type IntentRequestBlock, type IntentRequestTerms } from './intents';
 
 type Hex = `0x${string}`;
+
+const BLOCK_COPY: Readonly<Record<IntentRequestBlock, CopyKey>> = {
+  'pro-rata': 'borrow.standingBlockedProRata',
+  'partial-repay': 'borrow.standingBlockedPartial',
+  'prepay-listing': 'borrow.standingBlockedListing',
+  cadence: 'borrow.standingBlockedCadence',
+};
 
 /**
  * #3319 — the lenders standing ready for the pair, beside the way to set your
@@ -15,14 +22,16 @@ type Hex = `0x${string}`;
  * It always says that a matching service fills a request against them only
  * when its terms fit a lender's limits, so a fill is likely but neither
  * instant nor guaranteed (RB-FUNDS). That claim needs the network's
- * matching switch and standing-intent switch on: with either off it says no
- * request is filled against them, and with either unread it says that is not
- * known. A failed re-read keeps the last answer and says it may have changed.
+ * matching switch and standing-intent switch on and its keepers running:
+ * with either switch off it says no request is filled against them, with the
+ * keepers paused it says the matching service fills none until they resume
+ * though a lender or another filler still may, and with any of the three
+ * unread it says that is not known. A failed re-read keeps the last answer and says it may have changed.
  * The reader's own intents are never counted, since the protocol refuses a
  * match with oneself. Before a request is typed it states the terms every
- * intent fill requires (the full term's interest, no partial repayment); in
- * the request form, terms that rule every intent out say so instead of the
- * likely fill.
+ * intent fill requires (the full term's interest, no partial repayment, no
+ * interest schedule); in the request form, terms that rule every intent out
+ * say so instead of the likely fill.
  */
 export function StandingLenders({
   diamond,
@@ -77,10 +86,14 @@ export function StandingLenders({
         </p>
         {blocked !== null ? (
           <p className="tier-a" data-testid="standing-blocked">
-            {text(blocked === 'pro-rata' ? 'borrow.standingBlockedProRata' : 'borrow.standingBlockedPartial')}
+            {text(BLOCK_COPY[blocked])}
           </p>
         ) : matching === 'on' ? (
           <p className="tier-b">{text('borrow.standingFill')}</p>
+        ) : matching === 'paused' ? (
+          <p className="tier-a" data-testid="standing-paused">
+            {text('borrow.standingPaused')}
+          </p>
         ) : (
           <p className="tier-a">{text('borrow.standingFillUnknown')}</p>
         )}

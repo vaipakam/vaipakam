@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
+import { DEFAULT_INPUT, lifecycleTerms } from '../post/postModel';
 import { INTENT_PAGE, intentMatching, intentRequestBlock, readLenderIntents, standingReady, type IntentSummary } from './intents';
 
 type Hex = `0x${string}`;
@@ -53,10 +54,22 @@ describe('what lenders stand ready to lend on a pair', () => {
 });
 
 describe('request terms every intent fill requires', () => {
-  it('requires the full term’s interest and no partial repayment', () => {
-    expect(intentRequestBlock({ fullTerm: true, allowsPartialRepay: false })).toBeNull();
-    expect(intentRequestBlock({ fullTerm: false, allowsPartialRepay: false })).toBe('pro-rata');
-    expect(intentRequestBlock({ fullTerm: true, allowsPartialRepay: true })).toBe('partial-repay');
+  const fits = { useFullTermInterest: true, allowsPartialRepay: false, allowsPrepayListing: false, periodicInterestCadence: 0 };
+  it('requires the full term’s interest, no partial repayment, no listing consent and no interest schedule', () => {
+    expect(intentRequestBlock(fits)).toBeNull();
+    expect(intentRequestBlock({ ...fits, useFullTermInterest: false })).toBe('pro-rata');
+    expect(intentRequestBlock({ ...fits, allowsPartialRepay: true })).toBe('partial-repay');
+    expect(intentRequestBlock({ ...fits, allowsPrepayListing: true })).toBe('prepay-listing');
+    expect(intentRequestBlock({ ...fits, periodicInterestCadence: 1 })).toBe('cadence');
+    expect(intentRequestBlock({ ...fits, periodicInterestCadence: 4 })).toBe('cadence');
+  });
+  it('checks in the protocol’s order', () => {
+    expect(intentRequestBlock({ ...fits, useFullTermInterest: false, periodicInterestCadence: 2 })).toBe('pro-rata');
+    expect(intentRequestBlock({ ...fits, allowsPartialRepay: true, periodicInterestCadence: 2 })).toBe('partial-repay');
+  });
+  it('reads the terms as the request form builds them', () => {
+    expect(intentRequestBlock(lifecycleTerms(DEFAULT_INPUT))).toBeNull();
+    expect(intentRequestBlock(lifecycleTerms({ ...DEFAULT_INPUT, cadence: 1 }))).toBe('cadence');
   });
 });
 
@@ -69,6 +82,7 @@ describe('reading the intents', () => {
       getBlockNumber: async () => 77n,
       readContract: async ({ functionName, args, blockNumber }: { functionName: string; args: [bigint, bigint]; blockNumber?: bigint }) => {
         blocks.push(blockNumber);
+        if (functionName === 'keepersPaused') return false;
         if (functionName !== 'getActiveLenderIntents') return true;
         calls.push(args[0]);
         return [all.slice(Number(args[0]), Number(args[0] + args[1])), BigInt(all.length)];
@@ -78,26 +92,32 @@ describe('reading the intents', () => {
     expect(calls).toEqual([0n, BigInt(INTENT_PAGE)]);
     expect(r.scanned).toBe(all.length);
     expect(r.total).toBe(BigInt(all.length));
-    // Every page and both switches are read at one block.
-    expect(blocks).toHaveLength(4);
+    // Every page and all three switches are read at one block.
+    expect(blocks).toHaveLength(5);
     expect(new Set(blocks)).toEqual(new Set([77n]));
     expect(intentMatching(r.switches)).toBe('on');
   });
 
-  it('says matching is off when either switch is off, and unknown when one could not be read', async () => {
-    const client = (matching: boolean | Error, intents: boolean | Error) =>
+  it('says matching is off when either switch is off, paused while the keepers are, and unknown when one could not be read', async () => {
+    const client = (matching: boolean | Error, intents: boolean | Error, paused: boolean | Error = false) =>
       ({
         getBlockNumber: async () => 1n,
         readContract: async ({ functionName }: { functionName: string }) => {
           if (functionName === 'getActiveLenderIntents') return [[], 0n];
-          const v = functionName === 'getPartialFillEnabled' ? matching : intents;
+          const v = functionName === 'getPartialFillEnabled' ? matching : functionName === 'isLenderIntentEnabled' ? intents : paused;
           if (v instanceof Error) throw v;
           return v;
         },
       }) as unknown as PublicClient;
-    expect(intentMatching((await readLenderIntents(client(false, true), WETH)).switches)).toBe('off');
-    expect(intentMatching((await readLenderIntents(client(true, false), WETH)).switches)).toBe('off');
-    expect(intentMatching((await readLenderIntents(client(new Error('x'), true), WETH)).switches)).toBe('unknown');
-    expect(intentMatching((await readLenderIntents(client(new Error('x'), false), WETH)).switches)).toBe('off');
+    const said = async (...a: Parameters<typeof client>) => intentMatching((await readLenderIntents(client(...a), WETH)).switches);
+    expect(await said(false, true)).toBe('off');
+    expect(await said(true, false)).toBe('off');
+    expect(await said(new Error('x'), true)).toBe('unknown');
+    expect(await said(new Error('x'), false)).toBe('off');
+    expect(await said(true, true, true)).toBe('paused');
+    expect(await said(true, true, new Error('x'))).toBe('unknown');
+    // A switch off outranks the pause: no fill at all, not a fill by others.
+    expect(await said(false, true, true)).toBe('off');
+    expect(await said(true, true, false)).toBe('on');
   });
 });
