@@ -43,7 +43,7 @@ import { claimOutcomes, nftLegs, type ClaimantVault } from './claimOutcome';
 import { ASSET_ERC20, isFallback, type ClaimLane, type ClaimSide } from './loanClaim';
 import { laneLabel } from './loanClaimReceipt';
 import type { LoanClaimRows } from './loanClaimRows';
-import { claimRecord, REWARD_CLAIM_ABI, VENUE_VAULT, type HeldRewards, type PendingRewards } from './rewards';
+import { claimRecord, onlyMovesOn, REWARD_CLAIM_ABI, VENUE_VAULT, type HeldRewards, type PendingRewards } from './rewards';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -210,7 +210,13 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
   // Rewards: the claim run as a preview pays any held reward with it, so a
   // separate held leg is offered only when that preview cannot complete.
   const vpfi = i.vpfiToken !== null && lower(i.vpfiToken) !== ZERO ? i.vpfiToken : null;
-  if (i.rewards !== null && i.rewards.kind === 'exact') {
+  if (onlyMovesOn(i.rewards)) {
+    // #1787 — a claim that pays nothing and only moves on to the next part
+    // of a large wallet's entries is not bundled: a wallet with nothing
+    // claimable anywhere would send one on every claim-all. Said, and left
+    // to the rewards section's own claim, which states what it does.
+    gaps.push({ kind: 'rewards', why: 'partial' });
+  } else if (i.rewards !== null && i.rewards.kind === 'exact') {
     // A preview that completes is a claim the protocol takes, even one that
     // pays nothing: it walks days that paid nothing so the later paying days
     // can be reached (the protocol refuses a claim that would do nothing).

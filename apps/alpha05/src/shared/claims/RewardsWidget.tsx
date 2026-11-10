@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { RewardClaim, pendingText } from './RewardClaim';
-import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readVpfiToken } from './rewards';
+import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readsPartOfEntries, readVpfiToken } from './rewards';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
 import { useChainRead } from '../reads/chainRead';
@@ -57,6 +57,16 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
   let headline;
   const p = pending.data;
   if (p?.kind === 'exact') {
+    // #1787 — a claim reads one window of a large wallet's entries; the
+    // figure is that claim's, and a zero there only moves on to the next.
+    const part = readsPartOfEntries(p)
+      ? {
+          from: (p.window.from + 1n).toString(),
+          to: p.window.to.toString(),
+          total: p.window.total.toString(),
+          size: (p.window.to - p.window.from).toString(),
+        }
+      : null;
     headline = (
       <>
         {/* An exact zero is a claim that still makes progress: the protocol
@@ -65,13 +75,20 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
         <p className="rewards-figure" data-testid="rewards-pending" data-figure="exact" data-amount={p.amount.toString()}>
           {p.amount > 0n
             ? format('rewards.pendingExact', { amount: amount(p.amount) })
-            : p.toDay === 0n
+            : part
+              ? format('rewards.pendingZeroWindow', part)
+              : p.toDay === 0n
               ? text('rewards.pendingZeroEntries')
               : format('rewards.pendingZero', { from: p.fromDay.toString(), to: p.toDay.toString() })}
         </p>
         {/* A claim paid from its reward entries alone names no day range. */}
         {p.amount > 0n && (
           <p className="tier-b">{p.toDay === 0n ? text('rewards.pendingEntries') : format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>
+        )}
+        {p.amount > 0n && part && (
+          <p className="tier-b" data-testid="rewards-window">
+            {format('rewards.pendingWindow', part)}
+          </p>
         )}
       </>
     );

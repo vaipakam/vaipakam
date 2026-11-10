@@ -15,6 +15,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibClaimWork} from "../src/libraries/LibClaimWork.sol";
+import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
@@ -283,5 +284,126 @@ contract RewardClaimWorkMeterTest is SetupTest {
     function _assertWaits(uint256 id) internal view {
         (, , , , , bool capHit, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(id);
         assertTrue(capHit, "outside the snapshot while the domain stands: not the next claim's");
+    }
+
+    // ───────────────────────── the claim window ─────────────────────────
+
+    function _window() internal view returns (uint256 from, uint256 to, uint256 total) {
+        (from, to, total, ) = InteractionRewardsLensFacet(address(diamond)).getRewardClaimWindow(alice);
+    }
+
+    function _windowChangedAt() internal view returns (uint64 changedAt) {
+        (, , , changedAt) = InteractionRewardsLensFacet(address(diamond)).getRewardClaimWindow(alice);
+    }
+
+    /// @dev A wallet with no more entries than the window reads them all, and
+    ///      its window never moves.
+    function test_ASmallWallet_TheWindowIsTheWholeIndex() public {
+        _scene(40, 1);
+        (uint256 from, uint256 to, uint256 total) = _window();
+        assertEq(from, 0);
+        assertEq(to, 40);
+        assertEq(total, 40);
+    }
+
+    /// @dev A wallet with more entries than the window: each claim reads one
+    ///      window of its index, so what one claim reads is bounded; the window
+    ///      moves on after each claim and comes back to the start, so every
+    ///      entry is reached and paid once.
+    function test_AWalletOverTheWindow_IsServedWindowByWindow_EveryEntryOnce() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        uint256 n = 2 * w + 10;
+        uint256[] memory ids = _scene(n, 1, type(uint256).max);
+        (uint256 from, uint256 to, uint256 total) = _window();
+        assertEq(from, 0);
+        assertEq(to, w, "the first claim reads one window");
+        assertEq(total, n);
+
+        assertTrue(_claimOnce());
+        uint256 reach = LibClaimWork.freshWalkCapacity();
+        assertEq(_processedCount(ids), reach, "the meter's reach, inside the window");
+        uint256 share = vpfi.balanceOf(alice) / reach;
+        // The settled entries left the index, and the window moved on.
+        (from, to, total) = _window();
+        assertEq(total, n - reach, "the window's settled entries retired");
+        assertEq(from, w, "the next claim reads the next window");
+        assertEq(to, total < 2 * w ? total : 2 * w);
+
+        uint256 calls = 1 + _claimUntilDone(32);
+        assertLe(calls, 16);
+        assertEq(_processedCount(ids), n, "every entry reached and settled");
+        assertEq(vpfi.balanceOf(alice), n * share, "every entry paid its share, once");
+        (from, to, total) = _window();
+        assertEq(total, 0, "the index is empty");
+    }
+
+    /// @dev An entry outside the window is not the next claim's: its expiry
+    ///      clock waits (`capHit`) until a claim's window reaches it.
+    function test_AnEntryOutsideTheWindow_ItsClockWaits() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        uint256[] memory ids = _scene(w + 20, 1, type(uint256).max);
+        (, , , , , bool capIn, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(ids[0]);
+        (, , , , , bool capOut, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(ids[w + 5]);
+        assertFalse(capIn, "inside the window and the meter's reach");
+        assertTrue(capOut, "outside the window: not the next claim's");
+    }
+    /// @dev A window whose entries have nothing claimable yet does not hold the
+    ///      rest of the index: the claim that read it still moves the window
+    ///      (a zero-pay claim, not a revert), and the next claim reads the
+    ///      window behind it and pays.
+    function test_AWindowWithNothingClaimable_DoesNotHoldTheRest() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        // The first window: open positions whose first reward day is still to
+        // come, so nothing in it is claimable now.
+        for (uint256 i; i < w; ++i) {
+            _mut().pushRewardEntry(alice, uint64(10_000 + i), LibVaipakam.RewardSide.Lender, 1e18, 10_000);
+        }
+        uint256[] memory ids = _scene(20, 1, type(uint256).max);
+        (uint256 from, uint256 to, uint256 total) = _window();
+        assertEq(from, 0);
+        assertEq(to, w);
+        assertEq(total, w + 20);
+
+        assertEq(_windowChangedAt(), 0, "the window has not changed yet");
+        vm.warp(block.timestamp + 1 hours);
+        assertTrue(_claimOnce(), "a claim whose window paid nothing still moves the window");
+        assertEq(vpfi.balanceOf(alice), 0, "nothing in the first window was claimable");
+        assertEq(_windowChangedAt(), block.timestamp, "the move is recorded for the expiry clocks");
+        (from, to, total) = _window();
+        assertEq(from, w, "the next claim reads the window behind it");
+        assertEq(to, w + 20);
+
+        assertTrue(_claimOnce());
+        assertEq(_processedCount(ids), 20, "the entries behind the first window are reached");
+        assertGt(vpfi.balanceOf(alice), 0, "and paid");
+        (from, , ) = _window();
+        assertEq(from, 0, "the window comes back to the start");
+    }
+
+    /// @dev Codex #3487 r3 — retiring the window's last entry can reset the
+    ///      stored start to zero (the index comes to fit one window). That is
+    ///      the window moving, so the claim counts it as progress and stands:
+    ///      read back after the retirement, the reset looked like no move, the
+    ///      claim reverted, and the retirement and reset rolled back with it.
+    function test_ARetirementThatResetsTheWindow_IsTheClaimsProgress() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        for (uint256 i; i < w; ++i) {
+            _mut().pushRewardEntry(alice, uint64(10_000 + i), LibVaipakam.RewardSide.Lender, 1e18, 10_000);
+        }
+        uint256[] memory ids = _scene(1, 1, type(uint256).max);
+        assertTrue(_claimOnce(), "the first window paid nothing and moved on");
+        (uint256 from, , uint256 total) = _window();
+        assertEq(from, w);
+        assertEq(total, w + 1);
+
+        // The one entry the window now holds is settled elsewhere (as an
+        // expiry sweep would), so the next claim only retires it.
+        _mut().setRewardEntryProcessedRaw(ids[0], true);
+        vm.warp(block.timestamp + 1 hours);
+        assertTrue(_claimOnce(), "the retirement that resets the window is the claim's progress");
+        (from, , total) = _window();
+        assertEq(from, 0, "the window is back at the start");
+        assertEq(total, w, "the settled entry left the index");
+        assertEq(_windowChangedAt(), block.timestamp, "the reset is recorded for the expiry clocks");
     }
 }
