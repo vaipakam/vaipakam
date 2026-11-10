@@ -253,11 +253,11 @@ export function guardReceipt(r: GuardReview, copy: Copy): Receipt {
         format('priceGuard.setWhat', { limit: bpsPercent(r.bps) }),
         text('priceGuard.setCalm'),
         text('priceGuard.setRecorded'),
-        g !== null && g.maxMoveBps > 0 ? text('priceGuard.setReplaces') : text('priceGuard.setGap'),
+        g === null ? text('priceGuard.setUnknownNow') : g.maxMoveBps > 0 ? text('priceGuard.setReplaces') : text('priceGuard.setGap'),
         text('priceGuard.setCheckpoints'),
         text('priceGuard.setOnlyRefuses'),
       ];
-  if (g === null) consequences.push(text('priceGuard.guardUnread'));
+  if (g === null && clearing) consequences.push(text('priceGuard.guardUnread'));
   if (r.dryRun === 'unread') consequences.push(text('safety.dryRunUnread'));
   consequences.push(text('priceGuard.nothingMoves'));
   return {

@@ -1,7 +1,7 @@
 /**
  * The maker's price-move guard on an offer's page (#3358), against the
  * suite's chain. The creator of an open WETH-against-tLIQ offer puts a 5%
- * guard on it: the review says the offer was unguarded until now and that
+ * guard on it: the review says the offer has no guard now and that
  * no one can fill it until hourly price checks cover the pair, and the
  * finish card reads the change from the transaction's logs. The page then
  * says a fill is refused for missing checks; once two hourly checks exist
@@ -82,7 +82,7 @@ test('the creator guards an open offer, the page says when a fill is refused, an
   await guard.getByTestId('guard-set').click();
   await sign(
     page,
-    ['Put a price-move guard on this offer', `#${id}`, '5%', 'has no guard, as it has had since you posted it', 'no one can fill the offer', 'Nothing moves'],
+    ['Put a price-move guard on this offer', `#${id}`, '5%', 'The offer has no guard now', 'no one can fill the offer', 'Nothing moves'],
     'The guard is set at 5%',
   );
   expect((await sc.read<Guard>('getOfferPriceGuard', [offerId])).maxMoveBps).toBe(500);

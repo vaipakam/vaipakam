@@ -1563,8 +1563,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   either price moved past the limit since the change in either direction, or
   while the pair is not calm against its two last hourly checks; that the
   prices are recorded at the change; that the guard only refuses fills and
-  moves nothing; that a first guard leaves the time since posting unguarded
-  and a change replaces the guard. The finish card reads the change from the
+  moves nothing; whether the offer has a guard now, as read (never a claimed
+  history, and an unread guard said as unread), so a fill can still happen
+  until the change lands; and that a change replaces the current guard. The finish card reads the change from the
   transaction's own event. A change open or in flight keeps its panel, finish
   card included, even after a cancel clears the offer's terms. Where the
   network's protocol has no guard yet,

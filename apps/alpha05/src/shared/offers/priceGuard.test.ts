@@ -84,9 +84,13 @@ describe('status and receipt', () => {
     expect(guardStatusLine({ ...ON, status: 'not-calm' }, copy)).toBe('priceGuard.statusNotCalm:{"calm":"3%"}');
   });
 
-  it('states the unguarded gap on a first guard, and the replacement on a change', () => {
+  it('states no guard now on a first guard, the replacement on a change, and an unread guard as unread', () => {
     expect(guardReceipt(review(500), copy).consequences).toContain('priceGuard.setGap');
     expect(guardReceipt(review(800, { guard: ON }), copy).consequences).toContain('priceGuard.setReplaces');
+    const unread = guardReceipt(review(500, { guard: null }), copy).consequences;
+    expect(unread).toContain('priceGuard.setUnknownNow');
+    expect(unread).not.toContain('priceGuard.setGap');
+    expect(unread).not.toContain('priceGuard.setReplaces');
     expect(guardReceipt(review(0, { guard: ON }), copy).title).toBe('priceGuard.titleClear');
   });
 });

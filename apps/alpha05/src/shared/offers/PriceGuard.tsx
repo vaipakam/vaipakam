@@ -63,7 +63,8 @@ interface SectionProps {
  * #3358 — the price-move guard on an offer's page: where it stands now for
  * everyone who looks (a taker sees why a fill would be refused), and for the
  * creator of an open ERC-20 offer, a way to set, change or remove it. The
- * review says that the offer was unguarded between its post and this change.
+ * review says whether the offer has a guard now, as read, and what a fill
+ * can still do until the change lands.
  */
 export function PriceGuardSection({ id, guard, canChange, mine, chain, own, onDone }: SectionProps) {
   const copy = useCopy();
