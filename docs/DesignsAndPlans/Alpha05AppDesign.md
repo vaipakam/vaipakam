@@ -1553,6 +1553,30 @@ above. Each resolves here, so a route reviewer needs no private file:
   expiry defaults to 7 days; choosing "until taken or cancelled" is
   explicit and shows a note that such an offer keeps its rate as the
   market moves.
+- **RB-ASSET-TRUST** — a chosen ERC-20 in the pair picker shows its trust
+  tier (#3446, OFF-02, OFF-03), read from the public market rankings the
+  keeper fetches once a day from two lists and the index serves
+  (`GET /assets/rankings`), matched by contract address on the token's own
+  network, never by name or symbol. Where both lists rank it, the better
+  rank counts. Blue chip is the top 20 with a price feed the protocol holds
+  for that exact address; then the top 100, 200, 300 and 500. When another
+  list puts the same symbol at a different address and neither list knows
+  both, the token is unverified and both addresses are shown. An unranked
+  token whose name or symbol matches a ranked one is a possible copy, with
+  the ranked token's address; any other unranked token is used at the
+  reader's own risk. A test token the deployment record publishes says so;
+  a network with no stored list says a test network's tokens have no
+  market value, or on a main network that no ranking is stored. Each tier
+  states the list date, and a refresh that failed after it is a warning,
+  so an old list never reads as current; an index that cannot answer is
+  stated with its reason. The lists are named by place, never by provider.
+  The tier rule is the app's (the route carries ranks only), and the tier
+  is display and warning only: whether the protocol prices and accepts the
+  token stays its own answer, shown beside it. The "another token" field
+  searches by name or symbol unless the text starts like an address:
+  ranked tokens first, best rank first, each with its tier and full
+  address, then suggested tokens that match, with their label; a pick fills
+  the address. NFT collections carry no tier yet (#3433).
 - **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
   public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
   so it can be seen before mainnet; #3357; Polygon PoS and Polygon Amoy,

@@ -2444,6 +2444,8 @@ Borrow takes a lender offer (`offerType` 0) of an ERC-20 against ERC-20 collater
 
 Each token's class is read live: `getAssetPriceStatus(asset)` first (Divergent reads as distrusted and closes new loans), then `checkLiquidityOnActiveNetwork(asset)` (0 liquid, 1 illiquid). A revert of `OraclePriceDivergence` or `OracleCrossCheckDivergence` reads as distrusted; any other failure is shown as unreadable, with its reason. The suggested list is the deployment record's wrapped native token and test tokens; a pasted address is checked for shape only.
 
+The trust tier reads `GET /assets/rankings?chainId=<token chain>` from the index, which serves the keeper's daily fetch of two public market-cap lists (top 500 each): one entry per address with each list's rank, name and symbol, plus each list's `listFetchedAt` and last run. The app keys on the lowercase address and takes the best rank across lists: blue chip at rank ≤ 20 with `getAssetPriceStatus(asset)` priced, then ≤ 100, 200, 300 and 500. A symbol another list ranks at a different address, where neither list ranks both addresses, makes the token unverified; an unranked token whose `symbol()` or `name()` matches a ranked symbol or name is a possible copy; any other is unranked. A deployment-record test token is labelled test; a chain with no stored list reads as a test network on a testnet and as no list on a mainnet. A `lastRun` that failed after `listFetchedAt` is stated. The tier is display only and changes no on-chain treatment. Search matches ranked symbols and names by substring, best rank first, then suggested tokens by symbol; text starting with `0x` is parsed as an address instead.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Picking an Offer

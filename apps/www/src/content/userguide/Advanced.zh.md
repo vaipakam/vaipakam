@@ -1800,6 +1800,8 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 每种代币的类别实时读取：先读 `getAssetPriceStatus(asset)`（Divergent 视为不受信任并关闭新贷款），再读 `checkLiquidityOnActiveNetwork(asset)`（0 为有流动性，1 为无流动性）。以 `OraclePriceDivergence` 或 `OracleCrossCheckDivergence` 回滚视为不受信任；其他任何失败都显示为无法读取并附上原因。推荐列表为部署记录中的包装原生代币和测试代币；粘贴的地址只检查格式。
 
+信任等级从索引读取 `GET /assets/rankings?chainId=<token chain>`，索引提供 keeper 每日抓取的两份公开市值列表（各取前 500 名）：每个地址一条记录，包含每份列表的排名、名称和符号，以及每份列表的 `listFetchedAt` 和上次运行情况。应用以小写地址为键，取各列表中的最佳排名：排名 ≤ 20 且 `getAssetPriceStatus(asset)` 为已定价时为蓝筹，其后为 ≤ 100、200、300 和 500。如果另一份列表把同一符号排在另一个地址上，且没有任何列表同时排名这两个地址，该代币即为未验证；未排名代币的 `symbol()` 或 `name()` 与已排名的符号或名称相同时，为可能的仿冒；其余为未排名。部署记录中的测试代币标注为测试；没有存储列表的链在测试网上显示为测试网络，在主网上显示为无列表。在 `listFetchedAt` 之后失败的 `lastRun` 会被说明。等级仅用于显示，不改变任何链上处理。搜索按子串匹配已排名的符号和名称，最佳排名在前，然后按符号匹配推荐代币；以 `0x` 开头的文本则按地址解析。
+
 <a id="borrow-offers"></a>
 
 ### Borrow: 选择报价

@@ -161,6 +161,12 @@ lands.
   this needs a borrower who waited until the last minutes. The app counts
   down to the grace end by the chain's clock and tells the borrower to send
   early, and to send now with an hour or less left.
+- **A wrong or poisoned public token ranking** (accepted, #3446). The app's
+  trust tiers come from two public market-data lists the keeper fetches
+  daily. A list that ranks a copy at the real token's place could show a
+  copy with a tier. The two lists are matched by contract address and a
+  disagreement shows the token as unverified; the tier is display only, so
+  the protocol's own price and liquidity checks still decide every loan.
 
 ## 6. Keeping this current
 

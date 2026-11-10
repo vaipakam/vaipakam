@@ -1958,6 +1958,8 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 각 토큰의 분류는 실시간으로 읽습니다. 먼저 `getAssetPriceStatus(asset)`(Divergent는 불신으로 읽고 새 대출을 막음), 다음으로 `checkLiquidityOnActiveNetwork(asset)`(0 유동, 1 비유동). `OraclePriceDivergence` 또는 `OracleCrossCheckDivergence` revert는 불신으로 읽고, 그 밖의 실패는 이유와 함께 읽을 수 없음으로 표시합니다. 추천 목록은 배포 기록의 래핑된 네이티브 토큰과 테스트 토큰이며, 붙여 넣은 주소는 형식만 확인합니다.
 
+신뢰 등급은 인덱스에서 `GET /assets/rankings?chainId=<token chain>`를 읽습니다. 인덱스는 keeper가 매일 가져오는 두 개의 공개 시가총액 목록(각 상위 500)을 제공하며, 주소마다 각 목록의 순위·이름·심볼을 한 항목으로 담고, 각 목록의 `listFetchedAt`과 마지막 실행 결과도 함께 제공합니다. 앱은 소문자 주소를 키로 삼고 목록 간 가장 좋은 순위를 씁니다. 순위 ≤ 20이고 `getAssetPriceStatus(asset)`가 priced이면 블루칩, 그다음 ≤ 100, 200, 300, 500입니다. 다른 목록이 같은 심볼을 다른 주소에 올리고 어느 목록도 두 주소를 모두 올리지 않았다면 토큰은 미확인이 됩니다. 순위 밖 토큰 중 `symbol()`이나 `name()`이 순위에 든 심볼이나 이름과 같은 것은 복제 가능성, 나머지는 순위 밖입니다. 배포 기록의 테스트 토큰은 테스트로 표시되고, 저장된 목록이 없는 체인은 테스트넷에서는 테스트 네트워크로, 메인넷에서는 목록 없음으로 읽힙니다. `listFetchedAt` 이후에 실패한 `lastRun`은 명시됩니다. 등급은 표시용일 뿐 온체인 처리를 바꾸지 않습니다. 검색은 순위에 든 심볼과 이름을 부분 문자열로 비교해 가장 좋은 순위부터 보여 주고, 그다음 추천 토큰을 심볼로 보여 줍니다. `0x`로 시작하는 텍스트는 주소로 해석됩니다.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: 오퍼 고르기

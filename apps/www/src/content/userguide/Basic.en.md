@@ -1083,6 +1083,8 @@ To borrow, you take a lender's open offer: an amount of one token, a rate, a ter
 
 First choose what to borrow and what to lock. The app suggests tokens on the network, or you can paste a token address; no token-safety screening runs, so check a pasted address yourself. For each token the app reads what the protocol says about it now. A liquid token is priced, so the loan has a health factor and can be liquidated if the collateral loses value. An illiquid token is valued at zero, and on default the lender receives the collateral itself. When the protocol does not trust a token's price, new loans on it are closed until it does; loans already open are not affected.
 
+Each token you choose also shows where it ranks by market value, from two public lists of tokens, matched by the token's contract address on the network and never by its name. A blue chip is in the top 20 and is priced by the protocol; then come the top 100, 200, 300 and 500. A token outside the top 500 is marked as used at your own risk. A token that shares a ranked token's name or symbol at another address is marked as a possible copy, with the real token's address, and when the two lists disagree on where a token lives, it is marked unverified. The date of the lists is shown, and a refresh that failed is said. On a test network, tokens have no market value and no ranking. To find a token, type its name or symbol in the Another token field: ranked tokens come first, each with its tier and full address, and choosing one fills in the address. Check the address, not the name. The tier is a guide only and changes nothing the protocol does.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Picking an Offer
