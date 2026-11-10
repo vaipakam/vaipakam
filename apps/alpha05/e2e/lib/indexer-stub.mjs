@@ -51,6 +51,11 @@
 //    rate, the count and the amounts lent), only periods with a loan, the
 //    range counted back from the wall clock as the indexer counts it.
 //    Refused while the posture is `down`;
+//  - the indexer's `GET /loans/by-participant?chainId&wallet&scope&limit&
+//    before`, the desk's history: every loan the wallet was the lender or
+//    the borrower of at opening (the fixture never moves a position), the
+//    desk scope by default, newest first on the indexer's cursor. Refused
+//    while the posture is `down`;
 //  - the indexer's `GET /notifications/:address?chainId&limit&before`, the
 //    wallet's inbox: a `loan_matched` row for both parties of every
 //    `LoanInitiated` and a `loan_repaid` row for both parties of every
@@ -322,6 +327,71 @@ async function rateCandles(url) {
   return { status: 200, body: { chainId: CHAIN_ID, buckets, unplaced, truncated: false } };
 }
 
+/** The loan statuses the indexer records, by the chain's status number. */
+const LOAN_STATUS_NAMES = ['active', 'repaid', 'defaulted', 'settled', 'fallback_pending', 'internal_matched'];
+
+/** `/loans/by-participant`: the loans a wallet has held a side of, newest
+ *  participation first, on the indexer's `<participatedAt>_<loanId>`
+ *  cursor. The fixture never moves a position, so a wallet's side is the
+ *  loan's lender or borrower at opening and its participation time is the
+ *  opening block's. The desk scope (the default) keeps token loans against
+ *  token collateral and leaves out sale vehicles. */
+async function byParticipant(url) {
+  const raw = url.searchParams.get('wallet');
+  if (!raw) return { status: 400, body: { error: 'wallet-required' } };
+  const wallet = raw.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return { status: 400, body: { error: 'bad-address' } };
+  const scope = url.searchParams.get('scope') ?? 'desk';
+  if (scope !== 'desk' && scope !== 'all') return { status: 400, body: { error: 'bad-scope' } };
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const beforeRaw = url.searchParams.get('before');
+  let before = null;
+  if (beforeRaw) {
+    const m = beforeRaw.match(/^(\d+)_(\d+)$/);
+    if (!m) return { status: 400, body: { error: 'bad-before' } };
+    before = { t: Number(m[1]), id: Number(m[2]) };
+  }
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [LOAN_INITIATED] }]);
+  const rows = [];
+  for (const log of logs) {
+    const { args } = decodeEventLog({ abi: DIAMOND_ABI, data: log.data, topics: log.topics });
+    const roles = [];
+    if (args.lender.toLowerCase() === wallet) roles.push('lender');
+    if (args.borrower.toLowerCase() === wallet) roles.push('borrower');
+    if (roles.length === 0) continue;
+    const id = BigInt(log.topics[1]);
+    const l = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [id] });
+    const linked = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getOfferLinkedLoanId', args: [l.offerId] });
+    const offer = await chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName: 'getOffer', args: [l.offerId] });
+    const isSaleVehicle = linked !== 0n && Number(offer.offerType) !== 0;
+    const assetType = Number(l.assetType ?? 0);
+    const collateralAssetType = Number(l.collateralAssetType ?? 0);
+    if (scope === 'desk' && (assetType !== 0 || collateralAssetType !== 0 || isSaleVehicle)) continue;
+    const block = await anvil('eth_getBlockByNumber', [log.blockNumber, false]);
+    rows.push({
+      chainId: CHAIN_ID,
+      loanId: Number(id),
+      offerId: Number(l.offerId),
+      status: LOAN_STATUS_NAMES[Number(l.status)] ?? 'unknown',
+      lendingAsset: l.principalAsset.toLowerCase(),
+      collateralAsset: l.collateralAsset.toLowerCase(),
+      durationDays: Number(l.durationDays),
+      interestRateBps: Number(l.interestRateBps),
+      assetType,
+      collateralAssetType,
+      isSaleVehicle,
+      startAt: Number(l.startTime),
+      participatedAt: Number(block.timestamp),
+      roles: roles.sort(),
+    });
+  }
+  rows.sort((a, b) => b.participatedAt - a.participatedAt || b.loanId - a.loanId);
+  const after = before === null ? rows : rows.filter((r) => r.participatedAt < before.t || (r.participatedAt === before.t && r.loanId < before.id));
+  const loans = after.slice(0, limit);
+  const last = loans[loans.length - 1];
+  return { status: 200, body: { chainId: CHAIN_ID, wallet, loans, nextBefore: loans.length === limit ? `${last.participatedAt}_${last.loanId}` : null } };
+}
+
 /** Inbox rows a spec added (`/__stub/notifications`), each for one wallet. */
 let addedNotifications = [];
 
@@ -526,6 +596,7 @@ const server = http.createServer(async (req, res) => {
           '/offers/markets',
           '/loans/recent',
           '/loans/rate-candles',
+          '/loans/by-participant',
           '/notifications/:address',
           '/ws/chain/:chainId (503)',
           '/rpc/:chainId',
@@ -805,6 +876,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const r = await rateCandles(url);
+      json(res, r.status, r.body);
+      return;
+    }
+    if (url.pathname === '/loans/by-participant' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const r = await byParticipant(url);
       json(res, r.status, r.body);
       return;
     }

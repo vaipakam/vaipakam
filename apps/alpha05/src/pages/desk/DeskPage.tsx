@@ -24,6 +24,7 @@ import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { formatBps } from '../../shared/ui/format';
 import { useNow } from '../../shared/ui/useNow';
 import { DeskActivity } from './DeskActivity';
+import { DeskHistory, MarketLoans } from './DeskPositions';
 
 type Hex = `0x${string}`;
 type MarketTerms = Pick<Market, 'lending' | 'collateral' | 'durationDays'>;
@@ -41,12 +42,14 @@ function marketName(m: MarketTerms, meta: TokenMetaMap | null, format: CopyAcces
 }
 
 /**
- * The rate desk (OFF-73, OFF-75): the network's token markets (one lending
- * token against one collateral token for one term), the chosen market's
- * rate ladder, and below it the viewer's own offers on it, the market's
- * recent loans and the rates they were agreed at over time, all from the
- * index (the world rail, RB-RAILS), read only once a wallet is connected on
- * a served network, as the offer book is.
+ * The rate desk (OFF-73, OFF-75, OFF-76): the network's token markets (one
+ * lending token against one collateral token for one term), the chosen
+ * market's rate ladder, and below it the viewer's own offers on it, the
+ * market's recent loans and the rates they were agreed at over time, all
+ * from the index (the world rail, RB-RAILS), read only once a wallet is
+ * connected on a served network, as the offer book is. Then the viewer's
+ * live loans in the market, from its own chain read of its positions, and
+ * its desk history from the index, a page at a time.
  *
  * One completeness note stands above every view: the index lags the chain,
  * and it counts gasless signed orders that this page does not list yet. The
@@ -213,6 +216,8 @@ export function DeskPage() {
               copy={copy}
             />
           )}
+          {selected !== null && <MarketLoans key={`loans-${selectedKey}`} market={selected} meta={meta} copy={copy} />}
+          {viewer !== null && <DeskHistory viewer={viewer} copy={copy} />}
           <WhyLink summaryKey="desk.whySummary" detailKey="desk.why" />
         </>
       )}

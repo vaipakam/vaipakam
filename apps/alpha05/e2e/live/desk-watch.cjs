@@ -8,6 +8,8 @@
 // when there is one. Under each ladder (OFF-75, RB-DESK-TAPE) it prints the
 // wallet's own offers, the market's recent loans and the agreed-rate chart
 // (its period count, the first period's figures on hover, and the table).
+// Then (OFF-76, RB-DESK-HISTORY) the wallet's live loans in that market and
+// its desk history from the index.
 // Checks that nothing scrolls sideways and saves full-page screenshots per
 // device.
 // Usage: node e2e/live/desk-watch.cjs <address>
@@ -71,6 +73,17 @@ async function activity(p) {
     console.log(`----- first period on hover\n${(await tip.count()) ? await text(tip) : 'no tip'}`);
     await chart.getByTestId('desk-chart-table').locator('summary').click();
     console.log(`----- table rows = ${await chart.getByTestId('desk-candle-row').count()}`);
+  }
+  for (const id of ['desk-loans', 'desk-history']) {
+    const sec = p.getByTestId(id);
+    if (id === 'desk-history') {
+      await sec
+        .locator('[data-testid="desk-history-row"], [data-testid="desk-history-none"], [data-testid="desk-history-failed"]')
+        .first()
+        .waitFor({ timeout: 60000 })
+        .catch(() => {});
+    }
+    console.log(`----- ${id}\n${(await sec.count()) ? await text(sec) : 'not shown'}`);
   }
 }
 
