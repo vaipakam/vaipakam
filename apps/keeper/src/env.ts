@@ -1,6 +1,7 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { readSecrets, type SecretBinding } from '@vaipakam/lib/secretsStore';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -53,7 +54,7 @@ export const WORKER_NAME = 'vaipakam-keeper';
  */
 
 /** A Cloudflare Secrets Store secret binding — read with `.get()`. */
-export type SecretBinding = { get(): Promise<string> };
+export type { SecretBinding } from '@vaipakam/lib/secretsStore';
 
 /** Type-only brand; no value of it exists at runtime. */
 declare const KEEPER_PRIVATE: unique symbol;
@@ -661,40 +662,18 @@ export interface SecretReadFailed {
 }
 
 /**
- * Read one Secrets Store binding into a plain string.
- *
- * Tolerates BOTH an absent binding (`b` undefined) AND a failing
- * fetch: a rejected `.get()` — a transient Secrets Store outage, or
- * a secret deleted / deactivated after deploy — resolves to
- * `undefined` rather than rejecting. `resolveEnv` fans every secret
- * through `Promise.all`, so without this catch one unavailable
- * secret would abort the whole resolve and take down the entire
- * cron tick — including passes that never touch that secret.
- * Collapsing to `undefined` keeps the failure scoped to the one
- * dependent feature: every `Env` secret field is optional and
- * downstream code already handles `undefined` (skip that chain /
- * disable that adapter). (T-078 — PR #36 Codex review.)
- */
-async function readSecret(
-  b: SecretBinding | undefined,
-): Promise<string | undefined> {
-  if (!b) return undefined;
-  try {
-    return await b.get();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[env] Secrets Store fetch failed; treating as unset:', redactedError(err));
-    return undefined;
-  }
-}
-
-/**
- * {@link readSecret}, except that a binding which is present but cannot be
- * read is reported as such rather than as unset. For a secret whose absence
- * is itself a setting (#3240: no private routes means public sends), the
- * difference decides whether the keeper fails closed.
+ * Read one secret whose ABSENCE is itself a setting, so a binding that is
+ * present but cannot be read is reported as such rather than as unset.
+ * #3240: no private routes means public sends, so an unreadable
+ * `PRIVATE_TX_RPCS` must make the dependent feature refuse, never read as
+ * "send publicly". Every other secret goes through the shared
+ * `readSecrets` (`@vaipakam/lib/secretsStore`), whose policy is the
+ * opposite: a failed read is unset for the run, so one unavailable secret
+ * cannot take the whole tick down with it. The failure is logged by the
+ * secret's name, as the shared reader does.
  */
 async function readSecretOrFailure(
+  name: string,
   b: SecretBinding | undefined,
 ): Promise<string | SecretReadFailed | undefined> {
   if (!b) return undefined;
@@ -702,7 +681,7 @@ async function readSecretOrFailure(
     return await b.get();
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[env] Secrets Store fetch failed; its dependent feature refuses:', redactedError(err));
+    console.error(`[env] Secrets Store: could not read ${name}; its dependent feature refuses this run: ${redactedError(err)}`);
     return { secretReadFailed: true };
   }
 }
@@ -714,40 +693,28 @@ async function readSecretOrFailure(
  * never inside a hot path.
  */
 export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
-  const [
-    base,
-    eth,
-    arb,
-    op,
-    bnb,
-    sepolia,
-    baseSep,
-    arbSep,
-    opSep,
-    bnbTest,
-    tgToken,
-    pushPk,
-    zeroEx,
-    oneInch,
-    keeperKey,
-    privateTxRpcs,
-  ] = await Promise.all([
-    readSecret(raw.RPC_BASE),
-    readSecret(raw.RPC_ETH),
-    readSecret(raw.RPC_ARB),
-    readSecret(raw.RPC_OP),
-    readSecret(raw.RPC_BNB),
-    readSecret(raw.RPC_SEPOLIA),
-    readSecret(raw.RPC_BASE_SEPOLIA),
-    readSecret(raw.RPC_ARB_SEPOLIA),
-    readSecret(raw.RPC_OP_SEPOLIA),
-    readSecret(raw.RPC_BNB_TESTNET),
-    readSecret(raw.TG_BOT_TOKEN),
-    readSecret(raw.PUSH_CHANNEL_PK),
-    readSecret(raw.ZEROEX_API_KEY),
-    readSecret(raw.ONEINCH_API_KEY),
-    readSecret(raw.KEEPER_PRIVATE_KEY),
-    readSecretOrFailure(raw.PRIVATE_TX_RPCS),
+  // Every secret but one through the shared reader: unset for the run when
+  // its read fails, logged by name, and one "store unavailable" line when
+  // every bound secret fails together.
+  const [secrets, privateTxRpcs] = await Promise.all([
+    readSecrets({
+      RPC_BASE: raw.RPC_BASE,
+      RPC_ETH: raw.RPC_ETH,
+      RPC_ARB: raw.RPC_ARB,
+      RPC_OP: raw.RPC_OP,
+      RPC_BNB: raw.RPC_BNB,
+      RPC_SEPOLIA: raw.RPC_SEPOLIA,
+      RPC_BASE_SEPOLIA: raw.RPC_BASE_SEPOLIA,
+      RPC_ARB_SEPOLIA: raw.RPC_ARB_SEPOLIA,
+      RPC_OP_SEPOLIA: raw.RPC_OP_SEPOLIA,
+      RPC_BNB_TESTNET: raw.RPC_BNB_TESTNET,
+      TG_BOT_TOKEN: raw.TG_BOT_TOKEN,
+      PUSH_CHANNEL_PK: raw.PUSH_CHANNEL_PK,
+      ZEROEX_API_KEY: raw.ZEROEX_API_KEY,
+      ONEINCH_API_KEY: raw.ONEINCH_API_KEY,
+      KEEPER_PRIVATE_KEY: raw.KEEPER_PRIVATE_KEY,
+    }),
+    readSecretOrFailure('PRIVATE_TX_RPCS', raw.PRIVATE_TX_RPCS),
   ]);
   return {
     // Passed straight through — these need no `.get()` resolution. That is
@@ -825,21 +792,21 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     DISCOUNT_PATH_CHAIN_IDS: raw.DISCOUNT_PATH_CHAIN_IDS,
     PRIVATE_TX_FALLBACK_CHAIN_IDS: raw.PRIVATE_TX_FALLBACK_CHAIN_IDS,
     // Resolved secrets.
-    RPC_BASE: base,
-    RPC_ETH: eth,
-    RPC_ARB: arb,
-    RPC_OP: op,
-    RPC_BNB: bnb,
-    RPC_SEPOLIA: sepolia,
-    RPC_BASE_SEPOLIA: baseSep,
-    RPC_ARB_SEPOLIA: arbSep,
-    RPC_OP_SEPOLIA: opSep,
-    RPC_BNB_TESTNET: bnbTest,
-    TG_BOT_TOKEN: tgToken,
-    PUSH_CHANNEL_PK: pushPk,
-    ZEROEX_API_KEY: zeroEx,
-    ONEINCH_API_KEY: oneInch,
-    KEEPER_PRIVATE_KEY: keeperKey,
+    RPC_BASE: secrets.RPC_BASE,
+    RPC_ETH: secrets.RPC_ETH,
+    RPC_ARB: secrets.RPC_ARB,
+    RPC_OP: secrets.RPC_OP,
+    RPC_BNB: secrets.RPC_BNB,
+    RPC_SEPOLIA: secrets.RPC_SEPOLIA,
+    RPC_BASE_SEPOLIA: secrets.RPC_BASE_SEPOLIA,
+    RPC_ARB_SEPOLIA: secrets.RPC_ARB_SEPOLIA,
+    RPC_OP_SEPOLIA: secrets.RPC_OP_SEPOLIA,
+    RPC_BNB_TESTNET: secrets.RPC_BNB_TESTNET,
+    TG_BOT_TOKEN: secrets.TG_BOT_TOKEN,
+    PUSH_CHANNEL_PK: secrets.PUSH_CHANNEL_PK,
+    ZEROEX_API_KEY: secrets.ZEROEX_API_KEY,
+    ONEINCH_API_KEY: secrets.ONEINCH_API_KEY,
+    KEEPER_PRIVATE_KEY: secrets.KEEPER_PRIVATE_KEY,
     PRIVATE_TX_RPCS: privateTxRpcs,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
