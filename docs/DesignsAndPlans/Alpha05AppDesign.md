@@ -212,6 +212,18 @@ stops the action, the approval is put back to what it was (best effort, and
 only if nothing else changed it), and a failure to put it back is said
 beside the reason, never left silent; approval resets are named honestly.
 
+The numeraire equivalent (#3225) is one shared line under a typed amount,
+and the same words in a review's rows. It is the protocol's own valuation
+now, by the rule it uses for loan-to-value (a principal rounded up, a
+collateral rounded down), in the numeraire's own symbol, read once typing
+pauses rather than on every keystroke. An asset the protocol gives no price
+is said to be valued at nothing, a price the protocol's sources dispute is
+said to be why no value is shown, and a value that could not be read is said
+to be unread: the line never shows a figure the protocol would not stand
+behind. In a review the rows are informational, never binding, since the
+price moves after signing. The borrow and lend forms and the take-an-offer
+review carry it.
+
 ### RB-MODE — mode is defined per capability
 
 Basic is the default. A capability is Basic when a first-time user needs it

@@ -10,7 +10,7 @@ import { acceptFigures, listFee } from '../offers/model';
 import type { Receipt } from '../receipt/types';
 import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
-import { cadenceText, needsApproval, promptCount, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
+import { cadenceText, needsApproval, promptCount, valueRows, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 
 type Hex = `0x${string}`;
 
@@ -85,6 +85,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
           },
         ]
       : []),
+    ...valueRows(r, meta, copy),
     {
       label: text('accept.rowRate'),
       value: {

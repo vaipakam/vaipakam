@@ -3926,6 +3926,17 @@ export const copy = {
     already: A('Your risk access already reads this way, so nothing was sent.'),
     back: B('Back to Settings'),
   },
+  numeraire: {
+    value: B('About {{value}} {{unit}} at the protocol’s price now.'),
+    tiny: B('Less than 0.01 {{unit}} at the protocol’s price now.'),
+    unpriced: A('No price: the protocol values {{asset}} at nothing, so no equivalent is shown.'),
+    distrusted: A('No value shown: the protocol’s price sources for {{asset}} disagree right now, so it values none of it.'),
+    reading: B('Working out its value…'),
+    failed: A('Its value could not be read ({{reason}}), so none is shown. That is not the same as none.'),
+    rowPrincipal: B('Principal’s value now'),
+    rowCollateral: B('Collateral’s value now'),
+    rowUnread: B('Not read, so not shown'),
+  },
   approval: {
     step: B('approve exactly {{amount}} for the protocol to lock.'),
     stepZero: B('Set the approval to 0 first, as this token requires'),

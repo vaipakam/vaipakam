@@ -2077,7 +2077,7 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 ### Borrow: 確認と署名
 
-確認画面は、オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、ウォレットのボールト・残高・承認額、`previewOfferAcceptBlock`、割引の同意を読み、ウォレットが開く直前にもう一度読みます。ウォレットは保存されたオファーから作った EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に、新しい 128 ビットの nonce と 30 分の期限で署名します。非流動の確認は、確認画面が非流動と示した側だけを指定します。承認額が足りないときだけ担保額ちょうどの承認を行い、署名付きで `acceptOffer` を試行してから送信します。承認後に止まった場合、ほかに変更がなければアプリは承認額を元の値に戻します。結果は、このオファーとウォレットの `LoanInitiated` とレシートの `Transfer` ログから読みます。許可額は最初のウォレット確認の直前に読み直され、リセット時にはその値に戻します。送信後にリバートした承諾や、ウォレットが取り消しまたは置き換えた承諾にも、トランザクション追跡が同じリセットを行います。レビューには `allowsPartialRepay`、`allowsPrepayListing`、`parallelSaleOrderHash` を伴う `allowsParallelSale`、`refinanceTargetLoanId`、関連ローンを示し、返済額は一時停止がない場合の金額と明記します。一時停止中も利息は発生し、期日だけが後ろにずれるためです。 各承認ステップは、レシートが含まれたブロックで読み直した許可額で判定し、レシートのステータスでは判定しません。ゼロでない許可額から別のゼロでない値への変更を拒むトークン（`approve` のドライランで判別）には先にゼロへのステップが入り、確認画面ではそれを追加のプロンプトとして数えます。規約の同意はウォレットが開く直前に再度読み取られます。 どちらの売却経路も担保を NFT として出品するため、トークン担保では、付与された出品・売却の許可はこのローンでは使えないものとして表示されます。
+確認画面は、オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、ウォレットのボールト・残高・承認額、`previewOfferAcceptBlock`、割引の同意を読み、ウォレットが開く直前にもう一度読みます。ウォレットは保存されたオファーから作った EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に、新しい 128 ビットの nonce と 30 分の期限で署名します。非流動の確認は、確認画面が非流動と示した側だけを指定します。承認額が足りないときだけ担保額ちょうどの承認を行い、署名付きで `acceptOffer` を試行してから送信します。承認後に止まった場合、ほかに変更がなければアプリは承認額を元の値に戻します。結果は、このオファーとウォレットの `LoanInitiated` とレシートの `Transfer` ログから読みます。許可額は最初のウォレット確認の直前に読み直され、リセット時にはその値に戻します。送信後にリバートした承諾や、ウォレットが取り消しまたは置き換えた承諾にも、トランザクション追跡が同じリセットを行います。レビューには `allowsPartialRepay`、`allowsPrepayListing`、`parallelSaleOrderHash` を伴う `allowsParallelSale`、`refinanceTargetLoanId`、関連ローンを示し、返済額は一時停止がない場合の金額と明記します。一時停止中も利息は発生し、期日だけが後ろにずれるためです。 各承認ステップは、レシートが含まれたブロックで読み直した許可額で判定し、レシートのステータスでは判定しません。ゼロでない許可額から別のゼロでない値への変更を拒むトークン（`approve` のドライランで判別）には先にゼロへのステップが入り、確認画面ではそれを追加のプロンプトとして数えます。規約の同意はウォレットが開く直前に再度読み取られます。 どちらの売却経路も担保を NFT として出品するため、トークン担保では、付与された出品・売却の許可はこのローンでは使えないものとして表示されます。確認画面は、プレビューの金額での元本と担保の `getNumeraireValue` を、何も拘束しない行として加えます。
 
 <a id="borrow-fee"></a>
 
@@ -2095,7 +2095,7 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 ### Borrow: 自分のリクエストを出す
 
-リクエストは、借り手のウォレットから送る `offerType` 1、両側 ERC-20 の `createOffer` です。`collateralAmount` を借り手のボールトに移し（なければボールトを作成）、`OfferCreated(offerId, creator, 1)` を発行します。貸し手は `acceptOffer` で受けます。手数料を差し引いた元本は借り手のウォレットへ、手数料のうち送信者の取り分は送信した貸し手へ渡ります。`cancelOffer` は作成者には作成から `MIN_OFFER_CANCEL_DELAY`（5分）後から、誰にでもリクエストの期限切れ後に開かれています。担保は常に作成者に戻ります。
+リクエストは、借り手のウォレットから送る `offerType` 1、両側 ERC-20 の `createOffer` です。`collateralAmount` を借り手のボールトに移し（なければボールトを作成）、`OfferCreated(offerId, creator, 1)` を発行します。貸し手は `acceptOffer` で受けます。手数料を差し引いた元本は借り手のウォレットへ、手数料のうち送信者の取り分は送信した貸し手へ渡ります。`cancelOffer` は作成者には作成から `MIN_OFFER_CANCEL_DELAY`（5分）後から、誰にでもリクエストの期限切れ後に開かれています。担保は常に作成者に戻ります。入力した各金額の下に、フォームは `getNumeraireValue(asset, amount, roundUp)`（元本は切り上げ、担保は切り捨て）を `getNumeraireSymbol` の単位で表示し、入力が止まったときに読み取ります。流動性のない資産は評価ゼロ、争いのある価格は値なし、読み取りの失敗は未読として示されます。
 
 <a id="borrow-request-terms"></a>
 
