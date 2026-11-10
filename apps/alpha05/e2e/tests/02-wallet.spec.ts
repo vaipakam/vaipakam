@@ -84,6 +84,18 @@ test('a wallet on a network this app does not serve gets a tier-A notice and the
   }
   // Nothing of the visitor's is shown while unsupported: no identity line.
   await expect(page.locator('.posture').getByText(/ on Base Sepolia$/)).toHaveCount(0);
+  // The account panel stays inside the window even where the notice wraps
+  // the wallet slot onto its own row (a phone), so disconnect stays reachable.
+  await page.getByTestId('wallet-chip').click();
+  const panel = page.getByTestId('wallet-panel');
+  await expect(panel.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect
+    .poll(async () => {
+      const b = (await panel.boundingBox())!;
+      return b.x >= 0 && b.x + b.width <= page.viewportSize()!.width;
+    })
+    .toBe(true);
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Switch to Base Sepolia' }).click();
   await expect(notice).toHaveCount(0);
   await expect(page.getByTestId('wallet-chip').locator('.wallet-chain')).toHaveText('Base Sepolia');

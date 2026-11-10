@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useModal } from 'connectkit';
 import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
 import { DEFAULT_CHAIN, SUPPORTED_CHAINS, getSupportedChain, supportedChainNames } from '../chain/chains';
@@ -91,6 +91,8 @@ function AccountPanel({
   const [copied, setCopied] = useState<'copied' | 'failed' | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const chip = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
   const panelId = useId();
   const chain = getSupportedChain(chainId);
   const chainName = chain?.name ?? `chain ${chainId ?? '?'}`;
@@ -111,6 +113,26 @@ function AccountPanel({
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('pointerdown', onPointer);
     };
+  }, [open]);
+
+  // The panel hangs below the chip, right-aligned to it, but the chip is not
+  // always at the window's right edge (an unsupported-network notice wraps
+  // the wallet slot onto its own row on a phone). Measure where it landed and
+  // shift it back inside the window, 16px from either side.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const el = panel.current;
+      if (!el) return;
+      el.style.transform = '';
+      const r = el.getBoundingClientRect();
+      const gutter = 16;
+      const right = window.innerWidth - gutter;
+      setShift(r.left < gutter ? gutter - r.left : r.right > right ? right - r.right : 0);
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
   }, [open]);
 
   const copy = async () => {
@@ -141,7 +163,15 @@ function AccountPanel({
         <span className="wallet-chain">{chainName}</span>
       </button>
       {open && (
-        <div className="wallet-panel" id={panelId} role="group" aria-label={text('wallet.panel')} data-testid="wallet-panel">
+        <div
+          className="wallet-panel"
+          ref={panel}
+          id={panelId}
+          role="group"
+          aria-label={text('wallet.panel')}
+          data-testid="wallet-panel"
+          style={shift ? { transform: `translateX(${shift}px)` } : undefined}
+        >
           <p className="wallet-full">{address}</p>
           <button type="button" className="btn" onClick={() => void copy()}>
             {text('wallet.copy')}

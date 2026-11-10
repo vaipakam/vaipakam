@@ -34,17 +34,31 @@ async function session(b, opts, label) {
   await p.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => window.__cspReport(`${e.disposition} ${e.effectiveDirective} ${e.blockedURI}`));
   });
+  // Every check below counts only while the watch wallet is connected: a
+  // walk that silently ran disconnected would report clean without having
+  // looked at the connected-only requests, so a missing identity is a failure.
+  const chip = p.getByTestId('wallet-chip').first();
+  const connected = async (where) => {
+    const ok = await chip.waitFor({ state: 'visible', timeout: 30000 }).then(() => true, () => false);
+    if (!ok) found.push(`[not connected] ${where}`);
+    return ok;
+  };
   await p.goto(`${ORIGIN}/`, { waitUntil: 'networkidle' });
   await connect(p);
-  for (const route of ROUTES) {
-    await p.goto(`${ORIGIN}${route}`, { waitUntil: 'networkidle' }).catch((e) => found.push(`[goto] ${route} ${e.message}`));
-    await p.waitForTimeout(6000);
+  if (await connected('after connect')) {
+    for (const route of ROUTES) {
+      await p.goto(`${ORIGIN}${route}`, { waitUntil: 'networkidle' }).catch((e) => found.push(`[goto] ${route} ${e.message}`));
+      if (!(await connected(route))) break;
+      await p.waitForTimeout(6000);
+    }
+    // Open the account panel: it must open, and reach no host the page does
+    // not name either.
+    await chip.click();
+    const opened = await p.getByTestId('wallet-panel').waitFor({ state: 'visible', timeout: 10000 }).then(() => true, () => false);
+    if (!opened) found.push('[account panel] did not open');
+    await p.waitForTimeout(4000);
+    await p.keyboard.press('Escape');
   }
-  // Open the wallet control while connected: the account surface must not
-  // reach any host the page does not name either.
-  await p.getByTestId('wallet-chip').first().click().catch(() => {});
-  await p.waitForTimeout(4000);
-  await p.keyboard.press('Escape').catch(() => {});
   for (const e of errs) found.push(`[page error] ${e}`);
   console.log(`===== ${label}\nhosts: ${[...hosts].sort().join(' ')}`);
   console.log(found.length ? found.join('\n') : 'clean');
