@@ -14,7 +14,9 @@ const SETTLE_MS = 400;
  * numeraire, as the protocol values it now (`numeraireValue`): a figure for
  * a liquid asset, "no price" for one the protocol values at nothing, the
  * price sources' disagreement when that is why, and an unread value as
- * unread. Nothing is shown until the amount parses to more than zero.
+ * unread. A refresh that fails after an earlier figure states the value as
+ * unread too: an older figure is never shown as the price now.
+ * Nothing is shown until the amount parses to more than zero.
  * The value is read once typing pauses, so each keystroke is not a read.
  */
 export function NumeraireLine({
@@ -49,7 +51,7 @@ export function NumeraireLine({
   const line =
     settled !== amount || eq.state === 'reading'
       ? { tier: 'tier-b', state: 'reading', words: text('numeraire.reading') }
-      : eq.state === 'failed' || eq.data === null
+      : eq.state === 'failed' || eq.data === null || eq.error !== null
         ? {
             tier: 'tier-a',
             state: 'failed',
