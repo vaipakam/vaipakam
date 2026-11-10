@@ -76,11 +76,22 @@ export function DestinationsSection({ chain, own, facts, book }: Props) {
     const now = destinationClock(f, nowMs);
     const label = (a: Hex) => savedFor(a)?.label ?? null;
     const pending = f.pending ?? [];
-    const taken = new Set([...(f.destinations ?? []), ...pending.filter((p) => m === null || now === null || pendingState(p, m.delaySeconds, now) !== 'expired').map((p) => p.destination)].map((a) => a.toLowerCase()));
+    const taken = new Set(
+      [
+        ...(f.destinations ?? []),
+        ...pending.filter((p) => m === null || now === null || pendingState(p, m.delaySeconds, now) !== 'expired').map((p) => p.destination),
+      ].map((a) => a.toLowerCase()),
+    );
     const choices = book.entries.filter((e) => !taken.has(e.address.toLowerCase()) && !same(e.address, own.account));
     const chosen = choices.find((e) => e.address.toLowerCase() === pick.toLowerCase()) ?? null;
     body = (
       <>
+        {m === null && (
+          <p className="tier-a" data-testid="destinations-mode-unread">
+            {text('dest.pageModeUnread')}
+          </p>
+        )}
+        {f.destinations !== null && f.destinations.length > 0 && f.queuedTo === null && <p className="tier-a">{text('dest.pageQueueUnread')}</p>}
         {f.destinations === null ? (
           <p className="tier-a">{format('dest.failed', { reason: text('receipt.unknown') })}</p>
         ) : f.destinations.length === 0 ? (
@@ -110,6 +121,14 @@ export function DestinationsSection({ chain, own, facts, book }: Props) {
             </ul>
           </>
         )}
+        {f.pending === null && (
+          <>
+            <h3>{text('dest.waitingTitle')}</h3>
+            <p className="tier-a" data-testid="destinations-pending-unread">
+              {text('dest.pendingUnread')}
+            </p>
+          </>
+        )}
         {pending.length > 0 && (
           <>
             <h3>{text('dest.waitingTitle')}</h3>
@@ -123,19 +142,35 @@ export function DestinationsSection({ chain, own, facts, book }: Props) {
                     {s === 'waiting' && <p className="tier-b">{format('dest.waitsUntil', { at: formatUtc(p.maturesAt) })}</p>}
                     {s === 'ready' && m !== null && <p className="tier-b">{format('dest.readyUntil', { at: formatUtc(p.maturesAt + m.delaySeconds) })}</p>}
                     {s === 'expired' && m !== null && <p className="tier-b">{format('dest.lapsed', { at: formatUtc(p.maturesAt + m.delaySeconds) })}</p>}
+                    {s === null && <p className="tier-a">{text('dest.timingUnknown')}</p>}
                     <p className="actions">
                       {s === 'ready' && (
-                        <button type="button" className="btn btn-primary" onClick={() => open({ action: 'apply', destination: p.destination })} data-testid="destination-apply">
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => open({ action: 'apply', destination: p.destination })}
+                          data-testid="destination-apply"
+                        >
                           {text('dest.apply')}
                         </button>
                       )}
                       {s === 'expired' && savedFor(p.destination) !== null && (
-                        <button type="button" className="btn" onClick={() => open({ action: 'add', destination: p.destination })} data-testid="destination-ask-again">
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => open({ action: 'add', destination: p.destination })}
+                          data-testid="destination-ask-again"
+                        >
                           {text('dest.askAgain')}
                         </button>
                       )}
                       {/* A lapsed request still holds one of the waiting places until it is cancelled. */}
-                      <button type="button" className="btn" onClick={() => open({ action: 'cancel', destination: p.destination })} data-testid="destination-cancel">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => open({ action: 'cancel', destination: p.destination })}
+                        data-testid="destination-cancel"
+                      >
                         {text('dest.cancel')}
                       </button>
                     </p>
@@ -168,7 +203,13 @@ export function DestinationsSection({ chain, own, facts, book }: Props) {
               </Notice>
             )}
             <p className="actions">
-              <button type="button" className="btn btn-primary" disabled={chosen === null} onClick={() => chosen && open({ action: 'add', destination: chosen.address })} data-testid="destination-add">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={chosen === null}
+                onClick={() => chosen && open({ action: 'add', destination: chosen.address })}
+                data-testid="destination-add"
+              >
                 {text('dest.add')}
               </button>
             </p>
