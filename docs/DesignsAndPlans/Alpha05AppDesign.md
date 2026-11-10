@@ -2137,6 +2137,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   shown. Every figure is also in a table, and hover or focus shows a
   period's figures. The period choice lives in the page address. A failed
   read is a degraded-source warning, never an empty tape or chart.
+- **RB-DESK-HISTORY** — Below a market's activity (OFF-76) the desk shows
+  the viewer's live loans in that market and its desk history. The live
+  loans come from the viewer's own chain read of its positions, the same
+  inventory Positions reads, never from the index: each states the side
+  held, the amount and rate, and its health reading (or that there is
+  none), and opens the loan's page, where the protocol's verdict decides
+  what can be done. The section carries that read's own age, source and
+  refresh, never the index's freshness. A read that did not complete says
+  a loan may be missing. The history is the index's append-only record of the loans the
+  wallet has held a side of, token loans against token collateral only,
+  any status, newest participation first, a page at a time. A row names
+  its market by the term agreed at opening, only where the index confirms
+  it, and otherwise says the agreed term is not confirmed; never the live
+  term an extension rewrites. Its status is
+  labelled as the index's record, which can trail the chain, and each row
+  opens the loan's page, which reads the chain. An older page is offered
+  only when the index returned a row past the current one, never on a
+  full page alone; a row the reader refuses is counted, never dropped
+  silently. A failed read is a degraded-source warning, never an empty
+  history.
 
 ## 3. Companion specifications
 

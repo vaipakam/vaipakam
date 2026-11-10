@@ -20,7 +20,7 @@
  * labelled so; nothing here is a price the protocol reports.
  */
 import { getAddress } from 'viem';
-import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../positions/model';
+import { ASSET_ERC20, OFFER_TYPE_LENDER, type LiveLoanRow } from '../positions/model';
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { bookRowFrom, lapsed, type BookRow } from '../offers/book';
 
@@ -281,4 +281,18 @@ export function ownOrders(l: Pick<DeskLadder, 'asks' | 'bids'>, viewer: string):
     }
   }
   return out;
+}
+
+/** The viewer's live loans in one market: both legs tokens, the market's
+ *  two tokens and its term. The rows come from the viewer's own chain read
+ *  of its positions, never from the index. */
+export function loansInMarket(rows: readonly LiveLoanRow[], m: Pick<Market, 'lending' | 'collateral' | 'durationDays'>): LiveLoanRow[] {
+  return rows.filter(
+    (r) =>
+      r.loan.assetType === ASSET_ERC20 &&
+      r.loan.collateralAssetType === ASSET_ERC20 &&
+      r.loan.principalAsset.toLowerCase() === m.lending.toLowerCase() &&
+      r.loan.collateralAsset.toLowerCase() === m.collateral.toLowerCase() &&
+      r.loan.durationDays === BigInt(m.durationDays),
+  );
 }

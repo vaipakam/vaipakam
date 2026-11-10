@@ -19,6 +19,7 @@
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { IndexerUnavailable } from '../reads/world/indexerClient';
 import { unplacedFrom, type Unplaced } from '../reads/world/unplaced';
+import { wireBig, wireWhole } from '../reads/world/wire';
 import type { Market } from './markets';
 
 type Json = Record<string, unknown>;
@@ -50,17 +51,8 @@ export interface Tape {
   unplaced: Unplaced;
 }
 
-function whole(v: unknown): number {
-  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return v;
-  if (typeof v === 'string' && /^\d{1,15}$/.test(v)) return Number(v);
-  throw new Error('not a whole number');
-}
-
-function big(v: unknown): bigint {
-  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return BigInt(v);
-  if (typeof v === 'string' && /^\d+$/.test(v)) return BigInt(v);
-  throw new Error('not a whole number');
-}
+const whole = wireWhole;
+const big = wireBig;
 
 /** Reads one tape row, or throws when it is not a fill of this market. */
 export function fillFrom(o: Json, m: MarketTerms): Fill {
