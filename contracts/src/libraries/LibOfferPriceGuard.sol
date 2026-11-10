@@ -4,6 +4,12 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPairCalm} from "./LibPairCalm.sol";
 
+/// @dev The one host of the guard's refusal (`OfferPriceGuardFacet`), named
+///      by its selector only so this library need not import the facet.
+interface IOfferPriceGuardHost {
+    function requireOfferPriceGuardsClear(uint256 offerId, uint256 otherOfferId) external view;
+}
+
 /**
  * @title  LibOfferPriceGuard
  * @author Vaipakam Developer Team
@@ -25,7 +31,12 @@ import {LibPairCalm} from "./LibPairCalm.sol";
  * @dev    Every write to `Storage.offerPriceGuard` is here. Inlined into
  *         `OfferPriceGuardFacet` (the setter, the arm and the reads) and
  *         `OfferBookFacet` (which records an armed guard as the offer is
- *         opened on the book).
+ *         opened on the book). {requireClear} is the one check every step
+ *         that fills an offer runs: loan creation (`LoanFacet`, which every
+ *         accept, match and intent fill reaches) and the two steps that fill
+ *         an offer without opening a loan, the direct loan sale
+ *         (`EarlyWithdrawalDirectFacet`, the buyer's lender offer) and the
+ *         obligation handover (`PrecloseFacet`, the new borrower's offer).
  */
 library LibOfferPriceGuard {
     /// @notice Where a guarded offer stands now.
@@ -116,6 +127,21 @@ library LibOfferPriceGuard {
             refPrincipalPrice1e18: pP
         });
         emit OfferPriceGuardSet(offerId, o.creator, maxMoveBps, pC, pP);
+    }
+
+    /// @notice Refuse a fill of `offerId` (and of `otherOfferId`, the other
+    ///         maker's offer in a match; 0 = none) unless each guard lets it
+    ///         through now. Reverts with the host's named refusal.
+    /// @dev    Asks the host only when one of the two carries a guard, so an
+    ///         unguarded fill (the default) pays for no self-call, and a
+    ///         Diamond without the host still fills unguarded offers.
+    function requireClear(LibVaipakam.Storage storage s, uint256 offerId, uint256 otherOfferId)
+        internal
+        view
+    {
+        if (s.offerPriceGuard[offerId].maxMoveBps != 0 || s.offerPriceGuard[otherOfferId].maxMoveBps != 0) {
+            IOfferPriceGuardHost(address(this)).requireOfferPriceGuardsClear(offerId, otherOfferId);
+        }
     }
 
     /// @notice Remove `offerId`'s guard.

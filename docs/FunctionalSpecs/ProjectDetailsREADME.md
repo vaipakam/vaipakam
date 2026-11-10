@@ -697,11 +697,15 @@ unguarded, and an app that offers this route must say so). The creator can chang
 while the offer is open, and a change measures from the prices at that
 moment.
 
-Every fill checks it, at the one step every fill passes: the opening of the
-loan. That covers a direct accept, every match path (where both offers'
-guards are checked, since both creators are makers), an intent fill, and a
-refinance, offset or sale acceptance. The accept preview and the match
-preview report a guard refusal before anyone signs, in the order the fill
+Every fill checks it. Most fills pass one step, the opening of the loan,
+and the check sits there: that covers a direct accept, every match path
+(where both offers' guards are checked, since both creators are makers), an
+intent fill, and a refinance, offset or sale acceptance. Two steps fill an
+offer without opening a loan, and each runs the same check before anything
+moves: a direct loan sale into a buyer's standing lender offer, and an
+obligation handover onto an incoming borrower's offer. The accept preview, the match preview
+and the standing-intent fill preview report a guard refusal before anyone
+signs, in the order the fill
 would raise it (after the cadence check), and a read-only view states for
 any offer its limit, its reference prices and when they were taken, how far
 the rate has moved since, the calm bound in effect and which condition

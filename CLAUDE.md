@@ -375,11 +375,15 @@ runs half of it on old code:
   offers opened before the refresh are not counted.
 
 - **OfferPriceGuardFacet + LoanFacet + OfferBookFacet + OfferPreviewFacet +
-  OfferMatchFacet — the maker's price-move guard (#3358).** Loan creation
-  self-calls `requireOfferPriceGuardsClear` for a guarded offer (both makers'
-  offers in a match), the offer book records a guard armed before posting,
-  and the accept and match previews ask the same entry (the match preview
-  through `OfferPreviewFacet.previewOriginationRefusal`). An unguarded fill
+  OfferMatchFacet + RiskPreviewFacet + EarlyWithdrawalDirectFacet +
+  PrecloseFacet — the maker's price-move guard (#3358).** Every step that
+  fills an offer runs `LibOfferPriceGuard.requireClear`, which self-calls
+  `requireOfferPriceGuardsClear` for a guarded offer: loan creation (both
+  makers' offers in a match), the direct loan sale (the buyer's offer) and
+  the obligation handover (the incoming borrower's offer). The offer book records a guard armed before posting,
+  and the accept, match and standing-intent previews ask the same entry
+  (the match preview and `RiskPreviewFacet.previewIntent` through
+  `OfferPreviewFacet.previewOriginationRefusal`). An unguarded fill
   makes no self-call, so a Diamond without the host fills unguarded offers
   as before, but a guarded offer's fill reverts `FunctionDoesNotExist` there
   (a hard revert, never an unchecked fill). The calm rule is

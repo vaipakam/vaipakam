@@ -4,10 +4,10 @@ An offer waits on the book while the market moves, and a taker can fill it the m
 
 The creator can arm it before posting, in the same transaction as the post, so the offer is recorded with the prices at posting and is never on the book unguarded; or set, change or clear it on an open offer later, measured from the prices at that moment. The limit lies between 0.5% and 50%, and only an offer with two priceable ERC-20 legs can carry one.
 
-Every fill checks it at the opening of the loan, so a direct accept, every match path (both makers' guards), intent fills and refinance, offset or sale acceptances are all covered. An unguarded fill pays nothing extra for the check. The accept and match previews report a guard refusal by name, and a new read-only view says, for any offer, its limit, the prices it was measured from, how far the rate has moved since and which condition holds.
+Every fill checks it at the opening of the loan, so a direct accept, every match path (both makers' guards), intent fills and refinance, offset or sale acceptances are all covered. The two steps that fill an offer without opening a loan, a direct loan sale into a buyer's offer and an obligation handover onto an incoming borrower's offer, run the same check themselves. An unguarded fill pays nothing extra for the check. The accept, match and standing-intent previews report a guard refusal by name (the intent preview now also reports the borrower offer's cadence refusal, which it used to miss), and a new read-only view says, for any offer, its limit, the prices it was measured from, how far the rate has moved since and which condition holds.
 
 Closes #3358.
 
 > Caveat: a gasless signed offer cannot carry a guard until its signed terms can (#3327).
 > Caveat: the guard reads the hourly checkpoints, whose keeper pass ships disarmed and today covers only the pairs of active loans; a guarded offer in a pair nothing checkpoints cannot be filled until that pass covers guarded offers too (follow-up for the keeper).
-> Caveat: reaches a testnet only with the next fresh deploy (a new facet, plus loan creation, the offer book and both previews).
+> Caveat: reaches a testnet only with the next fresh deploy (a new facet, plus loan creation, the offer book and the three previews).

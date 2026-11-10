@@ -82,6 +82,9 @@ library LibPairCalm {
     ) internal view returns (Calm) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 hour = block.timestamp / 1 hours;
+        // Within the first two hours of the clock there is no earlier hour to
+        // have a checkpoint (never on a live chain, but never a panic either).
+        if (hour < 2) return Calm.NoCheckpoint;
         for (uint256 back = 1; back <= 2; ++back) {
             uint256 cThen = s.hourlyPrice1e18[collateralAsset][hour - back];
             uint256 pThen = s.hourlyPrice1e18[principalAsset][hour - back];

@@ -237,6 +237,7 @@ const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
   SelfTrade: 'lendAccept.err.SelfTrade',
   RefinanceRequestUntakeable: 'lendAccept.err.RefinanceRequestUntakeable',
   CadenceNotAdmitted: 'lendAccept.err.CadenceNotAdmitted',
+  PriceGuardRefused: 'lendAccept.err.PriceGuardRefused',
   Unrecognised: 'lendAccept.err.Unrecognised',
 };
 

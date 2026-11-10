@@ -2633,6 +2633,9 @@ export const copy = {
         'This refinance request does not stand for its loan now, so it cannot be funded: the borrower position moved after it was posted, an offset is open on that loan, or it is not the request that loan has on record.',
       ),
       CadenceNotAdmitted: A("The protocol no longer admits this request's interest schedule, so it cannot be funded."),
+      PriceGuardRefused: A(
+        "The borrower put a price-move guard on this request, and it refuses a fill now: the price has moved past the borrower's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
+      ),
       Unrecognised: A('The protocol refused this request with a code this build cannot name.'),
     },
     signWhy: C(
@@ -2986,6 +2989,9 @@ export const copy = {
       SelfTrade: A('This is your own offer.'),
       RefinanceRequestUntakeable: A('This offer cannot be taken directly.'),
       CadenceNotAdmitted: A("The protocol no longer admits this offer's interest schedule, so it cannot be taken."),
+      PriceGuardRefused: A(
+        "The lender put a price-move guard on this offer, and it refuses a fill now: the price has moved past the lender's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
+      ),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
     },
     changedOffer: B('The offer'),

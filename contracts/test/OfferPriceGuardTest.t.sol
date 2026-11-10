@@ -18,6 +18,10 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /**
  * @title OfferPriceGuardTest
@@ -419,5 +423,54 @@ contract OfferPriceGuardTest is SetupTest {
         _twoCheckpoints();
         assertEq(uint8(_previewMatch(lo, bo)), uint8(LibOfferMatch.MatchError.Ok));
         assertGt(OfferMatchFacet(address(diamond)).matchOffers(lo, bo), 0);
+    }
+    // ─── Fills that open no loan (Codex r2) ──────────────────────────────
+
+    /// @dev A direct loan sale fills the buyer's lender offer without opening
+    ///      a loan, so it runs the guard itself: refused while the buyer's
+    ///      guard cannot be shown inside, through once the guard is cleared.
+    function test_DirectSale_GuardedBuyOffer_Refused() public {
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _lenderOffer());
+        address buyer = _provisionFundedActor("guard-buyer", mockERC20, PRINCIPAL * 2);
+        vm.prank(buyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
+        );
+        vm.prank(buyer);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(buyOfferId, 500);
+
+        vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.OfferPairNoCheckpoint.selector, buyOfferId));
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
+
+        vm.prank(buyer);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(buyOfferId, 0);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
+        assertTrue(OfferCancelFacet(address(diamond)).getOffer(buyOfferId).accepted, "sold once unguarded");
+    }
+
+    /// @dev An obligation handover fills the incoming borrower's offer
+    ///      without opening a loan, so it runs the guard itself too.
+    function test_ObligationHandover_GuardedBorrowerOffer_Refused() public {
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _lenderOffer());
+        address incoming = _provisionFundedActor("guard-incoming", mockCollateralERC20, PLEDGED * 2);
+        vm.prank(incoming);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500)
+        );
+        vm.prank(incoming);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
+        ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);
+
+        vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.OfferPairNoCheckpoint.selector, offerId));
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId);
+
+        vm.prank(incoming);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 0);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId);
+        assertTrue(OfferCancelFacet(address(diamond)).getOffer(offerId).accepted, "handed over once unguarded");
     }
 }

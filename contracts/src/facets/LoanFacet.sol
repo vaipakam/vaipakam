@@ -23,7 +23,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
-import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
+import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 
 
 /**
@@ -540,15 +540,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // while the match override is active, so both makers are covered.
         // Asked only when one of them carries a guard, so an unguarded fill
         // (the default) pays for no self-call.
-        {
-            uint256 otherOfferId = s.matchOverride.active ? s.matchLenderAuthOfferId : 0;
-            if (
-                s.offerPriceGuard[ctx.offerId].maxMoveBps != 0
-                    || s.offerPriceGuard[otherOfferId].maxMoveBps != 0
-            ) {
-                OfferPriceGuardFacet(address(this)).requireOfferPriceGuardsClear(ctx.offerId, otherOfferId);
-            }
-        }
+        LibOfferPriceGuard.requireClear(
+            s, ctx.offerId, s.matchOverride.active ? s.matchLenderAuthOfferId : 0
+        );
 
         // Reverse-index the loan for both counterparties. Indexers and
         // frontends rely on these arrays to enumerate a user's loans
