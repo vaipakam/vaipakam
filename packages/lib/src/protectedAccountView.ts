@@ -14,6 +14,9 @@
  * two fields carry nothing; drop them from consumers with the legacy mode.
  */
 
+import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem';
+import { VaultProtectionABI } from '@vaipakam/contracts/abis';
+
 /** The two fields under the names consumers use. */
 export interface ProtectedAccountNftFields {
   protectNfts: boolean;
@@ -34,5 +37,121 @@ export function protectedAccountFromView<T extends object>(
     ...(rest as Omit<T, 'retiredProtectNfts' | 'retiredPendingNftOffAt'>),
     protectNfts: Boolean(protectNfts),
     pendingNftOffAt: BigInt((pending as bigint | number | string | undefined) ?? 0),
+  };
+}
+
+// ─── #3379 Stage B2 — protected mode lives in the account's vault ──────────
+//
+// The Diamond's `getProtectedAccount` and its protected-mode writes are gone:
+// the record is the vault's (`VaultProtection`, run by the vault's
+// `protect(bytes)`), and the Diamond keeps only the platform side
+// (`getProtection(account)` → vault, co-sign requirement, pending co-sign
+// switch-off). These helpers are the one place every consumer builds a vault
+// write and reads the record back in the shape it already indexes.
+
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+
+/** `VaultProtection.Auth`. B2 always sends the DIRECT form: the caller's own
+ *  key, no expiry, no signature (the vault then requires msg.sender == key). */
+export interface VaultProtectionAuth {
+  key: Address;
+  expiry: bigint;
+  sig: Hex;
+}
+
+/** The direct `Auth` for a write the wallet `key` sends itself. */
+export function directAuth(key: Address): VaultProtectionAuth {
+  return { key, expiry: 0n, sig: '0x' };
+}
+
+/** `VaultProtection.SETTINGS_*`, the `action` of `cancelSetting`. */
+export const VAULT_SETTING = { delay: 2, disable: 3, unlock: 4 } as const;
+/** `VaultProtection.SIGNER_*`, the `action` of `signerChange`. */
+export const VAULT_SIGNER = { add: 1, accept: 2, remove: 3, cancel: 4 } as const;
+/** `VaultProtection.REPLACE_*`, the `action` of `replacement`. */
+export const VAULT_REPLACE = { propose: 1, approve: 2, cancel: 3 } as const;
+
+/** The `data` argument of the vault's `protect(bytes)`: the ABI-encoded call
+ *  to one `VaultProtection` function. */
+export function protectionCall(functionName: string, args: readonly unknown[] = []): Hex {
+  return encodeFunctionData({ abi: VaultProtectionABI as Abi, functionName, args } as never);
+}
+
+/** `vault.protectionState()`, positional as viem decodes it. */
+export type VaultProtectionState = readonly [
+  enabled: boolean,
+  locked: boolean,
+  delay: number,
+  cooldownUntil: bigint,
+  lockedBy: Address,
+  signers: readonly Address[],
+  allowlist: readonly Address[],
+];
+
+/** `ProtectedAccountFacet.getProtection(account)`, positional. */
+export type DiamondProtection = readonly [vault: Address, requireCosign: boolean, pendingCosignOffAt: bigint];
+
+/** The record consumers indexed from the retired `getProtectedAccount`,
+ *  rebuilt from the vault and the Diamond. */
+export interface ProtectedAccountRecordFromVault extends ProtectedAccountNftFields {
+  enabled: boolean;
+  locked: boolean;
+  requireCosign: boolean;
+  retired: boolean;
+  delaySeconds: number;
+  pendingDelay: number;
+  pendingDelayAt: bigint;
+  pendingDisableAt: bigint;
+  pendingUnlockAt: bigint;
+  pendingCosignOffAt: bigint;
+  cooldownUntil: bigint;
+  lockedAt: bigint;
+  lockedBy: Address;
+  controller: Address;
+  retiredPendingUnpinAt: bigint;
+}
+
+/**
+ * The account's protected record in the retired view's shape.
+ *
+ * `state` and `owner` are null when the account has no vault (protected mode
+ * then reads as off). `retired` is the vault's owner record having moved to
+ * another wallet (a finalized replacement); `controller` is that wallet.
+ *
+ * NOT READABLE IN B2: the vault exposes no view of its pending setting
+ * changes (a lowered delay, a switch-off, an unlock) or of when its lock was
+ * set, so `pendingDelay`, `pendingDelayAt`, `pendingDisableAt`,
+ * `pendingUnlockAt` and `lockedAt` read 0 here. A 0 there means "not known",
+ * not "none pending". NFT protection's queue was retired by #3318 and reads
+ * off. TODO(#3379 B4): read them once the vault exposes them.
+ */
+export function protectedAccountFromVault(
+  account: Address,
+  protection: DiamondProtection | null,
+  state: VaultProtectionState | null,
+  owner: Address | null,
+): ProtectedAccountRecordFromVault {
+  const [, requireCosign, pendingCosignOffAt] = protection ?? [ZERO_ADDRESS, false, 0n];
+  const [enabled, locked, delay, cooldownUntil, lockedBy] = state ?? [false, false, 0, 0n, ZERO_ADDRESS, [], []];
+  const retired = owner !== null && owner.toLowerCase() !== account.toLowerCase();
+  return {
+    enabled,
+    locked,
+    protectNfts: false,
+    pendingNftOffAt: 0n,
+    requireCosign,
+    retired,
+    delaySeconds: Number(delay),
+    pendingDelay: 0,
+    pendingDelayAt: 0n,
+    pendingDisableAt: 0n,
+    pendingUnlockAt: 0n,
+    pendingCosignOffAt: BigInt(pendingCosignOffAt),
+    cooldownUntil: BigInt(cooldownUntil),
+    lockedAt: 0n,
+    lockedBy,
+    controller: retired ? (owner as Address) : ZERO_ADDRESS,
+    retiredPendingUnpinAt: 0n,
   };
 }

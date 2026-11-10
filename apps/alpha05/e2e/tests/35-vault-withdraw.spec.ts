@@ -17,6 +17,7 @@ import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { enableProtection } from '../lib/protection';
 
 type Hex = `0x${string}`;
 
@@ -108,7 +109,7 @@ test('with protected mode on, the withdrawal is queued for the account’s delay
   const sc = scenario({ lender: 'freshLender' });
   const me = sc.address('lender');
   await depositWeth(sc, 'lender', parseEther('0.03'));
-  await sc.diamondWrite('lender', 'enableProtectedMode', [DELAY, false]);
+  await enableProtection(sc, 'lender', DELAY);
   const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [me] });
 
   const { page, flags } = await launchWallet('freshLender');

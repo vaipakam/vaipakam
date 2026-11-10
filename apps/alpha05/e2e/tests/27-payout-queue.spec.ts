@@ -19,6 +19,8 @@ import type { Page } from '@playwright/test';
 import { anvilRpc, increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { VAULT_SIGNER } from '@vaipakam/lib/protectedAccountView';
+import { enableProtection, protect } from '../lib/protection';
 
 type Hex = `0x${string}`;
 type Pending = { state: number; cosigned: boolean; releaseAt: bigint; amount: bigint };
@@ -48,7 +50,7 @@ async function queueWithdrawals(sc: ReturnType<typeof scenario>, count: number, 
   const total = AMOUNT * BigInt(count);
   await sc.write('lender', WETH, TOKEN_ABI, 'deposit', [], total);
   await sc.write('lender', WETH, TOKEN_ABI, 'approve', [sc.diamond, total]);
-  await sc.diamondWrite('lender', 'enableProtectedMode', [DELAY, false]);
+  await enableProtection(sc, 'lender', DELAY);
   await sc.diamondWrite('lender', 'depositToVault', [0, WETH, 0n, total]);
   if (before) await before();
   for (let i = 0; i < count; i++) await sc.diamondWrite('lender', 'withdrawFromVault', [owner, 0, WETH, 0n, AMOUNT, owner]);
@@ -129,11 +131,11 @@ test('a secondary signer looks the account up, approves a payout that needs appr
   const { owner, ids, codes } = await queueWithdrawals(sc, 1, async () => {
     // A signer nominated, accepted from its own key, active after the delay;
     // then every release needs a signer's approval.
-    await sc.diamondWrite('lender', 'addSigner', [sc.address('lender'), signer]);
-    await sc.diamondWrite('borrower', 'acceptSignerRole', [sc.address('lender')]);
+    await protect(sc, 'lender', sc.address('lender'), 'signerChange', [VAULT_SIGNER.add, signer]);
+    await protect(sc, 'borrower', sc.address('lender'), 'signerChange', [VAULT_SIGNER.accept, signer]);
     await increaseTime(DELAY + 60);
     await mine();
-    await sc.diamondWrite('borrower', 'finalizeAddSigner', [sc.address('lender'), signer]);
+    await protect(sc, 'borrower', sc.address('lender'), 'finalizeSigner', [signer], false);
     await sc.diamondWrite('lender', 'setRequireCosign', [sc.address('lender'), true]);
   });
   const id = ids[0]!;

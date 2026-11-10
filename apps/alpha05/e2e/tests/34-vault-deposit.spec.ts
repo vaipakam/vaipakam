@@ -21,6 +21,7 @@ import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { enableProtection } from '../lib/protection';
 
 type Hex = `0x${string}`;
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -213,7 +214,7 @@ test('protected mode is stated in the receipt, and Terms published during the re
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
   await sc.write('lender', WETH, TOKEN_ABI, 'deposit', [], parseEther('0.05'));
-  await sc.diamondWrite('lender', 'enableProtectedMode', [2 * 24 * 60 * 60, false]);
+  await enableProtection(sc, 'lender', 2 * 24 * 60 * 60);
 
   const { page, flags } = await launchWallet('freshLender');
   await openDeposit(page);

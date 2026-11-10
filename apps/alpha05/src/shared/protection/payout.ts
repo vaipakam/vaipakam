@@ -11,12 +11,21 @@
  * wallet without the mode is paid at once.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { ProtectedAccountFacetABI, VaultOutflowFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { ProtectedAccountFacetABI, VaipakamVaultImplementationABI, VaultOutflowFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import {
+  protectedAccountFromVault,
+  type DiamondProtection,
+  type ProtectedAccountRecordFromVault,
+  type VaultProtectionState,
+} from '@vaipakam/lib/protectedAccountView';
 import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
 const PROTECTED = ProtectedAccountFacetABI as Abi;
+/** #3379 B2 — the account's vault, which holds its protected record. */
+export const VAULT = VaipakamVaultImplementationABI as Abi;
+const ZERO = '0x0000000000000000000000000000000000000000';
 const PAYOUT = VaultPayoutFacetABI as Abi;
 const OUTFLOW = VaultOutflowFacetABI as Abi;
 
@@ -37,7 +46,8 @@ export interface Protection {
   controller: Hex;
 }
 
-/** `getProtectedAccount`'s answer, as far as a payout's route reads it. */
+/** The account's protected record (the vault's, with the Diamond's co-sign
+ *  setting), as far as a payout's route reads it. */
 export interface ProtectedAccountAnswer {
   enabled: boolean;
   locked: boolean;
@@ -56,14 +66,44 @@ export function protectionFrom(a: ProtectedAccountAnswer | null): Protection | n
     : { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign, retired: a.retired, controller: a.controller };
 }
 
+/** #3379 B2 — the account's protected record, now held by its vault: the
+ *  Diamond's `getProtection(account)` names the vault (and the co-sign
+ *  setting), the vault's `protectionState()` and `vaultOwner()` the rest. An
+ *  account with no vault reads as protected mode off. Reverts are thrown
+ *  (wrap in `answerOrNull` to read one as unread). The vault exposes no
+ *  pending setting times nor when its lock was set: those read 0
+ *  ({@link protectedAccountFromVault}). */
+export interface ProtectedRecord {
+  record: ProtectedAccountRecordFromVault;
+  /** The account's vault; null when it has none. */
+  vault: Hex | null;
+  signers: readonly Hex[];
+  allowlist: readonly Hex[];
+}
+
+export async function readProtectedRecord(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<ProtectedRecord> {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const protection = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtection', args: [account], ...at })) as DiamondProtection;
+  const vault = protection[0].toLowerCase() === ZERO ? null : protection[0];
+  if (vault === null) return { record: protectedAccountFromVault(account, protection, null, null), vault, signers: [], allowlist: [] };
+  const [state, owner] = await Promise.all([
+    c.readContract({ address: vault, abi: VAULT, functionName: 'protectionState', ...at }) as Promise<VaultProtectionState>,
+    c.readContract({ address: vault, abi: VAULT, functionName: 'vaultOwner', ...at }) as Promise<Hex>,
+  ]);
+  return { record: protectedAccountFromVault(account, protection, state, owner), vault, signers: state[5], allowlist: state[6] };
+}
+
+/** The account's record as a payout's route reads it, or null when the
+ *  contract gave no answer (a failed source is thrown). */
+export async function readProtectedAccountAnswer(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<ProtectedAccountAnswer | null> {
+  const r = await answerOrNull(readProtectedRecord(c, diamond, account, blockNumber));
+  return r === null ? null : r.record;
+}
+
 /** The wallet's mode, or null when the contract gave no answer (a failed
  *  source is thrown, so the own rail tries the next one). */
 export async function readProtection(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<Protection | null> {
-  const at = blockNumber === undefined ? {} : { blockNumber };
-  const a = (await answerOrNull(
-    c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }),
-  )) as ProtectedAccountAnswer | null;
-  return protectionFrom(a);
+  return protectionFrom(await readProtectedAccountAnswer(c, diamond, account, blockNumber));
 }
 
 /** Where a payment to `account` from `source`'s vault goes:

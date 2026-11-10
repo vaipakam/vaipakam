@@ -20,15 +20,15 @@
  * queued row, so a locked account's queue is empty.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, ProtectedAccountFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
 import type { CopyAccess } from '../copy/useCopy';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eligibility/types';
 import { answerOrNull } from '../reads/answer';
+import { readProtectedRecord } from './payout';
 
 type Hex = `0x${string}`;
 
-const PROTECTED = ProtectedAccountFacetABI as Abi;
 export const PAYOUT = VaultPayoutFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 
@@ -114,17 +114,19 @@ type RawMode = { enabled: boolean; locked: boolean; requireCosign: boolean; reti
  *  whose read failed stays in the list, said so. */
 export async function readAccountQueue(c: PublicClient, diamond: Hex, account: Hex): Promise<AccountQueue> {
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
-  const [block, mode, signers, allowlist, paused, escapeOpen, escapeOpensAt, ids] = await Promise.all([
+  // #3379 B2: the mode, its signers and its allowlist are the vault's record.
+  const [block, record, paused, escapeOpen, escapeOpensAt, ids] = await Promise.all([
     c.getBlock(),
-    read<RawMode>(PROTECTED, 'getProtectedAccount', [account]),
-    read<readonly Hex[]>(PROTECTED, 'getProtectedSigners', [account]),
-    read<readonly Hex[]>(PROTECTED, 'getAllowlist', [account]),
+    answerOrNull(readProtectedRecord(c, diamond, account)),
     read<boolean>(ADMIN, 'paused'),
     read<boolean>(PAYOUT, 'isEscapeOpen'),
     read<bigint>(PAYOUT, 'escapeOpensAt'),
     read<readonly bigint[]>(PAYOUT, 'getPendingPayoutIds', [account]),
   ]);
   const rows = ids === null ? null : await Promise.all(ids.map((id) => readQueueRow(c, diamond, id)));
+  const mode: RawMode | null = record === null ? null : record.record;
+  const signers = record === null ? null : record.signers;
+  const allowlist = record === null ? null : record.allowlist;
   return {
     account,
     mode:

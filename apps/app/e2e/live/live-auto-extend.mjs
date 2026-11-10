@@ -254,7 +254,22 @@ try {
     read('hasAcceptedCurrentTerms', [BORROWER], at),
     read('hasAcceptedCurrentTerms', [LENDER], at),
   ]);
-  pre.protection = await read('getProtectedAccount', [BORROWER], at);
+  // #3379 B2 — protected mode's record lives in the account's vault, which
+  // the Diamond names; no vault reads as protection off.
+  {
+    const [vault] = await read('getProtection', [BORROWER], at);
+    if (/^0x0{40}$/i.test(vault)) pre.protection = { enabled: false, locked: false };
+    else {
+      const [enabled, locked] = await pub.readContract({
+        address: vault,
+        abi: readJson('packages/contracts/src/abis/VaipakamVaultImplementation.json'),
+        functionName: 'protectionCore',
+        args: [],
+        blockNumber: at,
+      });
+      pre.protection = { enabled, locked };
+    }
+  }
   pre.deadlines = await read('getLoanDeadlines', [LOAN_ID], at);
   pre.asset = pre.funding[0];
   const tokenRead = (functionName, args = []) => pub.readContract({ address: pre.asset, abi: erc20Abi, functionName, args, blockNumber: at });

@@ -172,7 +172,8 @@ export class StepSender {
    * send it and wait for its receipt. `worth`, when given, reads the
    * simulation's return value and says whether the call would do anything; a
    * call it judges idle is not sent (an always-succeeding continuation that
-   * would only burn gas).
+   * would only burn gas). `to`, when given, is the contract this one call goes
+   * to instead of the pass's `target` (a user's vault, #3379 B2).
    */
   async call(
     step: string,
@@ -181,6 +182,7 @@ export class StepSender {
     args: readonly unknown[],
     value: bigint = 0n,
     worth?: (simulated: unknown) => boolean,
+    to?: Address,
   ): Promise<CallResult> {
     this.receipt = null;
     this.refusal = null;
@@ -233,7 +235,7 @@ export class StepSender {
     }
     let simulated: unknown;
     try {
-      ({ result: simulated } = await ctx.client.simulateContract({ address: this.config.target ?? ctx.diamond, abi, functionName, args, value, account: ctx.wallet.account! }));
+      ({ result: simulated } = await ctx.client.simulateContract({ address: to ?? this.config.target ?? ctx.diamond, abi, functionName, args, value, account: ctx.wallet.account! }));
     } catch (err) {
       if (err instanceof PastRunDeadline) return this.stop('deadline');
       const c = classify(err);
@@ -257,7 +259,7 @@ export class StepSender {
     const label = `[keeper] ${pass} chain=${ctx.chainId} ${functionName}(${subject})`;
     let hash: Hex;
     try {
-      hash = (await ctx.wallet.writeContract({ address: this.config.target ?? ctx.diamond, abi, functionName, args, value, chain: undefined, account: ctx.wallet.account ?? null } as never)) as Hex;
+      hash = (await ctx.wallet.writeContract({ address: to ?? this.config.target ?? ctx.diamond, abi, functionName, args, value, chain: undefined, account: ctx.wallet.account ?? null } as never)) as Hex;
     } catch (err) {
       // A deferral at the deadline sent nothing, and says so.
       if (reportSendError(label, err, `send failed: ${shortErr(err)}`)) return this.stop('deadline');

@@ -16,12 +16,17 @@
  *     an empty queue, because an empty list would hide a payout an attacker
  *     queued.
  */
-import { protectedAccountFromView } from '@vaipakam/lib/protectedAccountView';
+import {
+  protectedAccountFromVault,
+  type DiamondProtection,
+  type VaultProtectionState,
+} from '@vaipakam/lib/protectedAccountView';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { parseEventLogs, type Log } from 'viem';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { isMissingSelectorError } from '../contracts/preflights';
 import { LEGACY_DIAMOND_NFT_ABI, POSITION_NFT_ABI, type PositionNftMode } from '../contracts/positionNft';
@@ -33,6 +38,14 @@ export const ROW_STATE = { Queued: 1, Released: 2, Cancelled: 3 } as const;
 export const ASSET_KIND = { ERC20: 0, ERC721: 1, ERC1155: 2 } as const;
 export type AssetKind = (typeof ASSET_KIND)[keyof typeof ASSET_KIND];
 
+/**
+ * #3379 B2 — the record lives in the account's vault and is rebuilt here from
+ * the vault's views and the Diamond's `getProtection`
+ * (`protectedAccountFromVault`). The vault exposes no view of its pending
+ * setting changes or of when its lock was set, so `pendingDelay`,
+ * `pendingDelayAt`, `pendingDisableAt`, `pendingUnlockAt` and `lockedAt` read
+ * 0 (unknown, not "none pending") until B4.
+ */
 export interface ProtectedAccountRecord {
   enabled: boolean;
   locked: boolean;
@@ -116,12 +129,18 @@ export interface ReplacementState {
   proposedBy: `0x${string}`;
   readyAt: bigint;
   round: number;
-  approvals: number;
+  /** #3379 B2 — the vault does not expose its approval tally: null (unknown).
+   *  The vault re-checks the majority when the move is completed. */
+  approvals: number | null;
+  /** The majority of the signers active now (the vault's own rule). */
   threshold: number;
 }
 
 export interface ProtectedAccountSnapshot {
   supported: boolean;
+  /** #3379 B2 — the account's vault, where its protected record lives and
+   *  every protected-mode write is sent; null when it has none yet. */
+  vault: `0x${string}` | null;
   /** The account record could not be read: render no controls. */
   recordFailed: boolean;
   record: ProtectedAccountRecord | null;
@@ -483,7 +502,9 @@ export function replacementStage(
   if (signers.some((x) => x.signer.toLowerCase() === nominee)) return 'nomineeIsSigner';
   const manager = (record.retired ? record.controller : account).toLowerCase();
   const bySigner = repl.proposedBy.toLowerCase() !== manager;
-  if (bySigner && (signers.length < MIN_RECOVERY_SIGNERS || repl.approvals < repl.threshold)) {
+  // An unknown tally (B2: the vault does not expose it) is not read as lost:
+  // the vault re-checks the majority at completion and refuses without it.
+  if (bySigner && (signers.length < MIN_RECOVERY_SIGNERS || (repl.approvals !== null && repl.approvals < repl.threshold))) {
     return repl.readyAt > 0n ? 'quorumLost' : 'collecting';
   }
   if (repl.readyAt === 0n) return 'collecting';
@@ -548,6 +569,7 @@ function useProtectedAccountQueryOptions() {
 
       const base: ProtectedAccountSnapshot = {
         supported: true,
+        vault: null,
         recordFailed: false,
         record: null,
         signers: null,
@@ -565,25 +587,43 @@ function useProtectedAccountQueryOptions() {
         fetchedAtMs,
       };
 
-      let record: ProtectedAccountRecord;
+      // #3379 B2: the record is the vault's; the Diamond names the vault and
+      // holds the co-sign setting.
+      const readVault = <T,>(vault: `0x${string}`, functionName: string, args: readonly unknown[] = []) =>
+        publicClient!.readContract({
+          address: vault,
+          abi: VaipakamVaultImplementationABI,
+          functionName,
+          args: args as unknown[],
+          blockNumber: block.number,
+        }) as Promise<T>;
+      let protection: DiamondProtection;
       try {
-        // The generated ABI names the two NFT-queue fields `retired*` since
-        // #3205; on a legacy chain they still carry the live settings.
-        const view = protectedAccountFromView(await read<object>('getProtectedAccount', [target])) as ProtectedAccountRecord;
-        record = {
-          ...view,
-          protectNfts: legacy ? view.protectNfts : false,
-          pendingNftOffAt: legacy ? view.pendingNftOffAt : 0n,
-        };
+        protection = await read<DiamondProtection>('getProtection', [target]);
       } catch (e) {
         if (isMissingSelectorError(e)) return { ...base, supported: false };
         return { ...base, recordFailed: true };
       }
+      const vault = protection[0].toLowerCase() === ZERO ? null : protection[0];
+      let state: VaultProtectionState | null = null;
+      let owner: `0x${string}` | null = null;
+      if (vault !== null) {
+        try {
+          [state, owner] = await Promise.all([
+            readVault<VaultProtectionState>(vault, 'protectionState'),
+            readVault<`0x${string}`>(vault, 'vaultOwner'),
+          ]);
+        } catch {
+          return { ...base, vault, recordFailed: true };
+        }
+      }
+      // NFT protection's Diamond queue was retired (#3318): it reads off.
+      const record: ProtectedAccountRecord = protectedAccountFromVault(target!, protection, state, owner);
+      const signerAddrs: `0x${string}`[] | null = state ? [...state[5]] : vault === null ? [] : null;
+      const allowlist: `0x${string}`[] | null = state ? [...state[6]] : vault === null ? [] : null;
 
-      const [signerAddrs, allowlist, payoutIds, transferIds, holderLockRaw, repl, escapeOpen, bounds, pendAllow, pendSign] =
-        await Promise.all([
-        soft(read<`0x${string}`[]>('getProtectedSigners', [target])),
-        soft(read<`0x${string}`[]>('getAllowlist', [target])),
+      const none = <T,>(v: T) => Promise.resolve(v);
+      const [payoutIds, transferIds, holderLockRaw, repl, escapeOpen, bounds, pending] = await Promise.all([
         soft(read<bigint[]>('getPendingPayoutIds', [target])),
         // Standalone mode has no NFT queue: an empty list, not an unread one.
         legacy ? soft(readLegacy<bigint[]>('getPendingTransferIds', [target])) : Promise.resolve([] as bigint[]),
@@ -598,24 +638,14 @@ function useProtectedAccountQueryOptions() {
                 blockNumber: block.number,
               }) as Promise<readonly [boolean, bigint, bigint, bigint, bigint]>,
             ),
-        soft(
-          read<
-            readonly [
-              { nominee: `0x${string}`; proposedBy: `0x${string}`; readyAt: bigint; round: number; approvals: number },
-              bigint,
-              bigint,
-            ]
-          >('getReplacement', [target]),
-        ),
+        vault === null
+          ? none([ZERO, ZERO, 0n, 0] as unknown as readonly [`0x${string}`, `0x${string}`, bigint, number])
+          : soft(readVault<readonly [`0x${string}`, `0x${string}`, bigint, number]>(vault, 'replacementProposal')),
         soft(read<boolean>('isEscapeOpen')),
         soft(read<readonly [bigint, bigint]>('getProtectedDelayBounds')),
-        soft(read<readonly [readonly `0x${string}`[], readonly bigint[]]>('getPendingAllowlistAdditions', [target])),
-        soft(
-          read<readonly [readonly `0x${string}`[], readonly bigint[], readonly boolean[]]>(
-            'getPendingSignerAdditions',
-            [target],
-          ),
-        ),
+        vault === null
+          ? none([[], []] as unknown as readonly [readonly `0x${string}`[], readonly `0x${string}`[]])
+          : soft(readVault<readonly [readonly `0x${string}`[], readonly `0x${string}`[]]>(vault, 'pendingAdditions')),
       ]);
 
       // A list is known only if EVERY entry under it read: a partial queue
@@ -629,9 +659,27 @@ function useProtectedAccountQueryOptions() {
         ? await all(
             signerAddrs.map(async (signer) => {
               const c = await soft(
-                read<{ addAt: bigint; accepted: boolean; removeAt: bigint }>('getSignerChange', [target, signer]),
+                readVault<{ addAt: bigint; accepted: boolean; removeAt: bigint }>(vault!, 'signerEntry', [signer]),
               );
               return c ? { signer, removeAt: c.removeAt } : null;
+            }),
+          )
+        : null;
+
+      // Each pending addition's timing is in its vault entry.
+      const pendAllow = pending
+        ? await all(
+            pending[0].map(async (address) => {
+              const e = await soft(readVault<{ readyAt: bigint }>(vault!, 'allowEntry', [address]));
+              return e ? { address, at: BigInt(e.readyAt) } : null;
+            }),
+          )
+        : null;
+      const pendSign = pending
+        ? await all(
+            pending[1].map(async (address) => {
+              const e = await soft(readVault<{ addAt: bigint; accepted: boolean }>(vault!, 'signerEntry', [address]));
+              return e ? { address, at: BigInt(e.addAt), accepted: e.accepted } : null;
             }),
           )
         : null;
@@ -691,6 +739,7 @@ function useProtectedAccountQueryOptions() {
 
       return {
         ...base,
+        vault,
         record: {
           ...record,
           delaySeconds: Number(record.delaySeconds),
@@ -698,10 +747,8 @@ function useProtectedAccountQueryOptions() {
         },
         signers,
         allowlist,
-        pendingAllowlist: pendAllow ? pendAllow[0].map((address, i) => ({ address, at: BigInt(pendAllow[1][i]) })) : null,
-        pendingSigners: pendSign
-          ? pendSign[0].map((address, i) => ({ address, at: BigInt(pendSign[1][i]), accepted: pendSign[2][i] }))
-          : null,
+        pendingAllowlist: pendAllow,
+        pendingSigners: pendSign,
         payouts: payouts?.sort((a, b) => (a.releaseAt < b.releaseAt ? -1 : 1)) ?? null,
         transfers,
         holderLock: holderLockRaw
@@ -715,12 +762,12 @@ function useProtectedAccountQueryOptions() {
           : null,
         replacement: repl
           ? {
-              nominee: repl[0].nominee,
-              proposedBy: repl[0].proposedBy,
-              readyAt: BigInt(repl[0].readyAt),
-              round: Number(repl[0].round),
-              approvals: Number(repl[1]),
-              threshold: Number(repl[2]),
+              nominee: repl[0],
+              proposedBy: repl[1],
+              readyAt: BigInt(repl[2]),
+              round: Number(repl[3]),
+              approvals: null,
+              threshold: Math.floor((signerAddrs?.length ?? 0) / 2) + 1,
             }
           : null,
         escapeOpen,

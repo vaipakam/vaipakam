@@ -1,29 +1,39 @@
 /**
  * ACC-36 / ACC-37 / ACC-43 — the Vault page's safety card: the account's
  * protected mode as the protocol stores it, and the four safety actions the
- * card offers in Basic mode. Each is its own call on `ProtectedAccountFacet`:
+ * card offers in Basic mode. #3379 B2: the record lives in the account's
+ * vault (`VaultProtection`, run through the vault's `protect(bytes)` with the
+ * wallet's direct authorization), and the Diamond applies its platform side
+ * (`applyProtection`). Each action is one or more transactions, sent in
+ * order ({@link safetySteps}):
  *
- * - `enable`: `enableProtectedMode(delaySeconds, protectNfts)`. Immediate,
- *   because it can only reduce what a thief could take. Refused during a
- *   pause and when the mode is already on; the delay must sit inside the
- *   protocol's bounds. It creates the wallet's vault if it has none.
- * - `lock`: `lockVault(account)`, by the account's manager or a secondary
- *   signer. Immediate and open during a pause: it cancels every queued
- *   payout and transfer (their assets stay in the vault), stops new payouts
+ * - `enable`: the Diamond's `getOrCreateUserVault` when the wallet has no
+ *   vault yet, the vault's `enable(delay)`, the Diamond's
+ *   `lockPositionNfts(account)` when NFT protection is chosen, then
+ *   `applyProtection(account)`. The delay must sit inside the protocol's
+ *   bounds.
+ * - `lock`: the vault's `lock`, then `applyProtection(account)`: it cancels
+ *   every queued payout (their assets stay in the vault), stops new payouts
  *   and new positions, and drops every pending change.
- * - `unlock`: `requestUnlock(account)`, by the manager. Refused during a
- *   pause and a new primary's cool-down. The unlock takes effect only after
- *   the account's delay, through `finalize`.
- * - `finalize`: `finalizeSettingChanges(account)`, by anyone. Applies EVERY
- *   change that is due at once (a lowered delay, NFT protection off, co-sign
- *   off, the unlock, the switch-off); the switch-off waits until no payout is
- *   queued. Refused during a pause.
+ * - `unlock`: the vault's `requestUnlock`. Refused during a new primary's
+ *   cool-down. The unlock takes effect only after the account's delay,
+ *   through `finalize`.
+ * - `finalize`: the vault's `finalizeSettings()` for a due vault setting
+ *   (a lowered delay, the unlock, the switch-off, which waits until no
+ *   payout is queued), the Diamond's `finalizeSettingChanges(account)` for a
+ *   due co-sign switch-off, and `applyProtection(account)` after an unlock or
+ *   a switch-off.
+ *
+ * NOT READABLE IN B2: the vault exposes no pending setting times and not
+ * when its lock was set, so a pending unlock, switch-off or lowered delay
+ * reads as none (TODO #3379 B4).
  *
  * What a review stands on is read through the wallet's connection at one
  * block, then the protocol's own dry run of the very call is asked.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, PositionNFTABI, ProtectedAccountFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, PositionNFTABI, ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultPayoutFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -34,6 +44,7 @@ import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
 import { formatSpan, formatUtc } from '../ui/format';
 import { positionNftForDiamond } from '../positions/positionNft';
+import { readProtectedRecord, VAULT } from './payout';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -42,14 +53,18 @@ export const PROTECTED = ProtectedAccountFacetABI as Abi;
 const PAYOUT = VaultPayoutFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const POSITION_NFT = PositionNFTABI as Abi;
+const FACTORY = VaultFactoryFacetABI as Abi;
+const VAULT_PROTECTION = VaultProtectionABI as Abi;
 
 export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize';
 
+/** The `VaultProtection` function (or, for a due co-sign switch-off only,
+ *  the Diamond's) each action's main step calls. */
 export const SAFETY_FUNCTION = {
-  enable: 'enableProtectedMode',
-  lock: 'lockVault',
+  enable: 'enable',
+  lock: 'lock',
   unlock: 'requestUnlock',
-  finalize: 'finalizeSettingChanges',
+  finalize: 'finalizeSettings',
 } as const satisfies Record<SafetyAction, string>;
 
 /** `ProtectedAccountFacet.CHANGE_*`. */
@@ -91,6 +106,9 @@ export interface SafetyMode {
 /** Everything the card and a review read, at one block. */
 export interface SafetyFacts {
   account: Hex;
+  /** The account's vault, which holds its protected record; null when it
+   *  has none (or the mode was unread). */
+  vault: Hex | null;
   /** The mode; 'absent' when this Diamond has no protected-account feature;
    *  null when unread. */
   mode: SafetyMode | 'absent' | null;
@@ -105,9 +123,9 @@ export interface SafetyFacts {
   readAt: number;
 }
 
-/** `getProtectedAccount`'s answer. `retiredProtectNfts` and
- *  `retiredPendingNftOffAt` hold the NFT flag only on a pre-#3205 Diamond
- *  (where the same fields were `protectNfts` / `pendingNftOffAt`). */
+/** The account's protected record (`protectedAccountFromVault`). On a
+ *  pre-#3205 Diamond the NFT flag was `retiredProtectNfts` /
+ *  `protectNfts`. */
 type RawMode = Record<string, boolean | number | bigint | string>;
 
 /** The PositionNFT holder lock's answer, or null when unread; 'legacy' on a
@@ -120,7 +138,7 @@ export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
   return {
     enabled: r.enabled === true,
     locked: r.locked === true,
-    nftLock: legacy ? r.retiredProtectNfts === true : lock === null ? null : lock.locked,
+    nftLock: legacy ? (r.retiredProtectNfts ?? r.protectNfts) === true : lock === null ? null : lock.locked,
     nftUnlockAt: legacy || lock === null ? 0 : lock.unlockAt,
     requireCosign: r.requireCosign === true,
     retired: r.retired === true,
@@ -129,7 +147,7 @@ export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
     pendingDelayAt: n(r.pendingDelayAt),
     pendingDisableAt: n(r.pendingDisableAt),
     pendingUnlockAt: n(r.pendingUnlockAt),
-    pendingNftOffAt: legacy ? n(r.retiredPendingNftOffAt) : 0,
+    pendingNftOffAt: legacy ? n(r.retiredPendingNftOffAt ?? r.pendingNftOffAt) : 0,
     pendingCosignOffAt: n(r.pendingCosignOffAt),
     cooldownUntil: n(r.cooldownUntil),
     lockedAt: n(r.lockedAt),
@@ -141,16 +159,13 @@ export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
 /** The mode, 'absent' when the Diamond routes no such function (it reverts
  *  `FunctionDoesNotExist`), null for any other revert. A failed source is
  *  thrown, so the own rail tries the next one. */
-async function readMode(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<SafetyMode | 'absent' | null> {
+async function readMode(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<{ mode: SafetyMode | 'absent' | null; vault: Hex | null }> {
   try {
-    const [raw, lock] = await Promise.all([
-      c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], blockNumber }) as Promise<RawMode>,
-      readNftLock(c, diamond, account, blockNumber),
-    ]);
-    return toMode(raw, lock);
+    const [rec, lock] = await Promise.all([readProtectedRecord(c, diamond, account, blockNumber), readNftLock(c, diamond, account, blockNumber)]);
+    return { mode: toMode(rec.record as unknown as RawMode, lock), vault: rec.vault };
   } catch (e) {
     if (!isContractAnswer(e)) throw e;
-    return refusalFromError(e).code === 'FunctionDoesNotExist' ? 'absent' : null;
+    return { mode: refusalFromError(e).code === 'FunctionDoesNotExist' ? 'absent' : null, vault: null };
   }
 }
 
@@ -173,7 +188,7 @@ export async function readSafetyFacts(c: PublicClient, diamond: Hex, account: He
   const at = { blockNumber: block.number };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
     answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
-  const [mode, bounds, paused, posture, ids] = await Promise.all([
+  const [{ mode, vault }, bounds, paused, posture, ids] = await Promise.all([
     readMode(c, diamond, account, block.number),
     read<readonly [bigint, bigint]>(PROTECTED, 'getProtectedDelayBounds'),
     read<boolean>(ADMIN, 'paused'),
@@ -182,6 +197,7 @@ export async function readSafetyFacts(c: PublicClient, diamond: Hex, account: He
   ]);
   return {
     account,
+    vault,
     mode,
     bounds: bounds === null ? null : { min: Number(bounds[0]), max: Number(bounds[1]) },
     paused,
@@ -236,10 +252,47 @@ export interface SafetyReview {
   readAt: number;
 }
 
-/** The call an action stands for. */
-export function safetyCall(action: SafetyAction, account: Hex, draft: SafetyDraft | null) {
-  const args = action === 'enable' ? ([draft?.delaySeconds ?? 0, draft?.protectNfts ?? false] as const) : ([account] as const);
-  return { abi: PROTECTED, functionName: SAFETY_FUNCTION[action], args };
+/** One transaction of an action: its target, the Diamond or the account's
+ *  vault (`'vault'`, resolved when it is sent: a vault the action's first
+ *  step creates has no address before it). */
+export interface SafetyStep {
+  to: 'diamond' | 'vault';
+  abi: Abi;
+  functionName: string;
+  args: readonly unknown[];
+}
+
+const vaultStep = (fn: string, args: readonly unknown[]): SafetyStep => ({ to: 'vault', abi: VAULT, functionName: 'protect', args: [protectionCall(fn, args)] });
+const diamondStep = (abi: Abi, functionName: string, args: readonly unknown[]): SafetyStep => ({ to: 'diamond', abi, functionName, args });
+
+/** The transactions an action stands for, in the order they are sent
+ *  (#3379 B2). `account` is the connected wallet, which authorizes each
+ *  vault write directly; `vault` is its vault (null: none yet); `due` the
+ *  changes a `finalize` applies. */
+export function safetySteps(action: SafetyAction, account: Hex, vault: Hex | null, draft: SafetyDraft | null, due: readonly PendingChange[] = []): SafetyStep[] {
+  const auth = directAuth(account);
+  const apply = diamondStep(PROTECTED, 'applyProtection', [account]);
+  if (action === 'enable') {
+    return [
+      ...(vault === null ? [diamondStep(FACTORY, 'getOrCreateUserVault', [account])] : []),
+      vaultStep(SAFETY_FUNCTION.enable, [draft?.delaySeconds ?? 0, auth]),
+      ...(draft?.protectNfts ? [diamondStep(PROTECTED, 'lockPositionNfts', [account])] : []),
+      apply,
+    ];
+  }
+  if (action === 'lock') return [vaultStep(SAFETY_FUNCTION.lock, [auth]), apply];
+  if (action === 'unlock') return [vaultStep(SAFETY_FUNCTION.unlock, [auth])];
+  const vaultDue = due.some((d) => d === 'lowerDelay' || d === 'unlock' || d === 'disable');
+  return [
+    ...(vaultDue ? [vaultStep(SAFETY_FUNCTION.finalize, [])] : []),
+    ...(due.includes('cosignOff') ? [diamondStep(PROTECTED, 'finalizeSettingChanges', [account])] : []),
+    ...(due.includes('unlock') || due.includes('disable') ? [apply] : []),
+  ];
+}
+
+/** A step's call, its target resolved. */
+export function stepCall(step: SafetyStep, diamond: Hex, vault: Hex) {
+  return { address: step.to === 'vault' ? vault : diamond, abi: step.abi, functionName: step.functionName, args: step.args };
 }
 
 export async function readSafetyReview(own: OwnStateClient, diamond: Hex, action: SafetyAction, draft: SafetyDraft | null, identity: string, copy: Copy): Promise<SafetyReview> {
@@ -249,8 +302,12 @@ export async function readSafetyReview(own: OwnStateClient, diamond: Hex, action
   const due = action === 'finalize' && facts.mode !== null && facts.mode !== 'absent' && now !== null ? dueChanges(facts.mode, now) : [];
   const base: SafetyReview = { identity, action, draft, facts, due, dryRun: null, readAt: Date.now() };
   if (safetyBlockers(base, copy).length > 0) return base;
-  const call = safetyCall(action, account, draft);
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
+  // Only the first step can be asked on the current state: each later one
+  // depends on the one before it having landed.
+  const first = safetySteps(action, account, facts.vault, draft, due)[0];
+  if (first === undefined || (first.to === 'vault' && facts.vault === null)) return base;
+  const call = stepCall(first, diamond, facts.vault ?? diamond);
+  const dry = await askThrough(own, (c) => c.simulateContract({ ...call, account }));
   return { ...base, dryRun: dry.kind === 'answered' ? null : dry.kind === 'reverted' ? refusalFromError(dry.error) : 'unread', readAt: Date.now() };
 }
 
@@ -321,17 +378,30 @@ export function changeText(change: PendingChange, m: SafetyMode | null, copy: Co
   return copy.text(CHANGE_WORDS[change]);
 }
 
-/** The action's outcome, from the Diamond's own logs for this account. */
+/** The vault's `VaultProtection` setting actions (`SETTINGS_*`). */
+const VAULT_SETTING_OF: Partial<Record<PendingChange, number>> = { lowerDelay: 2, disable: 3, unlock: 4 };
+
+/** The action's outcome, from the last transaction's own logs: the
+ *  Diamond's for this account, and the account's vault's (#3379 B2: the
+ *  vault records its own settings; the Diamond's `ProtectionApplied` states
+ *  the posture it applied). */
 export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: Hex, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const account = r.facts.account.toLowerCase();
+  const vault = r.facts.vault?.toLowerCase() ?? null;
   const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
   const events = (parseEventLogs({ abi: [...PROTECTED, ...PAYOUT] as Abi, logs: [...own], strict: false }) as unknown as { eventName: string; args: Args }[]).filter(
     (e) => String(e.args.account ?? '').toLowerCase() === account,
   );
+  const vaultEvents =
+    vault === null
+      ? []
+      : (parseEventLogs({ abi: VAULT_PROTECTION, logs: logs.filter((l) => l.address.toLowerCase() === vault), strict: false }) as unknown as { eventName: string; args: Args }[]);
   const find = (name: string) => events.filter((e) => e.eventName === name);
+  const findVault = (name: string) => vaultEvents.filter((e) => e.eventName === name);
+  const applied = find('ProtectionApplied');
   if (r.action === 'enable') {
-    const on = find('ProtectedModeEnabled')[0];
+    const on = applied.find((e) => e.args.enabled === true);
     if (!on) return [{ status: 'not-done', label: text('safety.titleEnable'), reason: text('safety.notEnabled') }];
     const delay = Number(on.args.delaySeconds as number | bigint);
     const label = format('safety.legEnabled', { delay: formatSpan(delay) });
@@ -339,23 +409,33 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
     return [{ status: 'done', label }];
   }
   if (r.action === 'lock') {
-    if (find('VaultLocked').length === 0) return [{ status: 'not-done', label: text('safety.titleLock'), reason: text('safety.lockNotRecorded') }];
+    if (!applied.some((e) => e.args.locked === true)) return [{ status: 'not-done', label: text('safety.titleLock'), reason: text('safety.lockNotRecorded') }];
     const cancelled = find('PayoutCancelled').length;
     const legs: LegOutcome[] = [{ status: 'done', label: text('safety.legLocked') }];
     if (cancelled > 0) legs.push({ status: 'done', label: format('safety.legCancelled', { count: String(cancelled) }) });
     return legs;
   }
   if (r.action === 'unlock') {
-    const asked = find('SettingChangeRequested').find((e) => Number(e.args.kind as number | bigint) === CHANGE_KIND.unlock);
+    const asked = findVault('ProtectionSettingRequested').find((e) => Number(e.args.action as number | bigint) === VAULT_SETTING_OF.unlock);
     if (!asked) return [{ status: 'not-done', label: text('safety.titleUnlock'), reason: text('safety.notRequested') }];
-    return [{ status: 'done', label: format('safety.legUnlockRequested', { at: formatUtc(BigInt(asked.args.effectiveAt as bigint)) }) }];
+    return [{ status: 'done', label: format('safety.legUnlockRequested', { at: formatUtc(BigInt(asked.args.at as bigint)) }) }];
   }
-  const applied = new Set(find('SettingChangeApplied').map((e) => Number(e.args.kind as number | bigint)));
-  const disabled = find('ProtectedModeDisabled').length > 0;
+  const diamondApplied = new Set(find('SettingChangeApplied').map((e) => Number(e.args.kind as number | bigint)));
+  const vaultApplied = new Set(findVault('ProtectionSettingApplied').map((e) => Number(e.args.action as number | bigint)));
+  const disabled = findVault('ProtectionDisabled').length > 0 || applied.some((e) => e.args.enabled === false);
+  const unlocked = applied.some((e) => e.args.enabled === true && e.args.locked === false);
   const mode = r.facts.mode === null || r.facts.mode === 'absent' ? null : r.facts.mode;
   const legs: LegOutcome[] = r.due.map((change) => {
     const label = changeText(change, mode, copy);
-    const done = change === 'disable' ? disabled : applied.has(CHANGE_KIND[change]);
+    const v = VAULT_SETTING_OF[change];
+    const done =
+      change === 'disable'
+        ? disabled
+        : change === 'unlock'
+          ? unlocked || vaultApplied.has(v!)
+          : v !== undefined
+            ? vaultApplied.has(v)
+            : diamondApplied.has(CHANGE_KIND[change]);
     return done ? { status: 'done', label } : { status: 'not-done', label, reason: text(change === 'disable' ? 'safety.rowsOpen' : 'safety.notApplied') };
   });
   return legs.length > 0 ? legs : [{ status: 'not-done', label: text('safety.titleFinalize'), reason: text('safety.nothingDue') }];

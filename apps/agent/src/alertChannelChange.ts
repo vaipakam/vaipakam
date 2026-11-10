@@ -31,7 +31,7 @@
  * alerts.
  */
 import { createPublicClient, http, type Address } from 'viem';
-import { ProtectedAccountFacetABI } from '@vaipakam/contracts/abis';
+import { ProtectedAccountFacetABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { getChainConfigs, type Env } from './env';
 
@@ -74,8 +74,11 @@ export const APPLY_BATCH = 50;
 /** Closed rows are kept this long for the record, then pruned. */
 export const CLOSED_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 
-/** The default reader: `getProtectedAccount` on the chain's Diamond. A
- *  chain with no Diamond reads as not protected; an unreadable one as null. */
+/** The default reader: the account's protected record, held by its vault
+ *  since #3379 B2 (the Diamond's `getProtection` names the vault; the vault's
+ *  `protectionCore` says whether protected mode is on and its delay). A
+ *  wallet with no vault is not protected. A chain with no Diamond reads as
+ *  not protected; an unreadable one as null. */
 export function chainProtectionReader(env: Env): ProtectionReader {
   const chains = new Map(getChainConfigs(env).map((c) => [c.id, c]));
   return async (wallet, chainId) => {
@@ -87,13 +90,20 @@ export function chainProtectionReader(env: Env): ProtectionReader {
     if (!chain) return null;
     try {
       const client = createPublicClient({ transport: http(chain.rpc) });
-      const a = (await client.readContract({
+      const [vault] = (await client.readContract({
         address: chain.diamond as Address,
         abi: ProtectedAccountFacetABI,
-        functionName: 'getProtectedAccount',
+        functionName: 'getProtection',
         args: [wallet as Address],
-      })) as { enabled: boolean; delaySeconds: number | bigint };
-      return { enabled: Boolean(a.enabled), delaySeconds: Number(a.delaySeconds) };
+      })) as readonly [Address, boolean, bigint];
+      if (/^0x0{40}$/i.test(vault)) return { enabled: false, delaySeconds: 0 };
+      const [enabled, , delay] = (await client.readContract({
+        address: vault,
+        abi: VaipakamVaultImplementationABI,
+        functionName: 'protectionCore',
+        args: [],
+      })) as readonly [boolean, boolean, number | bigint, Address];
+      return { enabled: Boolean(enabled), delaySeconds: Number(delay) };
     } catch {
       return null;
     }

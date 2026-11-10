@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import type { Abi } from 'viem';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -12,7 +14,7 @@ import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
-import { measureSafety, readSafetyReview, safetyBlockers, safetyCall, safetyChanged, type SafetyAction, type SafetyDraft, type SafetyReview } from './safety';
+import { measureSafety, readSafetyReview, safetyBlockers, safetyChanged, safetySteps, stepCall, type SafetyAction, type SafetyDraft, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
 
 /** The store key the card's safety action keeps its state under: one at a
@@ -73,12 +75,29 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
       const stop = (reason: string): never => {
         throw new StatedRefusal({ code: 'SafetyStopped', reason, reopensAt: null, remedy: null });
       };
-      const call = safetyCall(action, account, draft);
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
-      if (dry.kind === 'reverted') return stop(format('safety.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
-      if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
-      setStep(format('accept.stepOf', { n: '1', total: '1', what: text(STEP[action]) }));
-      return writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account });
+      // #3379 B2: the action's transactions, in order; each but the last is
+      // awaited here, the last is the one the tracker follows.
+      const steps = safetySteps(action, account, review.facts.vault, draft, review.due);
+      let vault = review.facts.vault;
+      for (const [i, step] of steps.entries()) {
+        if (step.to === 'vault' && vault === null) {
+          const read = await own.read((c) =>
+            c.readContract({ address: diamond, abi: VaultFactoryFacetABI as Abi, functionName: 'getUserVaultAddress', args: [account] }) as Promise<`0x${string}`>,
+          );
+          vault = /^0x0{40}$/i.test(read.value) ? null : read.value;
+          if (vault === null) return stop(text('safety.notEnabled'));
+        }
+        const call = stepCall(step, diamond, vault ?? diamond);
+        const dry = await askThrough(own, (c) => c.simulateContract({ ...call, account }));
+        if (dry.kind === 'reverted') return stop(format('safety.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
+        if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
+        setStep(format('accept.stepOf', { n: String(i + 1), total: String(steps.length), what: text(STEP[action]) }));
+        const hash = await writeContract(config, { ...call, chainId: chain.chainId, account });
+        if (i === steps.length - 1) return hash;
+        const landed = await waitForTransactionReceipt(config, { hash, chainId: chain.chainId });
+        if (landed.status !== 'success') return stop(text('flow.reverted'));
+      }
+      return stop(text('safety.nothingDue'));
     },
     measure: async (receipt) => (review ? measureSafety(review, receipt.logs, diamond, copy) : []),
     release: async () => null,

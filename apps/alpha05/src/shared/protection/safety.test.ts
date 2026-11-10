@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
-import { ProtectedAccountFacetABI } from '@vaipakam/contracts/abis';
-import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyCall, safetyChanged, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
+import { ProtectedAccountFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
+import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
 
 type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
 const ME = '0x00000000000000000000000000000000000000e1' as Hex;
 const OTHER = '0x00000000000000000000000000000000000000e2' as Hex;
+const VAULT = '0x00000000000000000000000000000000000000f1' as Hex;
 const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 const DAY = 86_400;
 const NOW = 1_800_000_000;
@@ -42,6 +44,7 @@ const LOCKED: SafetyMode = { ...ON, locked: true, lockedAt: NOW - DAY, lockedBy:
 function facts(p: Partial<SafetyFacts> = {}): SafetyFacts {
   return {
     account: ME,
+    vault: VAULT,
     mode: OFF,
     bounds: { min: 2 * DAY, max: 5 * DAY },
     paused: false,
@@ -58,7 +61,8 @@ function review(action: SafetyReview['action'], f: Partial<SafetyFacts> = {}, p:
 }
 
 function eventLog(eventName: string, args: Record<string, unknown>, data: { types: { type: string }[]; values: unknown[] }, address: Hex = DIAMOND): Log {
-  const topics = encodeEventTopics({ abi: ProtectedAccountFacetABI as Abi, eventName, args } as never);
+  const abi = (address === VAULT ? VaultProtectionABI : ProtectedAccountFacetABI) as Abi;
+  const topics = encodeEventTopics({ abi, eventName, args } as never);
   return { address, topics, data: data.types.length === 0 ? '0x' : encodeAbiParameters(data.types, data.values as never) } as unknown as Log;
 }
 
@@ -72,12 +76,20 @@ describe('pending and due changes', () => {
   });
 });
 
-describe('safetyCall', () => {
-  it('turns on with the chosen delay and NFT setting, and acts on the wallet’s own account otherwise', () => {
-    expect(safetyCall('enable', ME, { delaySeconds: 3 * DAY, protectNfts: true })).toMatchObject({ functionName: 'enableProtectedMode', args: [3 * DAY, true] });
-    expect(safetyCall('lock', ME, null)).toMatchObject({ functionName: 'lockVault', args: [ME] });
-    expect(safetyCall('unlock', ME, null)).toMatchObject({ functionName: 'requestUnlock', args: [ME] });
-    expect(safetyCall('finalize', ME, null)).toMatchObject({ functionName: 'finalizeSettingChanges', args: [ME] });
+describe('safetySteps', () => {
+  it('writes each action to the wallet’s own vault with its direct authorization, and the Diamond applies the posture', () => {
+    const auth = directAuth(ME);
+    const protect = (fn: string, args: readonly unknown[]) => ({ to: 'vault', functionName: 'protect', args: [protectionCall(fn, args)] });
+    expect(safetySteps('enable', ME, VAULT, { delaySeconds: 3 * DAY, protectNfts: true })).toMatchObject([
+      protect('enable', [3 * DAY, auth]),
+      { to: 'diamond', functionName: 'lockPositionNfts', args: [ME] },
+      { to: 'diamond', functionName: 'applyProtection', args: [ME] },
+    ]);
+    expect(safetySteps('enable', ME, null, { delaySeconds: 3 * DAY, protectNfts: false }).map((x) => x.functionName)).toEqual(['getOrCreateUserVault', 'protect', 'applyProtection']);
+    expect(safetySteps('lock', ME, VAULT, null)).toMatchObject([protect('lock', [auth]), { to: 'diamond', functionName: 'applyProtection', args: [ME] }]);
+    expect(safetySteps('unlock', ME, VAULT, null)).toMatchObject([protect('requestUnlock', [auth])]);
+    expect(safetySteps('finalize', ME, VAULT, null, ['cosignOff'])).toMatchObject([{ to: 'diamond', functionName: 'finalizeSettingChanges', args: [ME] }]);
+    expect(safetySteps('finalize', ME, VAULT, null, ['unlock']).map((x) => x.functionName)).toEqual(['protect', 'applyProtection']);
   });
 });
 
@@ -129,21 +141,18 @@ describe('safetyChanged', () => {
 });
 
 describe('measureSafety', () => {
-  it('reads the switch-on and its delay from the Diamond’s own logs for this wallet', () => {
-    const on = eventLog('ProtectedModeEnabled', { account: ME }, { types: [{ type: 'uint32' }, { type: 'bool' }], values: [2 * DAY, false] });
-    expect(measureSafety(review('enable'), [on], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legEnabled:{"delay":"2 days"}' }]);
-    const other = eventLog('ProtectedModeEnabled', { account: OTHER }, { types: [{ type: 'uint32' }, { type: 'bool' }], values: [2 * DAY, false] });
-    expect(measureSafety(review('enable'), [other], DIAMOND, copy)[0]?.status).toBe('not-done');
-    const elsewhere = eventLog('ProtectedModeEnabled', { account: ME }, { types: [{ type: 'uint32' }, { type: 'bool' }], values: [2 * DAY, false] }, OTHER);
-    expect(measureSafety(review('enable'), [elsewhere], DIAMOND, copy)[0]?.status).toBe('not-done');
+  const posture = (account: Hex, enabled: boolean, locked: boolean, address: Hex = DIAMOND) =>
+    eventLog('ProtectionApplied', { account }, { types: [{ type: 'bool' }, { type: 'bool' }, { type: 'bool' }, { type: 'uint32' }], values: [enabled, locked, false, 2 * DAY] }, address);
+  it('reads the switch-on and its delay from the Diamond’s applied posture for this wallet', () => {
+    expect(measureSafety(review('enable'), [posture(ME, true, false)], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legEnabled:{"delay":"2 days"}' }]);
+    expect(measureSafety(review('enable'), [posture(OTHER, true, false)], DIAMOND, copy)[0]?.status).toBe('not-done');
+    expect(measureSafety(review('enable'), [posture(ME, true, false, OTHER)], DIAMOND, copy)[0]?.status).toBe('not-done');
   });
-  it('reads a lock, an unlock request and the changes applied', () => {
-    const locked = eventLog('VaultLocked', { account: ME, by: ME }, { types: [], values: [] });
-    expect(measureSafety(review('lock', { mode: ON }), [locked], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legLocked' }]);
-    const asked = eventLog('SettingChangeRequested', { account: ME, kind: 5 }, { types: [{ type: 'uint256' }, { type: 'uint256' }], values: [0n, BigInt(NOW)] });
+  it('reads a lock, an unlock request (from the vault) and the changes applied', () => {
+    expect(measureSafety(review('lock', { mode: ON }), [posture(ME, true, true)], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legLocked' }]);
+    const asked = eventLog('ProtectionSettingRequested', { action: 4 }, { types: [{ type: 'uint256' }, { type: 'uint64' }, { type: 'address' }], values: [0n, BigInt(NOW), ME] }, VAULT);
     expect(measureSafety(review('unlock', { mode: LOCKED }), [asked], DIAMOND, copy)[0]?.status).toBe('done');
-    const applied = eventLog('SettingChangeApplied', { account: ME, kind: 5 }, { types: [], values: [] });
-    const legs = measureSafety(review('finalize', { mode: LOCKED }, { due: ['unlock', 'disable'] }), [applied], DIAMOND, copy);
+    const legs = measureSafety(review('finalize', { mode: LOCKED }, { due: ['unlock', 'disable'] }), [posture(ME, true, false)], DIAMOND, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
   });
 });
@@ -155,7 +164,8 @@ describe('safetyReceipt', () => {
     expect(r.consequences).toEqual(
       expect.arrayContaining(['safety.enableNeverOthers', 'safety.enableInbound', 'safety.enableNftsOff', 'safety.enableVault', 'safety.enableVoidsPin']),
     );
-    expect(r.prompts).toBe(1);
+    // #3379 B2: the vault's write, then the Diamond applying it.
+    expect(r.prompts).toBe(2);
   });
   it('a lock states what it cancels and drops; unread facts are said', () => {
     const r = safetyReceipt(review('lock', { mode: { ...ON, pendingDelayAt: NOW, pendingDelay: 3 * DAY }, openRows: 3 }), copy);
