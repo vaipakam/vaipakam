@@ -77,6 +77,10 @@ test('a market’s own offers, recent loans and agreed-rate chart read the terms
   await expect(tip).toContainText('First 5.2%, high 5.2%, low 5.2%, last 5.2%');
   await expect(tip).toContainText('Loans agreed: 1');
   await expect(tip).toContainText('Amounts lent added up: 0.03 WETH');
+  // The tip stays inside the page, phone width included.
+  const tipBox = (await tip.boundingBox())!;
+  expect(tipBox.x).toBeGreaterThanOrEqual(0);
+  expect(tipBox.x + tipBox.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   await chart.getByTestId('desk-chart-table').locator('summary').click();
   const rows = chart.getByTestId('desk-candle-row');
   await expect(rows).toHaveCount(2);

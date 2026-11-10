@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
@@ -372,7 +372,11 @@ function RateChart({
 }) {
   const { format } = copy;
   const [boxRef, width] = useWidth<HTMLDivElement>(320);
-  const [active, setActive] = useState<number | null>(null);
+  // The active period is held by its start time, not its position, so a
+  // refresh that drops or adds a period never points at the wrong one.
+  const [activeT, setActiveT] = useState<number | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const [tipW, setTipW] = useState(170);
   const first = candles[0]!;
   const last = candles[candles.length - 1]!;
   const x1 = Math.max(Math.floor(nowSec), last.t + stepSec);
@@ -399,11 +403,17 @@ function RateChart({
     return d;
   });
   const narrow = x(first.t + stepSec) - x(first.t) < 8;
-  const tip = active === null ? null : candles[active]!;
+  const tip = activeT === null ? null : (candles.find((c) => c.t === activeT) ?? null);
   // The tip sits inside the plot beside the crosshair, on the side with more
-  // room, so it never covers the controls above the chart.
+  // room, so it never covers the controls above the chart; it is then kept
+  // within the chart's width, measured, so a narrow phone never cuts it off.
   const tipX = tip === null ? 0 : x(tip.t + stepSec / 2);
-  const tipStyle = tipX > width / 2 ? { right: Math.max(width - tipX + 12, 0), top: PAD.top } : { left: tipX + 12, top: PAD.top };
+  const wanted = tipX > width / 2 ? tipX - 12 - tipW : tipX + 12;
+  const tipStyle = { left: Math.max(0, Math.min(wanted, width - tipW)), top: PAD.top };
+  useLayoutEffect(() => {
+    const w = tipRef.current?.offsetWidth;
+    if (w !== undefined && w > 0 && w !== tipW) setTipW(w);
+  }, [tip, width, tipW]);
   return (
     <div className="rate-chart" ref={boxRef} data-testid="desk-rate-chart">
       <svg width={width} height={CHART_H} role="img" aria-label={label}>
@@ -447,7 +457,7 @@ function RateChart({
         ))}
         {narrow && candles.map((c) => <circle key={`d${c.t}`} className="chart-dot" cx={x(c.t + stepSec / 2)} cy={y(Number(c.close))} r={4} />)}
         {tip !== null && <line className="chart-cross" x1={x(tip.t + stepSec / 2)} x2={x(tip.t + stepSec / 2)} y1={PAD.top} y2={PAD.top + plotH} />}
-        {candles.map((c, i) => {
+        {candles.map((c) => {
           const w = Math.max(x(c.t + stepSec) - x(c.t), 14);
           return (
             <rect
@@ -459,17 +469,17 @@ function RateChart({
               height={plotH}
               tabIndex={0}
               aria-label={`${formatUtc(c.t)}: ${PCT(c.close)}%`}
-              onMouseEnter={() => setActive(i)}
-              onMouseLeave={() => setActive(null)}
-              onFocus={() => setActive(i)}
-              onBlur={() => setActive(null)}
+              onMouseEnter={() => setActiveT(c.t)}
+              onMouseLeave={() => setActiveT(null)}
+              onFocus={() => setActiveT(c.t)}
+              onBlur={() => setActiveT(null)}
               data-testid="desk-chart-period"
             />
           );
         })}
       </svg>
       {tip !== null && (
-        <div className="chart-tip" style={tipStyle} data-testid="desk-chart-tip" role="status">
+        <div className="chart-tip" ref={tipRef} style={tipStyle} data-testid="desk-chart-tip" role="status">
           <p>{format('desk.chartTipWhen', { when: formatUtc(tip.t), span: formatSpan(stepSec) })}</p>
           <p>{format('desk.chartTipRates', { open: PCT(tip.open), high: PCT(tip.high), low: PCT(tip.low), close: PCT(tip.close) })}</p>
           <p>{format('desk.chartTipFills', { count: String(tip.fills) })}</p>

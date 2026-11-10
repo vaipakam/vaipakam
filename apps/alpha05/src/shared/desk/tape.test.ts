@@ -79,7 +79,7 @@ describe('the fills tape (OFF-75)', () => {
     ]);
     const t = await readTape(ix, 84532, MARKET);
     expect(ix.paths[0]).toContain('/loans/recent?');
-    expect(ix.paths[0]).toContain(`limit=${TAPE_LIMIT}`);
+    expect(ix.paths[0]).toContain(`limit=${TAPE_LIMIT + 1}`);
     expect(ix.paths[0]).toContain('durationDays=30');
     expect(ix.paths[0]).toContain('excludeSaleVehicles=1');
     expect(t.fills.map((f) => f.loanId)).toEqual([9n, 3n]);
@@ -88,10 +88,19 @@ describe('the fills tape (OFF-75)', () => {
     expect(t.more).toBe(false);
   });
 
-  it('says older loans exist when the page is full and the index has more', async () => {
+  it('says older loans exist only when the index returns a row past the page', async () => {
+    const loans = Array.from({ length: TAPE_LIMIT + 1 }, (_, i) => loan({ loanId: 100 - i }));
+    const t = await readTape(indexer([{ loans, scope: SCOPE, unplaced: UNPLACED, nextBefore: 80 }]), 84532, MARKET);
+    expect(t.more).toBe(true);
+    expect(t.fills).toHaveLength(TAPE_LIMIT);
+    expect(t.fills[TAPE_LIMIT - 1]!.loanId).toBe(BigInt(100 - TAPE_LIMIT + 1));
+  });
+
+  it('does not claim older loans when the page is exactly full, even with a cursor', async () => {
     const loans = Array.from({ length: TAPE_LIMIT }, (_, i) => loan({ loanId: 100 - i }));
     const t = await readTape(indexer([{ loans, scope: SCOPE, unplaced: UNPLACED, nextBefore: 81 }]), 84532, MARKET);
-    expect(t.more).toBe(true);
+    expect(t.more).toBe(false);
+    expect(t.fills).toHaveLength(TAPE_LIMIT);
   });
 
   it('refuses an answer not scoped to the market, and one with no count of unplaced loans', async () => {

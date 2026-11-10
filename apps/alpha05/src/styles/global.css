@@ -2255,8 +2255,9 @@ a.btn {
 }
 .chart-tip {
   position: absolute;
-  min-width: 170px;
-  max-width: 220px;
+  min-width: min(170px, 100%);
+  max-width: min(220px, 100%);
+  box-sizing: border-box;
   padding: 8px 10px;
   background: var(--surface-raised);
   border: 1px solid var(--border-strong);

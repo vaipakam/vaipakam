@@ -97,7 +97,9 @@ function scopeIs(scope: unknown, m: MarketTerms): boolean {
 export async function readTape(indexer: IndexerClient, chainId: number, m: MarketTerms): Promise<Tape> {
   const q = new URLSearchParams({
     chainId: String(chainId),
-    limit: String(TAPE_LIMIT),
+    // One row past the page: only a row the index actually returns proves
+    // older loans exist (a full page alone does not).
+    limit: String(TAPE_LIMIT + 1),
     lendingAsset: m.lending.toLowerCase(),
     collateralAsset: m.collateral.toLowerCase(),
     durationDays: String(m.durationDays),
@@ -110,7 +112,7 @@ export async function readTape(indexer: IndexerClient, chainId: number, m: Marke
   const unplaced = unplacedFrom(body.unplaced);
   const fills: Fill[] = [];
   let unread = 0;
-  for (const raw of body.loans) {
+  for (const raw of body.loans.slice(0, TAPE_LIMIT)) {
     try {
       fills.push(fillFrom(raw as Json, m));
     } catch {
@@ -118,8 +120,7 @@ export async function readTape(indexer: IndexerClient, chainId: number, m: Marke
     }
   }
   fills.sort((a, b) => b.startAt - a.startAt || (a.loanId > b.loanId ? -1 : a.loanId < b.loanId ? 1 : 0));
-  const next = body.nextBefore;
-  const more = next !== null && next !== undefined && body.loans.length >= TAPE_LIMIT;
+  const more = body.loans.length > TAPE_LIMIT;
   return { fills, unread, more, unplaced };
 }
 
