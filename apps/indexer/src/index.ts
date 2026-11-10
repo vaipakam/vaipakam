@@ -775,6 +775,7 @@ async function handleChainEventWebhook(
       ]
     : undefined;
   const signingKey = await readSecret(
+    perChainBinding ? `ALCHEMY_WEBHOOK_SIGNING_KEY_${urlChain}` : 'ALCHEMY_WEBHOOK_SIGNING_KEY',
     perChainBinding ?? env.ALCHEMY_WEBHOOK_SIGNING_KEY,
   );
   const ok = await verifyAlchemySignature(
