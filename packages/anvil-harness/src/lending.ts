@@ -134,7 +134,9 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
-  return BigInt(offerEv.args.offerId as bigint);
+  const offerId = BigInt(offerEv.args.offerId as bigint);
+  await ageOffer(sc, offerId);
+  return offerId;
 }
 
 export interface RequestTerms {
@@ -187,7 +189,9 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
-  return BigInt(offerEv.args.offerId as bigint);
+  const offerId = BigInt(offerEv.args.offerId as bigint);
+  await ageOffer(sc, offerId);
+  return offerId;
 }
 
 /** The lender posts a lender offer; the borrower accepts it with a signed
@@ -214,6 +218,18 @@ export async function waitOutTermsAge(sc: ScenarioChain, termsSetAt: bigint | un
   const readyAt = Number(termsSetAt + minAge);
   const now = await sc.now();
   if (readyAt > now) await sc.warp(readyAt - now);
+}
+
+/** Moves the chain past the moment offer `offerId`'s terms become fillable,
+ *  and mines a block there, so every read (a page's preview included) sees
+ *  the offer as takeable. A seeded offer stands for one its maker posted
+ *  earlier; on an idle Anvil no block would otherwise carry the clock past
+ *  the age, and the page would keep reading the offer as just posted. The
+ *  post helpers above call it; a spec that posts its own offer for a page to
+ *  take calls it too. */
+export async function ageOffer(sc: ScenarioChain, offerId: bigint): Promise<void> {
+  const o = await sc.read<Record<string, unknown>>('getOffer', [offerId]);
+  await waitOutTermsAge(sc, o.termsSetAt as bigint | undefined);
 }
 
 /** `who` signs the acceptance terms of a posted offer exactly as it stands

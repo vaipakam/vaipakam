@@ -206,7 +206,7 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "OfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,uint256,uint256)": {
+    "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,uint256,uint256)": {
       "class": "alternative",
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
       "why": "matches an off-chain signed offer the matcher does not index; on-chain offers are matched by matchOffers"
