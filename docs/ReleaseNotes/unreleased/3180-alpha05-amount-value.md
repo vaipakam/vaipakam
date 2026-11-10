@@ -1,4 +1,4 @@
-## Thread — alpha05 shows an amount's value now (PR #<n>)
+## Thread — alpha05 shows an amount's value now (PR #3477)
 
 The new app's borrow and lend forms now show, under each typed amount, what
 the protocol values it at right now, in the protocol's own numeraire. The
