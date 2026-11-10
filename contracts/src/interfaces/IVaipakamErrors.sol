@@ -1822,6 +1822,9 @@ interface IVaipakamErrors {
     error KeeperAllocateNeedsAttributionCap(uint32 chainId);
     /// @notice `chainId`'s attribution cap cannot return to zero while its keeper allocation (`bps`) is armed.
     error AttributionCapUnderLiveKeeperBps(uint32 chainId, uint16 bps);
+    /// @notice #2045 — a per-day attribution ceiling above the protocol
+    ///         ceiling (the VPFI hard supply cap), which bounds every day anyway.
+    error AttributionCapAboveCeiling(uint32 chainId, uint256 cap, uint256 ceiling);
 
     // ─── #2961 — skipping a day whose delivery parts disagreed ───
     /// @notice Day `dayId`'s delivery parts did not disagree on its whole: there is nothing to skip.
