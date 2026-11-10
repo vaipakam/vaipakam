@@ -1009,7 +1009,7 @@ propose aucune qu'elle utilise un proxy en lecture seule. Vos
 chiffres ne viennent jamais de l'index partagé. L'adresse et le
 réseau affichés en haut sont ceux auxquels appartient chaque chiffre
 de la page. Si votre wallet est sur un réseau que l'app ne sert pas,
-rien de vous n'est affiché tant que vous ne changez pas.
+rien de vous n'est affiché tant que vous ne changez pas. Sélectionnez votre adresse en haut pour la voir en entier, la copier, passer à un autre réseau que l'app dessert ou vous déconnecter. L'app affiche l'adresse elle-même, pas un nom issu d'un service de noms, car elle ne lit rien sur le réseau principal d'Ethereum.
 
 <a id="deployments"></a>
 

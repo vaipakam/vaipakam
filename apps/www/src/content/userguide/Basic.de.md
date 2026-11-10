@@ -1013,7 +1013,7 @@ Wallet keine anbietet, nutzt sie einen Read-only-Proxy. Deine
 eigenen Zahlen kommen nie aus dem gemeinsamen Index. Adresse und
 Netzwerk oben sind die, zu denen jede Zahl auf der Seite gehört.
 Ist dein Wallet in einem Netzwerk, das die App nicht bedient, wird
-nichts von dir angezeigt, bis du wechselst.
+nichts von dir angezeigt, bis du wechselst. Tippe oben auf deine Adresse, um sie vollständig zu sehen, sie zu kopieren, in ein anderes Netzwerk der App zu wechseln oder die Verbindung zu trennen. Die App zeigt die Adresse selbst, keinen Namen aus einem Namensdienst, denn sie liest nichts im Ethereum-Mainnet.
 
 <a id="deployments"></a>
 

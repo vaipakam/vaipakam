@@ -621,6 +621,36 @@ h1 {
   font-size: 0.8rem;
   color: var(--text-muted);
 }
+.wallet-account {
+  position: relative;
+}
+/* The connected wallet's panel: below the chip, right-aligned to it, never
+   wider than the window (16px gutters on a phone). */
+.wallet-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(320px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+.wallet-panel p {
+  margin: 0;
+}
+.wallet-full {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+}
 
 /* ── Notices with meaning ────────────────────────────────────────────── */
 .notice-info,

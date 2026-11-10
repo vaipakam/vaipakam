@@ -2137,7 +2137,7 @@ ligne de synchronisation nomme la source qui a répondu et l'âge de
 la lecture la plus ancienne de la page ; Actualiser les relit toutes.
 L'index ne sert qu'aux chiffres globaux (le marché et l'historique),
 avec sa hauteur de bloc et son âge. Un wallet sur un réseau non
-servi ne voit rien de lui tant qu'il ne change pas.
+servi ne voit rien de lui tant qu'il ne change pas. La puce d'adresse ouvre le panneau de compte propre à l'app : l'adresse complète avec une action de copie, le réseau, un passage vers chaque autre réseau desservi, et la déconnexion. Le sélecteur de wallet sert uniquement à se connecter. Une fois connectée, l'app n'effectue aucune recherche dans un service de noms : une session connectée ne lit rien sur le réseau principal d'Ethereum et n'atteint aucun hôte hors de la liste connect-src de la page.
 
 <a id="deployments"></a>
 

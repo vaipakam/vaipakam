@@ -2126,7 +2126,7 @@ Netzwerks. Die Sync-Zeile nennt die Quelle, die geantwortet hat, und
 das Alter des ältesten Lesevorgangs der Seite; Aktualisieren liest
 alles neu. Der Index dient nur für Weltzahlen (Markt und Verlauf),
 mit Blockhöhe und Alter. Ein Wallet in einem nicht bedienten
-Netzwerk sieht nichts Eigenes, bis es wechselt.
+Netzwerk sieht nichts Eigenes, bis es wechselt. Der Adress-Chip öffnet das eigene Kontopanel der App: die volle Adresse mit Kopieraktion, das Netzwerk, einen Wechsel in jedes andere bediente Netzwerk und das Trennen. Die Wallet-Auswahl dient nur dem Verbinden. Verbunden rendert die App keine Namensdienst-Abfrage, daher liest eine verbundene Sitzung nichts im Ethereum-Mainnet und erreicht keinen Host außerhalb der connect-src-Liste der Seite.
 
 <a id="deployments"></a>
 

@@ -41,7 +41,9 @@ async function session(b, opts, label) {
     await p.getByTestId('request-open').click();
     await p.getByTestId('request-duration').getByRole('radio').first().waitFor({ timeout: 60000 });
     await p.getByTestId('request-amount').fill('0.01');
-    await p.getByTestId('request-collateral').fill('50');
+    // An NFT collateral has no typed amount, so it has no value line.
+    const coll = p.getByTestId('request-collateral');
+    if (await coll.isVisible().catch(() => false)) await coll.fill('50');
     await p.waitForTimeout(8000);
     console.log(`--- amount: ${await line(p, 'request-amount-value')}`);
     console.log(`--- collateral: ${await line(p, 'request-collateral-value')}`);

@@ -2117,7 +2117,7 @@ de sincronización nombra la fuente que respondió y la antigüedad de
 la lectura más vieja de la página, y Actualizar las vuelve a leer
 todas. El índice solo se usa para las cifras del mundo (el mercado
 y el historial), con su altura de bloque y antigüedad. Un wallet en
-una red no atendida no ve nada propio hasta que cambia.
+una red no atendida no ve nada propio hasta que cambia. El chip de dirección abre el panel de cuenta propio de la app: la dirección completa con una acción de copia, la red, un cambio a cada otra red atendida y la desconexión. El selector de wallets solo se usa para conectar. Una vez conectada, la app no realiza ninguna consulta a un servicio de nombres, así que una sesión conectada no lee nada en la red principal de Ethereum ni llega a ningún host fuera de la lista connect-src de la página.
 
 <a id="deployments"></a>
 

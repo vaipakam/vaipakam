@@ -45,6 +45,12 @@ export const copy = {
     unsupported: A('Your wallet is on a network this app does not serve, so nothing of yours is shown and no action is offered until it moves. Supported: {{chains}}.'),
     switchTo: B('Switch to {{chain}}'),
     switchFailed: A('The wallet did not switch: {{reason}}'),
+    panel: B('Your wallet'),
+    copy: B('Copy address'),
+    copied: B('Address copied.'),
+    copyFailed: B('This browser did not allow copying; select the address above instead.'),
+    network: B('Network: {{chain}}.'),
+    disconnect: B('Disconnect'),
     noProvider: B('Reading your state through the proxy: this wallet offers no direct connection.'),
   },
   notBuilt: {

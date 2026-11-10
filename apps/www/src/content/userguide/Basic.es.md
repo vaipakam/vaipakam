@@ -993,7 +993,7 @@ ofrece ninguna usa un proxy de solo lectura. Tus cifras nunca salen
 del índice compartido. La dirección y la red que se muestran arriba
 son a las que pertenece cada cifra de la página. Si tu wallet está
 en una red que la app no atiende, no se muestra nada tuyo hasta que
-cambies.
+cambies. Toca tu dirección arriba para verla completa, copiarla, cambiar a otra red que la app atiende o desconectarte. La app muestra la dirección en sí, no un nombre de un servicio de nombres, porque no lee nada en la red principal de Ethereum.
 
 <a id="deployments"></a>
 

@@ -416,6 +416,18 @@ on the user's own device such as a browser extension. This is a deployment
 acceptance criterion (§3.2): a route does not reach parity on a deployment
 without it.
 
+The review is taken with a wallet connected, since some destinations are
+reached only then (#3476). A connected session must reach no host outside
+the list, and a third-party library must not reach one on the app's behalf.
+The wallet picker is used only to connect. The connected account surface
+(the full address, a copy action, the network, a switch to each other
+served network, and disconnect) is the app's own, because the picker's
+connected surfaces look up a name-service name on a network the app does
+not serve, from an endpoint the page does not name. The app shows the
+address itself. The committed live driver `e2e/live/console-watch.cjs` walks
+the main routes connected, on desktop and phone, and fails on any app console
+error or warning, any report and any failed request.
+
 ### RB-GOVERNANCE-QUEUE — queued governance changes are public
 
 Every change governance makes waits out the governance timelock's delay,

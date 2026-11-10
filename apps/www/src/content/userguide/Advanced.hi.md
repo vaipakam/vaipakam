@@ -2027,7 +2027,7 @@ browser में रखा गया एक display विकल्प है: 
 जिसने जवाब दिया, और पेज के सबसे पुराने read की उम्र भी; Refresh सब
 दोबारा पढ़ता है। index केवल दुनिया के आँकड़ों (market और history)
 के लिए इस्तेमाल होता है, उसकी block height और उम्र के साथ। बिना
-सपोर्ट वाले नेटवर्क पर wallet बदलने तक अपना कुछ नहीं देखता।
+सपोर्ट वाले नेटवर्क पर wallet बदलने तक अपना कुछ नहीं देखता। पते वाली chip ऐप का अपना account panel खोलती है: copy action के साथ पूरा पता, network, हर दूसरे सेवा-प्राप्त network पर switch, और disconnect। wallet picker केवल connect करने के लिए है। connect होने के बाद ऐप कोई name-service lookup नहीं करता, इसलिए connected session Ethereum mainnet पर कुछ नहीं पढ़ता और पेज की connect-src सूची के बाहर किसी host तक नहीं पहुँचता।
 
 <a id="deployments"></a>
 
