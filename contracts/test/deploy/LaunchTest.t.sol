@@ -15,6 +15,8 @@ import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
+import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
+import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
@@ -1842,6 +1844,84 @@ contract LaunchTest is Test {
         assertEq(
             c[9].detail,
             "the reward role is Detached, but the launch declares Canonical: run the reward configure step (ConfigureRewardReporter)"
+        );
+    }
+
+    /// @dev #3360 — off the canonical reward chain the armed-cap requirement
+    ///      does not apply (D* reaches a mirror in Base's broadcast), and the
+    ///      detail names the role found.
+    function test_RewardCapArmed_DoesNotApplyOffCanonical() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[11].label, "the fee-linked reward cap is armed before any loan");
+        assertTrue(c[11].checkable && c[11].met);
+        assertEq(
+            c[11].detail,
+            "does not apply: the reward role is Unconfigured, and the reward cap is armed on the canonical reward chain"
+        );
+    }
+
+    /// @dev #3360 — a canonical chain launched with D* unset would run every
+    ///      reward day under the legacy per-ETH cap, which self-loans can
+    ///      profit from: NOT MET, and a testnet launch refuses.
+    function test_RewardCapArmed_NotMetOnCanonicalWhenUnarmed() public {
+        vm.chainId(84532);
+        _configure();
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable);
+        assertFalse(c[11].met);
+        assertEq(
+            c[11].detail,
+            "the reward cap is not armed (setGovernorCommitArmedFromDay): every reward day would run the legacy per-ETH cap, which self-loans can profit from"
+        );
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev #3360 — armed, but the launch would land before the first armed
+    ///      day, so the days in between run the legacy cap: NOT MET until that
+    ///      day arrives, then met.
+    function test_RewardCapArmed_WaitsForTheFirstArmedDay() public {
+        _configure();
+        vm.startPrank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        InteractionRewardsFacet(diamond).setInteractionLaunchTimestamp(block.timestamp);
+        RewardAggregatorFacet(diamond).setGovernorCommitArmedFromDay(2);
+        vm.stopPrank();
+
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable);
+        assertFalse(c[11].met);
+        assertEq(
+            c[11].detail,
+            "today is reward day 0, before the cap's first armed day 2: a loan opened now would earn under the legacy per-ETH cap; launch on that day or later"
+        );
+
+        vm.warp(block.timestamp + 2 days);
+        c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable && c[11].met);
+        assertEq(
+            c[11].detail,
+            "armed from reward day 2 and today is day 2, so every reward day a loan can reach is capped"
+        );
+    }
+
+    /// @dev #3360 — D* set while the reward clock has not started: the first
+    ///      armed day cannot have begun, so NOT MET.
+    function test_RewardCapArmed_NotMetBeforeTheClockStarts() public {
+        _configure();
+        vm.startPrank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        RewardAggregatorFacet(diamond).setGovernorCommitArmedFromDay(1);
+        vm.stopPrank();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable);
+        assertFalse(c[11].met);
+        assertEq(
+            c[11].detail,
+            "the reward cap is armed from reward day 1, but the reward clock has not started (setInteractionLaunchTimestamp), so that day cannot have begun"
         );
     }
 

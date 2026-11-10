@@ -728,25 +728,26 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
     }
 
-    /// @notice #1384 — the reprice is a no-op on a plain (unstamped) loan: no
-    ///         entitlement record is fabricated on extension.
-    function test_1384_ExtendReprice_UnstampedLoanStaysUnstamped() public {
+    /// @notice #1384 / #3360 — a plain (no Full) loan is stamped at origination
+    ///         since #3360, so it carries its loan-side reward cap; the reprice
+    ///         on extension leaves that record exactly as it was (no Full stamp
+    ///         to downgrade, and the cap fields are never reset).
+    function test_1384_ExtendReprice_PlainLoanStampUnchanged() public {
         uint256 loanId = _setupExtendableLoan();
 
         LibVaipakam.FeeEntitlement memory before =
             FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
-        assertEq(uint256(before.openDays), 0, "precondition: unstamped");
+        assertGt(uint256(before.openDays), 0, "#3360: a plain loan is stamped at origination");
+        assertEq(uint8(before.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.None), "precondition: no Full");
 
         vm.prank(borrower);
         _f().extendLoanInPlace(loanId, 500, 45);
 
         LibVaipakam.FeeEntitlement memory fe =
             FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
-        assertEq(
-            uint256(fe.openDays),
-            0,
-            "unstamped loan stays unstamped (reprice no-op)"
-        );
+        assertEq(uint256(fe.openDays), uint256(before.openDays), "open term kept");
+        assertEq(fe.cStarOpen, before.cStarOpen, "cap base kept");
+        assertEq(uint256(fe.loanSideRewardCapOpen), uint256(before.loanSideRewardCapOpen), "cap kept");
         assertEq(
             uint8(fe.lenderMode),
             uint8(LibVaipakam.FeeEntitlementMode.None),

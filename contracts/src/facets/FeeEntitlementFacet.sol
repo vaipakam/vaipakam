@@ -78,7 +78,11 @@ contract FeeEntitlementFacet is IVaipakamErrors {
      *         notional `cStarOpen` is stamped for EVERY loan (even None/HoldOnly)
      *         because the loan-side reward cap (PR-5c) is defined from it. Only
      *         ever invoked on the ERC-20 origination path (never a rental / a
-     *         sale-vehicle accept, which pay no LIF and so bear no tariff).
+     *         sale-vehicle accept, which pay no LIF and so bear no tariff). Since
+     *         #3360 the accept invokes it for EVERY ERC-20 origination off a
+     *         reward mirror, whatever the tariff switch says, so every such loan
+     *         carries its reward cap; on a mirror only a Full opt-in reaches it
+     *         (see `OfferAcceptFacet._fullTariffShouldRun`).
      * @param  offerId            The accepted offer (source of the creator side).
      * @param  loanId             The freshly-minted loan.
      * @param  borrower           The loan's borrowing party.
