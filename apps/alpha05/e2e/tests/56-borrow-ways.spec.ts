@@ -189,6 +189,28 @@ test('with every keeper paused, the matching service is said to fill none and ot
   await fitsWidth(page);
 });
 
+test('a lender that chooses its fillers is stated apart, without a likely fill', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  // requiresKeeperAuth: only the lender or a filler it authorized may fill.
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), true, true]);
+  await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+  await sc.diamondWrite('admin', 'setKeepersPaused', [false]);
+
+  const { page } = await launchWallet('borrower');
+  await openPair(page, tliq);
+  const ways = page.getByRole('region', { name: 'Two ways to borrow' });
+  await expect(ways.getByTestId('standing-limited')).toContainText('One lender stands ready for this pair', { timeout: 60_000 });
+  await expect(ways.getByTestId('standing-limited')).toContainText('whether the matching service is one is not known');
+  await expect(ways.getByTestId('standing-ready')).toHaveCount(0);
+  await expect(ways).not.toContainText('a fill is likely');
+  await fitsWidth(page);
+});
+
 test('a borrower’s own standing intent is never counted as a lender ready for them', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;

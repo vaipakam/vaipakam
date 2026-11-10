@@ -686,7 +686,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   fill from its own standing offer and anyone can for a lender that has not
   limited who fills it; and with any of the three unread it says whether a
   fill would come is not known. The reader's own intents are never counted,
-  since the protocol refuses a match with oneself. Beside the way, the page
+  since the protocol refuses a match with oneself. A lender that lets only
+  fillers it has chosen fill against it is stated apart, with its own
+  figures, and the likely fill is never claimed for it: whether the
+  matching service is among those fillers is not read, so the page says it
+  is not known. Beside the way, the page
   states the terms every intent fill requires (the full term's interest, no
   partial repayment, no interest schedule); in the request form, terms that
   rule every intent out say so in place of the likely fill. That check

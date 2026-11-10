@@ -120,13 +120,18 @@ const same = (a: Hex, b: Hex) => a.toLowerCase() === b.toLowerCase();
  * Narrows the read to the pair; null when no lender stands ready on it. The
  * reader's own intents are left out (`exclude`): the protocol refuses a match
  * whose two sides share a creator, so they can never fill the reader's own
- * request.
+ * request. `limited` keeps only the intents whose lender lets only fillers it
+ * has chosen fill against them (`requiresKeeperAuth`, true) or only the rest,
+ * which any filler may fill (false); left out, it keeps both. The two are
+ * stated apart, because whether the matching service is among a lender's
+ * chosen fillers is not something this read knows.
  */
-export function standingReady(intents: readonly IntentSummary[], lending: Hex, collateral: Hex, exclude?: Hex | null): StandingReady | null {
+export function standingReady(intents: readonly IntentSummary[], lending: Hex, collateral: Hex, exclude?: Hex | null, limited?: boolean): StandingReady | null {
   let out: StandingReady | null = null;
   for (const i of intents) {
     if (!same(i.lendingAsset, lending) || !same(i.collateralAsset, collateral)) continue;
     if (exclude && same(i.owner, exclude)) continue;
+    if (limited !== undefined && i.requiresKeeperAuth !== limited) continue;
     const room = i.maxExposure > i.livePrincipal ? i.maxExposure - i.livePrincipal : 0n;
     const ready = room < i.availableCapital ? room : i.availableCapital;
     // Less than the lender's smallest fill cannot be lent at all.

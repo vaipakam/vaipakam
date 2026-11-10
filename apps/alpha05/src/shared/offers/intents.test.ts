@@ -53,6 +53,16 @@ describe('what lenders stand ready to lend on a pair', () => {
   });
 });
 
+describe('lenders that choose their fillers', () => {
+  it('are kept apart from the lenders any filler may fill against', () => {
+    const rows = [intent(), intent({ requiresKeeperAuth: true, minRateBps: 100n })];
+    expect(standingReady(rows, WETH, TLIQ)?.lenders).toBe(2);
+    expect(standingReady(rows, WETH, TLIQ, null, false)?.minRateBps).toBe(intent().minRateBps);
+    expect(standingReady(rows, WETH, TLIQ, null, true)?.minRateBps).toBe(100n);
+    expect(standingReady([intent()], WETH, TLIQ, null, true)).toBeNull();
+  });
+});
+
 describe('request terms every intent fill requires', () => {
   const fits = { useFullTermInterest: true, allowsPartialRepay: false, allowsPrepayListing: false, periodicInterestCadence: 0 };
   it('requires the full term’s interest, no partial repayment, no listing consent and no interest schedule', () => {

@@ -2412,6 +2412,18 @@ export const copy = {
     standingFill: A(
       "A matching service fills a request against them when its terms fit a lender's limits, so a fill is likely but neither instant nor guaranteed.",
     ),
+    standingLimitedOne: A(
+      'One lender stands ready for this pair, up to {{amount}} at rates from {{rate}}%, but lets only fillers it has chosen fill against it; whether the matching service is one is not known.',
+    ),
+    standingLimitedMany: A(
+      '{{count}} lenders stand ready for this pair, up to {{amount}} from one at rates from {{rate}}%, but let only fillers they have chosen fill against them; whether the matching service is one is not known.',
+    ),
+    standingAlsoLimitedOne: A(
+      'One more lender stands ready, up to {{amount}} at rates from {{rate}}%, but lets only fillers it has chosen fill against it; whether the matching service is one is not known.',
+    ),
+    standingAlsoLimitedMany: A(
+      '{{count}} more lenders stand ready, up to {{amount}} from one at rates from {{rate}}%, but let only fillers they have chosen fill against them; whether the matching service is one is not known.',
+    ),
     standingFillUnknown: A(
       'Whether this network’s matching is switched on and running could not be read, so whether a request is filled against them is not known.',
     ),
