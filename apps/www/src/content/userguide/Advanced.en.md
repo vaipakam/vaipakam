@@ -2734,6 +2734,18 @@ The card reads, at one block, `getProtectedAccount(wallet)`, `getProtectedDelayB
 
 The notice reads, at one block, `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (the manual pause's start plus the escape period it began with; zero when none is in force or the Diamond has never launched) and `getProtectedAccount(wallet)`, and counts down against the block's time. While paused with the route closed, `withdrawFromVault` reverts `EnforcedPause` and the review says the pause stops it. Once `isEscapeOpen` is true, a protected account still uses `withdrawFromVault`, which keeps queueing; any other wallet's Withdraw calls `escapeWithdraw(kind, asset, tokenId, amount)`, which refuses a protected account (`EscapeNotForProtected`), refuses a barred recipient, is bounded by the wallet's own depository holding and the free figure, and pays the caller. The finish card reads `EscapeWithdrawal(account, asset, tokenId, amount)` and the token's own transfer from the vault to the wallet. If the pause, the route or, under an open route, the mode is unread, no withdrawal is sent.
 
+<a id="protection-addresses"></a>
+
+### Saved addresses
+
+The book is kept in `localStorage` per chain id and wallet, never on chain. A wallet joins after it signs `AddressControl{account, destination, purpose, nonce, issuedAt}` in the domain `{name: 'Vaipakam Address Check', version: '1', chainId, verifyingContract: Diamond}`, with a random 32-byte nonce and a seven-day lifetime. The request travels as `/protection?prove=<code>`. The signing page refuses a network or Diamond this app does not serve and a lapsed request, and signs only when the connected account is that address on that chain. The pasted answer is checked with `verifyTypedData` over the connected wallet's own read connection, so a smart wallet answers through ERC-1271, and it is saved only when it answers that same request. The address box shows the full address with its first and last characters set apart, refuses a broken EIP-55 checksum, and refuses with no override any address whose first three and last three hex digits equal one the wallet already uses (its own address, saved and waiting entries, active and waiting destinations, protected signers, approved keepers and the network's keeper) while the rest differs. A first-time address needs an explicit tick, which any edit clears.
+
+<a id="protection-destinations"></a>
+
+### Payout destinations
+
+The section reads, at one block, `getProtectedAccount`, `getAllowlist`, `getPendingAllowlistAdditions` (each request with its `maturesAt`), `getProtectedSigners`, `paused`, and the queued payouts per recipient from `getPendingPayoutIds`. A request is waiting before `maturesAt`, ready until `maturesAt + delay` and lapsed after, by the block's time plus the seconds since. The four changes are `addAllowlisted`, `cancelAddAllowlisted`, `finalizeAddAllowlisted` and `removeAllowlisted`, each taking `(account, destination)`. The review is read at one block and refuses before the wallet what the facet would refuse: a pause or a lock (for adding and applying), your own wallet, an address already active or waiting, five destinations or five requests already, a flagged address, a request not yet matured or lapsed. Each call is dry-run, asked again just before the wallet opens, and measured from its own `AllowlistAddRequested`, `AllowlistAddCancelled`, `AllowlistAdded` or `AllowlistRemoved` log; a removal also counts the `PayoutCancelled` logs it caused.
+
 <a id="my-offers"></a>
 
 ### Your offers

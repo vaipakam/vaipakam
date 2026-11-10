@@ -1371,6 +1371,18 @@ The Account safety card on the Vault page shows whether your account runs protec
 
 While the protocol is paused, the Vault page says so at the top: withdrawals are closed, while full and partial repayment and adding collateral stay open. If the pause is an administrative one, it also says when its escape route opens, as the protocol reports it, with a countdown. Once the route is open, Withdraw on any asset with something free takes what is yours straight back to your wallet; the review says it goes through the escape route, and the route never returns what a loan, offer or claim holds. With protected mode on, your withdrawals still wait your account's delay in the payout queue, as usual. An automatic pause, or a protocol not yet launched, opens no escape route, and the page says none is scheduled.
 
+<a id="protection-addresses"></a>
+
+### Saved addresses
+
+The Protection page, linked from the Account safety card, keeps the addresses you trust to receive payouts, for each network and wallet. The list is kept in this browser only; another browser or device has its own. To save a wallet you control, give it a name and paste its address: the page shows it in full and asks you to tick that you checked it. It then makes a link. Open the link in the wallet app that holds that address, connect that wallet and sign; signing moves nothing and costs nothing. Paste the code it shows back into the page, and the wallet is saved as verified. An exchange deposit address cannot sign, so it is saved unverified under the exchange's name once you accept three risks: a wrong address loses what is sent, the exchange may not credit a deposit sent from your vault, and the exchange may give the address to someone else later. Wherever the app takes an address for funds or control, it refuses one whose first three and last three characters match an address you already use while the rest differs, because that is how address poisoning catches people who copy from their history.
+
+<a id="protection-destinations"></a>
+
+### Payout destinations
+
+With protected mode on, the Protection page also shows your payout destinations: besides your own wallet, at most five addresses a protected payout may go to. A destination is chosen only from your saved addresses. Asking to add one changes nothing at first: it becomes usable after your account's delay, must then be made active within one further delay, and otherwise lapses and can be asked for again. You, or a secondary signer, can cancel a request while it waits, and a lock cancels every request. Removing a destination takes effect at once and cancels every payout queued to it; the assets stay in your vault. Each change asks your wallet once, its review shows the address in full, and the finish card shows what the protocol recorded. With protected mode off, payouts go only to your wallet and the page says destinations do not apply.
+
 <a id="my-offers"></a>
 
 ### Your offers

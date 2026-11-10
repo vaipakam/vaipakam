@@ -1398,6 +1398,35 @@ above. Each resolves here, so a route reviewer needs no private file:
   If the pause, the route or, under an open route, the mode is unread, no
   entry point is chosen and nothing is sent. The finish card reads
   `EscapeWithdrawal` and the token's own transfer to the wallet.
+- **RB-ADDRESS-GUARD** — every address a user enters to receive funds or
+  control (#3415) goes through one address box. It shows the address in
+  full, with the first and last digits set apart and never shortened. It
+  refuses a broken checksum, and it refuses, with no override, a look-alike:
+  an address whose first three and last three hex digits match one the
+  reader already uses (their own wallet, a saved address, a destination, a
+  waiting request, a signer, an approved keeper) while the rest differs. A
+  first-time address needs an explicit "I checked the full address" tick,
+  which editing the address clears. The Protection page (ACC-41) keeps the
+  reader's saved addresses, per network and wallet, in this browser only,
+  and says so. A wallet joins only after it proves control: the app makes
+  an EIP-712 request naming the account, the address, the network and the
+  Diamond, with a nonce and a seven-day lifetime, carried as a link to the
+  wallet that holds the address. That wallet signs only when it is
+  connected as that address on that network; the signed answer comes back
+  as a code to paste, checked by the signature (a smart wallet answers
+  through ERC-1271) and saved only when it answers that same request. An
+  exchange deposit address, which cannot sign, joins unverified under the
+  exchange's name, after the reader acknowledges three risks: a wrong
+  address loses what is sent, an exchange may not credit a deposit from the
+  vault, and an exchange may reassign the address. A payout destination is
+  chosen only from the saved addresses. Asking to add one, cancelling a
+  request, making a matured one active and removing one are each one signed
+  transaction through RB-CONFIDENCE; the review states the address in full,
+  its saved name, when it becomes usable or by when it must be applied, the
+  payouts a removal cancels, and an exchange address's risks again. The
+  page states when protected mode is off and destinations do not apply,
+  each request's wait, readiness and lapse by the chain's clock, and the
+  at-most-five limit.
 - **RB-OFFERS-MINE** — the Offers page (OFF-46) lists every offer the
   connected wallet created, from the protocol's own per-creator index
   (which keeps a cancelled id), together with every offer whose position

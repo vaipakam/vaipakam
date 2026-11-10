@@ -2248,6 +2248,18 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 알림은 한 블록에서 `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt`(수동 일시 중지 시작 시각에 시작 당시의 비상 탈출 기간을 더한 값. 유효한 일시 중지가 없거나 Diamond가 출시된 적이 없으면 0), `getProtectedAccount(wallet)`를 읽고 블록 시각을 기준으로 카운트다운합니다. 경로가 닫힌 채 일시 중지 중이면 `withdrawFromVault`가 `EnforcedPause`로 리버트하고, 검토 화면은 일시 중지가 이를 막는다고 알립니다. `isEscapeOpen`이 참이 되면 보호 계정은 계속 `withdrawFromVault`를 쓰며 대기열 등록도 계속됩니다. 다른 모든 지갑의 출금은 `escapeWithdraw(kind, asset, tokenId, amount)`를 호출합니다. 이 함수는 보호 계정을 거부하고(`EscapeNotForProtected`), 금지된 수령인을 거부하며, 지갑 자신의 예치 잔액과 출금 가능 수치로 한도가 정해지고, 호출자에게 지급합니다. 완료 카드는 `EscapeWithdrawal(account, asset, tokenId, amount)`와 볼트에서 지갑으로 가는 토큰 자체의 이전을 읽습니다. 일시 중지, 경로, 또는 경로가 열린 경우의 모드를 읽을 수 없으면 출금을 보내지 않습니다.
 
+<a id="protection-addresses"></a>
+
+### 저장된 주소
+
+주소록은 체인 ID와 지갑별로 `localStorage`에 저장되며 온체인에는 저장되지 않습니다. 지갑은 도메인 `{name: 'Vaipakam Address Check', version: '1', chainId, verifyingContract: Diamond}`에서 `AddressControl{account, destination, purpose, nonce, issuedAt}`에 서명하면 추가되며, 무작위 32바이트 nonce와 7일 유효 기간을 가집니다. 요청은 `/protection?prove=<code>` 형태로 전달됩니다. 서명 페이지는 이 앱이 지원하지 않는 네트워크나 Diamond, 만료된 요청을 거부하고, 연결된 계정이 그 체인의 바로 그 주소일 때만 서명합니다. 붙여 넣은 응답은 연결된 지갑 자체의 읽기 연결을 통해 `verifyTypedData`로 확인되므로 스마트 지갑은 ERC-1271로 응답하며, 같은 요청에 대한 응답일 때만 저장됩니다. 주소 입력란은 주소 전체를 보여 주며 앞뒤 문자를 구분해 표시하고, 깨진 EIP-55 체크섬을 거부하며, 앞 세 자리와 뒤 세 자리 16진수가 지갑이 이미 쓰는 주소(자기 주소, 저장 및 대기 항목, 활성 및 대기 지급 대상, 보호 서명자, 승인된 keeper, 네트워크의 keeper)와 같고 나머지가 다른 주소는 예외 없이 거부합니다. 처음 쓰는 주소는 명시적인 체크가 필요하며, 수정하면 체크가 해제됩니다.
+
+<a id="protection-destinations"></a>
+
+### 지급 대상
+
+이 영역은 한 블록에서 `getProtectedAccount`, `getAllowlist`, `getPendingAllowlistAdditions`(각 요청과 그 `maturesAt`), `getProtectedSigners`, `paused`, 그리고 `getPendingPayoutIds`에서 수신자별 대기 지급을 읽습니다. 블록 시간에 그 뒤 지난 초를 더한 기준으로, 요청은 `maturesAt` 전에는 대기, `maturesAt + delay`까지는 준비, 그 뒤에는 만료입니다. 네 가지 변경은 `addAllowlisted`, `cancelAddAllowlisted`, `finalizeAddAllowlisted`, `removeAllowlisted`이며 모두 `(account, destination)`을 받습니다. 검토는 한 블록에서 읽히며, facet이 거부할 경우를 지갑을 열기 전에 거부합니다. 일시 중지나 잠금(추가와 활성화 시), 자기 지갑, 이미 활성이거나 대기 중인 주소, 이미 다섯 개의 지급 대상이나 다섯 개의 요청, 플래그된 주소, 아직 만기가 안 됐거나 만료된 요청입니다. 각 호출은 시뮬레이션되고, 지갑을 열기 직전에 다시 확인되며, 자체 `AllowlistAddRequested`, `AllowlistAddCancelled`, `AllowlistAdded`, `AllowlistRemoved` 로그로 측정됩니다. 제거는 그로 인해 생긴 `PayoutCancelled` 로그도 셉니다.
+
 <a id="my-offers"></a>
 
 ### 내 오퍼

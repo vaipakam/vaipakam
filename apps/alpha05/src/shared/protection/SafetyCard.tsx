@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { useMode } from '../../app/ModeContext';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -90,7 +91,7 @@ export function SafetyCard({ own, chain }: { own: OwnStateClient; chain: Support
       {held.choice !== null && <SafetyActionFlow own={own} chain={chain} choice={held.choice} onClose={close} />}
       <OwnStamp reads={[facts]} />
       <p className="tier-b" data-testid="vault-safety-more">
-        {text('safety.cardMore')}
+        <Link to="/protection">{text('safety.cardMore')}</Link>
       </p>
       <WhyLink summaryKey="safety.whySummary" detailKey="safety.why" />
       {f && m && m !== 'absent' && (m.enabled || (f.openRows ?? 0) > 0) && (

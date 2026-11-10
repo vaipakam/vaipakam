@@ -1420,6 +1420,18 @@ Die Karte Kontosicherheit auf der Tresor-Seite zeigt, ob Ihr Konto im geschützt
 
 Solange das Protokoll pausiert ist, sagt die Tresor-Seite das oben: Abhebungen sind geschlossen, während vollständige und teilweise Rückzahlung und das Nachschießen von Sicherheiten offen bleiben. Ist es eine administrative Pause, nennt sie auch, wann deren Notausgang öffnet, so wie das Protokoll es meldet, mit einem Countdown. Ist der Notausgang offen, bringt Abheben an jedem Asset mit freiem Anteil das, was Ihnen gehört, direkt zurück in Ihre Wallet; die Prüfung sagt, dass es über den Notausgang geht, und er gibt nie zurück, was ein Kredit, ein Angebot oder ein Anspruch hält. Mit geschütztem Modus warten Ihre Abhebungen wie gewohnt die Verzögerung Ihres Kontos in der Auszahlungs-Warteschlange ab. Eine automatische Pause oder ein noch nicht gestartetes Protokoll öffnet keinen Notausgang, und die Seite sagt, dass keiner geplant ist.
 
+<a id="protection-addresses"></a>
+
+### Gespeicherte Adressen
+
+Die Seite Protection, verlinkt von der Karte Kontosicherheit, speichert die Adressen, denen Sie Auszahlungen anvertrauen, je Netzwerk und Wallet. Die Liste liegt nur in diesem Browser; ein anderer Browser oder ein anderes Gerät hat eine eigene. Um eine Wallet zu speichern, die Sie kontrollieren, geben Sie ihr einen Namen und fügen ihre Adresse ein: Die Seite zeigt sie vollständig und bittet Sie zu bestätigen, dass Sie sie geprüft haben. Dann erstellt sie einen Link. Öffnen Sie ihn in der Wallet-App, die diese Adresse hält, verbinden Sie diese Wallet und signieren Sie; das Signieren bewegt nichts und kostet nichts. Fügen Sie den angezeigten Code wieder in die Seite ein, und die Wallet ist als geprüft gespeichert. Eine Einzahlungsadresse einer Börse kann nicht signieren; sie wird daher ungeprüft unter dem Namen der Börse gespeichert, sobald Sie drei Risiken akzeptieren: Bei einer falschen Adresse ist das Gesendete verloren, die Börse schreibt eine Einzahlung aus Ihrem Vault vielleicht nicht gut, und die Börse kann die Adresse später jemand anderem geben. Überall, wo die App eine Adresse für Geld oder Kontrolle annimmt, lehnt sie eine Adresse ab, deren erste drei und letzte drei Zeichen einer bereits genutzten Adresse gleichen, während der Rest abweicht; so fängt Address Poisoning Menschen, die aus ihrem Verlauf kopieren.
+
+<a id="protection-destinations"></a>
+
+### Auszahlungsziele
+
+Bei eingeschaltetem geschützten Modus zeigt die Seite Protection auch Ihre Auszahlungsziele: neben Ihrer eigenen Wallet höchstens fünf Adressen, an die eine geschützte Auszahlung gehen darf. Ein Ziel wird nur aus Ihren gespeicherten Adressen gewählt. Die Anfrage, eines hinzuzufügen, ändert zunächst nichts: Es wird nach der Verzögerung Ihres Kontos nutzbar, muss dann innerhalb einer weiteren Verzögerung aktiviert werden und verfällt sonst; danach kann es erneut angefragt werden. Sie oder ein zweiter Unterzeichner können eine wartende Anfrage abbrechen, und eine Sperre bricht jede Anfrage ab. Das Entfernen eines Ziels wirkt sofort und bricht jede an es gereihte Auszahlung ab; die Werte bleiben in Ihrem Vault. Jede Änderung fragt Ihre Wallet einmal, ihre Prüfung zeigt die Adresse vollständig, und die Abschlusskarte zeigt, was das Protokoll erfasst hat. Ist der geschützte Modus aus, gehen Auszahlungen nur an Ihre Wallet, und die Seite sagt, dass Ziele nicht gelten.
+
 <a id="my-offers"></a>
 
 ### Ihre Angebote

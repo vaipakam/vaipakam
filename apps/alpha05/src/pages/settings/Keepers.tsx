@@ -26,7 +26,9 @@ import {
   type KeeperChange,
   type KeeperSettings,
 } from '../../shared/keepers/keepers';
-import { parsePasted } from '../../shared/offers/assets';
+import { AddressEntry, entryReady } from '../../shared/address/AddressEntry';
+import { bookKnown, useAddressBook } from '../../shared/address/AddressBook';
+import { classifyCandidate, mergeKnown, type KnownAddress } from '../../shared/address/lookalike';
 import { readPosture, usePosture } from '../../shared/reads/posture';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -214,7 +216,7 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
         </Notice>
       )}
       {s !== null && !flowOpen && !termsOpen && (
-        <KeeperControls s={s} advanced={isAdvanced} paused={paused} network={network} chainName={chain.name} onChoose={choose} />
+        <KeeperControls s={s} advanced={isAdvanced} paused={paused} network={network} chainName={chain.name} chainId={chain.chainId} account={account} onChoose={choose} />
       )}
       {termsOpen && termsGate.session && (
         <TermsPrompt
@@ -277,6 +279,8 @@ function KeeperControls({
   paused,
   network,
   chainName,
+  chainId,
+  account,
   onChoose,
 }: {
   s: KeeperSettings;
@@ -284,6 +288,8 @@ function KeeperControls({
   paused: boolean;
   network: Hex | null;
   chainName: string;
+  chainId: number;
+  account: Hex;
   onChoose: (c: KeeperChange) => void;
 }) {
   const copy = useCopy();
@@ -315,7 +321,7 @@ function KeeperControls({
           ))}
         </ul>
       )}
-      {!paused && advanced && s.keepers.length < MAX_KEEPERS && <AddKeeper s={s} network={network} chainName={chainName} onChoose={onChoose} />}
+      {!paused && advanced && s.keepers.length < MAX_KEEPERS && <AddKeeper s={s} network={network} chainName={chainName} chainId={chainId} account={account} onChoose={onChoose} />}
       {!paused && advanced && s.keepers.length >= MAX_KEEPERS && <p className="tier-b">{format('keepers.fullNote', { max: String(MAX_KEEPERS) })}</p>}
       {!paused && !advanced && <p className="tier-b">{text('keepers.basicPointer')}</p>}
     </>
@@ -349,35 +355,61 @@ function ActionPicker({ initial, submitKey, onSubmit, testId }: { initial: numbe
   );
 }
 
-function AddKeeper({ s, network, chainName, onChoose }: { s: KeeperSettings; network: Hex | null; chainName: string; onChoose: (c: KeeperChange) => void }) {
+/** Adding a keeper (#3415, RB-ADDRESS-GUARD): the address is shown in
+ *  full, a look-alike of an address this wallet already uses is refused,
+ *  and a first-time address waits for "I checked the full address". The
+ *  network's own keeper and the saved addresses count as already used. A
+ *  keeper receives nothing, so no signature from it is asked. */
+function AddKeeper({
+  s,
+  network,
+  chainName,
+  chainId,
+  account,
+  onChoose,
+}: {
+  s: KeeperSettings;
+  network: Hex | null;
+  chainName: string;
+  chainId: number;
+  account: Hex;
+  onChoose: (c: KeeperChange) => void;
+}) {
   const copy = useCopy();
   const { text, format } = copy;
+  const book = useAddressBook(chainId, account);
   const networkFree = network !== null && !s.keepers.some((k) => k.keeper.toLowerCase() === network.toLowerCase());
   const [address, setAddress] = useState(networkFree ? network : '');
+  const [checked, setChecked] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const parsed = parsePasted(address);
+  const known: KnownAddress[] = mergeKnown(
+    [{ address: account, source: 'own', label: null }],
+    network === null ? [] : [{ address: network, source: 'keeper', label: keeperName(network, network, chainName, copy) }],
+    s.keepers.map((k) => ({ address: k.keeper, source: 'keeper' as const, label: null })),
+    bookKnown(book),
+  );
+  const parsed = entryReady(classifyCandidate(address, known), checked);
   const onSubmit = (e: FormEvent) => e.preventDefault();
   return (
     <form className="approval-add" onSubmit={onSubmit} data-testid="settings-keepers-add">
-      <label htmlFor="keepers-add-input">{text('keepers.addLabel')}</label>
       {network !== null ? (
         <p className="tier-b">{format('keepers.networkHint', { chain: chainName, address: network })}</p>
       ) : (
         <p className="tier-b">{format('keepers.noNetworkKeeper', { chain: chainName })}</p>
       )}
-      <div className="approval-add-row">
-        <input
-          id="keepers-add-input"
-          value={address}
-          onChange={(e) => {
-            setAddress(e.target.value);
-            setNote(null);
-          }}
-          placeholder="0x…"
-          spellCheck={false}
-          autoComplete="off"
-        />
-      </div>
+      <AddressEntry
+        id="keepers-add-input"
+        label={text('keepers.addLabel')}
+        value={address}
+        onChange={(v) => {
+          setAddress(v);
+          setNote(null);
+        }}
+        known={known}
+        checked={checked}
+        onChecked={setChecked}
+        testId="settings-keepers-add-entry"
+      />
       <ActionPicker
         initial={0}
         submitKey="keepers.approve"
@@ -395,7 +427,7 @@ function AddKeeper({ s, network, chainName, onChoose }: { s: KeeperSettings; net
           onChoose({ kind: 'approve', keeper: parsed, actions });
         }}
       />
-      {address.trim() !== '' && parsed !== null && <p className="tier-b">{keeperName(parsed, network, chainName, copy)}</p>}
+      {parsed !== null && <p className="tier-b">{keeperName(parsed, network, chainName, copy)}</p>}
       {note !== null && (
         <p className="tier-b" role="status" data-testid="settings-keepers-add-note">
           {note}

@@ -1416,6 +1416,18 @@ La carte Sécurité du compte de la page Coffre indique si votre compte fonction
 
 Tant que le protocole est en pause, la page Coffre l'indique en haut : les retraits sont fermés, tandis que le remboursement total ou partiel et l'ajout de garantie restent ouverts. S'il s'agit d'une pause administrative, elle indique aussi quand sa voie de secours s'ouvre, telle que le protocole la publie, avec un compte à rebours. Une fois la voie ouverte, Retirer sur tout actif ayant une part libre renvoie ce qui vous appartient directement vers votre portefeuille ; la revue dit que cela passe par la voie de secours, et la voie ne rend jamais ce qu'un prêt, une offre ou une réclamation retient. Avec le mode protégé, vos retraits attendent toujours le délai de votre compte dans la file de paiements, comme d'habitude. Une pause automatique, ou un protocole pas encore lancé, n'ouvre aucune voie de secours, et la page indique qu'aucune n'est prévue.
 
+<a id="protection-addresses"></a>
+
+### Adresses enregistrées
+
+La page Protection, accessible depuis la carte Sécurité du compte, conserve les adresses auxquelles vous confiez vos paiements, pour chaque réseau et chaque portefeuille. La liste n'existe que dans ce navigateur ; un autre navigateur ou appareil a la sienne. Pour enregistrer un portefeuille que vous contrôlez, donnez-lui un nom et collez son adresse : la page l'affiche en entier et vous demande de cocher que vous l'avez vérifiée. Elle crée alors un lien. Ouvrez-le dans l'application de portefeuille qui détient cette adresse, connectez ce portefeuille et signez ; la signature ne déplace rien et ne coûte rien. Collez dans la page le code affiché, et le portefeuille est enregistré comme vérifié. Une adresse de dépôt d'une plateforme d'échange ne peut pas signer : elle est donc enregistrée non vérifiée sous le nom de la plateforme, une fois que vous acceptez trois risques : une adresse erronée perd ce qui est envoyé, la plateforme peut ne pas créditer un dépôt venant de votre coffre, et elle peut attribuer l'adresse à quelqu'un d'autre plus tard. Partout où l'application reçoit une adresse pour des fonds ou un contrôle, elle refuse celle dont les trois premiers et trois derniers caractères correspondent à une adresse que vous utilisez déjà alors que le reste diffère : c'est ainsi que l'empoisonnement d'adresse piège ceux qui copient depuis leur historique.
+
+<a id="protection-destinations"></a>
+
+### Destinations de paiement
+
+Avec le mode protégé activé, la page Protection affiche aussi vos destinations de paiement : en plus de votre propre portefeuille, au plus cinq adresses vers lesquelles un paiement protégé peut aller. Une destination se choisit uniquement parmi vos adresses enregistrées. Demander d'en ajouter une ne change rien d'abord : elle devient utilisable après le délai de votre compte, doit ensuite être activée dans un délai supplémentaire, sinon elle expire et peut être redemandée. Vous, ou un signataire secondaire, pouvez annuler une demande en attente, et un verrouillage annule toutes les demandes. Retirer une destination prend effet immédiatement et annule chaque paiement en file vers elle ; les actifs restent dans votre coffre. Chaque changement demande une fois votre portefeuille, son récapitulatif affiche l'adresse en entier, et la carte finale montre ce que le protocole a enregistré. Mode protégé désactivé, les paiements ne vont qu'à votre portefeuille et la page indique que les destinations ne s'appliquent pas.
+
 <a id="my-offers"></a>
 
 ### Vos offres

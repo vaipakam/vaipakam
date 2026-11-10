@@ -2357,6 +2357,18 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 通知は同じブロックで `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手動一時停止の開始時刻に、開始時のエスケープ期間を足したもの。有効な一時停止がない場合や Diamond が一度も開始されていない場合はゼロ）、`getProtectedAccount(wallet)` を読み、ブロック時刻に対してカウントダウンします。ルートが閉じたまま一時停止中は `withdrawFromVault` が `EnforcedPause` でリバートし、レビューは一時停止が止めていると伝えます。`isEscapeOpen` が真になると、保護されたアカウントは引き続き `withdrawFromVault` を使い、キューへの登録が続きます。それ以外のウォレットの引き出しは `escapeWithdraw(kind, asset, tokenId, amount)` を呼びます。これは保護されたアカウントを拒否し（`EscapeNotForProtected`）、禁止された受取人を拒否し、ウォレット自身の入金残高と自由な数値で上限が決まり、呼び出し元に支払います。完了カードは `EscapeWithdrawal(account, asset, tokenId, amount)` と、ボールトからウォレットへのトークン自体の移転を読みます。一時停止、ルート、またはルートが開いている場合のモードが読めなければ、引き出しは送信されません。
 
+<a id="protection-addresses"></a>
+
+### 保存済みアドレス
+
+アドレス帳はチェーンIDとウォレットごとに `localStorage` に保存され、オンチェーンには置かれません。ウォレットは、ドメイン `{name: 'Vaipakam Address Check', version: '1', chainId, verifyingContract: Diamond}` で `AddressControl{account, destination, purpose, nonce, issuedAt}` に署名すると追加されます。32バイトのランダムな nonce を持ち、有効期間は7日です。リクエストは `/protection?prove=<code>` として渡されます。署名ページは、このアプリが扱わないネットワークや Diamond、失効したリクエストを拒否し、接続中のアカウントがそのチェーン上のそのアドレスである場合にだけ署名します。貼り戻された回答は、接続中のウォレット自身の読み取り接続を通じて `verifyTypedData` で検証されるため、スマートウォレットは ERC-1271 で回答します。同じリクエストへの回答である場合にだけ保存されます。アドレス欄はアドレスを全桁表示して先頭と末尾の文字を区切って示し、壊れた EIP-55 チェックサムを拒否し、先頭3桁と末尾3桁の16進数がウォレットのすでに使っているアドレス（自分のアドレス、保存済みと待機中の項目、有効と待機中の支払先、保護署名者、承認済み keeper、ネットワークの keeper）と同じで残りが異なるアドレスを例外なく拒否します。初めてのアドレスには明示的なチェックが必要で、編集するとチェックは外れます。
+
+<a id="protection-destinations"></a>
+
+### 支払先
+
+このセクションは同じブロックで `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（各リクエストとその `maturesAt`）、`getProtectedSigners`、`paused`、および `getPendingPayoutIds` から受取人ごとの待機中の支払いを読み取ります。ブロック時刻にその後の経過秒数を加えた時刻で、リクエストは `maturesAt` より前は待機中、`maturesAt + delay` までは準備完了、その後は失効です。四つの変更は `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted`、`removeAllowlisted` で、いずれも `(account, destination)` を取ります。確認画面は同じブロックで読み取られ、facet が拒否するものをウォレットを開く前に拒否します。一時停止やロック（追加と有効化の場合）、自分のウォレット、すでに有効または待機中のアドレス、すでに5つの支払先または5つのリクエスト、フラグ付きのアドレス、まだ満期でないか失効したリクエストです。各呼び出しはシミュレーションされ、ウォレットを開く直前に再確認され、それ自身の `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded`、`AllowlistRemoved` ログで計測されます。削除では、それによって発生した `PayoutCancelled` ログも数えます。
+
 <a id="my-offers"></a>
 
 ### あなたのオファー
