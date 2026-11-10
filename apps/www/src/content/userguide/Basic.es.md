@@ -1440,6 +1440,12 @@ Cada oferta tiene su propia página, leída de la cadena una vez que hay una bil
 
 Cancelar en una oferta abierta que creaste la retira del libro y devuelve lo que aún bloquea en tu bóveda: el importe no prestado o el NFT de una oferta de préstamo, la garantía sin usar de una solicitud, o la tarifa prepagada y el margen de una solicitud de alquiler. Una oferta que nada ha completado no puede cancelarse en sus primeros cinco minutos, para que una cancelación nunca compita con una aceptación; la revisión dice cuándo podrá, y levanta el bloqueo por sí sola. La parte ya completada sigue completada. Una oferta vencida tiene un botón Limpiar que devuelve de la misma forma lo que bloqueaba; cualquiera puede limpiar una oferta vencida, y la devolución siempre va a su creador. La revisión dice qué vuelve y adónde: sin modo protegido llega a tu billetera al instante; con él, espera el retraso de tu cuenta en la cola de pagos, o queda en tu bóveda mientras la cuenta está bloqueada. Cuando la app no puede calcular la devolución, como en una oferta ligada a un préstamo en curso, la revisión lo dice y la tarjeta final muestra lo que se movió. Mientras el protocolo está en pausa, cancelar está cerrado. Nada sale de tu billetera y no se pide ninguna aprobación, así que tu billetera pregunta una vez.
 
+<a id="offers-price-guard"></a>
+
+### Protección ante movimientos de precio
+
+Una oferta de un token contra garantía en token puede llevar una protección ante movimientos de precio. Mientras su oferta espera en el libro, los precios se mueven, y alguien podría tomarla justo cuando el mercado se ha movido a su favor. En la página de la oferta puede fijar un límite entre el 0,5 % y el 50 %: la oferta rechaza entonces ser tomada mientras la relación garantía/principal se haya movido más que ese límite desde que se fijó la protección, o mientras el mercado del par no esté en calma. Cualquiera que mire la oferta ve la protección y si permite tomarla ahora. Fijada en una oferta ya publicada, protege solo desde el momento en que se registra. Nunca mueve nada, y puede cambiarla o quitarla mientras la oferta esté abierta.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

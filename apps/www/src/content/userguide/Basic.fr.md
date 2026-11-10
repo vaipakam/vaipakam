@@ -1458,6 +1458,12 @@ Chaque offre a sa propre page, lue sur la chaîne une fois un portefeuille conne
 
 Annuler sur une offre ouverte que vous avez créée la retire du carnet et rend ce qu'elle bloque encore dans votre coffre : le montant non prêté ou le NFT d'une offre de prêt, la garantie inutilisée d'une demande, ou les frais prépayés et la marge d'une demande de location. Une offre que rien n'a exécutée ne peut pas être annulée pendant ses cinq premières minutes, pour qu'une annulation ne fasse jamais la course avec une acceptation ; la vérification indique quand elle le pourra et lève le blocage d'elle-même. La part déjà exécutée le reste. Une offre expirée a un bouton Nettoyer qui rend de la même façon ce qu'elle bloquait ; n'importe qui peut nettoyer une offre expirée, et le retour va toujours à son créateur. La vérification dit ce qui revient et où : sans mode protégé, cela arrive tout de suite dans votre portefeuille ; avec lui, cela attend le délai de votre compte dans la file des paiements, ou reste dans votre coffre tant que le compte est verrouillé. Quand l'application ne peut pas chiffrer le retour, par exemple pour une offre liée à un prêt en cours, la vérification le dit et la carte finale montre ce qui a bougé. Tant que le protocole est en pause, l'annulation est fermée. Rien ne quitte votre portefeuille et aucune approbation n'est demandée, donc votre portefeuille demande une seule fois.
 
+<a id="offers-price-guard"></a>
+
+### Garde de variation de prix
+
+Une offre d'un jeton contre une garantie en jeton peut porter une garde de variation de prix. Pendant que votre offre attend dans le carnet, les prix bougent, et quelqu'un pourrait la prendre au moment où le marché a évolué en sa faveur. Sur la page de l'offre, vous pouvez fixer une limite entre 0,5 % et 50 % : l'offre refuse alors d'être prise tant que le rapport garantie/principal a bougé de plus que cette limite depuis la mise en place de la garde, ou tant que le marché de la paire n'est pas calme. Toute personne qui consulte l'offre voit la garde et si elle permet une prise maintenant. Posée sur une offre déjà publiée, elle ne protège qu'à partir du moment où elle est enregistrée. Elle ne déplace jamais rien, et vous pouvez la modifier ou la retirer tant que l'offre est ouverte.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

@@ -2399,6 +2399,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 確認画面は1つのブロックで `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` と作成者の `getProtectedAccount` を読み、`OfferCancelFacet.cancelOffer(id)` を試行実行します。ファセットは作成者のマネージャーにはいつでも、`expiresAt` を過ぎれば誰にでも取消を認めます。`OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` を拒否し、`amountFilled == 0` のオファーが300秒未満で期限内なら `CancelCooldownActive` を返し、`whenNotPaused` です。返却額はファセット自身の分岐で算出します。ERC-20の貸付オファーは貸付資産の `(amountMax または amount) - amountFilled`、NFTの貸付オファーはそのトークンまたはERC-1155の数量、借入リクエストは未使用の担保 `(collateralAmountMax または collateralAmount) - collateralAmountFilled` またはそのNFT（`refinanceCarryOver` で担保がローンに残る場合はなし）、レンタルリクエストは `amount × durationDays` に `rentalBufferBpsAtCreate` のバッファを加えた額です。`getOfferLinkedLoanId` でローンに結びつくオファーや、記録されたバッファがゼロのレンタルリクエスト（その場合プロトコルは現行率を使う）は署名前に算出しません。返却はすべてボールト出金を通じて作成者のボールトから出るため、保護モードではキューに入るか、ロック中はボールトに留まります。ポジショントークンは廃止されます。完了カードは `OfferCanceled(offerId, creator)`、作成者へのプロトコルの支払い記録、作成者へのトークン自身の送金を読みます。
 
+<a id="offers-price-guard"></a>
+
+### 価格変動ガード
+
+ERC-20 担保に対する ERC-20 の開いているオファーでは、作成者がオファーのページから価格変動ガードを設定・変更・解除できます。記録時にプロトコルは両トークンのオラクル価格を記録し、その後は、担保対元本のレートがその水準から上限(0.5%〜50%、どちら向きでも)を超えて動いている間、ペアが直近 2 回の毎時価格チェックのいずれかに対して平穏の範囲を超えて動いている間、または現在の価格やそれらのチェックのいずれかが欠けている間、すべての受け入れが拒否されます。チェックはローン作成時に行われるため、直接の受け入れもマッチングも対象になり、ページは誰に対しても上限、レートの変動幅、今受けられるかどうかを示します。毎時チェックは誰でも書き込めます。プロトコルのキーパーは、開いているガード付きオファーの資産についてそれを書き込む想定です。両トークンについてそれが揃うまで、誰もオファーを受けられません。出したオファーに設定したガードは、記録されたブロックから保護し、それ以前は保護しません。変更すると価格が記録し直されます。何も動かさず、条件も変えません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

@@ -2132,6 +2132,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 确认页在同一区块读取 `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` 以及创建者的 `getProtectedAccount`，然后试运行 `OfferCancelFacet.cancelOffer(id)`。该切面允许创建者的管理者随时取消，`expiresAt` 过后任何人都可取消；它会以 `OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` 拒绝，并在 `amountFilled == 0` 的报价创建不足 300 秒且未过期时以 `CancelCooldownActive` 拒绝，且受 `whenNotPaused` 限制。退回数额按切面自身的分支计算：ERC-20 借出报价退回借出资产的 `(amountMax 或 amount) - amountFilled`；NFT 借出报价退回其代币或 ERC-1155 数量；借款请求退回未使用的抵押品 `(collateralAmountMax 或 collateralAmount) - collateralAmountFilled` 或其 NFT，当 `refinanceCarryOver` 把抵押品留在贷款中时不退回；租赁请求退回 `amount × durationDays` 加上按 `rentalBufferBpsAtCreate` 计算的缓冲金。通过 `getOfferLinkedLoanId` 与贷款绑定的报价，或记录的缓冲率为零的租赁请求（此时协议使用当前费率），在签名前不计算。所有退回都经由金库提取离开创建者的金库，因此保护模式会将其排入队列，或在账户锁定期间留在金库中。仓位代币被注销。完成卡片读取 `OfferCanceled(offerId, creator)`、协议给创建者的付款记录，以及代币本身向创建者的转账。
 
+<a id="offers-price-guard"></a>
+
+### 价格变动保护
+
+对于以 ERC-20 为抵押、出借 ERC-20 的开放报价，创建者可以在报价页面设置、修改或移除价格变动保护。记录时，协议会记下两个代币的预言机价格；此后，只要抵押对本金的比率偏离该水平超过上限（0.5% 到 50%，任一方向），只要该交易对相对最近两次每小时价格检查中的任一次超出平稳界限，或者缺少当前价格或其中一次检查，每一次接受都会被拒绝。检查在创建贷款时进行，因此直接接受和撮合都在其中，页面向所有人显示上限、比率变动了多少以及现在是否允许接受。任何人都可以写入每小时检查，协议的 keeper 按设计会为开放的受保护报价的资产写入它们；在两个代币都有检查之前，任何人都无法接受该报价。对已发布报价设置的保护从记录所在的区块起生效，之前不生效；修改会重新记录价格。它不转移任何资产，也不改变任何条款。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级
