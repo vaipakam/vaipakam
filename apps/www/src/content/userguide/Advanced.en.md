@@ -2846,3 +2846,27 @@ The review reads the rental with `getLoanDetails`, its dates with `getLoanDeadli
 ### Rent: Risks of Closing
 
 Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.
+
+<a id="rewards-vpfi"></a>
+
+### Rewards: VPFI in Your Vault
+
+The page reads the token with `getVPFIToken`; the zero address means VPFI is not set up on that network. At one block it reads the wallet's `balanceOf`, the vault from `getUserVaultAddress`, the counted VPFI from `getTrackedVPFIBalance`, the free amount from `withdrawableNow` and the vault's own `balanceOf`. Held is the counted amount less the free one; uncounted is the vault's balance above the counted one. Deposit VPFI is the vault's generic `depositToVault`, and Withdraw VPFI its `withdrawFromVault` (`escapeWithdraw` while the protocol is paused and the escape route is open, for an account not in protected mode), not the VPFI-only entries: the generic routes record VPFI for the tier the same way, and only they have the escape route. Each review reads `getTrackedVPFIBalance` and `getVPFIDiscountConsent` at its own block, and the outcome is measured from the transaction. `isCanonicalVpfiChain` is read with them: only VPFI's home network resolves the tier from its own counted VPFI, and the others apply a cached copy of that tier, so there the page and each receipt say a move changes no tier.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Rewards: Risks of Moving VPFI
+
+The tier is not today's balance. It is zero until your current continuous holding has lasted the minimum number of days; it then follows a recency-weighted average of your daily closing balances; and it is clamped to the lowest tier you held on any day of your current holding, looking back at most 30 days. These are two separate look-backs. Withdrawing part of your counted VPFI lowers that day's lowest balance, which the clamp reads, and withdrawing all of it restarts your holding time. A top-up does not restart it. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released. A protected account's withdrawal changes your counted VPFI and your tier only when it is released, and a cancelled one changes neither. VPFI in your vault is not collateral. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.
+
+<a id="rewards-tier"></a>
+
+### Rewards: Your Fee-Discount Tier
+
+At one block the card reads `getVPFIDiscountConsent`, `isCanonicalVpfiChain` and `getEffectiveDiscount`, which returns the tier and discount the fee path applies: zero while consent is off, capped at 50%, and on other networks the copy sent from the home network. On the home network it also reads `getTrackedVPFIDiscountTier`, the tier the counted VPFI alone gives, and says when the effective tier is lower. The protocol does not report which holding rule holds it down, and the rules' settings have no read view yet, so neither is shown. The table reads `getVpfiTierThresholds`, `getVpfiTierDiscountBps` and `getFeesConfig` at one block. Tiers 1 to 3 start at their threshold and tier 4 above its own. Each fee is the list fee times one minus the capped discount, computed exactly. The table is shown on the home network only, where tiers are set.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Rewards: Signing Instead of Approving
+
+At its own block the review reads whether Permit2 has code at its canonical address and the wallet's ERC-20 `allowance` to Permit2 for the VPFI token. Only when Permit2 is deployed and that allowance covers the amount is Sign instead of approve offered; otherwise Advanced says which of the two is missing. The wallet signs Permit2's `PermitTransferFrom` for the VPFI token and exactly the amount, with the Diamond as spender, a random nonce checked unused against `nonceBitmap`, and a deadline 30 minutes after the latest block. The app dry-runs `depositVPFIToVaultWithPermit` with the signature, then sends it; the protocol refuses a permit for any other token. The outcome is measured from `VPFIDepositedToVault`, which that entry emits in place of `VaultDeposited`, and from the token's transfer into the vault. Both routes count the VPFI for the tier the same way.

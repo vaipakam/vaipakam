@@ -27,7 +27,7 @@ type Hex = `0x${string}`;
  * that does not exist yet (#3216), so it is not shown rather than guessed. Rewards
  * are usage rebates, never yield (RL-6).
  */
-export function RewardsWidget() {
+export function RewardsWidget({ onRewards = false }: { /** On the Rewards page itself: no link to it. */ onRewards?: boolean } = {}) {
   const copy = useCopy();
   const { text, format } = copy;
   const own = useOwnStateClient();
@@ -228,9 +228,11 @@ export function RewardsWidget() {
       <p className="tier-b">{tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
       <OwnStamp reads={shown} />
-      <p>
-        <Link to="/rewards">{text('rewards.open')}</Link>
-      </p>
+      {!onRewards && (
+        <p>
+          <Link to="/rewards">{text('rewards.open')}</Link>
+        </p>
+      )}
     </section>
   );
 }
