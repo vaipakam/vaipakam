@@ -32,6 +32,11 @@ interface ILaunchReadableDiamond {
         view
         returns (uint64 lapseWindowSeconds, uint64 dispatchCutoffGap);
     function getInteractionHalfPoolForDay(uint256 day) external view returns (uint256);
+    function getGovernorCommitState()
+        external
+        view
+        returns (uint256 armedFromDay, uint256 outstandingFresh, uint256 outstandingRecycled, uint256 paidOutRecycled);
+    function getInteractionCurrentDay() external view returns (uint256 day, bool active);
 }
 
 /**
@@ -249,7 +254,7 @@ library LibLaunchReadiness {
     ///         placed in their slots.
     /// @dev {check} passes the cross-chain pair read in-line; {LaunchGate}
     ///      passes the pair its companion contract read, because one
-    ///      contract carrying all ten checks exceeds EIP-170 (#2975). Either
+    ///      contract carrying every check exceeds EIP-170 (#2975). Either
     ///      way the list, its order and every other entry come from here.
     /// @param crossChain The VPFI pool check, then the CCIP lanes check, as
     ///        {LibLaunchCrossChainReadiness.checks} returns them.
@@ -258,7 +263,7 @@ library LibLaunchReadiness {
         view
         returns (Check[] memory checks)
     {
-        checks = new Check[](11);
+        checks = new Check[](12);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -270,6 +275,7 @@ library LibLaunchReadiness {
         checks[8] = _lapseSchedule(diamond);
         checks[9] = _rewardRole(diamond, declared.rewardRole);
         checks[10] = _vaultEndpoints(diamond);
+        checks[11] = _rewardCapArmed(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -527,6 +533,94 @@ library LibLaunchReadiness {
                 intent == RewardRoleIntent.Canonical ? "Canonical" : "Mirror",
                 ": run the reward configure step (ConfigureRewardReporter)"
             );
+    }
+
+    /// @dev #3360 — on the canonical reward chain every reward day that can
+    ///      carry a loan must be an ARMED day (`governorCommitArmedFromDay`,
+    ///      D*), where each loan's reward is bounded by its own fee-linked
+    ///      loan-side cap. A day before D* runs the legacy per-ETH cap, under
+    ///      which a wallet lending to its own second wallet earns more VPFI
+    ///      than it pays in fees once VPFI is worth a few cents. The Diamond
+    ///      is paused until this launch, so no loan exists before it: the
+    ///      check asks that D* is set, that the reward clock runs, and that
+    ///      today is D* or later. D* can only be set to a future day, so the
+    ///      clock must start at least that many days before the launch.
+    ///      Off the canonical chain it does not apply: D* reaches a mirror in
+    ///      Base's broadcast, and the loan-side cap is not yet stamped there
+    ///      (the #3360 mirror decision).
+    function _rewardCapArmed(address diamond) private view returns (Check memory c) {
+        c.label = "the fee-linked reward cap is armed before any loan";
+        ILaunchReadableDiamond d = ILaunchReadableDiamond(diamond);
+        uint8 role;
+        try d.getRewardRole() returns (uint8 r) {
+            role = r;
+        } catch {
+            c.detail = "getRewardRole() unreadable";
+            return c;
+        }
+        if (role != 0) {
+            c.checkable = true;
+            c.met = true;
+            c.detail = string.concat(
+                "does not apply: the reward role is ",
+                _roleName(role),
+                ", and the reward cap is armed on the canonical reward chain"
+            );
+            return c;
+        }
+        uint256 armedFrom;
+        try d.getGovernorCommitState() returns (uint256 a, uint256, uint256, uint256) {
+            armedFrom = a;
+        } catch {
+            c.detail = "getGovernorCommitState() unreadable";
+            return c;
+        }
+        (bool clockRead, uint256 today, bool active) = _rewardDay(d);
+        if (!clockRead) {
+            c.detail = "getInteractionCurrentDay() unreadable";
+            return c;
+        }
+        c.checkable = true;
+        if (armedFrom == 0) {
+            c.detail = "the reward cap is not armed (setGovernorCommitArmedFromDay): every reward day would run the legacy per-ETH cap, which self-loans can profit from";
+            return c;
+        }
+        if (!active) {
+            c.detail = string.concat(
+                "the reward cap is armed from reward day ",
+                Strings.toString(armedFrom),
+                ", but the reward clock has not started (setInteractionLaunchTimestamp), so that day cannot have begun"
+            );
+            return c;
+        }
+        if (today < armedFrom) {
+            c.detail = string.concat(
+                "today is reward day ",
+                Strings.toString(today),
+                ", before the cap's first armed day ",
+                Strings.toString(armedFrom),
+                ": a loan opened now would earn under the legacy per-ETH cap; launch on that day or later"
+            );
+            return c;
+        }
+        c.met = true;
+        c.detail = string.concat(
+            "armed from reward day ",
+            Strings.toString(armedFrom),
+            " and today is day ",
+            Strings.toString(today),
+            ", so every reward day a loan can reach is capped"
+        );
+    }
+
+    /// @dev The reward clock, read in its own frame. `read` is false when the
+    ///      Diamond does not answer.
+    function _rewardDay(ILaunchReadableDiamond d) private view returns (bool read, uint256 today, bool active) {
+        try d.getInteractionCurrentDay() returns (uint256 day, bool a) {
+            return (true, day, a);
+        } catch {
+            return (false, 0, false);
+        }
     }
 
     /// @dev `LibVaipakam.RewardRole` by number, as `getRewardRole` returns

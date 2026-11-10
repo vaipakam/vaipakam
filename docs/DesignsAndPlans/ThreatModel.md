@@ -98,6 +98,12 @@ A "residual" below is a stated limit, not a bug report.
 - **Storage-layout guard.** No in-place upgrade can silently move a field.
 - **Deploy-time guards.** Every facet is size-checked, every selector is
   routed, and the deploy refuses to finish with an unrecorded facet.
+- **A fee-linked reward cap on every loan on Base** (#3360). Each token loan
+  records, when it opens, a lifetime ceiling on the lending reward either
+  side can earn from it, sized from that loan's own list loan-initiation fee
+  and term. The ceiling binds from the reward cutover day, and the first
+  unpause of the canonical chain is refused until that day is set and has
+  arrived, so no loan ever earns under the older per-ETH cap.
 
 ### 4.2 Planned (tracked)
 
@@ -119,6 +125,7 @@ A "residual" below is a stated limit, not a bug report.
 | Private transaction submission for forced sales where the mempool is public | #3240 |
 | Bounds on the sanctions list's adder key | #3239 |
 | Mainnet operations baseline (keeper host, credential scope) | #3243 |
+| The same fee-linked reward cap on mirror chains, with the VPFI a capped mirror claim does not pay sent back to Base | #3360 |
 
 Mainnet also waits on an external audit after code freeze. No bug bounty
 programme is offered (owner, 2026-11-09).
@@ -147,6 +154,17 @@ lands.
   a vault do, not what a vault-code change can. What stands against this is
   the 48h delay, the Pauser Safe's cancel, and noticing in time, which
   depends on #3237.
+- **Lending between one's own wallets for rewards** (accepted, #3360). The
+  same-address check refuses a wallet lending to itself, but two wallets of
+  one person cannot be told apart. Per loan, at the default settings, the two sides together can earn
+  at most about 4.9 times the list loan-initiation fee per year of term, in
+  VPFI, while the pair pays at least half that fee (the largest hold-tier
+  discount) in the lending asset, plus gas. So such a loop pays whenever
+  that much VPFI is worth more than what it costs. A party that pays the
+  Full tariff puts in more VPFI than its side can earn back, so only loops
+  on the default fee mode can gain. Until the mirror cap above lands, a
+  mirror chain's loans are bounded only by the per-wallet daily share,
+  which more wallets get around.
 - **Misleading reads.** A lying indexer or proxy can show a misleading list.
   It cannot change what a signed accept does.
 - **Cross-chain message-only effects** (reward accounting, acknowledgements)

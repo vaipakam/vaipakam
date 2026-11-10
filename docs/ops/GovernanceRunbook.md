@@ -600,7 +600,7 @@ even for the gap between the deploy and the handover.
    count**, both read in the state where it proved every role's holders;
    the wrapper records the two together (`handover-gate.proof`) for the
    launch phase and the verify report.
-2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the ten launch
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the launch
    requirements off the chain and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
    no Diamond role at all, and the role epoch and the Timelock's call count
@@ -658,7 +658,15 @@ even for the gap between the deploy and the handover.
      under both keys the oracle asks it under (the primary denominator and
      the ETH one), or every lookup under that key misses. How many feeds it
      holds is printed, not required: WETH prices without it, and the feed
-     service fills it under the registry's own delay.
+     service fills it under the registry's own delay;
+   - on the canonical reward chain, the fee-linked reward cap armed before
+     any loan can open (#3360): `setGovernorCommitArmedFromDay` has set the
+     first armed reward day, `setInteractionLaunchTimestamp` has started the
+     reward clock, and today is that day or later. Without it the first
+     loans earn under the older per-ETH cap, which self-loans between one
+     person's wallets can profit from. The setter takes only a future day,
+     so arm it at least one reward day before the launch. A mirror reads as
+     not applicable.
 
    The launch checks the chain against these DECLARED values rather than
    against itself: a check that only read the configuration back would
@@ -1246,10 +1254,11 @@ ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE
 
 Post-handover this is a Timelock action: Safe schedules, wait the delay, execute.
 
-While it is off, plain canonical originations skip Full-tariff stamping, so any
-loan accepted between a clean unstamped-scan and enablement rejoins the unstamped
-class and invalidates the scan. Enabling first means every subsequent origination
-stamps itself and the scan result cannot be overtaken by new loans.
+Before #3360, plain canonical originations skipped the stamp while this was
+off, so enabling first was what kept new loans out of the unstamped class. Since
+#3360 every origination off a reward mirror stamps itself whether or not the
+switch is on, so enabling is now only the decision to offer the Full tariff; it
+no longer affects Step 2's scan.
 
 ### Step 2 — zero the unstamped reward-eligible canonical loans
 
@@ -1258,16 +1267,32 @@ On armed days the legacy cap retires and the loan-side cap deliberately skips an
 at `D*` earns **uncapped**. Enumerate open reward-eligible canonical loans with
 `openDays == 0`, resolve each, and read back **zero unresolved**.
 
+**Since #3360 every token-loan origination off a reward mirror stamps itself**,
+whatever the fee-entitlement switch says and whether or not anyone opted into
+Full: the stamp is the loan-side cap's base, and a party that did not opt in is
+charged nothing. Before #3360 a plain accept skipped the stamp while the switch
+was off, which is why this step used to depend on enabling first (Step 1). So
+the unstamped class on a canonical chain is now only loans opened under code
+older than #3360. A fresh deploy has none. A refreshed Diamond can still carry
+some, and the readback is still the gate.
+
 **There is no backfill surface.** Stamping runs only at origination —
 `chargeFullTariff` is `address(this)`-gated with `OfferAcceptFacet` its only
-caller — and no admin or migration path stamps an existing loan. The supported
-resolutions are the enable-first ordering above (which prevents new members of
-the class) and **waiting for close**, or a voluntary close and re-open, for
-existing ones. A true backfill needs a migration card that does not yet exist.
+caller — and no admin or migration path stamps an existing loan. Existing
+unstamped loans are resolved by **waiting for close**, or a voluntary close and
+re-open. A true backfill needs a migration card that does not yet exist.
 
-On a pre-live mainnet genesis, enabling and arming together makes this set empty
-by construction. The readback is still the gate; any testnet rehearsal or
-post-launch `D*` will have such loans.
+**Mainnet arms before launch (#3360, owner decision 2026-11-10).** The
+canonical chain's launch check ("the fee-linked reward cap is armed before any
+loan") refuses the first unpause until `D*` is set, the reward clock runs, and
+today is `D*` or later. `D*` can only name a future day, so start the reward
+clock (`SetInteractionLaunch.s.sol`) and arm at least one full reward day
+before the launch, and launch on day `D*`. Every prerequisite in this section
+therefore lands before the launch, not after it. Mirror chains are not held by
+this check: they learn `D*` from Base's broadcast, which needs Base unpaused,
+so Base launches first. The loan-side cap is not yet stamped on mirrors (the
+mirror half of #3360), so until it ships a mirror loan is bounded only by the
+per-wallet daily share.
 
 ### Step 3 — complete EVERY keeper prerequisite (still before the arm)
 
