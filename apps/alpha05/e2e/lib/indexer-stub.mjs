@@ -376,6 +376,9 @@ async function byParticipant(url) {
       lendingAsset: l.principalAsset.toLowerCase(),
       collateralAsset: l.collateralAsset.toLowerCase(),
       durationDays: Number(l.durationDays),
+      // The tenor market, as on the recent-loans rows: every fixture loan's
+      // terms are the chain's own, so it is the loan's term.
+      marketDurationDays: Number(l.durationDays),
       interestRateBps: Number(l.interestRateBps),
       assetType,
       collateralAssetType,

@@ -34,8 +34,11 @@ export interface HistoryRow {
   loanId: bigint;
   lending: Hex;
   collateral: Hex;
-  /** The loan's term in days. */
-  durationDays: number;
+  /** The term the loan was agreed at, in days, which names its market:
+   *  the index's `marketDurationDays`, set only when the chain's own record
+   *  backs the opening terms. Null when it does not, so the loan belongs to
+   *  no market here. Never the live term, which an extension rewrites. */
+  marketDays: number | null;
   /** The sides the wallet has held on this loan. */
   lent: boolean;
   borrowed: boolean;
@@ -65,8 +68,8 @@ export function historyRowFrom(o: Json): HistoryRow {
   const lending = String(o.lendingAsset);
   const collateral = String(o.collateralAsset);
   if (!ADDRESS.test(lending) || !ADDRESS.test(collateral)) throw new Error('no market');
-  const durationDays = wireWhole(o.durationDays);
-  if (durationDays < 1) throw new Error('no term');
+  const marketDays = o.marketDurationDays === null ? null : wireWhole(o.marketDurationDays);
+  if (marketDays !== null && marketDays < 1) throw new Error('no term');
   const roles = Array.isArray(o.roles) ? o.roles : [];
   const lent = roles.includes('lender');
   const borrowed = roles.includes('borrower');
@@ -77,7 +80,7 @@ export function historyRowFrom(o: Json): HistoryRow {
     loanId: wireBig(o.loanId),
     lending: lending.toLowerCase() as Hex,
     collateral: collateral.toLowerCase() as Hex,
-    durationDays,
+    marketDays,
     lent,
     borrowed,
     status,

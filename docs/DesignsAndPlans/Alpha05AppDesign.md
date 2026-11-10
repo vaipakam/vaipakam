@@ -2147,7 +2147,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   refresh, never the index's freshness. A read that did not complete says
   a loan may be missing. The history is the index's append-only record of the loans the
   wallet has held a side of, token loans against token collateral only,
-  any status, newest participation first, a page at a time. Its status is
+  any status, newest participation first, a page at a time. A row names
+  its market by the term agreed at opening, only where the index confirms
+  it, and otherwise says the agreed term is not confirmed; never the live
+  term an extension rewrites. Its status is
   labelled as the index's record, which can trail the chain, and each row
   opens the loan's page, which reads the chain. An older page is offered
   only when the index returned a row past the current one, never on a

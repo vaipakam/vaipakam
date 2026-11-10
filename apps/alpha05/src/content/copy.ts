@@ -2339,6 +2339,7 @@ export const copy = {
     marketsTruncated: A('The index lists only its deepest markets, so a market with few offers may be missing here.'),
     marketsUnread: A('{{count}} markets in the index could not be read here, so they are left out of this list.'),
     marketName: B('{{lending}} against {{collateral}}, {{days}}-day term'),
+    marketNameUnplaced: B('{{lending}} against {{collateral}}, agreed term not confirmed by the index'),
     marketCounts: B('Lenders’ offers: {{asks}}. Borrowers’ requests: {{bids}}.'),
     bestAsk: B('Lowest lender rate {{rate}}% a year'),
     bestBid: B('Highest borrower rate {{rate}}% a year'),

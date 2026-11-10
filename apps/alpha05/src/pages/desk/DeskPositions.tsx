@@ -173,7 +173,10 @@ export function DeskHistory({ viewer, copy }: { viewer: Hex; copy: CopyAccess })
 function HistoryLine({ row: r, meta, copy }: { row: HistoryRow; meta: TokenMetaMap | null; copy: CopyAccess }) {
   const { text, format } = copy;
   const id = r.loanId.toString();
-  const market = format('desk.marketName', { lending: assetName(r.lending, meta), collateral: assetName(r.collateral, meta), days: String(r.durationDays) });
+  const pair = { lending: assetName(r.lending, meta), collateral: assetName(r.collateral, meta) };
+  // The market is the term agreed at opening, and only where the index
+  // confirms it; otherwise the row says so instead of naming a term.
+  const market = r.marketDays === null ? format('desk.marketNameUnplaced', pair) : format('desk.marketName', { ...pair, days: String(r.marketDays) });
   const side = r.lent && r.borrowed ? 'desk.historyBoth' : r.lent ? 'desk.historyLent' : 'desk.historyBorrowed';
   return (
     <li data-testid="desk-history-row" data-loan-id={id} data-status={r.status} data-lent={String(r.lent)} data-borrowed={String(r.borrowed)}>

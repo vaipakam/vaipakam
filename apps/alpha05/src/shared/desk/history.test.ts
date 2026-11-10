@@ -15,7 +15,9 @@ function row(over: Record<string, unknown> = {}): Record<string, unknown> {
     status: 'repaid',
     lendingAsset: WETH.toLowerCase(),
     collateralAsset: TLIQ.toLowerCase(),
-    durationDays: 30,
+    // The live term, which an extension rewrites; the history never reads it.
+    durationDays: 60,
+    marketDurationDays: 30,
     assetType: 0,
     collateralAssetType: 0,
     isSaleVehicle: false,
@@ -46,13 +48,15 @@ describe('the desk history (OFF-76)', () => {
       loanId: 7n,
       lending: WETH.toLowerCase(),
       collateral: TLIQ.toLowerCase(),
-      durationDays: 30,
+      marketDays: 30,
       lent: true,
       borrowed: true,
       status: 'liquidated',
       participatedAt: 1_000,
     });
     expect(historyRowFrom(row({ status: 'something_new' })).status).toBe('unknown');
+    // A loan whose opening terms the index has not confirmed is in no market.
+    expect(historyRowFrom(row({ marketDurationDays: null })).marketDays).toBeNull();
   });
 
   it('refuses rows outside the desk scope or with no side held', () => {
@@ -60,7 +64,8 @@ describe('the desk history (OFF-76)', () => {
     expect(() => historyRowFrom(row({ collateralAssetType: 2 }))).toThrow();
     expect(() => historyRowFrom(row({ isSaleVehicle: true }))).toThrow();
     expect(() => historyRowFrom(row({ lendingAsset: '0x' }))).toThrow();
-    expect(() => historyRowFrom(row({ durationDays: 0 }))).toThrow();
+    expect(() => historyRowFrom(row({ marketDurationDays: 0 }))).toThrow();
+    expect(() => historyRowFrom(row({ marketDurationDays: undefined }))).toThrow();
     expect(() => historyRowFrom(row({ roles: [] }))).toThrow();
     expect(() => historyRowFrom(row({ participatedAt: 'soon' }))).toThrow();
   });
