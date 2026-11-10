@@ -297,6 +297,52 @@ contract VaultProtectionTest is SetupTest {
         vm.expectRevert(VaultProtection.OwnerBlockedBySignerLock.selector);
         vault.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), makeAddr("thief2"), P.direct(acct))));
     }
+
+    // ─── Codex #3489 round 1 ─────────────────────────────────────────────
+
+    /// @dev Each operation has its own typehash: a signed cancel of an unlock
+    ///      (protective) can never be submitted as an unlock request.
+    function test_aSignedCancelIsNeverARequest() public {
+        P.lock(address(diamond), acct, acct);
+        uint64 expiry = uint64(vm.getBlockTimestamp() + 1 hours);
+        uint8 unlock = code.SETTINGS_UNLOCK();
+        bytes memory cancelSig =
+            _sig(OWNER_KEY, keccak256(abi.encode(code.SETTING_CANCEL_TYPEHASH(), unlock, uint256(0), expiry)));
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vault.protect(abi.encodeCall(VaultProtection.requestUnlock, (_signed(acct, expiry, cancelSig))));
+        // The same message signed under the settings typehash (the old shape)
+        // is not a cancel either.
+        bytes memory requestSig = _sig(
+            OWNER_KEY, keccak256(abi.encode(code.SETTINGS_TYPEHASH(), unlock, uint256(0), uint256(0), expiry))
+        );
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vault.protect(abi.encodeCall(VaultProtection.cancelSetting, (unlock, _signed(acct, expiry, requestSig))));
+    }
+
+    /// @dev A cancel of a pending addition is not a removal, nor the reverse.
+    function test_anAllowlistCancelIsNeverARemoval() public {
+        P.allow(address(diamond), acct, acct, dest, DELAY);
+        uint64 expiry = uint64(vm.getBlockTimestamp() + 1 hours);
+        bytes memory cancelSig =
+            _sig(OWNER_KEY, keccak256(abi.encode(code.ALLOWLIST_CANCEL_TYPEHASH(), dest, uint256(0), expiry)));
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vault.protect(abi.encodeCall(VaultProtection.removeAllowlisted, (dest, _signed(acct, expiry, cancelSig))));
+    }
+
+    /// @dev A verification must name this vault's account and Diamond.
+    function test_aVerificationNamingAnotherAccountOrDiamondIsRefused() public {
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));
+        vm.prank(dest);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (relayer, address(diamond), P.direct(dest))));
+        vm.prank(dest);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, relayer, P.direct(dest))));
+        assertFalse(vault.allowEntry(dest).verified);
+    }
 }
 
 /// @dev The Diamond's manager read, as the app makes it.

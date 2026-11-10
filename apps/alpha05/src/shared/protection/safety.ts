@@ -35,7 +35,7 @@ import { AdminFacetABI, PositionNFTABI, ProtectedAccountFacetABI, VaultFactoryFa
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
-import { refusalFromError } from '../eligibility/refusal';
+import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { answerOrNull, isContractAnswer } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
@@ -438,4 +438,74 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
     return done ? { status: 'done', label } : { status: 'not-done', label, reason: text(change === 'disable' ? 'safety.rowsOpen' : 'safety.notApplied') };
   });
   return legs.length > 0 ? legs : [{ status: 'not-done', label: text('safety.titleFinalize'), reason: text('safety.nothingDue') }];
+}
+
+// ─── Sending an action's steps in order (Codex #3489 r1) ───────────────────
+
+/** A step that landed before the action's last one: its hash and its logs. */
+export interface LandedStep {
+  hash: Hex;
+  logs: readonly Log[];
+}
+
+/** What `sendSafetySteps` hands the tracker: the hash it follows, the steps
+ *  that landed before it, and, when a later step could not be sent, the leg
+ *  that says so. */
+export interface SafetySend {
+  hash: Hex;
+  landed: readonly LandedStep[];
+  stopped: LegOutcome | null;
+}
+
+/**
+ * Send an action's steps in order. Each but the last is awaited; a step that
+ * landed is kept with its logs, so the outcome is measured over EVERY step
+ * that took effect, not over the last receipt alone (an action that finalizes
+ * a delay lowering in the vault and a co-sign switch-off in the Diamond emits
+ * its events in two receipts).
+ *
+ * A failure before anything landed is thrown, as before: nothing changed. A
+ * failure AFTER a step landed is not thrown, because that would report an
+ * action that partly took effect as one that failed outright. The tracker
+ * then follows the last step that landed, and `stopped` names the step that
+ * did not.
+ */
+export async function sendSafetySteps(
+  total: number,
+  send: (i: number) => Promise<Hex>,
+  wait: (hash: Hex) => Promise<{ ok: boolean; logs: readonly Log[] }>,
+  label: (i: number) => string,
+  revertedReason: string,
+): Promise<SafetySend> {
+  const landed: LandedStep[] = [];
+  const halt = (i: number, reason: string): SafetySend => ({
+    hash: landed[landed.length - 1].hash,
+    landed,
+    stopped: { status: 'not-done', label: label(i), reason },
+  });
+  for (let i = 0; i < total; i++) {
+    let hash: Hex;
+    try {
+      hash = await send(i);
+    } catch (e) {
+      if (landed.length === 0) throw e;
+      return halt(i, refusalFromError(e).reason);
+    }
+    if (i === total - 1) return { hash, landed, stopped: null };
+    const result = await wait(hash);
+    if (!result.ok) {
+      if (landed.length === 0) throw new StatedRefusal({ code: 'SafetyStopped', reason: revertedReason, reopensAt: null, remedy: null });
+      return halt(i, revertedReason);
+    }
+    landed.push({ hash, logs: result.logs });
+  }
+  throw new Error('no safety step to send');
+}
+
+/** The logs an action's outcome is measured over: every step that landed
+ *  before the receipt the tracker followed, then that receipt's own (a
+ *  step is never counted twice when the tracker follows one that landed). */
+export function safetyLogs(landed: readonly LandedStep[], receipt: { transactionHash: Hex; logs: readonly Log[] }): Log[] {
+  const followed = receipt.transactionHash.toLowerCase();
+  return [...landed.filter((s) => s.hash.toLowerCase() !== followed).flatMap((s) => s.logs), ...receipt.logs];
 }

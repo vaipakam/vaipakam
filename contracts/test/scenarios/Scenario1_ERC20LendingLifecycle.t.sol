@@ -42,6 +42,7 @@ import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
@@ -135,7 +136,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         helperTest        = new HelperTest();
 
         // Cut all facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -245,6 +246,13 @@ contract Scenario1_ERC20LendingLifecycle is Test {
             functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
 
+        // #3379 B2: the protected-mode reads every owner action makes are
+        // hosted on ProtectedAccountFacet (self-calls), so it is cut here too.
+        cuts[26] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.

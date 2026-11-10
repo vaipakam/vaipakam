@@ -38,6 +38,7 @@ import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
@@ -400,7 +401,7 @@ contract PositiveFlowsGapFillers is Test {
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         AccessControlFacet accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -547,6 +548,13 @@ contract PositiveFlowsGapFillers is Test {
             functionSelectors: helperTest.getOfferBookFacetSelectors()
         });
 
+        // #3379 B2: the protected-mode reads every owner action makes are
+        // hosted on ProtectedAccountFacet (self-calls), so it is cut here too.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
 import { ProtectedAccountFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
-import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
+import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
 
 type Hex = `0x${string}`;
@@ -183,5 +183,54 @@ describe('safetyReceipt', () => {
     const r = safetyReceipt(review('finalize', { mode: { ...ON, delaySeconds: 5 * DAY, pendingDelay: 2 * DAY, pendingDelayAt: NOW - 1 } }, { due: ['lowerDelay'] }), copy);
     expect(r.rows[0]?.value).toEqual({ kind: 'text', text: 'safety.changeLowerDelayTo:{"delay":"2 days"}' });
     expect(r.rows.find((x) => x.label === 'safety.rowDelayAfter')?.value).toEqual({ kind: 'text', text: 'safety.delayFromTo:{"to":"2 days","from":"5 days"}' });
+  });
+});
+
+// Codex #3489 r1: an action of several transactions is measured over every
+// step that landed, and a later step that could not be sent is a leg of the
+// outcome, not a failure of the whole action.
+describe('sendSafetySteps and safetyLogs', () => {
+  const H1 = ('0x' + '1'.repeat(64)) as Hex;
+  const H2 = ('0x' + '2'.repeat(64)) as Hex;
+  const lowered = eventLog('ProtectionSettingApplied', { action: 2 }, { types: [{ type: 'uint256' }], values: [2n * BigInt(DAY)] }, VAULT);
+  const cosignOff = eventLog('SettingChangeApplied', { account: ME, kind: 4 }, { types: [], values: [] });
+  const finalize = review('finalize', { mode: { ...ON, delaySeconds: 5 * DAY, pendingDelay: 2 * DAY, pendingDelayAt: NOW - 1, requireCosign: true, pendingCosignOffAt: NOW - 1 } }, { due: ['lowerDelay', 'cosignOff'] });
+  const label = (i: number) => `step ${i + 1}`;
+
+  it('measures the vault step and the Diamond step together', async () => {
+    const sent = await sendSafetySteps(2, async (i) => (i === 0 ? H1 : H2), async () => ({ ok: true, logs: [lowered] }), label, 'reverted');
+    expect(sent).toMatchObject({ hash: H2, stopped: null });
+    const legs = measureSafety(finalize, safetyLogs(sent.landed, { transactionHash: H2, logs: [cosignOff] }), DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    // The last receipt alone (the old measurement) misses the vault step.
+    expect(measureSafety(finalize, [cosignOff], DIAMOND, copy).map((l) => l.status)).toEqual(['not-done', 'done']);
+  });
+
+  it('a later step that cannot be sent leaves the landed one measured, and says which step stopped', async () => {
+    const sent = await sendSafetySteps(
+      2,
+      async (i) => {
+        if (i === 1) throw new Error('user rejected');
+        return H1;
+      },
+      async () => ({ ok: true, logs: [lowered] }),
+      label,
+      'reverted',
+    );
+    expect(sent.hash).toBe(H1);
+    expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 2' });
+    // The tracker follows H1: its logs are counted once.
+    const logs = safetyLogs(sent.landed, { transactionHash: H1, logs: [lowered] });
+    expect(logs).toHaveLength(1);
+    expect(measureSafety(finalize, logs, DIAMOND, copy).map((l) => l.status)).toEqual(['done', 'not-done']);
+  });
+
+  it('a failure before anything landed is still the action failing', async () => {
+    await expect(sendSafetySteps(2, async () => H1, async () => ({ ok: false, logs: [] }), label, 'reverted')).rejects.toThrow();
+    await expect(
+      sendSafetySteps(2, async () => {
+        throw new Error('refused');
+      }, async () => ({ ok: true, logs: [] }), label, 'reverted'),
+    ).rejects.toThrow('refused');
   });
 });

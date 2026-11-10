@@ -22,10 +22,14 @@
  */
 import { parseUnits } from 'viem';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
-import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 import { test, expect } from '../lib/wallet-fixture';
 import { TLIQ } from '../lib/desk';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI } from '../lib/chain';
+import { loadContractAbi } from '../lib/artifacts';
+
+/** Read from the exported file (the ABI barrel's JSON imports are refused by
+ *  Node's native ESM loader; see `../lib/artifacts`). */
+const VaipakamVaultImplementationABI = loadContractAbi('VaipakamVaultImplementation');
 
 const read = <T,>(functionName: string, args: readonly unknown[]) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, args: args as unknown[] }) as Promise<T>;

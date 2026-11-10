@@ -46,6 +46,7 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
+import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
@@ -141,7 +142,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -270,6 +271,13 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             functionSelectors: helperTest.getSellerClaimFacetSelectors()
         });
 
+        // #3379 B2: the protected-mode reads every owner action makes are
+        // hosted on ProtectedAccountFacet (self-calls), so it is cut here too.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));

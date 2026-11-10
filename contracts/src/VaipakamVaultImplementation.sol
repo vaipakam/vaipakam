@@ -732,7 +732,14 @@ contract VaipakamVaultImplementation is
         // protected record, finalized after its delay, while not locked.
         if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
             LibVaultProtectionStorage.Layout storage pl = LibVaultProtectionStorage.layout();
-            return pl.enabled && !pl.locked && pl.allow[o.to].active;
+            if (!pl.enabled || pl.locked) return false;
+            if (pl.allow[o.to].active) return true;
+            // Codex #3489 r1 — a destination that has protected mode on is
+            // paid into ITS vault (the outflow policy redirects it there): the
+            // vault created for an allowlisted wallet, which this vault proves
+            // from the address its creation owner derives.
+            if (!_isGenuineVault(o.to) || o.to == address(this)) return false;
+            return pl.allow[IVaultOwnerView(o.to).vaultCreationOwner()].active;
         }
         if (
             c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty

@@ -1363,6 +1363,90 @@ contract ProtectedVaultTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
         _core().transferFrom(user, thief, 1);
     }
+
+    // ─── Codex #3489 round 1 ─────────────────────────────────────────────
+
+    /// @dev A second replacement is a handover too: the outgoing controller's
+    ///      pending co-sign switch-off dies with it and can never apply.
+    function testSecondReplacementDropsTheOutgoingControllersPendingChanges() public {
+        _deposit20(10 ether);
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
+        P.addSigner(address(diamond), user, nominee, s1, DELAY);
+        vm.startPrank(nominee);
+        _prot().setRequireCosign(user, true);
+        _prot().setRequireCosign(user, false);
+        vm.stopPrank();
+        (,, uint64 offAt) = _prot().getProtection(user);
+        assertGt(offAt, 0, "fixture: the controller's switch-off is pending");
+
+        address nominee2 = makeAddr("nominee2");
+        P.propose(address(diamond), user, nominee, nominee2);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        (,, offAt) = _prot().getProtection(user);
+        assertEq(offAt, 0, "the handover dropped it");
+        assertEq(_prot().getRetiredAccountOf(nominee2), user, "the new controller is recorded");
+        assertEq(_prot().getRetiredAccountOf(nominee), address(0), "the outgoing one is not");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeSettingChanges(user);
+    }
+
+    /// @dev Every platform-side loosening waits out a new owner's cool-down.
+    function testCosignOffIsRefusedDuringTheNewOwnersCooldown() public {
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.PrimaryInCooldown.selector, vm.getBlockTimestamp() + DELAY)
+        );
+        _prot().setRequireCosign(user, false);
+    }
+
+    /// @dev Removing the last signer leaves nobody to co-sign: the requirement
+    ///      stops binding at once and is cleared when applied.
+    function testRemovingTheLastSignerClearsTheCosignRequirement() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
+        uint256 id = _queue(1 ether, user);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id); // no co-sign: no signer is left to give one
+        _prot().applyProtection(user);
+        (, bool requireCosign,) = _prot().getProtection(user);
+        assertFalse(requireCosign, "cleared on apply");
+    }
+
+    /// @dev An allowlisted destination that has protected mode on is paid
+    ///      into its own vault, which the paying vault accepts.
+    function testAllowlistedProtectedDestinationIsPaidIntoItsVault() public {
+        _deposit20(10 ether);
+        _enable();
+        P.enable(address(diamond), friend, DELAY);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        P.verify(address(diamond), user, friend);
+        address friendVault = address(P.vaultOf(address(diamond), friend));
+        uint256 before = token.balanceOf(friendVault);
+        uint256 id = _queue(2 ether, friend);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(friendVault) - before, 2 ether, "landed in the destination's vault");
+        assertEq(token.balanceOf(friend), 0, "not in its wallet");
+    }
 }
 
 /// @dev Exposes `LibDepositoryLedger` on its own storage for the unit test.

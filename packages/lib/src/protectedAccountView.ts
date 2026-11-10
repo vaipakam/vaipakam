@@ -52,25 +52,16 @@ export function protectedAccountFromView<T extends object>(
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
 
-/** `VaultProtection.Auth`. B2 always sends the DIRECT form: the caller's own
- *  key, no expiry, no signature (the vault then requires msg.sender == key). */
-export interface VaultProtectionAuth {
-  key: Address;
-  expiry: bigint;
-  sig: Hex;
-}
-
-/** The direct `Auth` for a write the wallet `key` sends itself. */
-export function directAuth(key: Address): VaultProtectionAuth {
-  return { key, expiry: 0n, sig: '0x' };
-}
-
-/** `VaultProtection.SETTINGS_*`, the `action` of `cancelSetting`. */
-export const VAULT_SETTING = { delay: 2, disable: 3, unlock: 4 } as const;
-/** `VaultProtection.SIGNER_*`, the `action` of `signerChange`. */
-export const VAULT_SIGNER = { add: 1, accept: 2, remove: 3, cancel: 4 } as const;
-/** `VaultProtection.REPLACE_*`, the `action` of `replacement`. */
-export const VAULT_REPLACE = { propose: 1, approve: 2, cancel: 3 } as const;
+// The ABI-free half (the `Auth` shape and the action codes) lives in
+// `vaultProtectionAuth`, so a native-ESM loader (Playwright) can import it
+// without reaching the ABI barrel's attribute-less JSON imports.
+export {
+  directAuth,
+  VAULT_SETTING,
+  VAULT_SIGNER,
+  VAULT_REPLACE,
+  type VaultProtectionAuth,
+} from './vaultProtectionAuth';
 
 /** The `data` argument of the vault's `protect(bytes)`: the ABI-encoded call
  *  to one `VaultProtection` function. */

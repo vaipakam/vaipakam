@@ -19,7 +19,7 @@ import type { Page } from '@playwright/test';
 import { anvilRpc, increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
-import { VAULT_SIGNER } from '@vaipakam/lib/protectedAccountView';
+import { VAULT_SIGNER } from '@vaipakam/lib/vaultProtectionAuth';
 import { enableProtection, protect } from '../lib/protection';
 
 type Hex = `0x${string}`;

@@ -490,6 +490,17 @@
   },
   {
     "type": "error",
+    "name": "PrimaryInCooldown",
+    "inputs": [
+      {
+        "name": "until",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ProtectedModeOff",
     "inputs": [
       {

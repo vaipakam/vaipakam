@@ -8,7 +8,9 @@ An allowlisted address can now verify itself, by its own call or signature (#341
 
 Vaults are now created at an address derived from their owner (#3393). A vault tells a genuine vault from a look-alike by that address, so a copy deployed by someone else with a forged owner record is refused as a payee.
 
+Review fixes: each kind of signed change has its own signed type, so a signed cancel can never be used as a request or a removal. A verification must name this vault's account and platform. A second replacement drops the outgoing wallet's pending changes just as the first does, and the new wallet cannot switch co-signing off during its cool-down. Removing the last signer ends the co-sign requirement. An allowlisted address with protected mode on is paid into its own vault. The alpha site's safety card now reports every step of a multi-step action, including one that landed before a later step failed.
+
 The platform reads the vault's record and applies its own side of it on request (anyone may ask): it holds the position NFTs and cancels queued payouts on a lock or a replacement, and raises the code-pin and NFT-lock delays. The deploy records the protection code as `vaultProtection`. Design: `docs/DesignsAndPlans/VaultOutflowPolicyDesign.md` (Stage B2 build notes).
 
 > Caveat: queued payout rows stay with the platform until Stage B3. A row cancelled by a lock is cancelled when the platform applies the lock; until then it cannot be released, because the release reads the lock from the vault.
-> Caveat: the app, the alpha site and the keeper still call the retired platform entries. They move to the vault's entries in Stage B4, and until then protected-mode settings cannot be changed from them.
+> Caveat: the app, the alpha site and the keeper reach the vault's entries by direct transactions only; the signed and relayed forms reach them in Stage B4.

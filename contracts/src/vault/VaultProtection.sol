@@ -97,6 +97,13 @@ contract VaultProtection {
         keccak256("AllowlistAdd(address destination,uint256 nonce,uint64 expiry)");
     bytes32 public constant ALLOWLIST_CANCEL_TYPEHASH =
         keccak256("AllowlistCancel(address destination,uint256 nonce,uint64 expiry)");
+    /// @dev Codex #3489 r1 — every operation has its OWN typehash, so a
+    ///      signature for one can never be replayed as another (a protective
+    ///      cancel as a loosening request) even where two nonce lanes meet.
+    bytes32 public constant ALLOWLIST_REMOVE_TYPEHASH =
+        keccak256("AllowlistRemove(address destination,uint256 nonce,uint64 expiry)");
+    bytes32 public constant SETTING_CANCEL_TYPEHASH =
+        keccak256("SettingCancel(uint8 action,uint256 nonce,uint64 expiry)");
     bytes32 public constant SIGNER_CHANGE_TYPEHASH =
         keccak256("SignerChange(uint8 action,address signer,uint256 nonce,uint64 expiry)");
     bytes32 public constant REPLACEMENT_TYPEHASH =
@@ -234,7 +241,7 @@ contract VaultProtection {
     ///         or any signer, as an allowlist cancel).
     function cancelSetting(uint8 action, Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
-        _asOwnerOrSigner(auth, PURPOSE_ALLOWLIST_CANCEL, keccak256(abi.encode(SETTINGS_TYPEHASH, action, uint256(0), _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)));
+        _asOwnerOrSigner(auth, PURPOSE_ALLOWLIST_CANCEL, keccak256(abi.encode(SETTING_CANCEL_TYPEHASH, action, _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)));
         if (action == SETTINGS_DELAY) l.pendingDelayAt = 0;
         else if (action == SETTINGS_UNLOCK) l.pendingUnlockAt = 0;
         else if (action == SETTINGS_DISABLE) l.pendingDisableAt = 0;
@@ -340,7 +347,7 @@ contract VaultProtection {
     /// @notice Remove `destination` at once (the owner or any signer).
     function removeAllowlisted(address destination, Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
-        _asOwnerOrSigner(auth, PURPOSE_ALLOWLIST_CANCEL, keccak256(abi.encode(ALLOWLIST_CANCEL_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)));
+        _asOwnerOrSigner(auth, PURPOSE_ALLOWLIST_CANCEL, keccak256(abi.encode(ALLOWLIST_REMOVE_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)));
         if (!l.allow[destination].active) revert BadDestination(destination);
         _dropAllow(l, destination);
         emit AllowlistRemoved(destination, auth.key);
@@ -352,6 +359,10 @@ contract VaultProtection {
     ///         entry's `verified` flag (pending or active entry).
     function verifyDestination(address account, address diamond, Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
+        // The destination confirms THIS account on THIS platform: both named
+        // fields must be the vault's own (its creation owner and Diamond).
+        IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
+        if (account != self.vaultCreationOwner() || diamond != self.vaultDiamond()) revert BadDestination(auth.key);
         address destination = auth.key;
         P.Entry storage e = l.allow[destination];
         if (!e.active && e.readyAt == 0) revert BadDestination(destination);

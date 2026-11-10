@@ -112,7 +112,12 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             _raiseCoreLockDelay(account, c.delay);
             changed = true;
         }
-        if ((c.locked && !a.locked) || (c.retired && !a.retired)) {
+        // Codex #3489 r1 — a HANDOVER is any move of the owner record to a
+        // wallet not applied yet (a first replacement, or a later one from
+        // one controller to the next), not only the first move to retired:
+        // the outgoing manager's queued rows and pending changes die with it.
+        bool handover = c.retired && a.controller != c.manager;
+        if ((c.locked && !a.locked) || handover) {
             _voidBeaconPending(account);
             _voidCoreLockPending(account);
             _lockPositionNfts(account);
@@ -120,10 +125,19 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             a.pendingCosignOffAt = 0;
             changed = true;
         }
-        if (c.retired && a.controller != c.manager) {
+        if (handover) {
             if (a.controller != address(0)) delete s.protectedRetiredAccountOf[a.controller];
             s.protectedRetiredAccountOf[c.manager] = account;
             a.controller = c.manager;
+            changed = true;
+        }
+        // The co-sign requirement binds only while the account has a signer:
+        // removing the last one clears it (as the platform-held rule did), so
+        // no payout waits on a co-signature nobody can give.
+        if (a.requireCosign && c.enabled && !LibProtectedAccount.hasSigners(account)) {
+            a.requireCosign = false;
+            a.pendingCosignOffAt = 0;
+            emit CosignRequirementSet(account, false);
             changed = true;
         }
         if (!c.enabled && a.enabled) {
@@ -185,7 +199,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             emit CosignRequirementSet(account, true);
             return;
         }
-        if (c.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
+        _requireLoosenable(account, c);
         a.pendingCosignOffAt = uint64(block.timestamp) + c.delay;
         emit SettingChangeRequested(account, CHANGE_COSIGN_OFF, 0, a.pendingCosignOffAt);
     }
@@ -214,7 +228,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[account];
         if (a.pendingCosignOffAt == 0) revert LibProtectedAccount.ChangeNotRequested();
         if (block.timestamp < a.pendingCosignOffAt) revert LibProtectedAccount.ChangeNotMatured(a.pendingCosignOffAt);
-        if (LibProtectedAccount.core(account).locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
+        _requireLoosenable(account, LibProtectedAccount.core(account));
         a.requireCosign = false;
         a.pendingCosignOffAt = 0;
         emit CosignRequirementSet(account, false);
@@ -278,6 +292,15 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         c = LibProtectedAccount.core(account);
         if (!c.enabled) revert LibProtectedAccount.ProtectedModeOff(account);
         if (msg.sender != c.manager) revert LibProtectedAccount.NotAccountManager(account, msg.sender);
+    }
+
+    /// @dev Codex #3489 r1 — THE gate every platform-side loosening passes
+    ///      (asking for co-sign off, and applying it): refused while the vault
+    ///      is locked or during a new owner's cool-down, read from the vault.
+    function _requireLoosenable(address account, LibProtectedAccount.Core memory c) private view {
+        if (c.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
+        (,,, uint64 cooldownUntil,,,) = IVaultProtectionRead(c.vault).protectionState();
+        if (block.timestamp < cooldownUntil) revert LibProtectedAccount.PrimaryInCooldown(cooldownUntil);
     }
 
     function _requireManagerOrSigner(address account) private view {

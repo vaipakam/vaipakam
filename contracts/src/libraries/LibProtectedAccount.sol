@@ -290,6 +290,14 @@ library LibProtectedAccount {
         return IVaultProtectionRead(c.vault).allowEntry(recipient).active;
     }
 
+    /// @notice Whether `account` has at least one active secondary signer.
+    function hasSigners(address account) internal view returns (bool) {
+        address vault = _s().userVaipakamVaults[account];
+        if (vault == address(0)) return false;
+        (,,,,, address[] memory signers,) = IVaultProtectionRead(vault).protectionState();
+        return signers.length != 0;
+    }
+
     /// @notice #3415 — whether a payout from `account` to `recipient` needs a
     ///         secondary signer's co-signature: the recipient is an allowlisted
     ///         destination that has not verified itself, and the account has
@@ -535,8 +543,10 @@ library LibProtectedAccount {
         if (core(p.user).locked) revert ProtectedVaultLocked(p.user);
         // #3415 — an unverified destination needs a co-signature when the
         // account has signers, whatever the account's own co-sign setting.
-        bool cosignNeeded =
-            s.protectedAccount[p.user].requireCosign || unverifiedNeedsCosign(p.user, p.recipient);
+        // The account's own co-sign setting binds only while it has a signer
+        // (removing the last one leaves nobody to co-sign, Codex #3489 r1).
+        bool cosignNeeded = (s.protectedAccount[p.user].requireCosign && hasSigners(p.user))
+            || unverifiedNeedsCosign(p.user, p.recipient);
         if (cosignNeeded && !p.cosigned) revert CosignRequired(id);
         p.state = ROW_RELEASED;
         s.pendingPayoutIds[p.user].remove(id);

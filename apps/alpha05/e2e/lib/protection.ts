@@ -5,13 +5,29 @@
  * sending wallet, and the Diamond's `applyProtection(account)` then applies
  * the platform side of a posture change.
  */
-import type { Abi } from 'viem';
-import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
+import fs from 'node:fs';
+import { encodeFunctionData, type Abi } from 'viem';
 import type { Party, ScenarioChain } from '@vaipakam/anvil-harness/scenarioChain';
-import { directAuth, protectionCall, type VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
+import type { VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
+import { directAuth } from '@vaipakam/lib/vaultProtectionAuth';
 
 type Hex = `0x${string}`;
-const VAULT = VaipakamVaultImplementationABI as Abi;
+
+/** The vault and `VaultProtection` ABIs, read from the exported files rather
+ *  than imported: the `@vaipakam/contracts/abis` barrel imports JSON without
+ *  an import attribute, which Playwright's native-ESM loader refuses (the
+ *  anvil harness reads the Diamond ABI the same way). Same files, same
+ *  entries. */
+const readAbi = (name: string): Abi =>
+  JSON.parse(fs.readFileSync(new URL(`../../../../packages/contracts/src/abis/${name}.json`, import.meta.url), 'utf8')) as Abi;
+const VAULT = readAbi('VaipakamVaultImplementation');
+const VAULT_PROTECTION = readAbi('VaultProtection');
+
+/** The `data` of `vault.protect(bytes)`: one encoded `VaultProtection` call
+ *  (what `protectionCall` of `@vaipakam/lib/protectedAccountView` builds). */
+function protectionCall(functionName: string, args: readonly unknown[]): Hex {
+  return encodeFunctionData({ abi: VAULT_PROTECTION, functionName, args } as never);
+}
 const ZERO = /^0x0{40}$/i;
 
 /** `account`'s vault, created (permissionlessly) when it has none. */

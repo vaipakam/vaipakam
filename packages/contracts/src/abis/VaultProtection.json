@@ -32,6 +32,19 @@
   },
   {
     "type": "function",
+    "name": "ALLOWLIST_REMOVE_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "LOCK_TYPEHASH",
     "inputs": [],
     "outputs": [
@@ -312,6 +325,19 @@
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SETTING_CANCEL_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
