@@ -1,4 +1,4 @@
-## Thread — alpha05 guards every address that receives funds, and adds payout destinations (PR #TBD)
+## Thread — alpha05 guards every address that receives funds, and adds payout destinations (PR #3494)
 
 Address poisoning works because people compare only the first and last few characters of an address. An attacker makes an address whose start and end match one the user already uses, plants it in their history with a worthless transfer, and waits for them to copy the wrong one. The new app now has one address box for anything that receives funds or control. It always shows the address in full, refuses a broken checksum, and refuses, with no override, an address whose first three and last three characters match one the user already uses while the rest differs. An address the user has not used before needs an explicit "I checked the full address" tick. The Keepers settings already use this box.
 
