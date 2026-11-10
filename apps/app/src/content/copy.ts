@@ -6909,6 +6909,22 @@ const copySource = {
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
     readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
+    // #1787 — a claim reads one part (window) of a large wallet's reward
+    // entries. The figure above is that claim's; later claims read the rest.
+    windowPart: tmpl('This claim reads reward entries {{from}} to {{to}} of {{total}}; later claims can pay more.', [
+      'from',
+      'to',
+      'total',
+    ]),
+    // #1787 — the part a claim would read has nothing to pay. The claim still
+    // runs and its one effect is to move on to the next part, so it is offered
+    // with exactly that description rather than hidden (hiding it would leave
+    // the rest of the entries out of reach).
+    windowMoveOn: tmpl(
+      'A claim made now pays nothing. Your reward entries are read {{size}} at a time, and the part it would read (entries {{from}} to {{to}} of {{total}}) has nothing to pay yet. Claiming only moves on to the next part, so a later claim can reach the rest, and it still costs a network fee.',
+      ['size', 'from', 'to', 'total'],
+    ),
+    claimMoveOn: 'Move on to the next part',
     // #2489 r2 — a held balance set aside for this wallet, claimable on its own
     // (never through the combined claim alone, which can fail for unrelated
     // reasons). Says nothing about why it was set aside.

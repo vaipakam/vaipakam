@@ -532,14 +532,18 @@ contract InteractionRewardsLensFacet {
     /// @return to    One past the last position the next claim reads.
     /// @return total The index's length, so a reader can say how much of it
     ///               the next claim covers.
+    /// @return changedAt When the entries the window holds last changed (0 =
+    ///               never). The expiry clock of every entry of the wallet
+    ///               counts no executable time from before it.
     function getRewardClaimWindow(address user)
         external
         view
-        returns (uint256 from, uint256 to, uint256 total)
+        returns (uint256 from, uint256 to, uint256 total, uint64 changedAt)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (from, to) = LibInteractionRewards.claimWindow(s, user);
         total = s.userRewardEntryIds[user].length;
+        changedAt = s.rewardClaimWindowChangedAt[user];
     }
 
     /// @notice Codex #2489 r14 — the LIVE entries among `[offset, offset + limit)`

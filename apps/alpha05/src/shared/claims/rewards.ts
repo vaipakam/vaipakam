@@ -187,7 +187,7 @@ export async function readPendingRewards(client: PublicClient, diamond: Hex, acc
  *  source rather than reporting a window it did not read. */
 async function readClaimWindow(client: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<ClaimWindow | null> {
   try {
-    const [from, to, total] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'getRewardClaimWindow', args: [account], blockNumber })) as readonly [bigint, bigint, bigint];
+    const [from, to, total] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'getRewardClaimWindow', args: [account], blockNumber })) as readonly [bigint, bigint, bigint, bigint];
     return { from, to, total };
   } catch (e) {
     if (isContractAnswer(e) && refusalFromError(e).code === 'FunctionDoesNotExist') return null;

@@ -289,7 +289,11 @@ contract RewardClaimWorkMeterTest is SetupTest {
     // ───────────────────────── the claim window ─────────────────────────
 
     function _window() internal view returns (uint256 from, uint256 to, uint256 total) {
-        return InteractionRewardsLensFacet(address(diamond)).getRewardClaimWindow(alice);
+        (from, to, total, ) = InteractionRewardsLensFacet(address(diamond)).getRewardClaimWindow(alice);
+    }
+
+    function _windowChangedAt() internal view returns (uint64 changedAt) {
+        (, , , changedAt) = InteractionRewardsLensFacet(address(diamond)).getRewardClaimWindow(alice);
     }
 
     /// @dev A wallet with no more entries than the window reads them all, and
@@ -360,8 +364,11 @@ contract RewardClaimWorkMeterTest is SetupTest {
         assertEq(to, w);
         assertEq(total, w + 20);
 
+        assertEq(_windowChangedAt(), 0, "the window has not changed yet");
+        vm.warp(block.timestamp + 1 hours);
         assertTrue(_claimOnce(), "a claim whose window paid nothing still moves the window");
         assertEq(vpfi.balanceOf(alice), 0, "nothing in the first window was claimable");
+        assertEq(_windowChangedAt(), block.timestamp, "the move is recorded for the expiry clocks");
         (from, to, total) = _window();
         assertEq(from, w, "the next claim reads the window behind it");
         assertEq(to, w + 20);

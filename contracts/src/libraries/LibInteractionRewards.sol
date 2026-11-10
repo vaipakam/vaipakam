@@ -988,7 +988,11 @@ library LibInteractionRewards {
         _removeUserEntry(s, oldUser, id);
         s.userRewardEntryIds[newUser].push(id);
         // #1067 — maintain the O(1) membership index on the newUser push.
-        s.rewardEntryUserIdx[id] = s.userRewardEntryIds[newUser].length;
+        uint256 newLen = s.userRewardEntryIds[newUser].length;
+        s.rewardEntryUserIdx[id] = newLen;
+        // #1787 — the entry joins the holder's index, perhaps inside its claim
+        // window: no interval observed before now may count toward its expiry.
+        if (newLen > CLAIM_WINDOW_ENTRIES) _noteClaimWindowChange(s, newUser);
         e.user = newUser;
         // Per-loan pointer already references `id`; sweep + per-user claim now
         // resolve to `newUser`.
@@ -1073,6 +1077,17 @@ library LibInteractionRewards {
         }
         ids.pop();
         s.rewardEntryUserIdx[id] = 0;
+        // #1787 — a swap-pop on an index longer than one window can move the
+        // tail into the claim window, and a shrink can make the window the
+        // whole index: either changes which entries the window holds. Once
+        // the index fits one window, the window starts at 0 again, so it
+        // cannot jump when the index next grows past one window.
+        if (n > CLAIM_WINDOW_ENTRIES) {
+            _noteClaimWindowChange(s, user);
+            if (lastIdx <= CLAIM_WINDOW_ENTRIES && s.rewardClaimWindowStart[user] != 0) {
+                s.rewardClaimWindowStart[user] = 0;
+            }
+        }
     }
 
     /// @dev Codex #2489 r16 — THE live predicate for a reward entry, shared by
@@ -1155,9 +1170,33 @@ library LibInteractionRewards {
         }
         if (next != start) {
             s.rewardClaimWindowStart[user] = next;
+            _noteClaimWindowChange(s, user);
             emit RewardClaimWindowAdvanced(user, next, n);
             res.advancedAnyDay = true;
         }
+    }
+
+    /// @dev #1787 — record that `user`'s claim window may now hold different
+    ///      entries ({LibVaipakam.Storage.rewardClaimWindowChangedAt}).
+    function _noteClaimWindowChange(LibVaipakam.Storage storage s, address user) private {
+        if (s.rewardClaimWindowChangedAt[user] != block.timestamp) {
+            s.rewardClaimWindowChangedAt[user] = uint64(block.timestamp);
+        }
+    }
+
+    /// @notice #1787 — whether an executable observation of `user`'s entry
+    ///         taken at `obsAt` predates a change of the claim window. The
+    ///         entry may have been outside the window for part of the interval
+    ///         since, when it was not claimable, so the horizon sweep and its
+    ///         estimate credit none of it (they re-baseline, as across a
+    ///         pause). `<=`: a change in the observation's own block is
+    ///         ambiguous in order and is treated as spanned.
+    function claimWindowChangedSince(LibVaipakam.Storage storage s, address user, uint256 obsAt)
+        internal
+        view
+        returns (bool)
+    {
+        return obsAt <= uint256(s.rewardClaimWindowChangedAt[user]);
     }
 
     /// @notice Codex #2489 r17 — `retired` SETTLED entries left `user`'s reward
@@ -4860,8 +4899,11 @@ library LibInteractionRewards {
         // prior observation is ambiguous in ordering, so treat an equal
         // timestamp as spanning the pause too — conservatively drop it rather
         // than credit a possibly-paused interval (Codex #1317 r2 xkm).
+        // #1787 — likewise an interval across a change of the claim window:
+        // the entry may have been outside it, not claimable, for part of it.
         bool spannedPause =
-            uint256(lastObs) <= uint256(LibPausable.lastPauseBoundaryAt());
+            uint256(lastObs) <= uint256(LibPausable.lastPauseBoundaryAt()) ||
+            claimWindowChangedSince(s, e.user, uint256(lastObs));
         if (!s.rewardEntryObsBlocked[id]) {
             uint256 gap = block.timestamp - uint256(lastObs);
             if (
@@ -5446,6 +5488,7 @@ library LibInteractionRewards {
             uint256 gap = block.timestamp - lastObs;
             if (
                 lastObs > uint256(LibPausable.lastPauseBoundaryAt()) &&
+                !claimWindowChangedSince(s, e.user, lastObs) &&
                 gap <=
                 uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
                     1 days
