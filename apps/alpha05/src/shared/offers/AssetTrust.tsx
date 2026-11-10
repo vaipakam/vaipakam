@@ -235,7 +235,13 @@ export function TokenSearch({
               <button type="button" className="token-hit" data-testid="token-hit" onClick={() => onPick(h.address)}>
                 <span className="token-hit-name">
                   {h.best.symbol} · {h.best.name}{' '}
-                  <span className="badge">{format('trust.hitTier', { tier: text(TIER_KEY[rankTier(h.best.rank, null)]), rank: String(h.best.rank) })}</span>
+                  {h.other ? (
+                    <span className="badge trust-badge" data-tier="unverified">
+                      {text('trust.hitUnverified')}
+                    </span>
+                  ) : (
+                    <span className="badge">{format('trust.hitTier', { tier: text(TIER_KEY[rankTier(h.best.rank, null)]), rank: String(h.best.rank) })}</span>
+                  )}
                 </span>
                 <span className="token-hit-address">{h.address}</span>
               </button>

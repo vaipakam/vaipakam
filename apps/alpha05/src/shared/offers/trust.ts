@@ -277,6 +277,10 @@ export function listStatuses(r: AssetRankings): ListStatus[] {
 export interface SearchHit {
   address: string;
   best: RankedRef;
+  /** Where another list puts this symbol instead (the same disagreement
+   *  rule a chosen token is classified by); null when the lists agree. A
+   *  hit with one shows as unverified, never with its rank tier. */
+  other: RankedRef | null;
 }
 
 /** Ranked tokens whose symbol or name contains `query`, best rank first;
@@ -290,8 +294,8 @@ export function searchRanked(r: AssetRankings, query: string, limit = 8): Search
     const names = RANKING_SOURCES.flatMap((s) => (entry[s] ? [norm(entry[s].symbol), norm(entry[s].name)] : []));
     if (!names.some((n) => n.includes(q))) continue;
     const best = bestRank(address, entry);
-    if (best) hits.push({ address, best, exact: names.includes(q) });
+    if (best) hits.push({ address, best, other: disagreement(r, address, entry), exact: names.includes(q) });
   }
   hits.sort((a, b) => a.best.rank - b.best.rank || Number(b.exact) - Number(a.exact) || a.address.localeCompare(b.address));
-  return hits.slice(0, limit).map(({ address, best }) => ({ address, best }));
+  return hits.slice(0, limit).map(({ address, best, other }) => ({ address, best, other }));
 }

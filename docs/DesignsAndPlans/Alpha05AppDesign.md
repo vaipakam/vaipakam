@@ -1577,7 +1577,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   token stays its own answer, shown beside it. The "another token" field
   searches by name or symbol unless the text starts like an address:
   ranked tokens first, best rank first, each with its tier and full
-  address, then suggested tokens that match, with their label; a pick fills
+  address (or marked unverified, never with a tier, where the lists
+  disagree under the same rule as a chosen token), then suggested tokens that match, with their label; a pick fills
   the address. NFT collections carry no tier yet (#3433).
 - **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
   public queue before it is included (Ethereum, BNB Chain, and BNB Testnet

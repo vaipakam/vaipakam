@@ -1287,6 +1287,11 @@ a.btn {
   background: var(--ok-soft);
   border-color: var(--ok);
 }
+.trust-badge[data-tier='unverified'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
 .token-hits {
   list-style: none;
   margin: 4px 0 0;

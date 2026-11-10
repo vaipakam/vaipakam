@@ -2399,6 +2399,7 @@ export const copy = {
     searchUnavailable: B('The public rankings could not be read, so only suggested tokens are listed; paste the address instead.'),
     noHits: B('No ranked token on {{chain}} matches; paste the contract address instead.'),
     hitTier: B('{{tier}}, #{{rank}}'),
+    hitUnverified: B('Unverified: the two lists disagree on this address'),
     hitUnranked: B('not ranked'),
   },
   borrow: {

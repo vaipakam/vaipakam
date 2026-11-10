@@ -147,5 +147,17 @@ describe('searchRanked', () => {
     ]);
     expect(searchRanked(r, 'wrapped').map((h) => h.address)).toEqual([C]);
     expect(searchRanked(r, 'u')).toEqual([]);
+    expect(searchRanked(r, 'usdc').every((h) => h.other === null)).toBe(true);
+  });
+
+  it('carries the lists’ disagreement into the hits, so neither shows a tier', async () => {
+    const r = await rankings([
+      { address: A, ranks: { cg: rank(5, 'USDC') } },
+      { address: B, ranks: { cp: rank(6, 'usdc') } },
+    ]);
+    expect(searchRanked(r, 'usdc').map((h) => [h.address, h.other?.address])).toEqual([
+      [A, B],
+      [B, A],
+    ]);
   });
 });
