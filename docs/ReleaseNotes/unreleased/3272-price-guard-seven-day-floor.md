@@ -1,4 +1,4 @@
-## Thread — Price settings wait as long as vault code changes (PR #<n>)
+## Thread — Price settings wait as long as vault code changes (PR #3484)
 
 On a production chain, a change to a price setting now waits at least seven days, not one. This covers the price guard's own settings (feeds, WETH, secondary sources, tolerances) and the feed registry the guard reads its Chainlink feeds from. The default delay for both is now seven days, up from three. The ceiling stays at fourteen days, and a testnet may still use no delay.
 
