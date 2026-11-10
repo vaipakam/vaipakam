@@ -92,7 +92,6 @@ function AccountPanel({
   const root = useRef<HTMLDivElement>(null);
   const chip = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const [shift, setShift] = useState(0);
   const panelId = useId();
   const chain = getSupportedChain(chainId);
   const chainName = chain?.name ?? `chain ${chainId ?? '?'}`;
@@ -118,7 +117,9 @@ function AccountPanel({
   // The panel hangs below the chip, right-aligned to it, but the chip is not
   // always at the window's right edge (an unsupported-network notice wraps
   // the wallet slot onto its own row on a phone). Measure where it landed and
-  // shift it back inside the window, 16px from either side.
+  // shift it back inside the window, 16px from either side. The effect owns
+  // the panel's transform outright (React never sets it), so each opening
+  // and each resize measures from the unshifted place and writes the result.
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
@@ -128,7 +129,8 @@ function AccountPanel({
       const r = el.getBoundingClientRect();
       const gutter = 16;
       const right = window.innerWidth - gutter;
-      setShift(r.left < gutter ? gutter - r.left : r.right > right ? right - r.right : 0);
+      const shift = r.left < gutter ? gutter - r.left : r.right > right ? right - r.right : 0;
+      el.style.transform = shift ? `translateX(${shift}px)` : '';
     };
     place();
     window.addEventListener('resize', place);
@@ -170,7 +172,6 @@ function AccountPanel({
           role="group"
           aria-label={text('wallet.panel')}
           data-testid="wallet-panel"
-          style={shift ? { transform: `translateX(${shift}px)` } : undefined}
         >
           <p className="wallet-full">{address}</p>
           <button type="button" className="btn" onClick={() => void copy()}>
