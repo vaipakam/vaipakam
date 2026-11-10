@@ -29,6 +29,9 @@ contract TierExplanationTest is SetupTest {
     uint256 internal constant T2_AMOUNT = 2_000 ether; // tier 2
 
     function setUp() public {
+        // A realistic date (day 20,000): at the epoch's day 0 there are no
+        // days before a holding for the look-back to wrongly include.
+        vm.warp(20_000 days + 12 hours);
         setupHelper();
         VPFIToken impl = new VPFIToken();
         bytes memory initData =

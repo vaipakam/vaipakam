@@ -272,7 +272,7 @@ contract VPFIDiscountAccumulatorFacet {
         e.twa = _computeTwa(s, user, today);
         e.rawTier = LibVPFIDiscount.tierOf(e.twa);
         if (e.rawTier == 0 && !full) return e;
-        e.lookbackTier = _computeRingBufferMinTier(s, user, today, minDays);
+        e.lookbackTier = _computeRingBufferMinTier(s, user, today);
         if (young) return e;
         uint8 t = e.rawTier < e.lookbackTier ? e.rawTier : e.lookbackTier;
         if (t == 0) return e;
@@ -478,31 +478,28 @@ contract VPFIDiscountAccumulatorFacet {
         return lastSnap.dayId == lastUpdate ? lastSnap.dayClose : 0;
     }
 
+    /// @dev The lowest tier in the look-back: every day of the CURRENT
+    ///      continuous holding, from `currentStakeStartDayId` to today,
+    ///      capped at the ring buffer's 30 days. Never a day before the
+    ///      holding began: such a day has no balance and would report a dip
+    ///      the holder never had (#3475 r1).
+    ///
+    ///      Sub 1.C round-1 P2 #4 is why the scan reaches back to the start
+    ///      day rather than only `today - minDays + 1`: a dust-then-bulk
+    ///      holder whose dust day has left a minDays-wide window is still
+    ///      caught. Once the minimum holding has passed, the start day is
+    ///      always at or before `today - minDays`, so the fee path scans the
+    ///      same days it did when this helper also took the minDays window;
+    ///      the window only ever mattered while the holding was young, which
+    ///      the fee path never reaches.
     function _computeRingBufferMinTier(
         LibVaipakam.Storage storage s,
         address user,
-        uint16 today,
-        uint16 windowDays
+        uint16 today
     ) private view returns (uint8) {
         if (s.currentStakeStartSec[user] == 0) return 0;
-        uint16 startDay = s.currentStakeStartDayId[user];
-        // Sub 1.C round-1 P2 #4: the scan must extend BACK to
-        // `currentStakeStartDayId` (capped at the 30-day ring buffer
-        // window) so a dust-then-bulk attacker whose dust day has
-        // fallen out of the `today - minDays + 1` window is still
-        // caught. With the previous `if (startDay > windowFloor)
-        // windowFloor = startDay` narrowing, a user who staked
-        // dust on day 0, topped up the same day, and read tier on
-        // day 3 saw the scan start at day 1 — missing the dust
-        // dayMin entirely. The new logic widens the floor down to
-        // the earlier of `today - minDays + 1` or `startDay`,
-        // bounded below by `today - 29` to stay within the ring
-        // buffer's active range.
+        uint16 windowFloor = s.currentStakeStartDayId[user];
         uint16 lowerCap = today > 29 ? today - 29 : 0;
-        uint16 windowFloor = today >= windowDays
-            ? today - windowDays + 1
-            : 0;
-        if (startDay < windowFloor) windowFloor = startDay;
         if (windowFloor < lowerCap) windowFloor = lowerCap;
         uint8 minTier = type(uint8).max;
         bool anyHit;
