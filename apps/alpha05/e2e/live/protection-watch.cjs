@@ -1,13 +1,14 @@
-// Watch-only live review of the Protection page (#3415 slice 1; ACC-41;
+// Watch-only live review of the Protection page (#3415; ACC-41;
 // RB-ADDRESS-GUARD; live tier, run after each deploy), through the shared
 // watch-only wallet (watch-wallet.cjs). The deployed build reads the watched
-// wallet's protected mode, destinations and waiting requests on the live
-// Diamond in one block; the driver prints the destinations and saved-address
-// sections on desktop and phone, types a look-alike of the watched address
-// into the address box to show it refused, and opens a damaged proof link to
-// show it refused. It saves nothing (the browser's list is the driver's own
-// throwaway context) and signs nothing; signing and every destination change
-// are covered by the CI-Anvil spec (60-protection.spec.ts).
+// wallet's protected mode, destinations, signers and waiting requests on the
+// live Diamond in one block; the driver prints the destinations, signers and
+// saved-address sections on desktop and phone, types a look-alike of the
+// watched address into the address box to show it refused, and opens a
+// damaged proof link and a damaged signer link to show both refused. It saves
+// nothing (the browser's list is the driver's own throwaway context) and
+// signs nothing; signing and every destination and signer change are covered
+// by the CI-Anvil specs (60-protection.spec.ts, 61-signers.spec.ts).
 // Usage: node e2e/live/protection-watch.cjs <address>  (screenshots go to
 // $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin; $LIVE_CHAIN_ID
 // picks the network, as in watch-wallet.cjs)
@@ -38,6 +39,9 @@ async function view(b, opts, label) {
   console.log(`===== ${label} (${p.url()})`);
   console.log(`--- destinations: ${(await dests.innerText()).replace(/\n+/g, ' · ')}`);
   await dests.screenshot({ path: `${OUT}/live-protection-${label}-destinations.png` });
+  const signers = p.getByTestId('signers');
+  console.log(`--- signers: ${(await signers.innerText()).replace(/\n+/g, ' · ')}`);
+  await signers.screenshot({ path: `${OUT}/live-protection-${label}-signers.png` });
   const book = p.getByTestId('address-book');
   console.log(`--- saved addresses: ${(await book.innerText()).replace(/\n+/g, ' · ')}`);
 
@@ -53,6 +57,13 @@ async function view(b, opts, label) {
   const prove = p.getByTestId('prove-control');
   await prove.waitFor({ timeout: 60000 });
   console.log(`--- damaged link: ${(await prove.innerText()).replace(/\n+/g, ' · ')}`);
+  // A damaged signer link offers nothing to accept.
+  await p.goto(`${ORIGIN}protection?signer=damaged&chain=1`, { waitUntil: 'networkidle' });
+  const accept = p.getByTestId('signer-accept-panel');
+  await accept.waitFor({ timeout: 60000 });
+  console.log(
+    `--- damaged signer link: ${(await accept.innerText()).replace(/\n+/g, ' · ')} accept buttons=${await accept.getByTestId('signer-accept').count()}`,
+  );
   console.log('errors:', JSON.stringify(errs));
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
   await ctx.close();

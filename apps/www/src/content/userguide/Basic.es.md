@@ -1410,6 +1410,12 @@ La página Protection, enlazada desde la tarjeta Seguridad de la cuenta, guarda 
 
 Con el modo protegido activado, la página Protection también muestra sus destinos de pago: además de su propia billetera, como máximo cinco direcciones a las que puede ir un pago protegido. Un destino se elige solo entre sus direcciones guardadas. Pedir añadir uno no cambia nada al principio: se puede usar tras el retraso de su cuenta, después debe activarse dentro de otro retraso y, si no, caduca y puede pedirse de nuevo. Usted, o un firmante secundario, puede cancelar una solicitud mientras espera, y un bloqueo cancela todas las solicitudes. Quitar un destino surte efecto al instante y cancela cada pago en cola hacia él; los activos se quedan en su bóveda. Cada cambio pide su billetera una vez, su revisión muestra la dirección completa y la tarjeta final muestra lo que registró el protocolo. Con el modo protegido desactivado, los pagos van solo a su billetera y la página indica que los destinos no se aplican.
 
+<a id="protection-signers"></a>
+
+### Firmantes secundarios
+
+Con el modo protegido activado, la página Protection también muestra tus firmantes secundarios: otras carteras que tienes, como una cartera de hardware, que protegen la cuenta. Un firmante puede cancelar cualquier cambio en espera, bloquear la cuenta, cancelar un pago en cola o cofirmarlo cuando se exigen cofirmas, quitar un destino y, junto con los demás firmantes, aprobar la sustitución de tu cartera principal. Nunca puede sacar nada de tu bóveda, abrir una posición ni añadir un destino o un firmante. Un firmante solo se elige entre tus carteras guardadas que probaron su control firmando. Pedirlo no cambia nada al principio: la página da un enlace que la cartera pedida abre para aceptar, con su propia clave. Cuando ha pasado tu plazo y ha aceptado, la solicitud debe activarse dentro de un plazo más; si no, caduca y hay que cancelarla antes de volver a pedirlo. Quitar un firmante también espera tu plazo, y otro firmante puede cancelar la retirada. También puedes exigir la cofirma de un firmante en cada pago: activarla es inmediato, desactivarla espera tu plazo, y quitar tu último firmante también la desactiva. Puedes tener como máximo cinco firmantes.
+
 <a id="my-offers"></a>
 
 ### Tus ofertas

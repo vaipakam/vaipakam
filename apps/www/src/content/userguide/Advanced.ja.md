@@ -2369,6 +2369,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 このセクションは同じブロックで `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（各リクエストとその `maturesAt`）、`getProtectedSigners`、`paused`、および `getPendingPayoutIds` から受取人ごとの待機中の支払いを読み取ります。ブロック時刻にその後の経過秒数を加えた時刻で、リクエストは `maturesAt` より前は待機中、`maturesAt + delay` までは準備完了、その後は失効です。四つの変更は `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted`、`removeAllowlisted` で、いずれも `(account, destination)` を取ります。確認画面は同じブロックで読み取られ、facet が拒否するものをウォレットを開く前に拒否します。一時停止やロック（追加と有効化の場合）、自分のウォレット、すでに有効または待機中のアドレス、すでに5つの支払先または5つのリクエスト、フラグ付きのアドレス、まだ満期でないか失効したリクエストです。各呼び出しはシミュレーションされ、ウォレットを開く直前に再確認され、それ自身の `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded`、`AllowlistRemoved` ログで計測されます。削除では、それによって発生した `PayoutCancelled` ログも数えます。
 
+<a id="protection-signers"></a>
+
+### セカンダリ署名者
+
+このセクションは1つのブロックで、`getProtectedAccount`(`requireCosign` と `pendingCosignOffAt` を含む)、各署名者の `removeAt` を読む `getSignerChange` 付きの `getProtectedSigners`、`getPendingSignerAdditions`(依頼された各ウォレットとその `maturesAt`、`accepted`)、`paused` を読みます。変更は `addSigner`、`cancelAddSigner`、`finalizeAddSigner`、`requestRemoveSigner`、`cancelRemoveSigner`、`finalizeRemoveSigner`(それぞれ `(account, signer)`)、依頼されたウォレットが承諾リンク(`/protection?signer=<account>&chain=<id>`)から送る `acceptSignerRole(account)`、そして `setRequireCosign(account, on)` です。レビューは facet が拒否するものをウォレットより先に拒否します。一時停止(取り消しを除く)、ロックまたは新しいメインウォレットのクールダウン(依頼、削除、共同署名のオフ)、自分のウォレット、すでに署名者または依頼済みのウォレット、取り消していない失効した依頼、すでに5人の署名者または5件の依頼、承諾していないウォレット、終わっていない待機または過ぎた期間、署名者のいない共同署名です。各呼び出しは試行実行され、ウォレットが開く直前にもう一度確認され、自身の `SignerAddRequested`、`SignerAccepted`、`SignerAddCancelled`、`SignerAdded`、`SignerRemoveRequested`、`SignerRemoveCancelled`、`SignerRemoved`、`CosignRequirementSet`、`SettingChangeRequested` ログから測定されます。待機中の依頼ウォレットはアドレスチェックの既知アドレス一覧に加わります。
+
 <a id="my-offers"></a>
 
 ### あなたのオファー

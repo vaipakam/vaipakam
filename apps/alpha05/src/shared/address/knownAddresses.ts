@@ -5,7 +5,7 @@
  * the wallet itself, the saved addresses and the proofs still waiting, this
  * network's own keeper, and, from the chain at one block, the account's
  * payout destinations, the destinations still waiting, its secondary
- * signers and its approved keepers.
+ * signers, the wallets asked to become one, and its approved keepers.
  *
  * Until every source has answered, a look-alike of an address not yet read
  * cannot be ruled out, so the list says it is incomplete and no box lets
@@ -31,6 +31,8 @@ export interface UsedAddresses {
   destinations: readonly Hex[] | null;
   pending: readonly Hex[] | null;
   signers: readonly Hex[] | null;
+  /** Wallets asked to become a signer, accepted or not. */
+  nominees: readonly Hex[] | null;
   keepers: readonly Hex[] | null;
 }
 
@@ -60,13 +62,14 @@ export async function readUsedAddresses(c: PublicClient, diamond: Hex, account: 
       return refusalFromError(e).code === 'FunctionDoesNotExist' ? [] : null;
     }
   };
-  const [destinations, pending, signers, keepers] = await Promise.all([
+  const [destinations, pending, signers, nominees, keepers] = await Promise.all([
     list<readonly Hex[]>(PROTECTED, 'getAllowlist', (r) => r),
     list<readonly [readonly Hex[], readonly bigint[]]>(PROTECTED, 'getPendingAllowlistAdditions', (r) => r[0]),
     list<readonly Hex[]>(PROTECTED, 'getProtectedSigners', (r) => r),
+    list<readonly [readonly Hex[], readonly bigint[], readonly boolean[]]>(PROTECTED, 'getPendingSignerAdditions', (r) => r[0]),
     list<readonly Hex[]>(PROFILE_ABI, 'getApprovedKeepers', (r) => r),
   ]);
-  return { destinations, pending, signers, keepers };
+  return { destinations, pending, signers, nominees, keepers };
 }
 
 /** Merge every source into one list, the most specific first: the wallet
@@ -87,9 +90,11 @@ export function knownAddresses(
     of(used?.destinations, 'destination'),
     of(used?.pending, 'pending'),
     of(used?.signers, 'signer'),
+    of(used?.nominees, 'signer'),
     of(used?.keepers, 'keeper'),
   );
-  const answered = used !== null && used.destinations !== null && used.pending !== null && used.signers !== null && used.keepers !== null;
+  const answered =
+    used !== null && used.destinations !== null && used.pending !== null && used.signers !== null && used.nominees !== null && used.keepers !== null;
   const state = read === 'ready' && answered ? 'complete' : read === 'reading' && used === null ? 'reading' : 'failed';
   return { list, state };
 }
