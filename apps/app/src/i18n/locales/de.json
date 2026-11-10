@@ -1450,7 +1450,11 @@
       "moreOffers_many": "{{count}} weitere passende Angebote zahlen weniger als die angezeigten.",
       "moreOffers_other": "{{count}} weitere passende Angebote zahlen weniger als die angezeigten.",
       "checking": "Wir prüfen, ob Sie diesen Kredit vorzeitig verlassen können…",
-      "checkFailed": "Die Ausstiegs-Details dieses Kredits konnten gerade nicht gelesen werden — neuer Versuch läuft."
+      "checkFailed": "Die Ausstiegs-Details dieses Kredits konnten gerade nicht gelesen werden — neuer Versuch läuft.",
+      "floorLoading": "Der Mindestbetrag, den Ihnen dieser Verkauf auszahlt, wird gelesen…",
+      "floorUnavailable": "Der Mindestbetrag, den Ihnen dieser Verkauf auszahlt, konnte gerade nicht gelesen werden, daher kann der Verkauf erst geprüft werden, wenn er lesbar ist. Versuchen Sie es gleich noch einmal.",
+      "receiptFloor": "Mindestens {{amount}} {{sym}}, nachdem der Zinsausgleich abgezogen ist, wenn der Verkauf innerhalb der nächsten 30 Minuten durchgeht. Der Verkauf wird abgelehnt statt ausgeführt, wenn er Ihnen weniger auszahlen würde.",
+      "receiptHeld": "{{amount}} {{sym}}, die auf diesem Kredit bereits für den Kreditgeber zurückgelegt sind, gehen mit der Position an den Käufer. Der Verkauf wird abgelehnt, wenn bis zu seiner Ausführung mehr zurückgelegt wurde."
     },
     "saleHold": {
       "title": "Der Kreditgeber hat diese Position zum Verkauf angeboten",
@@ -4249,6 +4253,12 @@
     "SaleBelowSellerFloor": "Dieses Angebot kann nicht mehr gekauft werden: Der Kredit hat sich seit dem Inserieren geändert (etwa durch eine Teilrückzahlung), so dass der Verkauf dem Verkäufer weniger als das von seinem Angebot garantierte Minimum einbrächte. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren.",
     "SaleAboveHeldCeiling": "Dieses Angebot kann nicht mehr gekauft werden: Seit dem Inserieren wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt, als das Angebot zulässt. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren.",
     "OfferBelowMinimumValue": "Dieses Angebot ist kleiner, als das Protokoll erlaubt: Der Betrag oder der kleinste Teil, den ein Abgleich übernehmen darf, ist weniger wert als der Mindestwert eines Angebots. Erhöhe den Betrag und versuche es erneut.",
-    "TooManyOpenOffers": "Diese Wallet hat bereits so viele offene Angebote, wie das Protokoll erlaubt. Storniere ein Angebot, das du nicht mehr brauchst (ein abgelaufenes Angebot zählt, bis du es stornierst), und versuche es dann erneut."
+    "TooManyOpenOffers": "Diese Wallet hat bereits so viele offene Angebote, wie das Protokoll erlaubt. Storniere ein Angebot, das du nicht mehr brauchst (ein abgelaufenes Angebot zählt, bis du es stornierst), und versuche es dann erneut.",
+    "DeadlinePassed": "Diese Transaktion hat zu lange gewartet, bevor sie die Chain erreichte, und ist daher abgelaufen, ohne etwas zu tun. Prüfen Sie die Bedingungen und senden Sie sie erneut.",
+    "DeadlineRequired": "Diese Aktion braucht ein Zeitlimit, und es wurde keines gesendet. Es ist nichts passiert; laden Sie die Seite neu und versuchen Sie es erneut.",
+    "OfferTermsTooFresh": "Dieses Angebot wurde vor wenigen Sekunden erstellt oder geändert, und ein Angebot kann erst angenommen werden, wenn seine Bedingungen einige Sekunden bestanden haben. Versuchen Sie es gleich noch einmal. Es wurde nichts gesendet.",
+    "IntentTermsTooFresh": "Dieses stehende Angebot wurde vor wenigen Sekunden festgelegt oder geändert, und es kann erst angenommen werden, wenn seine Bedingungen einige Sekunden bestanden haben. Versuchen Sie es gleich noch einmal. Es wurde nichts gesendet.",
+    "SaleNetBelowReviewed": "Dieser Verkauf würde Ihnen jetzt weniger auszahlen als den geprüften Mindestbetrag (eventuell wurde ein Teil des Kredits zurückgezahlt). Es wurde nichts verkauft. Prüfen Sie den Verkauf erneut, um den aktuellen Betrag zu sehen.",
+    "SaleHeldAboveReviewed": "Seit Ihrer Prüfung des Verkaufs wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt. Es wurde nichts verkauft. Prüfen Sie den Verkauf erneut, um die aktuellen Werte zu sehen."
   }
 }

@@ -4224,8 +4224,7 @@ const copySource = {
       '{{amount}} {{sym}} already set aside for the lender on this loan moves to the buyer with the position. The sale is refused if more than this has been set aside by the time it runs.',
       ['amount', 'sym'],
     ),
-    reviewMoved:
-      'The loan changed after you reviewed this sale, so nothing was sold. Open the review again to see the current figures.',
+
     moreOffers: tmpl(
       '{{count}} more matching offers pay less than the ones shown.',
       ['count'],
