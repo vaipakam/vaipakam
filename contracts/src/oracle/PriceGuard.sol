@@ -51,8 +51,11 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *           executable by anyone no sooner than the delay later, with one
  *           change pending per entry. Its waiting time is fixed when it is
  *           proposed. The owner or the guardian may cancel a pending change.
- *         - The delay is 1 to 14 days on a production chain. A testnet may set
- *           0, as the feed registry allows. Raising the delay applies at once;
+ *         - The delay is 7 to 14 days on a production chain, never shorter
+ *           than the vault code delay (owner decision 2026-11-10): a price
+ *           change can move value out of every vault, so it is visible at
+ *           least as long as a vault code change. A testnet may set 0, as
+ *           the feed registry allows. Raising the delay applies at once;
  *           lowering it waits the current delay.
  *         - One fast lever: the owner or the guardian (the Pauser Safe) may
  *           disable a secondary source at once. That only stops a source
@@ -66,7 +69,10 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     // ─── Constants ───────────────────────────────────────────────────────
 
     /// @notice The shortest and longest delay a production chain may set.
-    uint64 public constant MIN_DELAY = 1 days;
+    ///         The floor matches the vault code delay (`VaultBeacon`, 7 days
+    ///         once #3421 lands), so no price setting reaches the vaults'
+    ///         reads sooner than a vault code change could.
+    uint64 public constant MIN_DELAY = 7 days;
     uint64 public constant MAX_DELAY = 14 days;
 
     /// @notice A volatile feed's answer must be at most this old.

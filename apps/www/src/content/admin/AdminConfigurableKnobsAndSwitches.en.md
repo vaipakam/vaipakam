@@ -483,7 +483,7 @@ Each setting below is one `PriceGuard.Kind` entry, changed in two steps:
 - the guard's owner (the admin, then the Timelock after the handover)
   proposes it with `proposeChange(kind, subject, value)`;
 - anyone applies it with `executeChange(kind, subject)` once the guard's
-  delay has passed: 1 to 14 days on a production chain (3 by default),
+  delay has passed: 7 to 14 days on a production chain (7 by default),
   zero allowed on a testnet, where a change applies at once.
 
 The guardian (the Pauser Safe) may cancel a pending change, and may stop a
@@ -609,8 +609,8 @@ it is asked under (the numeraire's, the pricing anchor's and ETH's) are not
 entries at all: they are the guard's identity, fixed when it is built from
 that registry's own constants, and the deploy records the registry the
 guard reads. Which feed prices which token is not a guard entry either: it
-lives in the registry, where each change waits a delay (3 days by default on
-a production chain, 1 to 14 allowed; 0 allowed on a testnet) that the Pauser
+lives in the registry, where each change waits a delay (7 days by default on
+a production chain, 7 to 14 allowed; 0 allowed on a testnet) that the Pauser
 Safe can veto.
 
 The Uniswap V3 factory is the one Diamond setting here
