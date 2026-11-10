@@ -1958,6 +1958,8 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 각 토큰의 분류는 실시간으로 읽습니다. 먼저 `getAssetPriceStatus(asset)`(Divergent는 불신으로 읽고 새 대출을 막음), 다음으로 `checkLiquidityOnActiveNetwork(asset)`(0 유동, 1 비유동). `OraclePriceDivergence` 또는 `OracleCrossCheckDivergence` revert는 불신으로 읽고, 그 밖의 실패는 이유와 함께 읽을 수 없음으로 표시합니다. 추천 목록은 배포 기록의 래핑된 네이티브 토큰과 테스트 토큰이며, 붙여 넣은 주소는 형식만 확인합니다.
 
+신뢰 등급은 인덱스에서 `GET /assets/rankings?chainId=<token chain>`를 읽습니다. 인덱스는 keeper가 매일 가져오는 두 개의 공개 시가총액 목록(각 상위 500)을 제공하며, 주소마다 각 목록의 순위·이름·심볼을 한 항목으로 담고, 각 목록의 `listFetchedAt`과 마지막 실행 결과도 함께 제공합니다. 앱은 소문자 주소를 키로 삼고 목록 간 가장 좋은 순위를 씁니다. 순위 ≤ 20이고 `getAssetPriceStatus(asset)`가 priced이면 블루칩, 그다음 ≤ 100, 200, 300, 500입니다. 다른 목록이 같은 심볼을 다른 주소에 올리고 어느 목록도 두 주소를 모두 올리지 않았다면 토큰은 미확인이 됩니다. 순위 밖 토큰 중 `symbol()`이나 `name()`이 순위에 든 심볼이나 이름과 같은 것은 복제 가능성, 나머지는 순위 밖입니다. 배포 기록의 테스트 토큰은 테스트로 표시되고, 저장된 목록이 없는 체인은 테스트넷에서는 테스트 네트워크로, 메인넷에서는 목록 없음으로 읽힙니다. `listFetchedAt` 이후에 실패한 `lastRun`은 명시됩니다. 등급은 표시용일 뿐 온체인 처리를 바꾸지 않습니다. 검색은 순위에 든 심볼과 이름을 부분 문자열로 비교해 가장 좋은 순위부터 보여 주고, 그다음 추천 토큰을 심볼로 보여 줍니다. `0x`로 시작하는 텍스트는 주소로 해석됩니다.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: 오퍼 고르기
@@ -2124,6 +2126,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 측 선택은 지급금, 진행 중, 종료 행을 보유한 측으로 거릅니다. "없음"은 포지션 순회와 지급금 순회가 모두 끝나고 최신 읽기가 성공했을 때만 표시합니다. 한도에서 멈춘 순회는 불완전하다고 알립니다. 행은 `/positions/<id>`를 열고, 그곳에서 자격 판정이 각 작업을 결정합니다. 목록은 트랜잭션을 보내지 않습니다.
 
+쪽을 고른 뒤 진행 중인 행이 두 개 이상이면 맨 앞에 요약 카드가 나옵니다. 쪽마다 ERC-20 `principalAsset`별로 `principal`을 합산하며 토큰 간에는 절대 합산하지 않고(가치 비교는 익스포저 줄이 맡습니다), 원금이 NFT인 행은 대여로 셉니다. 다음 날짜는 행들이 쓰는 단계 중 아직 오지 않은 가장 이른 날짜입니다. 진행 중이거나 곧 도래하는 만기(상환) 또는 다가오는 정기 체크포인트(이자)이며, 같으면 더 낮은 대출 id를 택합니다. 유예 기간이 끝난 대출(만기 또는 체크포인트에서), 유예 기간 중인 대출, FallbackPending 대출은 id로 나열되며 각각 가장 심각한 단계 아래 한 번만 나옵니다. 기한을 읽지 못한 대출은 건수로 셉니다. 이자는 제외됩니다. 카드는 목록 자체의 읽기만 사용하며 탐색이 부분적이면 그렇게 밝힙니다. NFT 원금 행의 만기는 대여 종료(`rental-close`)이며 상환이 아닙니다. 대여는 선불 임대료로 종료되므로 요약도 각 행과 같은 이름을 씁니다.
+
 <a id="position"></a>
 
 ### Position: 대출을 읽는 방법
@@ -2141,6 +2145,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 이 작업은 하나의 규칙을 따릅니다: `repayLoan`은 Active 또는 FallbackPending ERC-20 대출에 대해 `loan.lender`도 `ownerOf(lenderTokenId)`도 아닌 모든 지갑에 제공되며(`LenderCannotRepayOwnLoan`), Active 대출에서는 실효 유예 기간 종료 후(`RepaymentPastGracePeriod`), 그리고 차입자 포지션의 열린 경로가 `SwapToRepayIntent`인 동안(Diamond의 `positionRoute(borrowerTokenId)`, #3205 이전 배포라면 `positionLock(borrowerTokenId)`) 보류됩니다. 대출자의 판매 등록, 재융자 요청, 전체 일시 중지는 이를 보류하지 않습니다. 대여는 아직 여기서 제공하지 않습니다.
 
 검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 상환이 대출을 남긴 상태를 그 `LoanRepaid` 로그에서 읽고(블록 시점이 아닙니다. 같은 블록의 이후 청구로 이미 정산되었을 수 있기 때문입니다), `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다. 그 수치보다 큰 allowance(무제한 포함)도 그 수치로 낮춥니다. `repayLoan(loanId)`에는 상한도 기한도 없기 때문이며, 이후 되돌리기가 원래의 큰 값을 복원합니다.
+
+유예 기간 중(`getLoanDeadlines`의 `maturity ≤ now ≤ graceEnd`)에는 전액 및 일부 상환 검토 화면이 체인 시계로 `graceEnd`까지 카운트다운합니다. 체인 시각은 검토가 읽은 블록 타임스탬프에 그 이후 경과한 초를 더해 추정합니다. `block.timestamp > graceEnd`가 되면 `repayLoan`과 `repayPartial`은 `RepaymentPastGracePeriod`로 되돌려지고, 그때부터 `triggerDefault`는 누구나 호출할 수 있으므로 늦은 상환은 디폴트와 경쟁합니다. 한 시간 이하가 남으면 시계가 지금 보내라고 알려 줍니다. 표시만 할 뿐이며, 보내기 전에 다시 읽는 판정이 관문이고 일시 중지는 `graceEnd`를 뒤로 미룹니다. 블록을 채워 상환을 유예 기간 뒤로 미루는 공격은 위협 모델에 수용된 낮은 위험으로 기록되어 있습니다.
 
 <a id="interest-schedule"></a>
 

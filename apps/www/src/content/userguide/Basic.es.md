@@ -1110,6 +1110,8 @@ Para pedir prestado, aceptas la oferta abierta de un prestamista: una cantidad d
 
 Primero elige qué pedir prestado y qué bloquear. La app sugiere tokens de la red, o puedes pegar una dirección de token; no se hace ninguna revisión de seguridad de tokens, así que revisa tú mismo una dirección pegada. Para cada token, la app lee lo que el protocolo dice de él ahora. Un token líquido tiene precio, así que el préstamo tiene un factor de salud y puede liquidarse si la garantía pierde valor. Un token ilíquido se valora en cero y, en caso de impago, el prestamista recibe la propia garantía. Cuando el protocolo no confía en el precio de un token, los préstamos nuevos sobre él se cierran hasta que vuelva a confiar; los préstamos ya abiertos no se ven afectados.
 
+Cada token que elige muestra también su puesto por valor de mercado, según dos listas públicas de tokens. La coincidencia se hace por la dirección de contrato del token en la red, nunca por su nombre. Un blue chip está en el top 20 y el protocolo le pone precio; luego vienen el top 100, 200, 300 y 500. Un token fuera del top 500 se marca como usado bajo su propio riesgo. Un token que comparte el nombre o el símbolo de un token clasificado en otra dirección se marca como posible copia, con la dirección del token real, y cuando las dos listas no coinciden en dónde está un token, se marca como no verificado. Se muestra la fecha de las listas, y se indica una actualización fallida. En una red de prueba, los tokens no tienen valor de mercado ni clasificación. Para encontrar un token, escriba su nombre o símbolo en el campo Otro token: los tokens clasificados aparecen primero, cada uno con su nivel y su dirección completa, y al elegir uno se rellena la dirección. Compruebe la dirección, no el nombre. El nivel es solo una guía y no cambia nada de lo que hace el protocolo.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Elegir una oferta
@@ -1276,6 +1278,8 @@ Positions muestra cada préstamo que prestaste o tomaste en esta red, a partir d
 
 Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que no tienes nada solo después de leerlo todo; si una lista no se pudo leer entera, lo indica. Cada préstamo abre su propia página, que muestra las acciones disponibles para ti. La lista nunca firma nada.
 
+Con dos o más préstamos activos, primero aparece un resumen. Para cada lado indica el principal que aún se debe o que sigue prestado, por token (los importes en tokens distintos nunca se suman, y los alquileres de NFT se cuentan), la próxima fecha de vencimiento de un pago con un enlace a su préstamo, y los préstamos vencidos o en fallback, cada uno enlazado. Los intereses no están en estos totales; la página de cada préstamo muestra lo que cuesta pagarlo ahora. En un alquiler, esa fecha es su cierre con la renta pagada por adelantado, así que nunca se llama reembolso.
+
 <a id="position"></a>
 
 ### Position: un préstamo
@@ -1291,6 +1295,8 @@ Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actu
 En un préstamo activo, la página ofrece pagarlo completo. Cualquiera puede pagar excepto el prestamista. Si no tienes la posición de prestatario, pagar no te da ningún derecho sobre la garantía: solo su titular puede cobrarla. El pago queda retenido una vez terminado el período de gracia (el préstamo pasa entonces a impago) y mientras haya una orden de swap-to-repay pendiente.
 
 Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si ya habías aprobado más, incluso una cantidad ilimitada, se reduce a esa cifra para el pago, porque el pago no fija por sí mismo ningún máximo. La aprobación limita el importe, no el tiempo: un pago que se confirma más tarde solo se ejecuta mientras lo que debes siga cabiendo en ella; si no, se rechaza y nada se mueve. En un préstamo que cobra el plazo completo, el importe no crece antes del vencimiento, así que un pago posterior aún puede ejecutarse. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
+
+Si el préstamo ya pasó su fecha de vencimiento y está en su periodo de gracia, la revisión cuenta hacia atrás hasta el fin de la gracia según el reloj de la cadena. Después, el protocolo rechaza un reembolso y cualquiera puede declarar un impago; gana la transacción que se mine primero, así que envíe su reembolso con tiempo. Con una hora o menos, la revisión le dice que lo envíe ahora. Un pago parcial muestra la misma cuenta atrás.
 
 <a id="interest-schedule"></a>
 

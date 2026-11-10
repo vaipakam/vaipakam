@@ -9,6 +9,7 @@ import { useChainRead } from '../reads/chainRead';
 import { assetName, type TokenMetaMap } from '../reads/tokens';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
+import { AssetTrustLine, TokenSearch } from './AssetTrust';
 
 type Hex = `0x${string}`;
 
@@ -50,7 +51,11 @@ function AssetChoice({
   const isSuggested = value !== null && suggested.some((c) => c.address.toLowerCase() === value.toLowerCase());
   const [other, setOther] = useState(value !== null && !isSuggested);
   const [pasted, setPasted] = useState(value !== null && !isSuggested ? value : '');
-  const invalid = other && pasted.trim() !== '' && parsePasted(pasted) === null;
+  // What the reader types is a search unless it starts like an address;
+  // an address attempt that does not parse is refused as before.
+  const addressAttempt = /^0x/i.test(pasted.trim());
+  const invalid = other && addressAttempt && parsePasted(pasted) === null;
+  const testToken = value !== null && suggested.some((c) => c.test && c.address.toLowerCase() === value.toLowerCase());
 
   return (
     <div className="asset-choice" data-testid={testId}>
@@ -79,7 +84,7 @@ function AssetChoice({
         <option value={OTHER}>{text('borrow.pickOther')}</option>
       </select>
       {other && (
-        <FormField label={text('borrow.pasteLabel')} error={invalid ? text('borrow.pasteInvalid') : null} hint={text('borrow.noScreening')}>
+        <FormField label={text('borrow.searchLabel')} error={invalid ? text('borrow.pasteInvalid') : null} hint={text('borrow.searchHint')}>
           {({ id: inputId, describedBy, invalid: bad }) => (
             <input
               id={inputId}
@@ -87,7 +92,7 @@ function AssetChoice({
               inputMode="text"
               autoComplete="off"
               spellCheck={false}
-              placeholder="0x…"
+              placeholder={text('borrow.searchPlaceholder')}
               value={pasted}
               aria-describedby={describedBy}
               aria-invalid={bad}
@@ -99,9 +104,22 @@ function AssetChoice({
           )}
         </FormField>
       )}
+      {other && !addressAttempt && (
+        <TokenSearch
+          query={pasted}
+          chain={chain}
+          suggested={suggested}
+          meta={meta}
+          onPick={(a) => {
+            setPasted(a);
+            onChange(parsePasted(a));
+          }}
+        />
+      )}
       {suggested.length === 0 && <p className="tier-b">{text('borrow.pickNone')}</p>}
       {value !== null && <AssetStandardLine asset={value} meta={meta} leg={leg} role={role} />}
       {value !== null && <AssetClassLine asset={value} chain={chain} meta={meta} />}
+      {value !== null && <AssetTrustLine asset={value} chain={chain} meta={meta} testToken={testToken} />}
       {value === null && !other && suggested.length > 0 && <p className="tier-b">{format('borrow.pickHint', { chain: chain.name })}</p>}
     </div>
   );

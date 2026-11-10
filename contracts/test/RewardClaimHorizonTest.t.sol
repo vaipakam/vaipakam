@@ -1039,4 +1039,41 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _cfg().setRewardClaimHorizonDays(0); // dark reset allowed
         assertEq(_cfg().getRewardClaimHorizonDays(), 0);
     }
+
+    /// @notice #1787 — an entry outside its wallet's claim window is not
+    ///         claimable, so its expiry clock must not run. When the entries
+    ///         the window holds change, no executable interval observed before
+    ///         the change counts: the next sweep re-baselines instead of
+    ///         crediting it, even when no sweep saw the entry outside.
+    function test_AnIntervalAcrossAClaimWindowChange_IsNotCredited() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry(); // position 0: inside the window
+        uint256 filler;
+        for (uint256 i; i < 128; ++i) {
+            // Open positions whose reward days are still to come.
+            filler = _mut().pushRewardEntry(alice, uint64(5_000 + i), LibVaipakam.RewardSide.Lender, 1e18, 10_000);
+        }
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0); // stamp
+        assertEq(_accrue(id, 10 days), 0, "executable time inside the window counts");
+        (, uint64 before) = _lens().getRewardEntryExpiry(id);
+        assertEq(before, uint64(vm.getBlockTimestamp() + 180 days + NOTICE - 10 days));
+
+        // The window's entries change: one leaves the 129-entry index.
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        _mut().setLoanActiveLenderEntryId(5_127, filler);
+        _mut().callRepointRewardEntry(5_127, makeAddr("holder"), true);
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+
+        (, uint64 estimate) = _lens().getRewardEntryExpiry(id);
+        assertEq(estimate, before + 1 hours + 1 days, "the estimate counts nothing across the change");
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
+        (, uint64 afterSweep) = _lens().getRewardEntryExpiry(id);
+        assertEq(afterSweep, before + 1 hours + 1 days, "the sweep re-baselines instead of crediting");
+
+        // From the new baseline the clock runs again.
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        _sweeper().sweepExpiredInteractionRewards(_ids(id));
+        (, uint64 later) = _lens().getRewardEntryExpiry(id);
+        assertEq(later, afterSweep, "time after the change counts as before");
+    }
 }

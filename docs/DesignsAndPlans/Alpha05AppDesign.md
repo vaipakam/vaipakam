@@ -782,6 +782,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   could not be read in full says so. Every row opens its position, where
   the protocol's verdict decides which actions are open (RB-ELIG): the list
   signs nothing and offers no action of its own.
+- **RB-POSITIONS-SUMMARY** — With two or more live loans in the list as
+  the side choice narrows it, Positions opens with one card that adds them
+  up, per side (borrowed, lent): the principal still owed or still out, per
+  token, never added across tokens (comparing values at today's prices is
+  the exposure line's, which counts what it cannot price); NFT rentals
+  counted, never totalled; the next date something falls due (a repayment,
+  an interest checkpoint, or a rental's close, which is never called a
+  repayment since a rental closes on its prepaid rent), with a link to its
+  loan; and the loans that need the
+  reader now, each linked (grace period over, past due in the grace period,
+  in fallback; a loan in more than one stage is named once, under the more
+  severe), plus a count of loans whose dates could not be read, since the
+  next date may be one of them. Interest is not in the totals, and the card
+  says so. It reads only what the list reads, shows nothing until that read
+  answers, and says when the walk was partial. With one loan the card is
+  not shown, since that row already says all of it. It manages no loan: every
+  loan stays its own position and its own row.
 - **RB-POSITION-VIEW** — a loan's own page states, in this order: its
   status in words (an adverse one, fallback or default, as a warning; an
   internal match as closed, with each side collecting on Claims); the
@@ -886,6 +903,22 @@ above. Each resolves here, so a route reviewer needs no private file:
   the status at the block, which both sides claiming later in that block
   moves on to settled), what left the wallet (within the two stated
   figures), and the approval put back.
+- **RB-GRACE-CLOCK** — a full or part repayment of a loan in grace (past
+  its due date, before its grace end) counts down to the end of grace by
+  the chain's clock: the block time the review read plus the time since
+  the read, never the reader's own clock alone. It says that after the end
+  the protocol refuses a repayment and anyone can file a default, and that
+  whichever transaction is mined first wins, so the repayment should be
+  sent well before then. With an hour or less left it says to send now,
+  since a repayment still waiting to be mined at the end is refused with
+  nothing moved. The protocol accepts a repayment through the last second
+  of grace, and the clock counts it the same way. When the clock passes the
+  end after the read, it says grace has ended by the chain's clock and that
+  a pause moves the end later, which the re-read before sending checks; a
+  read already past grace shows no clock, since the review's own refusal
+  says it. Before the due date, in fallback, or with the dates unread there
+  is no clock. It is a statement, never a gate: the re-read verdict is what
+  refuses (#3412).
 - **RB-POSITION-SCHEDULE** — a running ERC-20 loan with an interest
   schedule (LN-24) shows its current period from the protocol's settlement
   preview alone: the schedule, the period's end and grace end (the loan's
@@ -1520,6 +1553,33 @@ above. Each resolves here, so a route reviewer needs no private file:
   expiry defaults to 7 days; choosing "until taken or cancelled" is
   explicit and shows a note that such an offer keeps its rate as the
   market moves.
+- **RB-ASSET-TRUST** — a chosen ERC-20 in the pair picker shows its trust
+  tier (#3446, OFF-02, OFF-03), read from the public market rankings the
+  keeper fetches once a day from two lists and the index serves
+  (`GET /assets/rankings`), matched by contract address on the token's own
+  network, never by name or symbol. Where both lists rank it, the better
+  rank counts. Blue chip is the top 20 with a price feed the protocol holds
+  for that exact address; then the top 100, 200, 300 and 500. When another
+  list puts the same symbol at a different address and neither list knows
+  both, the token is unverified and both addresses are shown. An unranked
+  token whose name or symbol matches a ranked one is a possible copy, with
+  the ranked token's address; any other unranked token is used at the
+  reader's own risk. A test token the deployment record publishes says so;
+  a network with no stored list says a test network's tokens have no
+  market value, or on a main network that no ranking is stored. Each tier
+  states the date of every list it rests on, and a refresh of either list
+  that failed after its date is a warning, so an old list never reads as
+  current; a list never stored whose fetch failed is named as left out, so
+  a verdict from one list never reads as from two; an index that cannot answer is
+  stated with its reason. The lists are named by place, never by provider.
+  The tier rule is the app's (the route carries ranks only), and the tier
+  is display and warning only: whether the protocol prices and accepts the
+  token stays its own answer, shown beside it. The "another token" field
+  searches by name or symbol unless the text starts like an address:
+  ranked tokens first, best rank first, each with its tier and full
+  address (or marked unverified, never with a tier, where the lists
+  disagree under the same rule as a chosen token), then suggested tokens that match, with their label; a pick fills
+  the address. NFT collections carry no tier yet (#3433).
 - **RB-PUBLIC-QUEUE** — on a network that holds a sent transaction in a
   public queue before it is included (Ethereum, BNB Chain, and BNB Testnet
   so it can be seen before mainnet; #3357; Polygon PoS and Polygon Amoy,

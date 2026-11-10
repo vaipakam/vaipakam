@@ -149,6 +149,15 @@ function RewardsCard() {
   // above, where the combined claim's preview is known to be unavailable.
   if (!snapshot) return null;
 
+  const part = snapshot.window
+    ? {
+        from: (snapshot.window.from + 1n).toString(),
+        to: snapshot.window.to.toString(),
+        total: snapshot.window.total.toString(),
+        size: (snapshot.window.to - snapshot.window.from).toString(),
+      }
+    : null;
+
   async function claim() {
     setBusy(true);
     setError(null);
@@ -169,12 +178,29 @@ function RewardsCard() {
         <Sparkles aria-hidden />
         <h2 style={{ margin: 0 }}>{copy.rewards.title}</h2>
       </div>
-      {snapshot.pending > 0n ? (
+      {snapshot.pending > 0n || snapshot.movesOnOnly ? (
         <>
-          <p>
-            {copy.rewards.readyToClaim(formatTokenAmount(snapshot.pending, 18))}{' '}
-            {copy.rewards.blurb}
-          </p>
+          {snapshot.pending > 0n ? (
+            <p>
+              {copy.rewards.readyToClaim(formatTokenAmount(snapshot.pending, 18))}{' '}
+              {copy.rewards.blurb}
+            </p>
+          ) : null}
+          {/* #1787 — a claim reads one part of a large wallet's entries. A
+              zero there still runs and moves on to the next part, the only
+              way a later claim reaches the rest, so it is offered and said
+              to be exactly that. */}
+          {part ? (
+            <p
+              className={snapshot.pending > 0n ? 'muted' : undefined}
+              style={snapshot.pending > 0n ? { margin: '0 0 12px' } : undefined}
+              data-testid={snapshot.pending > 0n ? 'rewards-window' : 'rewards-window-move-on'}
+            >
+              {snapshot.pending > 0n
+                ? copy.rewards.windowPart(part.from, part.to, part.total)
+                : copy.rewards.windowMoveOn(part.size, part.from, part.to, part.total)}
+            </p>
+          ) : null}
           {error ? (
             <div className="banner banner-danger" role="alert">
               <span className="banner-body">{error}</span>
@@ -187,7 +213,7 @@ function RewardsCard() {
             onClick={() => void claim()}
           >
             {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-            {busy ? copy.common.waitingForWallet : copy.rewards.claim}
+            {busy ? copy.common.waitingForWallet : snapshot.pending > 0n ? copy.rewards.claim : copy.rewards.claimMoveOn}
           </button>
         </>
       ) : snapshot.waiting ? (
@@ -289,6 +315,8 @@ export function Claims() {
   const extendReservesListed = useExtendReservesListed();
   const hasOtherClaimable =
     (rewards.data?.pending ?? 0n) > 0n ||
+    // #1787 — a claim that only moves on is the card's one action.
+    Boolean(rewards.data?.movesOnOnly) ||
     (rewards.isError && (held.data ?? 0n) > 0n) ||
     sellerClaimsListed ||
     extendReservesListed;

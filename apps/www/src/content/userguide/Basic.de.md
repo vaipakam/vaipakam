@@ -1132,6 +1132,8 @@ Zum Leihen nimmst du das offene Angebot eines Verleihers an: einen Betrag eines 
 
 Wähle zuerst, was du leihen und was du sperren willst. Die App schlägt Tokens im Netzwerk vor, oder du fügst eine Token-Adresse ein; es läuft keine Sicherheitsprüfung für Tokens, prüfe eine eingefügte Adresse also selbst. Für jeden Token liest die App, was das Protokoll jetzt dazu sagt. Ein liquider Token hat einen Preis, der Kredit hat also einen Health Factor und kann liquidiert werden, wenn die Sicherheit an Wert verliert. Ein illiquider Token wird mit null bewertet, und bei einem Ausfall erhält der Verleiher die Sicherheit selbst. Traut das Protokoll dem Preis eines Tokens nicht, sind neue Kredite darauf geschlossen, bis es wieder vertraut; offene Kredite sind nicht betroffen.
 
+Jeder gewählte Token zeigt außerdem, welchen Rang er nach Marktwert hat, nach zwei öffentlichen Listen von Tokens. Abgeglichen wird über die Vertragsadresse des Tokens im Netzwerk, nie über seinen Namen. Ein Blue Chip gehört zu den Top 20 und wird vom Protokoll bepreist; danach folgen die Top 100, 200, 300 und 500. Ein Token außerhalb der Top 500 wird als Nutzung auf eigenes Risiko markiert. Ein Token, der Namen oder Symbol eines gelisteten Tokens unter einer anderen Adresse trägt, wird als mögliche Kopie markiert, mit der Adresse des echten Tokens; wenn sich die beiden Listen uneinig sind, wo ein Token liegt, wird er als nicht bestätigt markiert. Das Datum der Listen wird angezeigt, und eine fehlgeschlagene Aktualisierung wird genannt. In einem Testnetzwerk haben Tokens keinen Marktwert und keinen Rang. Um einen Token zu finden, tippen Sie Namen oder Symbol in das Feld Anderer Token: Gelistete Tokens stehen zuerst, jeweils mit Stufe und vollständiger Adresse, und eine Auswahl trägt die Adresse ein. Prüfen Sie die Adresse, nicht den Namen. Die Stufe ist nur eine Orientierung und ändert nichts an dem, was das Protokoll tut.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Ein Angebot auswählen
@@ -1298,6 +1300,8 @@ Positions listet jeden Kredit, den Sie in diesem Netzwerk vergeben oder aufgenom
 
 Alle, Verliehen und Geliehen grenzen alle drei Listen zugleich ein. Positions sagt nur dann, dass Sie nichts haben, wenn alles gelesen wurde; konnte eine Liste nicht vollständig gelesen werden, steht das dort. Jeder Kredit öffnet seine eigene Seite, die zeigt, welche Aktionen Ihnen offenstehen. Die Liste selbst signiert nie etwas.
 
+Bei zwei oder mehr laufenden Krediten steht eine Übersicht an erster Stelle. Für jede Seite nennt sie das noch geschuldete oder noch verliehene Kapital je Token (Beträge in verschiedenen Token werden nie zusammengezählt, NFT-Vermietungen werden gezählt), den nächsten Fälligkeitstermin einer Zahlung mit einem Link zu seinem Kredit sowie die überfälligen Kredite und die Kredite im Fallback, jeweils verlinkt. Zinsen sind in diesen Summen nicht enthalten; die Seite jedes Kredits zeigt, was die Rückzahlung jetzt kostet. Bei einer Vermietung ist dieses Datum das Ende der Miete, die im Voraus bezahlt ist; es heißt daher nie Rückzahlung.
+
 <a id="position"></a>
 
 ### Position: Ein Kredit
@@ -1313,6 +1317,8 @@ Darunter folgen die Daten des Kredits (das Fälligkeitsdatum der aktuellen Laufz
 Bei einem laufenden Kredit bietet die Seite an, ihn vollständig zurückzuzahlen. Zurückzahlen darf jeder außer dem Kreditgeber. Halten Sie die Kreditnehmerposition nicht, gibt Ihnen die Zahlung kein Recht auf die Sicherheit: Nur deren Inhaber kann sie abholen. Die Rückzahlung ist angehalten, sobald die Kulanzfrist abgelaufen ist (der Kredit geht dann in den Ausfall), und solange ein Swap-to-Repay-Auftrag offen ist.
 
 Der geschuldete Betrag wächst mit jeder Sekunde, und das Protokoll nimmt den Betrag zum Zeitpunkt, an dem Ihre Rückzahlung bestätigt wird. Die Prüfung zeigt zwei Zahlen: was es jetzt kostet und was es etwa dreißig Minuten später kosten würde. Ihre Wallet genehmigt genau die zweite Zahl. Hatten Sie schon mehr genehmigt, auch unbegrenzt, wird die Genehmigung für die Rückzahlung auf diese Zahl gesenkt, denn die Rückzahlung kennt selbst keinen Höchstbetrag. Die Genehmigung begrenzt den Betrag, nicht die Zeit: Eine später bestätigte Rückzahlung geht nur durch, solange der geschuldete Betrag noch hineinpasst, sonst wird sie abgelehnt und nichts bewegt sich. Bei einem Kredit, der die volle Laufzeit berechnet, wächst der Betrag vor dem Fälligkeitsdatum nicht, sodass auch eine spätere Rückzahlung noch durchgehen kann. Was die Rückzahlung von der Genehmigung nicht verbraucht, wird danach zurückgesetzt. Dann holt der Kreditnehmer die Sicherheit und der Kreditgeber Kapital und Zinsen unter Claims ab.
+
+Ist der Kredit über sein Fälligkeitsdatum hinaus und in der Nachfrist, zählt die Prüfung nach der Uhr der Chain bis zum Ende der Nachfrist herunter. Danach lehnt das Protokoll eine Rückzahlung ab und jeder kann einen Ausfall melden; die Transaktion, die zuerst gemined wird, gewinnt. Senden Sie die Rückzahlung also rechtzeitig; bei einer Stunde oder weniger sagt die Prüfung, dass Sie jetzt senden sollen. Eine Teilzahlung zeigt denselben Countdown.
 
 <a id="interest-schedule"></a>
 

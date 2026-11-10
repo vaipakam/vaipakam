@@ -24,6 +24,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
+import { GraceClock } from './GraceClock';
 import { formatUtc, shortAddress } from '../ui/format';
 import { allowanceFigure } from './approvalCap';
 import { partialReceipt } from './partialReceipt';
@@ -404,6 +405,7 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
                 {b}
               </Notice>
             ))}
+            <GraceClock dates={{ maturity: review.maturity, graceEnd: review.graceEnd, chainNow: review.payoff.chainNow, chainReadAt: review.payoff.chainReadAt }} />
             <WhyLink summaryKey="partial.whySummary" detailKey="partial.why" />
             <button type="button" className="btn btn-link" onClick={changeAmount} data-testid="partial-change">
               {text('partial.changeAmount')}

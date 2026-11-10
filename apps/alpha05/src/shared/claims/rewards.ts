@@ -15,6 +15,8 @@
 import { BaseError, ContractFunctionRevertedError, decodeErrorResult, parseAbi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { InteractionRewardsLensFacetABI, RewardClaimFacetABI, VPFIDiscountFacetABI, VPFITokenFacetABI, ConfigFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { extractRevertData } from '@vaipakam/lib/decodeContractError';
+import { refusalFromError } from '../eligibility/refusal';
+import { isContractAnswer } from '../reads/answer';
 import type { AtBlock } from '../tx/anchored';
 
 type Hex = `0x${string}`;
@@ -38,12 +40,24 @@ export const VENUE_VAULT = 2;
 /** The days the protocol counts from when it ends the final notice. */
 export const FINAL_NOTICE_DAYS = 90;
 
+/** #1787 — the part of the wallet's reward entries a claim made now reads:
+ *  index positions `from` to `to` (exclusive) of `total`. A claim reads at
+ *  most one window and then moves it on, so a wallet with more entries than
+ *  a window holds is served over several claims. */
+export interface ClaimWindow {
+  from: bigint;
+  to: bigint;
+  total: bigint;
+}
+
 /** What a claim made now would do, as the protocol answers it. */
 export type PendingRewards =
   /** The simulated claim: exactly what it pays, as of block `atBlock`.
    *  `fromDay`/`toDay` are 0 when the claim pays from its reward entries
-   *  only and walks no separate day range. */
-  | { kind: 'exact'; amount: bigint; fromDay: bigint; toDay: bigint; atBlock: bigint }
+   *  only and walks no separate day range. `window` is the part of the
+   *  wallet's entries it reads, read at the same block; absent where the
+   *  Diamond predates the claim window (#1787), whose claim reads them all. */
+  | { kind: 'exact'; amount: bigint; fromDay: bigint; toDay: bigint; atBlock: bigint; window?: ClaimWindow }
   /** Nothing to claim on this chain, every entry read. */
   | { kind: 'none' }
   /** A day the claim needs is not ready yet: its global figures have not
@@ -157,11 +171,42 @@ export async function readPendingRewards(client: PublicClient, diamond: Hex, acc
     await client.simulateContract({ address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'simulateClaimInteractionRewards', args: [account, VENUE_VAULT], account, blockNumber });
   } catch (e) {
     const r = revertOf(e);
-    if (r) return pendingFromRevert(r, blockNumber);
-    throw e;
+    if (!r) throw e;
+    const p = pendingFromRevert(r, blockNumber);
+    if (p.kind !== 'exact') return p;
+    const window = await readClaimWindow(client, diamond, account, blockNumber);
+    return window ? { ...p, window } : p;
   }
   // The entry always reverts; a success means this is not that entry.
   throw new Error('the claim preview returned instead of answering');
+}
+
+/** #1787 — the claim window at `blockNumber`, or null where the Diamond
+ *  routes no such view (it predates the window, and its claim reads every
+ *  entry). Any other failure is thrown, so the own rail tries its next
+ *  source rather than reporting a window it did not read. */
+async function readClaimWindow(client: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<ClaimWindow | null> {
+  try {
+    const [from, to, total] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'getRewardClaimWindow', args: [account], blockNumber })) as readonly [bigint, bigint, bigint, bigint];
+    return { from, to, total };
+  } catch (e) {
+    if (isContractAnswer(e) && refusalFromError(e).code === 'FunctionDoesNotExist') return null;
+    throw e;
+  }
+}
+
+/** #1787 — whether a claim made now reads only part of the wallet's reward
+ *  entries. Pure, so the rule is tested once. */
+export function readsPartOfEntries(p: PendingRewards | null): p is Extract<PendingRewards, { kind: 'exact' }> & { window: ClaimWindow } {
+  return p?.kind === 'exact' && p.window !== undefined && p.window.to - p.window.from < p.window.total;
+}
+
+/** #1787 — a claim that pays nothing and reads only part of the entries:
+ *  its one certain effect is to move the claim on to the next part. A wallet
+ *  whose entries have nothing claimable anywhere would get this answer on
+ *  every claim, so it is never offered as "claim again". Pure. */
+export function onlyMovesOn(p: PendingRewards | null): boolean {
+  return readsPartOfEntries(p) && p.amount === 0n;
 }
 
 /** The protocol's on-chain LOWER bound (it may understate, never overstate). */
@@ -265,10 +310,13 @@ export async function readSoonestExpiry(client: PublicClient, diamond: Hex, acco
  *  entries alone names no days (0 to 0), and the entries' shared day budget
  *  can still leave a remainder. An exact zero counts too: the protocol
  *  answers zero only for a claim that makes progress (it moves past reward
- *  days that paid nothing), and refuses otherwise. Pure, so the rule is
- *  tested once. */
+ *  days that paid nothing), and refuses otherwise. The one exception is a
+ *  zero that only moves the claim on to the next part of a large wallet's
+ *  entries (#1787, {onlyMovesOn}): a wallet with nothing claimable anywhere
+ *  would get it after every claim, so it is not offered as more remaining.
+ *  Pure, so the rule is tested once. */
 export function moreRemains(now: PendingRewards | null, claimBlock: bigint): boolean {
-  return now?.kind === 'exact' && now.atBlock >= claimBlock;
+  return now?.kind === 'exact' && now.atBlock >= claimBlock && !onlyMovesOn(now);
 }
 
 /** After a claim at `claimBlock`, whether more rewards remain: true for a

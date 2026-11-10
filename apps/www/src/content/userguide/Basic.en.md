@@ -1083,6 +1083,8 @@ To borrow, you take a lender's open offer: an amount of one token, a rate, a ter
 
 First choose what to borrow and what to lock. The app suggests tokens on the network, or you can paste a token address; no token-safety screening runs, so check a pasted address yourself. For each token the app reads what the protocol says about it now. A liquid token is priced, so the loan has a health factor and can be liquidated if the collateral loses value. An illiquid token is valued at zero, and on default the lender receives the collateral itself. When the protocol does not trust a token's price, new loans on it are closed until it does; loans already open are not affected.
 
+Each token you choose also shows where it ranks by market value, from two public lists of tokens, matched by the token's contract address on the network and never by its name. A blue chip is in the top 20 and is priced by the protocol; then come the top 100, 200, 300 and 500. A token outside the top 500 is marked as used at your own risk. A token that shares a ranked token's name or symbol at another address is marked as a possible copy, with the real token's address, and when the two lists disagree on where a token lives, it is marked unverified. The date of the lists is shown, and a refresh that failed is said. On a test network, tokens have no market value and no ranking. To find a token, type its name or symbol in the Another token field: ranked tokens come first, each with its tier and full address, and choosing one fills in the address. Check the address, not the name. The tier is a guide only and changes nothing the protocol does.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Picking an Offer
@@ -1249,6 +1251,8 @@ Positions lists every loan you lent or borrowed in on this network, from the pos
 
 All, Lent and Borrowed narrow the three lists at once. Positions says you have nothing only after reading everything; if a list could not be read in full, it says so. Each loan opens its own page, which shows the actions open to you. The list itself never signs anything.
 
+With two or more live loans, a summary comes first. For each side it gives the principal still owed or still out, per token (amounts in different tokens are never added together, and NFT rentals are counted), the next date a payment falls due with a link to its loan, and the loans past due or in fallback, each linked. Interest is not in these totals; each loan's page shows what repaying it costs now. For a rental, that date is when it closes on its prepaid rent, so it is never called a repayment.
+
 <a id="position"></a>
 
 ### Position: One Loan
@@ -1264,6 +1268,8 @@ Below that come the loan's dates (the due date of its current term before any pa
 On a running loan, the page offers to repay it in full. Anyone may repay except the lender. If you do not hold the borrower position, paying gives you no right to the collateral: only its holder can collect it. Repaying is held once the grace period has ended (the loan then goes to default), and while a swap-to-repay order is pending.
 
 What you owe grows by the second, and the protocol takes the amount as of the moment your repayment confirms. The review shows two figures: what it costs now, and what it would cost about thirty minutes ahead. Your wallet approves exactly the second figure. If you had already approved more, even an unlimited amount, it is lowered to that figure for the repayment, since the repayment takes no maximum of its own. The approval limits the amount, not the time: a repayment that confirms later goes through only while what is owed still fits within it, and is otherwise refused with nothing moved. On a loan that charges the full term, the amount does not grow before the due date, so a later repayment can still go through. Whatever it does not use of the approval is put back afterwards. Then the borrower collects the collateral and the lender collects principal and interest on Claims.
+
+If the loan is past its due date and in its grace period, the review counts down to the end of grace by the chain's clock. After that the protocol refuses a repayment and anyone can file a default, and whichever transaction is mined first wins, so send your repayment well before then; with an hour or less left the review says to send it now. Paying part of a loan shows the same countdown.
 
 <a id="interest-schedule"></a>
 

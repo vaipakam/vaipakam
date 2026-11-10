@@ -20,7 +20,7 @@ const review: PartialReview = {
   amount: 400n,
   floor: 10n,
   amountCheck: { ok: true },
-  payoff: { now: 1_010n, chainNow: 1_000n, atBy: 1_012n, by: 2_800n },
+  payoff: { now: 1_010n, chainNow: 1_000n, chainReadAt: 0, atBy: 1_012n, by: 2_800n },
   capped: false,
   interestNow: 10n,
   interestBy: 12n,

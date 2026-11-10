@@ -72,6 +72,7 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
+import { handleAssetRankings } from './assetRankings';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -557,6 +558,17 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
+    // ─── /assets/rankings ───────────────────────────────────────
+    // #3446 — public market-cap rankings of tokens, by token chain, as the
+    // keeper's daily fetch stored them. D1 only, so dispatched before
+    // `resolveEnv` like /health/ingest: a degraded Secrets Store must not
+    // take down a list the app reads to warn about unfamiliar tokens.
+    if (url.pathname === '/assets/rankings') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleAssetRankings(req, earlyRouteEnv(env).DB);
+      return new Response('Not found', { status: 404 });
+    }
+
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -775,6 +787,7 @@ async function handleChainEventWebhook(
       ]
     : undefined;
   const signingKey = await readSecret(
+    perChainBinding ? `ALCHEMY_WEBHOOK_SIGNING_KEY_${urlChain}` : 'ALCHEMY_WEBHOOK_SIGNING_KEY',
     perChainBinding ?? env.ALCHEMY_WEBHOOK_SIGNING_KEY,
   );
   const ok = await verifyAlchemySignature(

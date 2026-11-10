@@ -2444,6 +2444,8 @@ Borrow takes a lender offer (`offerType` 0) of an ERC-20 against ERC-20 collater
 
 Each token's class is read live: `getAssetPriceStatus(asset)` first (Divergent reads as distrusted and closes new loans), then `checkLiquidityOnActiveNetwork(asset)` (0 liquid, 1 illiquid). A revert of `OraclePriceDivergence` or `OracleCrossCheckDivergence` reads as distrusted; any other failure is shown as unreadable, with its reason. The suggested list is the deployment record's wrapped native token and test tokens; a pasted address is checked for shape only.
 
+The trust tier reads `GET /assets/rankings?chainId=<token chain>` from the index, which serves the keeper's daily fetch of two public market-cap lists (top 500 each): one entry per address with each list's rank, name and symbol, plus each list's `listFetchedAt` and last run. The app keys on the lowercase address and takes the best rank across lists: blue chip at rank ≤ 20 with `getAssetPriceStatus(asset)` priced, then ≤ 100, 200, 300 and 500. A symbol another list ranks at a different address, where neither list ranks both addresses, makes the token unverified; an unranked token whose `symbol()` or `name()` matches a ranked symbol or name is a possible copy; any other is unranked. A deployment-record test token is labelled test; a chain with no stored list reads as a test network on a testnet and as no list on a mainnet. A `lastRun` that failed after `listFetchedAt` is stated. The tier is display only and changes no on-chain treatment. Search matches ranked symbols and names by substring, best rank first, then suggested tokens by symbol; text starting with `0x` is parsed as an address instead.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Picking an Offer
@@ -2610,6 +2612,8 @@ Positions reads the same inventory as Home through one shared reader: `getUserPo
 
 The side choice filters payouts, live and ended rows by the side held. "Nothing" is said only when the position walk and the payout walk completed and the latest read succeeded; a walk stopped at its cap is stated as incomplete. A row opens `/positions/<id>`, where the eligibility verdict decides each action; the list sends no transaction.
 
+With two or more live rows after the side choice, a summary card comes first. Per side it sums `principal` per ERC-20 `principalAsset`, never across tokens (comparing values stays with the exposure line), and counts NFT-principal rows as rentals. The next date is the earliest still ahead among the stages the rows use: a running or due-soon maturity (repayment) or an upcoming periodic checkpoint (interest), ties going to the lower loan id. Loans whose grace has ended (on the maturity or a checkpoint), loans in grace, and FallbackPending loans are listed by id, each once under its most severe stage; loans with unread deadlines are counted. Interest is excluded. The card reads only the list's own read and states a partial walk. A maturity on an NFT-principal row is a rental's close (`rental-close`), never a repayment: a rental closes on its prepaid rent, so the summary names it as the rows do.
+
 <a id="position"></a>
 
 ### Position: How a Loan Is Read
@@ -2627,6 +2631,8 @@ Rates are the loan's snapshots: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtI
 The action follows one rule: `repayLoan` is offered for an Active or FallbackPending ERC-20 loan to any wallet that is neither `loan.lender` nor `ownerOf(lenderTokenId)` (`LenderCannotRepayOwnLoan`), held past the effective grace end on an Active loan (`RepaymentPastGracePeriod`) and while the borrower position's open route is `SwapToRepayIntent` (`positionRoute(borrowerTokenId)` on the Diamond, or `positionLock(borrowerTokenId)` for a deployment from before #3205). A lender listing, a refinance request and the global pause do not hold it. Rentals are not offered here yet.
 
 The review reads `calculateRepaymentAmount(loanId)` at the latest block and again with the block time overridden to `min(now + 30 minutes, grace end)`; the same request reads the block time it ran under, and a connection that ignored the override is passed over. The approval is exactly the second figure, the call is simulated before the wallet opens, and after the receipt the status the repayment left the loan in is read from its `LoanRepaid` log (not at the block, where a later claim can already have settled it), the payment is measured from the `Transfer` logs, and the allowance is reset to its prior value when it reads the approval less the payment. An allowance above that figure, unlimited included, is lowered to it as well, since `repayLoan(loanId)` takes no maximum or deadline; the reset then restores the larger value.
+
+In grace (`maturity ≤ now ≤ graceEnd` from `getLoanDeadlines`), the full and part repayment reviews count down to `graceEnd` on the chain clock, estimated as the block timestamp the review read plus the seconds since. `repayLoan` and `repayPartial` revert `RepaymentPastGracePeriod` once `block.timestamp > graceEnd`, and from then `triggerDefault` is open to anyone, so a late repayment races a default. With an hour or less left the clock says to send now. It only states: the verdict re-read before sending is the gate, and a pause moves `graceEnd` later. Block-stuffing to hold a repayment past grace is recorded as an accepted low risk in the threat model.
 
 <a id="interest-schedule"></a>
 

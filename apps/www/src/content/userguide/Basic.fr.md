@@ -1128,6 +1128,8 @@ Pour emprunter, vous acceptez l'offre ouverte d'un prêteur : un montant d'un to
 
 Choisissez d'abord ce que vous empruntez et ce que vous bloquez. L'app suggère des tokens du réseau, ou vous pouvez coller une adresse de token ; aucun contrôle de sécurité des tokens n'est fait, vérifiez donc vous-même une adresse collée. Pour chaque token, l'app lit ce que le protocole en dit maintenant. Un token liquide a un prix : le prêt a un facteur de santé et peut être liquidé si la garantie perd de la valeur. Un token illiquide est évalué à zéro, et en cas de défaut le prêteur reçoit la garantie elle-même. Quand le protocole ne fait pas confiance au prix d'un token, les nouveaux prêts sur celui-ci sont fermés jusqu'à ce qu'il lui fasse de nouveau confiance ; les prêts déjà ouverts ne sont pas concernés.
 
+Chaque jeton choisi indique aussi son rang par valeur de marché, d'après deux listes publiques de jetons. La correspondance se fait par l'adresse de contrat du jeton sur le réseau, jamais par son nom. Une valeur sûre (blue chip) figure dans le top 20 et est valorisée par le protocole ; viennent ensuite le top 100, 200, 300 et 500. Un jeton hors du top 500 est signalé comme utilisé à vos propres risques. Un jeton qui reprend le nom ou le symbole d'un jeton classé à une autre adresse est signalé comme copie possible, avec l'adresse du vrai jeton, et quand les deux listes ne s'accordent pas sur l'adresse d'un jeton, il est signalé comme non vérifié. La date des listes est affichée, et un rafraîchissement échoué est indiqué. Sur un réseau de test, les jetons n'ont ni valeur de marché ni classement. Pour trouver un jeton, tapez son nom ou son symbole dans le champ Un autre jeton : les jetons classés viennent en premier, chacun avec son niveau et son adresse complète, et en choisir un remplit l'adresse. Vérifiez l'adresse, pas le nom. Le niveau n'est qu'un repère et ne change rien à ce que fait le protocole.
+
 <a id="borrow-offers"></a>
 
 ### Borrow: Choisir une offre
@@ -1294,6 +1296,8 @@ Positions liste chaque prêt que vous avez accordé ou contracté sur ce réseau
 
 Tous, Prêtés et Empruntés filtrent les trois listes à la fois. Positions n'affirme que vous n'avez rien qu'après avoir tout lu ; si une liste n'a pas pu être lue en entier, il le dit. Chaque prêt ouvre sa propre page, qui montre les actions qui vous sont ouvertes. La liste elle-même ne signe jamais rien.
 
+Avec deux prêts en cours ou plus, un récapitulatif vient en premier. Pour chaque côté, il indique le principal encore dû ou encore prêté, par jeton (des montants en jetons différents ne sont jamais additionnés, et les locations de NFT sont comptées), la prochaine date d'échéance d'un paiement avec un lien vers son prêt, et les prêts en retard ou en repli (fallback), chacun avec son lien. Les intérêts ne sont pas inclus dans ces totaux ; la page de chaque prêt indique ce que coûte son remboursement maintenant. Pour une location, cette date est sa clôture sur le loyer payé d'avance ; elle n'est donc jamais appelée remboursement.
+
 <a id="position"></a>
 
 ### Position : un prêt
@@ -1309,6 +1313,8 @@ Viennent ensuite les dates du prêt (l'échéance de la période en cours avant 
 Sur un prêt en cours, la page propose de le rembourser intégralement. Tout le monde peut rembourser, sauf le prêteur. Si vous ne détenez pas la position d'emprunteur, payer ne vous donne aucun droit sur la garantie : seul son détenteur peut la récupérer. Le remboursement est suspendu dès la fin du délai de grâce (le prêt passe alors en défaut) et tant qu'un ordre de swap-to-repay est en attente.
 
 Ce que vous devez augmente à chaque seconde, et le protocole prend le montant au moment où votre remboursement est confirmé. L'examen montre deux chiffres : ce que cela coûte maintenant et ce que cela coûterait environ trente minutes plus tard. Votre portefeuille approuve exactement le second chiffre. Si vous aviez déjà approuvé davantage, même un montant illimité, l'approbation est ramenée à ce chiffre pour le remboursement, car le remboursement ne fixe lui-même aucun maximum. L'approbation limite le montant, pas le temps : un remboursement confirmé plus tard ne passe que tant que ce qui est dû y tient encore, sinon il est refusé et rien ne bouge. Sur un prêt qui facture la durée entière, le montant ne grandit pas avant l'échéance, donc un remboursement plus tardif peut encore passer. Ce que le remboursement n'utilise pas de l'approbation est remis en place ensuite. Puis l'emprunteur récupère la garantie et le prêteur récupère le principal et les intérêts dans Claims.
+
+Si le prêt a dépassé son échéance et se trouve dans son délai de grâce, la vérification décompte jusqu'à la fin du délai selon l'horloge de la chaîne. Ensuite, le protocole refuse un remboursement et n'importe qui peut déclarer un défaut ; la transaction minée en premier l'emporte, alors envoyez votre remboursement bien avant. À une heure ou moins de la fin, la vérification vous dit de l'envoyer maintenant. Un paiement partiel affiche le même décompte.
 
 <a id="interest-schedule"></a>
 

@@ -272,6 +272,11 @@ let unplaced = { count: 0, capped: false };
 
 /** @type {'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending'} */
 let posture = 'live';
+/** What `/assets/rankings` answers, per token chain id: a spec sets a
+ *  stored list, or `down` for a 503. Unset, no list is stored, as on the
+ *  live test networks the keeper does not rank. */
+let rankings = new Map();
+let rankingsDown = false;
 
 async function anvil(method, params = []) {
   const res = await fetch(ANVIL_URL, {
@@ -405,6 +410,7 @@ const server = http.createServer(async (req, res) => {
           '/__stub/index-posture',
           '/__stub/unplaced',
           '/__stub/notifications',
+          '/assets/rankings, /__stub/rankings',
           '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
           '/__stub/agent',
         ],
@@ -418,6 +424,8 @@ const server = http.createServer(async (req, res) => {
       unplaced = { count: 0, capped: false };
       addedNotifications = [];
       agent = freshAgent();
+      rankings = new Map();
+      rankingsDown = false;
       json(res, 200, { reset: true });
       return;
     }
@@ -439,6 +447,30 @@ const server = http.createServer(async (req, res) => {
       }
       unplaced = { count: next.count, capped: next.capped };
       json(res, 200, { unplaced });
+      return;
+    }
+    if (url.pathname === '/__stub/rankings' && req.method === 'POST') {
+      // { chainId, sources, assets } stores a list; { down: true } answers 503.
+      const next = JSON.parse(await readBody(req));
+      if (next.down === true) rankingsDown = true;
+      else if (Number.isSafeInteger(next.chainId) && next.sources && Array.isArray(next.assets)) {
+        rankingsDown = false;
+        rankings.set(next.chainId, { chainId: next.chainId, sources: next.sources, assets: next.assets });
+      } else {
+        json(res, 400, { error: 'rankings needs { chainId, sources, assets } or { down: true }' });
+        return;
+      }
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === '/assets/rankings' && req.method === 'GET') {
+      if (rankingsDown) {
+        json(res, 503, { error: 'unavailable' });
+        return;
+      }
+      const chainId = Number(url.searchParams.get('chainId'));
+      const none = { listFetchedAt: null, lastRun: null };
+      json(res, 200, rankings.get(chainId) ?? { chainId, sources: { cg: none, cp: none }, assets: [] });
       return;
     }
     if (url.pathname === '/__stub/notifications' && req.method === 'POST') {
