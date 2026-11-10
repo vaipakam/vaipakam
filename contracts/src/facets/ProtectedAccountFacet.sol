@@ -250,6 +250,19 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibVaipakam.storageSlot().protectedRetiredAccountOf[controller];
     }
 
+    /// @notice #3379 B2 — whether `account`'s protected mode is on, read from
+    ///         its vault (the host of {LibProtectedAccount.isEnabled}).
+    function isProtectionOn(address account) external view returns (bool) {
+        return LibProtectedAccount.core(account).enabled;
+    }
+
+    /// @notice #3379 B2 — refuse a NEW position for a locked or retired
+    ///         account (the one host of {LibProtectedAccount.requireCanOpen},
+    ///         which every opening path self-calls).
+    function requireCanOpenFor(address account) external view {
+        LibProtectedAccount.requireCanOpenLocal(account);
+    }
+
     /// @notice The bounds of the delay, in seconds.
     function getProtectedDelayBounds() external pure returns (uint256 minDelay, uint256 maxDelay) {
         return (LibProtectedAccount.MIN_DELAY, LibProtectedAccount.MAX_DELAY);

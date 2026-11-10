@@ -14,8 +14,10 @@ import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { ProtectedAccountFacetABI, VaipakamVaultImplementationABI, VaultOutflowFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import {
   protectedAccountFromVault,
+  VAULT_PROTECTION_VIEWS_ABI,
   type DiamondProtection,
   type ProtectedAccountRecordFromVault,
+  type VaultProtectionPending,
   type VaultProtectionState,
 } from '@vaipakam/lib/protectedAccountView';
 import { answerOrNull } from '../reads/answer';
@@ -70,8 +72,8 @@ export function protectionFrom(a: ProtectedAccountAnswer | null): Protection | n
  *  Diamond's `getProtection(account)` names the vault (and the co-sign
  *  setting), the vault's `protectionState()` and `vaultOwner()` the rest. An
  *  account with no vault reads as protected mode off. Reverts are thrown
- *  (wrap in `answerOrNull` to read one as unread). The vault exposes no
- *  pending setting times nor when its lock was set: those read 0
+ *  (wrap in `answerOrNull` to read one as unread). The pending setting
+ *  times and the lock time are the vault's `protectionPending()`
  *  ({@link protectedAccountFromVault}). */
 export interface ProtectedRecord {
   record: ProtectedAccountRecordFromVault;
@@ -85,12 +87,14 @@ export async function readProtectedRecord(c: PublicClient, diamond: Hex, account
   const at = blockNumber === undefined ? {} : { blockNumber };
   const protection = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtection', args: [account], ...at })) as DiamondProtection;
   const vault = protection[0].toLowerCase() === ZERO ? null : protection[0];
-  if (vault === null) return { record: protectedAccountFromVault(account, protection, null, null), vault, signers: [], allowlist: [] };
-  const [state, owner] = await Promise.all([
+  if (vault === null) return { record: protectedAccountFromVault(account, protection, null, null, null), vault, signers: [], allowlist: [] };
+  const [state, owner, pending] = await Promise.all([
     c.readContract({ address: vault, abi: VAULT, functionName: 'protectionState', ...at }) as Promise<VaultProtectionState>,
     c.readContract({ address: vault, abi: VAULT, functionName: 'vaultOwner', ...at }) as Promise<Hex>,
+    // Inline fragment until the vault ABI is re-exported with this view.
+    c.readContract({ address: vault, abi: VAULT_PROTECTION_VIEWS_ABI, functionName: 'protectionPending', ...at }) as Promise<VaultProtectionPending>,
   ]);
-  return { record: protectedAccountFromVault(account, protection, state, owner), vault, signers: state[5], allowlist: state[6] };
+  return { record: protectedAccountFromVault(account, protection, state, owner, pending), vault, signers: state[5], allowlist: state[6] };
 }
 
 /** The account's record as a payout's route reads it, or null when the

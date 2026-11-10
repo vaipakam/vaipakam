@@ -365,7 +365,14 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (o.to != LibProtectedAccount.manager(user)) revert OutflowRecipientInvalid(c, o.to);
         } else if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
             address mgr = LibProtectedAccount.manager(user);
-            if (o.to == user || o.to == mgr || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
+            // #3379 B2 — a payout to the owner record (the controller once a
+            // replacement moved it) is the Owner class, whichever entry asked:
+            // the vault pays the owner record only in that class.
+            if (o.to == mgr && mgr != user) {
+                o.class_ = VaultOutflowTypes.OutflowClass.Owner;
+                return payeeOwner;
+            }
+            if (o.to == user || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
                 revert OutflowRecipientInvalid(c, o.to);
             }
         } else if (c == VaultOutflowTypes.OutflowClass.MatchedCounterparty) {

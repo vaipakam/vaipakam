@@ -342,9 +342,10 @@
       "why": "the user's own profile"
     },
     "ProtectedAccountFacet.applyProtection(address)": {
-      "class": "gap",
-      "issue": "#3379",
-      "why": "applies the platform side of a vault's protected posture (holds position NFTs and cancels queued rows on a lock or replacement); the keeper's protectedAccount pass moves to it in Stage B4, and until then the account's owner, a signer or anyone may call it"
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.finalizeSettingChanges(address)": {
       "class": "keeper",

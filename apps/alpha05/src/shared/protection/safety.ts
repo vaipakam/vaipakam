@@ -24,9 +24,8 @@
  *   due co-sign switch-off, and `applyProtection(account)` after an unlock or
  *   a switch-off.
  *
- * NOT READABLE IN B2: the vault exposes no pending setting times and not
- * when its lock was set, so a pending unlock, switch-off or lowered delay
- * reads as none (TODO #3379 B4).
+ * The pending setting times and the lock time are the vault's
+ * `protectionPending()`.
  *
  * What a review stands on is read through the wallet's connection at one
  * block, then the protocol's own dry run of the very call is asked.

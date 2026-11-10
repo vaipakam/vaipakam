@@ -900,6 +900,27 @@ contract VaipakamVaultImplementation is
         return (l.pendingAllow[l.epoch], l.pendingSigners[l.epoch]);
     }
 
+    /// @notice The pending setting changes and when the lock began (0 = none).
+    function protectionPending()
+        external
+        view
+        returns (uint32 pendingDelay, uint64 pendingDelayAt, uint64 pendingUnlockAt, uint64 pendingDisableAt, uint64 lockedAt)
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.pendingDelay, l.pendingDelayAt, l.pendingUnlockAt, l.pendingDisableAt, l.lockedAt);
+    }
+
+    /// @notice The open replacement's approvals by active signers now, and
+    ///         the majority it needs.
+    function replacementTally() external view returns (uint256 approvals, uint256 threshold) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        uint256 n = l.signers.length;
+        for (uint256 i; i < n; ++i) {
+            if (l.approved[l.round][l.signers[i]]) ++approvals;
+        }
+        threshold = n / 2 + 1;
+    }
+
     /// @notice `key`'s next signature nonce for `purpose`.
     function protectionNonce(address key, uint8 purpose) external view returns (uint256) {
         return LibVaultProtectionStorage.layout().nonces[key][purpose];

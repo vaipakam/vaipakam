@@ -89,6 +89,50 @@ export type VaultProtectionState = readonly [
   allowlist: readonly Address[],
 ];
 
+/**
+ * The vault views added after the exported ABI was generated (#3379 B2):
+ * the pending setting times and the lock time, and the replacement's tally.
+ * TODO(#3379): drop once `VaipakamVaultImplementation.json` is re-exported
+ * with them, and read them from `VaipakamVaultImplementationABI`.
+ */
+export const VAULT_PROTECTION_VIEWS_ABI = [
+  {
+    type: 'function',
+    name: 'protectionPending',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { name: 'pendingDelay', type: 'uint32' },
+      { name: 'pendingDelayAt', type: 'uint64' },
+      { name: 'pendingUnlockAt', type: 'uint64' },
+      { name: 'pendingDisableAt', type: 'uint64' },
+      { name: 'lockedAt', type: 'uint64' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'replacementTally',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { name: 'approvals', type: 'uint256' },
+      { name: 'threshold', type: 'uint256' },
+    ],
+  },
+] as const;
+
+/** `vault.protectionPending()`, positional (0 = none). */
+export type VaultProtectionPending = readonly [
+  pendingDelay: number,
+  pendingDelayAt: bigint,
+  pendingUnlockAt: bigint,
+  pendingDisableAt: bigint,
+  lockedAt: bigint,
+];
+
+/** `vault.replacementTally()`, positional. */
+export type VaultReplacementTally = readonly [approvals: bigint, threshold: bigint];
+
 /** `ProtectedAccountFacet.getProtection(account)`, positional. */
 export type DiamondProtection = readonly [vault: Address, requireCosign: boolean, pendingCosignOffAt: bigint];
 
@@ -119,21 +163,20 @@ export interface ProtectedAccountRecordFromVault extends ProtectedAccountNftFiel
  * then reads as off). `retired` is the vault's owner record having moved to
  * another wallet (a finalized replacement); `controller` is that wallet.
  *
- * NOT READABLE IN B2: the vault exposes no view of its pending setting
- * changes (a lowered delay, a switch-off, an unlock) or of when its lock was
- * set, so `pendingDelay`, `pendingDelayAt`, `pendingDisableAt`,
- * `pendingUnlockAt` and `lockedAt` read 0 here. A 0 there means "not known",
- * not "none pending". NFT protection's queue was retired by #3318 and reads
- * off. TODO(#3379 B4): read them once the vault exposes them.
+ * The pending setting changes (a lowered delay, a switch-off, an unlock)
+ * and the lock time come from `pending` (`vault.protectionPending()`; 0 =
+ * none). NFT protection's queue was retired by #3318 and reads off.
  */
 export function protectedAccountFromVault(
   account: Address,
   protection: DiamondProtection | null,
   state: VaultProtectionState | null,
   owner: Address | null,
+  pending: VaultProtectionPending | null,
 ): ProtectedAccountRecordFromVault {
   const [, requireCosign, pendingCosignOffAt] = protection ?? [ZERO_ADDRESS, false, 0n];
   const [enabled, locked, delay, cooldownUntil, lockedBy] = state ?? [false, false, 0, 0n, ZERO_ADDRESS, [], []];
+  const [pendingDelay, pendingDelayAt, pendingUnlockAt, pendingDisableAt, lockedAt] = pending ?? [0, 0n, 0n, 0n, 0n];
   const retired = owner !== null && owner.toLowerCase() !== account.toLowerCase();
   return {
     enabled,
@@ -143,13 +186,13 @@ export function protectedAccountFromVault(
     requireCosign,
     retired,
     delaySeconds: Number(delay),
-    pendingDelay: 0,
-    pendingDelayAt: 0n,
-    pendingDisableAt: 0n,
-    pendingUnlockAt: 0n,
+    pendingDelay: Number(pendingDelay),
+    pendingDelayAt: BigInt(pendingDelayAt),
+    pendingDisableAt: BigInt(pendingDisableAt),
+    pendingUnlockAt: BigInt(pendingUnlockAt),
     pendingCosignOffAt: BigInt(pendingCosignOffAt),
     cooldownUntil: BigInt(cooldownUntil),
-    lockedAt: 0n,
+    lockedAt: BigInt(lockedAt),
     lockedBy,
     controller: retired ? (owner as Address) : ZERO_ADDRESS,
     retiredPendingUnpinAt: 0n,

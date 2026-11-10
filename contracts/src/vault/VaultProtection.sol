@@ -397,7 +397,10 @@ contract VaultProtection {
             sg.epoch = l.epoch;
             emit SignerRemoveRequested(who, sg.removeAt, auth.key);
         } else if (action == SIGNER_CANCEL) {
-            _asOwnerOrSigner(auth, PURPOSE_SIGNER_CHANGE, h);
+            // The nominee may withdraw its own pending nomination; anyone else
+            // must be the owner or an active signer.
+            if (auth.key == who && sg.addAt != 0) _authorize(auth, PURPOSE_SIGNER_CHANGE, h);
+            else _asOwnerOrSigner(auth, PURPOSE_SIGNER_CHANGE, h);
             if ((sg.addAt == 0 && sg.removeAt == 0) || sg.epoch != l.epoch) revert NotRequested();
             if (sg.addAt != 0) _remove(l.pendingSigners[l.epoch], who);
             sg.addAt = 0;

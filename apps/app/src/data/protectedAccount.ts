@@ -18,8 +18,11 @@
  */
 import {
   protectedAccountFromVault,
+  VAULT_PROTECTION_VIEWS_ABI,
   type DiamondProtection,
+  type VaultProtectionPending,
   type VaultProtectionState,
+  type VaultReplacementTally,
 } from '@vaipakam/lib/protectedAccountView';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
@@ -40,11 +43,8 @@ export type AssetKind = (typeof ASSET_KIND)[keyof typeof ASSET_KIND];
 
 /**
  * #3379 B2 — the record lives in the account's vault and is rebuilt here from
- * the vault's views and the Diamond's `getProtection`
- * (`protectedAccountFromVault`). The vault exposes no view of its pending
- * setting changes or of when its lock was set, so `pendingDelay`,
- * `pendingDelayAt`, `pendingDisableAt`, `pendingUnlockAt` and `lockedAt` read
- * 0 (unknown, not "none pending") until B4.
+ * the vault's views (`protectionState`, `vaultOwner`, `protectionPending`)
+ * and the Diamond's `getProtection` (`protectedAccountFromVault`).
  */
 export interface ProtectedAccountRecord {
   enabled: boolean;
@@ -129,10 +129,8 @@ export interface ReplacementState {
   proposedBy: `0x${string}`;
   readyAt: bigint;
   round: number;
-  /** #3379 B2 — the vault does not expose its approval tally: null (unknown).
-   *  The vault re-checks the majority when the move is completed. */
-  approvals: number | null;
-  /** The majority of the signers active now (the vault's own rule). */
+  /** Approvals by the signers active now (`vault.replacementTally()`). */
+  approvals: number;
   threshold: number;
 }
 
@@ -502,9 +500,7 @@ export function replacementStage(
   if (signers.some((x) => x.signer.toLowerCase() === nominee)) return 'nomineeIsSigner';
   const manager = (record.retired ? record.controller : account).toLowerCase();
   const bySigner = repl.proposedBy.toLowerCase() !== manager;
-  // An unknown tally (B2: the vault does not expose it) is not read as lost:
-  // the vault re-checks the majority at completion and refuses without it.
-  if (bySigner && (signers.length < MIN_RECOVERY_SIGNERS || (repl.approvals !== null && repl.approvals < repl.threshold))) {
+  if (bySigner && (signers.length < MIN_RECOVERY_SIGNERS || repl.approvals < repl.threshold)) {
     return repl.readyAt > 0n ? 'quorumLost' : 'collecting';
   }
   if (repl.readyAt === 0n) return 'collecting';
@@ -597,6 +593,14 @@ function useProtectedAccountQueryOptions() {
           args: args as unknown[],
           blockNumber: block.number,
         }) as Promise<T>;
+      // The vault views not yet in the exported ABI (inline fragments).
+      const readVaultViews = <T,>(vault: `0x${string}`, functionName: 'protectionPending' | 'replacementTally') =>
+        publicClient!.readContract({
+          address: vault,
+          abi: VAULT_PROTECTION_VIEWS_ABI,
+          functionName,
+          blockNumber: block.number,
+        }) as Promise<T>;
       let protection: DiamondProtection;
       try {
         protection = await read<DiamondProtection>('getProtection', [target]);
@@ -607,23 +611,25 @@ function useProtectedAccountQueryOptions() {
       const vault = protection[0].toLowerCase() === ZERO ? null : protection[0];
       let state: VaultProtectionState | null = null;
       let owner: `0x${string}` | null = null;
+      let pendingSettings: VaultProtectionPending | null = null;
       if (vault !== null) {
         try {
-          [state, owner] = await Promise.all([
+          [state, owner, pendingSettings] = await Promise.all([
             readVault<VaultProtectionState>(vault, 'protectionState'),
             readVault<`0x${string}`>(vault, 'vaultOwner'),
+            readVaultViews<VaultProtectionPending>(vault, 'protectionPending'),
           ]);
         } catch {
           return { ...base, vault, recordFailed: true };
         }
       }
       // NFT protection's Diamond queue was retired (#3318): it reads off.
-      const record: ProtectedAccountRecord = protectedAccountFromVault(target!, protection, state, owner);
+      const record: ProtectedAccountRecord = protectedAccountFromVault(target!, protection, state, owner, pendingSettings);
       const signerAddrs: `0x${string}`[] | null = state ? [...state[5]] : vault === null ? [] : null;
       const allowlist: `0x${string}`[] | null = state ? [...state[6]] : vault === null ? [] : null;
 
       const none = <T,>(v: T) => Promise.resolve(v);
-      const [payoutIds, transferIds, holderLockRaw, repl, escapeOpen, bounds, pending] = await Promise.all([
+      const [payoutIds, transferIds, holderLockRaw, repl, escapeOpen, bounds, pending, tally] = await Promise.all([
         soft(read<bigint[]>('getPendingPayoutIds', [target])),
         // Standalone mode has no NFT queue: an empty list, not an unread one.
         legacy ? soft(readLegacy<bigint[]>('getPendingTransferIds', [target])) : Promise.resolve([] as bigint[]),
@@ -646,6 +652,7 @@ function useProtectedAccountQueryOptions() {
         vault === null
           ? none([[], []] as unknown as readonly [readonly `0x${string}`[], readonly `0x${string}`[]])
           : soft(readVault<readonly [readonly `0x${string}`[], readonly `0x${string}`[]]>(vault, 'pendingAdditions')),
+        vault === null ? none([0n, 0n] as VaultReplacementTally) : soft(readVaultViews<VaultReplacementTally>(vault, 'replacementTally')),
       ]);
 
       // A list is known only if EVERY entry under it read: a partial queue
@@ -760,14 +767,14 @@ function useProtectedAccountQueryOptions() {
               lowerAt: BigInt(holderLockRaw[4]),
             }
           : null,
-        replacement: repl
+        replacement: repl && tally
           ? {
               nominee: repl[0],
               proposedBy: repl[1],
               readyAt: BigInt(repl[2]),
               round: Number(repl[3]),
-              approvals: null,
-              threshold: Math.floor((signerAddrs?.length ?? 0) / 2) + 1,
+              approvals: Number(tally[0]),
+              threshold: Number(tally[1]),
             }
           : null,
         escapeOpen,

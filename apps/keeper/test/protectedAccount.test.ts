@@ -172,6 +172,12 @@ class FakeDiamond {
             this.keyed(owner, this.allowPending),
             this.keyed(owner, this.signerChanges).filter((w) => this.signerChanges.get(`${owner}:${w}`)!.addAt !== 0n),
           ];
+        case 'protectionPending':
+          return [r.pendingDelay, r.pendingDelayAt, r.pendingUnlockAt, r.pendingDisableAt, r.lockedAt];
+        case 'replacementTally': {
+          const p = this.replacements.get(owner);
+          return [p?.approvals ?? 0n, p?.threshold ?? 0n];
+        }
         case 'replacementProposal': {
           const p = this.replacements.get(owner);
           return [p?.nominee ?? ZERO, p?.proposedBy ?? ZERO, p?.readyAt ?? 0n, 1];
@@ -331,7 +337,9 @@ class FakeDiamond {
         if (!acct.enabled) throw revert('ProtectedModeOff', [a[0]]);
         if (!this.lockGranted.has(a[0])) throw revert('KeeperAccessRequired');
         return () => {
-          // A repeat lock still drops every pending loosening change.
+          // A repeat lock keeps its time and still drops every pending
+          // loosening change.
+          if (!acct.locked) acct.lockedAt = this.now;
           Object.assign(acct, { locked: true, pendingUnlockAt: 0n, pendingDisableAt: 0n, pendingDelayAt: 0n, pendingCosignOffAt: 0n });
           for (const p of this.payouts.values()) if (p.user === a[0] && p.state === 1) p.state = 3;
           this.lastLogs = [];
@@ -534,7 +542,7 @@ describe('a run', () => {
       const full = d.multicall;
       // #3379 B2: the account's record is then completed from its vault, a
       // read made after the chunk; it comes back here.
-      const vaultRead = (q: Parameters<typeof full>[0]) => q.contracts.every((c) => c.functionName === 'protectionState' || c.functionName === 'vaultOwner');
+      const vaultRead = (q: Parameters<typeof full>[0]) => q.contracts.every((c) => ['protectionState', 'vaultOwner', 'protectionPending'].includes(c.functionName));
       d.multicall = async (q) =>
         q.contracts.some((c) => c.functionName === 'getPendingPayout' && c.args?.[0] === 101n) || vaultRead(q)
           ? full(q)
@@ -666,7 +674,7 @@ describe('a run', () => {
   });
 
   describe('pending changes', () => {
-    it("applies the co-sign switch-off on the Diamond, and leaves the vault's settings unread: their times are not readable (#3379 B2)", async () => {
+    it("applies an account's due vault settings in one call, an unlock included, then applies the platform side (#3379 B2)", async () => {
       d.accounts.set(ALICE, account({ locked: true, pendingUnlockAt: NOW - 5n }));
       d.accounts.set(BOB, account({ pendingDelayAt: NOW - 5n, pendingCosignOffAt: NOW - 1n }));
       ledger.add('SettingChangeRequested', { account: ALICE, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
@@ -674,16 +682,38 @@ describe('a run', () => {
       ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 1n) });
       ledger.add('SettingChangeRequested', { account: BOB, kind: 3, value: '0', effectiveAt: String(NOW - 1n) });
       const r = await run();
-      expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['finalizeSettingChanges', [BOB]]]);
-      expect(r.finalized).toEqual([`cosign-off:${BOB.slice(0, 10)}`]);
-      // The unlock and the lowered delay are the vault's: never sent, never
-      // settled, and said so.
-      expect(r.unread.get(`finalize:setting:${ALICE}:5:${NOW - 5n}`)).toMatch(/does not expose/);
-      expect(r.unread.get(`finalize:setting:${BOB}:2:${NOW - 5n}`)).toMatch(/does not expose/);
-      expect(d.accounts.get(ALICE)!.locked).toBe(true);
-      // The retired NFT switch-off has nothing pending: finished, below the
-      // unread rows, so the floor stays.
-      expect(cursors.rows.has(CHANGE_FLOOR_ITEM)).toBe(false);
+      // The vault's settings go to the vault (the unlock then to the
+      // Diamond's applyProtection; a lowered delay needs none); the co-sign
+      // switch-off stays the
+      // Diamond's. The retired NFT switch-off has nothing pending.
+      expect(d.sent.map((s) => [s.fn, s.args])).toEqual([
+        ['protect:finalizeSettings', []],
+        ['applyProtection', [ALICE]],
+        ['protect:finalizeSettings', []],
+        ['finalizeSettingChanges', [BOB]],
+      ]);
+      expect(r.finalized).toEqual([`unlock:${ALICE.slice(0, 10)}`, `lower-delay:${BOB.slice(0, 10)}`, `cosign-off:${BOB.slice(0, 10)}`]);
+      expect(d.accounts.get(ALICE)!.locked).toBe(false);
+      expect(cursors.rows.get(CHANGE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[3]));
+    });
+
+    it('counts a switch-off held back by open rows as waiting, and does not claim one applied with other settings', async () => {
+      d.accounts.set(ALICE, account({ pendingDisableAt: NOW - 5n }));
+      d.accounts.set(BOB, account({ pendingDisableAt: NOW - 5n, pendingDelayAt: NOW - 5n }));
+      d.openRows.add(ALICE);
+      d.openRows.add(BOB);
+      ledger.add('SettingChangeRequested', { account: ALICE, kind: 1, value: '0', effectiveAt: String(NOW - 5n) });
+      ledger.add('SettingChangeRequested', { account: BOB, kind: 1, value: '0', effectiveAt: String(NOW - 5n) });
+      ledger.add('SettingChangeRequested', { account: BOB, kind: 2, value: '7200', effectiveAt: String(NOW - 5n) });
+      const r = await run();
+      // Bob's call lands and applies only the lowered delay, which its
+      // receipt reports; Alice's is refused. Both switch-offs wait.
+      expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['protect:finalizeSettings', []]]);
+      expect(r.refused.size).toBe(0);
+      expect(r.waiting.get('switch-off-waits-for-open-rows')).toBe(2);
+      expect(r.finalized).toEqual([`lower-delay:${BOB.slice(0, 10)}`]);
+      expect(d.accounts.get(BOB)!.enabled).toBe(true);
+      expect(d.accounts.get(BOB)!.pendingDelayAt).toBe(0n);
     });
 
     it('reports a setting only from its receipt: a landed call that applied nothing reports nothing (Codex #3090)', async () => {
@@ -709,7 +739,7 @@ describe('a run', () => {
       expect(cursors.rows.get(CHANGE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
     });
 
-    it('waits on a locked account, an expired allowlist addition, an unaccepted or expired signer addition, and sends no replacement short of its approvals', async () => {
+    it('waits on a locked account, an expired allowlist addition, an unaccepted or expired signer addition, and a replacement short of its approvals', async () => {
       d.accounts.set(BOB, account({ locked: true }));
       d.allowPending.set(`${ALICE}:${DEST}`, NOW - 3601n);
       ledger.add('AllowlistAddRequested', { account: ALICE, destination: DEST, effectiveAt: String(NOW - 3601n) });
@@ -728,10 +758,8 @@ describe('a run', () => {
         'allowlist-add-expired': 1,
         'signer-not-accepted': 1,
         'signer-add-expired': 1,
+        'replacement-lacks-approvals': 1,
       });
-      // #3379 B2: the vault does not expose the approval tally; its own check
-      // refuses the replacement at the simulation, and nothing is sent.
-      expect(r.refused.get(`finalize:replace:${ALICE}`)).toBe('NotReady');
     });
 
     it('finalizes a matured allowlist addition, an accepted signer, a signer removal and a manager-led replacement', async () => {
@@ -841,10 +869,7 @@ describe('the Telegram steps', () => {
     d.payouts.set(1n, { user: ALICE, state: 1, cosigned: false, releaseAt: NOW - 1n, recipient: ALICE, amount: 100n });
     ledger.add(PAYOUT_EVENT, { account: ALICE, id: '1' });
     d.accounts.set(DEST, account());
-    // Locked since its request; #3379 B2: the vault does not expose when, so
-    // it is locked again rather than answered as already locked.
-    d.accounts.set(CAROL, account({ locked: true, lockedAt: NOW - 5n }));
-    d.lockGranted.add(CAROL);
+    d.accounts.set(CAROL, account({ locked: true, lockedAt: NOW - 5n })); // locked since its request
     store.requests = [
       request(1, ALICE),
       request(2, BOB), // locked before its request
@@ -856,14 +881,14 @@ describe('the Telegram steps', () => {
       request(8, ALICE), // sent again: one lock answers both
     ];
     const r = await run(true, false);
-    expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['lockVaultFor', [ALICE]], ['lockVaultFor', [BOB]], ['lockVaultFor', [CAROL]]]);
-    expect(r.locks!.map((l) => l.outcome)).toEqual(['locked', 'locked-again', 'not-allowed', 'not-protected', 'locked-again', 'expired', 'dropped-old']);
+    expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['lockVaultFor', [ALICE]], ['lockVaultFor', [BOB]]]);
+    expect(r.locks!.map((l) => l.outcome)).toEqual(['locked', 'locked-again', 'not-allowed', 'not-protected', 'already-locked', 'expired', 'dropped-old']);
     expect(r.released, 'the lock cancelled the payout before the release step').toEqual([]);
     expect(sent.map((a) => a.tgChatId)).toEqual(['chat-8', 'chat-2', 'chat-3', 'chat-4', 'chat-5', 'chat-6']);
     expect(sent[0].text).toMatch(/^Locked: /);
     expect(sent[1].text).toMatch(/lock was set again, which cancels any pending unlock/);
     expect(sent[2].text).toMatch(/not allowed the keeper to lock/);
-    expect(sent[4].text).toMatch(/lock was set again, which cancels any pending unlock/);
+    expect(sent[4].text).toMatch(/was already locked\. Nothing changed\./);
     expect(sent.every((a) => !a.pushSubscriber), 'an answer goes to the chat only').toBe(true);
     expect([...store.handled].map(([id, h]) => [id, h.outcome, h.at])).toEqual([
       [1, 'locked', NOW_SEC],
@@ -871,7 +896,7 @@ describe('the Telegram steps', () => {
       [2, 'locked-again', NOW_SEC],
       [3, 'not-allowed', NOW_SEC],
       [4, 'not-protected', NOW_SEC],
-      [5, 'locked-again', NOW_SEC],
+      [5, 'already-locked', NOW_SEC],
       [6, 'expired', NOW_SEC],
       [7, 'dropped-old', NOW_SEC],
     ]);
@@ -894,7 +919,7 @@ describe('the Telegram steps', () => {
     expect(d.accounts.get(BOB)!.locked, 'the unlock was dropped, not applied').toBe(true);
   });
 
-  it('reads requests again when their record could not be written', async () => {
+  it('reads requests again when their record could not be written, and never locks for them twice', async () => {
     d.lockGranted.add(ALICE);
     d.lockGranted.add(BOB);
     store.requests = [request(1, ALICE), request(2, BOB)];
@@ -906,11 +931,9 @@ describe('the Telegram steps', () => {
     store.markFails = false;
     sent = [];
     const again = await run(true, false);
-    // #3379 B2: the vault does not expose when its lock was set, so a lock
-    // that postdates Alice's request cannot be told from an older one: she
-    // is locked again (a repeat lock changes nothing else), and answered so.
-    expect(again.locks!.map((l) => [l.wallet, l.outcome])).toEqual([[ALICE, 'locked-again'], [BOB, 'locked-again']]);
-    expect(d.sent.filter((s) => s.fn === 'lockVaultFor').map((s) => s.args)).toEqual([[ALICE], [ALICE], [BOB]]);
+    // The lock postdates Alice's request, so it is not made again.
+    expect(again.locks!.map((l) => [l.wallet, l.outcome])).toEqual([[ALICE, 'already-locked'], [BOB, 'locked-again']]);
+    expect(d.sent.filter((s) => s.fn === 'lockVaultFor').map((s) => s.args)).toEqual([[ALICE], [BOB]]);
     expect(store.handled.size).toBe(2);
   });
 

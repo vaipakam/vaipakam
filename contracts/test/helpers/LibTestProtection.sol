@@ -71,7 +71,7 @@ library LibTestProtection {
     /// @dev Ask, wait the delay, finalize: `destination` becomes allowlisted.
     function allow(address diamond, address account, address owner, address destination, uint32 delay) internal {
         call(diamond, account, owner, abi.encodeCall(VaultProtection.addAllowlisted, (destination, direct(owner))));
-        vm.warp(block.timestamp + delay);
+        vm.warp(vm.getBlockTimestamp() + delay);
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (destination)));
     }
 
@@ -95,7 +95,7 @@ library LibTestProtection {
         uint8 accept = 2; // SIGNER_ACCEPT
         call(diamond, account, owner, abi.encodeCall(VaultProtection.signerChange, (add, signer, direct(owner))));
         call(diamond, account, signer, abi.encodeCall(VaultProtection.signerChange, (accept, signer, direct(signer))));
-        vm.warp(block.timestamp + delay);
+        vm.warp(vm.getBlockTimestamp() + delay);
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeSigner, (signer)));
     }
 

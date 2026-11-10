@@ -221,9 +221,7 @@ export interface TelegramStepDeps {
 interface AccountLock {
   enabled: boolean;
   locked: boolean;
-  /** When the current lock was first set (a repeat lock keeps it). #3379
-   *  B2: the vault does not expose it, so it reads 0 and a locked account is
-   *  always locked again (`protectedVault.ts`). */
+  /** When the current lock was first set (a repeat lock keeps it). */
   lockedAt: bigint;
 }
 

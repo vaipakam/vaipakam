@@ -887,9 +887,7 @@ function AccountView({
           <p className="muted">{p.replacementNone}</p>
         ) : (
           <>
-            {/* B2: the vault does not expose its approval tally; an unknown
-                count is shown as unknown, never as zero. */}
-            <p>{p.replacementLine(shortAddress(repl!.nominee), repl!.approvals ?? '?', repl!.threshold)}</p>
+            <p>{p.replacementLine(shortAddress(repl!.nominee), repl!.approvals, repl!.threshold)}</p>
             {replStage === 'scheduled' || replStage === 'due' ? <p>{p.replacementReady(when(repl!.readyAt))}</p> : null}
             {replStage === 'quorumLost' ? <p className="banner banner-warn">{p.replacementQuorumLost}</p> : null}
             {replStage === 'nomineeIsSigner' ? <p className="banner banner-warn">{p.replacementNomineeIsSigner}</p> : null}

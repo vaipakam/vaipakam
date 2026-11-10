@@ -39,11 +39,7 @@
 //      nothing is sent for a locked account except what an unlock itself
 //      needs.
 //
-//      B2 limits, stated: the vault exposes no view of its pending setting
-//      times, so a vault setting change (kinds 1, 2, 5) is read as unread
-//      and never sent; and the replacement's approval tally is not readable,
-//      so the vault's own check at the simulation decides it. And the
-//      vault, not the Diamond, now emits the `*Requested` / `Scheduled`
+//      B2 limit, stated: the vault, not the Diamond, now emits the `*Requested` / `Scheduled`
 //      events below, which the indexer's ledger does not carry: until it
 //      does (B4), only the Diamond's co-sign switch-off is nominated.
 //
@@ -93,8 +89,8 @@ import { boundedCall, PassReader, type ReadCall } from './passReader';
 import { StepSender } from './stepSender';
 import { leadStageCutoffMs, runIndex } from './runWindow';
 import { LEGACY_DIAMOND_NFT_ABI, positionNftForDiamond } from './positionNft';
-import { protectionCall } from '@vaipakam/lib/protectedAccountView';
-import type { DiamondProtection, VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
+import { protectionCall, VAULT_PROTECTION_VIEWS_ABI } from '@vaipakam/lib/protectedAccountView';
+import type { DiamondProtection, VaultProtectionPending, VaultProtectionState, VaultReplacementTally } from '@vaipakam/lib/protectedAccountView';
 import { accountFrom, noVault, protectionRead, vaultReads, type ProtectedAccount } from './protectedVault';
 
 /** Only the functions and events this pass names, plus every Diamond error. */
@@ -140,6 +136,9 @@ export const ABI = dedupe([
   ...pick(ProtectedAccountFacetABI),
   ...pick(VaultDepositoryFacetABI),
   ...pick(VaipakamVaultImplementationABI),
+  // The pending setting times, the lock time and the replacement's tally
+  // (inline until the vault ABI is re-exported with them).
+  ...(VAULT_PROTECTION_VIEWS_ABI as unknown as Abi),
   // The vault's protected-mode rules: their errors (a `protect` call reverts
   // with them) and the events applying a change emits.
   ...pick(VaultProtectionABI),
@@ -219,8 +218,7 @@ const ROW_NONE = 0;
 /** `ProtectedAccountFacet.CHANGE_*` → the `ProtectedAccount` field that holds
  *  when that change matures. #3379 B2: only the co-sign switch-off (4) is
  *  still the Diamond's; the switch-off (1), a lowered delay (2) and an unlock
- *  (5) are the vault's, whose pending times are not readable (they read 0 in
- *  the record, so `pendingAt` treats them as unread, never as applied). */
+ *  (5) are the vault's (`vault.protectionPending()`). */
 export const SETTING_FIELD: Readonly<Record<number, keyof ProtectedAccount>> = {
   1: 'pendingDisableAt',
   2: 'pendingDelayAt',
@@ -230,8 +228,7 @@ export const SETTING_FIELD: Readonly<Record<number, keyof ProtectedAccount>> = {
   // 6 (unpin) retired by #3204: a pin change waits at the VaultBeacon, and
   // its keeper pass is #3282.
 };
-/** The setting kinds the vault holds (its pending times are not readable in
- *  B2). */
+/** The setting kinds the vault holds. */
 const VAULT_SETTINGS: ReadonlySet<number> = new Set([1, 2, 5]);
 /** The co-sign switch-off, the one setting still the Diamond's. */
 const CHANGE_COSIGN_OFF = 4;
@@ -667,15 +664,15 @@ class Step {
     for (const { account, protection } of answers) {
       if (protection === undefined || this.known(account) || need.has(account)) continue;
       const p = protection as DiamondProtection;
-      if (noVault({ vault: p[0] })) this.accounts.set(account, accountFrom(account, p, null, null));
+      if (noVault({ vault: p[0] })) this.accounts.set(account, accountFrom(account, p, null, null, null));
       else need.set(account, p);
     }
     const want = [...need];
     const got = await this.r.groups(want.map(([, p]) => vaultReads(p[0])), 'vaults');
     want.forEach(([account, p], i) => {
-      const [state, owner] = got[i];
-      if (state !== undefined && owner !== undefined) {
-        this.accounts.set(account, accountFrom(account, p, state as VaultProtectionState, owner as Address));
+      const [state, owner, pending] = got[i];
+      if (state !== undefined && owner !== undefined && pending !== undefined) {
+        this.accounts.set(account, accountFrom(account, p, state as VaultProtectionState, owner as Address, pending as VaultProtectionPending));
       }
     });
   }
@@ -940,7 +937,7 @@ class Step {
         }
         const pending = pendingAt(c, s);
         if (pending === null) {
-          this.sender.noteUnread(`finalize:${key}`, "its pending time, which the account's vault does not expose (#3379 B2)");
+          this.sender.noteUnread(`finalize:${key}`, 'its pending change');
           continue;
         }
         if (pending !== c.at) {
@@ -1033,12 +1030,16 @@ class Step {
       }
       case 'signerRemove':
         return a.locked ? 'change-account-locked' : null;
-      case 'replace':
+      case 'replace': {
+        if (s.t !== 'replace') return null;
+        const [, proposedBy] = s.proposal;
+        const [approvals, threshold] = s.tally;
+        const manager = (a.retired ? lower(a.controller) : c.account) as Address;
         // A proposal the manager made needs no approvals; any other still
-        // needs its majority among the signers active now. #3379 B2: the
-        // vault does not expose its tally, so the vault's own check, in the
-        // simulation, decides it (`NotReady` when the majority is gone).
+        // needs its majority among the signers active now.
+        if (lower(proposedBy) !== manager && BigInt(approvals) < BigInt(threshold)) return 'replacement-lacks-approvals';
         return null;
+      }
     }
   }
 
@@ -1102,27 +1103,26 @@ function changeState(c: Change, got: readonly unknown[]): ChangeState | undefine
   if (c.t !== 'setting' && got.length === 0) return { t: 'none' };
   switch (c.t) {
     case 'setting':
-      return c.kind === CHANGE_COSIGN_OFF ? { t: 'cosign', protection: got[0] as DiamondProtection } : { t: 'vaultSetting' };
+      if (c.kind === CHANGE_COSIGN_OFF) return { t: 'cosign', protection: got[0] as DiamondProtection };
+      return got.length === 0 ? { t: 'none' } : { t: 'vaultSetting', pending: got[0] as VaultProtectionPending };
     case 'allow':
       return { t: 'allow', entry: got[0] as AllowEntry, pending: got[1] as PendingAdditions };
     case 'signerAdd':
     case 'signerRemove':
       return { t: 'signer', entry: got[0] as SignerChange, pending: got[1] as PendingAdditions };
     case 'replace':
-      return { t: 'replace', proposal: got[0] as ReplacementProposal };
+      return { t: 'replace', proposal: got[0] as ReplacementProposal, tally: got[1] as VaultReplacementTally };
   }
 }
 
 /** The reads of each change's own pending record: the Diamond's for the
- *  co-sign switch-off, the account's vault's for the rest (none for a vault
- *  setting: its pending time is not readable). Null when the account's vault
- *  is not known yet; an account with no vault has no vault-held change, and
- *  its record reads as none pending. */
+ *  co-sign switch-off, the account's vault's for the rest. Null when the
+ *  account's vault is not known yet; an account with no vault has no
+ *  vault-held change, and its record reads as none pending. */
 function changeCalls(c: Change, a: ProtectedAccount | undefined): ReadCall[] | null {
-  if (c.t === 'setting') {
-    if (c.kind === CHANGE_COSIGN_OFF) return [protectionRead(c.account)];
-    return [];
-  }
+  if (c.t === 'setting' && c.kind === CHANGE_COSIGN_OFF) return [protectionRead(c.account)];
+  // NFT protection's switch-off was retired by #3318: nothing holds it.
+  if (c.t === 'setting' && !VAULT_SETTINGS.has(c.kind)) return [];
   if (a === undefined) return null;
   if (noVault(a)) return [];
   const at = a.vault;
@@ -1138,8 +1138,13 @@ function changeCalls(c: Change, a: ProtectedAccount | undefined): ReadCall[] | n
         { functionName: 'signerEntry', args: [c.other], address: at },
         { functionName: 'pendingAdditions', args: [], address: at },
       ];
+    case 'setting':
+      return [{ functionName: 'protectionPending', args: [], address: at }];
     case 'replace':
-      return [{ functionName: 'replacementProposal', args: [], address: at }];
+      return [
+        { functionName: 'replacementProposal', args: [], address: at },
+        { functionName: 'replacementTally', args: [], address: at },
+      ];
   }
 }
 
@@ -1147,7 +1152,9 @@ function changeCalls(c: Change, a: ProtectedAccount | undefined): ReadCall[] | n
  *  `applyProtection` follows it: an unlock or a switch-off (both applied by
  *  the vault's `finalizeSettings`), or a replacement. */
 function changesPosture(c: Change): boolean {
-  return c.t === 'replace' || (c.t === 'setting' && VAULT_SETTINGS.has(c.kind));
+  // A lowered delay is not one: the Diamond acts only on a raised delay, and
+  // would refuse the call as nothing to apply.
+  return c.t === 'replace' || (c.t === 'setting' && (c.kind === CHANGE_DISABLE || c.kind === 5));
 }
 
 /** The accounts the page's events name (`PayoutQueued` and
@@ -1170,25 +1177,28 @@ function accountsNamed(page: LedgerRotation<bigint>): Map<bigint, Address> {
 /** What a change's own record read returns. */
 type ChangeState =
   | { t: 'cosign'; protection: DiamondProtection }
-  | { t: 'vaultSetting' }
+  | { t: 'vaultSetting'; pending: VaultProtectionPending }
   | { t: 'allow'; entry: AllowEntry; pending: PendingAdditions }
   | { t: 'signer'; entry: SignerChange; pending: PendingAdditions }
-  | { t: 'replace'; proposal: ReplacementProposal }
+  | { t: 'replace'; proposal: ReplacementProposal; tally: VaultReplacementTally }
   | { t: 'none' };
 
 const listed = (xs: readonly Address[], who: Address): boolean => xs.some((x) => lower(x) === who);
 
 /** The pending time the chain holds now for the change a row announced. A
  *  change is still the row's own only while this equals the row's time.
- *  Null when the chain does not expose it (a vault setting change, #3379
- *  B2): neither due nor finished, so it is never sent and never settled. */
+ *  Null when the record read is not the change's own (never expected). */
 export function pendingAt(c: Change, s: ChangeState): bigint | null {
   if (s.t === 'none') return 0n;
   switch (c.t) {
     case 'setting':
       if (s.t === 'cosign') return BigInt(s.protection[2]);
-      // NFT protection's switch-off was retired by #3318: nothing holds it.
-      if (c.kind === 3) return 0n;
+      if (s.t !== 'vaultSetting') return null;
+      // `protectionPending()`: (pendingDelay, pendingDelayAt, pendingUnlockAt,
+      // pendingDisableAt, lockedAt).
+      if (c.kind === CHANGE_DISABLE) return BigInt(s.pending[3]);
+      if (c.kind === 2) return BigInt(s.pending[1]);
+      if (c.kind === 5) return BigInt(s.pending[2]);
       return null;
     case 'allow': {
       if (s.t !== 'allow') return null;

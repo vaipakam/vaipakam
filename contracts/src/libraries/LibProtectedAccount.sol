@@ -231,7 +231,16 @@ library LibProtectedAccount {
 
     /// @notice Whether protected account mode is on for `account`.
     function isEnabled(address account) internal view returns (bool) {
-        return core(account).enabled;
+        // #3379 B2 — through its host, so callers near EIP-170 carry no copy
+        // of the vault read.
+        (bool ok, bytes memory ret) =
+            address(this).staticcall(abi.encodeWithSignature("isProtectionOn(address)", account));
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        return abi.decode(ret, (bool));
     }
 
     /// @notice Whether `account`'s positions are held against leaving it:
@@ -311,6 +320,19 @@ library LibProtectedAccount {
     ///         intent, a signed fill, a sale or offset listing) for a locked
     ///         or retired account. Loan servicing is never refused.
     function requireCanOpen(address account) internal view {
+        // #3379 B2 — one self-call to the rule's host, so the vault read is
+        // compiled once (ProtectedAccountFacet) and not into every caller.
+        (bool ok, bytes memory ret) =
+            address(this).staticcall(abi.encodeWithSignature("requireCanOpenFor(address)", account));
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+    }
+
+    /// @notice The rule {requireCanOpen} applies, run in its host.
+    function requireCanOpenLocal(address account) internal view {
         Core memory c = core(account);
         if (c.retired) revert AccountRetired(account);
         if (!c.enabled) return;
