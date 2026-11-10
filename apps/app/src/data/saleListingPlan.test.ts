@@ -182,6 +182,8 @@ describe('reviewedBoundsMoved', () => {
     expect(reviewedBoundsMoved(revert('ListingHeldAboveReviewed', [5n, 1n]))).toBe(true);
     // #3412 — a listing whose deadline passed was reviewed too long ago.
     expect(reviewedBoundsMoved(revert('DeadlinePassed', [5n]))).toBe(true);
+    expect(reviewedBoundsMoved(revert('SaleNetBelowReviewed', [5n, 6n]))).toBe(true);
+    expect(reviewedBoundsMoved(revert('SaleHeldAboveReviewed', [6n, 5n]))).toBe(true);
     expect(reviewedBoundsMoved(new Error('rpc'))).toBe(false);
   });
 });

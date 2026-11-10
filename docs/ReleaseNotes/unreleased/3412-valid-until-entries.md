@@ -6,7 +6,7 @@ This covers posting an offer (with or without a Permit2 signature), changing an 
 
 The deadline belongs to the transaction, not to the offer. An offer's own expiry still says how long a posted offer lives; the new deadline only says how late the transaction that posts or changes it may land.
 
-A lender's sale of a loan now always carries the figures the lender reviewed, the least the lender will net and the most the lender will pay toward a shortfall. The earlier unbound forms of the listed and direct sale are gone, and the bound forms took their plain names.
+A lender's sale of a loan now always carries the figures the lender reviewed, the least the lender will net and the most the lender will pay toward a shortfall. The earlier unbound forms of the listed and direct sale are gone, and the bound forms took their plain names. In the app, the direct sale into a standing offer to buy now reads the chain's quote of those two figures when its review opens, shows them, and sends exactly them, as a listing already did; the sale is refused rather than made if either is worse when it runs.
 
 Rescue actions are unchanged and take no deadline: repaying, a partial repayment, adding collateral, closing early by paying off, withdrawing surplus collateral and funding a lender intent. A late landing does them no harm.
 

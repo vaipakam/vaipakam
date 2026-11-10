@@ -105,8 +105,10 @@ export function boundListingArgs(
 
 /** The failures that say the figures a seller reviewed no longer hold: the
  *  listing would record a lower minimum, or more already set aside for the
- *  lender, than they agreed to — or it mined reverted, so which of its
- *  checks moved is unknown. */
+ *  lender, than they agreed to; the direct sale would net less, or move more
+ *  held money, than reviewed (`SaleNetBelowReviewed` / `SaleHeldAboveReviewed`,
+ *  #3412); or it mined reverted, so which of its checks moved is unknown. One
+ *  rule for both sale routes. */
 export function reviewedBoundsMoved(err: unknown): boolean {
   // A listing that MINED reverted carries no decoded revert data (the write
   // reports it as `TxNotSettledError`), so its reason cannot be read here.
@@ -117,6 +119,8 @@ export function reviewedBoundsMoved(err: unknown): boolean {
   return (
     name === 'ListingFloorBelowReviewed' ||
     name === 'ListingHeldAboveReviewed' ||
+    name === 'SaleNetBelowReviewed' ||
+    name === 'SaleHeldAboveReviewed' ||
     // The listing's deadline passed before it ran (#3412). Its window is the
     // quote's confirmation allowance, so the reviewed figures are no longer
     // known to hold either: review again rather than resend them.
