@@ -2143,8 +2143,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   inventory Positions reads, never from the index: each states the side
   held, the amount and rate, and its health reading (or that there is
   none), and opens the loan's page, where the protocol's verdict decides
-  what can be done. A read that did not complete says a loan may be
-  missing. The history is the index's append-only record of the loans the
+  what can be done. The section carries that read's own age, source and
+  refresh, never the index's freshness. A read that did not complete says
+  a loan may be missing. The history is the index's append-only record of the loans the
   wallet has held a side of, token loans against token collateral only,
   any status, newest participation first, a page at a time. Its status is
   labelled as the index's record, which can trail the chain, and each row

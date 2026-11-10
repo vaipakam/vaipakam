@@ -44,6 +44,9 @@ test('a market lists the viewer’s live loans in it, and the history lists ever
   await expect(loan).toHaveAttribute('data-side', 'lender');
   await expect(loan).toContainText(`Loan #${short.loanId}: you lent 0.02 WETH at 4.8% a year.`);
   await expect(loan.getByTestId('desk-loan-health')).toContainText(/Health factor|No health reading/);
+  // The live loans carry their own read's age and a refresh, apart from the index's freshness.
+  await expect(loans.locator('.stamp')).toBeVisible();
+  await expect(loans.locator('.stamp').getByRole('button')).toBeVisible();
   await expect(loan.getByRole('link', { name: `Manage loan #${short.loanId}` })).toHaveAttribute('href', `/positions/${short.loanId}`);
 
   // The history: both loans, newest participation first, with the status on record.

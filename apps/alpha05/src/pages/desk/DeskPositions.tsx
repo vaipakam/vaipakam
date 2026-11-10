@@ -10,6 +10,7 @@ import { worldKey } from '../../shared/reads/identityKey';
 import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { formatBps, formatScaled, formatUtc } from '../../shared/ui/format';
+import { OwnStamp } from '../../shared/ui/OwnStamp';
 
 type Hex = `0x${string}`;
 type MarketTerms = Pick<Market, 'lending' | 'collateral' | 'durationDays'>;
@@ -29,7 +30,9 @@ const STATUS: Readonly<Record<HistoryStatus, CopyKey>> = {
  * OFF-76 — the viewer's own loans in the selected market, from its own
  * chain read of its positions (the one inventory Positions reads), each
  * with its health reading and a way into the loan, where the protocol's
- * verdict decides what can be done (RB-ELIG). The desk signs nothing here.
+ * verdict decides what can be done (RB-ELIG). The read's own age, source and
+ * refresh are stamped, apart from the index's freshness. The desk signs
+ * nothing here.
  */
 export function MarketLoans({ market, meta, copy }: { market: MarketTerms; meta: TokenMetaMap | null; copy: CopyAccess }) {
   const { text, format } = copy;
@@ -37,6 +40,7 @@ export function MarketLoans({ market, meta, copy }: { market: MarketTerms; meta:
   return (
     <section className="home-section" aria-labelledby="desk-loans-title" data-testid="desk-loans">
       <h2 id="desk-loans-title">{text('desk.loansTitle')}</h2>
+      <OwnStamp reads={[book.read]} />
       <ReadState read={book.loans}>
         {(data) => {
           const rows = loansInMarket(data.rows, market);
