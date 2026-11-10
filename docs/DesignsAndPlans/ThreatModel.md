@@ -155,6 +155,12 @@ lands.
   on-chain minimum-output floor, not by the router.
 - **Old vault code** keeps running for its owner's own payouts until #3204
   lands (accepted with #3178).
+- **Block-stuffing to hold a repayment past grace** (accepted, #3412). An
+  attacker who fills blocks near a loan's grace end can delay a borrower's
+  repayment until a default lands first. Grace periods are days long, so
+  this needs a borrower who waited until the last minutes. The app counts
+  down to the grace end by the chain's clock and tells the borrower to send
+  early, and to send now with an hour or less left.
 
 ## 6. Keeping this current
 

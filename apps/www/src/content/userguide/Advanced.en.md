@@ -2630,6 +2630,8 @@ The action follows one rule: `repayLoan` is offered for an Active or FallbackPen
 
 The review reads `calculateRepaymentAmount(loanId)` at the latest block and again with the block time overridden to `min(now + 30 minutes, grace end)`; the same request reads the block time it ran under, and a connection that ignored the override is passed over. The approval is exactly the second figure, the call is simulated before the wallet opens, and after the receipt the status the repayment left the loan in is read from its `LoanRepaid` log (not at the block, where a later claim can already have settled it), the payment is measured from the `Transfer` logs, and the allowance is reset to its prior value when it reads the approval less the payment. An allowance above that figure, unlimited included, is lowered to it as well, since `repayLoan(loanId)` takes no maximum or deadline; the reset then restores the larger value.
 
+In grace (`maturity ≤ now ≤ graceEnd` from `getLoanDeadlines`), the full and part repayment reviews count down to `graceEnd` on the chain clock, estimated as the block timestamp the review read plus the seconds since. `repayLoan` and `repayPartial` revert `RepaymentPastGracePeriod` once `block.timestamp > graceEnd`, and from then `triggerDefault` is open to anyone, so a late repayment races a default. With an hour or less left the clock says to send now. It only states: the verdict re-read before sending is the gate, and a pause moves `graceEnd` later. Block-stuffing to hold a repayment past grace is recorded as an accepted low risk in the threat model.
+
 <a id="interest-schedule"></a>
 
 ### Interest Schedule: How It Is Read

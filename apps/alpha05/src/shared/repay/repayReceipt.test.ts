@@ -28,6 +28,7 @@ const review: RepayReview = {
   lenderHolder: A,
   borrowerHolder: A,
   graceEnd: 5_000n,
+  maturity: 4_000n,
   borrowerLock: 0,
   refinance: { offerId: 0n, live: false },
   payoff: { now: 101n, chainNow: 1_000n, atBy: 105n, by: 2_800n },

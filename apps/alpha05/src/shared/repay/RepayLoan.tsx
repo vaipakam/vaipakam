@@ -21,6 +21,7 @@ import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
+import { GraceClock } from './GraceClock';
 import { shortAddress } from '../ui/format';
 import { allowanceFigure } from './approvalCap';
 import { repaidStatus } from './repaidLog';
@@ -273,6 +274,7 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
                 {b}
               </Notice>
             ))}
+            <GraceClock dates={{ maturity: review.maturity, graceEnd: review.graceEnd, chainNow: review.payoff.chainNow, readAt: review.readAt }} />
             <WhyLink summaryKey="repay.payoffSummary" detailKey="repay.payoffWhy" />
           </div>
         ),

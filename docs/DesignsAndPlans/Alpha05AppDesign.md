@@ -903,6 +903,22 @@ above. Each resolves here, so a route reviewer needs no private file:
   the status at the block, which both sides claiming later in that block
   moves on to settled), what left the wallet (within the two stated
   figures), and the approval put back.
+- **RB-GRACE-CLOCK** — a full or part repayment of a loan in grace (past
+  its due date, before its grace end) counts down to the end of grace by
+  the chain's clock: the block time the review read plus the time since
+  the read, never the reader's own clock alone. It says that after the end
+  the protocol refuses a repayment and anyone can file a default, and that
+  whichever transaction is mined first wins, so the repayment should be
+  sent well before then. With an hour or less left it says to send now,
+  since a repayment still waiting to be mined at the end is refused with
+  nothing moved. The protocol accepts a repayment through the last second
+  of grace, and the clock counts it the same way. When the clock passes the
+  end after the read, it says grace has ended by the chain's clock and that
+  a pause moves the end later, which the re-read before sending checks; a
+  read already past grace shows no clock, since the review's own refusal
+  says it. Before the due date, in fallback, or with the dates unread there
+  is no clock. It is a statement, never a gate: the re-read verdict is what
+  refuses (#3412).
 - **RB-POSITION-SCHEDULE** — a running ERC-20 loan with an interest
   schedule (LN-24) shows its current period from the protocol's settlement
   preview alone: the schedule, the period's end and grace end (the loan's

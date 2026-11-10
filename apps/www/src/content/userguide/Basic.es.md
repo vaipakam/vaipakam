@@ -1294,6 +1294,8 @@ En un préstamo activo, la página ofrece pagarlo completo. Cualquiera puede pag
 
 Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si ya habías aprobado más, incluso una cantidad ilimitada, se reduce a esa cifra para el pago, porque el pago no fija por sí mismo ningún máximo. La aprobación limita el importe, no el tiempo: un pago que se confirma más tarde solo se ejecuta mientras lo que debes siga cabiendo en ella; si no, se rechaza y nada se mueve. En un préstamo que cobra el plazo completo, el importe no crece antes del vencimiento, así que un pago posterior aún puede ejecutarse. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
 
+Si el préstamo ya pasó su fecha de vencimiento y está en su periodo de gracia, la revisión cuenta hacia atrás hasta el fin de la gracia según el reloj de la cadena. Después, el protocolo rechaza un reembolso y cualquiera puede declarar un impago; gana la transacción que se mine primero, así que envíe su reembolso con tiempo. Con una hora o menos, la revisión le dice que lo envíe ahora. Un pago parcial muestra la misma cuenta atrás.
+
 <a id="interest-schedule"></a>
 
 ### Calendario de intereses

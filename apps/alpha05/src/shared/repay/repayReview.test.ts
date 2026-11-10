@@ -13,6 +13,7 @@ const review: RepayReview = {
   lenderHolder: A,
   borrowerHolder: A,
   graceEnd: 5_000n,
+  maturity: 4_000n,
   borrowerLock: 0,
   refinance: { offerId: 0n, live: false },
   payoff: { now: 101n, chainNow: 1_000n, atBy: 105n, by: 2_800n },
@@ -39,6 +40,8 @@ describe('changedBetween', () => {
   });
   it('reopens when a holder, the approval steps or the verdict moved', () => {
     expect(changedBetween(review, { ...review, borrowerHolder: null }, copy)).toBe('repay.changedHolders');
+    // A moved due date moves the grace clock the review shows.
+    expect(changedBetween(review, { ...review, maturity: 4_001n }, copy)).toBe('repay.changedHolders');
     expect(changedBetween(review, { ...review, refinance: { offerId: 9n, live: true } }, copy)).toBe('repay.changedHolders');
     expect(changedBetween(review, { ...review, refinance: { offerId: 0n, live: true } }, copy)).toBe('repay.changedHolders');
     expect(changedBetween(review, { ...review, approvalSteps: 0 }, copy)).toBe('repay.changedFunds');

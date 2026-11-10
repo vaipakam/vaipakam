@@ -2144,6 +2144,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 상환이 대출을 남긴 상태를 그 `LoanRepaid` 로그에서 읽고(블록 시점이 아닙니다. 같은 블록의 이후 청구로 이미 정산되었을 수 있기 때문입니다), `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다. 그 수치보다 큰 allowance(무제한 포함)도 그 수치로 낮춥니다. `repayLoan(loanId)`에는 상한도 기한도 없기 때문이며, 이후 되돌리기가 원래의 큰 값을 복원합니다.
 
+유예 기간 중(`getLoanDeadlines`의 `maturity ≤ now ≤ graceEnd`)에는 전액 및 일부 상환 검토 화면이 체인 시계로 `graceEnd`까지 카운트다운합니다. 체인 시각은 검토가 읽은 블록 타임스탬프에 그 이후 경과한 초를 더해 추정합니다. `block.timestamp > graceEnd`가 되면 `repayLoan`과 `repayPartial`은 `RepaymentPastGracePeriod`로 되돌려지고, 그때부터 `triggerDefault`는 누구나 호출할 수 있으므로 늦은 상환은 디폴트와 경쟁합니다. 한 시간 이하가 남으면 시계가 지금 보내라고 알려 줍니다. 표시만 할 뿐이며, 보내기 전에 다시 읽는 판정이 관문이고 일시 중지는 `graceEnd`를 뒤로 미룹니다. 블록을 채워 상환을 유예 기간 뒤로 미루는 공격은 위협 모델에 수용된 낮은 위험으로 기록되어 있습니다.
+
 <a id="interest-schedule"></a>
 
 ### 이자 일정: 읽는 방법

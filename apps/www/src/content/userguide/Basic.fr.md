@@ -1312,6 +1312,8 @@ Sur un prêt en cours, la page propose de le rembourser intégralement. Tout le 
 
 Ce que vous devez augmente à chaque seconde, et le protocole prend le montant au moment où votre remboursement est confirmé. L'examen montre deux chiffres : ce que cela coûte maintenant et ce que cela coûterait environ trente minutes plus tard. Votre portefeuille approuve exactement le second chiffre. Si vous aviez déjà approuvé davantage, même un montant illimité, l'approbation est ramenée à ce chiffre pour le remboursement, car le remboursement ne fixe lui-même aucun maximum. L'approbation limite le montant, pas le temps : un remboursement confirmé plus tard ne passe que tant que ce qui est dû y tient encore, sinon il est refusé et rien ne bouge. Sur un prêt qui facture la durée entière, le montant ne grandit pas avant l'échéance, donc un remboursement plus tardif peut encore passer. Ce que le remboursement n'utilise pas de l'approbation est remis en place ensuite. Puis l'emprunteur récupère la garantie et le prêteur récupère le principal et les intérêts dans Claims.
 
+Si le prêt a dépassé son échéance et se trouve dans son délai de grâce, la vérification décompte jusqu'à la fin du délai selon l'horloge de la chaîne. Ensuite, le protocole refuse un remboursement et n'importe qui peut déclarer un défaut ; la transaction minée en premier l'emporte, alors envoyez votre remboursement bien avant. À une heure ou moins de la fin, la vérification vous dit de l'envoyer maintenant. Un paiement partiel affiche le même décompte.
+
 <a id="interest-schedule"></a>
 
 ### Échéancier des intérêts
