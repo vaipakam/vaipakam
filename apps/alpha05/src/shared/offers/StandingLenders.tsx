@@ -4,7 +4,7 @@ import { useMode } from '../../app/ModeContext';
 import { useOwnRead } from '../reads/useOwnRead';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps } from '../ui/format';
-import { intentMatching, readLenderIntents, standingReady } from './intents';
+import { intentMatching, intentRequestBlock, readLenderIntents, standingReady, type IntentRequestTerms } from './intents';
 
 type Hex = `0x${string}`;
 
@@ -18,15 +18,36 @@ type Hex = `0x${string}`;
  * matching switch and standing-intent switch on: with either off it says no
  * request is filled against them, and with either unread it says that is not
  * known. A failed re-read keeps the last answer and says it may have changed.
+ * The reader's own intents are never counted, since the protocol refuses a
+ * match with oneself. Before a request is typed it states the terms every
+ * intent fill requires (the full term's interest, no partial repayment); in
+ * the request form, terms that rule every intent out say so instead of the
+ * likely fill.
  */
-export function StandingLenders({ diamond, lending, collateral, meta }: { diamond: Hex; lending: Hex; collateral: Hex; meta: TokenMetaMap | null }) {
+export function StandingLenders({
+  diamond,
+  lending,
+  collateral,
+  meta,
+  account,
+  request,
+}: {
+  diamond: Hex;
+  lending: Hex;
+  collateral: Hex;
+  meta: TokenMetaMap | null;
+  account: Hex | null;
+  /** The request's terms as typed, in the request form; absent beside the way. */
+  request?: IntentRequestTerms;
+}) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
   const read = useOwnRead(['borrow', 'intents', diamond.toLowerCase()], (c) => readLenderIntents(c, diamond));
   const partial = read.data !== null && BigInt(read.data.scanned) < read.data.total;
-  const ready = read.data ? standingReady(read.data.intents, lending, collateral) : null;
+  const ready = read.data ? standingReady(read.data.intents, lending, collateral, account) : null;
   const matching = read.data ? intentMatching(read.data.switches) : 'unknown';
   const stale = read.data !== null && read.error !== null;
+  const blocked = request ? intentRequestBlock(request) : null;
 
   let body: ReactNode;
   if (read.data === null) {
@@ -54,7 +75,16 @@ export function StandingLenders({ diamond, lending, collateral, meta }: { diamon
             rate: formatBps(ready.minRateBps),
           })}
         </p>
-        {matching === 'on' ? <p className="tier-b">{text('borrow.standingFill')}</p> : <p className="tier-a">{text('borrow.standingFillUnknown')}</p>}
+        {blocked !== null ? (
+          <p className="tier-a" data-testid="standing-blocked">
+            {text(blocked === 'pro-rata' ? 'borrow.standingBlockedProRata' : 'borrow.standingBlockedPartial')}
+          </p>
+        ) : matching === 'on' ? (
+          <p className="tier-b">{text('borrow.standingFill')}</p>
+        ) : (
+          <p className="tier-a">{text('borrow.standingFillUnknown')}</p>
+        )}
+        {request === undefined && <p className="tier-b">{text('borrow.standingTerms')}</p>}
         {isAdvanced && <p className="tier-b">{format('borrow.standingLimits', { days: String(ready.maxDays), ltv: formatBps(BigInt(ready.maxLtvBps)) })}</p>}
         {partial && <p className="tier-b">{format('borrow.standingPart', { shown: String(read.data.scanned), total: read.data.total.toString() })}</p>}
       </>

@@ -57,7 +57,7 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  */
 export function BorrowPage() {
   const { text, format } = useCopy();
-  const { status, chainId } = useAccount();
+  const { status, chainId, address } = useAccount();
   const connected = status === 'connected';
   const walletChain = getSupportedChain(chainId);
   const screenChain = useScreenChain();
@@ -191,7 +191,7 @@ export function BorrowPage() {
             <div className="way request-open" data-way="own">
               <h3>{text('borrow.wayOwn')}</h3>
               <p className="tier-b">{text(requestPair === null || requestPair.standard === 'erc20' ? 'request.openLead' : 'request.openLeadNft')}</p>
-              <StandingLenders diamond={diamond} lending={pair.lending!} collateral={pair.collateral!} meta={meta} />
+              <StandingLenders diamond={diamond} lending={pair.lending!} collateral={pair.collateral!} meta={meta} account={address ?? null} />
               {armContext !== null && (
                 <p className="tier-b" data-testid="request-held-for-tariff">
                   {format('request.heldForTariff', { id: armContext.offerId.toString() })}
@@ -222,7 +222,16 @@ export function BorrowPage() {
             meta={meta}
             onReview={reviewRequest}
             onCancel={() => setComposing(null)}
-            lead={<StandingLenders diamond={diamond} lending={requestPair.lending} collateral={requestPair.collateral} meta={meta} />}
+            lead={(input) => (
+              <StandingLenders
+                diamond={diamond}
+                lending={requestPair.lending}
+                collateral={requestPair.collateral}
+                meta={meta}
+                account={address ?? null}
+                request={{ fullTerm: input.fullTerm, allowsPartialRepay: input.allowsPartialRepay }}
+              />
+            )}
           />
         </section>
       )}

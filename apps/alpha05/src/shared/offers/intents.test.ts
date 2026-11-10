@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
-import { INTENT_PAGE, intentMatching, readLenderIntents, standingReady, type IntentSummary } from './intents';
+import { INTENT_PAGE, intentMatching, intentRequestBlock, readLenderIntents, standingReady, type IntentSummary } from './intents';
 
 type Hex = `0x${string}`;
 const WETH = '0x4200000000000000000000000000000000000006' as Hex;
@@ -44,6 +44,19 @@ describe('what lenders stand ready to lend on a pair', () => {
       TLIQ,
     );
     expect(r).toBeNull();
+  });
+  it('leaves out the reader’s own intents, which can never fill their own request', () => {
+    const me = '0x2222222222222222222222222222222222222222' as Hex;
+    expect(standingReady([intent({ owner: me })], WETH, TLIQ, me.toUpperCase().replace('0X', '0x') as Hex)).toBeNull();
+    expect(standingReady([intent({ owner: me }), intent()], WETH, TLIQ, me)?.lenders).toBe(1);
+  });
+});
+
+describe('request terms every intent fill requires', () => {
+  it('requires the full term’s interest and no partial repayment', () => {
+    expect(intentRequestBlock({ fullTerm: true, allowsPartialRepay: false })).toBeNull();
+    expect(intentRequestBlock({ fullTerm: false, allowsPartialRepay: false })).toBe('pro-rata');
+    expect(intentRequestBlock({ fullTerm: true, allowsPartialRepay: true })).toBe('partial-repay');
   });
 });
 

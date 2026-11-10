@@ -118,6 +118,10 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await ways.getByTestId('request-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Your borrow request' })).toBeVisible();
   await expect(page.getByTestId('standing-ready')).toContainText(/ready for this pair/, { timeout: 60_000 });
+  // Terms no standing lender accepts say so instead of a likely fill.
+  await page.getByTestId('request-prorata').check();
+  await expect(page.getByTestId('standing-blocked')).toContainText('so no standing lender can fill it');
+  await expect(page.locator('form')).not.toContainText('a fill is likely');
   await fitsWidth(page);
 });
 
@@ -139,4 +143,21 @@ test('with the standing-intent switch off, the lenders are not offered as a like
   await expect(standing.getByTestId('standing-ready')).toHaveCount(0);
   await expect(ways).not.toContainText('a fill is likely');
   await fitsWidth(page);
+});
+
+test('a borrower’s own standing intent is never counted as a lender ready for them', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  await sc.diamondWrite('borrower', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true]);
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
+  await sc.write('borrower', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('borrower', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+
+  const { page } = await launchWallet('borrower');
+  await openPair(page, tliq);
+  const standing = page.getByRole('region', { name: 'Two ways to borrow' }).getByTestId('standing-lenders');
+  await expect(standing).toContainText('No lender stands ready on this pair now', { timeout: 60_000 });
+  await expect(standing.getByTestId('standing-ready')).toHaveCount(0);
 });

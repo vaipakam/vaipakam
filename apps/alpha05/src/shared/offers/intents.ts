@@ -107,11 +107,17 @@ export interface StandingReady {
 
 const same = (a: Hex, b: Hex) => a.toLowerCase() === b.toLowerCase();
 
-/** Narrows the read to the pair; null when no lender stands ready on it. */
-export function standingReady(intents: readonly IntentSummary[], lending: Hex, collateral: Hex): StandingReady | null {
+/**
+ * Narrows the read to the pair; null when no lender stands ready on it. The
+ * reader's own intents are left out (`exclude`): the protocol refuses a match
+ * whose two sides share a creator, so they can never fill the reader's own
+ * request.
+ */
+export function standingReady(intents: readonly IntentSummary[], lending: Hex, collateral: Hex, exclude?: Hex | null): StandingReady | null {
   let out: StandingReady | null = null;
   for (const i of intents) {
     if (!same(i.lendingAsset, lending) || !same(i.collateralAsset, collateral)) continue;
+    if (exclude && same(i.owner, exclude)) continue;
     const room = i.maxExposure > i.livePrincipal ? i.maxExposure - i.livePrincipal : 0n;
     const ready = room < i.availableCapital ? room : i.availableCapital;
     // Less than the lender's smallest fill cannot be lent at all.
@@ -124,4 +130,23 @@ export function standingReady(intents: readonly IntentSummary[], lending: Hex, c
     if (i.maxInitLtvBps > out.maxLtvBps) out.maxLtvBps = i.maxInitLtvBps;
   }
   return out;
+}
+
+/** The request terms a fill against any standing intent requires. */
+export interface IntentRequestTerms {
+  fullTerm: boolean;
+  allowsPartialRepay: boolean;
+}
+
+/**
+ * Why no standing intent can fill a request with these terms, whatever the
+ * lender's own limits; null when the terms allow it. Mirrors the request-wide
+ * refusals of the protocol's intent fill: it requires the full term's
+ * interest (`LenderIntentFullTermRequired`) and refuses a request that allows
+ * partial repayment (`LenderIntentPartialRepayNotAllowed`).
+ */
+export function intentRequestBlock(t: IntentRequestTerms): 'pro-rata' | 'partial-repay' | null {
+  if (!t.fullTerm) return 'pro-rata';
+  if (t.allowsPartialRepay) return 'partial-repay';
+  return null;
 }

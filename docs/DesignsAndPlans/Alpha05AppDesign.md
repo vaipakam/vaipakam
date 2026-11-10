@@ -681,7 +681,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   guaranteed. That line needs both of the network's switches a fill against
   an intent passes, the matching switch and the standing-intent switch: with
   either off the page says no request is filled against them now, and with
-  either unread it says whether one would be is not known. The list and both
+  either unread it says whether one would be is not known. The reader's own
+  intents are never counted, since the protocol refuses a match with
+  oneself. Beside the way, the page states the terms every intent fill
+  requires (the full term's interest, no partial repayment); in the request
+  form, terms that rule every intent out say so in place of the likely fill.
+  The list and both
   switches are read at one block, so an intent that moves while the pages
   are read is never skipped by a list that looks complete. A list longer
   than the page reads is stated, an unread list is stated as unread, never

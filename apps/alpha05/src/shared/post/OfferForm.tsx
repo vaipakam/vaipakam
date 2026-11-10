@@ -101,8 +101,8 @@ interface OfferFormProps {
   onReview: (draft: PostDraft) => void;
   onCancel: () => void;
   /** What the page states under the form's heading (#3319: the lenders
-   *  standing ready for the pair). */
-  lead?: ReactNode;
+   *  standing ready for the pair), given the terms as typed so far. */
+  lead?: (input: PostInput) => ReactNode;
 }
 
 /**
@@ -643,7 +643,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     >
       <h2 id={lender ? 'lend-offer-form' : 'borrow-request-form'}>{text(k.formTitle)}</h2>
       <WhyLink summaryKey={k.openSummary} detailKey={k.openWhy} />
-      {lead}
+      {lead?.(input)}
       {metaMissing && (
         <Notice tone="warn" tier="A">
           {text('request.metaUnread')}
