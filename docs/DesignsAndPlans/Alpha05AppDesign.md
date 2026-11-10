@@ -2110,6 +2110,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   where browser storage is blocked), and hides nothing on the page under
   it. A page shows the card once its own entry names what it is and its
   guided equivalent.
+- **RB-TERMS-AGE** — An offer or request whose terms were set or
+  changed too recently to be filled (#3443) is refused in its review with
+  the protocol's own figures: how long terms must stand, and how long was
+  left at the block the review read (the offer's terms time, the minimum
+  age and the block's time, read at one block). No step to sign is shown
+  while it stands; the review reads the chain each block, so the refusal
+  lifts by itself. When the figures cannot be read, or nothing was left at
+  that block, the refusal still says it lifts within seconds.
 
 ## 3. Companion specifications
 

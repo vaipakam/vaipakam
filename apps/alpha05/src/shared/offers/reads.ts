@@ -178,6 +178,35 @@ export async function readPreview(client: PublicClient, diamond: Hex, offerId: b
   );
 }
 
+/** #3443 — when an offer's terms become fillable: they must stand the
+ *  protocol's minimum age (`getMinTermsAgeSec`) after `termsSetAt`, and a
+ *  fill is judged against the block's time. All three are read at one block,
+ *  so the wait left is the protocol's own figure at that block. */
+export interface TermsAge {
+  setAt: bigint;
+  minAgeSec: bigint;
+  /** The time of the block these were read at. */
+  chainNow: bigint;
+}
+
+export async function readTermsAge(client: PublicClient, diamond: Hex, offerId: bigint): Promise<TermsAge> {
+  const block = await client.getBlock();
+  const b = { blockNumber: block.number };
+  const [offer, minAgeSec] = await Promise.all([
+    client.readContract({ address: diamond, abi: OFFER_CANCEL, functionName: 'getOffer', args: [offerId], ...b }) as Promise<Raw>,
+    client.readContract({ address: diamond, abi: CONFIG, functionName: 'getMinTermsAgeSec', ...b }) as Promise<bigint>,
+  ]);
+  return { setAt: BigInt((offer.termsSetAt as bigint | undefined) ?? 0n), minAgeSec, chainNow: block.timestamp };
+}
+
+/** Seconds left at the read block before the terms may be filled; 0 when
+ *  they already may (or carry no age). */
+export function termsWaitSec(t: TermsAge): bigint {
+  if (t.setAt === 0n) return 0n;
+  const ready = t.setAt + t.minAgeSec;
+  return ready > t.chainNow ? ready - t.chainNow : 0n;
+}
+
 export async function readLinkedLoanId(client: PublicClient, diamond: Hex, offerId: bigint, b?: AtBlock): Promise<bigint> {
   return (await client.readContract({
     address: diamond,

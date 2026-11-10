@@ -1561,3 +1561,9 @@ Si tu billetera ya aprobó Permit2 para VPFI, un contrato compartido que muchas 
 ### Rate desk: mercados y escaleras de tipos
 
 El Rate desk, en Avanzado del menú, muestra las ofertas abiertas de préstamos de tokens en esta red agrupadas en mercados: un token prestado contra un token como garantía, a un plazo. Cada mercado muestra cuántas ofertas de prestamistas y solicitudes de prestatarios contiene y el mejor tipo de cada lado. Al elegir un mercado ve su escalera de tipos: ofertas de prestamistas desde el tipo más bajo hacia arriba y solicitudes de prestatarios desde el más alto hacia abajo. Cada tipo muestra cuántas ofertas hay en él y sus importes abiertos sumados. Esa suma es profundidad, no un importe que pueda tomar de una vez: cada oferta se sigue aceptando por separado, con su propia garantía y condiciones. El tipo medio queda a mitad entre los dos mejores tipos; lo calcula la app, el protocolo no lo informa. El desk lee el índice del protocolo, que puede ir unos minutos por detrás de la cadena, y la página propia de una oferta la comprueba en la cadena antes de que la acepte. Las órdenes firmadas se cuentan en los mercados, pero aún no se listan en la escalera. En el modo Básico una tarjeta arriba dice qué es la página y enlaza Borrow y Lend, que hacen lo mismo paso a paso.
+
+<a id="offer-terms-wait"></a>
+
+### Cuando una oferta se acaba de publicar o cambiar
+
+Una oferta o solicitud solo se puede tomar cuando sus condiciones llevan unos segundos vigentes desde que se publicó o se cambió por última vez. Si la abre antes, la revisión indica cuánto tiempo deben mantenerse las condiciones y aproximadamente cuánto falta, y no muestra ningún paso para firmar. No tiene que hacer nada: la revisión vuelve a comprobar por sí sola y le deja continuar cuando se cumple el tiempo. No se envía nada mientras espera.
