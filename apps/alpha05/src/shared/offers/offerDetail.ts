@@ -48,18 +48,20 @@ export async function readOfferDetail(client: PublicClient, diamond: Hex, id: bi
 
 /** What the reader may do with an offer from its detail page. Taking it is
  *  offered here for a loan of an ERC-20 against ERC-20 collateral that is a
- *  plain offer or a refinance request (the shared acceptance flow), and for
- *  an owner's NFT listed for rent (the rental flow); every other kind says
- *  where it is taken instead. */
+ *  plain offer or a refinance request (the shared acceptance flow), for an
+ *  owner's NFT listed for rent (the rental flow) and for a renter's request
+ *  (the owner's flow); every other kind says where it is taken instead. */
 export type DetailAction =
   | { kind: 'accept' }
   /** An owner's NFT listed for rent: rented here (NFT-02). */
   | { kind: 'rent' }
+  /** A renter's request to rent an NFT: an owner takes it here. */
+  | { kind: 'take-request' }
   | { kind: 'cancel' }
   | { kind: 'clean-up' }
   | { kind: 'connect' }
-  /** A renter's request, an NFT loan, a loan sale or an offset: not taken in this app yet. */
-  | { kind: 'elsewhere'; why: 'rental' | 'nft' | 'loan-sale' | 'offset' }
+  /** An NFT loan, a loan sale or an offset: not taken in this app yet. */
+  | { kind: 'elsewhere'; why: 'nft' | 'loan-sale' | 'offset' }
   /** Nothing to do: the offer ended. */
   | { kind: 'none' };
 
@@ -71,8 +73,8 @@ export function detailAction(d: Extract<OfferDetail, { kind: 'offer' }>, viewer:
   if (mine) return { kind: 'cancel' };
   if (d.purpose === 'loan-sale' || d.purpose === 'offset') return { kind: 'elsewhere', why: d.purpose };
   if (o.assetType !== ASSET_ERC20) {
-    if (o.offerType !== OFFER_TYPE_LENDER) return { kind: 'elsewhere', why: 'rental' };
-    return viewer === null ? { kind: 'connect' } : { kind: 'rent' };
+    if (viewer === null) return { kind: 'connect' };
+    return o.offerType === OFFER_TYPE_LENDER ? { kind: 'rent' } : { kind: 'take-request' };
   }
   if (o.collateralAssetType !== ASSET_ERC20) return { kind: 'elsewhere', why: 'nft' };
   return viewer === null ? { kind: 'connect' } : { kind: 'accept' };

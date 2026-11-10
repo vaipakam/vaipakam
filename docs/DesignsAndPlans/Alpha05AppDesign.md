@@ -1673,7 +1673,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   states when the browser cannot keep files or refused the worker. Data
   rights count and erase the saved files (RB-DATA-RIGHTS).
 - **RB-RENT** — Rent (NFT-02, NFT-03, NFT-04, NFT-38) uses rental words,
-  never a loan's. The Rent page lists the rentals tab of the offer book
+  never a loan's. Every rental term is stated as days of use: a pause moves
+  only the late-fee and default dates, never the end of the renter's use,
+  and the term says so. The Rent page lists the rentals tab of the offer book
   alone, owners' listings first; an empty book on a test network offers the
   faucet. A rental row and an offer page state "no collateral and no ratio",
   never a zero ratio. An owner's listing is rented from its offer page
@@ -1683,7 +1685,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   The receipt states what the renter gets (the right to use the NFT, which
   stays in the owner's vault), the rent rule, what comes back on a timely
   close, the late fee from the buffer, the grace as today's setting, that a
-  rental never closes by itself, that this app cannot close one yet (the
+  rental closes by itself only once every agreed day has been settled
+  (which anyone may do, and which returns the buffer to the renter as a
+  claim) and otherwise needs the renter's close or a default, that this
+  app cannot close one yet (the
   position page links a rental to its page in the current app), and what a
   default takes. A listing that fixed no buffer says the protocol applies
   today's setting at the start: the app re-reads it just before sending, a
@@ -1732,6 +1737,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   refused. The approval is exactly the rent and buffer, put back if the
   request does not go through; the outcome is measured (the request
   recorded and the rent and buffer in the renter's vault).
+
+- **RB-RENT-TAKE** — An owner takes a renter's request (NFT-01 / NFT-02)
+  from the request's own page, which names it a renter's request and offers
+  "Rent out your NFT", behind the Terms gate. The review states that the NFT
+  moves from the wallet into the owner's own vault and stays there until
+  the rental ends, who the renter is and that the renter becomes its user
+  at once, the term from now, the rent and buffer already in the renter's
+  vault with the buffer share the request fixed, what the owner receives
+  (the rent less the protocol's share, fixed at this start, paid into the
+  owner's vault as each finished day is settled, the rest at close as a
+  claim), the three ways a rental ends (every agreed day settled, the
+  renter's close, a default) and what a default does; a token the wallet
+  does not hold, or too few units, is said before any wallet step. The terms are signed, the approval is the one
+  ERC-721 token (or for an ERC-1155 the operator approval for this rental
+  alone, taken back afterwards whatever happens), and the acceptance is
+  sent only after a dry run with that signature; the outcome is measured
+  (the rental, the NFT in the owner's vault, the renter as its user).
 
 ## 3. Companion specifications
 

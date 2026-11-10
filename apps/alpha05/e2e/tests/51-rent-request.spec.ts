@@ -93,7 +93,7 @@ test('a renter posts a request to rent: a shortfall is stated first, then the re
   const receipt = flow.locator('.receipt');
   await expect(receipt).toContainText('Moved from your wallet into your own vault');
   await expect(receipt).toContainText(`NFT #${tokenId} of vRENT, which does not exist yet`);
-  await expect(receipt).toContainText('5 days from when an owner takes it');
+  await expect(receipt).toContainText('5 days of use once an owner takes it');
   await expect(receipt).toContainText('Pro-rata: you pay for the days you use');
   // The buffer is today's setting; the request keeps the one in force when
   // it lands, and the review states that race.

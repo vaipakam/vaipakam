@@ -91,10 +91,10 @@ test('an owner lists an NFT for rent: a token not held is refused in the review,
   const fmt = (v: bigint) => formatEther(v).replace(/\.0$/, '');
   await expect(receipt).toContainText('Moved from your wallet into your own vault');
   await expect(receipt).toContainText(`NFT #${tokenId} of vRENT`);
-  await expect(receipt).toContainText('5 days from when a renter starts it');
+  await expect(receipt).toContainText('5 days of use once a renter starts it');
   await expect(receipt).toContainText('Pro-rata: the renter pays for the days used');
   await expect(receipt).toContainText(fmt(rent + buffer));
-  await expect(receipt).toContainText('fixed by this listing now');
+  await expect(receipt).toContainText('kept as set when the listing lands');
   await expect(receipt).toContainText('less the protocol’s share');
   await expect(receipt).toContainText('the buffer goes to the protocol');
   await expect(receipt).toContainText('None: a rental has no collateral and no health factor');
