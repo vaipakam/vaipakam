@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -146,7 +147,7 @@ contract AddCollateralFacetTest is Test {
         addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
-        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
+        vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut all facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);

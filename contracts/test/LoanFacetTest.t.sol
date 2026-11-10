@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -174,7 +175,7 @@ contract LoanFacetTest is Test {
         helperTest = new HelperTest();
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
+        vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);

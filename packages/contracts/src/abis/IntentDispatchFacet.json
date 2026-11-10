@@ -1,25 +1,6 @@
 [
   {
     "type": "function",
-    "name": "isOrderValid",
-    "inputs": [
-      {
-        "name": "orderHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isValidSignature",
     "inputs": [
       {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Vm} from "forge-std/Vm.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -530,6 +531,8 @@ contract PriorityRoutingPerkTest is SetupTest {
         vm.startPrank(owner);
         BackstopFacet(address(diamond)).initializeBackstopVaultImplementation();
         address vault = BackstopFacet(address(diamond)).provisionBackstopVault();
+        // #3431 — the vault code fixes the backstop (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         vm.stopPrank();
         assertTrue(vault != address(0), "fixture-live: backstop vault provisioned");
 

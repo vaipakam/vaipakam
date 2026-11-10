@@ -39,9 +39,10 @@ library VaultOutflowTypes {
      *           (`ref`) pays the vault of the STORED lender of the loan it was
      *           matched against (`counterRef`), where that loan's lender claim
      *           finds it; `positionToken` is that loan's lender token.
-     *         - Treasury: the registry's treasury.
-     *         - SwapAdapter: a registry swap adapter (liquidation, default,
-     *           swap-to-repay, treasury conversion).
+     *         - Treasury: the treasury fixed in the vault code (#3431).
+     *         - SwapAdapter: RETIRED by #3431 — the vault refuses it. A swap
+     *           leaves a vault only through its `swapOut`, judged by the
+     *           balances it measures.
      *         - ListingEscrow: an ERC-1155 listing escrow this vault created.
      *         - Incentive: the actor of this action (liquidator bonus, match
      *           fee, keeper reward).
@@ -49,7 +50,7 @@ library VaultOutflowTypes {
      *           this same transaction.
      *         - SellerClaim: a recorded prior seller of this loan.
      *         - Backstop: the backstop's own Vaipakam vault (a genuine vault
-     *           whose owner record is the registry's backstop).
+     *           whose owner record is the backstop fixed in the vault code).
      *         - DiamondTransient: the Diamond itself, within one transaction,
      *           with its onward leg declared in `reason`.
      *         - ClaimCustody: the vault of the loan side's STORED party, where a
@@ -90,9 +91,9 @@ library VaultOutflowTypes {
     }
 
     /// @notice Who a just-in-time allowance may name as spender.
-    /// @dev    APPEND-ONLY. Conduit: a registry marketplace conduit (a
-    ///         listing fill). OrderTaker: a registry order protocol (the
-    ///         swap-to-repay limit-order fill).
+    /// @dev    APPEND-ONLY. Conduit: the listing conduit fixed in the vault
+    ///         code (a listing fill). OrderTaker: the 1inch order protocol
+    ///         fixed in the vault code (the swap-to-repay limit-order fill).
     enum GrantClass {
         Conduit,
         OrderTaker
@@ -151,6 +152,55 @@ library VaultOutflowTypes {
         GrantClass class_;
         uint256 ref;
     }
+    /**
+     * @notice #3431 — the endpoints a vault implementation fixes in its code
+     *         at construction. A zero entry leaves its class closed.
+     * @param treasury      The only treasury-class payee.
+     * @param backstop      The backstop vault contract; a backstop-class payee
+     *                      is the genuine vault whose owner record is it.
+     * @param seaport       The Seaport the vault answers ERC-1271 for.
+     * @param orderProtocol The 1inch order protocol the vault answers ERC-1271
+     *                      for and may approve as order taker.
+     * @param conduit       The one listing conduit the vault or its escrow
+     *                      may approve.
+     * @param conduitKey    The Seaport conduit key a listing must name.
+     * @param priceGuard    The standalone price guard (#3447), read from #3268.
+     */
+    struct VaultEndpoints {
+        address treasury;
+        address backstop;
+        address seaport;
+        address orderProtocol;
+        address conduit;
+        bytes32 conduitKey;
+        address priceGuard;
+    }
+
+    /**
+     * @notice #3431 — one atomic swap out of a vault, judged by its result.
+     * @param assetIn      ERC-20 the vault sells.
+     * @param maxIn        The most of `assetIn` the adapter may take.
+     * @param adapter      A contract on the fixed `ISwapAdapter` interface.
+     * @param assetOut     ERC-20 the recipient must receive.
+     * @param minOut       The least the recipient's `assetOut` balance must rise.
+     * @param to           The recipient: this vault, its owner, or the vault of
+     *                     `positionToken`'s current holder.
+     * @param positionToken The position whose holder's vault `to` may be.
+     * @param ref          The loan (or other record) this swap serves.
+     * @param adapterData  The adapter's routing payload.
+     */
+    struct SwapOut {
+        address assetIn;
+        uint256 maxIn;
+        address adapter;
+        address assetOut;
+        uint256 minOut;
+        address to;
+        uint256 positionToken;
+        uint256 ref;
+        bytes adapterData;
+    }
+
 }
 
 /**
@@ -182,4 +232,5 @@ library OutflowReason {
     uint8 internal constant LISTING_ESCROW = 20; // an ERC-1155 listing's lot into its escrow
     uint8 internal constant SANCTIONED_LOCK = 21; // a sanctioned party's share into its lock
     uint8 internal constant RENTAL = 22; // a rental settlement leg
+
 }

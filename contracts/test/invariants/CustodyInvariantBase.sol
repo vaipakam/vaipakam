@@ -23,7 +23,6 @@ import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
 import {MockLopFill} from "../mocks/MockLopFill.sol";
 import {CustodyHandler, CustodyWiring, CUSTODY_INTENT_CANCEL_GRACE} from "./CustodyHandler.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
-import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 
 /**
  * @title  CustodyInvariantBase
@@ -82,6 +81,8 @@ abstract contract CustodyInvariantBase is SetupTest {
         ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
         _deployCustodyBackstop();
         AdminFacet(address(diamond)).setTreasury(treasuryEOA);
+        // #3431 — the vault code fixes the treasury (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         sanctionsList = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctionsList));
         _onboardCustodyActors();
@@ -161,15 +162,17 @@ abstract contract CustodyInvariantBase is SetupTest {
         ic.setIntentAuctionSecondsBounds(60, 600);
         ic.setIntentCancelGraceSeconds(CUSTODY_INTENT_CANCEL_GRACE);
         ic.setFusionLimitOrderProtocol(address(lopFill));
-        // #3205 part 2 — the vault grants the order protocol only as a member
-        // of the registry's SWAP_ADAPTERS set.
-        LibTestVaultBeacon.registryOf(address(diamond)).setMember(RegistryKeys.SWAP_ADAPTERS, address(lopFill), true);
+        // #3431 — the vault code fixes the 1inch order protocol it signs for
+        // and approves: bring it to the Diamond's (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
     }
 
     function _deployCustodyBackstop() private {
         BackstopFacet b = BackstopFacet(address(diamond));
         b.initializeBackstopVaultImplementation();
         backstopVault = b.provisionBackstopVault();
+        // #3431 — the vault code fixes the backstop (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         b.setBackstopEnabled(true);
         b.setBackstopAbsorbEnabled(true);
         b.setBackstopAbsorbCap(usdc, weth, ABSORB_CAP_PER_PAIR);

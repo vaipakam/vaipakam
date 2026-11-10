@@ -882,28 +882,17 @@ contract CollateralListingExecutor is
         // time; we can't safely forward `Seaport.cancel` for a
         // different hash (would leave the real hash live AND register
         // a phantom cancel). Skip + breadcrumb.
-        bytes32 reconstructed = LibPrepayOrder.buildAndHashOfferMem(
-            ctx,
-            ctx.collateralAsset,
-            LibVaipakam.AssetType(ctx.collateralAssetType),
-            ctx.collateralTokenId,
-            ctx.collateralQuantity,
-            vaipakamDiamond,
-            address(this),
-            seaport,
-            feeLegs
+        // #3431 — the components are rebuilt once and hashed by Seaport
+        // (the builder used at listing time registers on the vault, so it
+        // is not callable here).
+        OrderComponents memory components = _buildOfferOrderComponents(
+            ctx, feeLegs
         );
+        bytes32 reconstructed = ISeaportOrderHash(seaport).getOrderHash(components);
         if (reconstructed != orderHash) {
             emit OfferOrderSeaportCancelSkipped(orderHash, uint256(ctx.offerId));
             return;
         }
-
-        // Rebuild the OrderComponents we just hashed-and-verified —
-        // share the helper that builds them. The helper reads via the
-        // recorded ctx so the rebuild is consistent.
-        OrderComponents memory components = _buildOfferOrderComponents(
-            ctx, feeLegs
-        );
 
         OrderComponents[] memory orders = new OrderComponents[](1);
         orders[0] = components;

@@ -45,26 +45,14 @@ library LibPrepayListingWiring {
     error VaultNotDeployed(address borrower);
 
     /**
-     * @notice Grant Seaport-conduit operator approval on the
-     *         vault for the loan's collateral asset AND pin the
-     *         (orderHash → executor) binding on the vault's
-     *         ERC-1271 mapping. After this call Seaport can pull
-     *         the collateral NFT into a fill (the conduit holds
-     *         the operator approval), and Seaport's sign-time
-     *         signature query against the orderHash resolves to
-     *         the executor's `isOrderValid` check (which returns
-     *         true iff the executor still has `orderContext[orderHash]`
-     *         populated).
-     *
-     * @dev    Asset-type aware: ERC721 uses the per-token
-     *         `setCollateralOperatorApproval`; ERC1155 uses the
-     *         operator-wide `setCollateralOperatorApprovalERC1155`
-     *         (ERC1155 has no per-token approval surface). The
-     *         operator-wide approval's blast radius is bounded by
-     *         the executor's `FULL_RESTRICTED` order type + the
-     *         #306 canonical-order construction (a different-shape
-     *         order would have a different orderHash and the vault's
-     *         ERC-1271 would return INVALID for it).
+     * @notice Arm a collateral listing's route: open the borrower-position
+     *         route for the listing and, for an ERC-1155 lot, open the
+     *         vault's escrow for this listing (the order's offerer and the
+     *         only holder of the conduit approval) and move the lot in.
+     * @dev    #3431 — the order itself was registered on the vault from its
+     *         terms when `LibPrepayOrder` built it, so nothing about the
+     *         order hash is pinned here. An ERC-721 is approved to the
+     *         conduit only inside its fill.
      *
      *         Reverts {VaultNotDeployed} if the borrower has no
      *         deployed vault for the loan's owner.
@@ -72,9 +60,7 @@ library LibPrepayListingWiring {
     function wire(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
-        bytes32 orderHash,
         address conduit,
-        address executor,
         bool holderAuthenticated
     ) internal {
         // #3205 — the ONE place a collateral listing arms its route.
@@ -102,7 +88,6 @@ library LibPrepayListingWiring {
                 loan.id
             );
         }
-        vault.registerListingOrderHash(orderHash, executor);
     }
 
     /**

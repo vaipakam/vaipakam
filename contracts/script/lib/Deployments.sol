@@ -586,6 +586,7 @@ library Deployments {
     function writeVaultBeacon(address a)    internal { _writeAddr(".vaultBeacon",    a); }
     function writePositionNFT(address a)    internal { _writeAddr(".positionNFT",    a); }
     function writeProtocolRegistry(address a) internal { _writeAddr(".protocolRegistry", a); }
+    function writeBackstopVault(address a)   internal { _writeAddr(".backstopVault",   a); }
     /// @notice #3272 — the chain's PriceGuard, the one price source the
     ///         Diamond and the vaults read (through the registry pointer).
     function writePriceGuard(address a) internal { _writeAddr(".priceGuard", a); }

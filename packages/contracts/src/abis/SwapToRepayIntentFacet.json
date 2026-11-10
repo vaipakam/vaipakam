@@ -1866,6 +1866,17 @@
   },
   {
     "type": "error",
+    "name": "IntentOrderProtocolMismatch",
+    "inputs": [
+      {
+        "name": "pinned",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
@@ -2295,17 +2306,6 @@
         "name": "available",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LopDomainUnsupported",
-    "inputs": [
-      {
-        "name": "lop",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

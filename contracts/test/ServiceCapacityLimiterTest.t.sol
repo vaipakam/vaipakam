@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -55,6 +56,8 @@ contract ServiceCapacityLimiterTest is SetupTest {
         vm.startPrank(owner);
         BackstopFacet(address(diamond)).initializeBackstopVaultImplementation();
         backstopVault = BackstopFacet(address(diamond)).provisionBackstopVault();
+        // #3431 — the vault code fixes the backstop (test convenience).
+        LibTestVaultBeacon.sync(address(diamond));
         vm.stopPrank();
         vm.warp(1_000_000);
     }

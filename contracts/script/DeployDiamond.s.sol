@@ -62,6 +62,8 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -157,6 +159,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #3272 — the inputs {setPriceGuardInputs} names.
     address internal _feedRegistryGuardian;
     PriceGuardDeployment.Inputs internal _priceGuardInputs;
+    /// @dev #3431 — the backstop vault provisioned in step 5c-iii, before the
+    ///      vault code (5d) fixes its address.
+    address internal backstopVault;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
     bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
@@ -1106,6 +1111,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         OracleAdminFacet(diamond).initializeProtocolRegistry(protocolRegistry);
         console.log("Protocol registry recorded on the Diamond.");
 
+        // 5c-iv. #3431 — the backstop vault exists BEFORE the vault code,
+        // which fixes its address as the only backstop-class owner. The
+        // deployer holds VAULT_ADMIN here (5a); provisioning does not wait
+        // for the unpause, and an upgrade keeps the proxy's address.
+        BackstopFacet(diamond).initializeBackstopVaultImplementation();
+        backstopVault = BackstopFacet(diamond).provisionBackstopVault();
+        console.log("Backstop vault:", backstopVault);
+
         // 5d. #3204 — the vault code and the VaultBeacon every vault resolves
         // it through. The implementation's initializers must be disabled at
         // construction (#905): checked from its Initializable slot, read-only,
@@ -1114,12 +1127,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // guardian starts as `admin` until the operator sets the Pauser Safe,
         // and version 1 is current from construction.
         //
-        // #3205 part 2 — the vault code reads two contracts as immutables: the
-        // PositionNFT core (5c, a holder payout's payee) and the protocol
-        // registry (5c-ii: the treasury, backstop, swap adapters and conduits
-        // a vault may pay or approve).
+        // #3205 part 2 / #3431 — the vault code fixes, as immutables, the
+        // PositionNFT core (5c, a holder payout's payee) and every endpoint a
+        // vault may pay or approve (5c-iii): it reads no registry.
         address vaultImpl = ArtifactDeploy.deploy(
-            type(VaipakamVaultImplementation).name, abi.encode(positionNFT, protocolRegistry)
+            type(VaipakamVaultImplementation).name, abi.encode(positionNFT, _vaultEndpoints(treasury, backstopVault))
         );
         require(
             uint256(vm.load(vaultImpl, _OZ_INITIALIZABLE_SLOT)) == type(uint64).max,
@@ -1309,6 +1321,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeVaultBeacon(vaultBeacon);
         Deployments.writePositionNFT(positionNFT);
         Deployments.writeProtocolRegistry(protocolRegistry);
+        Deployments.writeBackstopVault(backstopVault);
         Deployments.writePriceGuard(priceGuard);
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
@@ -1526,6 +1539,46 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      Builds the price guard (#3272), then seeds TREASURY and
     ///      PRICE_GUARD, and refuses a registry that does not name both: an
     ///      empty registry would leave every vault refusing every fee.
+    /// @dev #3431 — the endpoints the vault code fixes. Seaport 1.6 and the
+    ///      1inch order protocol (the v6 router, which hosts LOP v4) share one
+    ///      address on every chain they serve, so they are the defaults;
+    ///      `VAULT_SEAPORT` and `VAULT_ORDER_PROTOCOL` override them. The
+    ///      listing conduit has ONE input, its Seaport conduit key
+    ///      (`VAULT_LISTING_CONDUIT_KEY`, OpenSea's by default): the conduit
+    ///      address is resolved from it through that Seaport's conduit
+    ///      controller, so the two can never disagree. Only a local chain
+    ///      whose Seaport has no code (a test or Anvil) keeps the default
+    ///      conduit address unresolved; a production chain never does. The
+    ///      price guard is the #3447 guard this deploy built in 5c-ii.
+    function _vaultEndpoints(address treasury, address backstop)
+        internal
+        view
+        returns (VaultOutflowTypes.VaultEndpoints memory e)
+    {
+        e.treasury = treasury;
+        e.backstop = backstop;
+        e.seaport = vm.envOr("VAULT_SEAPORT", address(0x0000000000000068F116a894984e2DB1123eB395));
+        e.orderProtocol = vm.envOr("VAULT_ORDER_PROTOCOL", address(0x111111125421cA6dc452d289314280a0f8842A65));
+        e.conduitKey = vm.envOr(
+            "VAULT_LISTING_CONDUIT_KEY", bytes32(0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000)
+        );
+        e.priceGuard = priceGuard; // #3447, built in 5c-ii
+        bool production = Deployments.requiresProductionGovernance();
+        if (production) {
+            require(e.seaport.code.length != 0, "DeployDiamond: no code at the vault's Seaport");
+            require(e.orderProtocol.code.length != 0, "DeployDiamond: no code at the vault's order protocol");
+        }
+        if (e.seaport.code.length != 0) {
+            address controller = ISeaportOrderHash(e.seaport).conduitController();
+            (address conduit, bool exists) = IConduitController(controller).getConduit(e.conduitKey);
+            require(exists && conduit != address(0), "DeployDiamond: the vault's conduit key is not deployed on its Seaport");
+            e.conduit = conduit;
+        } else {
+            require(!production, "DeployDiamond: no code at the vault's Seaport");
+            e.conduit = 0x1E0049783F008A0085193E00003D00cd54003c71; // local only: OpenSea's conduit, unresolved
+        }
+    }
+
     function _deployProtocolRegistry(address admin, address treasury) internal {
         _deployPriceGuard(admin);
         bytes32[] memory keys = new bytes32[](2);
@@ -1538,6 +1591,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
             type(ProtocolRegistry).name,
             abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
         );
+        // #3391 — the registry is born with every key this deploy seeds, and
+        // never empty: each seeded pointer reads back as given.
+        require(keys.length != 0, "DeployDiamond: the protocol registry seeds no key");
+        for (uint256 i; i < keys.length; ++i) {
+            require(
+                values[i] != address(0) && IProtocolRegistryReader(protocolRegistry).requirePointer(keys[i]) == values[i],
+                "DeployDiamond: a seeded registry pointer does not read back"
+            );
+        }
         require(
             IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.TREASURY) == treasury,
             "DeployDiamond: the protocol registry does not name the treasury"
@@ -2089,12 +2151,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         `LibSwapToRepayIntentSettlement` (the T-090 v1.1 path)
     ///         or `LibTreasuryBuyback` (the Sub 3 buyback path).
     function _getIntentDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = IntentDispatchFacet.preInteraction.selector;
         s[1] = IntentDispatchFacet.postInteraction.selector;
         s[2] = IntentDispatchFacet.isValidSignature.selector;
-        // #1566 S3e — the borrower vault's ERC-1271 validator for a swap order.
-        s[3] = IntentDispatchFacet.isOrderValid.selector;
+        // #3431 — the vault's ERC-1271 no longer asks the Diamond (the
+        // retired `isOrderValid` validator); it signs for the order it hashed.
     }
 
     /// @notice T-092 Phase 1 (#499) — auto-lifecycle consent surface.

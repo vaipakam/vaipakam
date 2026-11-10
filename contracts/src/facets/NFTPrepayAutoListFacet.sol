@@ -309,7 +309,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
         bytes32 orderHash = LibPrepayOrder.buildAndHashMem(
             pctx,
-            pctx.borrowerVault, // the offerer (#3205 part 2)
+            LibPrepayOrder.loanLister(loanId), // the vault registers it (#3431)
             address(executor),
             executor.seaport(),
             askPrice,
@@ -337,7 +337,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             PREPAY_MODE_FIXED_PRICE,
             emptyFeeLegs
         );
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor), /* holderAuthenticated */ false);
+        LibPrepayListingWiring.wire(s, loan, conduit, /* holderAuthenticated */ false);
 
         emit PrepayListingPosted(
             loanId,
@@ -586,7 +586,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
         bytes32 newOrderHash = LibPrepayOrder.buildAndHashMem(
             pctx,
-            pctx.borrowerVault, // the offerer (#3205 part 2)
+            LibPrepayOrder.loanLister(loanId), // the vault registers it (#3431)
             address(executor),
             executor.seaport(),
             rotatedAsk,
@@ -616,7 +616,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         );
 
         // Step 9 — wire the new orderHash to the vault.
-        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor), /* holderAuthenticated */ false);
+        LibPrepayListingWiring.wire(s, loan, conduit, /* holderAuthenticated */ false);
 
         // T-086 Round-7 follow-up (Codex round-12 P2 #2) — emit the
         // EXISTING `PrepayListingUpdated` event byte-for-byte. Indexers
