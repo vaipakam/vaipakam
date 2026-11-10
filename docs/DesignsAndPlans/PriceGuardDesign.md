@@ -15,9 +15,12 @@ vaults read.
   #3431: "check outcomes, not identities"). So a vault holds the guard's
   address as a constant in its own code, and a new guard reaches vaults as a
   new vault version under the code delay, which an owner can pin against.
-  #3268 builds that read. Its open question: the guard's own config still
-  changes under the guard's delay (default 3 days), which a pinned vault does
-  not hold back.
+  #3268 builds that read. A pinned vault does not hold back the guard's own
+  config, so that config waits at least as long as a vault code change: the
+  owner decided on 2026-11-10 that the guard's delay, and the delay of the feed
+  registry it reads, are at least 7 days on a production chain, matching the
+  vault code delay (#3421). A vault owner therefore sees every price-setting
+  change for at least as long as they would see a vault code change.
 
 ## What moves, what stays
 
@@ -62,8 +65,9 @@ and EIP-170 room comes back to `OracleFacet`.
   owner or the guardian (the Pauser Safe) may cancel a pending change. One
   change is pending per entry, and each waits the delay that was set when it
   was proposed.
-- **Delay.** On a production chain the delay is 1 to 14 days, 3 by default. A
-  testnet may set 0, as the feed registry allows.
+- **Delay.** On a production chain the delay is 7 to 14 days, 7 by default,
+  matching the vault code delay (owner decision 2026-11-10). A testnet may set
+  0, as the feed registry allows.
 - **One fast lever.** The guardian may disable a secondary source (Tellor,
   API3 or DIA) at once. This is stop-only: the quorum runs on fewer sources,
   and no price can be introduced. Re-enabling a source waits the delay, and a

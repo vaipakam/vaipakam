@@ -64,6 +64,8 @@ export const ACCEPT_ERROR_NAMES = [
   'SelfTrade',
   'RefinanceRequestUntakeable',
   'CadenceNotAdmitted',
+  // #3443 — transient: clears once the terms have stood the minimum age.
+  'TermsTooFresh',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -114,6 +116,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   SelfTrade: 'selfTrade',
   RefinanceRequestUntakeable: 'refinanceUntakeable',
   CadenceNotAdmitted: 'cadenceNotAdmitted',
+  TermsTooFresh: 'termsTooFresh',
 };
 
 /**

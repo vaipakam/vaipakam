@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -59,8 +60,6 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     error SignedOfferNonceInvalidated(uint256 nonce);
     /// @notice The signature did not recover to / 1271-validate against `o.signer`.
     error SignedOfferBadSignature();
-    /// @notice The signed offer's signature deadline has passed.
-    error SignedOfferSigExpired(uint256 deadline);
     /// @notice The signed offer's GTT window has passed.
     error SignedOfferExpired(uint64 expiresAt);
     /// @notice Wallet-backed (Permit2-witness) signed offers are AON-only — a
@@ -215,9 +214,9 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         returns (bytes32 orderHash)
     {
         LibSignedOffer.requireFullWellFormed(o); // #1949 — a Full opt-in needs a ceiling
-        if (o.deadline != 0 && block.timestamp > o.deadline) {
-            revert SignedOfferSigExpired(o.deadline);
-        }
+        // #3412 — the signature's own deadline, through the one timing rule
+        // (optional: 0 = the signer set none).
+        LibTiming.checkDeadline(o.deadline);
         if (o.expiresAt != 0 && block.timestamp > o.expiresAt) {
             revert SignedOfferExpired(o.expiresAt);
         }

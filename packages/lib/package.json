@@ -26,6 +26,10 @@
       "types": "./src/deployStamp.d.mts",
       "default": "./src/deployStamp.mjs"
     },
+    "./secretsStore": {
+      "types": "./src/secretsStore.ts",
+      "default": "./src/secretsStore.ts"
+    },
     "./gasLimit": {
       "types": "./src/gasLimit.ts",
       "default": "./src/gasLimit.ts"

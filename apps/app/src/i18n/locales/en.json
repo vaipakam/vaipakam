@@ -2988,6 +2988,7 @@
         "selfTrade": "This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.",
         "refinanceUntakeable": "This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.",
         "cadenceNotAdmitted": "This offer’s interest-payment schedule isn’t allowed on these terms any more: the periodic-interest settings, the size threshold or an asset’s market status changed after it was posted. Its creator needs to cancel it and post it again. Nothing was sent.",
+        "termsTooFresh": "This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.",
         "unknown": "The protocol won’t accept this offer right now. Nothing was sent — refresh and try again, or check back shortly."
       },
       "walletConnectFirst": "Connect a wallet on a supported network first.",
@@ -3434,6 +3435,9 @@
       "waiting": "Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.",
       "claim": "Claim rewards",
       "readyToClaim": "{{amount}} VPFI ready to claim.",
+      "windowPart": "This claim reads reward entries {{from}} to {{to}} of {{total}}; later claims can pay more.",
+      "windowMoveOn": "A claim made now pays nothing. Your reward entries are read {{size}} at a time, and the part it would read (entries {{from}} to {{to}} of {{total}}) has nothing to pay yet. Claiming only moves on to the next part, so a later claim can reach the rest, and it still costs a network fee.",
+      "claimMoveOn": "Move on to the next part",
       "heldReady": "{{amount}} VPFI of your rewards was set aside for you and is ready to claim.",
       "heldNote": "You can claim it on its own, even when your other rewards can’t be claimed right now.",
       "claimHeld": "Claim set-aside rewards",

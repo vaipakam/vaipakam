@@ -1541,6 +1541,10 @@ library LibVaipakam {
         uint32 maxDurationDays; // longest loan term the lender will accept
         uint256 minFillAmount; // smallest slice a solver may fill (dust floor; > 0)
         bool requiresKeeperAuth; // true ⇒ only an opted-in solver may fill (v1-c gate)
+        // #3443 — when the intent's terms were last set (unix seconds), by
+        // `setLenderIntent`. A fill is refused until
+        // `LibTiming.minTermsAgeSec()` has passed since. Appended.
+        uint64 termsSetAt;
     }
 
     /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset) triple that keys a
@@ -2043,6 +2047,15 @@ library LibVaipakam {
         // (rev-15 §3): a quoted `C* > creatorMaxCStar` reverts unless
         // `creatorAllowFullDowngrade`. Only read when `creatorFull`.
         uint256 creatorMaxCStar;
+        // Slot 26 — #3443: when the offer's terms were last set (unix
+        // seconds): at creation and at every edit of its amount, rate or
+        // collateral. A fill is refused until `LibTiming.minTermsAgeSec()`
+        // has passed since (`LibTiming.requireOfferAged`), so an offer cannot
+        // be created or re-priced and filled in the same block. 0 = no age: a
+        // signed offer turned into an on-chain offer at the moment it is
+        // filled. Written only through `LibTiming.stampOfferTerms`.
+        // Appended — append-only.
+        uint64 termsSetAt;
     }
 
     /**
@@ -8226,6 +8239,30 @@ library LibVaipakam {
         ///      `numeraireSymbol` from the guard. No price setting lives in
         ///      this storage. Appended — append-only.
         address protocolRegistry;
+        /// @dev #1787 — per wallet, the first position of the CLAIM WINDOW in
+        ///      `userRewardEntryIds[user]`: the at most
+        ///      `LibInteractionRewards.CLAIM_WINDOW_ENTRIES` entries the next
+        ///      claim reads. A wallet with no more entries than that reads them
+        ///      all and keeps 0 here. Written only by
+        ///      `LibInteractionRewards.retireAndAdvanceClaimWindow`, at the end of each
+        ///      claim; a value at or past the list's length reads as 0.
+        ///      Appended — append-only.
+        mapping(address => uint256) rewardClaimWindowStart;
+        /// @dev #1787 — per wallet, the last time the set of entries its claim
+        ///      window holds may have changed: the window moved, or an entry
+        ///      left or joined an index longer than one window. The horizon
+        ///      sweep never credits an executable interval that spans it,
+        ///      because an entry outside the window is not claimable and its
+        ///      expiry clock must not run. Written only by
+        ///      `LibInteractionRewards`. Appended — append-only.
+        mapping(address => uint64) rewardClaimWindowChangedAt;
+        /// @dev #3443 — the minimum age, in seconds, of an offer's or lender
+        ///      intent's terms at fill. 0 = the default
+        ///      (`LibTiming.DEFAULT_MIN_TERMS_AGE_SEC`); read only through
+        ///      `LibTiming.minTermsAgeSec`. Written only by
+        ///      `ConfigFacet.setMinTermsAgeSec`, bounded
+        ///      `LibTiming.MIN_TERMS_AGE_SEC_MIN..MAX`. Appended — append-only.
+        uint32 cfgMinTermsAgeSec;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

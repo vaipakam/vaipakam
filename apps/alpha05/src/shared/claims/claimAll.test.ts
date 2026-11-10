@@ -123,6 +123,16 @@ describe('the Claim everything list', () => {
     expect(payoutLabel(rewards, rewards.payouts[0]!, copy)).toBe('rewards.pendingZero{"from":"3","to":"9"}');
   });
 
+  it('leaves out, and says so, a rewards claim that pays nothing and only moves on to the next part of the entries (#1787)', () => {
+    const list = claimAllList(
+      inputs({ rewards: { kind: 'exact', amount: 0n, fromDay: 0n, toDay: 0n, atBlock: 10n, window: { from: 0n, to: 128n, total: 200n } } }),
+      copy,
+      1,
+    );
+    expect(list.legs.find((l) => l.key === 'rewards')).toBeUndefined();
+    expect(list.gaps).toContainEqual({ kind: 'rewards', why: 'partial' });
+  });
+
   it('keeps a standing offer’s capital off, and says why, when the VPFI token could not be read', () => {
     const list = claimAllList(
       inputs({ vpfiToken: null, intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 9n, active: false }], complete: true } }),

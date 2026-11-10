@@ -986,6 +986,7 @@ contract DefaultedFacetTest is Test {
     function test_1955_timeDefault_lenderFull_shiftsInterestFeeToLender() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Default");
         AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+        LibTestVaultBeacon.sync(address(diamond));
 
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,

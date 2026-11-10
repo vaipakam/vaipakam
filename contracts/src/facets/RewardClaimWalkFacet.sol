@@ -42,7 +42,8 @@ contract RewardClaimWalkFacet is IVaipakamErrors {
     ///         ({LibInteractionRewards.settleLegacySlices}); this walks the armed
     ///         days alone, against `legacyFresh` (the slices' net legacy fresh)
     ///         and `backingRoom` (the live room read before the slices moved
-    ///         anything, Codex #2276).
+    ///         anything, Codex #2276). #1787 — it then closes the claim
+    ///         window ({LibInteractionRewards.retireAndAdvanceClaimWindow}).
     function epochClaimEntriesWalk(
         address user,
         uint256 freshBudget,
@@ -50,11 +51,16 @@ contract RewardClaimWalkFacet is IVaipakamErrors {
         uint256 windowFreshReserved,
         uint256 backingRoom,
         LibVaipakam.RewardDelivery deliverTo
-    ) external returns (LibInteractionRewards.ClaimEntriesResult memory) {
+    ) external returns (LibInteractionRewards.ClaimEntriesResult memory res) {
         _requireDiamondInternal();
-        return LibInteractionRewards.claimForUserEntries(
+        res = LibInteractionRewards.claimForUserEntries(
             user, freshBudget, legacyFresh, windowFreshReserved, backingRoom, deliverTo
         );
+        // #1787 — the walk is the claim's last entry leg, so the claim window
+        // closes here: its settled entries retire and the window moves on (a
+        // move is the claim's progress). Run in this frame because the
+        // claim's own is at the viaIR stack budget.
+        LibInteractionRewards.retireAndAdvanceClaimWindow(user, res);
     }
 
     function _requireDiamondInternal() private view {

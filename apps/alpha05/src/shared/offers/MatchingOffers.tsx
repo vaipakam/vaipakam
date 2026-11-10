@@ -1,4 +1,6 @@
+import { useId, useState } from 'react';
 import { useCopy, type CopyKey } from '../copy/useCopy';
+import { useMode } from '../../app/ModeContext';
 import { WhyLink } from '../help/WhyLink';
 import { roleTerms } from './acceptTerms';
 import { acceptFigures, lenderFigures, refinancePayoff, type AcceptRole } from './model';
@@ -8,6 +10,7 @@ import { formatBps, formatUtc } from '../ui/format';
 import { needFromAcceptCode } from '../risk/riskAccess';
 import { acceptErrorText, cadenceText, gateBlockText, stateText } from '../accept/acceptReview';
 import { MATCH_PAGE, type Matches, type MatchRow } from './matches';
+import { applyLimits, parseLimit, rateLadder } from './ladder';
 
 type Hex = `0x${string}`;
 
@@ -182,6 +185,62 @@ function OfferRow({
   );
 }
 
+/**
+ * #3319 — the borrower's limits on the list: the highest rate they will
+ * accept, and in Advanced the highest loan-to-value. A filter only: an offer
+ * is still taken at its own terms, and the page states how many it hid.
+ */
+function BorrowLimitsForm({
+  rateText,
+  ltvText,
+  onRate,
+  onLtv,
+}: {
+  rateText: string;
+  ltvText: string;
+  onRate: (t: string) => void;
+  onLtv: (t: string) => void;
+}) {
+  const { text } = useCopy();
+  const { isAdvanced } = useMode();
+  const rateId = useId();
+  const ltvId = useId();
+  const rateBad = !parseLimit(rateText).ok;
+  const ltvBad = !parseLimit(ltvText).ok;
+  return (
+    <div className="borrow-limits" data-testid="borrow-limits">
+      <div className="field">
+        <label htmlFor={rateId}>{text('borrow.limitRate')}</label>
+        <input
+          id={rateId}
+          inputMode="decimal"
+          autoComplete="off"
+          value={rateText}
+          onChange={(e) => onRate(e.target.value)}
+          aria-invalid={rateBad || undefined}
+          data-testid="limit-rate"
+        />
+        {rateBad && <p className="tier-b field-error">{text('borrow.limitInvalid')}</p>}
+      </div>
+      {(isAdvanced || ltvText !== '') && (
+        <div className="field">
+          <label htmlFor={ltvId}>{text('borrow.limitLtv')}</label>
+          <input
+            id={ltvId}
+            inputMode="decimal"
+            autoComplete="off"
+            value={ltvText}
+            onChange={(e) => onLtv(e.target.value)}
+            aria-invalid={ltvBad || undefined}
+            data-testid="limit-ltv"
+          />
+          {ltvBad && <p className="tier-b field-error">{text('borrow.limitInvalid')}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** OFF-44 — the offers open for the pair from the other side, taken whole. */
 export function MatchingOffers({
   role,
@@ -198,10 +257,26 @@ export function MatchingOffers({
 }) {
   const { text, format } = useCopy();
   const m = view.data;
-  const live = m?.rows.filter((r) => r.state === 'open') ?? [];
-  const ended = (m?.rows.length ?? 0) - live.length;
+  const open = m?.rows.filter((r) => r.state === 'open') ?? [];
+  const ended = (m?.rows.length ?? 0) - open.length;
   const k = KEYS[role];
   const otherSkipped = m ? m.skipped['other-side'] + m.skipped['not-erc20'] : 0;
+  // #3319: a borrower's limits narrow the list; an unreadable limit applies
+  // none, and says so beside its field.
+  const borrower = role === 'borrower';
+  const [rateText, setRateText] = useState('');
+  const [ltvText, setLtvText] = useState('');
+  const rate = parseLimit(rateText);
+  const ltv = parseLimit(ltvText);
+  const limited = borrower
+    ? applyLimits(open, { maxRateBps: rate.ok ? rate.value : null, maxLtvBps: ltv.ok ? ltv.value : null })
+    : { shown: open, aboveRate: 0, aboveLtv: 0, ltvUnchecked: 0 };
+  const live = limited.shown;
+  const hidden = limited.aboveRate + limited.aboveLtv;
+  const ladder = borrower ? rateLadder(live) : null;
+  const row = (r: MatchRow) => (
+    <OfferRow key={r.offer.id.toString()} role={role} row={r} matcherBps={m!.matcherBps} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
+  );
 
   return (
     <section className="borrow-section matches" aria-labelledby="borrow-matches">
@@ -218,7 +293,21 @@ export function MatchingOffers({
       {m && (
         <>
           {view.error !== null && <p className="tier-b">{text(k.matchesStale)}</p>}
-          {live.length === 0 &&
+          {borrower && open.length > 0 && <BorrowLimitsForm rateText={rateText} ltvText={ltvText} onRate={setRateText} onLtv={setLtvText} />}
+          {limited.aboveRate > 0 && (
+            <p className="tier-b" data-testid="hidden-rate">
+              {format('borrow.hiddenRate', { count: String(limited.aboveRate) })}
+            </p>
+          )}
+          {limited.aboveLtv > 0 && (
+            <p className="tier-b" data-testid="hidden-ltv">
+              {format('borrow.hiddenLtv', { count: String(limited.aboveLtv) })}
+            </p>
+          )}
+          {limited.ltvUnchecked > 0 && <p className="tier-b">{format('borrow.ltvUnchecked', { count: String(limited.ltvUnchecked) })}</p>}
+          {hidden > 0 && live.length === 0 && <p className="tier-b">{format('borrow.limitsHideAll', { count: String(open.length) })}</p>}
+          {hidden === 0 &&
+            live.length === 0 &&
             m.unread.length === 0 &&
             (BigInt(m.scanned) < m.total ? (
               // Only part of the pair was read: say what was read, never that no offer exists.
@@ -227,13 +316,32 @@ export function MatchingOffers({
               <p className="tier-b">{text(k.matchesEmpty)}</p>
             ))}
           {live.length > 1 && <p className="tier-b">{text(k.matchesOrder)}</p>}
-          {live.length > 0 && (
-            <ul className="rows offer-rows">
-              {live.map((r) => (
-                <OfferRow key={r.offer.id.toString()} role={role} row={r} matcherBps={m.matcherBps} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
-              ))}
-            </ul>
+          {ladder !== null && ladder.length > 0 && (
+            <ol className="ladder" aria-label={text('borrow.ladderLabel')}>
+              {ladder.map((step) => {
+                const asset = step.rows[0]!.offer.lendingAsset;
+                const amount = (v: bigint) => tokenAmount(v, asset, meta, format);
+                return (
+                  <li key={step.rateBps.toString()} className="ladder-step" data-rate-bps={step.rateBps.toString()}>
+                    <p className="ladder-head">
+                      {step.rows.length === 1
+                        ? format('borrow.ladderOne', { rate: formatBps(step.rateBps), amount: amount(step.maxAmount) })
+                        : step.minAmount === step.maxAmount
+                          ? format('borrow.ladderSame', { rate: formatBps(step.rateBps), count: String(step.rows.length), amount: amount(step.maxAmount) })
+                          : format('borrow.ladderRange', {
+                              rate: formatBps(step.rateBps),
+                              count: String(step.rows.length),
+                              min: amount(step.minAmount),
+                              max: amount(step.maxAmount),
+                            })}
+                    </p>
+                    <ul className="rows offer-rows">{step.rows.map(row)}</ul>
+                  </li>
+                );
+              })}
+            </ol>
           )}
+          {ladder === null && live.length > 0 && <ul className="rows offer-rows">{live.map(row)}</ul>}
           {m.unread.map((u) => (
             <Notice key={u.id.toString()} tone="warn" tier="A">
               {format(k.unreadRow, {
@@ -242,7 +350,7 @@ export function MatchingOffers({
               })}
             </Notice>
           ))}
-          {BigInt(m.scanned) < m.total && live.length > 0 && (
+          {BigInt(m.scanned) < m.total && open.length > 0 && (
             <p className="tier-b">
               {format(k.matchesMore, {
                 shown: String(Math.min(m.scanned, MATCH_PAGE)),

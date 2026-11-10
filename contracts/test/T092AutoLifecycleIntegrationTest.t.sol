@@ -36,6 +36,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 import {LibTestPayout} from "./helpers/LibTestPayout.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  T092AutoLifecycleIntegrationTest
@@ -1172,6 +1173,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         // Kill-switch OFF ⇒ the matched-refinance completion path is gated.
         _admin().setAutoRefinanceEnabled(false);
+        LibTestTiming.waitOutTermsAge(address(diamond), 999); // #3443
+        LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
 
         vm.expectRevert(
             LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector
@@ -1243,6 +1246,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_595_matchedCarryOver_admitsRetagsAndRepaysOld() public {
         (uint256 oldLoanId, uint256 taggedOfferId) = _carryOverMatchFixture();
         uint256 lenderOfferId = _refiLenderOfferId(400, LOAN_COLLATERAL);
+        LibTestTiming.waitOutTermsAge(address(diamond), lenderOfferId); // #3443
+        LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
 
         // §3.1-3.3 — previewMatch admits with the forced/pinned values.
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
@@ -1281,6 +1286,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             uint8(LibOfferMatch.MatchError.RefinanceCarryOverCollateralShortfall),
             "shortfall surfaced in preview"
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), lenderOfferId); // #3443
+        LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
         vm.expectRevert();
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
     }
@@ -1329,6 +1336,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             uint8(LibOfferMatch.MatchError.RefinanceTagged),
             "gated kill-switch -> not admissible"
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), lenderOfferId); // #3443
+        LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
         vm.expectRevert(
             LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector
         );
@@ -1378,6 +1387,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);

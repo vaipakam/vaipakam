@@ -45,6 +45,9 @@ export interface RepayReview {
   /** Effective end of the grace period (the loan clock); null when unread
    *  or when the loan is in fallback (a repayment then cures it). */
   graceEnd: bigint | null;
+  /** The effective due date (the loan clock); null when unread or in
+   *  fallback. Grace runs from here to `graceEnd`. */
+  maturity: bigint | null;
   borrowerLock: number | null;
   /** The refinance request recorded for this loan: its offer id (0n when
    *  none was ever recorded) and whether it still stands by the protocol's
@@ -154,6 +157,7 @@ export async function readRepayReview(
     lenderHolder: facts.lenderHolder,
     borrowerHolder: facts.borrowerHolder,
     graceEnd: facts.graceEnd,
+    maturity: facts.maturity,
     borrowerLock: facts.borrowerLock,
     refinance: facts.refinance,
     payoff,
@@ -200,6 +204,7 @@ export function changedBetween(a: RepayReview, b: RepayReview, copy: Pick<CopyAc
     a.borrowerHolder !== b.borrowerHolder ||
     a.borrowerLock !== b.borrowerLock ||
     a.graceEnd !== b.graceEnd ||
+    a.maturity !== b.maturity ||
     a.refinance?.offerId !== b.refinance?.offerId ||
     a.refinance?.live !== b.refinance?.live
   )

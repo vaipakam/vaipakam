@@ -22,6 +22,30 @@ export interface RewardsSnapshot {
   pending: bigint;
   /** True when a reward day is still finalizing for this user. */
   waiting: boolean;
+  /** #1787 — the part of the wallet's reward entries a claim made now reads,
+   *  when it is only part of them; absent when the claim reads every entry
+   *  (or the Diamond predates the claim window). */
+  window?: ClaimWindow;
+  /** #1787 — a claim made now runs, pays nothing and reads only part of the
+   *  entries: its one effect is to move the claim on to the next part, which
+   *  is the only action that lets a later claim reach the rest. */
+  movesOnOnly: boolean;
+}
+
+/** #1787 — the reward entries a claim made now reads: positions
+ *  `from` (inclusive) to `to` (exclusive) of the wallet's `total`. */
+export interface ClaimWindow {
+  from: bigint;
+  to: bigint;
+  total: bigint;
+}
+
+/** The outcome of running the claim for the wallet: what it would pay, and
+ *  whether it would run at all (`runs` is false where the claim's revert
+ *  means nothing is owed). */
+export interface ClaimOutcome {
+  paid: bigint;
+  runs: boolean;
 }
 
 /**
@@ -63,6 +87,17 @@ export async function previewClaimByExecution(
   diamond: Address,
   user: Address,
 ): Promise<bigint> {
+  return (await previewClaimOutcome(client, diamond, user)).paid;
+}
+
+/** {@link previewClaimByExecution}, keeping whether the claim would RUN: a
+ *  claim that pays nothing can still run, when it moves the claim window on
+ *  (#1787), and that is a different answer from "nothing is owed". */
+export async function previewClaimOutcome(
+  client: Pick<PublicClient, 'simulateContract'>,
+  diamond: Address,
+  user: Address,
+): Promise<ClaimOutcome> {
   try {
     await client.simulateContract({
       address: diamond,
@@ -79,16 +114,16 @@ export async function previewClaimByExecution(
     if (revert instanceof ContractFunctionRevertedError) {
       if (revert.data?.errorName === 'InteractionRewardsSimulation') {
         const [paid] = (revert.data.args ?? [0n]) as readonly [bigint, bigint, bigint];
-        return paid;
+        return { paid, runs: true };
       }
       const name = revert.data?.errorName ?? 'unknown';
-      if (NOTHING_OWED_REVERTS.has(name)) return 0n;
+      if (NOTHING_OWED_REVERTS.has(name)) return { paid: 0n, runs: false };
       throw new ClaimPreviewUnavailable(name);
     }
     const zero =
       err instanceof BaseError &&
       err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null;
-    if (zero) return 0n;
+    if (zero) return { paid: 0n, runs: false };
     throw err;
   }
   // The entry cannot return: it reverts by construction. A return means the
@@ -142,6 +177,51 @@ export async function readHeldReward(
   }
 }
 
+/**
+ * #1787 — the claim window (`getRewardClaimWindow`): the part of the wallet's
+ * reward entries a claim made now reads. Null where the Diamond answers with
+ * a revert or no data (it predates the window, and its claim reads every
+ * entry); a transport failure throws, so the card never reports a window it
+ * did not read.
+ */
+export async function readClaimWindow(
+  client: Pick<PublicClient, 'readContract'>,
+  diamond: Address,
+  user: Address,
+): Promise<ClaimWindow | null> {
+  try {
+    const [from, to, total] = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRewardClaimWindow',
+      args: [user],
+    })) as readonly [bigint, bigint, bigint, bigint];
+    return { from, to, total };
+  } catch (err) {
+    const isRevert =
+      err instanceof BaseError &&
+      (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+        err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+    if (isRevert) return null;
+    throw err;
+  }
+}
+
+/** #1787 — the snapshot's window fields from the claim's outcome and the
+ *  window. Pure, so the rule is tested once: a window is kept only when it
+ *  covers part of the entries, and a claim that runs paying nothing over
+ *  such a window only moves on. */
+export function windowFields(
+  outcome: ClaimOutcome,
+  window: ClaimWindow | null,
+): Pick<RewardsSnapshot, 'window' | 'movesOnOnly'> {
+  const partial = window !== null && window.to - window.from < window.total;
+  return {
+    ...(partial ? { window } : {}),
+    movesOnOnly: partial && outcome.runs && outcome.paid === 0n,
+  };
+}
+
 export function useInteractionRewards() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -153,18 +233,20 @@ export function useInteractionRewards() {
     refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<RewardsSnapshot> => {
       try {
-        const [pending, claimability] = await Promise.all([
-          previewClaimByExecution(publicClient!, readChain.diamondAddress, address!),
+        const [outcome, claimability, window] = await Promise.all([
+          previewClaimOutcome(publicClient!, readChain.diamondAddress, address!),
           publicClient!.readContract({
             address: readChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getInteractionClaimability',
             args: [address!],
           }) as Promise<readonly [bigint, bigint, bigint, boolean, bigint]>,
+          readClaimWindow(publicClient!, readChain.diamondAddress, address!),
         ]);
         return {
-          pending,
+          pending: outcome.paid,
           waiting: (claimability[4] ?? 0n) > 0n,
+          ...windowFields(outcome, window),
         };
       } catch (err) {
         // Only a REVERT/zero-data means "rewards facet absent on this
@@ -175,7 +257,7 @@ export function useInteractionRewards() {
           err instanceof BaseError &&
           (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
             err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (isRevert) return { pending: 0n, waiting: false };
+        if (isRevert) return { pending: 0n, waiting: false, movesOnOnly: false };
         throw err;
       }
     },

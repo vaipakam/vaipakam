@@ -149,7 +149,7 @@ describe('wireFromCreatePayload', () => {
 
 describe('collapseForSignedPost (#1145 round-2)', () => {
   /** The matcher's constant-ratio gate, verbatim from
-   *  `OfferMatchFacet._vetSignedOfferForMatch`:
+   *  `SignedOfferMatchFacet._vetSignedOfferForMatch`:
    *  `collateralAmount * ceiling == effCollMax * amount` — every signed
    *  post the ticket publishes must satisfy it or no keeper slice can
    *  ever materialize. */

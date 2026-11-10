@@ -62,6 +62,12 @@ const API_INDEX = {
     },
     {
       method: 'GET',
+      path: '/assets/rankings',
+      description:
+        "Public market-cap rankings of tokens on one chain (?chainId= is REQUIRED and is the token's own chain, e.g. 1 or 8453 — not a Vaipakam deployment). `assets` lists each ranked token address once, with each source's `rank`, `name` and `symbol` kept apart under `ranks` (sources `cg` and `cp`; lists can disagree). `sources` states per source when the stored list was fetched (`listFetchedAt`, unix seconds, null if none) and the last run (`lastRun`: `fetchedAt`, `ok`, `rowCount`, `detail`), so a failed refresh is visible beside the older list it left in place. Ranks only, no trust verdict. Refreshed daily; cached one hour; a 503 means the rankings cannot be read.",
+    },
+    {
+      method: 'GET',
       path: '/health/ingest',
       description:
         "Whether scheduled ingest is advancing: per chain, the last block the indexer reached (`lastBlock`), when (`scannedAt`, unix seconds) and `ageSeconds` (negative if the cursor's time is ahead of the indexer's clock — its freshness is then unknown), plus the deployment the chain's rows were indexed from (`deployment`: the Diamond, its `deployBlock`, `adoptedAt`, `resetPending` while a Diamond-change reset is claimed but not landed, and `adoptedBlind` when a first pass recorded the Diamond with nothing reset) — null before the indexer has recorded one. A chain is listed from its cursor OR its deployment record: right after a Diamond-change reset it may have a deployment and no cursor yet, and is then stated with `lastBlock`, `scannedAt` and `ageSeconds` null rather than omitted. Plus the schema gate's state for this build (`current`, `pending` naming the unapplied migrations, or `unknown`), and `configured.chains`: the chains this deployment is configured to scan (a deployment and an RPC binding present; secret values are not resolved by this route, so a configured chain whose secret fails stays listed). Facts only — what counts as stale is the caller's to judge. Never cached; a 503 means the state could not be read.",

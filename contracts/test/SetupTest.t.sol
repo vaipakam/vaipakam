@@ -82,6 +82,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -422,6 +423,7 @@ contract SetupTest is Test {
     NotificationFeeFacet notificationFeeFacet;
     ForcedSaleFacet forcedSaleFacet;
     ForcedSalePreviewFacet forcedSalePreviewFacet;
+    SignedOfferMatchFacet signedOfferMatchFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -597,6 +599,7 @@ contract SetupTest is Test {
         notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
         forcedSalePreviewFacet = ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
+        signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -634,7 +637,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](114);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](115);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1118,6 +1121,12 @@ contract SetupTest is Test {
             facetAddress: address(forcedSalePreviewFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getForcedSalePreviewFacetSelectors()
+        });
+        // #3443 — the signed-offer keeper-matcher, split off OfferMatchFacet.
+        cuts[114] = IDiamondCut.FacetCut({
+            facetAddress: address(signedOfferMatchFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSignedOfferMatchFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

@@ -17,12 +17,13 @@ import { StepNav } from '../../shared/ui/StepNav';
 import { AcceptOffer, ACCEPT_KEY } from '../../shared/accept/AcceptOffer';
 import { MatchingOffers, type MatchesView } from '../../shared/offers/MatchingOffers';
 import { PairPicker } from '../../shared/offers/PairPicker';
+import { StandingLenders } from '../../shared/offers/StandingLenders';
 import { readMatches } from '../../shared/offers/matches';
 import { ArmTariff, TARIFF_CONTEXT_KEY, type ArmContext } from '../../shared/post/ArmTariff';
 import { PostOffer } from '../../shared/post/PostOffer';
 import { OfferForm, REQUEST_KEY } from '../../shared/post/OfferForm';
 import type { PostDraft } from '../../shared/post/postReview';
-import type { PostAssets } from '../../shared/post/postModel';
+import { lifecycleTerms, type PostAssets } from '../../shared/post/postModel';
 import { useAssetStandard } from '../../shared/nft/useStandard';
 import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
@@ -56,7 +57,7 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  */
 export function BorrowPage() {
   const { text, format } = useCopy();
-  const { status, chainId } = useAccount();
+  const { status, chainId, address } = useAccount();
   const connected = status === 'connected';
   const walletChain = getSupportedChain(chainId);
   const screenChain = useScreenChain();
@@ -176,29 +177,40 @@ export function BorrowPage() {
       {chain && connected && walletChain !== null && !flowOpen && (
         <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />
       )}
-      {chain && ready && !flowOpen && connected && walletChain !== null && <MatchingOffers role="borrower" view={view} meta={meta} onTake={take} takeDisabled={takeDisabled} />}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
-        <section className="borrow-section request-open" aria-labelledby="borrow-request-open">
-          <h2 id="borrow-request-open" className="sr-only">
-            {text('request.open')}
-          </h2>
-          <p className="tier-b">{text(requestPair === null || requestPair.standard === 'erc20' ? 'request.openLead' : 'request.openLeadNft')}</p>
-          {armContext !== null && (
-            <p className="tier-b" data-testid="request-held-for-tariff">
-              {format('request.heldForTariff', { id: armContext.offerId.toString() })}
-            </p>
-          )}
-          <button
-            type="button"
-            className="btn"
-            disabled={takeDisabled || requestPair === null || armContext !== null}
-            onClick={() => setComposing(true)}
-            data-testid="request-open"
-          >
-            {text('request.open')}
-          </button>
+        <section className="borrow-section borrow-ways" aria-labelledby="borrow-ways">
+          <h2 id="borrow-ways">{text('borrow.waysTitle')}</h2>
+          <div className="ways">
+            <div className="way" data-way="now">
+              <h3>{text('borrow.wayNow')}</h3>
+              <p className="tier-b">{text('borrow.wayNowLead')}</p>
+              <button type="button" className="btn btn-primary" onClick={() => document.getElementById('borrow-matches')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                {text('borrow.wayNowGo')}
+              </button>
+            </div>
+            <div className="way request-open" data-way="own">
+              <h3>{text('borrow.wayOwn')}</h3>
+              <p className="tier-b">{text(requestPair === null || requestPair.standard === 'erc20' ? 'request.openLead' : 'request.openLeadNft')}</p>
+              <StandingLenders diamond={diamond} lending={pair.lending!} collateral={pair.collateral!} meta={meta} account={address ?? null} />
+              {armContext !== null && (
+                <p className="tier-b" data-testid="request-held-for-tariff">
+                  {format('request.heldForTariff', { id: armContext.offerId.toString() })}
+                </p>
+              )}
+              <button
+                type="button"
+                className="btn"
+                disabled={takeDisabled || requestPair === null || armContext !== null}
+                onClick={() => setComposing(true)}
+                data-testid="request-open"
+              >
+                {text('request.open')}
+              </button>
+            </div>
+          </div>
         </section>
       )}
+      {chain && ready && !flowOpen && connected && walletChain !== null && <MatchingOffers role="borrower" view={view} meta={meta} onTake={take} takeDisabled={takeDisabled} />}
       {composing === true && draft === null && armContext === null && !termsOpen && walletChain && own && requestPair && (
         <section className="borrow-section" aria-labelledby="borrow-request-form">
           <OfferForm
@@ -210,6 +222,16 @@ export function BorrowPage() {
             meta={meta}
             onReview={reviewRequest}
             onCancel={() => setComposing(null)}
+            lead={(input) => (
+              <StandingLenders
+                diamond={diamond}
+                lending={requestPair.lending}
+                collateral={requestPair.collateral}
+                meta={meta}
+                account={address ?? null}
+                request={lifecycleTerms(input)}
+              />
+            )}
           />
         </section>
       )}

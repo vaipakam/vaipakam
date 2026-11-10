@@ -45,6 +45,7 @@ import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 
 /**
  * @title Scenario8_BorrowerPreclose
@@ -404,6 +405,7 @@ contract Scenario8_BorrowerPreclose is Test {
         mockHealthFactor(activeLoanId, 2e18);
 
         // Expect LoanObligationTransferred event
+        LibTestTiming.backdateTerms(address(diamond), borrowerOfferId); // #3443
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
         // (loanId, origBorrower, newBorrower, shortfall, newBorrowerTokenId,

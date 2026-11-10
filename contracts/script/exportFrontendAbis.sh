@@ -303,6 +303,7 @@ FACETS=(
   "SaleFloorFacet"
   "VaultOutflowFacet"
   "ForcedSalePreviewFacet"
+  "SignedOfferMatchFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

@@ -468,7 +468,7 @@ function validateOrder(
   if (out.offerType === '0' && collateralAmountMax !== collateralAmount) {
     return { error: 'lender-collateral-range' };
   }
-  // `SignedOfferRatioNotConstant` (OfferMatchFacet._vetSignedOfferForMatch,
+  // `SignedOfferRatioNotConstant` (SignedOfferMatchFacet._vetSignedOfferForMatch,
   // Codex #1145 r3 P2) — a RANGED order (`amountMax > amount`) is consumed
   // through `matchSignedOffer` slices (direct fill is disabled for ranged
   // principal), and the matcher requires a CONSTANT collateral:principal

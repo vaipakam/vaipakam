@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
@@ -73,7 +74,6 @@ contract AcceptTermBindingTest is SetupTest {
 
     function _build(uint256 offerId)
         internal
-        view
         returns (LibAcceptTerms.AcceptTerms memory)
     {
         return LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
@@ -191,7 +191,7 @@ contract AcceptTermBindingTest is SetupTest {
         bytes memory sig = _sign(t);
         vm.warp(block.timestamp + 2 hours);
         vm.expectRevert(
-            OfferAcceptFacet.AcceptDeadlineExpired.selector
+            abi.encodeWithSelector(LibTiming.DeadlinePassed.selector, t.deadline)
         );
         _accept(offerId, t, sig);
     }

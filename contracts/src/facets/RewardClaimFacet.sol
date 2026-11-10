@@ -287,15 +287,11 @@ contract RewardClaimFacet is
             )
         );
         res.toTreasury.total += window.forfeited;
-        // Codex #2489 r17 ROOT — the legs above settled every closed entry they
-        // could, so retire the settled entries from the wallet's index now
-        // (bounded): the index converges to the unsettled entries and every
-        // per-user walk, this claim's included, stops growing with the wallet's
-        // lifetime. Bookkeeping only; the permissionless compactor covers a
-        // list longer than the bound.
-        LibInteractionRewards.retireSettledUserEntries(
-            LibVaipakam.storageSlot(), user, LibInteractionRewards.CLAIM_INDEX_COMPACT_STEPS
-        );
+        // Codex #2489 r17 ROOT / #1787 — the walk host closes the claim
+        // window after the walk (the last leg): it retires the window's
+        // settled entries and moves the window on, so the next claim reads
+        // the next slice of the wallet's entries, and a move counts as the
+        // claim's progress (`res.advancedAnyDay`).
     }
 
     /**

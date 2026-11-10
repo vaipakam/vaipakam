@@ -462,6 +462,12 @@
   //     two hours' checkpoints; without them every forced sale uses the full
   //     slippage cap. Simulated first. Permissionless; moves no value and
   //     pays only gas. Ships unset.
+  //   - ASSET_RANKINGS_ENABLED — 'true' arms the #3446 asset rankings pass,
+  //     hourly at :56: once a UTC day per source and mainnet chain, the top
+  //     500 tokens by market-cap rank from two public market-data sources,
+  //     keyed by contract address, written to the shared asset_ranking table
+  //     the app's asset trust tiers read. A failed day keeps the last good
+  //     list. Off-chain only; sends no transaction. Ships unset.
   //   - REWARD_STAGING_UPKEEP_ENABLED — 'true' arms the #3097 reward staging
   //     upkeep pass, hourly: prepareStagedDay / reserveStagedDay /
   //     resolveStagedDayPage for open staging records, reserveDomainPage /

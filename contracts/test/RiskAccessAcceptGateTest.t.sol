@@ -14,6 +14,7 @@ import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title RiskAccessAcceptGateTest
@@ -122,7 +123,6 @@ contract RiskAccessAcceptGateTest is SetupTest {
     ///      (the build/sign view-calls would otherwise consume the expectRevert).
     function _buildAndSign(address acceptor, uint256 pk, uint256 offerId)
         internal
-        view
         returns (LibAcceptTerms.AcceptTerms memory t, bytes memory sig)
     {
         t = LibAcceptTestSigner.buildTerms(address(diamond), acceptor, offerId, true, 0);
@@ -300,6 +300,9 @@ contract RiskAccessAcceptGateTest is SetupTest {
         _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
 
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        // #3443 — let the offer's terms age first, so signing the accept
+        // below moves no time and the cooldown is measured from the consent.
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         // Creator and acceptor tiers are raised while the cooldown is still 0.
         _armCreatorIlliquid(mockERC20, mockIlliquidERC20);

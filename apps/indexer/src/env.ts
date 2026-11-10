@@ -2,7 +2,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import type { RateLimitBinding } from '@vaipakam/lib/rateLimit';
 import { spendInternal, type TickBudget } from './subrequestBudget';
-import { redactedError } from '@vaipakam/lib/errorDescription';
+import { readSecret as readNamedSecret, readSecrets, type SecretBinding } from '@vaipakam/lib/secretsStore';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -63,7 +63,7 @@ export const WORKER_NAME = 'vaipakam-indexer';
  */
 
 /** A Cloudflare Secrets Store secret binding — read with `.get()`. */
-export type SecretBinding = { get(): Promise<string> };
+export type { SecretBinding };
 
 /**
  * The RAW Cloudflare bindings the Worker handler receives. `RPC_*`
@@ -295,44 +295,25 @@ export interface Env {
 }
 
 /**
- * Read one Secrets Store binding into a plain string.
+ * Read one named Secrets Store binding (`@vaipakam/lib/secretsStore`):
+ * `undefined` when unbound or unreadable, a failure logged by name.
  *
- * Tolerates BOTH an absent binding (`b` undefined) AND a failing
- * fetch: a rejected `.get()` — a transient Secrets Store outage, or
- * a secret deleted / deactivated after deploy — resolves to
- * `undefined` rather than rejecting. `resolveEnv` fans every secret
- * through `Promise.all`, so without this catch one unavailable
- * secret would abort the whole resolve and take down the entire
- * cron tick / every HTTP route — including paths that never touch
- * that secret. Collapsing to `undefined` keeps the failure scoped to
- * the one dependent feature: every `Env` secret field is optional
- * and downstream code already handles `undefined` (skip that chain).
- * (T-078 — PR #36 Codex review.)
+ * COUNTED WHERE IT HAPPENS (#2221). A Secrets Store read is a binding call to
+ * one of Cloudflare's own services, the same class as a D1 call, charged to
+ * the internal-services meter, and this Worker makes up to a dozen of them at
+ * the top of every cron tick, which a pass-scoped counter would never see. It
+ * is counted at the read because that is the only point that knows a binding
+ * was present. Conservative by intent: if a cached read is not billed as a
+ * subrequest, the counter is high by at most the number of secrets, and a
+ * ceiling guard that errs high refuses work it could have done, where one
+ * that errs low freezes a chain.
  */
-export async function readSecret(
+export function readSecret(
+  name: string,
   b: SecretBinding | undefined,
   budget?: TickBudget,
 ): Promise<string | undefined> {
-  if (!b) return undefined;
-  try {
-    // COUNTED WHERE IT HAPPENS (#2221). A Secrets Store read is a binding
-    // call to one of Cloudflare's own services — the same class as a D1 call,
-    // charged to the internal-services meter — and this Worker makes up to a
-    // dozen of them at the top of every cron tick, which a pass-scoped counter
-    // would never see. Counted here because this is the only line that knows
-    // whether a binding was actually present to read.
-    //
-    // Conservative by intent: if a cached read turns out not to be billed as
-    // a subrequest, this counter is high by at most the number of secrets,
-    // and a ceiling guard that errs high refuses work it could have done,
-    // where one that errs low freezes a chain.
-    if (budget) spendInternal(budget);
-    return await b.get();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[env] Secrets Store fetch failed; treating as unset:', redactedError(err));
-    return undefined;
-  }
+  return readNamedSecret(name, b, { onRead: budget ? () => spendInternal(budget) : undefined });
 }
 
 /**
@@ -345,33 +326,25 @@ export async function resolveEnv(
   raw: WorkerEnv,
   budget?: TickBudget,
 ): Promise<Env> {
-  const [
-    base,
-    eth,
-    arb,
-    op,
-    bnb,
-    sepolia,
-    baseSep,
-    arbSep,
-    opSep,
-    bnbTest,
-    polyAmoy,
-    openSea,
-  ] = await Promise.all([
-    readSecret(raw.RPC_BASE, budget),
-    readSecret(raw.RPC_ETH, budget),
-    readSecret(raw.RPC_ARB, budget),
-    readSecret(raw.RPC_OP, budget),
-    readSecret(raw.RPC_BNB, budget),
-    readSecret(raw.RPC_SEPOLIA, budget),
-    readSecret(raw.RPC_BASE_SEPOLIA, budget),
-    readSecret(raw.RPC_ARB_SEPOLIA, budget),
-    readSecret(raw.RPC_OP_SEPOLIA, budget),
-    readSecret(raw.RPC_BNB_TESTNET, budget),
-    readSecret(raw.RPC_POLYGON_AMOY, budget),
-    readSecret(raw.OPENSEA_API_KEY, budget),
-  ]);
+  // Keyed by binding name, so a failed read is logged by name; each read
+  // is counted against the tick's internal meter (see `readSecret`).
+  const secrets = await readSecrets(
+    {
+      RPC_BASE: raw.RPC_BASE,
+      RPC_ETH: raw.RPC_ETH,
+      RPC_ARB: raw.RPC_ARB,
+      RPC_OP: raw.RPC_OP,
+      RPC_BNB: raw.RPC_BNB,
+      RPC_SEPOLIA: raw.RPC_SEPOLIA,
+      RPC_BASE_SEPOLIA: raw.RPC_BASE_SEPOLIA,
+      RPC_ARB_SEPOLIA: raw.RPC_ARB_SEPOLIA,
+      RPC_OP_SEPOLIA: raw.RPC_OP_SEPOLIA,
+      RPC_BNB_TESTNET: raw.RPC_BNB_TESTNET,
+      RPC_POLYGON_AMOY: raw.RPC_POLYGON_AMOY,
+      OPENSEA_API_KEY: raw.OPENSEA_API_KEY,
+    },
+    { onRead: budget ? () => spendInternal(budget) : undefined },
+  );
   return {
     // Through the maintenance seam: the real binding untouched on every
     // ordinary deploy, a refusing stub when it is absent (#2239).
@@ -381,20 +354,20 @@ export async function resolveEnv(
     doIngestEnabled: isDoIngestEnabled(raw),
     CF_VERSION_METADATA: raw.CF_VERSION_METADATA,
     CANCELLED_OFFER_RETENTION_DAYS: raw.CANCELLED_OFFER_RETENTION_DAYS,
-    OPENSEA_API_KEY: openSea,
+    OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
-    RPC_BASE: base,
-    RPC_ETH: eth,
-    RPC_ARB: arb,
-    RPC_OP: op,
-    RPC_BNB: bnb,
-    RPC_SEPOLIA: sepolia,
-    RPC_BASE_SEPOLIA: baseSep,
-    RPC_ARB_SEPOLIA: arbSep,
-    RPC_OP_SEPOLIA: opSep,
-    RPC_BNB_TESTNET: bnbTest,
-    RPC_POLYGON_AMOY: polyAmoy,
+    RPC_BASE: secrets.RPC_BASE,
+    RPC_ETH: secrets.RPC_ETH,
+    RPC_ARB: secrets.RPC_ARB,
+    RPC_OP: secrets.RPC_OP,
+    RPC_BNB: secrets.RPC_BNB,
+    RPC_SEPOLIA: secrets.RPC_SEPOLIA,
+    RPC_BASE_SEPOLIA: secrets.RPC_BASE_SEPOLIA,
+    RPC_ARB_SEPOLIA: secrets.RPC_ARB_SEPOLIA,
+    RPC_OP_SEPOLIA: secrets.RPC_OP_SEPOLIA,
+    RPC_BNB_TESTNET: secrets.RPC_BNB_TESTNET,
+    RPC_POLYGON_AMOY: secrets.RPC_POLYGON_AMOY,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
 }

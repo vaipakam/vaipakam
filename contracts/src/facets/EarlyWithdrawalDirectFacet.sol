@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -222,23 +223,13 @@ contract EarlyWithdrawalDirectFacet is
         uint64 deadline; // fill must land at/before this timestamp; MANDATORY on the bound entry (bounds reward forfeiture — see below)
     }
 
-    /// @notice #1922 (#1503 item 6) — the fill would land after the deadline the
-    ///         seller reviewed. The direct sale settles in one transaction, so
-    ///         this bounds the mempool window a seller's quote may sit in.
-    error SaleQuoteExpired(uint64 deadline);
-
-    /// @notice #1922 (#1503 item 6, Codex r2 P1) — the bound entry was called with
-    ///         `deadline == 0`. The deadline is MANDATORY here: it is the cutoff
-    ///         that bounds the THIRD reviewed cost — reward forfeiture. The sale
-    ///         forfeits the exiting lender's pending reward at the CURRENT day
-    ///         (via `_rewardHook`), a loss that grows the longer the fill is
-    ///         delayed and that neither the net floor nor the held ceiling
-    ///         captures. A finite deadline caps it to the window the seller chose,
-    ///         exactly as the listed route's mandatory finite expiry does
-    ///         (LenderEarlyWithdrawalUXDesign.md §"part three"). Leaving it
-    ///         unbounded would be disclosure, not consent — which is what the
-    ///         unbound `sellLoanViaBuyOffer` is for.
-    error SaleDeadlineRequired();
+    // #3412 — the sale's deadline goes through `LibTiming.requireDeadline`:
+    // past it reverts `LibTiming.DeadlinePassed`, and a zero reverts
+    // `LibTiming.DeadlineRequired`. It is MANDATORY on the bound entry because
+    // it bounds the THIRD reviewed cost, reward forfeiture: the sale forfeits
+    // the exiting lender's pending reward at the CURRENT day (`_rewardHook`), a
+    // loss that grows the longer the fill is delayed and that neither the net
+    // floor nor the held ceiling captures (#1922, #1503 item 6, Codex r2 P1).
 
     /// @notice #1922 (#1503 item 6) — the seller's net receipt at execution is
     ///         below the floor they reviewed. Drift between quote and mining
@@ -329,7 +320,7 @@ contract EarlyWithdrawalDirectFacet is
      *         a mirror of it (the #1801 lesson `createLoanSaleOfferBound` records).
      *
      * @param deadline Fill must land at/before this timestamp; MANDATORY (a zero
-     *        reverts `SaleDeadlineRequired`) because it bounds the reward
+     *        reverts `LibTiming.DeadlineRequired`) because it bounds the reward
      *        forfeiture — the third reviewed cost — to the seller's chosen window.
      * @param reviewedMinSellerNet The seller's reviewed floor; net must be ≥ this
      *        (the `minSellerNet` output of `quoteSellerBounds`).
@@ -417,6 +408,9 @@ contract EarlyWithdrawalDirectFacet is
         if (LibVaipakam.isOfferExpired(buyOffer)) {
             revert OfferExpired(buyOfferId, buyOffer.expiresAt);
         }
+        // #3443 — the buy offer's terms must have stood the minimum age, so a
+        // buyer cannot post or re-price it and have it taken in the same block.
+        LibTiming.requireOfferAged(buyOfferId, buyOffer);
         // #1001 (S3, Codex #1070 r5 P2) — a linked Preclose Option-3 offset offer
         // is a Lender offer, so it would otherwise pass the shape check above and
         // be consumable here. Consuming it via the direct swap-in marks it
@@ -714,9 +708,8 @@ contract EarlyWithdrawalDirectFacet is
             // MANDATORY finite deadline (Codex r2 P1): it is the cutoff that
             // bounds the reward forfeiture `_rewardHook` charges at the current
             // day — the third reviewed cost, captured by neither bound above.
-            if (b.deadline == 0) revert SaleDeadlineRequired();
-            if (block.timestamp > b.deadline)
-                revert SaleQuoteExpired(b.deadline);
+            // #3412 — through the one timing rule (required).
+            LibTiming.requireDeadline(b.deadline);
             if (priorHeld > b.maxHeld)
                 revert SaleHeldAboveReviewed(priorHeld, b.maxHeld);
             uint256 projectedNet = loan.principal - shortfall;

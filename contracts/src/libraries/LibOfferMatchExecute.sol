@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibTiming} from "./LibTiming.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
@@ -269,6 +270,11 @@ library LibOfferMatchExecute {
             // is deterministic when both expired in the same second).
             // Re-raises the same typed error the direct-accept path
             // returns so the ABI is uniform across both entry points.
+            // #3443 — name the offer whose terms are too fresh, lender first.
+            if (mr.errorCode == LibOfferMatch.MatchError.TermsTooFresh) {
+                LibTiming.requireOfferAged(lenderOfferId, s.offers[lenderOfferId]);
+                LibTiming.requireOfferAged(borrowerOfferId, s.offers[borrowerOfferId]);
+            }
             if (mr.errorCode == LibOfferMatch.MatchError.OfferExpired) {
                 LibVaipakam.Offer storage l_ = s.offers[lenderOfferId];
                 if (LibVaipakam.isOfferExpired(l_)) {

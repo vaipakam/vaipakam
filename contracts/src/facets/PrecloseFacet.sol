@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -675,6 +676,9 @@ contract PrecloseFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(borrowerOfferId, offer.expiresAt);
         }
+        // #3443 — the offer's terms must have stood the minimum age before
+        // this path takes it, as on every other fill.
+        LibTiming.requireOfferAged(borrowerOfferId, offer);
         // #576 — a refinance-tagged offer is SINGLE-PURPOSE: it may only be
         // consumed by the direct accept-and-refinance path. Consuming it for an
         // UNRELATED obligation transfer is invalid: on a carry-over offer the

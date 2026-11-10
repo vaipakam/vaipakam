@@ -3722,7 +3722,7 @@ export async function markBorrowerFillsUnread(
  *     `filled_amount = ceiling` (amount_max, or amount when amount_max
  *     is '0' — mirroring `_ceiling`).
  *
- *   - `SignedOfferMatched` (OfferMatchFacet, v0.6 keeper-matcher) — the
+ *   - `SignedOfferMatched` (SignedOfferMatchFacet, v0.6 keeper-matcher) — the
  *     PARTIAL-fill path. Each event carries this slice's `fillAmount`, and
  *     the on-chain ledger accumulates (`filledBefore + fillAmount`). Rather
  *     than accumulating in D1 (non-idempotent under a partial-failure
