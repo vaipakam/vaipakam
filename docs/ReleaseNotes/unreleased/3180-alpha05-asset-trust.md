@@ -1,4 +1,4 @@
-## Thread — alpha05: trust tiers and token search in the pair picker (PR #TBD)
+## Thread — alpha05: trust tiers and token search in the pair picker (PR #3492)
 
 Part of #3446.
 

@@ -1,4 +1,4 @@
-## Thread — indexer: a store and a read route for public token rankings (PR #TBD)
+## Thread — indexer: a store and a read route for public token rankings (PR #3492)
 
 The indexer now has a place to keep the public market-cap rankings of tokens, and a public read route that serves them. This is the first part of the asset trust tiers in #3446: the connected app will use the ranks to sort an unfamiliar token into a tier (blue chip, top 100 to top 500, unranked) and to warn when a token copies a ranked token's symbol.
 
