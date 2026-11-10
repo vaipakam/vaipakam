@@ -196,7 +196,23 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
    *  #3318. */
   async positionTransfer(who: Party, to: Address, tokenId: bigint): Promise<TransactionReceipt> {
     const nft = await this.read<Address>('positionNFT');
-    return this.write(who, nft, POSITION_ERC721_ABI as Abi, 'transferFrom', [this.address(who), to, tokenId]);
+    await this.waitOutPositionCooldown(tokenId);
+    // The NFT contract asks the Diamond before every move and passes its
+    // refusal through unchanged, so the Diamond's errors decode it.
+    const abi = [...(POSITION_ERC721_ABI as Abi), ...(DIAMOND_ABI_VIEM as Abi).filter((e) => e.type === 'error')] as Abi;
+    return this.write(who, nft, abi, 'transferFrom', [this.address(who), to, tokenId]);
+  }
+
+  /** #3413 — a position refuses to move for a short cooldown after value
+   *  leaves it (a loan starts, a payout, a match, a sale). A live holder
+   *  simply waits; this node mines only on demand, so a scenario that moves
+   *  a token straight after one of those actions mines a block at the
+   *  moment the cooldown ends. A token never stamped needs nothing. */
+  async waitOutPositionCooldown(tokenId: bigint): Promise<void> {
+    const [valueOutBlock, readyAt] = await this.read<readonly [bigint, bigint]>('positionTransferCooldown', [tokenId]);
+    if (valueOutBlock === 0n) return;
+    if (Number(readyAt) > (await this.now())) await this.mineAt(Number(readyAt));
+    else if ((await this.blockNumber()) <= valueOutBlock) await this.mineBlocks(1);
   }
 
   /** A Diamond read. */
