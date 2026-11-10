@@ -15,9 +15,8 @@
  *   protocol refuses a lender repaying their own loan;
  * - a pending swap-to-repay order on the borrower position: its collateral
  *   is promised to an order that may still fill;
- * - a rental: the rent comes from the borrower's prepayment, which this
- *   page cannot repay from yet (stated as the app's limit, not the
- *   protocol's).
+ * - a rental: it is never repaid from a wallet; its renter closes it from
+ *   the rent and buffer prepaid into their own vault (eligibility/closeRental).
  * Deliberately NOT held (the canonical spec): a lender's sale listing, a
  * standing refinance request, the protocol pause (repayment stays open so a
  * borrower can always lower their risk), the Terms gate and the sanctions

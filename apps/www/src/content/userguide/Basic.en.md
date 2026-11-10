@@ -1431,7 +1431,7 @@ Rent, in the menu, lists the NFTs owners have listed for rent on your network; w
 
 ### Rent: Risks
 
-You never own a rented NFT, and your right to use it ends when the rental ends. The rent and buffer stay in your vault for the rental and cannot be withdrawn while it is open. Once every agreed day has been settled, which anyone may do, the rental closes by itself and your buffer is yours to claim. Until then you close it yourself, from its page in the current app, since the next app cannot close a rental yet. Closing during the grace period costs a late fee, taken from the buffer; after the grace period the rental defaults, the rent left in your vault goes to the owner and the buffer to the protocol, and nothing comes back to you. With full-term rent the whole term is owed even if you close early.
+You never own a rented NFT, and your right to use it ends when the rental ends. The rent and buffer stay in your vault for the rental and cannot be withdrawn while it is open. Once every agreed day has been settled, which anyone may do, the rental closes by itself and your buffer is yours to claim. Until then you close it yourself, from its position page. Closing during the grace period costs a late fee, taken from the buffer; after the grace period the rental defaults, the rent left in your vault goes to the owner and the buffer to the protocol, and nothing comes back to you. With full-term rent the whole term is owed even if you close early.
 
 <a id="rent-list"></a>
 
@@ -1468,3 +1468,15 @@ A renter's request asks to rent one NFT on set terms, and the renter has already
 ### Rent: Risks of Taking a Request
 
 The NFT stays in your vault for the whole rental, and you cannot withdraw it while the rental is open. The renter holds the right to use it until the rental ends, and you cannot take that right back early. The terms are the request's own: you cannot change the daily fee, the term, the rent rule or the buffer. Rent reaches your vault, less the protocol's share, as each finished day is settled; anyone may settle one. Once every agreed day is settled, the rental closes by itself and the renter can claim the buffer back. Before that, the renter can close it, or after the grace period anyone can close it as a default. When the renter closes it, you can claim the rent not yet settled and any late fee, less the protocol's share, and the rest of the buffer goes back to the renter. On a default you can claim the rent left, less that share, and the buffer goes to the protocol. A pause stops daily settling and moves the late-fee and default dates later, but never lengthens the renter's use. A request that recorded no buffer of its own takes today's setting when the rental starts.
+
+<a id="rent-close"></a>
+
+### Rent: Closing a Rental
+
+A running rental's page offers you, as the renter, Close the rental. Closing pays the rent owed and any late fee out of the rent and buffer you prepaid into your own vault, so nothing is taken from your wallet and there is no approval. The review shows the rent owed if it closes now and at a moment a short while ahead, counted by the rent rule (pro-rata: the days used since the start, a part day counted whole, less the days already settled; full term: every agreed day not yet settled), the days already settled, any late fee, what comes back to you as a claim, and what the owner receives: the rent and late fee, less the protocol's share. If the prepayment cannot cover the close, the review says so before your wallet opens. Your wallet then asks you once to close the rental, which the app first tries as a dry run. Afterwards the app checks on the chain that the rental closed, the claim recorded for you and that your use ended. Collect what comes back on the Claims page.
+
+<a id="rent-close-risks"></a>
+
+### Rent: Risks of Closing
+
+Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.

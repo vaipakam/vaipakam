@@ -30,7 +30,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { formatUtc, shortAddress } from '../ui/format';
 import { Notice } from '../ui/Notice';
-import { readRentalUse } from './rentReads';
+import { rentalUpdate } from './rentalLog';
 import { rentReceipt } from './rentReceipt';
 import { promptCount, readRentReview, rentBlockers, rentChangedBetween, reviewCost, type RentReview } from './rentReview';
 
@@ -195,27 +195,16 @@ export function RentAccept({ offerId, chain, own, meta, terms, onClose }: RentAc
       const v = legVerdict(got, need);
       legs.push(v === 'done' ? { status: 'done', label: payLabel } : { status: v, label: payLabel, reason: format('rent.prepaidOther', { amount: exact(pay, got), expected: exact(pay, need) }) });
     }
-    // The user right, read from the owner's vault at the receipt's block. An
-    // ERC-721 has one user; an ERC-1155 rents by quantity, so its count of
-    // units rented out must have grown by this rental's quantity.
+    // The user right, from this transaction's own rental update for the
+    // rental it opened: the renter it names, until when, and (an ERC-1155)
+    // the units it rents. The owner's vault totals are no measure of it,
+    // since another rental of the same token can move them in the same block.
     const nft = offerAmount(o, o.amount, meta, format);
-    try {
-      if (o.assetType === ASSET_ERC1155) {
-        const [before, after] = await Promise.all([
-          at.read((c, b) => readRentalUse(c, diamond, o.creator, o.lendingAsset, o.tokenId, { blockNumber: b.blockNumber - 1n })),
-          at.read((c, b) => readRentalUse(c, diamond, o.creator, o.lendingAsset, o.tokenId, b)),
-        ]);
-        const label = format('rent.useMulti', { nft, quantity: after.quantity.toString() });
-        legs.push(after.quantity >= before.quantity + o.quantity ? { status: 'done', label } : { status: 'unknown', label, reason: text('rent.useMultiOther') });
-      } else {
-        const use = await at.read((c, b) => readRentalUse(c, diamond, o.creator, o.lendingAsset, o.tokenId, b));
-        const mine = use.user.toLowerCase() === account.toLowerCase();
-        const label = format('rent.legUse', { nft, until: use.expires > 0n ? formatUtc(Number(use.expires)) : text('receipt.unknown') });
-        legs.push(mine ? { status: 'done', label } : { status: opened ? 'unknown' : 'not-done', label, reason: text('rent.useOther') });
-      }
-    } catch (e) {
-      legs.push({ status: 'unknown', label: format('rent.legUse', { nft, until: text('receipt.unknown') }), reason: refusalFromError(e).reason });
-    }
+    const update = opened ? rentalUpdate(logs, diamond, opened.loanId) : null;
+    const mine = update !== null && update.user.toLowerCase() === account.toLowerCase() && update.quantity === (o.assetType === ASSET_ERC1155 ? o.quantity : 1n);
+    const until = update !== null && update.expires > 0n ? formatUtc(Number(update.expires)) : text('receipt.unknown');
+    const label = o.assetType === ASSET_ERC1155 && update !== null ? format('rent.useMulti', { nft, quantity: update.activeTotal.toString() }) : format('rent.legUse', { nft, until });
+    legs.push(mine ? { status: 'done', label } : { status: 'not-done', label, reason: text('rent.useOther') });
     return legs;
   };
 
