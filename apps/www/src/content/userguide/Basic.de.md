@@ -1316,6 +1316,8 @@ Bei einem laufenden Kredit bietet die Seite an, ihn vollständig zurückzuzahlen
 
 Der geschuldete Betrag wächst mit jeder Sekunde, und das Protokoll nimmt den Betrag zum Zeitpunkt, an dem Ihre Rückzahlung bestätigt wird. Die Prüfung zeigt zwei Zahlen: was es jetzt kostet und was es etwa dreißig Minuten später kosten würde. Ihre Wallet genehmigt genau die zweite Zahl. Hatten Sie schon mehr genehmigt, auch unbegrenzt, wird die Genehmigung für die Rückzahlung auf diese Zahl gesenkt, denn die Rückzahlung kennt selbst keinen Höchstbetrag. Die Genehmigung begrenzt den Betrag, nicht die Zeit: Eine später bestätigte Rückzahlung geht nur durch, solange der geschuldete Betrag noch hineinpasst, sonst wird sie abgelehnt und nichts bewegt sich. Bei einem Kredit, der die volle Laufzeit berechnet, wächst der Betrag vor dem Fälligkeitsdatum nicht, sodass auch eine spätere Rückzahlung noch durchgehen kann. Was die Rückzahlung von der Genehmigung nicht verbraucht, wird danach zurückgesetzt. Dann holt der Kreditnehmer die Sicherheit und der Kreditgeber Kapital und Zinsen unter Claims ab.
 
+Ist der Kredit über sein Fälligkeitsdatum hinaus und in der Nachfrist, zählt die Prüfung nach der Uhr der Chain bis zum Ende der Nachfrist herunter. Danach lehnt das Protokoll eine Rückzahlung ab und jeder kann einen Ausfall melden; die Transaktion, die zuerst gemined wird, gewinnt. Senden Sie die Rückzahlung also rechtzeitig; bei einer Stunde oder weniger sagt die Prüfung, dass Sie jetzt senden sollen. Eine Teilzahlung zeigt denselben Countdown.
+
 <a id="interest-schedule"></a>
 
 ### Zinsplan

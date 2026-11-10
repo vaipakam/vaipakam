@@ -1986,6 +1986,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，从其 `LoanRepaid` 日志读取还款使贷款所处的状态（而非该区块的状态，同一区块中随后的领取可能已将其结清），根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。高于该数字的 allowance（包括无限额度）同样会降到这个数字，因为 `repayLoan(loanId)` 不设上限也不设期限；之后的恢复会还原原来的较大值。
 
+在宽限期内（`getLoanDeadlines` 给出的 `maturity ≤ now ≤ graceEnd`），全额与部分还款的审核会按链上时钟倒计时到 `graceEnd`，链上时间以审核读取的区块时间戳加上此后经过的秒数估算。一旦 `block.timestamp > graceEnd`，`repayLoan` 与 `repayPartial` 会以 `RepaymentPastGracePeriod` 回滚，此后任何人都可调用 `triggerDefault`，因此迟到的还款会与违约竞速。剩余一小时或更少时，倒计时提示立即发送。它只作说明：发送前重新读取的判定才是门槛，暂停会把 `graceEnd` 推后。通过塞满区块把还款拖过宽限期，已在威胁模型中记录为可接受的低风险。
+
 <a id="interest-schedule"></a>
 
 ### 利息计划：如何读取

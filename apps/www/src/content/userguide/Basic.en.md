@@ -1267,6 +1267,8 @@ On a running loan, the page offers to repay it in full. Anyone may repay except 
 
 What you owe grows by the second, and the protocol takes the amount as of the moment your repayment confirms. The review shows two figures: what it costs now, and what it would cost about thirty minutes ahead. Your wallet approves exactly the second figure. If you had already approved more, even an unlimited amount, it is lowered to that figure for the repayment, since the repayment takes no maximum of its own. The approval limits the amount, not the time: a repayment that confirms later goes through only while what is owed still fits within it, and is otherwise refused with nothing moved. On a loan that charges the full term, the amount does not grow before the due date, so a later repayment can still go through. Whatever it does not use of the approval is put back afterwards. Then the borrower collects the collateral and the lender collects principal and interest on Claims.
 
+If the loan is past its due date and in its grace period, the review counts down to the end of grace by the chain's clock. After that the protocol refuses a repayment and anyone can file a default, and whichever transaction is mined first wins, so send your repayment well before then; with an hour or less left the review says to send it now. Paying part of a loan shows the same countdown.
+
 <a id="interest-schedule"></a>
 
 ### Interest Schedule

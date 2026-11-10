@@ -487,6 +487,15 @@ export const copy = {
     cure: A('This loan is in fallback: repaying in full cancels it, and the collateral returns to the borrower side.'),
     loseBalance: A('Your wallet holds {{amount}}: enough now, but it may fall short if it confirms later.'),
     short: A('Your wallet is {{amount}} short of the payoff now, so repaying is not offered.'),
+    graceClock: A(
+      'This loan is in its grace period, which ends at {{time}}, {{left}} from now. After that the protocol refuses a repayment and anyone can file a default; whichever transaction is mined first wins, so send the repayment well before then.',
+    ),
+    graceClockUrgent: A(
+      'Less than an hour of the grace period is left: it ends at {{time}}, {{left}} from now. A repayment still waiting to be mined then is refused with nothing moved, and the loan can be defaulted, so send it now.',
+    ),
+    graceClockEnded: A(
+      'By the chain’s clock the grace period ended at {{time}}, so a repayment now is refused and the loan can be defaulted. A protocol pause moves the end later, and the review re-reads it before anything is sent.',
+    ),
     payoffSummary: B('Where the payoff comes from, and why the approval is a little larger'),
     payoffWhy: C(
       'The payoff is the protocol’s own figure: what is owed of the principal, interest under the loan’s terms less any already paid, and a late fee once the due date has passed. The protocol takes the figure as of the moment the repayment confirms, so the review shows it now and as of a moment a short while ahead, read from the protocol for that moment. The approval is exactly that later figure, so the repayment can confirm in between; a larger approval you already gave is lowered to it, since the repayment takes no maximum of its own. Whatever it does not use is put back afterwards.',
