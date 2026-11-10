@@ -6823,6 +6823,7 @@ const copySource = {
       NFTMinted: 'Position NFT minted',
       OfferCreatedDetails: 'Offer created',
       OfferCanceledDetails: 'Offer cancelled',
+      OfferPriceGuardSet: 'Offer price guard updated',
       UserVaultCreated: 'Vault created',
       TermsAccepted: 'Terms of use accepted',
       VaultRiskTierSet: 'Risk level changed',

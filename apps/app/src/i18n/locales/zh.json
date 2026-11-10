@@ -2768,6 +2768,7 @@
         "NFTMinted": "仓位 NFT 已铸造",
         "OfferCreatedDetails": "报价已创建",
         "OfferCanceledDetails": "报价已取消",
+        "OfferPriceGuardSet": "报价价格保护已更新",
         "UserVaultCreated": "vault 已创建",
         "TermsAccepted": "已接受使用条款",
         "VaultRiskTierSet": "风险级别已更改",

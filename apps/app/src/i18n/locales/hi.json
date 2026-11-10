@@ -2768,6 +2768,7 @@
         "NFTMinted": "पोज़िशन NFT मिंट किया गया",
         "OfferCreatedDetails": "ऑफ़र बनाया गया",
         "OfferCanceledDetails": "ऑफ़र रद्द किया गया",
+        "OfferPriceGuardSet": "ऑफ़र की मूल्य सुरक्षा अपडेट की गई",
         "UserVaultCreated": "वॉल्ट बनाया गया",
         "TermsAccepted": "उपयोग की शर्तें स्वीकार की गईं",
         "VaultRiskTierSet": "जोखिम स्तर बदला गया",

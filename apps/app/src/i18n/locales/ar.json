@@ -2768,6 +2768,7 @@
         "NFTMinted": "تم سك NFT المركز",
         "OfferCreatedDetails": "تم إنشاء العرض",
         "OfferCanceledDetails": "تم إلغاء العرض",
+        "OfferPriceGuardSet": "تم تحديث حماية سعر العرض",
         "UserVaultCreated": "تم إنشاء vault",
         "TermsAccepted": "تم قبول شروط الاستخدام",
         "VaultRiskTierSet": "تم تغيير مستوى المخاطر",

@@ -93,6 +93,8 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // ── Offers and their sale routes.
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
+  // #3358 — the maker's price-move guard set, changed or cleared on their offer.
+  ['OfferPriceGuardSet', ['creator']],
   ['OfferSaleProceedsCredited', ['borrower']],
   ['CollateralSaleProceedsSplit', ['lender', 'borrower']],
   ['PostParallelSaleListing', ['borrower']],

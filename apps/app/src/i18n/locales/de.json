@@ -2768,6 +2768,7 @@
         "NFTMinted": "Positions-NFT geprägt",
         "OfferCreatedDetails": "Angebot erstellt",
         "OfferCanceledDetails": "Angebot storniert",
+        "OfferPriceGuardSet": "Preisschutz des Angebots aktualisiert",
         "UserVaultCreated": "Vault erstellt",
         "TermsAccepted": "Nutzungsbedingungen akzeptiert",
         "VaultRiskTierSet": "Risikostufe geändert",

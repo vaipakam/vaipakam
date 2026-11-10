@@ -2768,6 +2768,7 @@
         "NFTMinted": "포지션 NFT 발행됨",
         "OfferCreatedDetails": "오퍼 생성됨",
         "OfferCanceledDetails": "오퍼 취소됨",
+        "OfferPriceGuardSet": "오퍼 가격 보호 업데이트됨",
         "UserVaultCreated": "vault 생성됨",
         "TermsAccepted": "이용약관 동의됨",
         "VaultRiskTierSet": "위험 수준 변경됨",
