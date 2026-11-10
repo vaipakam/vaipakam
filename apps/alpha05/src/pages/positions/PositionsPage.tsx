@@ -4,6 +4,7 @@ import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
 import { ASSET_ERC20, positionKey } from '../../shared/positions/model';
 import { EndedSection, LoansSection, PayoutsSection } from '../../shared/positions/PositionSections';
+import { PositionsSummary } from '../../shared/positions/PositionsSummary';
 import { part, usePositionBook } from '../../shared/positions/usePositionBook';
 import { useTokenMeta } from '../../shared/reads/tokens';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -14,8 +15,10 @@ type Side = 'all' | 'lent' | 'borrowed';
 /**
  * Positions (rulebook §4: list with quick actions; LN-05, LN-08, LN-10,
  * LN-11). The loan positions the connected wallet holds on its chain, read
- * from the one inventory Home reads, in the order a reader needs them:
- * payouts confirmed ready to collect, then live loans (the most urgent
+ * from the one inventory Home reads. With two or more live loans, a summary
+ * comes first (#3320): principal per token on each side, the next date due
+ * and the loans past their date. Then the lists, in the order a reader needs
+ * them: payouts confirmed ready to collect, then live loans (the most urgent
  * deadline first, the children of one offer grouped, each obligation's
  * stage with its pause credit, and the health factor), then ended loans
  * with their status. A side choice narrows all three to what the wallet
@@ -78,6 +81,7 @@ export function PositionsPage() {
                 ))}
               </div>
               {emptyFiltered && <p className="tier-b">{format('positions.emptyFiltered', { chain: book.chain.name })}</p>}
+              <PositionsSummary read={loans} meta={meta} />
               <PayoutsSection read={payouts} />
               <LoansSection read={loans} meta={meta} unit={book.numeraire.data ?? text('home.exposureUnit')} />
               <EndedSection read={ended} meta={meta} payoutKeys={payoutKeys} />

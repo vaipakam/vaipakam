@@ -2431,6 +2431,8 @@ Positions lit le même inventaire que Home via un lecteur partagé : `getUserPos
 
 Le choix du côté filtre les paiements et les lignes en cours et terminées selon le côté détenu. « Rien » n'est affiché que lorsque le parcours des positions et celui des paiements sont complets et que la dernière lecture a réussi ; un parcours arrêté à son plafond est déclaré incomplet. Une ligne ouvre `/positions/<id>`, où le verdict d'éligibilité décide de chaque action ; la liste n'envoie aucune transaction.
 
+Avec deux lignes en cours ou plus après le choix du côté, une carte de récapitulatif vient en premier. Par côté, elle additionne `principal` par `principalAsset` ERC-20, jamais entre jetons (la comparaison des valeurs reste à la ligne d'exposition), et compte les lignes à principal NFT comme des locations. La prochaine date est la plus proche encore à venir parmi les étapes que les lignes utilisent : une échéance en cours ou proche (remboursement) ou un point de contrôle périodique à venir (intérêts), l'égalité allant à l'identifiant de prêt le plus bas. Les prêts dont le délai de grâce est terminé (sur l'échéance ou un point de contrôle), les prêts en délai de grâce et les prêts FallbackPending sont listés par identifiant, chacun une seule fois sous son étape la plus grave ; les prêts dont les échéances n'ont pas pu être lues sont comptés. Les intérêts sont exclus. La carte n'utilise que la lecture de la liste elle-même et signale un parcours partiel.
+
 <a id="position"></a>
 
 ### Position : comment un prêt est lu

@@ -782,6 +782,21 @@ above. Each resolves here, so a route reviewer needs no private file:
   could not be read in full says so. Every row opens its position, where
   the protocol's verdict decides which actions are open (RB-ELIG): the list
   signs nothing and offers no action of its own.
+- **RB-POSITIONS-SUMMARY** — With two or more live loans in the list as
+  the side choice narrows it, Positions opens with one card that adds them
+  up, per side (borrowed, lent): the principal still owed or still out, per
+  token, never added across tokens (comparing values at today's prices is
+  the exposure line's, which counts what it cannot price); NFT rentals
+  counted, never totalled; the next date a payment falls due, repayment or
+  interest checkpoint, with a link to its loan; and the loans that need the
+  reader now, each linked (grace period over, past due in the grace period,
+  in fallback; a loan in more than one stage is named once, under the more
+  severe), plus a count of loans whose dates could not be read, since the
+  next date may be one of them. Interest is not in the totals, and the card
+  says so. It reads only what the list reads, shows nothing until that read
+  answers, and says when the walk was partial. With one loan the card is
+  not shown, since that row already says all of it. It manages no loan: every
+  loan stays its own position and its own row.
 - **RB-POSITION-VIEW** — a loan's own page states, in this order: its
   status in words (an adverse one, fallback or default, as a warning; an
   internal match as closed, with each side collecting on Claims); the

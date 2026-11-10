@@ -2610,6 +2610,8 @@ Positions reads the same inventory as Home through one shared reader: `getUserPo
 
 The side choice filters payouts, live and ended rows by the side held. "Nothing" is said only when the position walk and the payout walk completed and the latest read succeeded; a walk stopped at its cap is stated as incomplete. A row opens `/positions/<id>`, where the eligibility verdict decides each action; the list sends no transaction.
 
+With two or more live rows after the side choice, a summary card comes first. Per side it sums `principal` per ERC-20 `principalAsset`, never across tokens (comparing values stays with the exposure line), and counts NFT-principal rows as rentals. The next date is the earliest still ahead among the stages the rows use: a running or due-soon maturity (repayment) or an upcoming periodic checkpoint (interest), ties going to the lower loan id. Loans whose grace has ended (on the maturity or a checkpoint), loans in grace, and FallbackPending loans are listed by id, each once under its most severe stage; loans with unread deadlines are counted. Interest is excluded. The card reads only the list's own read and states a partial walk.
+
 <a id="position"></a>
 
 ### Position: How a Loan Is Read

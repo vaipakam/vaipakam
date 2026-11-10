@@ -2411,6 +2411,8 @@ Positions lee el mismo inventario que Home mediante un lector compartido: `getUs
 
 La elección de lado filtra los pagos y las filas activas y terminadas por el lado que se guarda. "Nada" se dice solo cuando el recorrido de posiciones y el de pagos se completaron y la última lectura tuvo éxito; un recorrido detenido en su tope se indica como incompleto. Una fila abre `/positions/<id>`, donde el veredicto de elegibilidad decide cada acción; la lista no envía ninguna transacción.
 
+Con dos o más filas activas tras elegir el lado, primero aparece una tarjeta de resumen. Por lado suma `principal` por cada `principalAsset` ERC-20, nunca entre tokens (la comparación de valores queda en la línea de exposición), y cuenta las filas con principal NFT como alquileres. La próxima fecha es la más temprana aún por llegar entre las etapas que usan las filas: un vencimiento en curso o próximo (reembolso) o un punto de control periódico próximo (intereses); un empate va al id de préstamo menor. Los préstamos cuyo periodo de gracia terminó (en el vencimiento o en un punto de control), los préstamos en periodo de gracia y los préstamos FallbackPending se listan por id, cada uno una vez bajo su etapa más grave; los préstamos con plazos no leídos se cuentan. Los intereses se excluyen. La tarjeta usa solo la lectura de la propia lista e indica un recorrido parcial.
+
 <a id="position"></a>
 
 ### Position: cómo se lee un préstamo
