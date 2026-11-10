@@ -192,12 +192,6 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
 
     // ─── Construction ────────────────────────────────────────────────────
 
-    /// @param owner_    The Timelock.
-    /// @param diamond_  The Diamond.
-    /// @param guardian_ The Pauser Safe.
-    /// @param firstImplementation The first vault implementation; registered
-    ///        as version 1 and made current at once (a fresh deploy has no
-    ///        vault to protect yet, and the factory needs code to point at).
     /// @notice #3393 — the init-code hash of every vault proxy this beacon
     ///         serves: a BeaconProxy pointing here, constructed with no call
     ///         data (the factory initializes it in the same transaction). With
@@ -206,6 +200,12 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     ///         vault can tell a genuine vault from a look-alike by address.
     bytes32 public immutable PROXY_INIT_CODE_HASH;
 
+    /// @param owner_    The Timelock.
+    /// @param diamond_  The Diamond.
+    /// @param guardian_ The Pauser Safe.
+    /// @param firstImplementation The first vault implementation; registered
+    ///        as version 1 and made current at once (a fresh deploy has no
+    ///        vault to protect yet, and the factory needs code to point at).
     constructor(address owner_, address diamond_, address guardian_, address firstImplementation)
         Ownable(owner_)
         EIP712("Vaipakam VaultBeacon", "1")
