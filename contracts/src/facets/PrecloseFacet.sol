@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -676,6 +677,9 @@ contract PrecloseFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(borrowerOfferId, offer.expiresAt);
         }
+        // #3443 — the offer's terms must have stood the minimum age before
+        // this path takes it, as on every other fill.
+        LibTiming.requireOfferAged(borrowerOfferId, offer);
         // #3358 — the incoming borrower posted this offer as a maker, so its
         // price-move guard holds here as on every other fill. The handover
         // opens no loan, so loan creation's check never sees it; this is that

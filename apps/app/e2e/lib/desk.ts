@@ -37,6 +37,7 @@ import {
 } from './chain';
 import { accountFor, type Role } from './wallets';
 import { increaseTime } from './anvil';
+import { waitOutTermsAge } from './termsAge';
 import { fetchSignedBook } from './signed';
 import { ensureWeth } from './seed';
 
@@ -401,6 +402,10 @@ function randomNonce(): bigint {
   return nonce;
 }
 
+/** #3443 offer-age wait — lives in `termsAge.ts` (see its header for
+ *  why); re-exported so the desk specs keep importing it from here. */
+export { waitOutTermsAge } from './termsAge';
+
 /** Direct-write accept of an ERC-20/ERC-20 offer of EITHER side (both
  *  shapes seedDeskOffer creates): escrow the acceptor's leg, sign the
  *  canonical AcceptTerms bound to the LIVE getOffer fields, send
@@ -451,6 +456,7 @@ export async function acceptOfferDirect(
   });
   await confirm(approveHash, 'approve (acceptOffer allowance)');
 
+  await waitOutTermsAge(offerId);
   // The chain clock judges the signature deadline — never Date.now()
   // (evm_increaseTime moves the fork far from wall time).
   const chainNow = (await pub.getBlock({ blockTag: 'latest' })).timestamp;
@@ -526,6 +532,17 @@ export async function acceptOfferDirect(
     primaryType: 'AcceptTerms',
     message: terms,
   });
+  // Pad the estimate the way the app does (x1.3). The estimate is taken
+  // against the latest block and the fill lands in the next one, so a
+  // time-dependent branch can cost more than was measured; an unpadded
+  // limit then runs out exactly at the estimate.
+  const estimate = await pub.estimateContractGas({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'acceptOffer',
+    args: [offerId, terms, signature],
+    account,
+  });
   const hash = await wallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -533,6 +550,7 @@ export async function acceptOfferDirect(
     args: [offerId, terms, signature],
     account,
     chain: forkChain,
+    gas: (estimate * 13n) / 10n,
   });
   await confirm(hash, 'acceptOffer');
   // The acceptor's side is the mirror of the creator's.

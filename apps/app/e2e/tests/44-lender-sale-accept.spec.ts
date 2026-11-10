@@ -37,6 +37,7 @@ import { connectWallet } from "../lib/wallet-fixture";
 import {
   newestOfferIdFor,
   consentAndWaitEnabled,
+  openOfferToAccept,
   signAcceptReview,
 } from "../lib/flows";
 import { seedDeskOffer, acceptOfferDirect } from "../lib/desk";
@@ -243,9 +244,7 @@ test("a third wallet buys a listed lender position; the position migrates and th
   const pre = await ledger();
 
   const { page } = buyer;
-  await page.goto(`/lend?offer=${saleOfferId}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await openOfferToAccept(page, "lend", saleOfferId);
   await connectWallet(page);
   await expect(
     page.getByText(

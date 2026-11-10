@@ -11,6 +11,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title SelfTradePreventionTest
@@ -100,6 +101,7 @@ contract SelfTradePreventionTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     function _postBorrowerOffer(address creator)
@@ -137,6 +139,7 @@ contract SelfTradePreventionTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     // ═════════════════════════════════════════════════════════════════

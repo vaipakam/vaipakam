@@ -56,6 +56,7 @@ import {
   freshTenor,
   openMarketViaCustomPair,
   seedDeskOffer,
+  waitOutTermsAge,
 } from '../lib/desk';
 import {
   fetchSignedBook,
@@ -245,6 +246,10 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
     collateralAsset: MUSDC,
     collateralDecimals: decimals,
   });
+
+  // Both offers must have stood the minimum terms age before they match
+  // (#3412); a live matcher arrives later, the spec steps the Anvil clock.
+  await waitOutTermsAge(lenderOfferId, borrowerOfferId);
 
   // The contract confirms Ok BEFORE any DOM assert — if this fails the
   // seed shape regressed, not the band.

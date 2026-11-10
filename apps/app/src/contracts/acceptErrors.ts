@@ -66,6 +66,8 @@ export const ACCEPT_ERROR_NAMES = [
   'CadenceNotAdmitted',
   // #3358 — the offer's price-move guard would refuse the fill.
   'PriceGuardRefused',
+  // #3443 — transient: clears once the terms have stood the minimum age.
+  'TermsTooFresh',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -117,6 +119,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   RefinanceRequestUntakeable: 'refinanceUntakeable',
   CadenceNotAdmitted: 'cadenceNotAdmitted',
   PriceGuardRefused: 'priceGuardRefused',
+  TermsTooFresh: 'termsTooFresh',
 };
 
 /**

@@ -455,8 +455,9 @@ a per-user isolated proxy with no commingling. See ADR-0008
 
 **Viaduct (viaIR)** — Solidity 0.8.29's intermediate-representation
 compilation pipeline (`viaIR = true`). Adopted protocol-wide for
-optimizer determinism. Cost: 5-15 min builds, 8 GB RSS — hence the
-`nice -n -10 ionice -c 2 -n 0` prefix convention.
+optimizer determinism. Cost: 5-15 min builds, 8 GB RSS. (The
+`nice -n -10 ionice -c 2 -n 0` prefix that once accompanied it is retired:
+the owner's machine raises `solc`'s priority automatically, 2026-11-10.)
 
 **VPFI** — the protocol token. ERC-20 on the canonical chain (Base);
 `VPFIMirrorToken` proxy on mirror chains. Wired for fee discounts,

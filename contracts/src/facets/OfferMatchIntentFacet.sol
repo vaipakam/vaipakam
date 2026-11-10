@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -121,6 +122,9 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];
         if (!intent.active) revert LenderIntentInactive();
+        // #3443 — the intent's terms must have stood the minimum age, so an
+        // intent cannot be set (or re-priced) and filled in the same block.
+        LibTiming.requireIntentAged(lender, intent.termsSetAt);
         // #393 v1-c — permissioned-solver gate. A `requiresKeeperAuth` intent may
         // only be filled by the lender themselves or a solver the lender has
         // authorized for `KEEPER_ACTION_SIGNED_FILL` (pre-loan, principal-keyed).

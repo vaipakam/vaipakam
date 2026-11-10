@@ -17,6 +17,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @title  OfferPrincipalLockTest
 /// @notice T-407-C (#566) — end-to-end lifecycle coverage for the
@@ -108,9 +109,11 @@ contract OfferPrincipalLockTest is SetupTest {
         returns (uint256)
     {
         vm.prank(lender);
-        return OfferCreateFacet(address(diamond)).createOffer(
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             _lenderParams(amount, amountMax)
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     function _lenderVault() internal returns (address) {

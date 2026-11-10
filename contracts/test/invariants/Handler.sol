@@ -27,6 +27,7 @@ import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 
 /**
  * @title Handler
@@ -523,6 +524,7 @@ contract Handler is Test {
         LibVaipakam.Loan memory L = _getLoan(loanId);
         if (L.status != LibVaipakam.LoanStatus.Active) return;
 
+        LibTestTiming.waitOutTermsAge(diamond, offerId); // #3443
         vm.prank(L.lender);
         try EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, offerId) {
             ghostSold[loanId] = true;

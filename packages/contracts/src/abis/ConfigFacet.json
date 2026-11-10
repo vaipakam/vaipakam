@@ -368,6 +368,19 @@
   },
   {
     "type": "function",
+    "name": "getMinTermsAgeSec",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getNotificationFeeConfig",
     "inputs": [],
     "outputs": [
@@ -1138,6 +1151,19 @@
         "name": "maxSlippageBps",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMinTermsAgeSec",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -1962,6 +1988,19 @@
   },
   {
     "type": "event",
+    "name": "MinTermsAgeSecSet",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MirrorTierMaxAgeSecSet",
     "inputs": [
       {
@@ -2692,6 +2731,17 @@
         "name": "ceilDays",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidMinTermsAgeSec",
+    "inputs": [
+      {
+        "name": "newValue",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

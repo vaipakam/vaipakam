@@ -359,6 +359,22 @@
   },
   {
     "type": "error",
+    "name": "IntentTermsTooFresh",
+    "inputs": [
+      {
+        "name": "lender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidOfferType",
     "inputs": []
   },
@@ -430,6 +446,22 @@
         "name": "expiresAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OfferTermsTooFresh",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

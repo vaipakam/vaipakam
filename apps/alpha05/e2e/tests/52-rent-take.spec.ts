@@ -17,6 +17,7 @@ import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { ageOffer } from '@vaipakam/anvil-harness/lending';
 
 const NFT_ABI = parseAbi(['function mint(address to, uint256 tokenId)', 'function ownerOf(uint256 tokenId) view returns (address)']);
 const TOKEN_ABI = parseAbi(['function mint(address to, uint256 amount)', 'function approve(address spender, uint256 amount) returns (bool)']);
@@ -80,6 +81,7 @@ test('an owner takes a renter’s request: a token not held is refused in the re
     },
   ]);
   const offerId = BigInt(sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated')!.args.offerId as bigint);
+  await ageOffer(sc, offerId);
   const id = offerId.toString();
 
   // Its page reads it as a renter's request and offers renting the NFT out.

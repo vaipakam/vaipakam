@@ -17,6 +17,7 @@ import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { ageOffer } from '@vaipakam/anvil-harness/lending';
 
 const NFT_ABI = parseAbi(['function mint(address to, uint256 tokenId)', 'function approve(address to, uint256 tokenId)']);
 const TOKEN_ABI = parseAbi(['function mint(address to, uint256 amount)', 'function balanceOf(address owner) view returns (uint256)']);
@@ -93,6 +94,7 @@ test('an empty rental book offers the faucet; an owner lists an NFT and a renter
     },
   ]);
   const offerId = BigInt(sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated')!.args.offerId as bigint);
+  await ageOffer(sc, offerId);
   const id = offerId.toString();
   const raw = await sc.read<{ rentalBufferBpsAtCreate: number }>('getOffer', [offerId]);
   const bufferBps = BigInt(raw.rentalBufferBpsAtCreate);

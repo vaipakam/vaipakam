@@ -18,6 +18,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -87,6 +88,7 @@ contract OfferPriceGuardTest is SetupTest {
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId);
     }
 
     function _guard(uint256 offerId, uint16 bps) internal {
@@ -388,6 +390,7 @@ contract OfferPriceGuardTest is SetupTest {
         borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500)
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), borrowerOfferId);
     }
 
     function _previewMatch(uint256 lo, uint256 bo) internal view returns (LibOfferMatch.MatchError) {
@@ -436,6 +439,7 @@ contract OfferPriceGuardTest is SetupTest {
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId);
         vm.prank(buyer);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(buyOfferId, 500);
 
@@ -459,6 +463,9 @@ contract OfferPriceGuardTest is SetupTest {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500)
         );
+        // Backdated rather than waited: a handover's incoming offer must end
+        // by the loan's maturity, so the clock must not move.
+        LibTestTiming.backdateTerms(address(diamond), offerId);
         vm.prank(incoming);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
         ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);

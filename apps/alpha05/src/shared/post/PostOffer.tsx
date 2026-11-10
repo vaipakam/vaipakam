@@ -29,6 +29,7 @@ import { shortAddress } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
 import { tariffStoreKeys, type ArmContext } from './ArmTariff';
 import { createdOffer } from './postOutcome';
+import { guardPostLeg, postCall } from './guardPost';
 import { erc20Pair, nftCollateralPair, type RiskNeed } from '../risk/riskAccess';
 import { nftApproval } from '../tx/nftApproval';
 import { operatorApproval } from '../tx/operatorApproval';
@@ -222,14 +223,16 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
 
       // 2. The dry run with the approval in place: the protocol's verdict
       //    on the whole request, collateral pull included.
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params], account }));
+      //    With a guard, the post is the batch that arms it (guardPost).
+      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps);
+      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       if (dry.kind === 'reverted') return stop(format(k.dryRunRefused, { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 
       // 3. The request or offer.
       say(text(k.stepSend));
       try {
-        return await writeContract(config, { address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params], chainId: chain.chainId, account });
+        return await writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account });
       } catch (e) {
         return stop(format(k.stoppedAfterApproval, { reason: refusalFromError(e).reason }));
       }
@@ -273,6 +276,8 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       } else {
         legs.push({ status: 'not-done', label: text(POST_KEYS[r.draft.side].legNoOffer), reason: text(POST_KEYS[r.draft.side].noOffer) });
       }
+      // #3358: the guard the post armed, as recorded for the offer it made.
+      legs.push(...guardPostLeg(r.draft.parsed, receipt.logs, diamond, id, copy));
       const collateral = r.draft.pair.collateral;
       const stake = stakeOfDraft(r.draft);
       const h = r.holding;

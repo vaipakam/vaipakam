@@ -27,6 +27,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title PauseGatingTest
@@ -125,6 +126,7 @@ contract PauseGatingTest is SetupTest {
     }
 
     function test_pause_transferObligationViaOffer() public {
+        LibTestTiming.waitOutTermsAge(address(diamond), 0); // #3443
         vm.expectRevert(LibPausable.EnforcedPause.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(0, 0);
     }
@@ -160,6 +162,7 @@ contract PauseGatingTest is SetupTest {
     // ── EarlyWithdrawalFacet ────────────────────────────────────────────────
 
     function test_pause_sellLoanViaBuyOffer() public {
+        LibTestTiming.waitOutTermsAge(address(diamond), 0); // #3443
         vm.expectRevert(LibPausable.EnforcedPause.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(0, 0);
     }

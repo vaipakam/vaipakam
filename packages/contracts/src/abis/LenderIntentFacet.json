@@ -100,6 +100,11 @@
             "name": "requiresKeeperAuth",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "termsSetAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

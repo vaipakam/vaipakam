@@ -119,6 +119,7 @@ import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
@@ -307,7 +308,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 113 -> 114: OfferPriceGuardFacet (#3358) - the maker's price-move
     // guard, which loan creation and the accept and match previews self-call.
     // Its selectors are new (Adds).
-    uint256 public constant EXPECTED_FACETS = 114;
+    // 114 -> 115: SignedOfferMatchFacet (#3443) - the signed-offer
+    // keeper-matcher, split off OfferMatchFacet for EIP-170. Its selector
+    // moves hosts, so the Replace cut repoints it.
+    uint256 public constant EXPECTED_FACETS = 115;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1346,6 +1350,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[111] = Item("vaultOutflowFacet", ArtifactDeploy.deploy(type(VaultOutflowFacet).name), _getVaultOutflowSelectors());
         items[112] = Item("forcedSalePreviewFacet", ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name), _getForcedSalePreviewSelectors());
         items[113] = Item("offerPriceGuardFacet", ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name), _getOfferPriceGuardSelectors());
+        items[114] = Item("signedOfferMatchFacet", ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name), _getSignedOfferMatchSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

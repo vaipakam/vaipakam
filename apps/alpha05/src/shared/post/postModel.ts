@@ -103,6 +103,11 @@ export interface PostInput {
   tariffCeiling: string;
   /** Whether a loan the tariff cannot be taken on opens without it. */
   tariffDowngrade: boolean;
+  /** #3358 (Advanced): post with a price-move guard, armed in the same
+   *  transaction; only an ERC-20 against ERC-20 offer can carry one. */
+  guard: boolean;
+  /** The guard's limit in percent, as typed ("5"). */
+  guardPercent: string;
 }
 
 /** OFF-11: the fill modes, in the protocol's `FillMode` order. */
@@ -131,6 +136,8 @@ export const DEFAULT_INPUT: PostInput = {
   tariff: false,
   tariffCeiling: '',
   tariffDowngrade: false,
+  guard: false,
+  guardPercent: '',
 };
 
 /** Why a fill mode cannot go with the rest of the request: all-or-none
@@ -173,7 +180,7 @@ export function partCollateral(collateral: bigint, part: bigint, amountMax: bigi
 
 /** The Advanced options a request carries, named so a Basic reader is told
  *  they still apply (RB-MODE: switching mode never drops what was set). */
-export type AdvancedOption = 'range' | 'fill' | 'cadence' | 'tariff';
+export type AdvancedOption = 'range' | 'fill' | 'cadence' | 'tariff' | 'guard';
 
 export function advancedSet(input: PostInput): AdvancedOption[] {
   const out: AdvancedOption[] = [];
@@ -181,6 +188,7 @@ export function advancedSet(input: PostInput): AdvancedOption[] {
   if (input.fillMode !== 'partial') out.push('fill');
   if (input.cadence !== 0) out.push('cadence');
   if (input.tariff) out.push('tariff');
+  if (input.guard) out.push('guard');
   return out;
 }
 
@@ -265,6 +273,9 @@ export interface ParsedPost {
   /** OFF-22: the Full tariff opt-in, armed by its own transaction after
    *  posting; null when not chosen. */
   tariff: TariffChoice | null;
+  /** #3358: the price-move guard armed with the post, in bps of the
+   *  collateral-to-principal rate; null for none. */
+  guardBps: number | null;
   rateBps: bigint;
   durationDays: number;
   expiry: ExpiryChoice;

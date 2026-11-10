@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestTiming} from "./LibTestTiming.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
@@ -50,7 +51,11 @@ library LibAcceptTestSigner {
         uint256 offerId,
         bool consent,
         uint256 linkedLoanId
-    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+    ) internal returns (LibAcceptTerms.AcceptTerms memory t) {
+        // #3443 — an offer fills only once its terms have stood the minimum
+        // age; a live taker arrives later, so the helper moves the chain there
+        // before stamping the terms' deadline.
+        LibTestTiming.waitOutTermsAge(diamond, offerId);
         LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
         bool isERC20 = o.assetType == LibVaipakam.AssetType.ERC20;
         bool isLender = o.offerType == LibVaipakam.OfferType.Lender;
@@ -106,7 +111,7 @@ library LibAcceptTestSigner {
         uint256 offerId,
         bool consent,
         uint256 linkedLoanId
-    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+    ) internal returns (LibAcceptTerms.AcceptTerms memory t) {
         t = buildTerms(diamond, acceptor, offerId, consent, linkedLoanId);
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(linkedLoanId);
         t.amount = loan.principal;
@@ -125,7 +130,7 @@ library LibAcceptTestSigner {
         bool consent,
         uint256 maxCStar,
         bool allowDowngrade
-    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+    ) internal returns (LibAcceptTerms.AcceptTerms memory t) {
         t = buildTerms(diamond, acceptor, offerId, consent, 0);
         t.acceptorFull = true;
         t.acceptorMaxCStar = maxCStar;

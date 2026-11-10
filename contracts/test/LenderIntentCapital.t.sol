@@ -24,6 +24,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  LenderIntentCapitalTest
@@ -69,6 +70,7 @@ contract LenderIntentCapitalTest is SetupTest {
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
         );
+        LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
     }
 
     /// @dev Mint wallet balance + approve the Diamond for exactly `amount`,
@@ -161,6 +163,7 @@ contract LenderIntentCapitalTest is SetupTest {
                 useFullTermInterest: true
             })
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     // ─── 1. Fund — increments capital + moves wallet → vault ─────────────────

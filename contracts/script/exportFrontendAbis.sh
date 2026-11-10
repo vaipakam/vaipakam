@@ -305,6 +305,7 @@ FACETS=(
   "ForcedSalePreviewFacet"
   # The maker's price-move guard on an offer (#3358).
   "OfferPriceGuardFacet"
+  "SignedOfferMatchFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

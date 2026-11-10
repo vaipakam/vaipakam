@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -225,6 +226,11 @@ contract OfferPreviewFacet {
         // #195 — GTT lazy-expiry, before sanctions / pause / KYC.
         if (LibVaipakam.isOfferExpired(offer)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferExpired;
+            return preview;
+        }
+        // #3443 — mirrors `_acceptOffer`'s terms-age gate, right after expiry.
+        if (!LibTiming.termsAged(offer.termsSetAt)) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.TermsTooFresh;
             return preview;
         }
         // #1503 PR-A (Codex #1505 r2 + r3 ordering) — mirror `_acceptOffer`'s

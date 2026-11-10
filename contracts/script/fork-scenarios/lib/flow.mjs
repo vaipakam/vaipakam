@@ -26,6 +26,7 @@ import {
   forkChain,
   parseUnits,
   pub,
+  rpc,
   tx,
   walletFor,
 } from './chain.mjs';
@@ -317,7 +318,27 @@ export async function acceptStoredOffer(offerId, acceptor, overrides = {}) {
   return acceptOffer(offerId, stored, acceptor, { address: stored.creator }, { linkedLoanId, ...overrides });
 }
 
+/**
+ * #3443 — an offer can be filled only once its terms have stood the
+ * Diamond's minimum age (`getMinTermsAgeSec`). A live taker simply arrives
+ * later; a scenario that posts and accepts back to back advances the fork by
+ * exactly the shortfall first, never otherwise.
+ */
+export async function waitOutTermsAge(offerId) {
+  const minAge = await read(ABIS.config, 'getMinTermsAgeSec', []).catch(() => null);
+  if (minAge === null) return; // a Diamond without the rule
+  const { termsSetAt } = await read(ABIS.offerCancel, 'getOffer', [offerId]);
+  if (!termsSetAt) return; // terms that carry no age
+  const readyAt = BigInt(termsSetAt) + BigInt(minAge);
+  const now = BigInt(await chainNow());
+  if (readyAt > now + 1n) {
+    await rpc('evm_increaseTime', [Number(readyAt - now)]);
+    await rpc('evm_mine');
+  }
+}
+
 export async function acceptOffer(offerId, offer, acceptor, creator, overrides = {}) {
+  await waitOutTermsAge(offerId);
   const terms = await acceptTerms(offerId, offer, acceptor, creator, overrides);
   const signature = await walletFor(acceptor).signTypedData({
     domain: { name: 'Vaipakam AcceptOffer', version: '1', chainId: forkChain.id, verifyingContract: DIAMOND },
