@@ -377,6 +377,10 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         address newHolder = makeAddr("new-borrower-holder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(LOAN).borrowerTokenId;
+        // #3413 — the settlement paid the lender, so the loan's tokens may not
+        // move in that block nor for the 5-second cooldown after it.
+        vm.roll(block.number + 1);
+        vm.warp(block.timestamp + 5);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         vm.prank(newHolder);

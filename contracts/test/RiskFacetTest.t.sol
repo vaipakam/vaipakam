@@ -1147,6 +1147,7 @@ contract RiskFacetTest is Test {
     {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         holder = makeAddr(tag);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), l.lenderTokenId);
         vm.prank(l.lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(
             l.lender, holder, l.lenderTokenId
@@ -5493,6 +5494,7 @@ contract RiskFacetTest is Test {
         address storedLender = l0.lender;
         address newHolder = makeAddr("holder1383");
 
+        LibTestPositionNFT.waitOutCooldown(address(diamond), l0.lenderTokenId);
         vm.prank(storedLender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(
             storedLender, newHolder, l0.lenderTokenId

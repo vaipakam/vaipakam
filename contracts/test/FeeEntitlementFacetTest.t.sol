@@ -482,6 +482,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), ol.lenderTokenId);
         vm.prank(lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, ol.lenderTokenId);
 
@@ -1403,6 +1404,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // load-bearing on every rental default, not just an edge case.
         LibVaipakam.Loan memory rl = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address rHolder = makeAddr("rentalHolder1955");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), rl.lenderTokenId);
         vm.prank(rl.lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(
             rl.lender, rHolder, rl.lenderTokenId
@@ -1544,6 +1546,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), ol.lenderTokenId);
         vm.prank(ol.lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(ol.lender, holder, ol.lenderTokenId);
 

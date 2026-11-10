@@ -304,6 +304,7 @@ contract TierExclusionTest is SetupTest {
         assertEq(_tierBalance(borrowerEoa), OWN_VPFI + LOAN_COLLATERAL, "self-held: all of it counts");
 
         address buyer = makeAddr("claimBuyer");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), BORROWER_TOKEN);
         vm.prank(borrowerEoa);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrowerEoa, buyer, BORROWER_TOKEN);
 
@@ -313,6 +314,7 @@ contract TierExclusionTest is SetupTest {
         assertEq(bVpfi, LOAN_COLLATERAL, "sold claim: the liened collateral is the buyer's");
         assertEq(_tierBalance(borrowerEoa), OWN_VPFI, "the seller keeps credit only on their own VPFI");
 
+        LibTestPositionNFT.waitOutCooldown(address(diamond), BORROWER_TOKEN);
         vm.prank(buyer);
         LibTestPositionNFT.core(address(diamond)).transferFrom(buyer, borrowerEoa, BORROWER_TOKEN);
         (, , bv, bVpfi) = _exclusion();
@@ -329,6 +331,7 @@ contract TierExclusionTest is SetupTest {
         TestMutatorFacet(address(diamond)).setVpfiTokenRaw(address(collateralAsset));
         _scaffold(OWN_VPFI);
 
+        LibTestPositionNFT.waitOutCooldown(address(diamond), BORROWER_TOKEN);
         vm.prank(borrowerEoa);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrowerEoa, makeAddr("liveBuyer"), BORROWER_TOKEN);
 
@@ -372,6 +375,7 @@ contract TierExclusionTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLegacyFrozenVpfiRaw(LOAN_ID, false, borrowerEoa, legacy);
         assertEq(_owedToOthers(borrowerEoa), legacy, "fixture: the legacy bump is in the aggregate");
 
+        LibTestPositionNFT.waitOutCooldown(address(diamond), BORROWER_TOKEN);
         vm.prank(borrowerEoa);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrowerEoa, makeAddr("legacyBuyer"), BORROWER_TOKEN);
 

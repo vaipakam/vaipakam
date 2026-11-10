@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
@@ -888,6 +889,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.backstopEligibleAfter = 0;
             emit OfferBackstopEligibilitySet(offerId, 0);
         }
+        // #3413 — the offer's terms changed: its token cools down, so a sale
+        // of the offer position cannot fill against terms changed just before.
+        LibPositionNFT.markOfferValueOut(offerId);
         emit OfferModified(
             offerId,
             offer.creator,

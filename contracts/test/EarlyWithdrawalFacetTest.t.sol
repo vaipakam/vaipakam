@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {PositionNFT} from "../src/PositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -801,6 +802,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 borrowerTokenId =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
         // Borrower position moves to the buy offer's creator (the buyer).
+        LibTestPositionNFT.waitOutCooldown(address(diamond), borrowerTokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(
             borrower, newLender, borrowerTokenId
@@ -828,6 +830,7 @@ contract EarlyWithdrawalFacetTest is Test {
         address holder = makeAddr("itemFiveBorrowerHolder");
         uint256 borrowerTokenId =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), borrowerTokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(
             borrower, holder, borrowerTokenId
@@ -936,6 +939,35 @@ contract EarlyWithdrawalFacetTest is Test {
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
+    }
+
+    /// @dev #3413 — a direct sale pays the seller and re-mints the lender side
+    ///      to the buyer, retiring the seller's token. Retiring stamps the
+    ///      loan, so neither the seller's old token (now a receipt) nor the
+    ///      loan's other tokens move in the sale's block or within the
+    ///      cooldown: a marketplace buyer of the old token in that block gets
+    ///      a refusal, not an empty receipt.
+    function testSellLoanViaBuyOffer_StampsTheLoanForTheCooldown() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        uint256 oldToken = LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        // Past the loan's own start cooldown, so the stamp read below is the sale's.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), oldToken);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint64 atBlock = uint64(vm.getBlockNumber());
+        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
+
+        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(oldToken);
+        assertEq(b2, atBlock, "the sale stamped the loan");
+        assertEq(r2, readyAt);
+        PositionNFT nft = LibTestPositionNFT.core(address(diamond));
+        address seller = nft.ownerOf(oldToken);
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, oldToken, atBlock, readyAt)
+        );
+        vm.prank(seller);
+        nft.transferFrom(seller, makeAddr("marketBuyer"), oldToken);
     }
 
     /// @dev Protected account mode: a locked buyer opens no new position, and

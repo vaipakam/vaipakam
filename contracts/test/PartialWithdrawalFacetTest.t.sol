@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {PositionNFT} from "../src/PositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -498,5 +499,117 @@ contract PartialWithdrawalFacetTest is Test {
             COLLATERAL - 30 ether,
             "withdrawal honored under the 1.5 snapshot despite the raised 1.8 live floor"
         );
+    }
+
+    // ─── #3413 transfer cooldown after a value-out ───────────────────────
+
+    /// @dev Transfer `tokenId` from its holder, expecting `revertData` (empty
+    ///      for success). Holder read first, so the expectation and the prank
+    ///      land on the transfer itself.
+    function _tryMove(uint256 tokenId, bytes memory revertData) internal {
+        PositionNFT nft = LibTestPositionNFT.core(address(diamond));
+        address holder = nft.ownerOf(tokenId);
+        address buyer = makeAddr("buyer");
+        if (revertData.length != 0) vm.expectRevert(revertData);
+        vm.prank(holder);
+        nft.transferFrom(holder, buyer, tokenId);
+    }
+
+    function _withdrawSome() internal returns (uint64 atBlock, uint64 readyAt) {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.prank(borrower);
+        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
+        atBlock = uint64(block.number);
+        readyAt = uint64(block.timestamp) + 5;
+    }
+
+    /// @dev A direct accept turns the offer's own token into the loan's
+    ///      token, and the borrower side took its principal: the new loan
+    ///      cools down from its start, then both sides move freely.
+    function testCooldown_ANewLoanCoolsDownFromItsStartThenMoves() public {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.lenderTokenId);
+        assertGt(b, 0, "the accept stamped the loan");
+        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
+        assertEq(b2, b, "both sides read the loan's stamp");
+        assertEq(r2, r);
+        if (vm.getBlockNumber() <= b) {
+            _tryMove(
+                loan.lenderTokenId,
+                abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, b, r)
+            );
+        }
+        vm.roll(uint256(b) + 1);
+        if (vm.getBlockTimestamp() < r) vm.warp(r);
+        _tryMove(loan.lenderTokenId, "");
+        _tryMove(loan.borrowerTokenId, "");
+    }
+
+    function testCooldown_WithdrawalHoldsBothSidesForABlockAndTheCooldown() public {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        (uint64 atBlock, uint64 readyAt) = _withdrawSome();
+
+        (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
+        assertEq(b, atBlock, "stamped in this block");
+        assertEq(r, readyAt, "ready after the default 5 seconds");
+
+        bytes memory borrowerErr = abi.encodeWithSelector(
+            VaipakamNFTFacet.PositionCoolingDown.selector, loan.borrowerTokenId, atBlock, readyAt
+        );
+        bytes memory lenderErr = abi.encodeWithSelector(
+            VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, atBlock, readyAt
+        );
+        // Same block: neither side moves.
+        _tryMove(loan.borrowerTokenId, borrowerErr);
+        _tryMove(loan.lenderTokenId, lenderErr);
+
+        // The time has passed but it is still the same block: refused.
+        vm.warp(block.timestamp + 60);
+        _tryMove(loan.borrowerTokenId, borrowerErr);
+
+        // A later block, but before the cooldown: refused.
+        vm.warp(readyAt - 1);
+        vm.roll(block.number + 1);
+        _tryMove(loan.borrowerTokenId, borrowerErr);
+
+        // A later block at the cooldown's end: moves.
+        vm.warp(readyAt);
+        _tryMove(loan.borrowerTokenId, "");
+        _tryMove(loan.lenderTokenId, "");
+    }
+
+    function testCooldown_AdminSetsItWithinBounds() public {
+        (uint32 sec, uint32 minSec, uint32 maxSec) = VaipakamNFTFacet(address(diamond)).positionTransferCooldownSec();
+        assertEq(sec, 5, "default");
+        assertEq(minSec, 1);
+        assertEq(maxSec, 600);
+
+        vm.expectRevert(abi.encodeWithSelector(VaipakamNFTFacet.InvalidPositionTransferCooldown.selector, uint32(0)));
+        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(0);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamNFTFacet.InvalidPositionTransferCooldown.selector, uint32(601)));
+        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(601);
+
+        vm.prank(lender);
+        vm.expectRevert();
+        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(60);
+
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit VaipakamNFTFacet.PositionTransferCooldownSet(60);
+        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(60);
+        (sec,,) = VaipakamNFTFacet(address(diamond)).positionTransferCooldownSec();
+        assertEq(sec, 60);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        (uint64 atBlock,) = _withdrawSome();
+        (, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
+        assertEq(r, uint64(block.timestamp) + 60, "the set cooldown applies");
+        vm.roll(atBlock + 1);
+        vm.warp(block.timestamp + 59);
+        _tryMove(
+            loan.borrowerTokenId,
+            abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, loan.borrowerTokenId, atBlock, r)
+        );
+        vm.warp(r);
+        _tryMove(loan.borrowerTokenId, "");
     }
 }
