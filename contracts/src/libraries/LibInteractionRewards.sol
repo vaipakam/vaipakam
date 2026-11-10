@@ -1160,9 +1160,13 @@ library LibInteractionRewards {
     function retireAndAdvanceClaimWindow(address user, ClaimEntriesResult memory res) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (uint256 from, ) = claimWindow(s, user);
+        // The start as this claim found it: retiring an entry can reset the
+        // stored start to zero (the index came to fit one window), and that
+        // reset is the window moving, so it is compared against here rather
+        // than read back afterwards (Codex #3487 r3).
+        uint256 start = s.rewardClaimWindowStart[user];
         _retireSettledFrom(s, user, from, CLAIM_WINDOW_ENTRIES);
         uint256 n = s.userRewardEntryIds[user].length;
-        uint256 start = s.rewardClaimWindowStart[user];
         uint256 next;
         if (n > CLAIM_WINDOW_ENTRIES) {
             next = from + CLAIM_WINDOW_ENTRIES;

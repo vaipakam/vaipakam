@@ -379,4 +379,31 @@ contract RewardClaimWorkMeterTest is SetupTest {
         (from, , ) = _window();
         assertEq(from, 0, "the window comes back to the start");
     }
+
+    /// @dev Codex #3487 r3 — retiring the window's last entry can reset the
+    ///      stored start to zero (the index comes to fit one window). That is
+    ///      the window moving, so the claim counts it as progress and stands:
+    ///      read back after the retirement, the reset looked like no move, the
+    ///      claim reverted, and the retirement and reset rolled back with it.
+    function test_ARetirementThatResetsTheWindow_IsTheClaimsProgress() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        for (uint256 i; i < w; ++i) {
+            _mut().pushRewardEntry(alice, uint64(10_000 + i), LibVaipakam.RewardSide.Lender, 1e18, 10_000);
+        }
+        uint256[] memory ids = _scene(1, 1, type(uint256).max);
+        assertTrue(_claimOnce(), "the first window paid nothing and moved on");
+        (uint256 from, , uint256 total) = _window();
+        assertEq(from, w);
+        assertEq(total, w + 1);
+
+        // The one entry the window now holds is settled elsewhere (as an
+        // expiry sweep would), so the next claim only retires it.
+        _mut().setRewardEntryProcessedRaw(ids[0], true);
+        vm.warp(block.timestamp + 1 hours);
+        assertTrue(_claimOnce(), "the retirement that resets the window is the claim's progress");
+        (from, , total) = _window();
+        assertEq(from, 0, "the window is back at the start");
+        assertEq(total, w, "the settled entry left the index");
+        assertEq(_windowChangedAt(), block.timestamp, "the reset is recorded for the expiry clocks");
+    }
 }
