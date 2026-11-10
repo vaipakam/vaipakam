@@ -2261,6 +2261,8 @@ Die Klasse jedes Tokens wird live gelesen: zuerst `getAssetPriceStatus(asset)` (
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` liefert die offenen Angebots-IDs des Paars und die Gesamtzahl. Für jede liest die Seite `getOffer`, `getOfferState` und, mit Wallet, `previewAccept(offerId, wallet)`, dessen `errorCode` die Ablehnung des Protokolls ist. Der Beleihungswert ist `calculateLTV` zu heutigen Preisen; eine illiquide oder preislose Seite sagt, warum es keinen gibt. Eine direkte Annahme bindet `amountMax` des Verleihers zu `interestRateBps`. Kreditanfragen, Angebote mit NFT-Seite und eigene Angebote werden gezählt, nicht gelistet.
 
+Die App gruppiert die Zeilen nach dem Zinssatz, den die Annahme bindet (`interestRateBps`), der niedrigste zuerst; innerhalb einer Stufe bleibt die Reihenfolge der Liste. Der höchste Zinssatz und im Advanced-Modus der höchste Beleihungswert filtern nur die gelesenen Zeilen; eine Zeile, deren `calculateLTV` keine Zahl ist, bleibt und wird gezählt. Die Zeile der bereitstehenden Verleiher liest `getActiveLenderIntents(offset, 50)`, bis zu vier Seiten, behält die Intents des Paars und nimmt für jeden das Kleinere aus `availableCapital` und `maxExposure` minus `livePrincipal`; einer unter `minFillAmount` entfällt. Sie zeigt die Anzahl, den größten Einzelwert und das niedrigste `minRateBps`, im Advanced-Modus dazu das höchste `maxDurationDays` und `maxInitLtvBps`. Ein Abgleichdienst füllt eine Anfrage aus einem Intent nur innerhalb dieser Grenzen, daher ist eine Füllung nicht garantiert.
+
 <a id="borrow-review"></a>
 
 ### Borrow: Prüfen und Signieren

@@ -1116,6 +1116,8 @@ Primero elige qué pedir prestado y qué bloquear. La app sugiere tokens de la r
 
 La página muestra las ofertas abiertas de prestamistas para tus dos tokens, leídas del propio protocolo. Cada una indica la cantidad, la tasa y el plazo, la garantía pedida, la relación préstamo-valor a los precios de hoy, cómo se cobran los intereses, el calendario de intereses si lo hay, cuándo termina la oferta y lo que recibirías tras la comisión. Una oferta se acepta entera, por la cantidad completa del prestamista y su tasa más baja. Si el protocolo rechazaría una oferta, la página dice por qué y no muestra botón. El orden es una ayuda, no un consejo.
 
+Primero la página nombra las dos formas de pedir prestado: tomar una oferta ahora, o fijar tu propia tasa con una solicitud y esperar a un prestamista. Las ofertas se agrupan por tasa, la más baja primero, y cada escalón muestra cuántas ofertas contiene y el importe de cada una; los importes nunca se suman, porque tomas una oferta entera. Puedes escribir la tasa más alta que aceptas, que solo oculta ofertas e indica cuántas. Junto a la solicitud, la página muestra los prestamistas listos para tu par: un servicio de emparejamiento llena una solicitud con sus fondos cuando sus condiciones caben en sus límites, así que es probable que se llene, pero no es inmediato ni está garantizado.
+
 <a id="borrow-review"></a>
 
 ### Borrow: Revisar y firmar

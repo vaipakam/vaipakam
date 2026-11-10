@@ -2450,6 +2450,8 @@ Each token's class is read live: `getAssetPriceStatus(asset)` first (Divergent r
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` gives the pair's open offer ids and total. For each, the page reads `getOffer`, `getOfferState` and, with a wallet, `previewAccept(offerId, wallet)`, whose `errorCode` is the protocol's refusal. The loan-to-value is `calculateLTV` at today's prices; an illiquid or unpriced leg says why there is none. A direct take binds the lender's `amountMax` at `interestRateBps`. Offers that are borrow requests, carry an NFT leg or are the reader's own are counted, not listed.
 
+Rows are grouped in the app by the rate the take binds (`interestRateBps`), lowest first; within a step the list order holds. The highest rate and, in Advanced, the highest loan-to-value only filter the rows read; a row whose `calculateLTV` is not a figure is kept and counted. The standing-lenders line reads `getActiveLenderIntents(offset, 50)`, up to four pages, keeps the pair's intents and takes for each the smaller of `availableCapital` and `maxExposure` minus `livePrincipal`, dropping one below `minFillAmount`. It shows the count, the largest single figure and the lowest `minRateBps`, and in Advanced the highest `maxDurationDays` and `maxInitLtvBps`. A matching service fills a request against an intent only within those limits, so a fill is not guaranteed.
+
 <a id="borrow-review"></a>
 
 ### Borrow: Review and Signing

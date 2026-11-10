@@ -2271,6 +2271,8 @@ La classe de chaque token est lue en direct : d'abord `getAssetPriceStatus(asset
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` donne les ids d'offres ouvertes de la paire et le total. Pour chacune, la page lit `getOffer`, `getOfferState` et, avec un wallet, `previewAccept(offerId, wallet)`, dont le `errorCode` est le refus du protocole. Le ratio prêt-valeur est `calculateLTV` aux prix du jour ; un côté illiquide ou sans prix dit pourquoi il n'y en a pas. Une acceptation directe fixe le `amountMax` du prêteur à `interestRateBps`. Les demandes d'emprunt, les offres avec un côté NFT et les siennes sont comptées, pas listées.
 
+L'application regroupe les lignes par le taux que la prise engage (`interestRateBps`), le plus bas d'abord ; dans un palier, l'ordre de la liste est conservé. Le taux le plus élevé et, en mode Advanced, le ratio prêt-valeur le plus élevé ne font que filtrer les lignes lues ; une ligne dont `calculateLTV` n'est pas un chiffre est gardée et comptée. La ligne des prêteurs prêts lit `getActiveLenderIntents(offset, 50)`, jusqu'à quatre pages, garde les intentions de la paire et retient pour chacune le plus petit de `availableCapital` et de `maxExposure` moins `livePrincipal`, en écartant celle sous `minFillAmount`. Elle affiche le nombre, le plus grand chiffre individuel et le plus bas `minRateBps`, et en mode Advanced les plus hauts `maxDurationDays` et `maxInitLtvBps`. Un service de rapprochement ne remplit une demande sur une intention que dans ces limites, donc un remplissage n'est pas garanti.
+
 <a id="borrow-review"></a>
 
 ### Borrow: Vérifier et signer

@@ -659,6 +659,27 @@ above. Each resolves here, so a route reviewer needs no private file:
   record of it, the fee share paid back to the sender beside it, the two
   plus the rest of the fee adding up to the principal the loan recorded,
   and offers the withdrawal.
+- **RB-BORROW-WAYS** — Once the pair is chosen, Borrow names both ways
+  up front, side by side on a wide screen and stacked on a phone: borrow
+  now (take a lender's open offer whole) and set your own rate (post a
+  request and wait), each in one sentence, before the list (#3319). A
+  borrower's list reads as a ladder grouped by rate, lowest first; each
+  step states how many offers it holds and the amount of each, never a
+  sum, because one borrow takes one offer whole. The borrower may type the
+  highest rate they accept, and in Advanced the highest loan-to-value:
+  these only hide offers, the page states how many each hid, an unreadable
+  limit applies none and says so, and an offer whose loan-to-value is not a
+  figure is kept and counted apart rather than hidden on a figure the
+  protocol did not report. The way to set your own rate, and the request
+  form under its heading, state the lenders standing ready for the pair
+  from the protocol's list of active, funded lender intents: how many, the
+  most any one of them can lend now (never a sum, since one lender fills a
+  request), and the lowest rate any accepts, with Advanced adding the
+  longest term and highest loan-to-value they take. The line always says
+  that a matching service fills a request against them only when its terms
+  fit a lender's limits, so a fill is likely but neither instant nor
+  guaranteed; a list longer than the page reads is stated, and an unread
+  list is stated as unread, never as no lenders.
 - **RB-LEND-POST** — Borrow and Lend post the reader's own offer through
   one shared flow (form, review, signing, measured outcome) whose side is
   the poster's: a borrower posts a request, a lender posts an offer. The

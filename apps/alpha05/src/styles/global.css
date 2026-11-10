@@ -1436,6 +1436,84 @@ a.btn {
   color: var(--brand-strong);
 }
 
+/* ── Borrow: the two ways, the limits, the rate ladder (#3319) ──────── */
+.ways {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 720px) {
+  .ways {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.way {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  justify-items: start;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  min-width: 0;
+}
+.way h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+.way p {
+  margin: 0;
+}
+.way .btn {
+  min-height: var(--taptarget);
+}
+.standing-lenders {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.standing-lenders p {
+  margin: 0;
+}
+.borrow-limits {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 16px;
+  margin: 8px 0;
+}
+@media (min-width: 720px) {
+  .borrow-limits {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.borrow-limits .field input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.ladder {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+.ladder-step {
+  min-width: 0;
+}
+.ladder-head {
+  margin: 0;
+  padding: 6px 0;
+  font-weight: 600;
+  color: var(--text-strong);
+  border-bottom: 1px solid var(--border-strong);
+  overflow-wrap: anywhere;
+}
+.ladder-step > .rows {
+  margin: 8px 0 0;
+}
+
 /* ── Borrow: the borrower's own request ──────────────────────────────── */
 .request-open {
   display: grid;

@@ -1964,6 +1964,8 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)`가 페어의 열린 오퍼 ID와 총수를 줍니다. 각 ID에 대해 페이지는 `getOffer`, `getOfferState`, 지갑이 있으면 `previewAccept(offerId, wallet)`를 읽으며, 그 `errorCode`가 프로토콜의 거절입니다. LTV는 오늘 가격 기준 `calculateLTV`이며, 비유동이거나 가격이 없는 측은 없는 이유를 밝힙니다. 직접 수락은 대출자의 `amountMax`를 `interestRateBps`로 묶습니다. 차입 요청, NFT 측이 있는 오퍼, 본인 오퍼는 세기만 하고 목록에 넣지 않습니다.
 
+앱은 수락이 묶는 금리(`interestRateBps`)로 행을 묶고 가장 낮은 금리를 먼저 둡니다. 한 단계 안에서는 목록 순서를 유지합니다. 최고 금리와 Advanced의 최고 LTV는 읽은 행을 거르기만 합니다. `calculateLTV`가 수치가 아닌 행은 남기고 개수에 넣습니다. 대기 중인 대출자 줄은 `getActiveLenderIntents(offset, 50)`를 최대 네 페이지 읽고, 해당 쌍의 인텐트를 남겨 각각 `availableCapital`과 `maxExposure`에서 `livePrincipal`을 뺀 값 중 작은 값을 취하며, `minFillAmount` 미만인 것은 뺍니다. 개수, 가장 큰 단일 수치, 가장 낮은 `minRateBps`를 보여 주고, Advanced에서는 가장 큰 `maxDurationDays`와 `maxInitLtvBps`도 보여 줍니다. 매칭 서비스는 이 한도 안에서만 인텐트로 요청을 채우므로 채워짐이 보장되지는 않습니다.
+
 <a id="borrow-review"></a>
 
 ### Borrow: 검토와 서명

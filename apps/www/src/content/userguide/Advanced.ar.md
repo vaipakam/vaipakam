@@ -1969,6 +1969,8 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 يعطي `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` معرّفات العروض المفتوحة للزوج والإجمالي. لكل منها تقرأ الصفحة `getOffer` و`getOfferState`، ومع محفظة `previewAccept(offerId, wallet)` الذي يمثّل `errorCode` فيه رفض البروتوكول. نسبة القرض إلى القيمة هي `calculateLTV` بأسعار اليوم؛ والجانب غير السائل أو بلا سعر يقول لماذا لا توجد. القبول المباشر يُلزم بـ`amountMax` للمُقرض عند `interestRateBps`. طلبات الاقتراض والعروض ذات جانب NFT وعروضك تُعدّ ولا تُدرج.
 
+يجمّع التطبيق الصفوف حسب السعر الذي يُلزم به الأخذ (`interestRateBps`)، الأدنى أولًا؛ وداخل الدرجة يبقى ترتيب القائمة. أعلى سعر، وفي وضع Advanced أعلى نسبة قرض إلى قيمة، يصفّيان الصفوف المقروءة فقط؛ والصف الذي لا يكون `calculateLTV` فيه رقمًا يُبقى ويُعدّ. يقرأ سطر المُقرضين المستعدين `getActiveLenderIntents(offset, 50)` حتى أربع صفحات، ويُبقي نوايا الزوج، ويأخذ لكل نية الأصغر بين `availableCapital` و`maxExposure` مطروحًا منه `livePrincipal`، ويُسقط ما يقل عن `minFillAmount`. ويُظهر العدد وأكبر رقم منفرد وأدنى `minRateBps`، وفي وضع Advanced أعلى `maxDurationDays` و`maxInitLtvBps`. لا تملأ خدمة المطابقة طلبًا من نية إلا ضمن هذه الحدود، لذا فالملء غير مضمون.
+
 <a id="borrow-review"></a>
 
 ### Borrow: المراجعة والتوقيع

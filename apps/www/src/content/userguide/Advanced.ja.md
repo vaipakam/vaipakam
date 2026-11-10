@@ -2073,6 +2073,8 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` がペアの公開オファー ID と総数を返します。各 ID について `getOffer`、`getOfferState`、ウォレットがあれば `previewAccept(offerId, wallet)` を読みます。その `errorCode` がプロトコルの拒否理由です。ローン・トゥ・バリューは現在価格での `calculateLTV` で、非流動または価格のない側はない理由を示します。直接の受諾は貸し手の `amountMax` を `interestRateBps` で拘束します。借入リクエスト、NFT の側を持つオファー、自分のオファーは数えますが一覧には出しません。
 
+アプリは受諾が拘束する金利（`interestRateBps`）で行をまとめ、低い順に並べます。段の中ではリストの順序を保ちます。最高金利と、Advanced での最高ローン・トゥ・バリューは読み取った行を絞り込むだけです。`calculateLTV` が数値でない行は残し、数に含めます。待機中の貸し手の行は `getActiveLenderIntents(offset, 50)` を最大四ページ読み、ペアのインテントを残し、それぞれ `availableCapital` と `maxExposure` から `livePrincipal` を引いた値の小さい方を取り、`minFillAmount` を下回るものは除きます。数、単独で最大の値、最低の `minRateBps` を示し、Advanced では最大の `maxDurationDays` と `maxInitLtvBps` も示します。マッチングサービスはこれらの上限内でのみインテントでリクエストを成立させるため、成立は保証されません。
+
 <a id="borrow-review"></a>
 
 ### Borrow: 確認と署名

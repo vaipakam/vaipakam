@@ -1806,6 +1806,8 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 返回该交易对的公开报价 id 和总数。对每个 id，页面读取 `getOffer`、`getOfferState`，有钱包时还读取 `previewAccept(offerId, wallet)`，其中 `errorCode` 即协议的拒绝原因。贷款价值比为按今日价格计算的 `calculateLTV`；无流动性或无价格的一侧会说明为何没有。直接接受按出借人的 `amountMax` 和 `interestRateBps` 绑定。借款请求、带 NFT 一侧的报价和自己的报价只计数，不列出。
 
+应用按接受时绑定的利率（`interestRateBps`）对行分组，最低的在前；同一档内保持列表顺序。最高利率以及 Advanced 模式下的最高贷款价值比只筛选已读取的行；`calculateLTV` 不是数值的行会保留并计数。待命出借人一行读取 `getActiveLenderIntents(offset, 50)`，最多四页，保留该币对的意向，并对每个意向取 `availableCapital` 与 `maxExposure` 减 `livePrincipal` 中较小者，低于 `minFillAmount` 的意向被剔除。它显示数量、最大的单个数值和最低的 `minRateBps`，Advanced 模式下还显示最高的 `maxDurationDays` 和 `maxInitLtvBps`。撮合服务只在这些限制内用某个意向成交请求，因此成交并无保证。
+
 <a id="borrow-review"></a>
 
 ### Borrow: 审核与签名

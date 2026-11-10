@@ -1,0 +1,11 @@
+## Thread — alpha05: Borrow names both ways up front and lists offers as a rate ladder (PR #TBD)
+
+Once a borrower picks what to borrow and what to lock, the Borrow page in the new app (`apps/alpha05`) now names the two ways to borrow before anything else: borrow now, by taking a lender's open offer whole, or set your own rate, by posting a request and waiting for a lender. Each way has one sentence, so a reader new to on-chain lending no longer has to discover the second way below the list.
+
+The open offers now read as a ladder grouped by rate, lowest first. Each step says how many offers it holds and the amount of each one. The amounts are never added up, because one borrow takes one offer whole, so a total would be an amount nobody can borrow.
+
+A borrower can type the highest rate they will accept, and in Advanced the highest loan-to-value. These only narrow the list: the page says how many offers each limit hid, an unreadable limit applies none and says so, and an offer whose loan-to-value the protocol does not report as a figure is kept and counted rather than hidden on a guess. An offer is still taken at its own terms, which the review shows before signing.
+
+The way to set your own rate, and the request form, now state the lenders standing ready for the pair, read from the protocol's own list of active, funded lender intents: how many there are, the most any one of them can lend now, and the lowest rate any of them accepts. It always adds that a matching service fills a request against them only when its terms fit a lender's limits, so a fill is likely but neither instant nor guaranteed.
+
+Closes #3319.
