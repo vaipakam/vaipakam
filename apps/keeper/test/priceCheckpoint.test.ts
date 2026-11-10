@@ -22,11 +22,14 @@ import {
   assetState,
   checkpointOnce,
   describeReport,
+  isGuarded,
+  openGuardCandidates,
   price1e18,
   recordedBy,
   runPriceCheckpoint,
   trackedPairAssets,
   type CheckpointDeps,
+  type GuardCandidate,
 } from '../src/priceCheckpoint';
 import type { Env } from '../src/env';
 import type { KeeperContext } from '../src/keeper';
@@ -56,6 +59,10 @@ class FakeDiamond {
   /** Seconds the next landed call's block is after `now` (a send mined later). */
   minedLaterSec = 0n;
   hasFloor = true;
+  /** Whether the Diamond carries the #3358 price-move guard. */
+  hasGuard = true;
+  /** offerId → [maxMoveBps, status]; absent = no guard (Off). */
+  guards = new Map<bigint, [number, number]>();
   /** asset → [price, decimals]; absent = the oracle refuses it. */
   prices = new Map<Address, [bigint, number]>();
   /** `asset:hour` → stored 1e18 price. */
@@ -72,6 +79,11 @@ class FakeDiamond {
         // The Diamond's fallback: FunctionDoesNotExist(), a selector no facet ABI names.
         if (!this.hasFloor) throw new ContractFunctionRevertedError({ abi: ABI, data: '0xa9ad62f8', functionName });
         return { tier1Bps: 450, tier2Bps: 350, tier3Bps: 250, calmMoveBps: 200, cushionBps: 11000 };
+      case 'getOfferPriceGuard': {
+        if (!this.hasGuard) throw new ContractFunctionRevertedError({ abi: ABI, data: '0xa9ad62f8', functionName });
+        const [maxMoveBps, status] = this.guards.get(a[0] as bigint) ?? [0, 0];
+        return { maxMoveBps, setAt: 1n, refCollateralPrice1e18: 1n, refPrincipalPrice1e18: 1n, status, moveBps: 0n, calmMoveBps: 200 };
+      }
       case 'getHourlyPriceCheckpoint':
         return this.book.get(`${(a[0] as string).toLowerCase()}:${a[1]}`) ?? 0n;
       case 'getAssetPrice': {
@@ -152,6 +164,7 @@ function deps(d: FakeDiamond, assets: readonly string[], over: Partial<Checkpoin
     sendDeadline: Date.now() + 120_000,
     visit: 0,
     assets: async () => assets,
+    offers: async () => [],
     ...over,
   };
 }
@@ -200,7 +213,7 @@ describe('one chain\'s run', () => {
     expect(r.recorded.sort()).toEqual([weth, usdc].sort());
     expect(d.book.get(`${weth}:${HOUR}`)).toBe(3_000n * 10n ** 18n);
     expect(describeReport(r)).toBe(
-      `[keeper] priceCheckpoint chain=${CHAIN} hour=${HOUR} tracked=4 already=1 due=2 recorded=2 no-price=${gone}`,
+      `[keeper] priceCheckpoint chain=${CHAIN} hour=${HOUR} tracked=4 guarded-offers=0 already=1 due=2 recorded=2 no-price=${gone}`,
     );
   });
 
@@ -272,14 +285,90 @@ describe('one chain\'s run', () => {
     expect((await checkpointOnce(CHAIN, DIAMOND, deps(d, [asset(1)]))).skipped).toBe(`the RPC configured for chain ${CHAIN} serves chain 1`);
     const e = new FakeDiamond();
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(e, ['0x', '0x0000000000000000000000000000000000000000']));
-    expect(r.skipped).toMatch(/no active loan with two ERC-20 legs/);
+    expect(r.skipped).toBe('no active loan and no open offer with two ERC-20 legs, so nothing reads a checkpoint');
     expect(e.sent).toEqual([]);
   });
 
-  it('a failed indexer read skips the chain rather than guessing', async () => {
+  it('a failed indexer read with nothing else to work skips the chain rather than guessing', async () => {
     const d = new FakeDiamond();
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { assets: async () => Promise.reject(new Error('D1 down')) }));
     expect(r.skipped).toMatch(/^the active loans' assets could not be read from the indexer \(/);
+    const o = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => Promise.reject(new Error('D1 down')) }));
+    expect(o.skipped).toMatch(/^the open offers could not be read from the indexer \(/);
+  });
+});
+
+describe('guarded offers (#3358)', () => {
+  const offer = (id: number, lend: Address, col: Address): GuardCandidate => ({ offerId: BigInt(id), lendingAsset: lend, collateralAsset: col });
+
+  it('reads a guard as set only with a limit and an offer still there', () => {
+    expect(isGuarded(ok({ maxMoveBps: 300, status: 4 }))).toBe(true);
+    expect(isGuarded(ok({ maxMoveBps: 0, status: 0 })), 'no guard').toBe(false);
+    expect(isGuarded(ok({ maxMoveBps: 300, status: 1 })), 'a row left by a gone offer').toBe(false);
+    expect(isGuarded(fail)).toBeUndefined();
+  });
+
+  it('checkpoints both assets of a guarded open offer in a pair no loan uses, and not an unguarded one', async () => {
+    const d = new FakeDiamond();
+    const [weth, usdc, dai, wbtc, link, uni] = [1, 2, 3, 4, 5, 6].map(asset);
+    for (const a of [weth, usdc, dai, wbtc, link, uni]) d.prices.set(a, [1n, 0]);
+    d.guards.set(7n, [300, 4]).set(9n, [300, 1]);
+    const r = await checkpointOnce(
+      CHAIN,
+      DIAMOND,
+      deps(d, [weth, usdc], { offers: async () => [offer(7, dai, wbtc), offer(8, link, uni), offer(9, link, uni)] }),
+    );
+    expect(d.sent.flat().sort()).toEqual([weth, usdc, dai, wbtc].sort());
+    expect(r).toMatchObject({ tracked: 4, guardedOffers: 1, guardNote: null });
+    expect(describeReport(r)).toContain('tracked=4 guarded-offers=1 ');
+  });
+
+  it('sends nothing when the open offers carry no guard and no loan reads the floor', async () => {
+    const d = new FakeDiamond();
+    d.prices.set(asset(3), [1n, 0]).set(asset(4), [1n, 0]);
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => [offer(7, asset(3), asset(4))] }));
+    expect(d.sent).toEqual([]);
+    expect(r).toMatchObject({ guardedOffers: 0, skipped: 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint' });
+  });
+
+  it('works a chain whose only readers are guarded offers', async () => {
+    const d = new FakeDiamond();
+    d.prices.set(asset(3), [1n, 0]).set(asset(4), [1n, 0]);
+    d.guards.set(7n, [500, 2]);
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => [offer(7, asset(3), asset(4))] }));
+    expect(r.skipped).toBeUndefined();
+    expect(r.recorded.sort()).toEqual([asset(3), asset(4)].sort());
+  });
+
+  it('still writes the loans\' assets on a Diamond without the guard, and says so', async () => {
+    const d = new FakeDiamond();
+    d.hasGuard = false;
+    d.prices.set(asset(1), [1n, 0]).set(asset(3), [1n, 0]);
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [asset(1)], { offers: async () => [offer(7, asset(3), asset(4))] }));
+    expect(d.sent).toEqual([[asset(1)]]);
+    expect(r.guardedOffers).toBeNull();
+    expect(r.guardNote).toMatch(/does not answer getOfferPriceGuard [\s\S]*carries no #3358 price-move guard$/);
+    expect(describeReport(r)).toContain('guarded-offers=unread (this Diamond does not answer getOfferPriceGuard');
+  });
+
+  it('a failed read of one reader leaves the other\'s assets worked and names the failure', async () => {
+    const d = new FakeDiamond();
+    d.prices.set(asset(1), [1n, 0]).set(asset(3), [1n, 0]).set(asset(4), [1n, 0]);
+    d.guards.set(7n, [300, 2]);
+    const noOffers = await checkpointOnce(CHAIN, DIAMOND, deps(d, [asset(1)], { offers: async () => Promise.reject(new Error('D1 down')) }));
+    expect(noOffers.recorded).toEqual([asset(1)]);
+    expect(noOffers.guardNote).toMatch(/^the open offers could not be read from the indexer \(/);
+
+    const e = new FakeDiamond();
+    e.prices.set(asset(3), [1n, 0]).set(asset(4), [1n, 0]);
+    e.guards.set(7n, [300, 2]);
+    const noLoans = await checkpointOnce(
+      CHAIN,
+      DIAMOND,
+      deps(e, [], { assets: async () => Promise.reject(new Error('D1 down')), offers: async () => [offer(7, asset(3), asset(4))] }),
+    );
+    expect(noLoans.recorded.sort()).toEqual([asset(3), asset(4)].sort());
+    expect(describeReport(noLoans)).toMatch(/unread=loan assets\(the active loans' assets could not be read from the indexer/);
   });
 });
 
@@ -303,6 +392,34 @@ describe('the asset list', () => {
     insert(7, 'active', 0, 0, '0x', asset(12)); // stub placeholder
     const got = await trackedPairAssets({ DB: h.d1 } as unknown as Env, CHAIN);
     expect([...got].sort()).toEqual([asset(1), asset(2), asset(3), asset(12)].sort());
+  });
+});
+
+describe('the open offers a guard can be on', () => {
+  it('takes open, unexpired, fetched offers whose two legs are ERC-20, on this chain only', async () => {
+    const h = createSharedD1();
+    const insert = (id: number, status: string, at: number, ct: number, expires: number, stub = 0, chain = CHAIN) =>
+      h.db
+        .prepare(
+          `INSERT INTO offers (chain_id, offer_id, status, creator, offer_type, lending_asset, collateral_asset,
+             asset_type, collateral_asset_type, expires_at, is_stub, amount, interest_rate_bps, collateral_amount,
+             duration_days, first_seen_block, first_seen_at, updated_at)
+           VALUES (?, ?, ?, '0xc', 0, ?, ?, ?, ?, ?, ?, '1', 500, '1', 30, 1, 1, 1)`,
+        )
+        .run(chain, id, status, asset(id * 2), asset(id * 2 + 1), at, ct, expires, stub);
+    const now = 1_000_000;
+    insert(1, 'active', 0, 0, 0);
+    insert(2, 'active', 0, 0, now + 60);
+    insert(3, 'active', 0, 0, now); // expired at this second
+    insert(4, 'accepted', 0, 0, 0);
+    insert(5, 'cancelled', 0, 0, 0);
+    insert(6, 'active', 0, 1, 0); // NFT collateral
+    insert(7, 'active', 1, 0, 0); // NFT rental
+    insert(8, 'active', 0, 0, 0, 1); // stub, assets not fetched yet
+    insert(9, 'active', 0, 0, 0, 0, 1); // another chain
+    const got = await openGuardCandidates({ DB: h.d1 } as unknown as Env, CHAIN, now);
+    expect(got.map((o) => o.offerId).sort()).toEqual([1n, 2n]);
+    expect(got.find((o) => o.offerId === 1n)).toEqual({ offerId: 1n, lendingAsset: asset(2), collateralAsset: asset(3) });
   });
 });
 
