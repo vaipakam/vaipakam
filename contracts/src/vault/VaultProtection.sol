@@ -9,7 +9,15 @@ import {LibVaultProtectionStorage as P} from "./LibVaultProtectionStorage.sol";
 interface IProtectedVaultSelf {
     function vaultOwner() external view returns (address);
     function vaultDiamond() external view returns (address);
+    function vaultCreationOwner() external view returns (address);
     function setOwnerFromProtection(address newOwner) external;
+}
+
+/// @dev The one platform read the protection code makes: the account's queued
+///      payout rows, which a switch-off waits for (they move into the vault
+///      with the liens in Stage B3).
+interface IPayoutRowsView {
+    function getPendingPayoutIds(address account) external view returns (uint256[] memory);
 }
 
 /**
@@ -159,6 +167,7 @@ contract VaultProtection {
     error AlreadyApproved();
     error NoProposal();
     error OwnerBlockedBySignerLock();
+    error PendingRowsExist();
 
     constructor() {
         SELF = address(this);
@@ -237,12 +246,15 @@ contract VaultProtection {
     function finalizeSettings() external onlyDelegateCall {
         P.Layout storage l = _enabled();
         uint64 nowTs = uint64(block.timestamp);
+        bool applied;
         if (l.pendingDelayAt != 0 && nowTs >= l.pendingDelayAt) {
+            applied = true;
             l.delay = l.pendingDelay;
             l.pendingDelayAt = 0;
             emit ProtectionSettingApplied(SETTINGS_DELAY, l.delay);
         }
         if (l.pendingUnlockAt != 0 && nowTs >= l.pendingUnlockAt) {
+            applied = true;
             l.locked = false;
             l.lockedBy = address(0);
             l.lockedAt = 0;
@@ -250,8 +262,29 @@ contract VaultProtection {
             emit ProtectionSettingApplied(SETTINGS_UNLOCK, 0);
         }
         if (l.pendingDisableAt != 0 && nowTs >= l.pendingDisableAt && !l.locked) {
-            _clear(l);
-            emit ProtectionDisabled();
+            // A switch-off waits while any payout row is still queued (it
+            // never holds back another due change); it reverts only when it
+            // was the one change due. An unreadable count reads as rows open,
+            // so a platform fault can only make the switch-off wait.
+            if (_noOpenRows()) {
+                _clear(l);
+                emit ProtectionDisabled();
+                applied = true;
+            } else if (!applied) {
+                revert PendingRowsExist();
+            }
+        }
+        if (!applied) revert NotRequested();
+    }
+
+    function _noOpenRows() private view returns (bool) {
+        IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
+        try IPayoutRowsView(self.vaultDiamond()).getPendingPayoutIds(self.vaultCreationOwner()) returns (
+            uint256[] memory ids
+        ) {
+            return ids.length == 0;
+        } catch {
+            return false;
         }
     }
 
@@ -268,6 +301,11 @@ contract VaultProtection {
             revert BadDestination(destination);
         }
         if (l.allowlist.length >= MAX_ALLOWLIST) revert TooMany();
+        if (e.readyAt == 0 || e.epoch != l.epoch) {
+            address[] storage pending = l.pendingAllow[l.epoch];
+            if (pending.length >= MAX_ALLOWLIST) revert TooMany();
+            pending.push(destination);
+        }
         e.readyAt = _later(l);
         e.epoch = l.epoch;
         emit AllowlistAddRequested(destination, e.readyAt, auth.key);
@@ -278,8 +316,9 @@ contract VaultProtection {
         P.Layout storage l = _enabled();
         _asOwnerOrSigner(auth, PURPOSE_ALLOWLIST_CANCEL, keccak256(abi.encode(ALLOWLIST_CANCEL_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)));
         P.Entry storage e = l.allow[destination];
-        if (e.active || e.readyAt == 0) revert NotRequested();
+        if (e.active || e.readyAt == 0 || e.epoch != l.epoch) revert NotRequested();
         e.readyAt = 0;
+        _remove(l.pendingAllow[l.epoch], destination);
         emit AllowlistAddCancelled(destination, auth.key);
     }
 
@@ -294,6 +333,7 @@ contract VaultProtection {
         if (l.allowlist.length >= MAX_ALLOWLIST) revert TooMany();
         e.active = true;
         e.readyAt = 0;
+        _remove(l.pendingAllow[l.epoch], destination);
         l.allowlist.push(destination);
         emit AllowlistAdded(destination);
     }
@@ -336,12 +376,17 @@ contract VaultProtection {
             address owner = _asOwner(auth, PURPOSE_SIGNER_CHANGE, h);
             if (who == address(0) || who == owner || sg.active || l.allow[who].active) revert BadNominee(who);
             if (l.signers.length >= MAX_SIGNERS) revert TooMany();
+            if (sg.addAt == 0 || sg.epoch != l.epoch) {
+                address[] storage pending = l.pendingSigners[l.epoch];
+                if (pending.length >= MAX_SIGNERS) revert TooMany();
+                pending.push(who);
+            }
             sg.addAt = _later(l);
             sg.epoch = l.epoch;
             sg.accepted = false;
             emit SignerAddRequested(who, sg.addAt, auth.key);
         } else if (action == SIGNER_ACCEPT) {
-            if (auth.key != who || sg.addAt == 0) revert NotRequested();
+            if (auth.key != who || sg.addAt == 0 || sg.epoch != l.epoch) revert NotRequested();
             _authorize(auth, PURPOSE_SIGNER_CHANGE, h);
             sg.accepted = true;
             emit SignerAccepted(who);
@@ -354,7 +399,8 @@ contract VaultProtection {
             emit SignerRemoveRequested(who, sg.removeAt, auth.key);
         } else if (action == SIGNER_CANCEL) {
             _asOwnerOrSigner(auth, PURPOSE_SIGNER_CHANGE, h);
-            if (sg.addAt == 0 && sg.removeAt == 0) revert NotRequested();
+            if ((sg.addAt == 0 && sg.removeAt == 0) || sg.epoch != l.epoch) revert NotRequested();
+            if (sg.addAt != 0) _remove(l.pendingSigners[l.epoch], who);
             sg.addAt = 0;
             sg.removeAt = 0;
             sg.accepted = false;
@@ -377,6 +423,7 @@ contract VaultProtection {
             if (l.signers.length >= MAX_SIGNERS) revert TooMany();
             sg.addAt = 0;
             sg.active = true;
+            _remove(l.pendingSigners[l.epoch], who);
             l.signers.push(who);
             emit SignerAdded(who);
         } else if (sg.removeAt != 0) {
@@ -639,6 +686,18 @@ contract VaultProtection {
             if (l.allowlist[i] == destination) {
                 l.allowlist[i] = l.allowlist[n - 1];
                 l.allowlist.pop();
+                return;
+            }
+        }
+    }
+
+    /// @dev Remove `who` from a pending list (at most five long).
+    function _remove(address[] storage list, address who) private {
+        uint256 n = list.length;
+        for (uint256 i; i < n; ++i) {
+            if (list[i] == who) {
+                list[i] = list[n - 1];
+                list.pop();
                 return;
             }
         }

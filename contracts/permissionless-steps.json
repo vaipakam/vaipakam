@@ -310,6 +310,10 @@
       "class": "gated",
       "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender); the vault then refuses a conduit outside the registry's CONDUITS set"
     },
+    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
+      "class": "user",
+      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
+    },
     "ProfileFacet.approveKeeper(address,uint16)": {
       "class": "user",
       "why": "the user's own keeper settings"
@@ -337,65 +341,14 @@
       "class": "user",
       "why": "the user's own profile"
     },
-    "ProtectedAccountFacet.acceptSignerRole(address)": {
-      "class": "user",
-      "why": "the nominee accepts its own nomination"
-    },
-    "ProtectedAccountFacet.addAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.addSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelAddAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelAddSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager cancels its own nomination"
-    },
-    "ProtectedAccountFacet.cancelRemoveSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelReplacement(address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    "ProtectedAccountFacet.applyProtection(address)": {
+      "class": "gap",
+      "issue": "#3379",
+      "why": "applies the platform side of a vault's protected posture (holds position NFTs and cancels queued rows on a lock or replacement); the keeper's protectedAccount pass moves to it in Stage B4, and until then the account's owner, a signer or anyone may call it"
     },
     "ProtectedAccountFacet.cancelSettingChange(address,uint8)": {
       "class": "user",
       "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.enableProtectedMode(uint32,bool)": {
-      "class": "user",
-      "why": "the account owner's own setting"
-    },
-    "ProtectedAccountFacet.finalizeAddAllowlisted(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeAddSigner(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeRemoveSigner(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeReplacement(address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.finalizeSettingChanges(address)": {
       "class": "keeper",
@@ -406,30 +359,6 @@
     "ProtectedAccountFacet.lockPositionNfts(address)": {
       "class": "user",
       "why": "the account manager locks its own account's position NFTs at the PositionNFT core (called with its own account; a caller naming another account is refused unless it manages it); it can only tighten"
-    },
-    "ProtectedAccountFacet.lockVault(address)": {
-      "class": "user",
-      "why": "the account manager or one of its signers locks its own account"
-    },
-    "ProtectedAccountFacet.proposeReplacement(address,address)": {
-      "class": "user",
-      "why": "a signer or the manager proposes; approvals and the delay follow"
-    },
-    "ProtectedAccountFacet.removeAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.requestRemoveSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.requestUnlock(address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.setProtectedDelay(address,uint32)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
     },
     "ProtectedAccountFacet.setRequireCosign(address,bool)": {
       "class": "user",
@@ -444,10 +373,6 @@
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
-    },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
-      "class": "user",
-      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
     "ProtocolRegistry.executeAdd(bytes32,address)": {
       "class": "user",

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
@@ -263,24 +264,15 @@ contract LenderIntentCapitalTest is SetupTest {
     }
 
     function _replaceLender(address nominee) internal {
-        ProtectedAccountFacet p = ProtectedAccountFacet(address(diamond));
-        vm.prank(lender);
-        p.enableProtectedMode(2 days, true);
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
         address[3] memory signers = [makeAddr("is1"), makeAddr("is2"), makeAddr("is3")];
         for (uint256 i; i < 3; ++i) {
-            vm.prank(lender);
-            p.addSigner(lender, signers[i]);
-            vm.prank(signers[i]);
-            p.acceptSignerRole(lender);
-            vm.warp(vm.getBlockTimestamp() + 2 days);
-            p.finalizeAddSigner(lender, signers[i]);
+            LibTestProtection.addSigner(address(diamond), lender, lender, signers[i], 2 days);
         }
-        vm.prank(signers[0]);
-        p.proposeReplacement(lender, nominee);
-        vm.prank(signers[1]);
-        p.approveReplacement(lender);
+        LibTestProtection.propose(address(diamond), lender, signers[0], nominee);
+        LibTestProtection.approve(address(diamond), lender, signers[1], nominee);
         vm.warp(vm.getBlockTimestamp() + 2 days);
-        p.finalizeReplacement(lender);
+        LibTestProtection.finalizeReplacement(address(diamond), lender);
     }
 
     function test_withdraw_partial_thenRemainder() public {

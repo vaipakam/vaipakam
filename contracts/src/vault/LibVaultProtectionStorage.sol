@@ -70,6 +70,9 @@ library LibVaultProtectionStorage {
         mapping(uint32 => mapping(address => bool)) approved;
         // Signature nonces: key => purpose => next nonce.
         mapping(address => mapping(uint8 => uint256)) nonces;
+        // Pending additions per epoch (listed, and at most five of each wait).
+        mapping(uint64 => address[]) pendingAllow;
+        mapping(uint64 => address[]) pendingSigners;
     }
 
     function layout() internal pure returns (Layout storage l) {

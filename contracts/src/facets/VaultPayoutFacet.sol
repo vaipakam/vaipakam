@@ -125,16 +125,21 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         LibProtectedAccount.recordReleased(id, delivered);
     }
 
-    /// @dev #3205 part 2 — through the one policy: the owner's own wallet is
-    ///      the Owner class; an allowlisted address or the controller of a
-    ///      retired account is OwnerAllowlisted (the policy re-checks the
-    ///      allowlist). The release this call pays is bound beforehand, so the
+    /// @dev #3205 part 2 — through the one policy: the owner's wallet (the
+    ///      vault's owner record, so a retired account's controller) is the
+    ///      Owner class; an allowlisted address is OwnerAllowlisted (the policy
+    ///      re-checks the allowlist). The release this call pays is bound beforehand, so the
     ///      payout gate lets exactly it through.
     function _pay(uint8 kind, address user, address asset, uint256 tokenId, uint256 amount, address recipient, uint8 reason)
         private
         returns (uint256 delivered)
     {
-        if (recipient == user) return LibVaultOutflow.toOwner(user, kind, asset, tokenId, amount, reason);
+        // #3379 B2 — the owner class pays the vault's owner record (the
+        // controller once a replacement moved it); anyone else on the
+        // allowlist is OwnerAllowlisted.
+        if (recipient == LibProtectedAccount.manager(user)) {
+            return LibVaultOutflow.toOwner(user, kind, asset, tokenId, amount, reason);
+        }
         return LibVaultOutflow.toAllowlisted(user, kind, asset, tokenId, amount, recipient, reason);
     }
 

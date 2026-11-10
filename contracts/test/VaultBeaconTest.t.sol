@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -359,8 +361,7 @@ contract VaultBeaconTest is Test {
     // ─── Protected mode: the pin delay ───────────────────────────────────
 
     function _protectAlice() internal {
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).enableProtectedMode(LibProtectedAccount.MIN_DELAY, false);
+        LibTestProtection.enable(address(diamond), alice, LibProtectedAccount.MIN_DELAY);
     }
 
     /// Under protected mode a first pin, a re-pin and an unpin each wait the
@@ -397,8 +398,7 @@ contract VaultBeaconTest is Test {
 
         // Locked: no pin request at all, and a lock cancels a pending one.
         _pinAlice(3);
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).lockVault(alice);
+        LibTestProtection.lock(address(diamond), alice, alice);
         (, uint256 at) = beacon.pendingPinOf(vaultA);
         assertEq(at, 0, "the lock cancelled the pending pin");
         bytes memory sig = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 2));
@@ -498,14 +498,13 @@ contract VaultBeaconTest is Test {
     function test_switchingProtectionOffCancelsAPendingPin() public {
         _protectAlice();
         uint256 t0 = block.timestamp;
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).requestDisableProtectedMode();
+        LibTestProtection.requestDisable(address(diamond), alice, alice);
         vm.warp(t0 + 1 days);
         _pinAlice(3);
         (, uint256 pinAt) = beacon.pendingPinOf(vaultA);
         assertGt(pinAt, 0, "a pin change is pending");
         vm.warp(t0 + LibProtectedAccount.MIN_DELAY);
-        ProtectedAccountFacet(address(diamond)).finalizeSettingChanges(alice);
+        LibTestProtection.finalizeSettings(address(diamond), alice);
         (, uint256 after_) = beacon.pendingPinOf(vaultA);
         assertEq(after_, 0, "the switch-off cancelled it at the beacon");
 
@@ -522,15 +521,14 @@ contract VaultBeaconTest is Test {
         _protectAlice();
         uint256 d = beacon.pinDelay(vaultA);
         uint256 t0 = block.timestamp;
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).requestDisableProtectedMode();
+        LibTestProtection.requestDisable(address(diamond), alice, alice);
         bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
         beacon.setPinDelay(vaultA, 0, lower);
         (, uint256 lowerAt) = beacon.pendingPinDelayOf(vaultA);
         assertGt(lowerAt, 0, "a lowering is pending");
 
         vm.warp(t0 + LibProtectedAccount.MIN_DELAY);
-        ProtectedAccountFacet(address(diamond)).finalizeSettingChanges(alice);
+        LibTestProtection.finalizeSettings(address(diamond), alice);
         (, uint256 after_) = beacon.pendingPinDelayOf(vaultA);
         assertEq(after_, 0, "the switch-off voided the lowering");
 

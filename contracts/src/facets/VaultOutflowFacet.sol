@@ -161,7 +161,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
         o.asset = asset;
         o.tokenId = tokenId;
         o.amount = amount;
-        o.to = user;
+        // #3379 B2 — the account's owner wallet is the vault's own owner
+        // record: the account wallet, or the wallet a verified replacement
+        // moved it to (the vault pays only that wallet in this class).
+        o.to = LibProtectedAccount.manager(user);
         o.class_ = VaultOutflowTypes.OutflowClass.Owner;
         o.reason = reason;
         return _outflow(user, o);
@@ -358,9 +361,11 @@ contract VaultOutflowFacet is IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         VaultOutflowTypes.OutflowClass c = o.class_;
         if (c == VaultOutflowTypes.OutflowClass.Owner) {
-            if (o.to != user) revert OutflowRecipientInvalid(c, o.to);
+            // #3379 B2 — the owner record, which a replacement moves.
+            if (o.to != LibProtectedAccount.manager(user)) revert OutflowRecipientInvalid(c, o.to);
         } else if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
-            if (o.to == user || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
+            address mgr = LibProtectedAccount.manager(user);
+            if (o.to == user || o.to == mgr || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
                 revert OutflowRecipientInvalid(c, o.to);
             }
         } else if (c == VaultOutflowTypes.OutflowClass.MatchedCounterparty) {

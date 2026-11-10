@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Vm} from "forge-std/Vm.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -136,14 +137,11 @@ contract PerkSpendTest is SetupTest {
     /// perks; it lost every right over the account.
     function testRetiredWalletCannotSpendTheAccountOnPerks() public {
         _perk().setPerkConfig(PERK_TIMED, 1e18, 1 days);
-        ProtectedAccountFacet pa = ProtectedAccountFacet(address(diamond));
         address nominee = makeAddr("perkNominee");
-        vm.startPrank(buyer);
-        pa.enableProtectedMode(2 days, false);
-        pa.proposeReplacement(buyer, nominee);
-        vm.stopPrank();
+        LibTestProtection.enable(address(diamond), buyer, 2 days);
+        LibTestProtection.propose(address(diamond), buyer, buyer, nominee);
         vm.warp(block.timestamp + 2 days);
-        pa.finalizeReplacement(buyer);
+        LibTestProtection.finalizeReplacement(address(diamond), buyer);
 
         vm.prank(buyer);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, buyer, buyer));

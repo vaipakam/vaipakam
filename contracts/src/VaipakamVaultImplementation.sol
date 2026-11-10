@@ -891,6 +891,15 @@ contract VaipakamVaultImplementation is
         return (l.nominee, l.proposedBy, l.readyAt, l.round);
     }
 
+    /// @notice The allowlist and signer additions pending now (the current
+    ///         epoch; one voided by a lock, a replacement or a switch-off is
+    ///         not listed). Each entry's timing is in {allowEntry} /
+    ///         {signerEntry}.
+    function pendingAdditions() external view returns (address[] memory allowlist, address[] memory signers) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.pendingAllow[l.epoch], l.pendingSigners[l.epoch]);
+    }
+
     /// @notice `key`'s next signature nonce for `purpose`.
     function protectionNonce(address key, uint8 purpose) external view returns (uint256) {
         return LibVaultProtectionStorage.layout().nonces[key][purpose];

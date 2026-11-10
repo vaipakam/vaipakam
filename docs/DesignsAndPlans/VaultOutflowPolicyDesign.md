@@ -820,6 +820,80 @@ checks what actually happens instead.
    address through Seaport's conduit controller, and the readiness check
    refuses a vault code whose key does not resolve to its conduit.
 
+### Build notes, part 2 Stage B2: protected mode held by the vault (2026-11-10)
+
+B2 moves protected account mode out of Diamond storage into each vault, and
+makes vault identity a function of the creation owner (#3393). Owner
+decisions 2026-11-10 (delegatecall split; the vault is the only writer).
+
+1. **CREATE2 vaults (#3393).** The Diamond creates every vault with CREATE2,
+   salted by the owner wallet, as a BeaconProxy built with no call data
+   (initialized in the same transaction). The beacon publishes the proxy's
+   init-code hash, so a vault's address is a function of its creation owner
+   alone. A vault is genuine when it runs the vault code AND sits at the
+   address its own recorded creation owner derives: a look-alike anyone
+   deploys, whatever owner record it carries, fails.
+2. **One record, one writer.** A vault's protected record (its delay, lock,
+   up to five signers, up to five allowlisted destinations, the open
+   replacement, the per-key nonces) lives in the vault's own storage, at an
+   ERC-7201 namespace the storage-layout guard records. It is written only by
+   `VaultProtection`, a stateless, non-upgradeable code contract every vault
+   delegatecalls through its `protect` entry. Its address is fixed in the
+   vault code like the other endpoints, so changing the rules is new vault
+   code through the beacon's delay; its writes refuse a direct call.
+3. **Who writes.** Each write names its key (the owner, a signer, or a
+   destination verifying itself) and is accepted as a direct call from that
+   key, or as that key's EIP-712 signature submitted by anyone. Contract
+   wallets sign through ERC-1271. Every purpose has its own typehash (settings,
+   allowlist add, allowlist cancel, signer change, replacement, lock,
+   destination verification), and every signature is bound to the chain and
+   the vault (the domain), to the key's next nonce for that purpose and to an
+   expiry. A used nonce is spent; a key may burn its next nonce to void a
+   signature it gave out.
+4. **The rules carried over unchanged.** A 2–5 day delay. A loosening change
+   (an allowlist or signer addition, a signer removal, a delay lowering, an
+   unlock, a switch-off) waits the delay, expires one further delay after it
+   matures, and can be cancelled by the owner or any signer. A lock (owner or
+   signer, also signed and relayed by anyone, #3423) drops every pending
+   change and the owner's own replacement proposal. A replacement waits the
+   delay from the owner's own proposal, or from the moment a majority of at
+   least three signers is reached; the owner cannot redirect a recovery under
+   a lock a signer placed.
+5. **A replacement moves the owner record, not the vault.** Finalizing it
+   sets the vault's owner record to the nominee: the payee of the owner class
+   and the key every later owner authorization (and the beacon's pin
+   signatures) is checked against. The vault stays the one created for the
+   account, and a holder payout goes to the vault whose CREATION owner is the
+   holder, so positions the replaced wallet held keep paying the vault the
+   new owner controls.
+6. **#3415, the verified flag.** Each allowlist entry carries `verified`, set
+   only by the destination itself: its direct call, or its signature naming
+   the account and the Diamond (the chain and vault through the domain). A
+   payout to an unverified destination needs a signer's co-signature when the
+   account has signers; an account without signers is unaffected. The
+   inbound small-transfer form is the destination's direct call (proven by
+   `msg.sender`), so no separate native-transfer path is needed.
+7. **The vault enforces the record itself.** An owner-class outflow, and a
+   swap paying the owner, is refused while the vault is locked; an
+   allowlisted outflow reaches only a finalized entry of the vault's own
+   record. This closes the Stage A residual for allowlisted destinations.
+8. **The Diamond reads, and applies its own side.** Every Diamond rule
+   (`LibProtectedAccount`) reads the vault: on, locked, the delay, the
+   manager (the owner record), signers, allowlist, verification. Nothing is
+   copied. `applyProtection` (permissionless, tightening only) applies the
+   platform's effects of the vault's posture: on a switch-on it voids every
+   pending change at the beacon and the position-NFT core and raises both
+   delays; on a lock or a replacement it also holds the position NFTs and
+   cancels queued payout rows; on a replacement it records which account the
+   new owner manages. The keeper's chat LOCK (`lockVaultFor`) locks through the
+   vault, which accepts that one write from the Diamond because a lock only
+   stops value leaving. The co-sign setting stays on the platform side with
+   the payout rows, which move in B3.
+9. **Stated residuals.** Queued payout rows are still Diamond storage (B3). A
+   payout row cancelled by a lock is cancelled when `applyProtection` runs;
+   until then it cannot release, because release reads the lock from the
+   vault. The app and keeper move to the vault's entries in B4.
+
 ## 9. Order of work
 
 1. #3204's build (central vault code; it supplies the code-hash identity
