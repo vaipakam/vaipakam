@@ -293,6 +293,15 @@ interface BaseEnv {
    *  oracle's own reading, moves no value and pays only gas. */
   PRICE_CHECKPOINT_ENABLED?: string;
 
+  // Asset rankings pass (#3446). `secret_text` like the flags above.
+  /** 'true' arms the asset rankings pass (in addition to KEEPER_ENABLED):
+   *  once a UTC day, the top 500 tokens by market-cap rank on each mainnet
+   *  chain from two public market-data sources, keyed by contract address,
+   *  written to the shared `asset_ranking` table the app reads for its asset
+   *  trust tiers. Off-chain only: reads two public APIs, sends no
+   *  transaction. */
+  ASSET_RANKINGS_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -562,6 +571,7 @@ export const PLAIN_VAR_KEYS = [
   'KEEPER_FEE_RESERVE_LIQUIDATIONS',
   'KEEPER_FEE_RESERVE_LIQUIDATION_GAS',
   'PRICE_CHECKPOINT_ENABLED',
+  'ASSET_RANKINGS_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -795,6 +805,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_FEE_RESERVE_LIQUIDATIONS: raw.KEEPER_FEE_RESERVE_LIQUIDATIONS,
     KEEPER_FEE_RESERVE_LIQUIDATION_GAS: raw.KEEPER_FEE_RESERVE_LIQUIDATION_GAS,
     PRICE_CHECKPOINT_ENABLED: raw.PRICE_CHECKPOINT_ENABLED,
+    ASSET_RANKINGS_ENABLED: raw.ASSET_RANKINGS_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

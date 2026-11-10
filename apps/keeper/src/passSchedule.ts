@@ -59,6 +59,7 @@ import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } 
 import { PASS_CADENCE_SEC as VAULT_BEACON_UPKEEP_CADENCE_SEC, runVaultBeaconUpkeep } from './vaultBeaconUpkeep';
 import { runKeeperFeeBalance } from './keeperFeeBalance';
 import { PASS_CADENCE_SEC as PRICE_CHECKPOINT_CADENCE_SEC, runPriceCheckpoint } from './priceCheckpoint';
+import { PASS_CADENCE_SEC as ASSET_RANKINGS_CADENCE_SEC, runAssetRankings } from './assetRankings';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -381,8 +382,8 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     // :26 — clear of every staggered pass (the 5-minute ones sit on :02–:03
     // modulo 5, the 15-minute ones on :00, :01, :04, :05, :09 and :10 modulo
     // 15, the other hourly ones on :06, :14, :21, :29, :36, :44, :51 and :59).
-    // It shares :11 modulo 15 with priceCheckpoint (:11 and :41), which
-    // leaves :56 the only free minute there.
+    // It shares :11 modulo 15 with priceCheckpoint (:11 and :41) and
+    // assetRankings (:56), which fill it.
     offsetMinutes: 26,
     why: 'applies VaultBeacon changes whose delay (hours or days) has passed; each only applies what its owner decided, so an hour past maturity is not material (#3282)',
     run: runVaultBeaconUpkeep,
@@ -393,8 +394,8 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     // :11 and :41 — half an hour apart and clear of every staggered pass (the
     // 5-minute ones sit on :02–:04 modulo 5, the 15-minute ones on :00, :01,
     // :04, :05, :09 and :10 modulo 15, the hourly ones on :06, :14, :21, :26,
-    // :29, :36, :44, :51 and :59). With vaultBeaconUpkeep at :26 that leaves
-    // only :56 free at :11 modulo 15.
+    // :29, :36, :44, :51 and :59). With vaultBeaconUpkeep at :26 and
+    // assetRankings at :56, :11 modulo 15 is full.
     offsetMinutes: 11,
     why: "writes each UTC hour's price checkpoint the #3359 forced-sale floor reads; the second run is the hour's retry, and a missed hour only returns sales to the full slippage cap (#3384)",
     run: runPriceCheckpoint,
@@ -409,6 +410,17 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 51,
     why: "continues, resolves and (past their deadlines) unwinds reward staging records, domains and legacy slices, and registers for released batches' windows; deadlines and windows are days long, so an hour is not material (#3097)",
     run: runRewardStagingUpkeep,
+  },
+  {
+    name: 'assetRankings',
+    cadenceMinutes: ASSET_RANKINGS_CADENCE_SEC / 60,
+    // :56 — the last minute clear of every staggered pass (the 5-minute ones
+    // sit on :02–:04 modulo 5, the 15-minute ones on :00, :01, :04, :05, :09
+    // and :10 modulo 15, the hourly ones on :06, :11, :14, :21, :26, :29, :36,
+    // :41, :44, :51 and :59).
+    offsetMinutes: 56,
+    why: 'refreshes the daily market-cap rankings the app\'s asset trust tiers read; a pair is fetched once a UTC day and a failed fetch is retried the next hour (#3446)',
+    run: runAssetRankings,
   },
 ];
 

@@ -454,6 +454,12 @@ journalctl -u vaipakam-keeper -f
    each UTC hour's price checkpoint for the assets of active ERC-20 loans,
    which the #3359 forced-sale floor reads; while it is unarmed every forced
    sale uses the full slippage cap),
+   `ASSET_RANKINGS_ENABLED` (`assetRankings`, hourly at :56: once a UTC day
+   per source and mainnet chain, writes the top 500 tokens by market-cap rank
+   from two public market-data sources to the shared `asset_ranking` table
+   the app's asset trust tiers read; off-chain only, it sends no
+   transaction, and while it is unarmed the app shows no tier newer than the
+   last list written),
    `REWARD_STAGING_UPKEEP_ENABLED` (`rewardStagingUpkeep`, hourly at :51:
    moves held reward claim days on to payment; its unwind step also needs
    `REWARD_STAGING_UNWIND_ENABLED`), and
