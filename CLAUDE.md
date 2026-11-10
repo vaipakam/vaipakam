@@ -1887,8 +1887,7 @@ Rules:
 
 ## Executing forge
 
-- When ever running forge build, forge script or forge test, run them in high priority
-- Prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, and low priority causes 2–3× slowdowns under parallel desktop load. (This line used to link a `feedback_forge_high_priority.md` that is not in the repository — the rule is the whole content, so it is stated here instead.)
+- Run forge build, forge script and forge test as plain `forge` commands. **No `nice` / `ionice` prefix** (owner decision 2026-11-10): the owner's machine raises the priority of every running solc process automatically, so the prefix is redundant, and `nice -n -10` fails without privileges anyway. This replaces the earlier rule that required the prefix.
 
 ### Live testnet review is part of definition-of-done (user directive 2026-07-05)
 
@@ -2052,8 +2051,7 @@ viaIR + optimizer parity with src/ to faithfully reproduce production
 bytecode, AND the quick profile's `test/**` skip would empty test
 discovery.
 
-The high-priority `nice -n -10 ionice` prefix still applies to both
-profiles — it's about scheduling priority, not the build itself.
+No priority prefix is needed for either profile (see "Executing forge").
 
 ### Local full regression — run it via `run-regression.sh` (sparse compile)
 
@@ -2288,19 +2286,14 @@ Two practical consequences:
   or removing an annotation:
 
   ```bash
-  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
-    forge test --match-path "test/deploy/*" -vv
-  # or through the gate, which shells out to bare forge and so needs the
-  # prefix on the wrapper:
-  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
-    bash script/predeploy-check.sh
+  FOUNDRY_PROFILE=default forge test --match-path "test/deploy/*" -vv
+  # or through the gate:
+  FOUNDRY_PROFILE=default bash script/predeploy-check.sh
   ```
 
   `FOUNDRY_PROFILE=default` is **correctness**: an inner loop leaves `quick`
   exported, quick skips `test/**`, and discovery then empties and the run goes
-  green having executed nothing. `nice`/`ionice` is the separate **performance**
-  policy the "Executing forge" rule sets; omitting it still runs the suite, just
-  2–3× slower. `-vv` is also correctness-adjacent: the HEADROOM figures live in
+  green having executed nothing. `-vv` is also correctness-adjacent: the HEADROOM figures live in
   `test_ReportFacetsNearSizeLimit`, which always passes by design, and Foundry
   hides logs from passing tests below `-vv`.
 
@@ -2321,7 +2314,7 @@ Two practical consequences:
   #    DeployCrosschain.s.sol, which no deploy test imports). Skip this and
   #    step 2 reads a STALE artifact from an earlier build and approves a
   #    contract that is now oversized.
-  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 forge build --skip test
+  FOUNDRY_PROFILE=default forge build --skip test
 
   # 2. EXTRACT `.deployedBytecode.object` and convert hex chars to bytes.
   jq -r '.deployedBytecode.object | (length - 2) / 2' \
@@ -2353,14 +2346,10 @@ Two practical consequences:
   change they did not look at. Match the file you actually touched:
 
   ```bash
-  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
-    forge test --match-path "test/SignedOfferBook.t.sol"
+  FOUNDRY_PROFILE=default forge test --match-path "test/SignedOfferBook.t.sol"
   # or, when the block is in a widely-inherited helper and you want the
-  # whole closure compiled, the chunked regression — another wrapper that
-  # shells out to bare forge, so the prefix goes on the wrapper here too
-  # (the script raises only IO priority internally and deliberately omits
-  # `nice`, which needs privileges it cannot assume):
-  nice -n -10 ionice -c 2 -n 0 bash script/run-regression.sh
+  # whole closure compiled, the chunked regression:
+  bash script/run-regression.sh
   ```
 
   This is the same trap in a second form: a probe or helper under `test/` that
