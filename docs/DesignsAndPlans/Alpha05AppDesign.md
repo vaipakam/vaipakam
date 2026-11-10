@@ -381,9 +381,10 @@ the finish card adds why where the chain lets it be read (#3482): when the
 receipt spent the whole gas allowance, it names that allowance and says it
 most likely ran out of gas; otherwise it replays the call on the state just
 before its block and states the protocol's refusal as the likely reason,
-since a transaction earlier in the same block can change it. A replay that
-goes through says the block most likely changed what the call relied on; a
-replay that cannot run says so. The reason never changes the verdict.
+since a transaction earlier in the same block, or the block's own later
+time, can change it. A replay that goes through says that one of those two
+changed what the call relied on, without claiming which; a replay that
+cannot run says so. The reason never changes the verdict.
 
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant

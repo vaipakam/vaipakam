@@ -10,9 +10,11 @@
  *   stated as the likely one.
  * - Otherwise the call is replayed on the state just before its block and
  *   the protocol's refusal is decoded. A transaction earlier in the same
- *   block can change that state, so the replay names the LIKELY reason; a
- *   replay that goes through says that something in the block changed what
- *   the call relied on; a replay that cannot be run says why.
+ *   block can change that state, and the replay runs at the parent block's
+ *   time, not its own (an offer can expire in between), so the replay names
+ *   the LIKELY reason; a replay that goes through says that something
+ *   changed by the block, either an earlier transaction or the later time,
+ *   without claiming which; a replay that cannot be run says why.
  *
  * Nothing here can turn a revert into a success: it only explains one.
  */
@@ -26,7 +28,8 @@ export type RevertCause =
   | { kind: 'out-of-gas'; gasLimit: bigint }
   /** The replay on the state before its block was refused, and why. */
   | { kind: 'refused'; reason: string }
-  /** The replay went through: the block changed what the call relied on. */
+  /** The replay went through: an earlier transaction in the block, or the
+   *  block's later time, changed what the call relied on (not told apart). */
   | { kind: 'replay-passes' }
   /** The cause could not be read (the transaction or the replay). */
   | { kind: 'unread'; reason: string };
