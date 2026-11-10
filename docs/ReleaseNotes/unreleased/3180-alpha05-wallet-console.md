@@ -1,4 +1,4 @@
-## Thread — alpha05 keeps a connected session's console clean (PR #<n>)
+## Thread — alpha05 keeps a connected session's console clean (PR #3481)
 
 With a wallet connected, the new app's console filled with refused requests to an outside Ethereum mainnet endpoint. The wallet picker's connected surfaces (its button, its account page and its avatar) each looked up a name-service name for the address on Ethereum mainnet. Because the app serves no mainnet, they read it from a public endpoint the page never names, and that endpoint refuses the app's origin. One connected walk over the main pages made 167 such requests, and every report from the page's list of allowed destinations was one of them.
 
