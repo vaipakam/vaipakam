@@ -5,8 +5,11 @@
 // or offer reads the page made (none). Then, as <address> in Basic mode, it
 // prints the orientation card; in Advanced mode, the completeness note, the
 // market list and the ladder the desk opens, then the next market's ladder
-// when there is one. Checks that nothing scrolls sideways and saves
-// full-page screenshots per device.
+// when there is one. Under each ladder (OFF-75, RB-DESK-TAPE) it prints the
+// wallet's own offers, the market's recent loans and the agreed-rate chart
+// (its period count, the first period's figures on hover, and the table).
+// Checks that nothing scrolls sideways and saves full-page screenshots per
+// device.
 // Usage: node e2e/live/desk-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
 const { chromium, devices } = require('playwright');
@@ -40,8 +43,35 @@ async function ladder(p, label, step) {
     .catch(() => {});
   await p.waitForTimeout(2000);
   console.log(`----- ladder ${step} (${await l.getAttribute('data-market').catch(() => '')})\n${(await l.count()) ? await text(l) : 'no ladder'}`);
+  await activity(p);
   console.log('scrollWidth/innerWidth', await width(p));
   await p.screenshot({ path: `${OUT}/live-desk-${step}-${label}.png`, fullPage: true });
+}
+
+async function activity(p) {
+  for (const id of ['desk-orders', 'desk-tape']) {
+    const sec = p.getByTestId(id);
+    console.log(`----- ${id}\n${(await sec.count()) ? await text(sec) : 'not shown'}`);
+  }
+  const chart = p.getByTestId('desk-chart');
+  if (!(await chart.count())) return console.log('----- desk-chart\nnot shown');
+  await chart
+    .locator('[data-testid="desk-rate-chart"], [data-testid="desk-chart-none"], [data-testid="desk-chart-failed"]')
+    .first()
+    .waitFor({ timeout: 60000 })
+    .catch(() => {});
+  const periods = chart.getByTestId('desk-chart-period');
+  console.log(
+    `----- desk-chart (${await chart.getAttribute('data-period')}): periods drawn = ${await periods.count()}, runs = ${await chart.getByTestId('desk-chart-run').count()}`,
+  );
+  console.log(await text(chart));
+  if (await periods.count()) {
+    await periods.first().hover();
+    const tip = chart.getByTestId('desk-chart-tip');
+    console.log(`----- first period on hover\n${(await tip.count()) ? await text(tip) : 'no tip'}`);
+    await chart.getByTestId('desk-chart-table').locator('summary').click();
+    console.log(`----- table rows = ${await chart.getByTestId('desk-candle-row').count()}`);
+  }
 }
 
 async function session(b, opts, label) {

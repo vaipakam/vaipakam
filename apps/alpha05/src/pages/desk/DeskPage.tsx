@@ -23,6 +23,7 @@ import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../s
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { formatBps } from '../../shared/ui/format';
 import { useNow } from '../../shared/ui/useNow';
+import { DeskActivity } from './DeskActivity';
 
 type Hex = `0x${string}`;
 type MarketTerms = Pick<Market, 'lending' | 'collateral' | 'durationDays'>;
@@ -40,10 +41,12 @@ function marketName(m: MarketTerms, meta: TokenMetaMap | null, format: CopyAcces
 }
 
 /**
- * The rate desk, slice 1 (OFF-73): the network's token markets (one lending
- * token against one collateral token for one term) and the chosen market's
- * rate ladder, both from the index (the world rail, RB-RAILS), read only
- * once a wallet is connected on a served network, as the offer book is.
+ * The rate desk (OFF-73, OFF-75): the network's token markets (one lending
+ * token against one collateral token for one term), the chosen market's
+ * rate ladder, and below it the viewer's own offers on it, the market's
+ * recent loans and the rates they were agreed at over time, all from the
+ * index (the world rail, RB-RAILS), read only once a wallet is connected on
+ * a served network, as the offer book is.
  *
  * One completeness note stands above every view: the index lags the chain,
  * and it counts gasless signed orders that this page does not list yet. The
@@ -197,6 +200,18 @@ export function DeskPage() {
                 </>
               )}
             </section>
+          )}
+          {selected !== null && (
+            <DeskActivity
+              key={selectedKey}
+              market={selected}
+              marketLabel={marketName(selected, meta, format)}
+              ladder={ladder}
+              viewer={viewer}
+              meta={meta}
+              nowSec={nowSec}
+              copy={copy}
+            />
           )}
           <WhyLink summaryKey="desk.whySummary" detailKey="desk.why" />
         </>

@@ -1585,3 +1585,9 @@ Le Rate desk, sous Avancé dans le menu, présente les offres ouvertes de prêt 
 ### Quand une offre vient d'être publiée ou modifiée
 
 Une offre ou une demande ne peut être prise qu'une fois que ses conditions sont en place depuis quelques secondes après sa publication ou sa dernière modification. Si vous l'ouvrez plus tôt, la vérification indique combien de temps les conditions doivent rester en place et environ combien de temps il reste, et n'affiche aucune étape à signer. Vous n'avez rien à faire : la vérification relit d'elle-même et vous laisse continuer une fois le délai écoulé. Rien n'est envoyé pendant l'attente.
+
+<a id="desk-tape"></a>
+
+### Rate desk : vos offres, les prêts récents et les taux convenus
+
+Sous l'échelle d'un marché, le Rate desk présente trois autres éléments. D'abord, vos propres offres sur cette échelle, avec la part de chacune déjà prise et la part encore ouverte, telles que l'index les a enregistrées en dernier ; la page propre d'une offre la vérifie sur la chaîne. Ensuite, les prêts récents du marché, les plus récents en premier : chaque ligne est un prêt conclu sur ce marché, au taux et pour le montant fixés à son ouverture, que les remboursements ou prolongations ultérieurs ne modifient pas. Enfin, un graphique des taux auxquels des prêts ont été conclus sur les 7, 30 ou 90 derniers jours, ou depuis le début. Chaque palier est le taux du dernier prêt conclu dans sa période, et la barre ombrée couvre le taux le plus bas et le plus haut de cette période. Un vide signifie qu'aucun prêt n'a été conclu alors ; rien n'est tracé par-dessus. La ligne pointillée est le taux médian actuel de l'échelle, calculé par l'application, et les mêmes chiffres figurent dans un tableau sous le graphique. Lorsque l'index ne peut pas confirmer la durée d'un prêt, il ne le place dans aucun marché ; le desk indique combien de prêts de ce type compte la paire de jetons.
