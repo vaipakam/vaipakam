@@ -1,4 +1,4 @@
-## Keeper — hourly price checkpoints now cover guarded offers (PR #<n>)
+## Keeper — hourly price checkpoints now cover guarded offers (PR #3501)
 
 The maker's price-move guard (#3358) lets an offer refuse a fill unless both of its assets have an hourly price checkpoint for each of the last two hours. The keeper's price checkpoint pass wrote checkpoints only for the assets of active loans, so a guarded offer in a pair no loan used could never be filled, however calm the market. For the guard a missing checkpoint is not the safe direction it is for the forced-sale floor: it blocks the offer outright.
 
