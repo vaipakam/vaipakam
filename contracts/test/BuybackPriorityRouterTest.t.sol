@@ -390,6 +390,75 @@ contract BuybackPriorityRouterTest is SetupTest {
         _assertHeadroom(40e18, 40e18, "rebalanced");
     }
 
+    // ─── #908 — an order pending across an in-place refresh ───────
+    //
+    // A Diamond refreshed in place with buyback orders pending carries those
+    // orders with no floor recorded: the aggregate and the per-order record
+    // are new storage and start at zero. Each order releases only what it
+    // recorded, so such an order releases nothing and cannot underflow the
+    // aggregate. The tests build that state by erasing a fresh order's two
+    // records, which is exactly what the pre-#908 code left behind.
+
+    /// @dev `LibVaipakam.Storage` slot of `buybackVpfiFloorReserved`, from the
+    ///      storage-layout golden file; `buybackVpfiFloorHeld` follows it.
+    uint256 private constant FLOOR_RESERVED_SLOT = 700;
+
+    function _eraseFloorRecords(bytes32 orderHash) internal {
+        bytes32 base = LibVaipakam.VANGKI_STORAGE_POSITION;
+        bytes32 reservedSlot = bytes32(uint256(base) + FLOOR_RESERVED_SLOT);
+        bytes32 heldSlot = keccak256(abi.encode(orderHash, uint256(base) + FLOOR_RESERVED_SLOT + 1));
+        // The slots are the right ones only if they hold what the order
+        // recorded: guard the layout assumption before erasing.
+        (, uint256 heldBefore) = _t().getBuybackTopUpHeadroom();
+        assertEq(uint256(vm.load(address(diamond), reservedSlot)), heldBefore, "aggregate slot");
+        assertGt(uint256(vm.load(address(diamond), heldSlot)), 0, "per-order slot");
+        vm.store(address(diamond), reservedSlot, bytes32(0));
+        vm.store(address(diamond), heldSlot, bytes32(0));
+    }
+
+    function test_Headroom_LegacyOrderExpiresWithoutUnderflow() public {
+        _t().setRewardEmissionsTopUpTarget(100e18);
+        bytes32 legacy = _commitFloor(40e18);
+        _eraseFloorRecords(legacy);
+        _assertHeadroom(100e18, 0, "legacy holds nothing");
+
+        // An order committed after the refresh reserves as usual.
+        bytes32 fresh = _commitFloor(30e18);
+        _assertHeadroom(100e18, 30e18, "fresh holds its floor");
+
+        // The legacy order expires: it releases nothing, the fresh order's
+        // reservation stays whole, and the source tokens come back.
+        vm.warp(block.timestamp + 30 minutes + 1);
+        _t().expireBuybackIntent(legacy);
+        _assertHeadroom(100e18, 30e18, "after legacy expiry");
+        _t().expireBuybackIntent(fresh);
+        _assertHeadroom(100e18, 0, "after fresh expiry");
+    }
+
+    function test_Headroom_LegacyOrderFillsFromFreeRoomOnly() public {
+        _t().setRewardEmissionsTopUpTarget(50e18);
+        bytes32 legacy = _commitFloor(30e18);
+        _eraseFloorRecords(legacy);
+        bytes32 fresh = _commitFloor(30e18);
+        _assertHeadroom(50e18, 30e18, "fresh holds its floor");
+
+        // The legacy order held no room, so all it delivers must come from
+        // the free 20: its 30 would take the fresh order's floor.
+        vpfi.mint(lop, 30e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibTreasuryBuyback.BuybackHeadroomShort.selector, 30e18, 20e18)
+        );
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), legacy, AMOUNT_IN, address(usdc), AMOUNT_IN, address(vpfi), 30e18
+        );
+
+        // Once the fresh order settles, the legacy one settles too.
+        _fillPart(fresh, AMOUNT_IN, 30e18);
+        _t().setRewardEmissionsTopUpTarget(80e18);
+        _fillPart(legacy, AMOUNT_IN, 30e18);
+        _assertHeadroom(20e18, 0, "both settled");
+    }
+
     // #687-C: test_Routing_StakingPoolCap_WidensWithBuybackBudget removed with
     // the staking pool + its buyback-overflow accumulator (5% yield gone).
 }

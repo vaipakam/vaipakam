@@ -8276,8 +8276,21 @@ library LibVaipakam {
         ///      only its own floor plus free headroom, and a target may not
         ///      be lowered below what is held, so every committed order can
         ///      always settle at its floor. Written only by
-        ///      `LibTreasuryBuyback`. Appended — append-only.
+        ///      `LibTreasuryBuyback`. Always the sum of
+        ///      `buybackVpfiFloorHeld` over pending orders. Appended —
+        ///      append-only.
         uint256 buybackVpfiFloorReserved;
+        /// @dev #908 — the part of `buybackVpfiFloorReserved` each pending
+        ///      buyback order holds, keyed by order hash: its `minVpfiOut`
+        ///      at commit, less the floor its fills have met. An order
+        ///      releases exactly what it recorded here, never a figure
+        ///      recomputed from its terms, so an order committed before
+        ///      this record existed (a Diamond refreshed in place with
+        ///      orders pending) holds and releases nothing, and the
+        ///      aggregate can never underflow. Cleared when the order
+        ///      fills or expires. Written only by `LibTreasuryBuyback`.
+        ///      Appended — append-only.
+        mapping(bytes32 => uint256) buybackVpfiFloorHeld;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
