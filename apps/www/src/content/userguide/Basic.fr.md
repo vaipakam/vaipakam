@@ -1294,6 +1294,8 @@ Positions liste chaque prêt que vous avez accordé ou contracté sur ce réseau
 
 Tous, Prêtés et Empruntés filtrent les trois listes à la fois. Positions n'affirme que vous n'avez rien qu'après avoir tout lu ; si une liste n'a pas pu être lue en entier, il le dit. Chaque prêt ouvre sa propre page, qui montre les actions qui vous sont ouvertes. La liste elle-même ne signe jamais rien.
 
+Avec deux prêts en cours ou plus, un récapitulatif vient en premier. Pour chaque côté, il indique le principal encore dû ou encore prêté, par jeton (des montants en jetons différents ne sont jamais additionnés, et les locations de NFT sont comptées), la prochaine date d'échéance d'un paiement avec un lien vers son prêt, et les prêts en retard ou en repli (fallback), chacun avec son lien. Les intérêts ne sont pas inclus dans ces totaux ; la page de chaque prêt indique ce que coûte son remboursement maintenant. Pour une location, cette date est sa clôture sur le loyer payé d'avance ; elle n'est donc jamais appelée remboursement.
+
 <a id="position"></a>
 
 ### Position : un prêt

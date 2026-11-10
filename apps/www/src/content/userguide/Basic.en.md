@@ -1249,6 +1249,8 @@ Positions lists every loan you lent or borrowed in on this network, from the pos
 
 All, Lent and Borrowed narrow the three lists at once. Positions says you have nothing only after reading everything; if a list could not be read in full, it says so. Each loan opens its own page, which shows the actions open to you. The list itself never signs anything.
 
+With two or more live loans, a summary comes first. For each side it gives the principal still owed or still out, per token (amounts in different tokens are never added together, and NFT rentals are counted), the next date a payment falls due with a link to its loan, and the loans past due or in fallback, each linked. Interest is not in these totals; each loan's page shows what repaying it costs now. For a rental, that date is when it closes on its prepaid rent, so it is never called a repayment.
+
 <a id="position"></a>
 
 ### Position: One Loan

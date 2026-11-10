@@ -988,6 +988,24 @@ dd.value-unknown > .icon {
   font-size: 1.15rem;
   color: var(--text-strong);
 }
+/* #3320: the summary over all live loans, one block per side. */
+.positions-summary .summary-side {
+  padding: 12px 16px;
+  margin: 0 0 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+.positions-summary .summary-side p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.positions-summary .summary-head {
+  color: var(--text-strong);
+  font-weight: 600;
+}
 .section-head {
   display: flex;
   align-items: baseline;

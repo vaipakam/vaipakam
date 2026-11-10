@@ -2421,6 +2421,8 @@ Positions liest denselben Bestand wie Home über einen gemeinsamen Leser: `getUs
 
 Die Seitenauswahl filtert Auszahlungen, laufende und beendete Zeilen nach der gehaltenen Seite. „Nichts“ wird nur gesagt, wenn der Positions- und der Auszahlungsdurchlauf vollständig waren und das letzte Lesen gelang; ein an seiner Obergrenze gestoppter Durchlauf wird als unvollständig angegeben. Eine Zeile öffnet `/positions/<id>`, wo das Eignungsurteil jede Aktion entscheidet; die Liste sendet keine Transaktion.
 
+Bei zwei oder mehr laufenden Zeilen nach der Seitenwahl steht eine Übersichtskarte an erster Stelle. Je Seite summiert sie `principal` je ERC-20-`principalAsset`, nie über Token hinweg (der Wertvergleich bleibt bei der Exposure-Zeile), und zählt Zeilen mit NFT-Kapital als Vermietungen. Der nächste Termin ist der früheste noch bevorstehende unter den Stufen, die auch die Zeilen verwenden: eine laufende oder bald fällige Fälligkeit (Rückzahlung) oder ein anstehender periodischer Checkpoint (Zinsen); bei Gleichstand gilt die niedrigere Kredit-ID. Kredite mit abgelaufener Karenzfrist (bei der Fälligkeit oder einem Checkpoint), Kredite in der Karenzfrist und FallbackPending-Kredite werden nach ID aufgeführt, jeder einmal unter seiner schwersten Stufe; Kredite mit nicht gelesenen Fristen werden gezählt. Zinsen sind ausgenommen. Die Karte nutzt nur den eigenen Lesevorgang der Liste und nennt einen unvollständigen Durchlauf. Eine Fälligkeit bei einer Zeile mit NFT-Kapital ist das Ende einer Vermietung (`rental-close`), nie eine Rückzahlung: Eine Vermietung endet mit ihrer vorausbezahlten Miete, daher nennt die Zusammenfassung sie so wie die Zeilen.
+
 <a id="position"></a>
 
 ### Position: Wie ein Kredit gelesen wird

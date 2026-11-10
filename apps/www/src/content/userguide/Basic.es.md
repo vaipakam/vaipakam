@@ -1276,6 +1276,8 @@ Positions muestra cada préstamo que prestaste o tomaste en esta red, a partir d
 
 Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que no tienes nada solo después de leerlo todo; si una lista no se pudo leer entera, lo indica. Cada préstamo abre su propia página, que muestra las acciones disponibles para ti. La lista nunca firma nada.
 
+Con dos o más préstamos activos, primero aparece un resumen. Para cada lado indica el principal que aún se debe o que sigue prestado, por token (los importes en tokens distintos nunca se suman, y los alquileres de NFT se cuentan), la próxima fecha de vencimiento de un pago con un enlace a su préstamo, y los préstamos vencidos o en fallback, cada uno enlazado. Los intereses no están en estos totales; la página de cada préstamo muestra lo que cuesta pagarlo ahora. En un alquiler, esa fecha es su cierre con la renta pagada por adelantado, así que nunca se llama reembolso.
+
 <a id="position"></a>
 
 ### Position: un préstamo
