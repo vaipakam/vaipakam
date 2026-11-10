@@ -1,4 +1,4 @@
-## Thread — alpha05: repaying in grace counts down to the end and says to send early (PR #TBD)
+## Thread — alpha05: repaying in grace counts down to the end and says to send early (PR #3490)
 
 When a borrower repays a loan that is past its due date and in its grace period, the repayment review in the new app (`apps/alpha05`) now counts down to the end of grace. It says that after the end the protocol refuses a repayment and anyone can file a default, and that whichever transaction is mined first wins, so the repayment should be sent well before then. Paying part of a loan shows the same clock.
 
