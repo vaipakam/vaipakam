@@ -2294,7 +2294,7 @@ source that answered and the age of the oldest read on the page,
 and Refresh re-reads them all. The index is used only for world
 figures (the market and history), with its block height and age
 shown. A wallet on an unserved network sees nothing of its own
-until it switches.
+until it switches. The address chip opens the app's own account panel: the full address with a copy action, the network, a switch to each other served network, and disconnect. The wallet picker is used only to connect. Once connected, the app renders no name-service lookup, so a connected session reads nothing on Ethereum mainnet and reaches no host outside the page's connect-src list.
 
 <a id="deployments"></a>
 

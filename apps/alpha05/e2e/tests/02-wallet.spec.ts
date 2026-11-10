@@ -21,6 +21,37 @@ test('connecting shows the address and network as the identity of every figure',
   await page.keyboard.press('Escape');
 });
 
+test('the connected wallet’s panel states the full address and network, copies and disconnects, and the page reads nothing on Ethereum mainnet', async ({ launchWallet }) => {
+  const { page, account } = await launchWallet('lender');
+  // The app reads no mainnet name service: a connected session must reach
+  // no host beyond its own origin, its Workers and the local chain (#3476).
+  const outside: string[] = [];
+  page.on('request', (r) => {
+    const host = new URL(r.url()).hostname;
+    if (!['127.0.0.1', 'localhost'].includes(host) && !r.url().startsWith('data:')) outside.push(r.url());
+  });
+  await page.goto('/');
+  await connectWallet(page);
+  const chip = page.getByTestId('wallet-chip');
+  await expect(chip).toHaveAttribute('aria-expanded', 'false');
+  await chip.click();
+  await expect(chip).toHaveAttribute('aria-expanded', 'true');
+  const panel = page.getByTestId('wallet-panel');
+  await expect(panel).toContainText(account.address);
+  await expect(panel).toContainText('Network: Base Sepolia.');
+  // The panel stays inside the window on a phone.
+  const box = (await panel.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await expect(chip).toBeFocused();
+  await chip.click();
+  await panel.getByRole('button', { name: 'Disconnect' }).click();
+  await expect(page.locator('.wallet').getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  expect(outside.filter((u) => /merkle|ens|mainnet/i.test(u))).toEqual([]);
+});
+
 test('the capability line states what was read from the protocol contract', async ({ launchWallet }) => {
   const { page } = await launchWallet('visitor');
   await page.goto('/');

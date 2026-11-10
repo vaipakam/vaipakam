@@ -952,7 +952,7 @@ none does it use a read-only proxy. Your own figures are never
 taken from the shared index. The address and network shown at the
 top are the ones every figure on the page belongs to. If your
 wallet is on a network the app does not serve, nothing of yours is
-shown until you switch.
+shown until you switch. Select your address at the top to see it in full, copy it, switch to another network the app serves, or disconnect. The app shows the address itself, not a name-service name, because it reads nothing on Ethereum mainnet.
 
 <a id="deployments"></a>
 
