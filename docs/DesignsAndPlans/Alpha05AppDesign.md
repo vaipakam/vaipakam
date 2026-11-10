@@ -2041,7 +2041,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   RW-09, RW-10), shown on a network with VPFI set up. The card states the
   tier and discount the protocol's own fee path applies now
   (`getEffectiveDiscount`), never one worked out by the app: none while the
-  consent is off, with the tier that would apply with it on; on VPFI's home
+  consent is off, with the tier that would apply with it on (or that it
+  could not be read); on VPFI's home
   network, with one line naming the holding rule that holds the effective
   tier below what the counted VPFI alone would give (no holding recorded,
   the minimum holding period with its end, the weighted average's tier, or

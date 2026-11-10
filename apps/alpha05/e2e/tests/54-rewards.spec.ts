@@ -186,7 +186,7 @@ test('the tier card states the tier the protocol applies, names the holding rule
   const now = page.getByTestId('rewards-tier-now');
   await expect(now).toHaveAttribute('data-state', 'consent-off', { timeout: 60_000 });
   await expect(now).toContainText('Your fee discount is off, so no tier applies to your fees.');
-  await expect(page.getByTestId('rewards-tier-would')).toHaveCount(0);
+  await expect(page.getByTestId('rewards-tier-would')).toHaveText('With it on, no tier would apply now.');
   const rows = page.getByTestId('rewards-tier-row');
   await expect(rows).toHaveCount(5, { timeout: 60_000 });
   await expect(rows.nth(0)).toContainText(`Below 100 ${symbol}`);

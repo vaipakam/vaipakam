@@ -87,9 +87,13 @@ describe('the tier the card states', () => {
   it('without the explanation, states the tier and that why could not be read', () => {
     expect(tierState({ ...base, explain: null })).toEqual({ kind: 'applies', tier: 2, bps: 1500n, explained: false });
   });
-  it('says no tier applies while the consent is off, with the tier that would apply with it on', () => {
+  it('says no tier applies while the consent is off, with the tier that would apply with it on, or that it is unread', () => {
     expect(tierState({ ...base, consent: false, effective: { tier: 0, bps: 0n } })).toEqual({ kind: 'consent-off', would: { tier: 2, bps: 1500n } });
-    expect(tierState({ ...base, consent: false, explain: explained({ effective: { tier: 0, bps: 0n } }) })).toEqual({ kind: 'consent-off', would: null });
+    expect(tierState({ ...base, consent: false, explain: explained({ effective: { tier: 0, bps: 0n } }) })).toEqual({
+      kind: 'consent-off',
+      would: { tier: 0, bps: 0n },
+    });
+    // Unread is kept apart from a known tier 0, so the card can say so.
     expect(tierState({ ...base, consent: false, explain: null })).toEqual({ kind: 'consent-off', would: null });
   });
   it('away from the home network, states the copy sent from there', () => {

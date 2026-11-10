@@ -1819,6 +1819,8 @@ export const copy = {
       'Your counted VPFI reaches tier {{counted}}, but during the look-back over your current holding it fell to tier {{lowest}}, and a tier never exceeds the lowest one held then, so tier {{tier}} applies.',
     ),
     consentOffWould: B('With it on, tier {{tier}} would apply now: {{discount}}% off your fees.'),
+    consentOffWouldNone: B('With it on, no tier would apply now.'),
+    wouldUnread: A('Which tier would apply with it on could not be read from the protocol.'),
     explainUnread: B('Why this tier applies could not be read from the protocol.'),
     explainTitle: B('How the protocol works out your tier'),
     factCounted: B('VPFI counted now'),

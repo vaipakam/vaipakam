@@ -91,9 +91,13 @@ export function TierSection({ chain, own }: { chain: SupportedChain; own: OwnSta
             ) : (
               <p className="tier-a">{format('rewardsTier.copy', { tier: String(state.tier), discount: discountPercent(state.bps) })}</p>
             ))}
-          {state.kind === 'consent-off' && state.would !== null && (
-            <p className="tier-b" data-testid="rewards-tier-would">
-              {format('rewardsTier.consentOffWould', { tier: String(state.would.tier), discount: discountPercent(state.would.bps) })}
+          {state.kind === 'consent-off' && (
+            <p className="tier-b" data-testid="rewards-tier-would" data-would={state.would === null ? 'unread' : state.would.tier}>
+              {state.would === null
+                ? text('rewardsTier.wouldUnread')
+                : state.would.tier === 0
+                  ? text('rewardsTier.consentOffWouldNone')
+                  : format('rewardsTier.consentOffWould', { tier: String(state.would.tier), discount: discountPercent(state.would.bps) })}
             </p>
           )}
           {(state.kind === 'applies' || state.kind === 'held-down') &&

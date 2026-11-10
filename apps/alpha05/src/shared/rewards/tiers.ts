@@ -153,6 +153,8 @@ export type HeldBy =
 /** What the tier card says, in order of what decides it. */
 export type TierState =
   | { kind: 'unread' }
+  /** `would`: the tier that would apply with the consent on (tier 0 when
+   *  none would), or null when the explanation could not be read. */
   | { kind: 'consent-off'; would: { tier: number; bps: bigint } | null }
   | { kind: 'copy'; tier: number; bps: bigint }
   | { kind: 'held-down'; tier: number; bps: bigint; counted: number; held: HeldBy }
@@ -175,7 +177,7 @@ function heldBy(e: TierExplanation): HeldBy {
 
 export function tierState(card: Pick<TierCard, 'consent' | 'home' | 'effective' | 'explain'>): TierState {
   const e = card.explain;
-  if (card.consent === false) return { kind: 'consent-off', would: e !== null && e.effective.tier > 0 ? e.effective : null };
+  if (card.consent === false) return { kind: 'consent-off', would: e === null ? null : e.effective };
   if (card.consent === null || card.home === null || card.effective === null) return { kind: 'unread' };
   const { tier, bps } = card.effective;
   if (!card.home) return { kind: 'copy', tier, bps };
