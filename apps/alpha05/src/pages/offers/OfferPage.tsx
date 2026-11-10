@@ -9,6 +9,8 @@ import { TakeRequest } from '../../shared/rent/TakeRequest';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { CancelOffer, useCancelOfferHeld } from '../../shared/offers/CancelOffer';
+import { PriceGuardSection, useGuardHeld } from '../../shared/offers/PriceGuard';
+import { readPriceGuard } from '../../shared/offers/priceGuard';
 import { roleTerms } from '../../shared/offers/acceptTerms';
 import { detailAction, readOfferDetail, type OfferDetail } from '../../shared/offers/offerDetail';
 import { collateralWords } from '../../shared/offers/collateralWords';
@@ -168,6 +170,14 @@ function OfferBody({
   const amt = (v: bigint) => offerAmount(o, v, meta, format);
   const collateral = collateralWords(o, meta, format);
   const terms = roleTerms(o);
+  // #3358: the guard is read for an offer of a token against token
+  // collateral, the only kind that can carry one.
+  const guardable = erc20 && erc20Collateral;
+  const guardDiamond = (walletChain?.diamondAddress ?? '0x') as Hex;
+  const guardHeld = useGuardHeld(d.id);
+  const guard = useOwnRead(['offerGuard', guardDiamond, d.id.toString()], (c) => readPriceGuard(c, guardDiamond, d.id), {
+    enabled: guardable && walletChain !== null && own !== null,
+  });
   const offersPage = PAGES.find((p) => p.path === '/offers/:id');
   const currentHref = offersPage ? currentAppHref(offersPage, { id: d.id.toString() }) : null;
 
@@ -214,6 +224,17 @@ function OfferBody({
       {d.state === 'sale-consumed' && <p className="tier-a">{text('offers.soldNote')}</p>}
       {d.state === 'cancelled' && <p className="tier-b">{text('offerPage.cancelledNote')}</p>}
       {d.state === 'expired' && <p className="tier-a">{text('offers.expiredHolds')}</p>}
+      {guardable && walletChain && own && (guard.data !== null || guard.state === 'failed' || guardHeld.bps !== null) && (
+        <PriceGuardSection
+          id={d.id}
+          guard={guard.state === 'failed' ? null : guard.data}
+          canChange={mine && d.state === 'open'}
+          mine={mine}
+          chain={walletChain}
+          own={own}
+          onDone={guard.refetch}
+        />
+      )}
       <section className="home-section" aria-labelledby="offer-action" data-testid="offer-action">
         <h2 id="offer-action" className="sr-only">
           {text('offerPage.actionTitle')}

@@ -1462,6 +1462,12 @@ Jedes Angebot hat seine eigene Seite, die aus der Chain gelesen wird, sobald ein
 
 Stornieren bei einem offenen Angebot, das Sie erstellt haben, nimmt es aus dem Buch und gibt zurück, was es noch in Ihrem Vault sperrt: den nicht verliehenen Betrag oder das NFT eines Leihangebots, die ungenutzte Sicherheit einer Anfrage oder die vorausbezahlte Gebühr samt Puffer einer Mietanfrage. Ein Angebot, das noch nichts erfüllt hat, kann in seinen ersten fünf Minuten nicht storniert werden, damit eine Stornierung nie mit einer Annahme konkurriert; die Prüfung nennt den Zeitpunkt und hebt die Sperre von selbst auf. Ein bereits erfüllter Teil bleibt erfüllt. Ein abgelaufenes Angebot hat die Schaltfläche Aufräumen, die ebenso zurückgibt, was es sperrte; jeder darf ein abgelaufenes Angebot aufräumen, und die Rückgabe geht immer an seinen Ersteller. Die Prüfung sagt, was zurückkommt und wohin: ohne geschützten Modus sofort an Ihre Wallet; mit ihm wartet es die Verzögerung Ihres Kontos in der Auszahlungswarteschlange ab oder bleibt in Ihrem Vault, solange das Konto gesperrt ist. Kann die App die Rückgabe nicht beziffern, etwa bei einem Angebot, das an einen laufenden Kredit gebunden ist, sagt die Prüfung das, und die Abschlusskarte zeigt, was bewegt wurde. Solange das Protokoll pausiert ist, ist das Stornieren geschlossen. Nichts verlässt Ihre Wallet und keine Freigabe wird verlangt, daher fragt Ihre Wallet einmal.
 
+<a id="offers-price-guard"></a>
+
+### Preisbewegungsschutz
+
+Ein Angebot eines Tokens gegen Token-Sicherheiten kann einen Preisbewegungsschutz tragen. Während Ihr Angebot im Orderbuch wartet, bewegen sich die Preise, und jemand könnte es genau dann annehmen, wenn sich der Markt zu seinen Gunsten bewegt hat. Auf der Seite des Angebots können Sie ein Limit zwischen 0,5 % und 50 % setzen: Das Angebot lehnt dann eine Annahme ab, solange sich das Verhältnis von Sicherheit zu Kapital seit dem Setzen des Schutzes um mehr als dieses Limit bewegt hat oder der Markt des Paares nicht ruhig ist. Wer das Angebot ansieht, sieht den Schutz und ob er eine Annahme jetzt zulässt. Auf einem bereits eingestellten Angebot schützt er erst ab dem Moment, in dem er erfasst wird. Er bewegt nie etwas, und Sie können ihn ändern oder entfernen, solange das Angebot offen ist.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

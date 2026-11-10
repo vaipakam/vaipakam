@@ -1547,6 +1547,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   creator. A return it could not size is measured in the asset the offer
   itself can return, an ERC-20 or an NFT, and one that moved nothing is
   stated as nothing returned.
+- **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
+  page of an open or ended loan offer of a token against token collateral.
+  Read at the page's block, it states the limit, when it was set, and whether
+  a fill is allowed now or refused, and why: the price moved past the limit
+  (by how much), the pair's hourly price checks are missing, the pair is not
+  calm, or a price cannot be read. A taker sees the same, so a refusal is
+  never a surprise at signing. Only the creator of an open offer may set,
+  change or remove it, from 0.5% to 50%, through one flow keyed by the offer:
+  the review is read at one block (the offer, its guard, the pause), then the
+  protocol's dry run, and a non-creator, an ended or NFT offer, a pause, a
+  limit out of range, removing a guard that is off and the dry run's refusal
+  each stop it by name. The receipt states that a fill is refused while
+  either price moved past the limit since the change in either direction, or
+  while the pair is not calm against its two last hourly checks; that the
+  prices are recorded at the change; that the guard only refuses fills and
+  moves nothing; that a first guard leaves the time since posting unguarded
+  and a change replaces the guard. The finish card reads the change from the
+  transaction's own event. Where the network's protocol has no guard yet,
+  the creator is told so and nobody else sees a section. Arming a guard at
+  posting is later work.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

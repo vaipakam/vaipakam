@@ -1413,6 +1413,12 @@ Each offer has its own page, read from the chain once a wallet is connected. It 
 
 Cancel on an open offer you made takes it off the book and returns what it still locks in your vault: a lending offer's unlent amount or its NFT, a request's unused collateral, or a rental request's prepaid fee and buffer. An offer nothing has filled cannot be cancelled in its first five minutes, so a cancel never races someone's accept; the review says when it can be, and lifts the block by itself. Part of an offer already filled stays filled. An expired offer has a Clean up button that returns what it locked in the same way; anyone may clean up an expired offer, and the return always goes to its creator. The review says what returns and where: without protected mode it reaches your wallet at once; with it, it waits your account's delay in the payout queue, or stays in your vault while the account is locked. Where the app cannot size the return, such as for an offer tied to a running loan, the review says so and the finish card shows what moved. While the protocol is paused, cancelling is closed. Nothing leaves your wallet and no approval is asked, so your wallet asks once.
 
+<a id="offers-price-guard"></a>
+
+### Price-move guard
+
+An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

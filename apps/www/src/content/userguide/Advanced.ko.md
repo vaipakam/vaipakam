@@ -2290,6 +2290,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 한 블록에서 `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()`, 생성자의 `getProtectedAccount`를 읽은 뒤 `OfferCancelFacet.cancelOffer(id)`를 시험 실행합니다. 파셋은 생성자의 관리자에게는 언제든, `expiresAt`이 지나면 누구에게나 취소를 허용합니다. `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`를 거부하고, `amountFilled == 0`인 오퍼가 300초 미만이며 만료되지 않았으면 `CancelCooldownActive`로 거부하며, `whenNotPaused`입니다. 반환액은 파셋 자체의 분기로 계산합니다. ERC-20 대출 오퍼는 대출 자산의 `(amountMax 또는 amount) - amountFilled`, NFT 대출 오퍼는 그 토큰 또는 ERC-1155 수량, 차입 요청은 쓰지 않은 담보 `(collateralAmountMax 또는 collateralAmount) - collateralAmountFilled` 또는 그 NFT(`refinanceCarryOver`가 담보를 대출에 남기면 없음), 대여 요청은 `amount × durationDays`에 `rentalBufferBpsAtCreate` 버퍼를 더한 값입니다. `getOfferLinkedLoanId`로 대출에 묶인 오퍼나 기록된 버퍼가 0인 대여 요청(이 경우 프로토콜은 현재 비율을 씀)은 서명 전에 계산하지 않습니다. 모든 반환은 볼트 출금을 통해 생성자의 볼트를 떠나므로, 보호 모드는 대기열에 넣거나 계정이 잠긴 동안 볼트에 둡니다. 포지션 토큰은 폐기됩니다. 완료 카드는 `OfferCanceled(offerId, creator)`, 생성자에 대한 프로토콜의 지급 기록, 생성자에게 간 토큰 자체의 전송을 읽습니다.
 
+<a id="offers-price-guard"></a>
+
+### 가격 변동 보호
+
+ERC-20 담보에 대한 ERC-20의 열린 오퍼에서는 작성자가 오퍼 페이지에서 가격 변동 보호를 설정, 변경, 해제할 수 있습니다. 기록될 때 프로토콜은 두 토큰의 오라클 가격을 적어 두고, 그 뒤로는 담보 대비 원금 비율이 그 수준에서 한도(0.5%~50%, 어느 방향이든)보다 많이 움직인 동안, 페어가 최근 두 번의 시간별 가격 점검 중 하나에 비해 안정 범위를 넘어 움직인 동안, 또는 현재 가격이나 그 점검 중 하나가 없는 동안 모든 체결이 거부됩니다. 점검은 대출 생성 시점에 이루어지므로 직접 체결과 매칭 모두에 적용되며, 페이지는 모두에게 한도, 비율이 얼마나 움직였는지, 지금 체결이 가능한지를 보여 줍니다. 시간별 점검은 누구나 기록할 수 있고, 프로토콜의 키퍼는 열린 보호 오퍼의 자산에 대해 이를 기록하도록 되어 있습니다. 두 토큰 모두에 대해 점검이 있기 전까지는 누구도 오퍼를 받을 수 없습니다. 올린 오퍼에 건 보호는 기록된 블록부터 보호하며 그 이전은 보호하지 않습니다. 변경하면 가격이 다시 기록됩니다. 아무것도 옮기지 않고 어떤 조건도 바꾸지 않습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
