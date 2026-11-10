@@ -32,6 +32,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  FallbackCustodyTest
@@ -1035,6 +1036,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         (, uint256 t,) = _fcSlices(id);
         assertGt(t, 0, "fixture-live: a treasury slice");
         AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.sync(address(diamond));
         uint256 diamond0 = _fcBal(weth, address(diamond));
         uint256 recorded0 = TreasuryFacet(address(diamond)).getTreasuryBalance(weth);
 

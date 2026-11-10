@@ -8,6 +8,7 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "../test/helpers/LibTestTiming.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -252,6 +253,9 @@ contract AnvilNewPartialFlows is Script {
         weth.approve(diamond, COLLATERAL_AMOUNT);
         uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(bP);
         vm.stopBroadcast();
+        // The offer-age rule (#3412): a fill waits until the terms have stood
+        // the minimum age. Steps a simulation only; see {LibTestTiming}.
+        LibTestTiming.waitOutTermsAge(diamond, rangeOfferId, borrowerOfferId);
         vm.startBroadcast(deployerKey);
         OfferMatchFacet(diamond).matchOffers(rangeOfferId, borrowerOfferId);
         vm.stopBroadcast();

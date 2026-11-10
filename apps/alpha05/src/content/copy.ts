@@ -3059,6 +3059,7 @@ export const copy = {
       PriceGuardRefused: A(
         "The borrower put a price-move guard on this request, and it refuses a fill now: the price has moved past the borrower's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
       ),
+      TermsTooFresh: A('This request was posted or changed a few seconds ago, and a request can be funded only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
       Unrecognised: A('The protocol refused this request with a code this build cannot name.'),
     },
     signWhy: C(
@@ -3415,6 +3416,7 @@ export const copy = {
       PriceGuardRefused: A(
         "The lender put a price-move guard on this offer, and it refuses a fill now: the price has moved past the lender's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
       ),
+      TermsTooFresh: A('This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
     },
     changedOffer: B('The offer'),

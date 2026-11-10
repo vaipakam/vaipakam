@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
@@ -249,9 +250,6 @@ contract OfferAcceptFacet is
     ///         Parameterless to keep the facet under EIP-170 (the caller holds
     ///         both addresses); same rationale for the two below.
     error AcceptorMismatch();
-    /// @notice `block.timestamp` is past `terms.deadline` — the signing window
-    ///         for this acceptance has closed.
-    error AcceptDeadlineExpired();
     /// @notice `terms.nonce` was already consumed by `terms.acceptor` — a
     ///         captured acceptance signature cannot be replayed.
     error AcceptNonceUsed();
@@ -486,10 +484,9 @@ contract OfferAcceptFacet is
         address acceptor
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // 1 — signing window.
-        if (block.timestamp > terms.deadline) {
-            revert AcceptDeadlineExpired();
-        }
+        // 1 — signing window: the acceptance's own deadline (#3412, the one
+        // timing rule; required).
+        LibTiming.requireDeadline(terms.deadline);
         // 2 — bind the digest to the funds-mover (no cross-ERC-1271 replay).
         if (terms.acceptor != acceptor) {
             revert AcceptorMismatch();
@@ -838,6 +835,9 @@ contract OfferAcceptFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(offerId, offer.expiresAt);
         }
+        // #3443 — the offer's terms must have stood the minimum age, so an
+        // offer cannot be created or re-priced and taken in the same block.
+        LibTiming.requireOfferAged(offerId, offer);
         // #1503 PR-A (Codex #1505 r1 P1) — a sale VEHICLE's fill must also
         // respect the linked loan's LIVE maturity, enforced HERE, before any
         // value moves. Post-upgrade vehicles are covered by the expiry gate
@@ -1972,7 +1972,14 @@ contract OfferAcceptFacet is
         // checkpoint is missing. The exact refusal is
         // `OfferPriceGuardFacet.requireOfferPriceGuardsClear`'s revert, and
         // `getOfferPriceGuard` says which. APPENDED; prior values stay stable.
-        PriceGuardRefused
+        PriceGuardRefused,
+        // #3443 — the offer's terms were set (created or last edited) less
+        // than the minimum age ago, so `_acceptOffer` reverts
+        // `LibTiming.OfferTermsTooFresh`. Ordered where `_acceptOffer` orders
+        // it, right after the expiry gate. Transient: the offer becomes
+        // takeable on its own a few seconds later. APPENDED; prior values stay
+        // stable.
+        TermsTooFresh
     }
 
     /// @notice Projection of the loan that would land if the supplied

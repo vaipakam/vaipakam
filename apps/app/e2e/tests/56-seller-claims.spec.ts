@@ -26,7 +26,12 @@
  */
 import { erc20Abi, parseAbiItem, type Address } from 'viem';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
-import { consentAndWaitEnabled, newestOfferIdFor, signAcceptReview } from '../lib/flows';
+import {
+  consentAndWaitEnabled,
+  newestOfferIdFor,
+  openOfferToAccept,
+  signAcceptReview,
+} from '../lib/flows';
 import { acceptOfferDirect, repayLoanInFull, seedDeskOffer } from '../lib/desk';
 import { increaseTime } from '../lib/anvil';
 import { topUpWeth } from '../lib/seed';
@@ -90,7 +95,7 @@ test('the seller of a lender position withdraws the interest it earned before th
 
   // A third wallet buys it (spec 44's drive).
   const buyer = await launchWallet('newLender');
-  await buyer.page.goto(`/lend?offer=${saleOfferId}`, { waitUntil: 'domcontentloaded' });
+  await openOfferToAccept(buyer.page, 'lend', saleOfferId);
   await connectWallet(buyer.page);
   await expect(
     buyer.page.getByText(new RegExp(`buying the lender side of already-running loan #${loanId}\\b`, 'i')),

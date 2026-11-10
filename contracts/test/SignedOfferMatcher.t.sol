@@ -6,7 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
-import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -17,11 +17,12 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSignedOffer} from "../src/libraries/LibSignedOffer.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  SignedOfferMatcherTest
  * @notice Targeted suite for #396 v0.6 — the keeper-matcher for signed
- *         offers (`OfferMatchFacet.matchSignedOffer`).
+ *         offers (`SignedOfferMatchFacet.matchSignedOffer`).
  *
  * @dev    A keeper (`msg.sender`) fills a vault-backed signed offer against
  *         an on-chain counterparty offer, full or partial, earning the 1%
@@ -189,6 +190,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     /// @dev Post an on-chain LENDER offer (single-value) of `amount` against
@@ -235,6 +237,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     /// @dev Provision a fresh actor (KYC + country + diamond approvals + wallet
@@ -276,7 +279,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         // Keeper fills the whole ceiling.
         vm.prank(keeper);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
 
@@ -321,7 +324,7 @@ contract SignedOfferMatcherTest is SetupTest {
         // matcher: assert topics, skip exact data equality on the ids.
         vm.recordLogs();
         vm.prank(keeper);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
 
@@ -380,7 +383,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         // ── Slice 1.
         vm.prank(keeper);
-        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, cp1, PRINCIPAL
         );
         assertGt(loan1, 0, "slice 1 loan");
@@ -397,7 +400,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         // ── Slice 2.
         vm.prank(keeper);
-        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, cp2, PRINCIPAL
         );
         assertGt(loan2, 0, "slice 2 loan");
@@ -410,7 +413,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         // ── Slice 3 consumes the residual ceiling.
         vm.prank(keeper);
-        uint256 loan3 = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loan3 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, cp3, PRINCIPAL
         );
         assertGt(loan3, 0, "slice 3 loan");
@@ -426,10 +429,10 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferConsumed.selector, orderHash
+                SignedOfferMatchFacet.SignedOfferConsumed.selector, orderHash
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, cp4, PRINCIPAL
         );
     }
@@ -451,12 +454,12 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
                 ceiling + PRINCIPAL, // fillAmount
                 ceiling // remaining
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, ceiling + PRINCIPAL
         );
     }
@@ -477,12 +480,12 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
                 partialFill, // fillAmount
                 PRINCIPAL // remaining (= ceiling, nothing filled yet)
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, partialFill
         );
     }
@@ -497,7 +500,7 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
 
         vm.prank(keeper);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
         assertGt(loanId, 0, "AON full fill loan");
@@ -528,7 +531,7 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
 
         vm.prank(keeper);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, lenderOfferId, PRINCIPAL
         );
 
@@ -561,8 +564,8 @@ contract SignedOfferMatcherTest is SetupTest {
         o.interestRateBps = RATE_BPS + 1;
 
         vm.prank(keeper);
-        vm.expectRevert(OfferMatchFacet.SignedOfferBadSignature.selector);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        vm.expectRevert(SignedOfferMatchFacet.SignedOfferBadSignature.selector);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
     }
@@ -584,10 +587,10 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferConsumed.selector, orderHash
+                SignedOfferMatchFacet.SignedOfferConsumed.selector, orderHash
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
     }
@@ -606,9 +609,9 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.warp(uint256(expiresAt)); // block.timestamp == expiresAt exactly
         vm.prank(keeper);
         vm.expectRevert(
-            abi.encodeWithSelector(OfferMatchFacet.SignedOfferGttExpired.selector, expiresAt)
+            abi.encodeWithSelector(SignedOfferMatchFacet.SignedOfferGttExpired.selector, expiresAt)
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
     }
 
     function test_nonceBurned_reverts() public {
@@ -625,10 +628,10 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferNonceBurned.selector, o.nonce
+                SignedOfferMatchFacet.SignedOfferNonceBurned.selector, o.nonce
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
     }
@@ -651,7 +654,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSignature("FunctionDisabled(uint8)", uint8(3))
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
     }
@@ -675,12 +678,12 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
                 belowMin, // fillAmount
                 ceiling // remaining (nothing filled yet)
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, belowMin);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, belowMin);
     }
 
     /// @notice A keeper may not leave a sub-minimum dust REMAINDER. Filling
@@ -699,12 +702,12 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
                 fill, // fillAmount
                 ceiling // remaining
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, fill);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, fill);
     }
 
     /// @notice A RANGED all-or-nothing signed offer (`amount != amountMax`) is
@@ -724,12 +727,12 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
                 ceiling, // fillAmount
                 ceiling // remaining
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, ceiling);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, ceiling);
     }
 
     /// @notice A matched signed offer with a NON-constant collateral ratio
@@ -749,8 +752,8 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 cp = _postBorrowerCounterparty(borrower, PRINCIPAL);
 
         vm.prank(keeper);
-        vm.expectRevert(OfferMatchFacet.SignedOfferRatioNotConstant.selector);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, PRINCIPAL);
+        vm.expectRevert(SignedOfferMatchFacet.SignedOfferRatioNotConstant.selector);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, PRINCIPAL);
     }
 
     /// @dev Pull the `sliceOfferId` (first data word) out of the most recent
@@ -804,7 +807,7 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
 
         vm.prank(keeper);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, lenderOfferId, PRINCIPAL
         );
 
@@ -842,9 +845,9 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 cp2 = _postLenderCounterparty(l2, PRINCIPAL);
 
         vm.prank(keeper);
-        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, PRINCIPAL);
+        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, PRINCIPAL);
         vm.prank(keeper);
-        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, PRINCIPAL);
+        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, PRINCIPAL);
 
         uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
         uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
@@ -869,12 +872,12 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
                 dust, // fillAmount
                 2 * PRINCIPAL // remaining (= ceiling, nothing filled)
             )
         );
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, dust);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, dust);
     }
 
     /// @notice The borrower's signed collateral floor is threaded into the
@@ -935,9 +938,10 @@ contract SignedOfferMatcherTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), cp); // #3443
 
         vm.prank(keeper);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, cp, PRINCIPAL
         );
         assertGt(loanId, 0, "match admitted at the borrower floor");
@@ -983,9 +987,9 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 cp2 = _postLenderCounterparty(l2, 5_000 ether);
 
         vm.prank(keeper);
-        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, 4_000 ether);
+        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, 4_000 ether);
         vm.prank(keeper);
-        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, 5_000 ether);
+        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, 5_000 ether);
 
         uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
         uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
@@ -1010,7 +1014,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         vm.recordLogs();
         vm.prank(keeper);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
             o, sig, borrowerOfferId, PRINCIPAL
         );
         uint256 sliceOfferId = _lastSliceOfferId();

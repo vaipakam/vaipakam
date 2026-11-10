@@ -8,6 +8,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { MOCKS, WETH, pub, DIAMOND, DIAMOND_ABI_VIEM } from './chain';
 import { connectWallet } from './wallet-fixture';
+import { waitOutTermsAge } from './termsAge';
 
 /** Choose a SelectMenu row by its stable data-value. The app's
  *  dropdowns are the custom SelectMenu (button + listbox), not native
@@ -149,9 +150,26 @@ export async function acceptAsBorrower(
   page: Page,
   offerId: bigint,
 ): Promise<void> {
-  await page.goto(`/borrow?offer=${offerId}`, { waitUntil: 'domcontentloaded' });
+  await openOfferToAccept(page, 'borrow', offerId);
   await connectWallet(page);
   await signAcceptReview(page);
+}
+
+/** Open an offer's deep link (`/borrow?offer=` for a lender offer or an
+ *  offset, `/lend?offer=` for a borrow request or a listed position) to
+ *  ACCEPT it. Every spec that signs from a deep link opens it here, so
+ *  none can skip the #3443 terms-age wait: an offer posted moments ago is
+ *  not fillable yet, and on the idle Anvil the app's simulation would see
+ *  it as fresh for as long as nothing else is mined (termsAge.ts). The
+ *  wait comes before navigation, so the review the app renders is
+ *  already against an aged block. */
+export async function openOfferToAccept(
+  page: Page,
+  route: 'borrow' | 'lend',
+  offerId: bigint,
+): Promise<void> {
+  await waitOutTermsAge(offerId);
+  await page.goto(`/${route}?offer=${offerId}`, { waitUntil: 'domcontentloaded' });
 }
 
 /** Borrower accepts through the GUIDED MATCHER (flow 4.1): details →
@@ -165,6 +183,7 @@ export async function acceptViaGuidedMatch(
   page: Page,
   offerId: bigint,
 ): Promise<void> {
+  await waitOutTermsAge(offerId); // #3443, as in acceptAsBorrower
   await page.goto('/borrow', { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   await pickCuratedAsset(page, 'lending-asset', WETH);

@@ -15,6 +15,7 @@ import {
   acceptAsBorrower,
   newestOfferIdFor,
   newestLoanIdFor,
+  openOfferToAccept,
   signAcceptReview,
 } from "../lib/flows";
 import { connectWallet } from "../lib/wallet-fixture";
@@ -111,9 +112,7 @@ test("a third wallet takes an offset offer; the earlier loan closes in the same 
   // The taker's review discloses the close-out, then signs.
   const taker = await launchWallet("newBorrower");
   const { page } = taker;
-  await page.goto(`/borrow?offer=${offsetOfferId}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await openOfferToAccept(page, "borrow", offsetOfferId);
   await connectWallet(page);
   await expect(page.getByTestId("offset-offer-banner")).toBeVisible({
     timeout: 60_000,

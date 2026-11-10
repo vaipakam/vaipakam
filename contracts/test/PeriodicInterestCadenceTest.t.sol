@@ -15,6 +15,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 // #3272 part 2 — the numeraire is the price guard's identity, recorded on the
 // Diamond once with the registry; there is no numeraire setter to test here.
@@ -105,7 +106,9 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.CreateOfferParams memory p
     ) internal returns (uint256) {
         vm.prank(lender);
-        return OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p);
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     function _expectCadenceNotAllowed(
@@ -506,6 +509,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         b.offerType = LibVaipakam.OfferType.Borrower;
         vm.prank(borrower);
         uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(b);
+        LibTestTiming.waitOutTermsAge(address(diamond), borrowerOfferId); // #3443
         _enableFeature();
         LibOfferMatch.MatchResult memory r = OfferMatchFacet(address(diamond)).previewMatch(
             lenderOfferId, borrowerOfferId, address(this), address(this)

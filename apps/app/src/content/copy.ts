@@ -6297,6 +6297,10 @@ const copySource = {
       // each means the same thing to the taker: not now.
       priceGuardRefused:
         'The creator of this offer limited how far the price may move before it is taken. The price has moved past that limit, or it is moving too fast (or can’t be read) to check right now, so the offer can’t be taken. Nothing was sent.',
+      // #3443 — an offer can be taken only once its terms have stood the
+      // minimum age (a few seconds); this clears by itself.
+      termsTooFresh:
+        'This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.

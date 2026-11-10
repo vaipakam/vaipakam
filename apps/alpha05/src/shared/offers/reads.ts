@@ -68,6 +68,9 @@ export const ACCEPT_ERRORS = [
   'CadenceNotAdmitted',
   // #3358 — the offer creator's price-move guard refuses the fill now.
   'PriceGuardRefused',
+  // #3443 — the offer's terms were set less than the minimum age ago;
+  // clears by itself within seconds.
+  'TermsTooFresh',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

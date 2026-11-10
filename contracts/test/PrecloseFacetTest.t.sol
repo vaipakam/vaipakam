@@ -59,6 +59,7 @@ import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWit
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title PrecloseFacetTest
@@ -450,6 +451,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Give diamond some ERC20 for internal transfers (treasury fee etc.)
@@ -561,6 +563,7 @@ contract PrecloseFacetTest is Test {
     function testTransferObligationRevertsNotNFTOwner() public {
         // Phase 6: borrower-entitled strategic flow. Non-owner callers fall
         // through requireKeeperFor and revert with KeeperAccessRequired.
+        LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
@@ -568,6 +571,7 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationRevertsLoanNotActive() public {
         _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+        LibTestTiming.backdateTerms(address(diamond), 1); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
@@ -608,6 +612,7 @@ contract PrecloseFacetTest is Test {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(flaggedHolder, true); // current holder, NOT stored borrower, NOT keeper
 
+        LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(keeper); // clean caller
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedHolder)
@@ -617,6 +622,7 @@ contract PrecloseFacetTest is Test {
 
     function testTransferObligationRevertsInvalidOfferType() public {
         // The original offer (id=1) is a Lender offer and is accepted → InvalidOfferTerms
+        LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
@@ -664,6 +670,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -704,6 +712,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), longOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), longOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -742,6 +752,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), lowCollOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), lowCollOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InsufficientCollateral.selector);
@@ -780,6 +792,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), wrongAmtOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), wrongAmtOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -819,6 +833,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), selfOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), selfOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidNewBorrower.selector);
@@ -830,7 +846,7 @@ contract PrecloseFacetTest is Test {
     ///      isolate the guard rather than any other term.
     function _createNewBorrowerOffer(uint64 expiresAt_) private returns (uint256) {
         vm.prank(newBorrower);
-        return OfferCreateFacet(address(diamond)).createOffer(
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -860,6 +876,9 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), oid_); // #3443
+        LibTestTiming.backdateTerms(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     /// @dev #1773 — the obligation transfer reads the incoming borrower's offer
@@ -872,6 +891,7 @@ contract PrecloseFacetTest is Test {
         uint256 offerId = _createNewBorrowerOffer(deadline);
 
         vm.warp(block.timestamp + 2 days);
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(
@@ -892,6 +912,7 @@ contract PrecloseFacetTest is Test {
         uint256 offerId = _createNewBorrowerOffer(deadline);
 
         vm.warp(uint256(deadline));
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(
@@ -914,6 +935,7 @@ contract PrecloseFacetTest is Test {
         uint256 offerId = _createNewBorrowerOffer(0);
 
         vm.warp(block.timestamp + 2 days);
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -956,7 +978,9 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).lock();
         vm.prank(borrower);
@@ -996,6 +1020,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         // Mock cross-facet calls
         MockVaultWithdraw.deliversAll(address(diamond));
@@ -1004,6 +1029,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
 
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
         // (loanId, origBorrower, newBorrower, shortfall, newBorrowerTokenId,
@@ -1065,6 +1091,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
@@ -1082,6 +1109,7 @@ contract PrecloseFacetTest is Test {
             l0.borrowerNotifBilled = true;
             TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l0);
         }
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -1170,6 +1198,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
     }
 
     /// @dev The cross-facet stubs the transfer's later steps need (vault / NFT /
@@ -1192,6 +1222,7 @@ contract PrecloseFacetTest is Test {
         _mockTransferCrossCalls();
 
         // Gate stays OFF; ben is the default BlueChipOnly tier.
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
 
@@ -1210,6 +1241,7 @@ contract PrecloseFacetTest is Test {
         _mockTier(mockCollateralERC20, 1);
         _mockTransferCrossCalls();
 
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(owner);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
 
@@ -1233,6 +1265,7 @@ contract PrecloseFacetTest is Test {
         _mockTransferCrossCalls();
 
         // Arm ben (immediate; default zero cooldown), then enable the gate.
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(newBorrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
         vm.prank(owner);
@@ -1285,11 +1318,13 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), partialOffer); // #3443
         // Simulate a prior matchOffers partial fill.
         LibVaipakam.Offer memory o =
             OfferCancelFacet(address(diamond)).getOffer(partialOffer);
         o.amountFilled = 1;
         TestMutatorFacet(address(diamond)).setOffer(partialOffer, o);
+        LibTestTiming.backdateTerms(address(diamond), partialOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -1331,12 +1366,14 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), highRateOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        LibTestTiming.backdateTerms(address(diamond), highRateOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, highRateOffer);
@@ -1378,12 +1415,14 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), lowRateOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        LibTestTiming.backdateTerms(address(diamond), lowRateOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, lowRateOffer);
@@ -1428,8 +1467,10 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
@@ -1853,6 +1894,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
         vm.clearMockedCalls();
+        LibTestTiming.backdateTerms(address(diamond), 12345); // #3443
 
         vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
         vm.prank(borrower);
@@ -2059,6 +2101,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), badCollOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), badCollOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -2099,10 +2143,12 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "burn fail");
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(bytes("burn fail"));
@@ -2142,11 +2188,13 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "mint fail");
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(bytes("mint fail"));
@@ -2219,6 +2267,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
@@ -2226,6 +2275,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2271,6 +2321,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
@@ -2278,6 +2329,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2326,6 +2378,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
@@ -2333,6 +2386,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2389,6 +2443,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         // The incoming offer names no collateral either, as a rental's does.
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(validOffer);
         o.collateralAsset = address(0);
@@ -2407,6 +2462,7 @@ contract PrecloseFacetTest is Test {
             abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, address(0))),
             0
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2461,6 +2517,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         // Governance RAISES the live buffer to 10% after the offer is posted.
         TestMutatorFacet(address(diamond)).setRentalBufferBpsRaw(1000);
@@ -2471,6 +2528,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2549,6 +2607,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         // 7 days of rent accrue with no deduction.
         vm.warp(block.timestamp + 7 days);
@@ -2576,6 +2635,7 @@ contract PrecloseFacetTest is Test {
                 expLender
             )
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2599,6 +2659,7 @@ contract PrecloseFacetTest is Test {
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             _borrowerErc20Offer(perDay, 20)
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.warp(block.timestamp + 7 days);
         // accrued 7d = 700e (−1% treasury = 693e lender); shortfall 3d = 300e (full lender).
@@ -2615,6 +2676,7 @@ contract PrecloseFacetTest is Test {
                 expLender
             )
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
@@ -2647,8 +2709,10 @@ contract PrecloseFacetTest is Test {
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             _borrowerErc20Offer(perDay, 30)
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         _mockRentalTransferCalls();
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -2680,6 +2744,7 @@ contract PrecloseFacetTest is Test {
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             _borrowerErc20Offer(perDay, 20)
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         // No warp: catch-up 0 (clock ahead), shortfall = 25 unpaid − 20 offer = 5
         // days → 500e, all to lender (no accrued rent → no treasury split).
@@ -2691,6 +2756,7 @@ contract PrecloseFacetTest is Test {
                 activeLoanId, borrower, mockERC20, uint256(500 ether)
             )
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
@@ -2720,6 +2786,7 @@ contract PrecloseFacetTest is Test {
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             _borrowerErc20Offer(perDay, 23)
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.warp(block.timestamp + 7 days); // 7 days rent, no shortfall (23=23)
         _mockRentalTransferCalls();
@@ -2730,6 +2797,7 @@ contract PrecloseFacetTest is Test {
                 activeLoanId, borrower, mockERC20, uint256(693 ether)
             )
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
@@ -2759,6 +2827,7 @@ contract PrecloseFacetTest is Test {
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             _borrowerErc20Offer(perDay, 23)
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.warp(block.timestamp + 7 days); // 7 days from startTime, not from epoch 0
         _mockRentalTransferCalls();
@@ -2769,6 +2838,7 @@ contract PrecloseFacetTest is Test {
                 activeLoanId, borrower, mockERC20, uint256(693 ether)
             )
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
@@ -2898,8 +2968,10 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
         _setLoanCollateralAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
+        LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -2950,6 +3022,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
@@ -2991,6 +3065,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
@@ -2998,6 +3073,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // Mock updateNFTStatus to revert (last cross-facet call in transferObligationViaOffer)
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "update fail");
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(bytes("update fail"));
@@ -3040,6 +3116,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
@@ -3065,6 +3142,7 @@ contract PrecloseFacetTest is Test {
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(bytes("burn offer fail"));
@@ -3256,6 +3334,8 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
@@ -3303,6 +3383,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         // T-051 — vault resolution moved inside the chokepoint.
         // #1132 (S10 central enforcement) — the lender top-up chokepoint is now
@@ -3316,6 +3397,7 @@ contract PrecloseFacetTest is Test {
             abi.encodeWithSelector(EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector),
             "vault fail"
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert();
@@ -3365,6 +3447,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         LibVaipakam.Loan memory before_ =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -3378,6 +3461,7 @@ contract PrecloseFacetTest is Test {
 
         // Clean borrower initiates — must COMPLETE (pre-#1132 this reverted on the
         // flagged lender's receive-side vault resolution).
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
@@ -467,7 +468,7 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferFacet.SignedOfferSigExpired.selector,
+                LibTiming.DeadlinePassed.selector,
                 deadline
             )
         );

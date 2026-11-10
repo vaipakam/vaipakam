@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {PositiveFlowsBase} from "./positive-flows/PositiveFlowsBase.sol";
@@ -85,7 +86,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         wall-clock time. On an Anvil left idle (or restored with
  *         `evm_revert`) the latest block can be hours old, so a signed accept
  *         whose deadline is one hour past the simulated time arrives expired
- *         (`AcceptDeadlineExpired`). Run `cast rpc evm_mine` first. A live
+ *         (`LibTiming.DeadlinePassed`). Run `cast rpc evm_mine` first. A live
  *         chain mines continuously and does not need it.
  *
  *         Composition: each `new` below is local to the script runner's own

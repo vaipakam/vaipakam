@@ -48,6 +48,7 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 
 /**
  * @title Scenario7_LenderEarlyWithdrawal
@@ -415,6 +416,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         // Expect LoanSold event
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
         emit EarlyWithdrawalDirectFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);

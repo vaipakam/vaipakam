@@ -28,7 +28,7 @@ import {
   walletFor,
 } from '../lib/chain';
 import { accountFor, type Role } from '../lib/wallets';
-import { MUSDC, freshTenor, seedDeskOffer } from '../lib/desk';
+import { MUSDC, freshTenor, seedDeskOffer, waitOutTermsAge } from '../lib/desk';
 import { topUpWeth } from '../lib/seed';
 
 type LoanRow = { borrower: string; offerId: bigint; status: number | bigint };
@@ -65,6 +65,7 @@ async function mintMusdc(role: Role, decimals: number): Promise<void> {
  *  return the loan the match opened. */
 async function matchDirect(matcher: Role, lenderOfferId: bigint, borrowerOfferId: bigint): Promise<bigint> {
   const account = accountFor(matcher);
+  await waitOutTermsAge(lenderOfferId, borrowerOfferId);
   const preview = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,

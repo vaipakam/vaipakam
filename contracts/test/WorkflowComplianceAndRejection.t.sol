@@ -53,6 +53,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 contract MockRentableNFT721Test is ERC721 {
     mapping(uint256 => address) private _users;
@@ -593,6 +594,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Borrower (US) tries to transfer obligation to sanctionedUser (IR) -> CountriesNotCompatible
         // transferObligationViaOffer checks _enforceCountryAndKYC(newBorrower=sanctionedUser, existingParty=loan.lender)
         // sanctionedUser(IR) vs lender(US) -> no trade allowance -> revert
+        LibTestTiming.waitOutTermsAge(address(diamond), sanctionedOfferId); // #3443
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, sanctionedOfferId);
@@ -636,6 +638,7 @@ contract WorkflowComplianceAndRejection is Test {
         );
 
         // Lender (US) tries to sell to sanctionedUser (IR) -> CountriesNotCompatible
+        LibTestTiming.waitOutTermsAge(address(diamond), sanctionedOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId);
@@ -800,6 +803,7 @@ contract WorkflowComplianceAndRejection is Test {
         );
 
         // Lender tries to sell NFT rental loan -> InvalidSaleOffer (assetType != ERC20)
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId);

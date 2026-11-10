@@ -49,6 +49,7 @@
     "VaultOutflowFacet",
     "ForcedSalePreviewFacet",
     "OfferPriceGuardFacet",
+    "SignedOfferMatchFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

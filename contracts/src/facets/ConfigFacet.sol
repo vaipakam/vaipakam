@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 
 /**
  * @title ConfigFacet
@@ -2604,12 +2605,16 @@ contract ConfigFacet is DiamondAccessControl {
     event TwaRecentWeightSet(uint8 newValue);
     event TwaMinStakedDaysSet(uint8 newValue);
     event MirrorTierMaxAgeSecSet(uint32 newValue);
+    /// @notice #3443 — the minimum age of an offer's or lender intent's
+    ///         terms at fill changed.
+    event MinTermsAgeSecSet(uint32 newValue);
 
     error InvalidTwaRecentDays(uint8 newValue);
     error InvalidTwaWindowDays(uint8 newValue);
     error InvalidTwaRecentWeight(uint8 newValue);
     error InvalidTwaMinStakedDays(uint8 newValue);
     error InvalidMirrorTierMaxAgeSec(uint32 newValue);
+    error InvalidMinTermsAgeSec(uint32 newValue);
 
     /// @notice Set the number of recent days that receive the heavier
     ///         weight inside the 30-day ring-buffer TWA.
@@ -2686,6 +2691,31 @@ contract ConfigFacet is DiamondAccessControl {
         }
         LibVaipakam.storageSlot().cfgMirrorTierMaxAgeSec = newValue;
         emit MirrorTierMaxAgeSecSet(newValue);
+    }
+
+    /// @notice #3443 — set how long an offer's or lender intent's terms must
+    ///         have stood before they can be filled (accepted, matched or
+    ///         intent-filled). Every edit of the terms restarts the wait.
+    /// @dev    Bounded `1 ≤ x ≤ 60` seconds (`LibTiming.MIN_TERMS_AGE_SEC_MIN`
+    ///         / `_MAX`). The floor of one second keeps a fill in a later
+    ///         block than the one that set the terms on every chain. Until set,
+    ///         the default `LibTiming.DEFAULT_MIN_TERMS_AGE_SEC` (5 s) applies.
+    function setMinTermsAgeSec(uint32 newValue)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newValue < LibTiming.MIN_TERMS_AGE_SEC_MIN || newValue > LibTiming.MIN_TERMS_AGE_SEC_MAX) {
+            revert InvalidMinTermsAgeSec(newValue);
+        }
+        LibVaipakam.storageSlot().cfgMinTermsAgeSec = newValue;
+        emit MinTermsAgeSecSet(newValue);
+    }
+
+    /// @notice #3443 — the minimum age, in seconds, an offer's or lender
+    ///         intent's terms must have at fill: the admin's setting, or the
+    ///         5 s default while none is set.
+    function getMinTermsAgeSec() external view returns (uint256) {
+        return LibTiming.minTermsAgeSec();
     }
 
 }
