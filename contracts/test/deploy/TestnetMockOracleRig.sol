@@ -21,6 +21,9 @@ import {MockUniswapV3Factory} from "../../script/mocks/MockUniswapV3.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "../../script/lib/PriceGuardConfig.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title TestnetMockOracleRig
@@ -77,13 +80,8 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        bytes4[] memory oracleAdminSelectors = new bytes4[](6);
-        oracleAdminSelectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        oracleAdminSelectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        oracleAdminSelectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        oracleAdminSelectors[3] = OracleAdminFacet.setWethContract.selector;
-        oracleAdminSelectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        oracleAdminSelectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
+        // #3272 part 2: the admin facet holds no price setting; the guard does.
+        bytes4[] memory oracleAdminSelectors = helper.getOracleAdminFacetSelectors();
 
         bytes4[] memory riskSelectors = new bytes4[](1);
         riskSelectors[0] = RiskFacet.updateRiskParams.selector;
@@ -163,13 +161,16 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
             MOCK_POOL_LIQUIDITY
         );
 
-        OracleAdminFacet oa = OracleAdminFacet(address(diamond));
-        oa.setChainlinkRegistry(address(registry));
-        oa.setUsdChainlinkDenominator(registry.USD());
-        oa.setEthChainlinkDenominator(registry.ETH());
-        oa.setWethContract(address(weth));
-        oa.setEthUsdFeed(address(ethFeed));
-        oa.setUniswapV3Factory(address(univ3));
+        // #3272 part 2: the Diamond prices through a guard in the registry's
+        // USD/ETH identity, pointed the way DeployTestnetMocks points it.
+        {
+            PriceGuard guard = LibTestPriceGuard.installWith(
+                address(diamond), owner, LibTestPriceGuard.identity(registry.USD(), registry.ETH())
+            );
+            PriceGuardConfig.requireIdentity(guard, registry.USD(), registry.ETH());
+            PriceGuardConfig.pointAt(guard, address(registry), address(weth), address(ethFeed));
+        }
+        OracleAdminFacet(address(diamond)).setUniswapV3Factory(address(univ3));
 
         // [weth, mUSDC] — mirrors DeployTestnetMocks: mUSDC gives WETH
         // itself a tier route (#2747; the setter refuses WETH alone).

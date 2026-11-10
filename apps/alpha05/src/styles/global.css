@@ -1316,6 +1316,29 @@ a.btn {
   color: var(--text-body);
   font: inherit;
 }
+/* Settings › Keepers: one row per action, the checkbox at a tap target. */
+.keeper-actions {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+}
+.keeper-action {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: var(--taptarget);
+  padding: 6px 0;
+  cursor: pointer;
+}
+.keeper-action input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: var(--brand-fill);
+}
 @keyframes risk-in {
   from {
     opacity: 0;

@@ -28,6 +28,7 @@ import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibOneTxSwapFill} from "./helpers/LibOneTxSwapFill.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /**
  * @title SwapToRepayIntentFacetTest
@@ -406,8 +407,8 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         internal
         returns (SwapToRepayIntentFacet.FusionOrderParams memory params)
     {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(principalAsset)), abi.encode(uint256(1e8), uint8(8)));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(collateralAsset)), abi.encode(uint256(1e8), uint8(8)));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(principalAsset)), abi.encode(uint256(1e8), uint8(8)));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(collateralAsset)), abi.encode(uint256(1e8), uint8(8)));
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN_ID), abi.encode(uint256(2e18)));
         TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
             LOAN_ID, borrowerEoa, address(collateralAsset), 0, LOAN_COLLATERAL, LibVaipakam.AssetType.ERC20
@@ -612,7 +613,7 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         l.collateralAmount = 2;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
         TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(LOAN_ID, borrowerEoa, address(coarse), 0, 2, LibVaipakam.AssetType.ERC20);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(coarse)), abi.encode(uint256(2_000e8), uint8(8)));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(coarse)), abi.encode(uint256(2_000e8), uint8(8)));
 
         (uint256 lot, uint256 minTaker) = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID);
         assertEq(lot, 1, "one unit is the least lot that covers the debt");
@@ -681,7 +682,7 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
         // Collateral repriced to $0.50: 2,000 collateral is worth 970 at the
         // 3% floor, below the ~1,020 debt floor plus buffer.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(collateralAsset)), abi.encode(uint256(0.5e8), uint8(8)));
+        vm.mockCall(LibTestPriceGuard.guardOf(address(diamond)), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(collateralAsset)), abi.encode(uint256(0.5e8), uint8(8)));
         vm.prank(borrowerEoa);
         vm.expectPartialRevert(SwapToRepayIntentFacet.IntentCollateralCannotCoverDebtFloor.selector);
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);

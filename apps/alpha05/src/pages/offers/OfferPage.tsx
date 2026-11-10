@@ -4,6 +4,8 @@ import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { PAGES, currentAppHref } from '../../routes/pageMap';
 import { AcceptOffer } from '../../shared/accept/AcceptOffer';
+import { RentAccept } from '../../shared/rent/RentAccept';
+import { TakeRequest } from '../../shared/rent/TakeRequest';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { CancelOffer, useCancelOfferHeld } from '../../shared/offers/CancelOffer';
@@ -40,13 +42,15 @@ const STATE_KEY: Record<OfferState, CopyKey> = {
 };
 
 const ELSEWHERE_KEY = {
-  rental: 'offerPage.elsewhereRental',
   nft: 'offerPage.elsewhereNft',
   'loan-sale': 'offerPage.elsewhereLoanSale',
   offset: 'offerPage.elsewhereOffset',
 } as const satisfies Record<string, CopyKey>;
 
-/** An offer number from the address bar, or null when it is not one. */
+/** Which take a held flow is: an owner's listing rented, a renter's
+ *  request taken by an owner, or a loan (null). */
+type RentalTake = 'listing' | 'request';
+
 /**
  * The flows open or in flight for an offer on this page: its cancel (or
  * clean-up) and its take, including a take waiting on the Terms prompt. A
@@ -55,14 +59,16 @@ const ELSEWHERE_KEY = {
  * clear its terms), and the creator may cancel under a reader's open review,
  * so the panel stays, with its Close, until the reader closes it.
  */
-function useHeldFlows(id: bigint | null): { cancel: boolean; take: boolean; closeCancel: () => void } {
+function useHeldFlows(id: bigint | null): { cancel: boolean; take: boolean; rental: RentalTake | null; closeCancel: () => void } {
   const cancel = useCancelOfferHeld(id ?? 0n);
   const [taking] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:offer`);
   const [pending] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:pending`);
+  const [rental] = useStoredValue<RentalTake>(`${OFFERS_ACCEPT_KEY}:rental`);
   const key = id?.toString() ?? null;
-  return { cancel: id !== null && cancel.held, take: key !== null && (taking === key || pending === key), closeCancel: () => cancel.setOpen(null) };
+  return { cancel: id !== null && cancel.held, take: key !== null && (taking === key || pending === key), rental, closeCancel: () => cancel.setOpen(null) };
 }
 
+/** An offer number from the address bar, or null when it is not one. */
 export function parseOfferId(raw: string | undefined): bigint | null {
   if (raw === undefined || !/^\d{1,30}$/.test(raw)) return null;
   const id = BigInt(raw);
@@ -127,7 +133,7 @@ export function OfferPage() {
           {d?.kind !== 'offer' && (held.cancel || held.take) && walletChain && heldOwn && (
             <section className="home-section" data-testid="offer-action">
               {held.cancel && <CancelOffer id={id} chain={walletChain} own={heldOwn} onClose={held.closeCancel} />}
-              {held.take && <TakeAction id={id} chain={walletChain} own={heldOwn} meta={meta} lend />}
+              {held.take && <TakeAction id={id} chain={walletChain} own={heldOwn} meta={meta} lend={held.rental !== 'request'} rental={held.rental} />}
             </section>
           )}
           {d?.kind === 'offer' && <OfferBody detail={d} walletChain={connected ? walletChain : null} own={connected && walletChain ? own : null} meta={meta} />}
@@ -174,7 +180,11 @@ function OfferBody({
         </span>
       </p>
       <Facts title={text('offerPage.factsTitle')} id="offer-facts" testId="offer-facts">
-        <Fact label={text('offerPage.factSide')} value={text(lend ? 'offerPage.sideLender' : 'offerPage.sideBorrower')} unknown={unknown} />
+        <Fact
+          label={text('offerPage.factSide')}
+          value={text(erc20 ? (lend ? 'offerPage.sideLender' : 'offerPage.sideBorrower') : lend ? 'offerPage.sideOwner' : 'offerPage.sideRenter')}
+          unknown={unknown}
+        />
         <Fact label={text('offerPage.factCreator')} value={mine ? text('offerBook.byYou') : shortAddress(o.creator)} unknown={unknown} />
         {erc20 && (
           <Fact
@@ -184,7 +194,13 @@ function OfferBody({
           />
         )}
         {erc20 && o.amountFilled > 0n && <Fact label={text('offerPage.factFilled')} value={amt(o.amountFilled)} unknown={unknown} />}
-        <Fact label={text(lend ? 'offerPage.factCollateralAsked' : 'offerPage.factCollateralPledged')} value={collateral} unknown={unknown} />
+        {!erc20 && <Fact label={text('offerPage.factRented')} value={amt(o.amount)} unknown={unknown} />}
+        {!erc20 && <Fact label={text('offerPage.factDailyFee')} value={tokenAmount(o.amount, o.prepayAsset, meta, format)} unknown={unknown} />}
+        <Fact
+          label={text(lend ? 'offerPage.factCollateralAsked' : 'offerPage.factCollateralPledged')}
+          value={erc20 ? collateral : text('offerBook.noCollateral')}
+          unknown={unknown}
+        />
         {!lend && erc20Collateral && o.collateralAmountFilled > 0n && (
           <Fact label={text('offerPage.factCollateralFilled')} value={tokenAmount(o.collateralAmountFilled, o.collateralAsset, meta, format)} unknown={unknown} />
         )}
@@ -216,7 +232,9 @@ function OfferBody({
         {(action.kind === 'cancel' || action.kind === 'clean-up' || held.cancel) && walletChain && own && (
           <CancelAction id={d.id} cleanUp={action.kind === 'clean-up'} chain={walletChain} own={own} />
         )}
-        {(action.kind === 'accept' || held.take) && walletChain && own && <TakeAction id={d.id} chain={walletChain} own={own} meta={meta} lend={lend} />}
+        {(action.kind === 'accept' || action.kind === 'rent' || action.kind === 'take-request' || held.take) && walletChain && own && (
+          <TakeAction id={d.id} chain={walletChain} own={own} meta={meta} lend={lend} rental={erc20 ? null : lend ? 'listing' : 'request'} />
+        )}
       </section>
       <WhyLink summaryKey="offerPage.whySummary" detailKey="offerPage.why" />
     </>
@@ -237,16 +255,35 @@ function CancelAction({ id, cleanUp, chain, own }: { id: bigint; cleanUp: boolea
 /** OFF-50 from the book: the shared acceptance flow, behind the Terms gate
  *  (OFF-35), kept in this page's own store so a navigation away and back
  *  reopens the same review. */
-function TakeAction({ id, chain, own, meta, lend }: { id: bigint; chain: SupportedChain; own: OwnStateClient; meta: TokenMetaMap | null; lend: boolean }) {
+function TakeAction({
+  id,
+  chain,
+  own,
+  meta,
+  lend,
+  rental,
+}: {
+  id: bigint;
+  chain: SupportedChain;
+  own: OwnStateClient;
+  meta: TokenMetaMap | null;
+  lend: boolean;
+  rental: RentalTake | null;
+}) {
   const { text, format } = useCopy();
   const terms = useTerms();
   const termsGate = useTermsGate(`${OFFERS_ACCEPT_KEY}.terms`, chain, own);
   const [taking, setTaking] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:offer`);
   const [pending, setPending] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:pending`);
+  // Which flow the held take is: a listing rented, a request taken, or a
+  // loan. Kept with the take so a page whose read found no terms (a cancel
+  // cleared them) reopens the same.
+  const [, setRental] = useStoredValue<RentalTake>(`${OFFERS_ACCEPT_KEY}:rental`);
   const key = id.toString();
   const open = taking === key;
   const termsOpen = termsGate.session !== null;
   const take = () => {
+    setRental(rental);
     if (terms.data?.kind === 'needed') {
       setPending(key);
       termsGate.start(terms.data);
@@ -273,12 +310,12 @@ function TakeAction({ id, chain, own, meta, lend }: { id: bigint; chain: Support
       )}
       {!open && !termsOpen && (
         <button type="button" className="btn btn-primary" disabled={terms.state !== 'ready'} onClick={take} data-testid="offer-page-take">
-          {text(lend ? 'offerPage.takeLoan' : 'offerPage.fundRequest')}
+          {text(rental === 'listing' ? 'rent.rent' : rental === 'request' ? 'rentTake.take' : lend ? 'offerPage.takeLoan' : 'offerPage.fundRequest')}
         </button>
       )}
       {termsOpen && termsGate.session && (
         <TermsPrompt
-          asker={text('offerPage.asker')}
+          asker={text(rental === 'listing' ? 'rent.asker' : rental === 'request' ? 'rentTake.asker' : 'offerPage.asker')}
           gate={termsGate}
           session={termsGate.session}
           chain={chain}
@@ -294,7 +331,33 @@ function TakeAction({ id, chain, own, meta, lend }: { id: bigint; chain: Support
           }}
         />
       )}
-      {open && <AcceptOffer flowKey={OFFERS_ACCEPT_KEY} offerId={id} chain={chain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />}
+      {open && rental === 'request' && (
+        <TakeRequest
+          offerId={id}
+          chain={chain}
+          own={own}
+          meta={meta}
+          terms={terms.data}
+          onClose={() => {
+            setTaking(null);
+            setRental(null);
+          }}
+        />
+      )}
+      {open && rental === 'listing' && (
+        <RentAccept
+          offerId={id}
+          chain={chain}
+          own={own}
+          meta={meta}
+          terms={terms.data}
+          onClose={() => {
+            setTaking(null);
+            setRental(null);
+          }}
+        />
+      )}
+      {open && rental === null && <AcceptOffer flowKey={OFFERS_ACCEPT_KEY} offerId={id} chain={chain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />}
     </>
   );
 }

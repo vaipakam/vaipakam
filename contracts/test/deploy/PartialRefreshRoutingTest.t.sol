@@ -441,10 +441,14 @@ contract PartialRefreshRoutingTest is Test {
             34,
             "ConfigFacet surface must exceed the 34 the drifted list carried"
         );
-        assertGt(
+        // #3272 part 2 moved every pricing setter and getter onto the price
+        // guard, so OracleAdminFacet's whole surface is now its 8 remaining
+        // functions (the liquidity inputs and the registry record), well under
+        // the 30 the drifted list once carried. Re-pinned to the exact count.
+        assertEq(
             surface.oracleAdminSelectors().length,
-            30,
-            "OracleAdminFacet surface must exceed the 30 the drifted list carried"
+            8,
+            "OracleAdminFacet surface must carry its 8 functions"
         );
         assertGt(
             surface.offerCreateSelectors().length,

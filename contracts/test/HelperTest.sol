@@ -123,7 +123,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](250); // #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](250); // #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -239,7 +239,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getInterestRateBpsSumCounter.selector;
         selectors[n++] = TestMutatorFacet.getUniqueUserCounter.selector;
         selectors[n++] = TestMutatorFacet.getUserSeenFlag.selector;
-        selectors[n++] = TestMutatorFacet.setEthUsdFeedRaw.selector;
         selectors[n++] = TestMutatorFacet.setInteractionCapVpfiPerEthRaw.selector;
         // Vestigial (T-068): writes the deprecated `localEid` legacy
         // slot. The canonical-buy path now keys the per-wallet cap by
@@ -255,7 +254,6 @@ contract HelperTest {
         // `NotificationFeeTest` fixture (OracleAdminFacet isn't cut
         // into the minimal test diamond, so the production
         // owner-gated setter isn't reachable from test setUp).
-        selectors[n++] = TestMutatorFacet.setWethContractRaw.selector;
         // Layout-resilient `loan.liquidationLtvBpsAtInit` writer.
         // PR2 of internal-match work replaced the old
         // `setLiqThresholdBpsRaw` (which wrote the retired per-asset
@@ -306,6 +304,8 @@ contract HelperTest {
         // FlashLoanLiquidationPath.md — flip the discount-path master
         // kill-switch in fixtures that don't cut ConfigFacet.
         selectors[n++] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
+        selectors[n++] = TestMutatorFacet.setKeeperTierRaw.selector;
+        selectors[n++] = TestMutatorFacet.setTierLiqDiscountBpsRaw.selector;
         // MarketRateWidgetAndDepthTieredLTV.md — same pattern for the
         // depth-tiered-LTV master kill-switch. Refinance / Preclose /
         // OfferMatch test fixtures use this to assert both regimes
@@ -848,7 +848,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        // Mirrors `_getOracleSelectors` in DeployDiamond. #3272 part 2: the
+        // price selectors forward to the price guard.
+        selectors = new bytes4[](20);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -856,34 +858,19 @@ contract HelperTest {
         selectors[4] = OracleFacet.getAssetRiskProfile.selector;
         selectors[5] = OracleFacet.getIlliquidAssets.selector;
         selectors[6] = OracleFacet.isAssetSupported.selector;
-        selectors[7] = OracleFacet.getSequencerUptimeFeed.selector;
-        selectors[8] = OracleFacet.sequencerHealthy.selector;
-        // AnalyticalGettersDesign §3.4 — daily price-snapshot ring
-        // buffer for historical TVL reconstruction.
-        selectors[9] = OracleFacet.captureDailyPriceSnapshot.selector;
-        selectors[10] = OracleFacet.getHistoricalAssetPrice.selector;
-        // Depth-tiered LTV (Piece B) — liquidity-tier classification views.
-        selectors[11] = OracleFacet.getLiquidityTier.selector;
-        selectors[12] = OracleFacet.getEffectiveLiquidityTier.selector;
-        // Phase 2 of AutonomousLtvAndOracleFallback.md — try-wrapped
-        // `getAssetPrice` for callers (LibFallback) that need to detect
-        // oracle-quorum unavailability without reverting.
-        selectors[13] = OracleFacet.tryGetAssetPrice.selector;
-        // Phase 4 of AutonomousLtvAndOracleFallback.md — autonomous
-        // tier-LTV cache. `refreshTierLtvCache` is the permissionless
-        // refresh; the two views read the cache + the effective value
-        // (with library-default fallback when cache is hard-stale).
-        selectors[14] = OracleFacet.refreshTierLtvCache.selector;
-        selectors[15] = OracleFacet.getTierLtvCacheEntry.selector;
-        selectors[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
-        // #638 — live-secondary-feed counter for the backstop oracle gate.
-        selectors[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
-        // #666 — the price read that tells a missing price from a distrusted one.
-        selectors[18] = OracleFacet.getAssetPriceStatus.selector;
-        // #2747 — the tier search's quote-leg test (launch readiness reads it).
-        selectors[19] = OracleFacet.isLiquidityQuoteUsable.selector;
-        // #3359 — the close-out depth tier the forced-sale floor reads.
-        selectors[20] = OracleFacet.getCloseOutLiquidityTier.selector;
+        selectors[7] = OracleFacet.sequencerHealthy.selector;
+        selectors[8] = OracleFacet.captureDailyPriceSnapshot.selector;
+        selectors[9] = OracleFacet.getHistoricalAssetPrice.selector;
+        selectors[10] = OracleFacet.getLiquidityTier.selector;
+        selectors[11] = OracleFacet.getEffectiveLiquidityTier.selector;
+        selectors[12] = OracleFacet.tryGetAssetPrice.selector;
+        selectors[13] = OracleFacet.refreshTierLtvCache.selector;
+        selectors[14] = OracleFacet.getTierLtvCacheEntry.selector;
+        selectors[15] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
+        selectors[16] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        selectors[17] = OracleFacet.getAssetPriceStatus.selector;
+        selectors[18] = OracleFacet.isLiquidityQuoteUsable.selector;
+        selectors[19] = OracleFacet.getCloseOutLiquidityTier.selector;
         return selectors;
     }
 
@@ -2001,11 +1988,9 @@ contract HelperTest {
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
         selectors[18] = ConfigFacet.setMaxOfferDurationDays.selector;
-        // T-032 / Numeraire generalization (Phase 1) — notification fee knob (now in
-        // numeraire-units) + bundled frontend-facing getter. The
-        // per-knob `setNotificationFeeUsdOracle` was retired; the
-        // protocol's reference currency is the global numeraireOracle
-        // (set via setNumeraire below).
+        // T-032 — notification fee knob + bundled frontend-facing getter.
+        // The protocol's reference currency is the price guard's numeraire
+        // (#3272 part 2).
         selectors[19] = ConfigFacet.setNotificationFee.selector;
         selectors[20] = ConfigFacet.getNotificationFeeConfig.selector;
         // T-044 — admin-configurable loan-default grace schedule.
@@ -2141,34 +2126,19 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
-        // T-034 Periodic Interest Payment knobs + master kill-switches +
-        // individual getters.
-        selectors[0] = NumeraireConfigFacet.setNumeraire.selector;
-        selectors[1] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
-        selectors[2] = NumeraireConfigFacet.setPreNotifyDays.selector;
-        selectors[3] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
-        selectors[4] = NumeraireConfigFacet.setNumeraireSwapEnabled.selector;
-        selectors[5] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
-        selectors[6] = NumeraireConfigFacet.getNumeraireSymbol.selector;
-        selectors[7] = NumeraireConfigFacet.getEthNumeraireFeed.selector;
-        selectors[8] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
-        selectors[9] = NumeraireConfigFacet.getPreNotifyDays.selector;
-        selectors[10] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
-        selectors[11] = NumeraireConfigFacet.getNumeraireSwapEnabled.selector;
-        // T-048 Predominantly Available Denominator (PAD) — atomic
-        // rotation setter + per-asset numeraire-direct override setter
-        // + 5 individual getters.
-        selectors[12] = NumeraireConfigFacet.setPredominantDenominator.selector;
-        selectors[13] = NumeraireConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
-        selectors[14] = NumeraireConfigFacet.getPredominantDenominator.selector;
-        selectors[15] = NumeraireConfigFacet.getPredominantDenominatorSymbol.selector;
-        selectors[16] = NumeraireConfigFacet.getEthPadFeed.selector;
-        selectors[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
-        selectors[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
-        // #3242 — the offer value floor.
-        selectors[19] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
-        selectors[20] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
+        // Mirrors `_getNumeraireConfigSelectors` in DeployDiamond. #3272 part 2
+        // removed numeraire switching and the PAD surface.
+        selectors = new bytes4[](10);
+        selectors[0] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
+        selectors[1] = NumeraireConfigFacet.setPreNotifyDays.selector;
+        selectors[2] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
+        selectors[3] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
+        selectors[4] = NumeraireConfigFacet.getNumeraireSymbol.selector;
+        selectors[5] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
+        selectors[6] = NumeraireConfigFacet.getPreNotifyDays.selector;
+        selectors[7] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
+        selectors[8] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
+        selectors[9] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
         return selectors;
     }
 
@@ -3146,45 +3116,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](36);
-        selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        selectors[3] = OracleAdminFacet.setWethContract.selector;
-        selectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        selectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        selectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
-        selectors[7] = OracleAdminFacet.setSequencerUptimeFeed.selector;
-        selectors[8] = OracleAdminFacet.setFeedOverride.selector;
-        selectors[9] = OracleAdminFacet.getFeedOverride.selector;
-        selectors[10] = OracleAdminFacet.setTellorOracle.selector;
-        selectors[11] = OracleAdminFacet.getTellorOracle.selector;
-        selectors[12] = OracleAdminFacet.setApi3ServerV1.selector;
-        selectors[13] = OracleAdminFacet.getApi3ServerV1.selector;
-        selectors[14] = OracleAdminFacet.setDIAOracleV2.selector;
-        selectors[15] = OracleAdminFacet.getDIAOracleV2.selector;
-        selectors[16] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
-        selectors[17] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
-        selectors[18] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
-        selectors[19] = OracleAdminFacet.getSecondaryOracleMaxStaleness.selector;
-        selectors[20] = OracleAdminFacet.setPythOracle.selector;
-        selectors[21] = OracleAdminFacet.getPythOracle.selector;
-        selectors[22] = OracleAdminFacet.setPythCrossCheckFeedId.selector;
-        selectors[23] = OracleAdminFacet.getPythNumeraireFeedId.selector;
-        selectors[24] = OracleAdminFacet.setPythMaxStalenessSeconds.selector;
-        selectors[25] = OracleAdminFacet.getPythMaxStalenessSeconds.selector;
-        selectors[26] = OracleAdminFacet.setPythCrossCheckMaxDeviationBps.selector;
-        selectors[27] = OracleAdminFacet.getPythNumeraireMaxDeviationBps.selector;
-        selectors[28] = OracleAdminFacet.setPythConfidenceMaxBps.selector;
-        selectors[29] = OracleAdminFacet.getPythConfidenceMaxBps.selector;
-        selectors[30] = OracleAdminFacet.setPeerProtocolAddresses.selector;
-        selectors[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
-        selectors[32] = OracleAdminFacet.setTierReferenceAssets.selector;
-        selectors[33] = OracleAdminFacet.getTierReferenceAssets.selector;
-        selectors[34] = OracleAdminFacet.getWethContract.selector;
-        // #2880 — the launch readiness check reads the feed registry the
-        // oracle prices through and the two quote keys it asks it under.
-        selectors[35] = OracleAdminFacet.getFeedRegistryLookup.selector;
+        // Mirrors `_getOracleAdminSelectors` in DeployDiamond. #3272 part 2:
+        // the pricing config is the price guard's own.
+        selectors = new bytes4[](8);
+        selectors[0] = OracleAdminFacet.setUniswapV3Factory.selector;
+        selectors[1] = OracleAdminFacet.setPeerProtocolAddresses.selector;
+        selectors[2] = OracleAdminFacet.getPeerProtocolAddresses.selector;
+        selectors[3] = OracleAdminFacet.setTierReferenceAssets.selector;
+        selectors[4] = OracleAdminFacet.getTierReferenceAssets.selector;
+        selectors[5] = OracleAdminFacet.initializeProtocolRegistry.selector;
+        selectors[6] = OracleAdminFacet.getProtocolRegistry.selector;
+        selectors[7] = OracleAdminFacet.getPriceGuard.selector;
         return selectors;
     }
 

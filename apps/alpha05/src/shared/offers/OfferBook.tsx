@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { getSupportedChain, DEFAULT_CHAIN } from '../../chain/chains';
 import { useCopy, type CopyAccess, type CopyKey } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
-import { OFFER_TYPE_LENDER } from '../positions/model';
+import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../positions/model';
 import { useTokenMeta, type TokenMetaMap } from '../reads/tokens';
 import { worldKey } from '../reads/identityKey';
 import { IndexerUnavailable } from '../reads/world/indexerClient';
@@ -19,6 +19,8 @@ type Hex = `0x${string}`;
 
 const TAB_KEY: Record<BookTab, CopyKey> = { loans: 'offerBook.tabLoans', rentals: 'offerBook.tabRentals' };
 const SIDE_KEY: Record<BookSide, CopyKey> = { all: 'offerBook.sideAll', lender: 'offerBook.sideLender', borrower: 'offerBook.sideBorrower' };
+/** On the rentals book a lender is the NFT's owner and a borrower a renter. */
+const RENT_SIDE_KEY: Record<BookSide, CopyKey> = { all: 'offerBook.sideAll', lender: 'offerBook.sideOwners', borrower: 'offerBook.sideRenters' };
 const KIND_KEY: Partial<Record<BookKind, CopyKey>> = {
   refinance: 'offerBook.tagRefinance',
   'refinance-unknown': 'offerBook.tagRefinanceUnknown',
@@ -50,13 +52,16 @@ function indexReason(e: unknown, text: CopyAccess['text']): string {
  * to what has been read so far, and the page says how many that is. A
  * failed read is a degraded-source warning, never an empty book.
  */
-export function OfferBook({ viewer }: { viewer: Hex }) {
+export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; rentals?: boolean; empty?: ReactNode }) {
   const copy = useCopy();
   const { text, format } = copy;
   const world = useWorldRail();
   const chain = getSupportedChain(world.chainId) ?? DEFAULT_CHAIN;
-  const [tab, setTab] = useState<BookTab>('loans');
-  const [side, setSide] = useState<BookSide>('all');
+  // The Rent page's book (NFT-03) is the rentals tab alone, owners' listings
+  // first; the Offers page's book starts on loans with both sides.
+  const [chosenTab, setTab] = useState<BookTab>('loans');
+  const tab: BookTab = rentals ? 'rentals' : chosenTab;
+  const [side, setSide] = useState<BookSide>(rentals ? 'lender' : 'all');
   const [hideMine, setHideMine] = useState(false);
   const book = useInfiniteQuery({
     queryKey: worldKey(world.chainId, 'offerBook'),
@@ -73,6 +78,9 @@ export function OfferBook({ viewer }: { viewer: Hex }) {
   const all = pages.flatMap((p) => p.rows);
   const unread = pages.reduce((n, p) => n + p.unread, 0);
   const rows = all.filter((r) => inBook(r, { tab, side, hide: hideMine ? viewer : null }));
+  /** What this tab holds before the side and hide-mine filters: the book is
+   *  empty only when this is, otherwise the filters hide what there is. */
+  const inTab = all.filter((r) => inBook(r, { tab, side: 'all', hide: null })).length;
   const meta = useTokenMeta(all.flatMap((r) => [r.lendingAsset, r.collateralAsset, r.prepayAsset])).data;
   const failed = world.indexer.origin === null || book.status === 'error';
   const reason = world.indexer.origin === null ? text('offerBook.noIndex') : indexReason(book.error, text);
@@ -80,19 +88,21 @@ export function OfferBook({ viewer }: { viewer: Hex }) {
 
   return (
     <section className="home-section offer-book" aria-labelledby="offer-book-title" data-testid="offer-book">
-      <h2 id="offer-book-title">{text('offerBook.title')}</h2>
-      <p className="tier-b">{format('offerBook.lead', { chain: chain.name })}</p>
-      <div className="offers-filters" role="group" aria-label={text('offerBook.tabLabel')} data-testid="offer-book-tabs">
-        {BOOK_TABS.map((t) => (
-          <button key={t} type="button" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`offer-book-tab-${t}`}>
-            {text(TAB_KEY[t])}
-          </button>
-        ))}
-      </div>
+      <h2 id="offer-book-title">{text(rentals ? 'offerBook.rentTitle' : 'offerBook.title')}</h2>
+      <p className="tier-b">{format(rentals ? 'offerBook.rentLead' : 'offerBook.lead', { chain: chain.name })}</p>
+      {!rentals && (
+        <div className="offers-filters" role="group" aria-label={text('offerBook.tabLabel')} data-testid="offer-book-tabs">
+          {BOOK_TABS.map((t) => (
+            <button key={t} type="button" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`offer-book-tab-${t}`}>
+              {text(TAB_KEY[t])}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="offers-filters" role="group" aria-label={text('offerBook.sideLabel')} data-testid="offer-book-sides">
         {BOOK_SIDES.map((s) => (
           <button key={s} type="button" aria-pressed={side === s} onClick={() => setSide(s)} data-testid={`offer-book-side-${s}`}>
-            {text(SIDE_KEY[s])}
+            {text((tab === 'rentals' ? RENT_SIDE_KEY : SIDE_KEY)[s])}
           </button>
         ))}
       </div>
@@ -112,6 +122,14 @@ export function OfferBook({ viewer }: { viewer: Hex }) {
           <p className="tier-b" data-testid="offer-book-count">
             {format(book.hasNextPage ? 'offerBook.countMore' : 'offerBook.countAll', { shown: String(rows.length), read: String(all.length) })}
           </p>
+          {/* "Nothing listed" only from a complete, current read with every
+              record understood; otherwise the failure or unread notice stands. */}
+          {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && inTab === 0 && empty}
+          {rows.length === 0 && inTab > 0 && (
+            <p className="tier-b" data-testid="offer-book-filtered">
+              {text('offerBook.filteredOut')}
+            </p>
+          )}
           {rows.length > 0 && (
             <ul className="rows offers-list" data-testid="offer-book-rows">
               {rows.map((r) => (
@@ -144,7 +162,9 @@ function BookRowItem({ row: r, viewer, meta, copy, expired }: { row: BookRow; vi
           {offerLine(r, meta, copy)}
         </Link>
       </p>
-      <p className="tier-b">{format(lend ? 'offerBook.collateralAsked' : 'offerBook.collateralPledged', { collateral: collateralWords(r, meta, format) })}</p>
+      <p className="tier-b">
+        {r.assetType === ASSET_ERC20 ? format(lend ? 'offerBook.collateralAsked' : 'offerBook.collateralPledged', { collateral: collateralWords(r, meta, format) }) : text('offerBook.noCollateral')}
+      </p>
       <p className="tier-b">
         {mine ? text('offerBook.byYou') : format('offerBook.byCreator', { address: shortAddress(r.creator) })}
         {r.expiresAt > 0n && !expired && <> · {format('home.offerExpires', { when: formatUtc(Number(r.expiresAt)) })}</>}

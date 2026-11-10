@@ -4,12 +4,13 @@
  * explicit list of what the chain did not answer.
  */
 import { describe, expect, it } from 'vitest';
-import { getAbiItem, toFunctionSelector, type PublicClient } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { getAbiItem, toFunctionSelector, type Abi, type PublicClient } from 'viem';
+import { DIAMOND_ABI_VIEM, PriceGuardABI } from '@vaipakam/contracts/abis';
 import {
   EVENTLESS_PROTOCOL_KNOBS,
   LABELLED_KNOB_GETTERS,
   LABELLED_KNOB_KEYS,
+  PRICE_GUARD_KNOB_GETTERS,
   PROTOCOL_KNOB_GETTERS,
   PROTOCOL_KNOB_SETTER_EVENTS,
   abiDescribesGetterAt,
@@ -27,6 +28,8 @@ type AbiFn = {
 };
 
 const fns = (DIAMOND_ABI_VIEM as readonly AbiFn[]).filter((e) => e.type === 'function');
+const GUARD_ABI = PriceGuardABI as Abi;
+const guardFns = (GUARD_ABI as readonly AbiFn[]).filter((e) => e.type === 'function');
 
 describe('PROTOCOL_KNOB_GETTERS', () => {
   it('names each key and each getter once', () => {
@@ -53,11 +56,14 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
   });
 
   it('marks exactly the settings that can change without an event (Codex #2683 r3, #2685, #2815 r1)', () => {
-    // #2685 gave the last two (`sequencerUptimeFeed`, `ethNumeraireFeed`)
-    // their events, so no published setting changes silently any more and
-    // the console's disclosure shows on no row. A setting added later that
-    // has a silent setter must be marked here, by name.
-    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual([]);
+    // #3272 part 2 — the price guard the registry names, and every one of
+    // the guard's settings: each changes in a transaction the guard or the
+    // registry announces, from an address the snapshot does not hear. A
+    // setting added later that has a silent setter must be marked here, by
+    // name.
+    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual(
+      ['priceGuard', ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key)].sort(),
+    );
   });
 
   it('names a setter event for every setting that is not eventless, each one an event the Diamond declares (Codex #2815 r1)', () => {
@@ -99,7 +105,7 @@ describe('readProtocolKnobGetters', () => {
               return { status: 'success', result: 3 };
             case 'getAutoLendEnabled':
               return { status: 'success', result: false };
-            case 'getPythOracle':
+            case 'getTreasury':
               return { status: 'success', result: '0x00000000000000000000000000000000000000aa' };
             default:
               return { status: 'failure', error: new Error('FunctionDoesNotExist') };
@@ -111,6 +117,7 @@ describe('readProtocolKnobGetters', () => {
       client,
       diamond: '0x00000000000000000000000000000000000000dd',
       abi: DIAMOND_ABI_VIEM,
+      guardAbi: GUARD_ABI,
       blockNumber: 42n,
       facets: undefined,
     });
@@ -123,12 +130,16 @@ describe('readProtocolKnobGetters', () => {
       minHealthFactor: '1500000000000000000',
       preNotifyDays: '3',
       autoLendEnabled: false,
-      pythOracle: '0x00000000000000000000000000000000000000aa',
+      treasury: '0x00000000000000000000000000000000000000aa',
     });
-    // No artifact: no labelled getter can be bound, so all are unreported.
-    expect(r.unreported).toHaveLength(PROTOCOL_KNOB_GETTERS.length - 4 + LABELLED_KNOB_KEYS.length);
+    // No artifact: no labelled getter can be bound, so all are unreported;
+    // and no guard was named, so none of its settings were asked.
+    expect(r.unreported).toHaveLength(
+      PROTOCOL_KNOB_GETTERS.length - 4 + LABELLED_KNOB_KEYS.length + PRICE_GUARD_KNOB_GETTERS.length,
+    );
     expect(r.unreported).not.toContain('minHealthFactor');
-    expect(r.unreported).toContain('treasury');
+    expect(r.unreported).toContain('rewardGraceSeconds');
+    expect(r.unreported).toContain('pythOracle');
   });
 
   it('throws when the batch itself fails, leaving the meaning to the caller', async () => {
@@ -142,6 +153,7 @@ describe('readProtocolKnobGetters', () => {
         client,
         diamond: '0x00000000000000000000000000000000000000dd',
         abi: DIAMOND_ABI_VIEM,
+        guardAbi: GUARD_ABI,
         blockNumber: 1n,
         facets: undefined,
       }),
@@ -196,7 +208,6 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
   const HOSTS = {
     adminFacet: '0x00000000000000000000000000000000000000A1',
     configFacet: '0x00000000000000000000000000000000000000C1',
-    oracleAdminFacet: '0x00000000000000000000000000000000000000B1',
   } as const;
   const SELECTOR_HOST = new Map<string, string>(
     LABELLED_KNOB_GETTERS.map((g) => [
@@ -207,11 +218,6 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
   const ANSWERS: Record<string, unknown> = {
     getPartialLiquidationSizing: [12_000n, 9_500n, 0n],
     getTierLiqDiscountBps: [770, 600, 500],
-    getFeedRegistryLookup: [
-      '0x00000000000000000000000000000000000000f1',
-      '0x0000000000000000000000000000000000000348',
-      '0x000000000000000000000000000000000000eeee',
-    ],
     getNotificationFeeConfig: [5n * 10n ** 17n, 123n],
     getGraceBuckets: [
       { maxDurationDays: 7n, graceSeconds: 3600n },
@@ -237,6 +243,7 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
       client: c,
       diamond: '0x00000000000000000000000000000000000000dd',
       abi: DIAMOND_ABI_VIEM,
+      guardAbi: GUARD_ABI,
       blockNumber: 9n,
       facets: facets ?? undefined,
     });
@@ -251,9 +258,6 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
       tier1LiqDiscountBps: '770',
       tier2LiqDiscountBps: '600',
       tier3LiqDiscountBps: '500',
-      feedRegistry: '0x00000000000000000000000000000000000000f1',
-      feedRegistryPrimaryKey: '0x0000000000000000000000000000000000000348',
-      feedRegistryEthKey: '0x000000000000000000000000000000000000eeee',
       notificationFeeVpfi: '500000000000000000',
       graceBuckets: [
         { maxDurationDays: '7', graceSeconds: '3600' },
@@ -334,5 +338,94 @@ describe('abiDescribesGetterAt (Codex #2683 r1)', () => {
       throw new Error('rpc down');
     });
     await expect(abiDescribesGetterAt({ ...base, client: failing, expectedHost: HOST })).resolves.toBe(false);
+  });
+});
+
+describe('PRICE_GUARD_KNOB_GETTERS (#3272 part 2)', () => {
+  it('names each key once, never a key the Diamond getters or the bundle publish', () => {
+    const keys = PRICE_GUARD_KNOB_GETTERS.map((k) => k.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    const diamondKeys = new Set<string>([...PROTOCOL_KNOB_GETTERS.map((k) => k.key), ...LABELLED_KNOB_KEYS]);
+    for (const k of keys) expect(diamondKeys.has(k), k).toBe(false);
+    const bundle = abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? [];
+    for (const k of keys) expect(bundle).not.toContain(k);
+  });
+
+  it('backs every key with a no-argument, single-output view the guard declares', () => {
+    for (const k of PRICE_GUARD_KNOB_GETTERS) {
+      const entry = guardFns.filter((f) => f.name === k.getter);
+      expect(entry, k.getter).toHaveLength(1);
+      expect(['view', 'pure'], k.getter).toContain(entry[0].stateMutability);
+      expect(entry[0].inputs ?? [], k.getter).toHaveLength(0);
+      expect(entry[0].outputs ?? [], k.getter).toHaveLength(1);
+    }
+  });
+
+  it('reads the guard the Diamond names, at the same block', async () => {
+    const GUARD = '0x00000000000000000000000000000000000000Ab';
+    const calls: { address: string; blockNumber?: bigint; names: string[] }[] = [];
+    const client = {
+      multicall: async (args: {
+        contracts: readonly { address: string; functionName: string }[];
+        blockNumber?: bigint;
+      }) => {
+        calls.push({
+          address: args.contracts[0]?.address ?? '',
+          blockNumber: args.blockNumber,
+          names: args.contracts.map((c) => c.functionName),
+        });
+        return args.contracts.map((c) => {
+          if (c.functionName === 'getPriceGuard') return { status: 'success', result: GUARD };
+          if (c.address === GUARD && c.functionName === 'delay') return { status: 'success', result: 259_200n };
+          if (c.address === GUARD && c.functionName === 'weth') {
+            return { status: 'success', result: '0x00000000000000000000000000000000000000e7' };
+          }
+          return { status: 'failure', error: new Error('x') };
+        });
+      },
+    } as unknown as PublicClient;
+    const r = await readProtocolKnobGetters({
+      client,
+      diamond: '0x00000000000000000000000000000000000000dd',
+      abi: DIAMOND_ABI_VIEM,
+      guardAbi: GUARD_ABI,
+      blockNumber: 77n,
+      facets: undefined,
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({
+      address: GUARD,
+      blockNumber: 77n,
+      names: PRICE_GUARD_KNOB_GETTERS.map((k) => k.getter),
+    });
+    expect(r.values.priceGuard).toBe(GUARD);
+    expect(r.values.priceGuardDelaySeconds).toBe('259200');
+    expect(r.values.wethContract).toBe('0x00000000000000000000000000000000000000e7');
+    expect(r.unreported).toContain('pythOracle');
+    expect(r.unreported).not.toContain('wethContract');
+  });
+
+  it('asks the guard nothing, and reports its settings unreported, when the Diamond names none', async () => {
+    let batches = 0;
+    const client = {
+      multicall: async (args: { contracts: readonly { functionName: string }[] }) => {
+        batches++;
+        return args.contracts.map((c) =>
+          c.functionName === 'getPriceGuard'
+            ? { status: 'success', result: '0x0000000000000000000000000000000000000000' }
+            : { status: 'failure', error: new Error('x') },
+        );
+      },
+    } as unknown as PublicClient;
+    const r = await readProtocolKnobGetters({
+      client,
+      diamond: '0x00000000000000000000000000000000000000dd',
+      abi: DIAMOND_ABI_VIEM,
+      guardAbi: GUARD_ABI,
+      blockNumber: 1n,
+      facets: undefined,
+    });
+    expect(batches).toBe(1);
+    expect(r.unreported).toEqual(expect.arrayContaining(PRICE_GUARD_KNOB_GETTERS.map((k) => k.key)));
   });
 });

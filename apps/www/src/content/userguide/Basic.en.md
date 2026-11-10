@@ -1416,3 +1416,67 @@ Settings is at the foot of the menu. Mode, theme and language need no wallet and
 Settings also shows your risk level on this network in words, whether this network enforces it, and whether strict mode is on. If new risk terms stopped your level from counting, you can confirm it again there in one wallet step. To raise or lower your level, or to turn strict mode on or off, switch to **Advanced** mode: each change is one wallet confirmation with its own receipt, and moves no funds. Lowering takes effect at once and closes pairs above the new level to new offers and requests, your own open ones included; loans you already have are not affected. Raising can wait out the protocol's period, and the app shows when it counts.
 
 Settings also lists the standing approvals your wallet gives the protocol on this network: how much of a token it may move without asking you again, or an approval over an NFT collection or a single NFT. Each can be withdrawn in one wallet confirmation, which moves no funds. The list checks the suggested assets and every asset your deposits, loans and offers here name, and you can add another token to check; an approval for any other token is not found there, so your wallet can show the rest. If another approval also covers the same asset, such as the whole collection's for one NFT, the review names it as staying after the withdrawal.
+
+Settings also shows whether keepers may act for your wallet on this network, and which keepers you approved. Everything starts off. A keeper acts only while keeper access is on and it holds the action; a step on a loan also needs that loan or offer to name the keeper. A keeper never receives your funds and cannot claim, withdraw or transfer anything. You can turn keeper access off or remove a keeper in one wallet confirmation in either mode; to turn access on, approve a keeper or change what it may do, switch to **Advanced** mode.
+
+You can also install the app on your phone or computer, so it opens from your home screen or app list with shortcuts to Offers, Positions, Vault and Alerts. Use your browser's Install app or Add to Home Screen option (on an iPhone or iPad: Safari, then Share, then Add to Home Screen), or, in **Advanced** mode, Install the app in Settings where your browser offers it. The app keeps copies of its own code files so it opens faster; your positions and every figure are always read from the network.
+
+<a id="rent-review"></a>
+
+### Rent: Renting an NFT
+
+Rent, in the menu, lists the NFTs owners have listed for rent on your network; when nothing is listed on a test network, it points you to the faucet for a test NFT and test tokens. A rental gives you the right to use an NFT for a set number of days, never the NFT itself: it stays in the owner's vault, which records you as its user until the rental ends. Open a listing and choose Rent this NFT. The review shows what moves from your wallet into your own vault: the daily fee for the whole term plus a buffer, a small share of the rent that the listing fixed when it was posted. It also shows the rent rule (pro-rata, the days you use with a part day counted as a whole day, or full term), what comes back when you close on time, the grace period and the late fee taken from the buffer. A rental has no collateral and no health factor. If your wallet holds less than the rent plus buffer, the review says so before any wallet step. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly that amount if needed, and to start the rental, which the app first tries as a dry run. Afterwards the app checks on the chain the rental it started, the payment into your vault and that you are now the NFT's user.
+
+<a id="rent-risks"></a>
+
+### Rent: Risks
+
+You never own a rented NFT, and your right to use it ends when the rental ends. The rent and buffer stay in your vault for the rental and cannot be withdrawn while it is open. Once every agreed day has been settled, which anyone may do, the rental closes by itself and your buffer is yours to claim. Until then you close it yourself, from its position page. Closing during the grace period costs a late fee, taken from the buffer; after the grace period the rental defaults, the rent left in your vault goes to the owner and the buffer to the protocol, and nothing comes back to you. With full-term rent the whole term is owed even if you close early.
+
+<a id="rent-list"></a>
+
+### Rent: Listing Your NFT for Rent
+
+On Rent, List an NFT for rent opens a short form: the collection (a test collection on a test network, or a pasted address), the token's number and, for a multi-token collection, the quantity; the token renters pay in; the daily fee, a single figure; the term in days; the rent rule, pro-rata or full term; and how long the listing stays open. There are no collateral or rate fields: a rental has neither. The review shows that the NFT moves from your wallet into your own vault, what a renter pays up front, the buffer share this listing fixes at today's setting, what you receive (the rent due, less the protocol's share, which is fixed when a renter takes the listing), the grace period and what a default does. If your wallet does not hold the NFT, the review says so before any wallet step. Your wallet then asks you to let the protocol move that one token (for a multi-token collection, the whole collection for this listing only, taken back in one more step afterwards) and to post the listing, which the app first tries as a dry run. Afterwards the app checks on the chain that the listing was recorded and the NFT reached your vault, and links to the listing's page.
+
+<a id="rent-list-risks"></a>
+
+### Rent: Risks of Listing
+
+The NFT stays in your vault while the listing is open and while it is rented, and you cannot withdraw it until the listing or the rental ends. While nobody has rented it, you can cancel the listing from its page after its first five minutes. Once rented, the renter holds the right to use the NFT until the rental ends, and you cannot take that right back early. Rent reaches your vault, less the protocol's share, as each finished day is settled; anyone may settle one. Once every agreed day is settled, the rental closes by itself and the renter can claim the buffer back. Before that, the renter can close it, or after the grace period anyone can close it as a default. When the renter closes it, you can claim the rent not yet settled and any late fee, less the protocol's share, and the rest of the buffer goes back to the renter. On a default you can claim the rent left, less that share, and the buffer goes to the protocol. A pause stops daily settling and moves the late-fee and default dates later, but never lengthens the renter's use. A listing that lapses keeps the NFT in your vault until it is closed.
+
+<a id="rent-request"></a>
+
+### Rent: Asking to Rent an NFT
+
+On Rent, Post a rental request opens the same short form as a listing, worded for you as the renter: the collection and the token's number (and, for a multi-token collection, the quantity), the token you pay in, the daily fee as a single figure, the term in days, the rent rule and how long the request stays open. The review shows that the rent for the whole term and a buffer move from your wallet into your own vault now, the buffer share this request fixes at today's setting, that the term runs from when an owner takes the request, and that an owner who takes it starts the rental at once, with no further step from you. If your wallet holds too little, or already holds that NFT, the review says so before any wallet step; a token that does not exist yet is noted. Your wallet then approves exactly the rent and buffer and posts the request, which the app first tries as a dry run. Afterwards the app checks on the chain that the request was recorded and the rent and buffer reached your vault, and links to the request's page.
+
+<a id="rent-request-risks"></a>
+
+### Rent: Risks of a Rental Request
+
+The rent and buffer stay in your vault while the request is open, and you cannot withdraw them until you cancel it or it ends. While no owner has taken it, you can cancel the request from its page after its first five minutes, and they come back to your wallet. An owner who takes it starts the rental at once on exactly these terms: you hold the right to use the NFT, never the NFT itself. Once every agreed day has been settled, which anyone may do, the rental closes by itself and your buffer is yours to claim; until then, close it from its position page. Closing late costs a late fee from the buffer, and if it defaults the rent goes to the owner and the buffer to the protocol. A request that lapses keeps the rent and buffer in your vault until it is closed. The buffer share is the protocol's setting when the request lands: if it changes after your review, a higher one is refused when your wallet approved exactly this amount and taken when an earlier approval covers it, and the outcome states what moved.
+
+<a id="rent-take"></a>
+
+### Rent: Taking a Renter's Request
+
+A renter's request asks to rent one NFT on set terms, and the renter has already put the rent and a buffer into their own vault. Its page says so and offers Rent out your NFT. The review shows that the NFT moves from your wallet into your own vault, who the renter is, and that they get the right to use it, never the NFT itself, for the term from now. It also shows the daily fee, the term and the rent rule the request fixes, the rent and buffer already in the renter's vault, what you receive (the rent, less the protocol's share, which is fixed when the rental starts, into your vault as each finished day is settled, and the rest at close), the grace period and what a default does. If your wallet does not hold that NFT, or holds too few units, the review says so before any wallet step, and reads again by itself once it does. Your wallet then asks you to sign the terms, which costs nothing, to let the protocol move that one token (for a multi-token collection, the whole collection for this rental only, taken back in one more step afterwards) and to start the rental, which the app first tries as a dry run. Afterwards the app checks on the chain the rental it started, that the NFT reached your vault and that your vault names the renter as its user, and links to the rental.
+
+<a id="rent-take-risks"></a>
+
+### Rent: Risks of Taking a Request
+
+The NFT stays in your vault for the whole rental, and you cannot withdraw it while the rental is open. The renter holds the right to use it until the rental ends, and you cannot take that right back early. The terms are the request's own: you cannot change the daily fee, the term, the rent rule or the buffer. Rent reaches your vault, less the protocol's share, as each finished day is settled; anyone may settle one. Once every agreed day is settled, the rental closes by itself and the renter can claim the buffer back. Before that, the renter can close it, or after the grace period anyone can close it as a default. When the renter closes it, you can claim the rent not yet settled and any late fee, less the protocol's share, and the rest of the buffer goes back to the renter. On a default you can claim the rent left, less that share, and the buffer goes to the protocol. A pause stops daily settling and moves the late-fee and default dates later, but never lengthens the renter's use. A request that recorded no buffer of its own takes today's setting when the rental starts.
+
+<a id="rent-close"></a>
+
+### Rent: Closing a Rental
+
+A running rental's page offers you, as the renter, Close the rental. Closing pays the rent owed and any late fee out of the rent and buffer you prepaid into your own vault, so nothing is taken from your wallet and there is no approval. The review shows the rent owed if it closes now and at a moment a short while ahead, counted by the rent rule (pro-rata: the days used since the start, a part day counted whole, less the days already settled; full term: every agreed day not yet settled), the days already settled, any late fee, what comes back to you as a claim, and what the owner receives: the rent and late fee, less the protocol's share. If the prepayment cannot cover the close, the review says so before your wallet opens. Your wallet then asks you once to close the rental, which the app first tries as a dry run. Afterwards the app checks on the chain that the rental closed, the claim recorded for you and that your use ended. Collect what comes back on the Claims page.
+
+<a id="rent-close-risks"></a>
+
+### Rent: Risks of Closing
+
+Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.

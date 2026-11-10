@@ -399,8 +399,8 @@ vi.mock('viem', async (importOriginal) => {
           configReads += 1;
           configPinnedAt.push(blockNumber);
           if (configThrows) throw new Error('config read failed');
-          // [symbol, threshold, preNotify, periodicEnabled, numeraireSwapEnabled]
-          return ['0x00', 0n, 3, periodicEnabled, true];
+          // [symbol, threshold, preNotify, periodicEnabled]
+          return ['0x00', 0n, 3, periodicEnabled];
         }
         if (functionName !== 'aggregate3') {
           throw new Error(`the lane must batch its reads; saw a bare ${functionName}`);

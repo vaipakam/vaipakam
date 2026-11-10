@@ -459,7 +459,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         returns (uint8)
     {
         return uint8(
-            LibRiskAccess._pairRequiredLevel(LibVaipakam.storageSlot(), p)
+            LibRiskAccess._pairRequiredLevel(p)
         );
     }
 

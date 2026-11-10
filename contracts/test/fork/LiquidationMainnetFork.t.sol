@@ -12,6 +12,10 @@ import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
+import {MockProtocolRegistry} from "../mocks/MockProtocolRegistry.sol";
+import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 
 /// @title LiquidationMainnetForkTest
 /// @notice Fork-based integration test for the oracle + liquidity inputs
@@ -43,7 +47,7 @@ contract LiquidationMainnetForkTest is Test {
     address internal constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // Chainlink ETH/USD aggregator on mainnet — used as the direct
-    // `ethNumeraireFeed` so `getAssetPrice(WETH)` resolves without needing an
+    // ETH/<numeraire> feed so `getAssetPrice(WETH)` resolves without needing an
     // asset/USD registry hop (the Feed Registry does not register WETH
     // as a USD-quoted asset; it is only reachable via the ETH alias).
     address internal constant ETH_USD_FEED =
@@ -85,27 +89,39 @@ contract LiquidationMainnetForkTest is Test {
         AdminFacet(address(diamond)).unpause();
     }
 
+    /// @dev #3272 part 2 — the Diamond prices through a price guard. A fork of
+    ///      chain 1 is a production chain to the guard, so it holds a delay
+    ///      of at least a day; its starting config applies at construction,
+    ///      as a deploy's does.
     function _wireOracleInfrastructure() internal {
-        OracleAdminFacet admin = OracleAdminFacet(address(diamond));
-        admin.setChainlinkRegistry(CHAINLINK_FEED_REGISTRY);
-        admin.setUsdChainlinkDenominator(USD_DENOM);
-        admin.setWethContract(WETH);
-        admin.setEthUsdFeed(ETH_USD_FEED);
-        admin.setUniswapV3Factory(UNISWAP_V3_FACTORY);
+        PriceGuard.Change[] memory c = new PriceGuard.Change[](3);
+        c[0] = _change(PriceGuard.Kind.FeedRegistry, CHAINLINK_FEED_REGISTRY);
+        c[1] = _change(PriceGuard.Kind.Weth, WETH);
+        c[2] = _change(PriceGuard.Kind.EthNumeraireFeed, ETH_USD_FEED);
+        address guard = ArtifactDeploy.deploy(
+            type(PriceGuard).name,
+            abi.encode(
+                address(this),
+                address(this),
+                LibTestPriceGuard.identity(USD_DENOM, LibTestPriceGuard.ETH),
+                uint64(1 days),
+                c
+            )
+        );
+        MockProtocolRegistry registry = new MockProtocolRegistry(address(diamond));
+        registry.setPointer(RegistryKeys.PRICE_GUARD, guard);
+        OracleAdminFacet(address(diamond)).initializeProtocolRegistry(address(registry));
+        OracleAdminFacet(address(diamond)).setUniswapV3Factory(UNISWAP_V3_FACTORY);
         // No l2 sequencer feed on l1 — intentional; sequencerHealthy() must
         // return true under that config.
     }
 
-    function _oracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
-        s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        s[3] = OracleAdminFacet.setWethContract.selector;
-        s[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        s[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        s[6] = OracleAdminFacet.setStableTokenFeed.selector;
-        s[7] = OracleAdminFacet.setSequencerUptimeFeed.selector;
+    function _change(PriceGuard.Kind kind, address value) internal pure returns (PriceGuard.Change memory) {
+        return PriceGuard.Change(kind, bytes32(0), bytes32(uint256(uint160(value))));
+    }
+
+    function _oracleAdminSelectors() internal returns (bytes4[] memory) {
+        return new HelperTest().getOracleAdminFacetSelectors();
     }
 
     function _cut(address facet, bytes4[] memory selectors)

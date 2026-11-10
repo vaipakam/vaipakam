@@ -80,7 +80,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, formatExactSpan, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
-import { numeraireOf, packedText } from '../data/numeraire';
+import { numeraireOf } from '../data/numeraire';
 import { idleAware } from '../lib/idle';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
@@ -210,11 +210,6 @@ function makeFormatters(locale: string | undefined) {
         if (!/^\d+$/.test(str)) return str;
         // Exact: bps of the HF scale is the health factor with 4 decimals.
         return copy.protocolConsole.hfBpsValue(exactDecimal(exactAmountString(BigInt(str), 4)), num(Number(str)));
-      }
-      case 'symbolText': {
-        if (ZERO_WORD.test(str)) return copy.protocolConsole.notSet;
-        const text = packedText(str);
-        return text ?? str;
       }
       case 'notBefore': {
         // #2843 — the recorded time, always shown beside the verdict.

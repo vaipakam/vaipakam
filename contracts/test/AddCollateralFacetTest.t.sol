@@ -49,6 +49,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /**
  * @title AddCollateralFacetTest
@@ -100,7 +101,7 @@ contract AddCollateralFacetTest is Test {
 
     function mockOraclePrice(address asset, uint256 price, uint8 decimals) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );

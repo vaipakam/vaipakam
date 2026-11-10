@@ -42,8 +42,6 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
  *     (`RecycleSource.NotificationFee`), never routed to treasury.
  *   - **#973/L26 restamp** — the vault debit runs the mandatory discount
  *     accumulator rollup at the post-mutation balance.
- *   - **Numeraire de-link** — a `setNumeraire` rotation no longer touches
- *     the flat VPFI tariff.
  */
 contract NotificationFeeTest is SetupTest {
     // #229: VPFIDiscountFacet now cut by `SetupTest.setupHelper()`.
@@ -389,34 +387,6 @@ contract NotificationFeeTest is SetupTest {
             .getLoanDetails(1);
         assertTrue(loan.lenderNotifBilled, "lender billed");
         assertTrue(loan.borrowerNotifBilled, "borrower billed");
-    }
-
-    // ─── Numeraire de-link (M1a) ─────────────────────────────────────────
-
-    /// @notice A `setNumeraire` rotation MUST NOT touch the flat VPFI
-    ///         tariff — it has no numeraire linkage. (Pre-M1 the fee lived
-    ///         in the numeraire-denominated slot the rotation clobbered.)
-    function test_setNumeraire_LeavesNotificationTariffUntouched() public {
-        // Set a distinct flat tariff first.
-        ConfigFacet(address(diamond)).setNotificationFee(7e18); // 7 VPFI
-
-        // Rotate to a hypothetical EUR numeraire (structure-only; the
-        // notification tariff is deliberately absent from the signature).
-        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            makeAddr("ethEurFeed"),
-            makeAddr("eurDenom"),
-            // forge-lint: disable-next-line(unsafe-typecast)
-            bytes32("eur"),
-            bytes32(0),
-            5_000 * 1e18, // threshold
-            0, // kyc tier0
-            0 // kyc tier1
-        );
-
-        (uint256 feeVpfi, ) =
-            ConfigFacet(address(diamond)).getNotificationFeeConfig();
-        assertEq(feeVpfi, 7e18, "tariff survived the numeraire rotation");
     }
 
     // ─── Governance bounds on setNotificationFee ──────────────────────

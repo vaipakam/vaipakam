@@ -217,6 +217,7 @@ import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicF
 import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /// @dev #1566 slice 4 PR B — the one call the activation fixture needs from
 ///      whichever VPFI token a suite built: every suite that builds the token
@@ -285,7 +286,7 @@ contract SetupTest is Test {
         uint8 decimals
     ) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );
@@ -1535,7 +1536,7 @@ contract SetupTest is Test {
 
         // Mock prices: $1 for simplicity
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockERC20
@@ -1543,7 +1544,7 @@ contract SetupTest is Test {
             abi.encode(1e8, 8) // $1, 8 decimals
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -1551,7 +1552,7 @@ contract SetupTest is Test {
             abi.encode(1e8, 8) // $1, 8 decimals
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockIlliquidERC20

@@ -2,74 +2,35 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {HelperTest} from "./HelperTest.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
+import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibPriceGuard} from "../src/libraries/LibPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title OracleAdminFacetTest
-/// @notice Owner-only coverage for the four oracle-config setters exposed by
-///         OracleAdminFacet. Each setter delegates to a LibVaipakam helper
-///         that gates on `LibDiamond.enforceIsContractOwner()` before writing
-///         one storage slot; no external getter is provided so round-trip is
-///         verified through the public {OracleFacet} surface:
-///
-///           - registry / denominator writes → {getAssetPrice} NoPriceFeed
-///             branch when either is zero
-///           - uniswap factory write         → {checkLiquidity} Illiquid
-///             fail-closed branch when factory is zero
-///           - weth contract write           → asset/WETH pool discovery
-///             for every non-WETH asset in {checkLiquidity}
-///           - eth/usd feed write             → WETH pricing + depth→USD
-///             conversion in {checkLiquidity}
-///
-///         SetupTest cuts {OracleFacet} but not {OracleAdminFacet}. This test
-///         extends the shared setup by diamond-cutting the admin facet on top
-///         so the setters are reachable through the diamond proxy.
+/// @notice The oracle settings the Diamond still holds (the pool factory and
+///         the liquidity classification's reference inputs), and the one-shot
+///         record of the protocol registry the Diamond finds its price guard
+///         by (#3272 part 2). Every price setting is the guard's own and is
+///         tested in the guard's suites.
 contract OracleAdminFacetTest is SetupTest {
     function setUp() public {
-        // #229 — OracleAdminFacet now cut by `SetupTest.setupHelper()`
-        // (all 34 selectors, mirroring DeployDiamond). The prior local
-        // 11-selector subset cut would double-cut and revert. Dropped.
         setupHelper();
     }
 
     // ─── Non-owner guard coverage ─────────────────────────────────────────────
-
-    function testSetChainlinkRegistryRevertsForNonOwner() public {
-        address attacker = makeAddr("attacker");
-        vm.prank(attacker);
-        vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(address(0xBEEF));
-    }
-
-    function testSetUsdChainlinkDenominatorRevertsForNonOwner() public {
-        address attacker = makeAddr("attacker");
-        vm.prank(attacker);
-        vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(address(0xBEEF));
-    }
-
-    function testSetWethContractRevertsForNonOwner() public {
-        address attacker = makeAddr("attacker");
-        vm.prank(attacker);
-        vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setWethContract(address(0xBEEF));
-    }
-
-    function testSetEthUsdFeedRevertsForNonOwner() public {
-        address attacker = makeAddr("attacker");
-        vm.prank(attacker);
-        vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setEthUsdFeed(address(0xBEEF));
-    }
-
-    function testSetStableTokenFeedRevertsForNonOwner() public {
-        address attacker = makeAddr("attacker");
-        vm.prank(attacker);
-        vm.expectRevert();
-        OracleAdminFacet(address(diamond)).setStableTokenFeed("EUR", address(0xBEEF));
-    }
 
     function testSetUniswapV3FactoryRevertsForNonOwner() public {
         address attacker = makeAddr("attacker");
@@ -79,54 +40,6 @@ contract OracleAdminFacetTest is SetupTest {
     }
 
     // ─── Owner-path side effects ──────────────────────────────────────────────
-
-    /// @dev Zero registry collapses {getAssetPrice} to NoPriceFeed. SetupTest
-    ///      never calls {setChainlinkRegistry}, so the slot already starts at
-    ///      zero — but invoking the setter still has to succeed for the owner,
-    ///      and the subsequent revert confirms the slot value after the write.
-    function testOwnerCanZeroChainlinkRegistry() public {
-        vm.clearMockedCalls();
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(address(0));
-        vm.expectRevert(OracleFacet.NoPriceFeed.selector);
-        OracleFacet(address(diamond)).getAssetPrice(mockERC20);
-    }
-
-    /// @dev Zero denominator collapses {getAssetPrice} to NoPriceFeed on the
-    ///      second half of the guard (`usdDenominator == address(0)`).
-    function testOwnerCanZeroUsdDenominator() public {
-        vm.clearMockedCalls();
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(address(0));
-        vm.expectRevert(OracleFacet.NoPriceFeed.selector);
-        OracleFacet(address(diamond)).getAssetPrice(mockERC20);
-    }
-
-    /// @dev Zero WETH address fail-closes {checkLiquidity} to Illiquid —
-    ///      there is no quote asset so no asset/WETH pool can be derived.
-    function testOwnerCanZeroWethContract() public {
-        vm.clearMockedCalls();
-        OracleAdminFacet(address(diamond)).setWethContract(address(0));
-        LibVaipakam.LiquidityStatus status =
-            OracleFacet(address(diamond)).checkLiquidity(mockERC20);
-        assertEq(
-            uint8(status),
-            uint8(LibVaipakam.LiquidityStatus.Illiquid),
-            "weth=0 fail-closes to Illiquid"
-        );
-    }
-
-    /// @dev Zero ETH/USD feed fail-closes {checkLiquidity} to Illiquid —
-    ///      no way to price WETH or convert depth to USD.
-    function testOwnerCanZeroEthUsdFeed() public {
-        vm.clearMockedCalls();
-        OracleAdminFacet(address(diamond)).setEthUsdFeed(address(0));
-        LibVaipakam.LiquidityStatus status =
-            OracleFacet(address(diamond)).checkLiquidity(mockERC20);
-        assertEq(
-            uint8(status),
-            uint8(LibVaipakam.LiquidityStatus.Illiquid),
-            "ethNumeraireFeed=0 fail-closes to Illiquid"
-        );
-    }
 
     /// @dev Zero factory collapses {checkLiquidity} to Illiquid via the
     ///      fail-closed factory guard.
@@ -144,68 +57,9 @@ contract OracleAdminFacetTest is SetupTest {
 
     // ─── Post-audit bounds (ConfigKnobBoundsAudit-2026-05-14) ─────────
     //
-    // Gap #2 — `setStableTokenFeed.symbol` is now capped at
-    // MAX_STABLE_SYMBOL_LEN (10 bytes) to bound storage / observability
-    // noise.
-    //
     // Gap #3 — `setTierReferenceAssets.assets` is now capped at
     // MAX_TIER_REFERENCE_ASSETS (20) to bound the per-peer iteration
     // in the permissionless `refreshTierLtvCache` hot path.
-
-    function testSetStableTokenFeed_AcceptsShortSymbol() public {
-        // "EUR" (3 bytes) — well under the 10-byte cap.
-        OracleAdminFacet(address(diamond)).setStableTokenFeed(
-            "EUR",
-            address(0x1234)
-        );
-        // No revert ⇒ accepted. (LibVaipakam stores the mapping;
-        // the round-trip read happens via the peg-loop in
-        // OracleFacet; not asserted here — the bounds check is the
-        // unit under test.)
-    }
-
-    function testSetStableTokenFeed_AcceptsBoundarySymbol() public {
-        // Exactly 10 bytes — at the boundary, must succeed.
-        OracleAdminFacet(address(diamond)).setStableTokenFeed(
-            "ABCDEFGHIJ",
-            address(0x1234)
-        );
-    }
-
-    function testSetStableTokenFeed_RevertsLongSymbol() public {
-        // 11 bytes — just over the cap, must revert.
-        bytes memory eleven = "ABCDEFGHIJK";
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                OracleAdminFacet.StableSymbolTooLong.selector,
-                uint256(eleven.length),
-                uint256(10)
-            )
-        );
-        OracleAdminFacet(address(diamond)).setStableTokenFeed(
-            string(eleven),
-            address(0x1234)
-        );
-    }
-
-    function testSetStableTokenFeed_RevertsHugeSymbol() public {
-        // A pathological 200-byte symbol — exactly the "registers a
-        // 100-KB symbol" exploit shape the cap defends against.
-        // Build via concatenation to make the intent obvious.
-        bytes memory big = new bytes(200);
-        for (uint256 i = 0; i < 200; ++i) big[i] = 0x41; // 'A'
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                OracleAdminFacet.StableSymbolTooLong.selector,
-                uint256(200),
-                uint256(10)
-            )
-        );
-        OracleAdminFacet(address(diamond)).setStableTokenFeed(
-            string(big),
-            address(0x1234)
-        );
-    }
 
     function testSetTierReferenceAssets_AcceptsAtBoundary() public {
         // 20 assets — exactly at the cap, must succeed.
@@ -255,28 +109,112 @@ contract OracleAdminFacetTest is SetupTest {
 
     // ─── #2685: every chain-level oracle setter announces its change ─────────
 
-    function testChainLevelOracleSettersEmit() public {
+    function testFactorySetterEmits() public {
         OracleAdminFacet a = OracleAdminFacet(address(diamond));
-
-        vm.expectEmit(false, true, false, false, address(diamond));
-        emit LibVaipakam.SequencerUptimeFeedSet(address(0), address(0xA1));
-        a.setSequencerUptimeFeed(address(0xA1));
-
-        vm.expectEmit(false, true, false, false, address(diamond));
-        emit LibVaipakam.EthNumeraireFeedSet(address(0), address(0xA2));
-        a.setEthUsdFeed(address(0xA2));
-
-        vm.expectEmit(false, true, false, false, address(diamond));
-        emit LibVaipakam.WethContractSet(address(0), address(0xA3));
-        a.setWethContract(address(0xA3));
-
         vm.expectEmit(false, true, false, false, address(diamond));
         emit LibVaipakam.UniswapV3FactorySet(address(0), address(0xA4));
         a.setUniswapV3Factory(address(0xA4));
+    }
 
-        // The previous value is the one the last write left.
-        vm.expectEmit(true, true, false, false, address(diamond));
-        emit LibVaipakam.SequencerUptimeFeedSet(address(0xA1), address(0));
-        a.setSequencerUptimeFeed(address(0));
+    // ─── #3272 part 2: the registry the Diamond finds its price guard by ─────
+
+    function testTheRegistryIsRecordedOnceWithTheGuardsNumeraire() public {
+        OracleAdminFacet a = OracleAdminFacet(address(diamond));
+        address registry = a.getProtocolRegistry();
+        assertTrue(registry != address(0), "recorded at setup");
+        assertEq(a.getPriceGuard(), MockProtocolRegistry(registry).pointer(RegistryKeys.PRICE_GUARD));
+        assertEq(NumeraireConfigFacet(address(diamond)).getNumeraireSymbol(), bytes32("usd"));
+
+        vm.expectRevert(OracleAdminFacet.AlreadyInitialized.selector);
+        a.initializeProtocolRegistry(registry);
+    }
+
+    function testOnlyTheAdminRecordsTheRegistry() public {
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        OracleAdminFacet(address(diamond)).initializeProtocolRegistry(address(0xBEEF));
+    }
+
+    function testAFreshDiamondRefusesEveryPriceUntilTheRegistryIsRecorded() public {
+        (address d,) = _bareOracleDiamond();
+        vm.expectRevert(LibPriceGuard.ProtocolRegistryUnset.selector);
+        OracleFacet(d).getAssetPrice(mockERC20);
+        vm.expectRevert(LibPriceGuard.ProtocolRegistryUnset.selector);
+        OracleFacet(d).getAssetPriceStatus(mockERC20);
+        vm.expectRevert(LibPriceGuard.ProtocolRegistryUnset.selector);
+        OracleAdminFacet(d).getPriceGuard();
+        assertEq(OracleAdminFacet(d).getProtocolRegistry(), address(0));
+    }
+
+    function testARegistryThatNamesNoGuardIsRefused() public {
+        (address d,) = _bareOracleDiamond();
+        vm.expectRevert(abi.encodeWithSelector(OracleAdminFacet.ProtocolRegistryMismatch.selector, address(0xBEEF)));
+        OracleAdminFacet(d).initializeProtocolRegistry(address(0xBEEF));
+
+        MockProtocolRegistry empty = new MockProtocolRegistry(address(0));
+        vm.expectRevert(abi.encodeWithSelector(OracleAdminFacet.ProtocolRegistryMismatch.selector, address(empty)));
+        OracleAdminFacet(d).initializeProtocolRegistry(address(empty));
+    }
+
+    /// @dev A guard swapped in by the registry is read from the block it
+    ///      lands, but only in the numeraire the Diamond recorded: a guard in
+    ///      any other unit is refused by name, never read as "no price".
+    function testASwappedGuardIsReadOnlyInTheRecordedNumeraire() public {
+        OracleAdminFacet a = OracleAdminFacet(address(diamond));
+        MockProtocolRegistry registry = MockProtocolRegistry(a.getProtocolRegistry());
+
+        PriceGuard sameUnit = LibTestPriceGuard.deployGuard(address(this));
+        registry.setPointer(RegistryKeys.PRICE_GUARD, address(sameUnit));
+        assertEq(a.getPriceGuard(), address(sameUnit), "the swap lands at once");
+
+        PriceGuard.Identity memory eur = LibTestPriceGuard.identity(address(0xE0), LibTestPriceGuard.ETH);
+        eur.numeraireSymbol = bytes32("eur");
+        PriceGuard otherUnit = LibTestPriceGuard.deployGuard(address(this), eur);
+        registry.setPointer(RegistryKeys.PRICE_GUARD, address(otherUnit));
+        bytes memory refusal = abi.encodeWithSelector(
+            LibPriceGuard.PriceGuardNumeraireMismatch.selector, address(otherUnit), bytes32("usd"), bytes32("eur")
+        );
+        vm.expectRevert(refusal);
+        OracleFacet(address(diamond)).getAssetPrice(mockERC20);
+        vm.expectRevert(refusal);
+        OracleFacet(address(diamond)).getAssetPriceStatus(mockERC20);
+        vm.expectRevert(refusal);
+        a.getPriceGuard();
+    }
+
+    /// @dev The Diamond holds no write path into the guard: the guard's
+    ///      owner is the deploy's admin (the Timelock after the handover),
+    ///      and a call from the Diamond is a stranger's.
+    function testTheDiamondCannotChangeTheGuard() public {
+        PriceGuard guard = PriceGuard(OracleAdminFacet(address(diamond)).getPriceGuard());
+        assertTrue(guard.owner() != address(diamond));
+        vm.prank(address(diamond));
+        vm.expectRevert();
+        guard.proposeChange(PriceGuard.Kind.Weth, bytes32(0), bytes32(uint256(uint160(address(0xBEEF)))));
+    }
+
+    /// @dev A Diamond with the oracle and its admin facet cut and access
+    ///      control initialized, but no registry recorded.
+    function _bareOracleDiamond() internal returns (address d, HelperTest h) {
+        h = new HelperTest();
+        DiamondCutFacet cut = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
+        d = address(new VaipakamDiamond(address(this), address(cut)));
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        cuts[0] = IDiamondCut.FacetCut(
+            ArtifactDeploy.deploy(type(OracleFacet).name), IDiamondCut.FacetCutAction.Add, h.getOracleFacetSelectors()
+        );
+        cuts[1] = IDiamondCut.FacetCut(
+            ArtifactDeploy.deploy(type(OracleAdminFacet).name),
+            IDiamondCut.FacetCutAction.Add,
+            h.getOracleAdminFacetSelectors()
+        );
+        cuts[2] = IDiamondCut.FacetCut(
+            ArtifactDeploy.deploy(type(AccessControlFacet).name),
+            IDiamondCut.FacetCutAction.Add,
+            h.getAccessControlFacetSelectors()
+        );
+        IDiamondCut(d).diamondCut(cuts, address(0), "");
+        AccessControlFacet(d).initializeAccessControl();
     }
 }

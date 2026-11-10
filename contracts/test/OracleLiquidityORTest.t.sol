@@ -15,6 +15,8 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @title OracleLiquidityORTest
@@ -93,14 +95,8 @@ contract OracleLiquidityORTest is Test {
         accessControlFacet  = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest          = new HelperTest();
 
-        bytes4[] memory oracleAdminSelectors = new bytes4[](7);
-        oracleAdminSelectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        oracleAdminSelectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        oracleAdminSelectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        oracleAdminSelectors[3] = OracleAdminFacet.setWethContract.selector;
-        oracleAdminSelectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        oracleAdminSelectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        oracleAdminSelectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
+        // #3272 part 2 - the admin facet holds no price setting; the guard does.
+        bytes4[] memory oracleAdminSelectors = helperTest.getOracleAdminFacetSelectors();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
@@ -129,11 +125,13 @@ contract OracleLiquidityORTest is Test {
 
         vm.warp(7 days);
 
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(mockDenom);
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(mockRegistry);
-        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
+        // #3272 part 2 - the Diamond prices through a guard keyed by these
+        // denominators, named by the registry it records.
+        LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, LibTestPriceGuard.ETH));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
         OracleAdminFacet(address(diamond)).setUniswapV3Factory(mockUniFactory);
-        OracleAdminFacet(address(diamond)).setEthUsdFeed(mockEthUsdFeed);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
 
         // Phase 7b.1 — register the two new V3-clone factories.
         AdminFacet(address(diamond)).setPancakeswapV3Factory(mockPancakeFactory);
@@ -381,7 +379,7 @@ contract OracleLiquidityORTest is Test {
     ///      real quorum or feed read would.
     function _priceFails(address asset, bytes4 selector) internal {
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encodeWithSelector(selector)
         );
@@ -452,7 +450,7 @@ contract OracleLiquidityORTest is Test {
             uint256(500)
         );
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockWeth),
             crossCheck
         );

@@ -10,6 +10,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @title RiskAccessFacetTest
@@ -281,11 +283,11 @@ contract RiskAccessFacetTest is SetupTest {
     // ════════════════════════════════════════════════════════════════════════
 
     function test_classify_wethIsBlueChip() public {
-        // WETH is blue-chip via the `asset == wethContract` clause even at
-        // effective tier 0. `setWethContract` is owner-only — the test contract
-        // IS the diamond owner (SetupTest: `owner = address(this)`).
+        // WETH is blue-chip via the `asset == weth` clause even at effective
+        // tier 0. WETH is the price guard's entry (#3272 part 2); the test
+        // contract owns the suite's guard.
         address weth = makeAddr("wethCanonical");
-        OracleAdminFacet(address(diamond)).setWethContract(weth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, weth);
         _mockTier(weth, 0); // tier 0, yet still blue-chip by the WETH clause
 
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(

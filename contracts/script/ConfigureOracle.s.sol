@@ -12,6 +12,8 @@ import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "./lib/PriceGuardConfig.sol";
 
 /// @dev #2548 — the one factory read the mock-rig adoption proves itself with.
 interface IUniswapV3FactoryView {
@@ -20,16 +22,21 @@ interface IUniswapV3FactoryView {
 
 /**
  * @title ConfigureOracle
- * @notice One-shot post-deploy script that wires the OracleAdminFacet +
- *         AdminFacet settings required for liquidity/LTV/HF checks and
- *         0x swap liquidation. Idempotent — each setter is a straight
+ * @notice One-shot post-deploy script that wires the price inputs of the
+ *         chain's price guard (#3272 part 2) and the OracleAdminFacet +
+ *         AdminFacet settings the liquidity checks and the 0x swap
+ *         liquidation need. Idempotent: a guard entry already holding its
+ *         value is left alone and each Diamond setter is a straight
  *         assignment, so re-running is safe.
  * @dev Must be broadcast by a holder of `ADMIN_ROLE` (typically the
  *      admin/timelock key). Every chain prices its non-WETH assets
  *      through its own `VaipakamFeedRegistry` (#2880), recorded as
  *      `.feedRegistry` by `DeployFeedRegistry` (the contracts phase).
- *      This script points the Diamond at it and takes the USD and ETH
- *      denominators from it, so the two key every lookup the same way.
+ *      The price guard, built by `DeployDiamond` keyed by that registry's
+ *      USD and ETH denominators, takes it as its FeedRegistry entry; this
+ *      script refuses a guard keyed otherwise. Each guard entry goes
+ *      through the guard's own delayed change ({PriceGuardConfig}), so on
+ *      a chain with a delay it is proposed here and executes later.
  *      Chainlink's own Feed Registry (Ethereum mainnet only) is not used.
  *
  *      Required env vars (resolve per chain via <CHAIN>_* prefix,
@@ -373,18 +380,32 @@ contract ConfigureOracle is Script {
         // No-0x chain: the on-chain DEX adapter is the only liquidation route.
         if (zeroEx == address(0)) _warnIfNoUniV3Adapter(diamond, adapters);
 
+        // #3272 part 2 — every price input is the price guard's own config.
+        // The guard was built by DeployDiamond with whatever of it existed
+        // then; this step brings each entry to the value above through the
+        // guard's delayed change (applied at once under a testnet's zero
+        // delay, left pending for its delay elsewhere).
+        PriceGuard guard = PriceGuard(OracleAdminFacet(diamond).getPriceGuard());
+        require(
+            guard.owner() == broadcaster,
+            "ConfigureOracle: the broadcaster does not own the price guard - after the handover its config changes are Timelock proposals"
+        );
+        require(
+            guard.NUMERAIRE_DENOMINATOR() == usdDenom && guard.ETH_DENOMINATOR() == ethDenom,
+            "ConfigureOracle: the price guard's fixed identity is not keyed by this feed registry's USD and ETH denominators - the guard was built against another registry"
+        );
+        console.log("Price guard:           ", address(guard));
+
         vm.startBroadcast(deployerKey);
 
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         AdminFacet af = AdminFacet(diamond);
 
-        oa.setUsdChainlinkDenominator(usdDenom);
-        oa.setEthChainlinkDenominator(ethDenom);
-        oa.setWethContract(weth);
-        oa.setEthUsdFeed(ethNumeraireFeed);
+        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.FeedRegistry, bytes32(0), feedRegistry);
+        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.Weth, bytes32(0), weth);
+        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.EthNumeraireFeed, bytes32(0), ethNumeraireFeed);
+        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.SequencerFeed, bytes32(0), sequencerFeed);
         oa.setUniswapV3Factory(uniV3Factory);
-        oa.setSequencerUptimeFeed(sequencerFeed);
-        oa.setChainlinkRegistry(feedRegistry);
         // 0x route — set when configured (validated pre-broadcast above). When
         // absent, liquidations route via the registered on-chain swap adapter(s).
         if (zeroEx != address(0)) {
@@ -403,7 +424,8 @@ contract ConfigureOracle is Script {
             console.log("PAA quote list unchanged: no <CHAIN>_PAA_QUOTE_ASSETS given. The launch readiness check refuses this chain until the list names a quote asset besides WETH (#2747).");
         }
 
-        // Stable-token feeds — optional, registered one symbol at a time.
+        // Stable peg references — optional, one symbol at a time, each the
+        // guard's StableRef entry keyed by the symbol.
         string memory csv = vm.envOr("VPFI_STABLE_FEED_SYMBOLS", string(""));
         if (bytes(csv).length > 0) {
             string[] memory symbols = _splitCsv(csv);
@@ -414,8 +436,8 @@ contract ConfigureOracle is Script {
                     console.log("  skipped (no feed env):", sym);
                     continue;
                 }
-                oa.setStableTokenFeed(sym, feed);
-                console.log("  stable feed set:", sym);
+                PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.StableRef, bytes32(bytes(sym)), feed);
+                console.log("  stable reference set:", sym);
             }
         }
 

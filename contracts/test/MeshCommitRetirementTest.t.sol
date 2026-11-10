@@ -9,6 +9,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 
 /**
  * @title  MeshCommitRetirementTest
@@ -53,6 +54,11 @@ contract MeshCommitRetirementTest is SetupTest {
     }
 
     function setUp() public {
+        // Two cells re-run setUp() mid-test to build a dark twin, after
+        // `_configureCanonical` moved the chain id to Base mainnet; a mainnet
+        // chain id refuses the test price guard's zero delay, so start each
+        // build on the local test chain.
+        vm.chainId(31337);
         setupHelper();
         messenger = new MockRewardMessenger(address(diamond));
         _configureCanonical();
@@ -633,7 +639,8 @@ contract MeshCommitRetirementTest is SetupTest {
         // that headroom max too. `finalizeDay` then panics on overflow —
         // with the keeper knob DARK, so it is a pre-existing wedge this
         // suite's zero day credit was hiding, not anything #1569 introduced.
-        // Tracked separately rather than widened into this PR.
+        // #2045 closed it with a protocol ceiling on the day's attribution;
+        // test_2045_MaxDayCreditWithMaxCumulativeCannotWedgeFinalization pins it.
         _reportArbWithDayCredit(6, type(uint256).max, 5 ether, 20 ether, 15 ether);
 
         // The read survives, and the ceiling still holds structurally.
@@ -648,6 +655,46 @@ contract MeshCommitRetirementTest is SetupTest {
             _agg().getChainDayRecycledFunding(6, CHAIN_ARB).stamped,
             "finalization is not wedged"
         );
+    }
+
+    /// #2045 — a report carrying a near-2^256 cumulative AND day credit used
+    /// to be attributed in full (the clamp's headroom derives from the same
+    /// report), and the day's fold then overflowed and wedged finalization
+    /// for every chain. The protocol ceiling bounds the day whatever the
+    /// chain reports: the day finalizes, the day's credit is the ceiling,
+    /// and the rest waits in the chain's backlog.
+    function test_2045_MaxDayCreditWithMaxCumulativeCannotWedgeFinalization() public {
+        _armAndInstruct40(); // no Base ceiling set for ARB: only the protocol one stands
+
+        _reportArbWithDayCredit(6, type(uint256).max, type(uint256).max, 20 ether, 15 ether);
+        _finalize(6);
+
+        assertTrue(
+            _agg().getChainDayRecycledFunding(6, CHAIN_ARB).stamped,
+            "finalization is not wedged"
+        );
+        (uint256 credit, bool accepted) = _agg().getChainDailyRecycledCredit(6, CHAIN_ARB);
+        assertTrue(accepted, "the day was attributed");
+        assertEq(credit, LibVpfiRecycle.DAY_ATTRIBUTION_CEILING, "the protocol ceiling bounds the day");
+        assertGt(_agg().getChainAttributionBacklog(CHAIN_ARB), 0, "the rest is carried, not dropped");
+    }
+
+    /// #2045 — the protocol ceiling is the VPFI hard supply cap, and Base's
+    /// own per-chain ceiling may not exceed it.
+    function test_2045_PerChainCeilingAboveTheProtocolCeilingIsRefused() public {
+        assertEq(LibVpfiRecycle.DAY_ATTRIBUTION_CEILING, 230_000_000 ether, "the VPFI hard cap");
+        uint256 over = LibVpfiRecycle.DAY_ATTRIBUTION_CEILING + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.AttributionCapAboveCeiling.selector,
+                CHAIN_ARB,
+                over,
+                LibVpfiRecycle.DAY_ATTRIBUTION_CEILING
+            )
+        );
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, over);
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, LibVpfiRecycle.DAY_ATTRIBUTION_CEILING);
+        assertEq(_agg().getChainDailyAttributionCap(CHAIN_ARB), LibVpfiRecycle.DAY_ATTRIBUTION_CEILING);
     }
 
     // ─── Base's own chain id is inert ────────────────────────────────────

@@ -37,6 +37,7 @@ import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {PriceGuardCrossing} from "./lib/PriceGuardCrossing.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
@@ -170,6 +171,8 @@ contract RedeployFacets is Script {
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
         _requirePositionNFTDiamond(diamond);
+        // #3272 part 2 - and one from before the price guard.
+        PriceGuardCrossing.requireRecorded(diamond);
         // #666 - and one whose OracleFacet cannot answer the fallback's
         // price-status read; see {_requireOraclePriceStatus}.
         _requireOraclePriceStatus(diamond);

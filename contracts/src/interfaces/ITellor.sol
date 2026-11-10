@@ -19,7 +19,7 @@ pragma solidity ^0.8.29;
  *
  * `getDataBefore` returns the most recent value reported before
  * `_timestamp`. The OracleFacet calls it with
- * `block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER` (#665), so a
+ * `block.timestamp - PriceGuard.TELLOR_DISPUTE_BUFFER` (#665), so a
  * report younger than the buffer is never consumed before anyone has
  * had time to dispute it, and applies its own staleness guard (measured
  * from `block.timestamp`, not from the buffered bound) against the

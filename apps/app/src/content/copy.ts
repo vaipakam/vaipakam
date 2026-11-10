@@ -7899,6 +7899,22 @@ const copySource = {
       'The discount on the collateral price a liquidator receives, by how deep the collateral’s market is: the thinner the market, the wider the discount. Paid in collateral at the liquidation, not from the treasury.',
     hfBpsValue: tmpl('health factor {{hf}} ({{bps}} bps)', ['hf', 'bps']),
     oraclesHeading: 'Price oracles',
+    /* #3272 part 2 — every price comes from the price guard; the rows below
+       its own are its settings, which the Diamond cannot change. */
+    priceGuard: 'Price guard',
+    priceGuardHint:
+      'The contract every price the protocol uses comes from. The settings below this row are its settings, not the protocol’s: the protocol reads them and cannot change them.',
+    priceGuardDelay: 'Price guard change delay',
+    priceGuardDelayHint:
+      'How long a proposed change to the price guard’s settings waits before anyone may apply it, so it can be reviewed and cancelled first. It can be zero on a test network, where a change applies at once.',
+    priceGuardOwner: 'Price guard owner',
+    priceGuardOwnerHint: 'May propose a change to the price guard’s settings. A change still waits the delay above.',
+    priceGuardGuardian: 'Price guard guardian',
+    priceGuardGuardianHint:
+      'May cancel a proposed change, and may stop a secondary price source from counting at once. Cannot make a change or shorten the wait.',
+    protocolRegistry: 'Protocol registry',
+    protocolRegistryHint:
+      'The registry that names the price guard. It is recorded once, when the protocol is set up. Pointing it at a different guard is the registry’s own delayed change, and the protocol refuses a guard that prices in another reference currency.',
     secondaryOracleMaxDeviation: 'Secondary-oracle max deviation',
     secondaryOracleMaxStaleness: 'Secondary-oracle max staleness',
     pythOracle: 'Pyth oracle',
@@ -7921,7 +7937,7 @@ const copySource = {
       'This chain’s own registry of price feeds. Which feed prices which token is recorded there, not in these settings, and each change to it waits a delay during which it can be vetoed.',
     feedRegistryPrimaryKey: 'Registry key for main prices',
     feedRegistryPrimaryKeyHint:
-      'The key the registry is asked under for a token’s main price: the pricing anchor below when one is set, the reference currency’s own key otherwise. This is the key in force; the reference currency’s own key has no separate read.',
+      'The key the registry is asked under for a token’s main price: the pricing anchor’s key. It is the reference currency’s own key unless the price guard was built with a separate anchor, which is then converted to the reference currency.',
     feedRegistryEthKey: 'Registry key for ETH prices',
     feedRegistryEthKeyHint: 'The key the registry is asked under for prices quoted in ETH.',
     wethContract: 'Wrapped ether (WETH) token',
@@ -7960,18 +7976,12 @@ const copySource = {
     preNotifyDaysHint: 'How many days before an interest checkpoint or a maturity date reminders go out.',
     numeraireHeading: 'Reference currency and pricing anchor',
     numeraire: 'Reference currency',
+    numeraireHint:
+      'The currency every value is measured in. It is fixed when the price guard is built and recorded once, so it cannot be switched on this deployment.',
+    numeraireDenominator: 'Reference currency registry key',
+    numeraireDenominatorHint: 'The key the price-feed registry knows the reference currency by.',
     numeraireFeed: 'Reference-currency ETH price feed',
-    numeraireFeedHint:
-      'The Chainlink feed that prices ETH in the reference currency. It changes together with the reference currency.',
-    numeraireRotation: 'Reference-currency change',
-    numeraireRotationHint: 'Whether governance may switch the reference currency.',
-    /* #2680 — the predominantly available denominator (PAD). */
-    padDenominator: 'Pricing anchor',
-    padDenominatorHint:
-      'The currency main prices are looked up in before they are converted to the reference currency.',
-    padDenominatorUnset: 'not set, so main prices are looked up in the reference currency directly',
-    padSymbol: 'Pricing anchor symbol',
-    padSymbolHint: 'Recorded with the pricing anchor. No price path reads it today.',
+    numeraireFeedHint: 'The Chainlink feed that prices ETH in the reference currency.',
     padEthFeed: 'Pricing anchor ETH price feed',
     padEthFeedHint: 'The Chainlink feed that prices ETH in the anchor currency.',
     padRateFeed: 'Pricing anchor to reference-currency rate feed',

@@ -9,7 +9,7 @@ import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/
 import {ERC20BurnableUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
 import {ERC20CappedUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20CappedUpgradeable.sol";
 import {ERC20PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PausableUpgradeable.sol";
-import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
+import {IVPFIToken, VPFI_TOTAL_SUPPLY_CAP} from "../interfaces/IVPFIToken.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {GuardianPausable} from "../crosschain/GuardianPausable.sol";
 
@@ -75,7 +75,7 @@ contract VPFIToken is
     IVaipakamErrors
 {
     /// @inheritdoc IVPFIToken
-    uint256 public constant TOTAL_SUPPLY_CAP = 230_000_000 ether;
+    uint256 public constant TOTAL_SUPPLY_CAP = VPFI_TOTAL_SUPPLY_CAP;
 
     /// @inheritdoc IVPFIToken
     uint256 public constant INITIAL_MINT = 23_000_000 ether;

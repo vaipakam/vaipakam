@@ -70,4 +70,38 @@ interface IPriceGuard {
         external
         view
         returns (bool ok, uint256 price, uint8 decimals);
+
+    // ─── Config the Diamond reads for its own rules (#3272 part 2) ───────
+    //
+    // The liquidity classification stays in the Diamond, and routes its pool
+    // probes over WETH and sizes them with the ETH reference feed. It reads
+    // those from here, so the guard is the one place they are set.
+
+    /// @notice The numeraire's Chainlink denominator, fixed at construction.
+    function NUMERAIRE_DENOMINATOR() external view returns (address);
+
+    /// @notice The numeraire's lower-case ASCII symbol (`"usd"`), fixed at
+    ///         construction. The unit of every numeraire-denominated
+    ///         threshold the Diamond holds.
+    function NUMERAIRE_SYMBOL() external view returns (bytes32);
+
+    /// @notice The denominator asset prices are read in before any pivot,
+    ///         fixed at construction (the numeraire's own on retail).
+    function PAD_DENOMINATOR() external view returns (address);
+
+    /// @notice The Chainlink ETH denominator, fixed at construction.
+    function ETH_DENOMINATOR() external view returns (address);
+
+    /// @notice The chain's feed registry; zero while unset.
+    function feedRegistry() external view returns (address);
+
+    /// @notice The chain's WETH, priced from the ETH reference feed; zero
+    ///         while unset.
+    function weth() external view returns (address);
+
+    /// @notice The ETH/<numeraire> feed; zero while unset.
+    function ethNumeraireFeed() external view returns (address);
+
+    /// @notice The L2 sequencer uptime feed; zero on an L1.
+    function sequencerFeed() external view returns (address);
 }

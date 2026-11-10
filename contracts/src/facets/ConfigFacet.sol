@@ -779,7 +779,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///         notification fee. The value is a flat VPFI QUANTITY in wei
     ///         (1e18-scaled), NOT a numeraire figure: #1346 made this a
     ///         native-VPFI tariff with no oracle step and no numeraire
-    ///         linkage (`setNumeraire` no longer rotates it). This notice
+    ///         linkage. This notice
     ///         said "value in numeraire-units" until #1349.
     /// @dev    #1934 — the parameter was named `newFeeNumeraire1e18` until
     ///         the rename; the event signature and topic hash do not include
@@ -812,9 +812,8 @@ contract ConfigFacet is DiamondAccessControl {
      *      — NOT a numeraire figure. There is no oracle conversion and no
      *      `VPFI_PER_ETH_FIXED_PHASE1` peg; the stored value IS the VPFI
      *      amount billed (the §14.2 conversion class is forbidden at
-     *      launch). It has no numeraire linkage — `setNumeraire` does not
-     *      rotate it (a rotation would clobber this VPFI quantity with a
-     *      fiat-denominated value). The billed tariff moves into Diamond
+     *      launch). It has no numeraire linkage: it is a VPFI quantity,
+     *      never a fiat-denominated value. The billed tariff moves into Diamond
      *      custody and credits the recycle bucket
      *      (`RecycleSource.NotificationFee`), never routed to treasury.
      * @param newFeeVpfi1e18 New per-loan-side tariff in native VPFI wei;
@@ -1620,6 +1619,10 @@ contract ConfigFacet is DiamondAccessControl {
      *         practice governance either writes all three non-zero
      *         (atomic override) or never calls this setter.
      *
+     *         #910 — a loan's discount is stamped when it starts
+     *         (`Loan.liqDiscountBpsAtInit`), so a change here applies to
+     *         loans opened after it and never re-prices an open loan.
+     *
      * @param  tier1Bps Discount for Tier 1 (thinnest qualifying tier).
      * @param  tier2Bps Discount for Tier 2.
      * @param  tier3Bps Discount for Tier 3 (deepest).
@@ -2045,6 +2048,9 @@ contract ConfigFacet is DiamondAccessControl {
     ///         bounded accordingly. The relay promotes one step at a time
     ///         on accumulated 0x/1inch confidence and demotes immediately
     ///         on observed degradation (the process is §4.4 step 5).
+    ///         #910 / #3351 — it reaches open loans only through the
+    ///         figures read live; the discounted liquidation's tier and
+    ///         discount are stamped at each loan's start and never move.
     /// @dev    KEEPER_ROLE-only (admin = DEFAULT_ADMIN_ROLE → governance
     ///         can rotate the keeper EOA). `tier == 0` is rejected — the
     ///         stored-zero default already reads as Tier 1, and demoting
@@ -2410,8 +2416,8 @@ contract ConfigFacet is DiamondAccessControl {
      *        window AND inside the global `[GRACE_SECONDS_MIN,
      *        GRACE_SECONDS_MAX]` floor / ceiling (defense in depth).
      *      Per-slot bounds defend against a compromised admin pushing
-     *      a single slot to either extreme — same policy as
-     *      setSecondaryOracleMaxStaleness, etc. (T-033).
+     *      a single slot to either extreme — the T-033 policy every
+     *      bounded governance setter follows.
      * @param buckets New schedule. Order matters; rejected if invalid.
      */
     function setGraceBuckets(
