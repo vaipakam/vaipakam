@@ -665,6 +665,56 @@ and a wallet can read the floor, the cap and its own open count before it
 signs. Both bounds are bounded governance knobs, so a chain where a
 keeper's work costs more can raise the floor.
 
+### The maker's price-move guard (owner decision 2026-11-08, #3358)
+
+An offer waits on the book while the market moves, and a taker can fill it
+the moment the price has moved in the taker's favour, on terms the maker set
+against the old price. An offer's creator may therefore put a price-move
+guard on it: a limit, in basis points, on how far the collateral-to-lending
+asset rate may move. A guarded offer refuses a fill when either:
+
+1. the rate has moved more than the creator's limit, in either direction,
+   from the rate when the guard was recorded; or
+2. the pair is not calm: the rate now is not within the calm bound the
+   forced-sale floor uses (2% by default) of the rate at each of the last
+   two hourly price checkpoints. The guard and the forced-sale floor read
+   one calm rule, not two copies of it.
+
+A fill the guard cannot show to be inside it is refused too: a current price
+that cannot be read, or a missing checkpoint for either asset in either of
+the last two hours. The creator asked for the protection, so the fill does
+not happen on an unknown. The guard is off by default, only ever refuses a
+fill, moves no funds and changes no term of a loan.
+
+The limit lies between 0.5% and 50%. The guard can be put only on an offer
+whose two legs are ERC-20 tokens with a readable price, and a request for one
+on any other offer is refused by name. The creator can set it in two ways:
+armed before posting, in the same transaction as the post, so the reference
+prices are the prices at posting and the offer is never on the book
+unguarded; or set on an offer already posted and still open, measured from
+the prices when it is set (between the post and that change the offer is
+unguarded, and an app that offers this route must say so). The creator can change it or clear it
+while the offer is open, and a change measures from the prices at that
+moment.
+
+Every fill checks it, at the one step every fill passes: the opening of the
+loan. That covers a direct accept, every match path (where both offers'
+guards are checked, since both creators are makers), an intent fill, and a
+refinance, offset or sale acceptance. The accept preview and the match
+preview report a guard refusal before anyone signs, in the order the fill
+would raise it (after the cadence check), and a read-only view states for
+any offer its limit, its reference prices and when they were taken, how far
+the rate has moved since, the calm bound in effect and which condition
+holds now. A refusal names its reason: moved past the limit (with the move
+and the limit), not calm, no checkpoint, or no readable price.
+
+What it does not cover: a gasless signed offer, which is put on the book
+only at its fill, cannot carry a guard until its signed terms can (#3327).
+The guard depends on the hourly checkpoints, which anyone may write and a
+keeper pass backs; until that pass also covers the pairs of guarded offers,
+a guarded offer in a pair nothing else checkpoints cannot be filled, and the
+view says why.
+
 ### Creation modes — on-chain and gasless signed offers (v0.5)
 
 An offer may be created two ways, both reaching the same on-chain offer state:

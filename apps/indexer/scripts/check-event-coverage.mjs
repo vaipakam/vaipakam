@@ -54,6 +54,8 @@ const DELIBERATELY_NOT_HANDLED = {
     '#1566 slice 2 — custody provenance for liquidation-fallback collateral held in the borrower vault under a lien: one event per row move (entry, each settlement slice, retry pull and restore, match legs, return to the pledge) with its amount and the amount still held. Loan status still derives from the status events (LoanFallbackPending, LoanCuredFromFallback and the terminal events), so no loans-row field changes; indexer surfacing of the custody trail is deferred',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
+  OfferPriceGuardSet:
+    'the maker\'s price-move guard (#3358) — read live through getOfferPriceGuard; no offer row column depends on it yet (follow-up: lets the price-checkpoint keeper find guarded pairs)',
   OfferCreatorFullTariffSet:
     'per-offer creator Full VPFI fee-entitlement tariff opt-in (#1347) — a pre-acceptance authorization knob, not an offer-lifecycle state the indexer projects (dark until the fee-entitlement master switch arms)',
   OfferCreatedDetails:

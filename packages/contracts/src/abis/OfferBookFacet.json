@@ -247,6 +247,43 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "OfferPriceGuardSet",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "maxMoveBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "refCollateralPrice1e18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "refPrincipalPrice1e18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
@@ -1998,6 +2035,17 @@
     "type": "error",
     "name": "OfferCreationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferPriceGuardUnpriced",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

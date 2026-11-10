@@ -374,6 +374,18 @@ runs half of it on old code:
   starts with the build that introduced it: on a Diamond refreshed in place,
   offers opened before the refresh are not counted.
 
+- **OfferPriceGuardFacet + LoanFacet + OfferBookFacet + OfferPreviewFacet +
+  OfferMatchFacet — the maker's price-move guard (#3358).** Loan creation
+  self-calls `requireOfferPriceGuardsClear` for a guarded offer (both makers'
+  offers in a match), the offer book records a guard armed before posting,
+  and the accept and match previews ask the same entry (the match preview
+  through `OfferPreviewFacet.previewOriginationRefusal`). An unguarded fill
+  makes no self-call, so a Diamond without the host fills unguarded offers
+  as before, but a guarded offer's fill reverts `FunctionDoesNotExist` there
+  (a hard revert, never an unchecked fill). The calm rule is
+  `LibPairCalm`, shared with `SaleFloorFacet`. Reaches a chain by fresh
+  deploy or `RefreshAllFacetsInPlace`.
+
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
   `LibLoanClock`, which adds the paused time since the loan started (from the

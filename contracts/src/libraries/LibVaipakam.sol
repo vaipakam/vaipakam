@@ -440,6 +440,13 @@ library LibVaipakam {
     uint16 constant SALE_FLOOR_CUSHION_BPS_DEFAULT = 11_000;
     uint16 constant SALE_FLOOR_CUSHION_BPS_MIN = 10_500;
     uint16 constant SALE_FLOOR_CUSHION_BPS_MAX = 20_000;
+    // #3358 — the maker's price-move guard (owner decision 2026-11-08): the
+    // most the collateral/principal rate may move between the guard being
+    // recorded and a fill, as the offer's creator chose it. A guard tighter
+    // than half a percent would refuse fills on ordinary oracle noise; one
+    // looser than half the price guards nothing. 0 = no guard.
+    uint16 constant OFFER_PRICE_GUARD_BPS_MIN = 50;
+    uint16 constant OFFER_PRICE_GUARD_BPS_MAX = 5_000;
     // #3242 — the most offers one wallet may have open at once, every offer
     // type counted. A stored 0 reads as the default; the setter bounds a
     // non-zero value to [MIN, MAX] so a mistyped cap can neither shut
@@ -3101,6 +3108,19 @@ library LibVaipakam {
         uint16 tier3Bps;
         uint16 calmMoveBps;
         uint16 cushionBps;
+    }
+
+    /// @notice #3358 — one offer's price-move guard, set by its creator.
+    /// @dev    Written only by `LibOfferPriceGuard.record` / `clear`. A
+    ///         `maxMoveBps` of 0 means no guard. The two reference prices are
+    ///         the oracle's 1e18-scaled prices of the offer's collateral and
+    ///         principal assets when the guard was recorded (at posting, when
+    ///         the creator armed it before posting).
+    struct OfferPriceGuard {
+        uint16 maxMoveBps;
+        uint64 setAt;
+        uint256 refCollateralPrice1e18;
+        uint256 refPrincipalPrice1e18;
     }
 
     struct Storage {
@@ -8243,6 +8263,11 @@ library LibVaipakam {
         ///      expiry clock must not run. Written only by
         ///      `LibInteractionRewards`. Appended — append-only.
         mapping(address => uint64) rewardClaimWindowChangedAt;
+        /// @dev #3358 — per offer, the maker's price-move guard
+        ///      ({OfferPriceGuard}); absent = no guard. Written only by
+        ///      `LibOfferPriceGuard`, read at every fill of the offer.
+        ///      Appended — append-only.
+        mapping(uint256 => OfferPriceGuard) offerPriceGuard;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
