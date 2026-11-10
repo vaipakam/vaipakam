@@ -2796,6 +2796,7 @@
         "ProtectedDelaySet": "Retraso de pago modificado",
         "ProtectNftsSet": "Protección de NFT de posición modificada",
         "CosignRequirementSet": "Requisito de cofirma modificado",
+        "ProtectionApplied": "Ajustes del modo protegido aplicados",
         "AllowlistAddRequested": "Solicitada la adición de una dirección de pago",
         "AllowlistAddCancelled": "Adición de una dirección de pago cancelada",
         "AllowlistAdded": "Dirección de pago añadida",

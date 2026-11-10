@@ -2796,6 +2796,7 @@
         "ProtectedDelaySet": "Auszahlungsverzögerung geändert",
         "ProtectNftsSet": "Schutz der Positions-NFTs geändert",
         "CosignRequirementSet": "Mitsignatur-Anforderung geändert",
+        "ProtectionApplied": "Einstellungen des geschützten Modus angewendet",
         "AllowlistAddRequested": "Hinzufügen einer Auszahlungsadresse beantragt",
         "AllowlistAddCancelled": "Hinzufügen einer Auszahlungsadresse storniert",
         "AllowlistAdded": "Auszahlungsadresse hinzugefügt",

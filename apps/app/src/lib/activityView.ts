@@ -289,6 +289,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   ProtectedDelaySet: { label: 'Payout delay changed', category: 'other', priority: 40 },
   ProtectNftsSet: { label: 'Position NFT protection changed', category: 'other', priority: 40 },
   CosignRequirementSet: { label: 'Co-signing requirement changed', category: 'other', priority: 40 },
+  ProtectionApplied: { label: 'Protected mode settings applied', category: 'other', priority: 40 },
   AllowlistAddRequested: { label: 'Payout address addition requested', category: 'other', priority: 40 },
   AllowlistAddCancelled: { label: 'Payout address addition cancelled', category: 'other', priority: 40 },
   AllowlistAdded: { label: 'Payout address added', category: 'other', priority: 40 },

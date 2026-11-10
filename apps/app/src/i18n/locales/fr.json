@@ -2796,6 +2796,7 @@
         "ProtectedDelaySet": "Délai de versement modifié",
         "ProtectNftsSet": "Protection des NFT de position modifiée",
         "CosignRequirementSet": "Exigence de cosignature modifiée",
+        "ProtectionApplied": "Paramètres du mode protégé appliqués",
         "AllowlistAddRequested": "Ajout d’une adresse de versement demandé",
         "AllowlistAddCancelled": "Ajout d’une adresse de versement annulé",
         "AllowlistAdded": "Adresse de versement ajoutée",

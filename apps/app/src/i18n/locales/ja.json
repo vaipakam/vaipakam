@@ -2796,6 +2796,7 @@
         "ProtectedDelaySet": "支払い遅延を変更",
         "ProtectNftsSet": "ポジションNFTの保護を変更",
         "CosignRequirementSet": "共同署名の要件を変更",
+        "ProtectionApplied": "保護モードの設定を適用しました",
         "AllowlistAddRequested": "支払先アドレスの追加を申請",
         "AllowlistAddCancelled": "支払先アドレスの追加を取り消し",
         "AllowlistAdded": "支払先アドレスを追加",

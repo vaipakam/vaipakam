@@ -2796,6 +2796,7 @@
         "ProtectedDelaySet": "تغيّرت مهلة الدفع",
         "ProtectNftsSet": "تغيّرت حماية NFT المراكز",
         "CosignRequirementSet": "تغيّر شرط التوقيع المشترك",
+        "ProtectionApplied": "تم تطبيق إعدادات الوضع المحمي",
         "AllowlistAddRequested": "طُلبت إضافة عنوان دفع",
         "AllowlistAddCancelled": "أُلغيت إضافة عنوان دفع",
         "AllowlistAdded": "أُضيف عنوان دفع",
