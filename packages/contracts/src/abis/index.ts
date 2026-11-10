@@ -80,6 +80,7 @@ import OfferBookFacetABI from './OfferBookFacet.json';
 import SaleFloorFacetABI from './SaleFloorFacet.json';
 import VaultOutflowFacetABI from './VaultOutflowFacet.json';
 import ForcedSalePreviewFacetABI from './ForcedSalePreviewFacet.json';
+import OfferPriceGuardFacetABI from './OfferPriceGuardFacet.json';
 import SignedOfferMatchFacetABI from './SignedOfferMatchFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -267,6 +268,7 @@ export {
   SaleFloorFacetABI,
   VaultOutflowFacetABI,
   ForcedSalePreviewFacetABI,
+  OfferPriceGuardFacetABI,
   SignedOfferMatchFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

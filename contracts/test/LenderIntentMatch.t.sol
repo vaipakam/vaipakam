@@ -10,6 +10,7 @@ import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -1097,6 +1098,35 @@ contract LenderIntentMatchTest is SetupTest {
         vm.prank(solver);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, solver, 1e18, 0));
         OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp2, PRINCIPAL);
+    }
+
+    /// @dev #3358 (Codex r2) — a borrower offer whose maker's price-move guard
+    ///      refuses the fill (here: no hourly checkpoints, so calm cannot be
+    ///      shown) previews `PriceGuardRefused`, and `matchIntent` reverts at
+    ///      loan creation. With the guard cleared, both agree on a fill.
+    function test_previewIntent_priceGuardRefused_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b-guard");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(b);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(cp, 500);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "a refusing guard previews not-ok");
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.Ok), "intent guards passed");
+        assertEq(uint8(r.matchError), uint8(LibOfferMatch.MatchError.PriceGuardRefused), "named by the guard");
+        vm.prank(solver);
+        vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.OfferPairNoCheckpoint.selector, cp));
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL);
+
+        vm.prank(b);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(cp, 0);
+        assertTrue(_preview(solver, PRINCIPAL, cp).ok, "guard cleared: preview Ok");
+        vm.prank(solver);
+        uint256 loanId =
+            OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL);
+        assertGt(loanId, 0, "guard cleared: the fill goes through");
     }
 
     function test_previewIntent_belowMinFill_agrees() public {

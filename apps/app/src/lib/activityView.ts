@@ -255,6 +255,8 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   NFTMinted: { label: 'Position NFT minted', category: 'other', priority: 5 },
   OfferCreatedDetails: { label: 'Offer created', category: 'offer', priority: 10 },
   OfferCanceledDetails: { label: 'Offer cancelled', category: 'offer', priority: 10 },
+  // #3358 — the maker set, changed or cleared their offer's price-move guard.
+  OfferPriceGuardSet: { label: 'Offer price guard updated', category: 'offer', priority: 20 },
   // Created lazily inside a wallet's first offer, accept or deposit, before
   // that action's own event: low, so the action represents the row (#2708 r1).
   UserVaultCreated: { label: 'Vault created', category: 'other', priority: 8 },

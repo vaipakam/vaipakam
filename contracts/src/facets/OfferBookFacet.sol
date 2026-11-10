@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
+import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
@@ -53,6 +54,13 @@ contract OfferBookFacet is IVaipakamErrors {
         LibMetricsHooks.onOfferCreated(offer);
         emit OfferCreateFacet.OfferCreated(offerId, offer.creator, offer.offerType);
         _emitOfferCreatedDetails(offerId, offer);
+        // #3358 — a price-move guard the creator armed earlier in this
+        // transaction (`OfferPriceGuardFacet.armOfferPriceGuard`) is recorded
+        // here, with the prices at posting, so the offer is never on the book
+        // unguarded. Only the creator can arm their own key, so whatever the
+        // route, the guard is theirs.
+        uint16 armedGuard = LibOfferPriceGuard.takeArmed(offer.creator);
+        if (armedGuard != 0) LibOfferPriceGuard.record(LibVaipakam.storageSlot(), offerId, armedGuard);
     }
 
     /**

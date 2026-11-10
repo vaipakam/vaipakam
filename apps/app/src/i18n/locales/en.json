@@ -2988,6 +2988,7 @@
         "selfTrade": "This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.",
         "refinanceUntakeable": "This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.",
         "cadenceNotAdmitted": "This offer’s interest-payment schedule isn’t allowed on these terms any more: the periodic-interest settings, the size threshold or an asset’s market status changed after it was posted. Its creator needs to cancel it and post it again. Nothing was sent.",
+        "priceGuardRefused": "The creator of this offer limited how far the price may move before it is taken. The price has moved past that limit, or it is moving too fast (or can’t be read) to check right now, so the offer can’t be taken. Nothing was sent.",
         "termsTooFresh": "This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.",
         "unknown": "The protocol won’t accept this offer right now. Nothing was sent — refresh and try again, or check back shortly."
       },
@@ -3349,6 +3350,7 @@
         "NFTMinted": "Position NFT minted",
         "OfferCreatedDetails": "Offer created",
         "OfferCanceledDetails": "Offer cancelled",
+        "OfferPriceGuardSet": "Offer price guard updated",
         "UserVaultCreated": "Vault created",
         "TermsAccepted": "Terms of use accepted",
         "VaultRiskTierSet": "Risk level changed",

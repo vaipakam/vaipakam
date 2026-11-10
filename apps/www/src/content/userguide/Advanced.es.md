@@ -2535,6 +2535,18 @@ La tarjeta lee, en un mismo bloque, `getProtectedAccount(wallet)`, `getProtected
 
 El aviso lee, en un mismo bloque, `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (el inicio de la pausa manual más el periodo de escape con que empezó; cero si no hay ninguna en vigor o el Diamond nunca se lanzó) y `getProtectedAccount(wallet)`, y cuenta atrás con la hora del bloque. En pausa con la vía cerrada, `withdrawFromVault` revierte con `EnforcedPause` y la revisión dice que la pausa lo detiene. Cuando `isEscapeOpen` es verdadero, una cuenta protegida sigue usando `withdrawFromVault`, que sigue poniendo en cola; el retiro de cualquier otra billetera llama a `escapeWithdraw(kind, asset, tokenId, amount)`, que rechaza una cuenta protegida (`EscapeNotForProtected`), rechaza un destinatario vetado, está limitado por el saldo propio de depósito de la billetera y la cifra libre, y paga a quien llama. La tarjeta final lee `EscapeWithdrawal(account, asset, tokenId, amount)` y la transferencia del propio token de la bóveda a la billetera. Si la pausa, la vía o, con la vía abierta, el modo no se pueden leer, no se envía ningún retiro.
 
+<a id="protection-addresses"></a>
+
+### Direcciones guardadas
+
+La libreta se guarda en `localStorage` por id de cadena y billetera, nunca on-chain. Una billetera entra tras firmar `AddressControl{account, destination, purpose, nonce, issuedAt}` en el dominio `{name: 'Vaipakam Address Check', version: '1', chainId, verifyingContract: Diamond}`, con un nonce aleatorio de 32 bytes y una vigencia de siete días. La solicitud viaja como `/protection?prove=<code>`. La página de firma rechaza una red o un Diamond que esta aplicación no sirve y una solicitud caducada, y solo firma cuando la cuenta conectada es esa dirección en esa cadena. La respuesta pegada se comprueba con `verifyTypedData` mediante la propia conexión de lectura de la billetera conectada, de modo que una billetera inteligente responde por ERC-1271, y solo se guarda si responde a esa misma solicitud. El campo de dirección muestra la dirección completa con sus primeros y últimos caracteres separados, rechaza una suma de control EIP-55 rota y rechaza sin excepción toda dirección cuyos tres primeros y tres últimos dígitos hexadecimales igualan los de una ya usada (la propia, las entradas guardadas y en espera, los destinos activos y en espera, los firmantes protegidos, los keepers aprobados y el keeper de la red) mientras el resto difiere. Una dirección nueva requiere una marca explícita, que cualquier edición borra.
+
+<a id="protection-destinations"></a>
+
+### Destinos de pago
+
+La sección lee, en un bloque, `getProtectedAccount`, `getAllowlist`, `getPendingAllowlistAdditions` (cada solicitud con su `maturesAt`), `getProtectedSigners`, `paused` y los pagos en cola por destinatario de `getPendingPayoutIds`. Una solicitud espera antes de `maturesAt`, está lista hasta `maturesAt + delay` y caduca después, según la hora del bloque más los segundos transcurridos. Los cuatro cambios son `addAllowlisted`, `cancelAddAllowlisted`, `finalizeAddAllowlisted` y `removeAllowlisted`, cada uno con `(account, destination)`. La revisión se lee en un bloque y rechaza antes de la billetera lo que la facet rechazaría: una pausa o un bloqueo (al añadir y al activar), su propia billetera, una dirección ya activa o en espera, ya cinco destinos o cinco solicitudes, una dirección marcada, una solicitud aún no madura o caducada. Cada llamada se simula, se vuelve a comprobar justo antes de abrir la billetera y se mide por su propio log `AllowlistAddRequested`, `AllowlistAddCancelled`, `AllowlistAdded` o `AllowlistRemoved`; una retirada también cuenta los logs `PayoutCancelled` que causó.
+
 <a id="my-offers"></a>
 
 ### Tus ofertas

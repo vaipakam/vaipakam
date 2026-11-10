@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -679,6 +680,11 @@ contract PrecloseFacet is
         // #3443 — the offer's terms must have stood the minimum age before
         // this path takes it, as on every other fill.
         LibTiming.requireOfferAged(borrowerOfferId, offer);
+        // #3358 — the incoming borrower posted this offer as a maker, so its
+        // price-move guard holds here as on every other fill. The handover
+        // opens no loan, so loan creation's check never sees it; this is that
+        // check, before any state change.
+        LibOfferPriceGuard.requireClear(s, borrowerOfferId, 0);
         // #576 — a refinance-tagged offer is SINGLE-PURPOSE: it may only be
         // consumed by the direct accept-and-refinance path. Consuming it for an
         // UNRELATED obligation transfer is invalid: on a carry-over offer the

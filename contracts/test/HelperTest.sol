@@ -114,6 +114,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
@@ -671,11 +672,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
+        selectors[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
         return selectors;
     }
 
@@ -2771,6 +2773,16 @@ contract HelperTest {
     /// `DeployDiamond._getForcedSalePreviewSelectors`.
     function getForcedSalePreviewFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.forcedSalePreview();
+    }
+
+    /// #3358 — the maker's price-move guard. Mirrors
+    /// `DeployDiamond._getOfferPriceGuardSelectors`.
+    function getOfferPriceGuardFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
+        selectors[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
+        selectors[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
+        selectors[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
     }
 
     /// #3359 - the forced-sale floor rule. Mirrors

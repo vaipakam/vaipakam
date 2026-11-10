@@ -1398,6 +1398,18 @@ La tarjeta Seguridad de la cuenta en la página Bóveda muestra si tu cuenta usa
 
 Mientras el protocolo está en pausa, la página Bóveda lo dice arriba: los retiros están cerrados, mientras que el pago total y parcial y añadir garantía siguen abiertos. Si es una pausa administrativa, también dice cuándo se abre su vía de escape, según lo informa el protocolo, con una cuenta atrás. Una vez abierta la vía, Retirar en cualquier activo con algo libre devuelve lo tuyo directamente a tu billetera; la revisión dice que pasa por la vía de escape, y la vía nunca devuelve lo que retiene un préstamo, una oferta o un reclamo. Con el modo protegido activo, tus retiros siguen esperando el plazo de tu cuenta en la cola de pagos, como siempre. Una pausa automática, o un protocolo aún no lanzado, no abre ninguna vía de escape, y la página dice que no hay ninguna prevista.
 
+<a id="protection-addresses"></a>
+
+### Direcciones guardadas
+
+La página Protection, enlazada desde la tarjeta Seguridad de la cuenta, guarda las direcciones a las que confía sus pagos, para cada red y billetera. La lista se guarda solo en este navegador; otro navegador o dispositivo tiene la suya. Para guardar una billetera que usted controla, póngale un nombre y pegue su dirección: la página la muestra completa y le pide marcar que la comprobó. Luego crea un enlace. Ábralo en la aplicación de billetera que tiene esa dirección, conecte esa billetera y firme; firmar no mueve nada ni cuesta nada. Pegue en la página el código que muestra, y la billetera queda guardada como verificada. Una dirección de depósito de un exchange no puede firmar, así que se guarda sin verificar con el nombre del exchange una vez que acepta tres riesgos: con una dirección equivocada se pierde lo enviado, el exchange puede no acreditar un depósito enviado desde su bóveda, y el exchange puede asignar la dirección a otra persona más adelante. Allí donde la aplicación recibe una dirección para fondos o control, rechaza la que coincide en sus tres primeros y tres últimos caracteres con una dirección que ya usa mientras el resto difiere, porque así el envenenamiento de direcciones atrapa a quien copia de su historial.
+
+<a id="protection-destinations"></a>
+
+### Destinos de pago
+
+Con el modo protegido activado, la página Protection también muestra sus destinos de pago: además de su propia billetera, como máximo cinco direcciones a las que puede ir un pago protegido. Un destino se elige solo entre sus direcciones guardadas. Pedir añadir uno no cambia nada al principio: se puede usar tras el retraso de su cuenta, después debe activarse dentro de otro retraso y, si no, caduca y puede pedirse de nuevo. Usted, o un firmante secundario, puede cancelar una solicitud mientras espera, y un bloqueo cancela todas las solicitudes. Quitar un destino surte efecto al instante y cancela cada pago en cola hacia él; los activos se quedan en su bóveda. Cada cambio pide su billetera una vez, su revisión muestra la dirección completa y la tarjeta final muestra lo que registró el protocolo. Con el modo protegido desactivado, los pagos van solo a su billetera y la página indica que los destinos no se aplican.
+
 <a id="my-offers"></a>
 
 ### Tus ofertas

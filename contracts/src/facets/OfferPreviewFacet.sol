@@ -13,6 +13,7 @@ import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 
@@ -40,6 +41,15 @@ import {ProfileFacet} from "./ProfileFacet.sol";
 contract OfferPreviewFacet {
     /// @notice The offer does not exist (zero creator).
     error InvalidOffer();
+
+    /// @notice #3358 — the first check loan creation runs after the accept or
+    ///         match core that would refuse the loan, if any: the offer's
+    ///         cadence (#3025), then the makers' price-move guards (#3358).
+    enum OriginationRefusal {
+        None,
+        CadenceNotAdmitted,
+        PriceGuardRefused
+    }
 
     /**
      * @notice Read-only projection + first-failing-blocker for a direct
@@ -458,6 +468,13 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #3358 — loan creation then asks the offer's price-move guard, the
+        // same entry, so a fill the guard would refuse is reported here.
+        if (!_priceGuardsClear(s, offerId, 0)) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.PriceGuardRefused;
+            return preview;
+        }
+
         // #2407 — a refinance-tagged offer completes only if it is its target
         // loan's recorded request and no offset is open on that loan;
         // otherwise the refinance hook, which runs after every check above,
@@ -560,6 +577,50 @@ contract OfferPreviewFacet {
         LibCadenceAdmission.enforce(
             LibCadenceAdmission.originationTerms(LibVaipakam.storageSlot().offers[offerId], principal)
         );
+    }
+
+    /**
+     * @notice #3358 — the first origination check loan creation would refuse
+     *         a loan opened now from `offerId` with `principal` funded, where
+     *         `otherOfferId` (0 = none) is the other maker's offer in a match:
+     *         the cadence rule first, then the price-move guards, in loan
+     *         creation's order.
+     * @dev The match preview asks it (one call for both checks); the accept
+     *      preview runs the same two checks inline. Each asks the entry loan
+     *      creation itself calls, so the refusal is the one it would raise.
+     *      Not for a lender-sale vehicle, which the cadence rule exempts.
+     */
+    function previewOriginationRefusal(uint256 offerId, uint256 principal, uint256 otherOfferId)
+        external
+        view
+        returns (OriginationRefusal)
+    {
+        try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(offerId, principal) {} catch {
+            return OriginationRefusal.CadenceNotAdmitted;
+        }
+        if (!_priceGuardsClear(LibVaipakam.storageSlot(), offerId, otherOfferId)) {
+            return OriginationRefusal.PriceGuardRefused;
+        }
+        return OriginationRefusal.None;
+    }
+
+    /// @dev Whether the price-move guards on `offerId` and `otherOfferId`
+    ///      (0 = none) would let a fill through now. Loan creation asks
+    ///      `requireOfferPriceGuardsClear` only when one of them carries a
+    ///      guard, so this asks only then too.
+    function _priceGuardsClear(LibVaipakam.Storage storage s, uint256 offerId, uint256 otherOfferId)
+        private
+        view
+        returns (bool)
+    {
+        if (s.offerPriceGuard[offerId].maxMoveBps == 0 && s.offerPriceGuard[otherOfferId].maxMoveBps == 0) {
+            return true;
+        }
+        try OfferPriceGuardFacet(address(this)).requireOfferPriceGuardsClear(offerId, otherOfferId) {
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /**

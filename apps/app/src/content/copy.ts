@@ -6291,6 +6291,12 @@ const copySource = {
       // threshold or a leg's liquidity moved since the offer was posted.
       cadenceNotAdmitted:
         'This offer’s interest-payment schedule isn’t allowed on these terms any more: the periodic-interest settings, the size threshold or an asset’s market status changed after it was posted. Its creator needs to cancel it and post it again. Nothing was sent.',
+      // #3358 — the offer's price-move guard: the pair moved past the
+      // creator's limit, is not calm against the hourly checkpoints, or a
+      // price or checkpoint is missing. One sentence covers all four, since
+      // each means the same thing to the taker: not now.
+      priceGuardRefused:
+        'The creator of this offer limited how far the price may move before it is taken. The price has moved past that limit, or it is moving too fast (or can’t be read) to check right now, so the offer can’t be taken. Nothing was sent.',
       // #3443 — an offer can be taken only once its terms have stood the
       // minimum age (a few seconds); this clears by itself.
       termsTooFresh:
@@ -6821,6 +6827,7 @@ const copySource = {
       NFTMinted: 'Position NFT minted',
       OfferCreatedDetails: 'Offer created',
       OfferCanceledDetails: 'Offer cancelled',
+      OfferPriceGuardSet: 'Offer price guard updated',
       UserVaultCreated: 'Vault created',
       TermsAccepted: 'Terms of use accepted',
       VaultRiskTierSet: 'Risk level changed',

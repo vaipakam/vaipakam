@@ -1966,6 +1966,13 @@ contract OfferAcceptFacet is
         // revert for the same offer and principal. The creator must cancel and
         // re-post. APPENDED; prior values stay stable.
         CadenceNotAdmitted,
+        // #3358 — the offer's price-move guard would refuse the fill: the pair
+        // moved past the creator's limit since the guard was recorded, or it
+        // is not calm against the last two hourly checkpoints, or a price or a
+        // checkpoint is missing. The exact refusal is
+        // `OfferPriceGuardFacet.requireOfferPriceGuardsClear`'s revert, and
+        // `getOfferPriceGuard` says which. APPENDED; prior values stay stable.
+        PriceGuardRefused,
         // #3443 — the offer's terms were set (created or last edited) less
         // than the minimum age ago, so `_acceptOffer` reverts
         // `LibTiming.OfferTermsTooFresh`. Ordered where `_acceptOffer` orders

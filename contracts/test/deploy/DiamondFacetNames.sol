@@ -118,9 +118,11 @@ abstract contract DiamondFacetNames {
     ///      outflow policy host).
     ///      112 → 113 with `ForcedSalePreviewFacet` (#3205 part 2 — the
     ///      forced-sale previews, split off ForcedSaleFacet).
-    ///      113 → 114 with `SignedOfferMatchFacet` (#3443 — the signed-offer
+    ///      113 → 114 with `OfferPriceGuardFacet` (#3358 — the maker's
+    ///      price-move guard on an offer).
+    ///      114 → 115 with `SignedOfferMatchFacet` (#3443 — the signed-offer
     ///      keeper-matcher, split off OfferMatchFacet).
-    function cutFacetNames() internal pure returns (string[114] memory) {
+    function cutFacetNames() internal pure returns (string[115] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -274,6 +276,8 @@ abstract contract DiamondFacetNames {
             "VaultOutflowFacet",
             // The forced-sale previews (#3205 part 2, split off ForcedSaleFacet).
             "ForcedSalePreviewFacet",
+            // The maker's price-move guard (#3358).
+            "OfferPriceGuardFacet",
             // The signed-offer keeper-matcher (#3443, split off OfferMatchFacet).
             "SignedOfferMatchFacet",
             "SwapToRepayFacet",

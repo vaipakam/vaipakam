@@ -184,6 +184,7 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
@@ -423,6 +424,7 @@ contract SetupTest is Test {
     NotificationFeeFacet notificationFeeFacet;
     ForcedSaleFacet forcedSaleFacet;
     ForcedSalePreviewFacet forcedSalePreviewFacet;
+    OfferPriceGuardFacet offerPriceGuardFacet;
     SignedOfferMatchFacet signedOfferMatchFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
@@ -599,6 +601,7 @@ contract SetupTest is Test {
         notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
         forcedSalePreviewFacet = ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
+        offerPriceGuardFacet = OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
         signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
@@ -637,7 +640,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](115);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](116);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1122,8 +1125,14 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getForcedSalePreviewFacetSelectors()
         });
-        // #3443 — the signed-offer keeper-matcher, split off OfferMatchFacet.
+        // #3358 — the maker's price-move guard.
         cuts[114] = IDiamondCut.FacetCut({
+            facetAddress: address(offerPriceGuardFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPriceGuardFacetSelectors()
+        });
+        // #3443 — the signed-offer keeper-matcher, split off OfferMatchFacet.
+        cuts[115] = IDiamondCut.FacetCut({
             facetAddress: address(signedOfferMatchFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSignedOfferMatchFacetSelectors()

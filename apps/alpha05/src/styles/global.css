@@ -2072,3 +2072,74 @@ a.btn {
   font-weight: 600;
   line-height: 20px;
 }
+/* #3415 — the address box and full-address display (RB-ADDRESS-GUARD):
+   the whole address always shows, wrapping on a phone rather than cut. */
+.address-entry {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+.address-entry input,
+.address-book input[type='text'],
+.address-book select,
+.address-book textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--taptarget);
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text-body);
+  font: inherit;
+}
+.address-entry input[aria-invalid='true'] {
+  border-color: var(--danger, var(--border-strong));
+}
+.full-address {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.95em;
+}
+.full-address strong {
+  font-weight: 700;
+}
+.address-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--taptarget);
+}
+.address-book,
+.destinations {
+  display: grid;
+  gap: 12px;
+}
+.address-book ul,
+.destinations ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.address-book li,
+.destinations li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle, var(--border-strong));
+  border-radius: 10px;
+}
+.address-book .actions,
+.destinations .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.address-book .actions .btn,
+.destinations .actions .btn {
+  min-height: var(--taptarget);
+}
