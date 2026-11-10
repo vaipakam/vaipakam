@@ -5,7 +5,7 @@
  * no one can fill it until hourly price checks cover the pair, and the
  * finish card reads the change from the transaction's logs. The page then
  * says a fill is refused for missing checks; once two hourly checks exist
- * it says a fill is allowed. Another wallet sees the guard and why a fill
+ * it says the guard would not refuse a fill. Another wallet sees the guard and why a fill
  * would be refused, with no way to change it. The creator changes the limit
  * and removes the guard; a review left open while the offer is cancelled
  * elsewhere stays, refused, until the reader closes it. Runs on the desktop and the phone; the suite
@@ -92,7 +92,7 @@ test('the creator guards an open offer, the page says when a fill is refused, an
   await expect(guard.getByTestId('guard-status')).toContainText('hourly price checks for this pair are missing');
   await fitsWidth(page);
 
-  // Two hourly checks for both tokens: the pair is calm, so a fill is allowed.
+  // Two hourly checks for both tokens: the pair is calm, so the guard would not refuse a fill.
   await checkpoint(sc, [WETH, tliq]);
   await anvilRpc('evm_increaseTime', [3600]);
   await anvilRpc('evm_mine');
@@ -102,7 +102,7 @@ test('the creator guards an open offer, the page says when a fill is refused, an
   await page.reload();
   await connectWallet(page);
   await expect(guard).toHaveAttribute('data-status', 'clear', { timeout: 60_000 });
-  await expect(guard.getByTestId('guard-status')).toContainText('A fill is allowed now');
+  await expect(guard.getByTestId('guard-status')).toContainText('the guard would not refuse a fill now');
 
   // Another wallet sees the guard and cannot change it.
   const other = await launchWallet('visitor');

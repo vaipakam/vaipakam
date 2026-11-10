@@ -1550,7 +1550,8 @@ above. Each resolves here, so a route reviewer needs no private file:
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether
-  a fill is allowed now or refused, and why: the price moved past the limit
+  the guard would refuse a fill now, and why (its own verdict only, never a
+  claim that the offer can be filled): the price moved past the limit
   (by how much), the pair's hourly price checks are missing, the pair is not
   calm, or a price cannot be read. A taker sees the same, so a refusal is
   never a surprise at signing, and a guard that could not be read is said to

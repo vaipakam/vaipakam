@@ -2381,7 +2381,7 @@ export const copy = {
     lead: B('A guard refuses a fill when the price has moved past your limit. It never moves anything.'),
     none: B('This offer has no price-move guard.'),
     limitLine: A('Guarded: a fill is refused if the collateral-to-principal rate moves more than {{limit}} from its level on {{at}}.'),
-    statusClear: B('Moved {{move}} of the {{limit}} limit. A fill is allowed now.'),
+    statusClear: B('Moved {{move}} of the {{limit}} limit, so the guard would not refuse a fill now.'),
     statusMoved: A('The rate has moved {{move}}, past the {{limit}} limit, so a fill is refused now.'),
     statusNoCheckpoint: A('A fill is refused now: the hourly price checks for this pair are missing. It may clear later.'),
     statusNotCalm: A('A fill is refused now: the pair moved more than {{calm}} against a recent hourly price check. It may clear later.'),
