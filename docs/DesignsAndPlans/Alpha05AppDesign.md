@@ -1404,7 +1404,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   refuses a broken checksum, and it refuses, with no override, a look-alike:
   an address whose first three and last three hex digits match one the
   reader already uses (their own wallet, a saved address, a destination, a
-  waiting request, a signer, an approved keeper, the network's own keeper)
+  waiting request, a signer, a wallet asked to be one, an approved keeper,
+  the network's own keeper)
   while the rest differs. Every box checks against that same one list, read
   from the chain at one block, and lets no address be used until all of it
   has been read: a list it could not read is stated, never treated as
@@ -1431,6 +1432,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   each request's wait, readiness and lapse by the chain's clock, and the
   at-most-five limit; a lapsed request still holds a waiting place, so it
   can be cancelled as well as asked for again.
+  A secondary signer is likewise chosen only from the saved wallets that
+  proved control by signing, never an exchange address. Asking a wallet,
+  cancelling the request, making it a signer, asking for its removal,
+  cancelling or carrying out that removal, and switching the co-sign on or
+  off are each one signed transaction through RB-CONFIDENCE; every review
+  states what a signer can do (cancel a waiting change, lock the account,
+  cancel or co-sign a queued payout, remove a destination, with the other
+  signers approve replacing the main wallet) and what it cannot (move
+  anything, open a position, add a destination or signer). The page shows
+  each asked wallet's acceptance and gives the link it opens to accept
+  (`?signer=<account>&chain=<id>`); that page names the account in full and
+  offers to accept only to the asked wallet, connected on that network,
+  while the request waits. A wallet becomes a signer only once it accepted
+  and the delay passed, within one further delay; a lapsed request must be
+  cancelled before the wallet is asked again. A removal waits the delay,
+  and removing the last signer also stops the co-sign, which the review
+  says.
 - **RB-OFFERS-MINE** — the Offers page (OFF-46) lists every offer the
   connected wallet created, from the protocol's own per-creator index
   (which keeps a cancelled id), together with every offer whose position

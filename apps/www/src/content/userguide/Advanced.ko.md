@@ -2260,6 +2260,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 이 영역은 한 블록에서 `getProtectedAccount`, `getAllowlist`, `getPendingAllowlistAdditions`(각 요청과 그 `maturesAt`), `getProtectedSigners`, `paused`, 그리고 `getPendingPayoutIds`에서 수신자별 대기 지급을 읽습니다. 블록 시간에 그 뒤 지난 초를 더한 기준으로, 요청은 `maturesAt` 전에는 대기, `maturesAt + delay`까지는 준비, 그 뒤에는 만료입니다. 네 가지 변경은 `addAllowlisted`, `cancelAddAllowlisted`, `finalizeAddAllowlisted`, `removeAllowlisted`이며 모두 `(account, destination)`을 받습니다. 검토는 한 블록에서 읽히며, facet이 거부할 경우를 지갑을 열기 전에 거부합니다. 일시 중지나 잠금(추가와 활성화 시), 자기 지갑, 이미 활성이거나 대기 중인 주소, 이미 다섯 개의 지급 대상이나 다섯 개의 요청, 플래그된 주소, 아직 만기가 안 됐거나 만료된 요청입니다. 각 호출은 시뮬레이션되고, 지갑을 열기 직전에 다시 확인되며, 자체 `AllowlistAddRequested`, `AllowlistAddCancelled`, `AllowlistAdded`, `AllowlistRemoved` 로그로 측정됩니다. 제거는 그로 인해 생긴 `PayoutCancelled` 로그도 셉니다.
 
+<a id="protection-signers"></a>
+
+### 보조 서명자
+
+이 섹션은 한 블록에서 `getProtectedAccount`(`requireCosign`, `pendingCosignOffAt` 포함), 각 서명자의 `removeAt`을 위한 `getSignerChange`와 함께 `getProtectedSigners`, `getPendingSignerAdditions`(요청받은 각 지갑과 그 `maturesAt`, `accepted`), `paused`를 읽습니다. 변경은 `addSigner`, `cancelAddSigner`, `finalizeAddSigner`, `requestRemoveSigner`, `cancelRemoveSigner`, `finalizeRemoveSigner`(각각 `(account, signer)`), 요청받은 지갑이 수락 링크(`/protection?signer=<account>&chain=<id>`)에서 보내는 `acceptSignerRole(account)`, 그리고 `setRequireCosign(account, on)`입니다. 검토는 facet이 거부할 것을 지갑보다 먼저 거부합니다. 일시 중지(취소 제외), 잠금 또는 새 기본 지갑의 쿨다운(요청, 제거, 공동 서명 끄기), 본인 지갑, 이미 서명자이거나 이미 요청받은 지갑, 취소하지 않은 만료된 요청, 이미 다섯 명의 서명자 또는 다섯 건의 요청, 수락하지 않은 지갑, 끝나지 않은 대기 또는 지난 기간, 서명자 없는 공동 서명입니다. 각 호출은 시험 실행되고, 지갑이 열리기 직전에 다시 확인되며, 자체 `SignerAddRequested`, `SignerAccepted`, `SignerAddCancelled`, `SignerAdded`, `SignerRemoveRequested`, `SignerRemoveCancelled`, `SignerRemoved`, `CosignRequirementSet` 또는 `SettingChangeRequested` 로그로 측정됩니다. 대기 중인 요청 지갑은 주소 검사의 알려진 주소 목록에 들어갑니다.
+
 <a id="my-offers"></a>
 
 ### 내 오퍼

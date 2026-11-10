@@ -1383,6 +1383,12 @@ The Protection page, linked from the Account safety card, keeps the addresses yo
 
 With protected mode on, the Protection page also shows your payout destinations: besides your own wallet, at most five addresses a protected payout may go to. A destination is chosen only from your saved addresses. Asking to add one changes nothing at first: it becomes usable after your account's delay, must then be made active within one further delay, and otherwise lapses and can be asked for again. You, or a secondary signer, can cancel a request while it waits, and a lock cancels every request. Removing a destination takes effect at once and cancels every payout queued to it; the assets stay in your vault. Each change asks your wallet once, its review shows the address in full, and the finish card shows what the protocol recorded. With protected mode off, payouts go only to your wallet and the page says destinations do not apply.
 
+<a id="protection-signers"></a>
+
+### Secondary signers
+
+With protected mode on, the Protection page also lists your secondary signers: other wallets you hold, such as a hardware wallet, that guard the account. A signer can cancel any waiting change, lock the account, cancel a queued payout or co-sign it when co-signs are required, remove a destination, and with the other signers approve replacing your main wallet. It can never move anything out of your vault, open a position, or add a destination or signer. A signer is chosen only from your saved wallets that proved control by signing. Asking one changes nothing at first: the page gives a link that the asked wallet opens to accept, from its own key. Once your delay has passed and it has accepted, the request must be made active within one further delay, or it lapses and must be cancelled before you ask again. Removing a signer also waits your delay, and another signer can cancel the removal. You can also require a signer's co-sign on every payout: switching it on is immediate, while switching it off waits your delay, and removing your last signer switches it off too. You can have at most five signers.
+
 <a id="my-offers"></a>
 
 ### Your offers

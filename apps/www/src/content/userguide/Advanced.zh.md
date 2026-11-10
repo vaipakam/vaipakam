@@ -2102,6 +2102,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 本部分在同一区块读取 `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（每个请求及其 `maturesAt`）、`getProtectedSigners`、`paused`，以及从 `getPendingPayoutIds` 得出的按收款方排队的付款。按区块时间加上此后经过的秒数计算，请求在 `maturesAt` 之前处于等待，直到 `maturesAt + delay` 为就绪，此后失效。四种更改是 `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted` 和 `removeAllowlisted`，参数均为 `(account, destination)`。审核在同一区块读取，并在打开钱包前拒绝 facet 会拒绝的情形：暂停或锁定（添加和激活时）、您自己的钱包、已有效或等待中的地址、已有五个目的地或五个请求、被标记的地址、尚未到期或已失效的请求。每次调用都会先模拟执行，在打开钱包前再核对一次，并以其自身的 `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded` 或 `AllowlistRemoved` 日志计量；移除还会统计它引发的 `PayoutCancelled` 日志。
 
+<a id="protection-signers"></a>
+
+### 辅助签名人
+
+本节在同一区块读取 `getProtectedAccount`(含 `requireCosign` 和 `pendingCosignOffAt`)、`getProtectedSigners` 及用于每位签名人 `removeAt` 的 `getSignerChange`、`getPendingSignerAdditions`(每个被请求的钱包及其 `maturesAt` 和 `accepted`)以及 `paused`。更改包括 `addSigner`、`cancelAddSigner`、`finalizeAddSigner`、`requestRemoveSigner`、`cancelRemoveSigner` 和 `finalizeRemoveSigner`,均接收 `(account, signer)`;由被请求的钱包从接受链接(`/protection?signer=<account>&chain=<id>`)发送的 `acceptSignerRole(account)`;以及 `setRequireCosign(account, on)`。审阅会在钱包之前拒绝 facet 将会拒绝的情况:暂停(取消除外)、锁定或新主钱包的冷却期(请求、移除和关闭共同签名时)、您自己的钱包、已是签名人或已被请求的钱包、尚未取消的失效请求、已有五位签名人或五个请求、未接受的钱包、未结束的等待或已过的期限,以及没有签名人时的共同签名。每次调用都会先模拟执行,在钱包打开前再次确认,并从其自身的 `SignerAddRequested`、`SignerAccepted`、`SignerAddCancelled`、`SignerAdded`、`SignerRemoveRequested`、`SignerRemoveCancelled`、`SignerRemoved`、`CosignRequirementSet` 或 `SettingChangeRequested` 日志中计量。等待中的被请求钱包会加入地址检查的已知地址列表。
+
 <a id="my-offers"></a>
 
 ### 你的报价

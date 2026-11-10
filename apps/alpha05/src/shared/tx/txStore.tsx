@@ -29,7 +29,8 @@ export interface Frozen {
   receipt: Receipt | null;
   /** The explorer origin of the network the transaction was sent on. */
   explorer: string;
-  /** The page that owns the flow, for the shell's pointer back to it. */
+  /** The page that owns the flow, with its query (an invitation link's
+   *  account, for one), for the shell's pointer back to it. */
   where: string;
 }
 

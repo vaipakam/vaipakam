@@ -2265,6 +2265,12 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 يقرأ القسم، في كتلة واحدة، `getProtectedAccount` و`getAllowlist` و`getPendingAllowlistAdditions` (كل طلب مع `maturesAt` الخاص به) و`getProtectedSigners` و`paused`، والدفعات المنتظرة لكل مستلم من `getPendingPayoutIds`. بحسب وقت الكتلة مضافًا إليه الثواني المنقضية، يكون الطلب منتظرًا قبل `maturesAt`، وجاهزًا حتى `maturesAt + delay`، ومنتهيًا بعد ذلك. التغييرات الأربعة هي `addAllowlisted` و`cancelAddAllowlisted` و`finalizeAddAllowlisted` و`removeAllowlisted`، وكل منها يأخذ `(account, destination)`. تُقرأ المراجعة في كتلة واحدة وترفض قبل المحفظة ما سيرفضه الـ facet: إيقاف مؤقت أو قفل (عند الإضافة والتفعيل)، ومحفظتك نفسها، وعنوان نشط أو منتظر أصلًا، ووجود خمس وجهات أو خمسة طلبات، وعنوان مُعلَّم، وطلب لم ينضج بعد أو انتهى. تُحاكى كل عملية استدعاء، ويُعاد التحقق قبيل فتح المحفظة، وتُقاس من سجلها الخاص `AllowlistAddRequested` أو `AllowlistAddCancelled` أو `AllowlistAdded` أو `AllowlistRemoved`؛ وتعدّ الإزالة أيضًا سجلات `PayoutCancelled` التي سببتها.
 
+<a id="protection-signers"></a>
+
+### الموقّعون الثانويون
+
+يقرأ هذا القسم، في كتلة واحدة، `getProtectedAccount` (مع `requireCosign` و`pendingCosignOffAt`)، و`getProtectedSigners` مع `getSignerChange` لقيمة `removeAt` لكل موقّع، و`getPendingSignerAdditions` (كل محفظة مطلوبة مع `maturesAt` و`accepted`)، و`paused`. التغييرات هي `addSigner` و`cancelAddSigner` و`finalizeAddSigner` و`requestRemoveSigner` و`cancelRemoveSigner` و`finalizeRemoveSigner`، وكل منها يأخذ `(account, signer)`؛ و`acceptSignerRole(account)` الذي ترسله المحفظة المطلوبة من رابط القبول (`/protection?signer=<account>&chain=<id>`)؛ و`setRequireCosign(account, on)`. ترفض المراجعة قبل المحفظة ما سترفضه الـ facet: الإيقاف المؤقت (إلا للإلغاء)، أو القفل أو فترة تهدئة محفظة رئيسية جديدة (عند الطلب والإزالة وإيقاف التوقيع المشترك)، ومحفظتك نفسها، ومحفظة هي موقّع بالفعل أو مطلوبة بالفعل، وطلبًا منتهيًا لم يُلغَ بعد، ووجود خمسة موقّعين أو خمسة طلبات بالفعل، ومحفظة لم تقبل، وانتظارًا لم ينتهِ أو نافذة انقضت، وتوقيعًا مشتركًا بلا موقّع. تُجرَّب كل استدعاء أولًا، ويُسأل عنه مجددًا قبل فتح المحفظة مباشرة، ويُقاس من سجله الخاص `SignerAddRequested` أو `SignerAccepted` أو `SignerAddCancelled` أو `SignerAdded` أو `SignerRemoveRequested` أو `SignerRemoveCancelled` أو `SignerRemoved` أو `CosignRequirementSet` أو `SettingChangeRequested`. تنضم المحافظ المطلوبة قيد الانتظار إلى قائمة العناوين المعروفة في فحص العناوين.
+
 <a id="my-offers"></a>
 
 ### عروضك

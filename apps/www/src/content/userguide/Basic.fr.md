@@ -1428,6 +1428,12 @@ La page Protection, accessible depuis la carte Sécurité du compte, conserve le
 
 Avec le mode protégé activé, la page Protection affiche aussi vos destinations de paiement : en plus de votre propre portefeuille, au plus cinq adresses vers lesquelles un paiement protégé peut aller. Une destination se choisit uniquement parmi vos adresses enregistrées. Demander d'en ajouter une ne change rien d'abord : elle devient utilisable après le délai de votre compte, doit ensuite être activée dans un délai supplémentaire, sinon elle expire et peut être redemandée. Vous, ou un signataire secondaire, pouvez annuler une demande en attente, et un verrouillage annule toutes les demandes. Retirer une destination prend effet immédiatement et annule chaque paiement en file vers elle ; les actifs restent dans votre coffre. Chaque changement demande une fois votre portefeuille, son récapitulatif affiche l'adresse en entier, et la carte finale montre ce que le protocole a enregistré. Mode protégé désactivé, les paiements ne vont qu'à votre portefeuille et la page indique que les destinations ne s'appliquent pas.
 
+<a id="protection-signers"></a>
+
+### Signataires secondaires
+
+Avec le mode protégé activé, la page Protection liste aussi vos signataires secondaires : d'autres portefeuilles que vous détenez, par exemple un portefeuille matériel, qui protègent le compte. Un signataire peut annuler toute modification en attente, verrouiller le compte, annuler un paiement en file ou le cosigner lorsque les cosignatures sont exigées, retirer une destination et, avec les autres signataires, approuver le remplacement de votre portefeuille principal. Il ne peut jamais sortir quoi que ce soit de votre coffre, ouvrir une position, ni ajouter une destination ou un signataire. Un signataire se choisit uniquement parmi vos portefeuilles enregistrés qui ont prouvé leur contrôle en signant. La demande ne change rien au départ : la page fournit un lien que le portefeuille sollicité ouvre pour accepter, avec sa propre clé. Une fois votre délai écoulé et l'acceptation faite, la demande doit être activée dans un délai supplémentaire, sinon elle expire et doit être annulée avant de redemander. Retirer un signataire attend aussi votre délai, et un autre signataire peut annuler ce retrait. Vous pouvez aussi exiger la cosignature d'un signataire sur chaque paiement : l'activation est immédiate, la désactivation attend votre délai, et retirer votre dernier signataire la désactive aussi. Vous pouvez avoir au plus cinq signataires.
+
 <a id="my-offers"></a>
 
 ### Vos offres
