@@ -53,10 +53,25 @@ library LibTestPositionNFT {
     ///         of a live id fails). The transfer runs the Diamond's transfer
     ///         check and counts, as any holder's transfer does.
     function move(address diamond, uint256 tokenId, address to) internal {
+        waitOutCooldown(diamond, tokenId);
         PositionNFT nft = core(diamond);
         address holder = nft.ownerOf(tokenId);
         VM.prank(holder);
         nft.transferFrom(holder, to, tokenId);
+    }
+
+    /// @notice #3413 — advance to the first block and time `tokenId` may move
+    ///         after its latest value-out (a later block, at or after its
+    ///         `readyAt`). Does nothing when the token is not cooling down, or
+    ///         when the Diamond does not route the cooldown view. For tests of
+    ///         something other than the cooldown that move a token right after
+    ///         a loan opened or paid out.
+    function waitOutCooldown(address diamond, uint256 tokenId) internal {
+        try VaipakamNFTFacet(diamond).positionTransferCooldown(tokenId) returns (uint64 atBlock, uint64 readyAt) {
+            if (atBlock == 0) return;
+            if (VM.getBlockNumber() <= atBlock) VM.roll(uint256(atBlock) + 1);
+            if (VM.getBlockTimestamp() < readyAt) VM.warp(readyAt);
+        } catch {}
     }
 
     /// @notice Make the core report `holder` for `tokenId` (a `vm.mockCall` on

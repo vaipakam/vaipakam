@@ -273,6 +273,10 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
     ) external {
         _enforceAuthorizedCaller();
         LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
+        // #3413 — an offer's own token becoming a loan's token (a direct
+        // accept): the offer's deposit became a loan and the borrower side
+        // took its principal, so the new loan's tokens cool down.
+        if (loanId != 0 && es.loanIds[tokenId] == 0) LibPositionNFT.markLoanValueOut(loanId);
         es.nftStatuses[tokenId] = newStatus;
         es.loanIds[tokenId] = loanId;
 

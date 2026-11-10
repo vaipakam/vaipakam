@@ -523,12 +523,26 @@ contract PartialWithdrawalFacetTest is Test {
         readyAt = uint64(block.timestamp) + 5;
     }
 
-    function testCooldown_UntouchedLoanMovesFreely() public {
+    /// @dev A direct accept turns the offer's own token into the loan's
+    ///      token, and the borrower side took its principal: the new loan
+    ///      cools down from its start, then both sides move freely.
+    function testCooldown_ANewLoanCoolsDownFromItsStartThenMoves() public {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.lenderTokenId);
-        assertEq(b, 0, "nothing has left the position");
-        assertEq(r, 0);
+        assertGt(b, 0, "the accept stamped the loan");
+        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
+        assertEq(b2, b, "both sides read the loan's stamp");
+        assertEq(r2, r);
+        if (vm.getBlockNumber() <= b) {
+            _tryMove(
+                loan.lenderTokenId,
+                abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, b, r)
+            );
+        }
+        vm.roll(uint256(b) + 1);
+        if (vm.getBlockTimestamp() < r) vm.warp(r);
         _tryMove(loan.lenderTokenId, "");
+        _tryMove(loan.borrowerTokenId, "");
     }
 
     function testCooldown_WithdrawalHoldsBothSidesForABlockAndTheCooldown() public {

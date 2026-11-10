@@ -246,6 +246,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         assertEq(_live(loanId), offerId, "precondition: the request is live");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
         address newHolder = makeAddr("newHolder");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         assertEq(_live(loanId), 0);
@@ -260,8 +261,10 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 r1 = _request(loanId, 0);
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
         address away = makeAddr("roundTripHolder");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, away, tokenId);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(away);
         LibTestPositionNFT.core(address(diamond)).transferFrom(away, borrower, tokenId);
 
@@ -307,6 +310,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
 
         address holderB = makeAddr("holderB");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, holderB, tokenId);
         address vaultB = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holderB);
@@ -324,6 +328,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(r2);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         LibTestPositionNFT.core(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
         vm.prank(borrower);
@@ -556,6 +561,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
 
         address holderB = makeAddr("offsetHolder");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, holderB, tokenId);
         address vaultB = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holderB);
@@ -563,10 +569,12 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.startPrank(holderB);
         ERC20(mockERC20).approve(vaultB, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
         uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
         );
         assertGt(offsetOfferId, 0, "precondition: the offset is open");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         LibTestPositionNFT.core(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
         assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(tokenId), borrower, "the position came back");
@@ -591,6 +599,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 loanId = _activeLoan();
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
         address creator = makeAddr("offsetCreator");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, creator, tokenId);
         address creatorVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(creator);
@@ -598,8 +607,9 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.startPrank(creator);
         ERC20(mockERC20).approve(creatorVault, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
         uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+            loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
         );
         vm.stopPrank();
         uint256 deposited = OfferCancelFacet(address(diamond)).getOffer(offsetOfferId).amountMax;
@@ -607,6 +617,7 @@ contract RefinanceRequestGuardTest is SetupTest {
 
         // The position moves on: the offset is dead.
         address nextHolder = makeAddr("nextBorrowerHolder");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(creator);
         LibTestPositionNFT.core(address(diamond)).transferFrom(creator, nextHolder, tokenId);
 
@@ -648,6 +659,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         assertFalse(OfferCancelFacet(address(diamond)).isOfferRouteDead(offerId), "the request is live before the move");
 
         address newHolder = makeAddr("requestNewHolder");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         // #3336 — the Diamond's dead-vehicle read now names it, the rule the
@@ -683,6 +695,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 offerId = _request(loanId, 0);
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
         address newHolder = makeAddr("cooldownNewHolder");
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
 

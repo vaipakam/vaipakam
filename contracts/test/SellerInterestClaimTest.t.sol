@@ -365,6 +365,7 @@ contract SellerInterestClaimTest is SetupTest {
         m.setFlagged(lender, false);
         address holder = makeAddr("plainHolder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, tokenId);
         m.setFlagged(lender, true);
@@ -519,6 +520,7 @@ contract SellerInterestClaimTest is SetupTest {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         address holder = makeAddr("transfereeHolder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(lender);
         LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, tokenId);
         assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault yet");

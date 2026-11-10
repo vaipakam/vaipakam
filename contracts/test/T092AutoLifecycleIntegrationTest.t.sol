@@ -1832,6 +1832,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _fundReserve(loanId, borrower, 2 ether);
         address newHolder = makeAddr("newBorrowerHolder");
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), l.borrowerTokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, l.borrowerTokenId);
         (, uint256 forNew, , , ) = _f().getExtendFunding(loanId, newHolder);

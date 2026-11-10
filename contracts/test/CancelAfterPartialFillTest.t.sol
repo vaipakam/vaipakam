@@ -664,6 +664,14 @@ contract CancelAfterPartialFillTest is SetupTest {
         uint64 matchBlock = uint64(vm.getBlockNumber());
         uint64 matchReady = uint64(vm.getBlockTimestamp()) + 5;
 
+        // The lender offer is still open, but the match drew 5k of its
+        // deposit into the loan, so its own token cools down too.
+        _tryMove(
+            lenderOfferToken,
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.PositionCoolingDown.selector, lenderOfferToken, matchBlock, matchReady
+            )
+        );
         // The filled borrower offer's own token ended at the match.
         _tryMove(
             borrowerOfferToken,

@@ -158,8 +158,8 @@ library LibPositionNFT {
     }
 
     /// @notice As {markLoanValueOut}, for offer `offerId`'s own token: a
-    ///         change to its terms, or its retirement (a cancel refunds the
-    ///         deposit; an accept moves it into a loan), which {retire} stamps.
+    ///         change to its terms, a match drawing on it, or its end
+    ///         (stamped by {retire}).
     function markOfferValueOut(uint256 offerId) internal {
         _storage().offerValueOut[offerId] = _stampNow();
     }
@@ -260,17 +260,21 @@ library LibPositionNFT {
     }
 
     /// @notice Mark `tokenId` retired. Idempotent. Clears any open route.
-    /// @dev    #3413 — retiring an offer's own token empties it (a cancel
-    ///         refunds its deposit, an accept moves it into a loan), so it is
-    ///         stamped as a value-out: the receipt cannot be sold in the same
+    /// @dev    #3413 — a retired token's position has closed or passed to a
+    ///         new token: a cancel refunded an offer's deposit, a match used up
+    ///         the rest of it, a final claim paid a side out, or a sale or
+    ///         handover re-minted a side to its new holder (the seller paid).
+    ///         So retiring stamps the token's position, its loan or else its
+    ///         offer, as a value-out: the receipt cannot be sold in the same
     ///         block, nor within the cooldown, to a buyer who priced the live
-    ///         offer. Every retire comes through here, so every offer exit is
-    ///         covered. A loan token's exits stamp its loan where value leaves.
+    ///         position. Every retire comes through here, so no exit path can
+    ///         miss it.
     function retire(uint256 tokenId) internal {
         ERC721Storage storage es = _storage();
-        uint256 offerId = es.offerIds[tokenId];
-        if (offerId != 0 && es.loanIds[tokenId] == 0 && !es.retired[tokenId]) {
-            es.offerValueOut[offerId] = _stampNow();
+        if (!es.retired[tokenId]) {
+            uint256 loanId = es.loanIds[tokenId];
+            if (loanId != 0) es.loanValueOut[loanId] = _stampNow();
+            else if (es.offerIds[tokenId] != 0) es.offerValueOut[es.offerIds[tokenId]] = _stampNow();
         }
         es.retired[tokenId] = true;
         delete es.routes[tokenId];
