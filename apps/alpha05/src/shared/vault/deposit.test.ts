@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
-import { VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
-import { depositBlockers, depositCall, depositChanged, deposited, depositPromptCount, depositShort, type DepositDraft, type DepositReview } from './deposit';
+import { VaultDepositoryFacetABI, VPFIDiscountFacetABI } from '@vaipakam/contracts/abis';
+import {
+  depositBlockers,
+  depositCall,
+  depositChanged,
+  deposited,
+  depositPromptCount,
+  depositRoute,
+  depositShort,
+  permitDepositCall,
+  signOffered,
+  vpfiDeposited,
+  type DepositDraft,
+  type DepositReview,
+} from './deposit';
 import { depositReceipt } from './depositReceipt';
 
 type Hex = `0x${string}`;
@@ -35,6 +48,8 @@ const multiDraft: DepositDraft = { standard: 'erc1155', asset: NFT, tokenId: 2n,
 function erc20(p: Partial<DepositReview> = {}, h: Partial<{ balance: bigint; allowance: bigint; approvalSteps: number }> = {}): DepositReview {
   return {
     identity: 'i',
+    vpfi: null,
+    permit: null,
     draft: erc20Draft,
     vault: VAULT,
     paused: false,
@@ -177,5 +192,59 @@ describe('depositReceipt', () => {
     const unread = later(null);
     expect(unread.row).toEqual({ kind: 'text', text: 'vaultDeposit.laterUnread' });
     expect(unread.consequences).toContain('vaultDeposit.afterUnread');
+  });
+});
+
+describe('signing instead of approving (RW-03)', () => {
+  const VPFI = { tracked: 0n, consent: true, home: true };
+  const vpfi = (allowance: bigint | null, deployed = true, h: Partial<{ balance: bigint; allowance: bigint; approvalSteps: number }> = {}) =>
+    erc20({ vpfi: VPFI, permit: { deployed, allowance: deployed ? allowance : null } }, h);
+
+  it('is offered for VPFI only where Permit2 is here and the wallet’s approval for it covers the amount', () => {
+    expect(signOffered(vpfi(100n))).toBe(true);
+    expect(signOffered(vpfi(99n))).toBe(false);
+    expect(signOffered(vpfi(null))).toBe(false);
+    expect(signOffered(vpfi(10n ** 30n, false))).toBe(false);
+    // Any other asset carries no route, whatever was read.
+    expect(signOffered(erc20({ permit: { deployed: true, allowance: 10n ** 30n } }))).toBe(false);
+  });
+  it('takes the chosen route only when it is offered; the approval is always there', () => {
+    expect(depositRoute(vpfi(100n), 'sign')).toBe('sign');
+    expect(depositRoute(vpfi(100n), null)).toBe('approve');
+    expect(depositRoute(vpfi(99n), 'sign')).toBe('approve');
+  });
+  it('asks for one signature and the deposit, whatever the approval would have taken', () => {
+    expect(depositPromptCount(vpfi(100n, true, { approvalSteps: 2 }), 'sign')).toBe(2);
+    expect(depositPromptCount(vpfi(100n, true, { approvalSteps: 2 }))).toBe(3);
+  });
+  it('on the signed route, a change to the protocol’s approval is not one; losing the route is', () => {
+    expect(depositChanged(vpfi(100n), vpfi(100n, true, { allowance: 50n, approvalSteps: 0 }), copy, 'sign')).toBeNull();
+    expect(depositChanged(vpfi(100n), vpfi(100n, true, { allowance: 50n, approvalSteps: 0 }), copy)).toBe('repay.changedFunds');
+    expect(depositChanged(vpfi(100n), vpfi(10n), copy, 'sign')).toBe('vpfiPermit.changed');
+  });
+  it('calls the VPFI entry with the amount, the signed transfer and the signature', () => {
+    const permit = { permitted: { token: TOKEN, amount: 100n }, nonce: 7n, deadline: 99n };
+    const call = permitDepositCall(100n, permit, '0xab');
+    expect(call.functionName).toBe('depositVPFIToVaultWithPermit');
+    expect(call.args).toEqual([100n, permit, '0xab']);
+  });
+  it('reads the credit from the VPFI entry’s own event, for this wallet only', () => {
+    const log = (user: Hex, address: Hex = DIAMOND): Log => {
+      const topics = encodeEventTopics({ abi: VPFIDiscountFacetABI as Abi, eventName: 'VPFIDepositedToVault', args: { user } });
+      return { address, topics, data: encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [100n, 300n]) } as unknown as Log;
+    };
+    expect(vpfiDeposited([log(ME)], DIAMOND, ME)).toBe(100n);
+    expect(vpfiDeposited([log(OTHER)], DIAMOND, ME)).toBeNull();
+    expect(vpfiDeposited([log(ME, OTHER)], DIAMOND, ME)).toBeNull();
+  });
+  it('the receipt names the signature in place of the approval, how long it lasts and that nothing is put back', () => {
+    const r = depositReceipt(vpfi(100n), null, copy, 'sign');
+    const row = r.rows.find((x) => x.label === 'vpfiPermit.row');
+    expect(row).toBeDefined();
+    expect(r.rows.some((x) => x.label === 'repay.rowApproval')).toBe(false);
+    expect(r.prompts).toBe(2);
+    expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('vpfiPermit.after:'))).toBe(true);
+    expect(r.consequences).toContain('vpfiPermit.kept');
+    expect(r.consequences).not.toContain('vaultDeposit.approvalBack');
   });
 });

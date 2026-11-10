@@ -952,7 +952,7 @@ none does it use a read-only proxy. Your own figures are never
 taken from the shared index. The address and network shown at the
 top are the ones every figure on the page belongs to. If your
 wallet is on a network the app does not serve, nothing of yours is
-shown until you switch.
+shown until you switch. Select your address at the top to see it in full, copy it, switch to another network the app serves, or disconnect. The app shows the address itself, not a name-service name, because it reads nothing on Ethereum mainnet.
 
 <a id="deployments"></a>
 
@@ -1093,7 +1093,7 @@ The page lists the lender offers open for your two tokens, read from the protoco
 
 ### Borrow: Review and Signing
 
-Before your wallet opens, the review shows every figure: what you receive, the fee, what you lock, the rate, what you owe on the due date, the grace period and what you can lose. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the collateral if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what arrived and what was locked. It also states the loan's lifecycle terms, each even when it is the default: partial repayment, selling the collateral, and any refinance or linked loan. The amount owed assumes no pause: a pause moves the due date later and interest keeps running through it.
+Before your wallet opens, the review shows every figure: what you receive, the fee, what you lock, the rate, what you owe on the due date, the grace period and what you can lose. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the collateral if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what arrived and what was locked. It also states the loan's lifecycle terms, each even when it is the default: partial repayment, selling the collateral, and any refinance or linked loan. The amount owed assumes no pause: a pause moves the due date later and interest keeps running through it. The review also shows what the protocol values the amount and the collateral at now; these figures are for information and move with the price.
 
 <a id="borrow-fee"></a>
 
@@ -1111,7 +1111,7 @@ A loan can cost you your collateral. If you have not repaid by the end of the gr
 
 ### Borrow: Posting Your Own Request
 
-When no offer fits, you can post your own borrow request for your two tokens: the exact amount, the rate you will pay, the term and the collateral you lock. Posting moves the collateral from your wallet into your own vault, where it stays while the request is open. A lender who takes it opens the loan at once, on your terms, without asking you again; the amount, less the initiation fee, arrives in your wallet. You can cancel from five minutes after posting, and the collateral returns to your wallet. A lapsed request can no longer be taken; its collateral stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close a request on the current app's Offers page; the review says so before anything is locked.
+When no offer fits, you can post your own borrow request for your two tokens: the exact amount, the rate you will pay, the term and the collateral you lock. Posting moves the collateral from your wallet into your own vault, where it stays while the request is open. A lender who takes it opens the loan at once, on your terms, without asking you again; the amount, less the initiation fee, arrives in your wallet. You can cancel from five minutes after posting, and the collateral returns to your wallet. A lapsed request can no longer be taken; its collateral stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close a request on the current app's Offers page; the review says so before anything is locked. Under each amount you type, the form shows what the protocol values it at now, in its own unit; for an asset it gives no price it says so instead of a figure.
 
 <a id="borrow-request-terms"></a>
 
@@ -1480,3 +1480,27 @@ A running rental's page offers you, as the renter, Close the rental. Closing pay
 ### Rent: Risks of Closing
 
 Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.
+
+<a id="rewards-vpfi"></a>
+
+### Rewards: VPFI in Your Vault
+
+Rewards, in the menu, shows your rewards on this network, your VPFI and your fee-discount consent. Your rewards are the usage rebates Home shows, claimed the same way. Below them the page shows your VPFI: in your wallet, counted in your own vault, free to withdraw now, and held for loans, offers, claims or payouts. Counted VPFI sets your fee-discount tier, and the tier lowers your fees only while your consent is on. VPFI sent to your vault directly, without a deposit, is not counted and never raises your tier; the page shows it and points you to the Vault page to adopt it. Deposit VPFI moves VPFI from your wallet into your own vault, which only your wallet controls, after you accept the Terms if you have not yet; the first deposit creates the vault. Withdraw VPFI moves VPFI that is free back to your wallet. Each review says what the move does to your tier and whether your consent is on, and afterwards the app checks the result on the chain. On a network where VPFI is not set up, the page says so and offers neither. Only VPFI in your vault on VPFI's home network sets your tier; other networks apply a copy of the tier worked out there, so on them the page and each review say that moving VPFI changes no tier.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Rewards: Risks of Moving VPFI
+
+Your tier is not your balance today. It is zero until your current holding has lasted a minimum number of days. It then follows an average of your daily holdings that weights recent days more. Separately, it never exceeds the lowest tier you held on any day of your current holding, looking back at most 30 days. So a deposit raises your tier only with time, and a brief top-up does not lift it. Withdrawing part of your counted VPFI can lower your tier, and withdrawing all of it restarts your holding time from your next deposit. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released, and a protected account's withdrawal waits its delay first. A protected account's withdrawal changes your counted VPFI and your tier only when it is released, and a cancelled one changes neither. VPFI in your vault is not collateral and backs no loan. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.
+
+<a id="rewards-tier"></a>
+
+### Rewards: Your Fee-Discount Tier
+
+Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Rewards: Signing Instead of Approving
+
+Where your wallet has already approved Permit2 for VPFI, a shared contract many apps use to move tokens with a signature, the VPFI deposit review offers Sign instead of approve. You then sign a one-time transfer of exactly the amount, valid for 30 minutes, and send the deposit: two wallet steps and no approval to the protocol. The signature can be used once, only by a transaction your own wallet sends, and only into your own vault; unused, it lapses. The app never asks you to approve Permit2 itself, because that approval is open-ended and shared with other apps. Without it, the review keeps the usual approval of exactly the amount. On a network without Permit2 the choice is not offered.

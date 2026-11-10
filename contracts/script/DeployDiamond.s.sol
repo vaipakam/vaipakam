@@ -2884,7 +2884,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // setVPFIBuyRate). The kept consumptive fee-discount surface remains,
         // plus the renamed discount-price config (getVPFIDiscountConfig /
         // setVPFIDiscountRate) that the discount quote depends on.
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
         s[1] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
         s[2] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
@@ -2907,6 +2907,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[14] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
         // #1383 — secondary-settlement lender yield-fee resolve host.
         s[15] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
+        // #3459 — the tier holding rules and their bounds.
+        s[16] = VPFIDiscountFacet.getTwaConfig.selector;
     }
 
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
@@ -3188,12 +3190,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view (off-chain
         // monitoring + Sub 2.B CCIP payload source + test inspection).
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
+        // #3459 — the rule-by-rule tier explanation (public read).
+        s[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
     }
 
     /// T-087 Sub 2.C — mirror-side tier-push receiver facet. Both

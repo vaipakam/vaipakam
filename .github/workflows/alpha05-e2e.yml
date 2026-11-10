@@ -57,12 +57,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # One job per Playwright project (desktop, phone), run side by side. The
+  # suite on one runner had grown to 45-57 minutes against a 60-minute limit
+  # and was cancelled at 272 of 276 tests (2026-11-10); splitting by project
+  # halves the test time instead of only moving the limit. Each job compiles
+  # and deploys its own fixture, so the two share nothing at run time.
   e2e:
-    name: anvil-tier scenarios
+    name: anvil-tier scenarios (${{ matrix.project }})
     runs-on: ubuntu-latest
     # A cold fixture compile (viaIR, every facet) is the long pole; the forge
     # cache below makes most runs incremental.
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, phone]
     steps:
       - name: Checkout (with submodules — the fixture compiles the contracts)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -120,14 +129,14 @@ jobs:
       - name: Typecheck the e2e surface
         run: pnpm --filter @vaipakam/alpha05 run e2e:typecheck
 
-      - name: Run e2e
-        run: pnpm --filter @vaipakam/alpha05 run e2e
+      - name: Run e2e (${{ matrix.project }})
+        run: pnpm --filter @vaipakam/alpha05 run e2e --project=${{ matrix.project }}
 
       - name: Upload traces on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: alpha05-e2e-traces
+          name: alpha05-e2e-traces-${{ matrix.project }}
           path: apps/alpha05/test-results/
           retention-days: 7
 
@@ -141,3 +150,16 @@ jobs:
             echo "===== $f ====="
             cat "$f"
           done
+
+  # The one result under the suite's long-standing name, so a merge gate or a
+  # watcher keyed on "anvil-tier scenarios" reads both projects' outcome.
+  verdict:
+    name: anvil-tier scenarios
+    needs: e2e
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both projects passed
+        run: |
+          echo "desktop and phone: ${{ needs.e2e.result }}"
+          test "${{ needs.e2e.result }}" = "success"

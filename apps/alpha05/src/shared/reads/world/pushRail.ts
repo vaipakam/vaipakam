@@ -188,6 +188,10 @@ export interface PushRailHandle {
   close(): void;
 }
 
+/** `WebSocket.CONNECTING`, written out so a stand-in socket class need not
+ *  carry the static. */
+const SOCKET_CONNECTING = 0;
+
 export function openPushRail(opts: PushRailOptions): PushRailHandle {
   const WS = opts.WebSocketImpl ?? WebSocket;
   const setT = opts.setTimeoutImpl ?? setTimeout;
@@ -278,7 +282,17 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
       socket = null;
       if (ws) {
         ws.onclose = null;
-        ws.close();
+        ws.onmessage = null;
+        ws.onerror = null;
+        // A socket still opening is closed once it opens: closing it
+        // mid-handshake makes the browser log a failed connection for a
+        // rail that was simply no longer wanted (a route change, a chain
+        // switch, a remount).
+        if (ws.readyState === SOCKET_CONNECTING) ws.onopen = () => ws.close();
+        else {
+          ws.onopen = null;
+          ws.close();
+        }
       }
       setState('closed');
     },

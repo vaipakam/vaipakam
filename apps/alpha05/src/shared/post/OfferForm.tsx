@@ -45,6 +45,7 @@ import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../
 import { readPostFormInputs, type PostDraft } from './postReview';
 import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../offers/cadence';
 import { readNumeraireSymbol } from '../reads/numeraire';
+import { NumeraireLine } from '../ui/NumeraireLine';
 import { belowFloor, capStanding, readMinOfferAmount, readOpenOffers } from '../offers/offerBook';
 import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../offers/fullTariff';
 
@@ -673,25 +674,28 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           error={show('amount') ? (amountError(amount, lendingSymbol, lendingDecimals) ?? (lender && ranged ? null : floorText)) : null}
         >
           {({ id, describedBy, invalid }) => (
-            <div className="input-with-action">
-              <input
-                id={id}
-                inputMode="decimal"
-                autoComplete="off"
-                aria-describedby={describedBy}
-                aria-invalid={invalid}
-                value={input.amount}
-                onChange={(e) => set({ amount: e.target.value })}
-                onBlur={() => leave('amount')}
-                data-testid="request-amount"
-              />
-              {lender && inputs.data && inputs.data.balance !== null && lendingDecimals !== null && inputs.data.balance > 0n && (
-                // RB-CLICKS: Max lends the whole wallet balance, exactly.
-                <button type="button" className="btn" onClick={() => set({ amount: formatUnits(inputs.data!.balance!, lendingDecimals) })} data-testid="request-amount-all">
-                  {text('request.max')}
-                </button>
-              )}
-            </div>
+            <>
+              <div className="input-with-action">
+                <input
+                  id={id}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid}
+                  value={input.amount}
+                  onChange={(e) => set({ amount: e.target.value })}
+                  onBlur={() => leave('amount')}
+                  data-testid="request-amount"
+                />
+                {lender && inputs.data && inputs.data.balance !== null && lendingDecimals !== null && inputs.data.balance > 0n && (
+                  // RB-CLICKS: Max lends the whole wallet balance, exactly.
+                  <button type="button" className="btn" onClick={() => set({ amount: formatUnits(inputs.data!.balance!, lendingDecimals) })} data-testid="request-amount-all">
+                    {text('request.max')}
+                  </button>
+                )}
+              </div>
+              <NumeraireLine asset={pair.lending} amount={amount?.ok ? amount.value : null} leg="debt" assetLabel={lendingSymbol} testId="request-amount-value" />
+            </>
           )}
         </FormField>
         {named ? (
@@ -765,30 +769,33 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
             error={show('collateral') ? amountError(collateral, collateralSymbol, collateralDecimals) : null}
           >
             {({ id, describedBy, invalid }) => (
-              <div className="input-with-action">
-                <input
-                  id={id}
-                  inputMode="decimal"
-                  autoComplete="off"
-                  aria-describedby={describedBy}
-                  aria-invalid={invalid}
-                  value={input.collateral}
-                  onChange={(e) => set({ collateral: e.target.value })}
-                  onBlur={() => leave('collateral')}
-                  data-testid="request-collateral"
-                />
-                {!lender && inputs.data && inputs.data.balance !== null && collateralDecimals !== null && inputs.data.balance > 0n && (
-                  // RB-CLICKS: Max fills the whole wallet balance, exactly.
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => set({ collateral: formatUnits(inputs.data!.balance!, collateralDecimals) })}
-                    data-testid="request-collateral-max"
-                  >
-                    {text('request.max')}
-                  </button>
-                )}
-              </div>
+              <>
+                <div className="input-with-action">
+                  <input
+                    id={id}
+                    inputMode="decimal"
+                    autoComplete="off"
+                    aria-describedby={describedBy}
+                    aria-invalid={invalid}
+                    value={input.collateral}
+                    onChange={(e) => set({ collateral: e.target.value })}
+                    onBlur={() => leave('collateral')}
+                    data-testid="request-collateral"
+                  />
+                  {!lender && inputs.data && inputs.data.balance !== null && collateralDecimals !== null && inputs.data.balance > 0n && (
+                    // RB-CLICKS: Max fills the whole wallet balance, exactly.
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => set({ collateral: formatUnits(inputs.data!.balance!, collateralDecimals) })}
+                      data-testid="request-collateral-max"
+                    >
+                      {text('request.max')}
+                    </button>
+                  )}
+                </div>
+                <NumeraireLine asset={pair.collateral} amount={collateral?.ok ? collateral.value : null} leg="collateral" assetLabel={collateralSymbol} testId="request-collateral-value" />
+              </>
             )}
           </FormField>
         )}
@@ -983,17 +990,20 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
                   }
                 >
                   {({ id, describedBy, invalid }) => (
-                    <input
-                      id={id}
-                      inputMode="decimal"
-                      autoComplete="off"
-                      aria-describedby={describedBy}
-                      aria-invalid={invalid}
-                      value={input.amountMax}
-                      onChange={(e) => set({ amountMax: e.target.value })}
-                      onBlur={() => leave('amountMax')}
-                      data-testid="request-amount-max"
-                    />
+                    <>
+                      <input
+                        id={id}
+                        inputMode="decimal"
+                        autoComplete="off"
+                        aria-describedby={describedBy}
+                        aria-invalid={invalid}
+                        value={input.amountMax}
+                        onChange={(e) => set({ amountMax: e.target.value })}
+                        onBlur={() => leave('amountMax')}
+                        data-testid="request-amount-max"
+                      />
+                      <NumeraireLine asset={pair.lending} amount={amountMax?.ok ? amountMax.value : null} leg="debt" assetLabel={lendingSymbol} testId="request-amount-max-value" />
+                    </>
                   )}
                 </FormField>
                 <FormField

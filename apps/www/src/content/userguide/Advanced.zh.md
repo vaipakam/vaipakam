@@ -1689,7 +1689,7 @@ wallet 的提供方，再经由只读 RPC 代理，最后经由网络的公共�
 同步行会注明作出响应的来源，以及页面上最早一次读取距今多久；
 "刷新"会重新读取全部内容。索引只用于全局数字（市场和历史），
 并显示其区块高度和时效。处于不支持网络上的 wallet 在切换之前
-看不到任何属于自己的内容。
+看不到任何属于自己的内容。地址标签会打开应用自己的账户面板：带复制操作的完整地址、network、切换到其他每个受支持的 network，以及断开连接。钱包选择器只用于连接。连接后应用不进行任何名称服务查询，因此已连接的会话不会读取 Ethereum mainnet 上的任何内容，也不会访问页面 connect-src 列表之外的任何主机。
 
 <a id="deployments"></a>
 
@@ -1810,7 +1810,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow: 审核与签名
 
-审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。
+审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。审核会按预览金额加入本金和抵押品的 `getNumeraireValue`，作为不具约束力的行。
 
 <a id="borrow-fee"></a>
 
@@ -1828,7 +1828,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow：发布你自己的请求
 
-请求是从借款人钱包发送的 `createOffer`，`offerType` 为 1，两侧均为 ERC-20。它把 `collateralAmount` 转入借款人的金库（若没有金库则先创建），并发出 `OfferCreated(offerId, creator, 1)`。出借人用 `acceptOffer` 接受：扣除费用后的本金进入借款人钱包，费用中归发送者的份额归发送交易的出借人。`cancelOffer` 在创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起对创建者开放，请求过期后对任何人开放；抵押品始终退回创建者。
+请求是从借款人钱包发送的 `createOffer`，`offerType` 为 1，两侧均为 ERC-20。它把 `collateralAmount` 转入借款人的金库（若没有金库则先创建），并发出 `OfferCreated(offerId, creator, 1)`。出借人用 `acceptOffer` 接受：扣除费用后的本金进入借款人钱包，费用中归发送者的份额归发送交易的出借人。`cancelOffer` 在创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起对创建者开放，请求过期后对任何人开放；抵押品始终退回创建者。在每个输入的金额下方，表单以 `getNumeraireSymbol` 的单位显示 `getNumeraireValue(asset, amount, roundUp)`（本金向上取整，抵押品向下取整），在输入暂停时读取；非流动资产显示为估值为零，有争议的价格显示为无值，读取失败显示为未读。
 
 <a id="borrow-request-terms"></a>
 
@@ -2193,3 +2193,27 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 租用：结束的风险
 
 结束会立即终止你使用该 NFT 的权利，即使还有约定天数，而且无法撤销。租金按结束上链的时刻计算，所以在此之前开始的一天按整天支付；按全期计租时，无论多早结束，所有尚未结算的约定天数都要支付。租期结束后会从你的缓冲金中扣除逾期费：全部租金的 1%，每逾期一天再加 0.5%，最多 5%，且绝不超过缓冲金。超过宽限期后，协议会拒绝结束；此后租用要么在剩余天数逐日结算完时结束（任何人都可以结算），要么以违约告终，以先发生者为准。审核显示的稍后时刻既不是截止时间也不是上限：较晚上链的结束按那时计算，因此可能扣除更多租金或更高的逾期费，退还给你的会更少。退还的金额作为待领款项留在你自己的金库中，直到你领取。
+
+<a id="rewards-vpfi"></a>
+
+### 奖励：金库中的 VPFI
+
+页面用 `getVPFIToken` 读取代币；零地址表示该网络未设置 VPFI。它在同一个区块读取钱包的 `balanceOf`、`getUserVaultAddress` 给出的金库、`getTrackedVPFIBalance` 给出的已计入 VPFI、`withdrawableNow` 给出的可自由提取额，以及金库自身的 `balanceOf`。占用额是已计入额减去可自由提取额；未计入额是金库余额中超出已计入额的部分。“存入 VPFI”是金库的通用 `depositToVault`，“提取 VPFI”是其 `withdrawFromVault`（协议暂停且应急通道开放时，非保护模式的账户为 `escapeWithdraw`），而不是 VPFI 专用入口：通用路径同样为等级记录 VPFI，且只有它们有应急通道。每个确认页在其自身区块读取 `getTrackedVPFIBalance` 和 `getVPFIDiscountConsent`，结果从交易中测得。同时读取 `isCanonicalVpfiChain`：只有 VPFI 主网络根据其自身已计入的 VPFI 计算等级，其他网络使用该等级的缓存副本，因此在那里页面和每张收据都会说明操作不会改变等级。
+
+<a id="rewards-vpfi-risks"></a>
+
+### 奖励：移动 VPFI 的风险
+
+等级不是你今天的余额。在你当前不间断的持有达到最少天数之前，它为零；之后它跟随按近期加权的每日收盘余额平均值；并且它被限制在你当前持有期间任何一天所处的最低等级，最多回看 30 天。这是两个独立的回看。提取部分已计入的 VPFI 会降低当天的最低余额，而上限读取的正是它；全部提取会让持有时间重新计算。追加不会让它重新计算。为贷款、报价、领取或付款而占用的 VPFI 在释放之前无法提取。受保护账户的提取只有在释放时才会改变已计入的 VPFI 和你的等级，已取消的提取两者都不改变。金库中的 VPFI 不是抵押品。协议不出售 VPFI，不为其报价，也不因持有而支付任何东西。
+
+<a id="rewards-tier"></a>
+
+### 奖励：手续费折扣等级
+
+卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。在主网络上，它还读取 `getTrackedVPFIDiscountTier`（仅凭已计入 VPFI 得到的等级），并在有效等级更低时说明。协议不报告是哪条持有规则压低了等级，而这些规则的设置目前也没有读取视图，因此两者都不显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
+
+<a id="rewards-vpfi-sign"></a>
+
+### 奖励：以签名代替授权
+
+审核页在自己的区块读取 Permit2 的规范地址上是否有代码，以及钱包为 VPFI 代币授予 Permit2 的 ERC-20 `allowance`。只有当 Permit2 已部署且该 allowance 覆盖金额时，才提供“以签名代替授权”；否则 Advanced 会说明缺少的是哪一项。钱包为 VPFI 代币和恰好该金额签署 Permit2 的 `PermitTransferFrom`，spender 为 Diamond，nonce 为经 `nonceBitmap` 核实未用过的随机值，期限为最新区块之后 30 分钟。应用先带签名试运行 `depositVPFIToVaultWithPermit`，再发送；协议会拒绝针对任何其他代币的 permit。结果从该入口代替 `VaultDeposited` 发出的 `VPFIDepositedToVault`，以及代币转入金库的记录中测得。两条路径对 VPFI 计入等级的方式相同。

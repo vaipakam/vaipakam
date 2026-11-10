@@ -1839,7 +1839,7 @@ exit 및 정산 도구, 자동화, 서명된 주문, keeper 상태, 회계 세�
 에서 가장 오래된 읽기의 경과 시간을 알려 주며, 새로고침은 모두를
 다시 읽습니다. 인덱스는 전체 숫자(마켓과 기록)에만 쓰이며, 그
 블록 높이와 경과 시간을 함께 보여 줍니다. 지원하지 않는 네트워크에
-있는 wallet은 전환할 때까지 자신의 것을 아무것도 보지 못합니다.
+있는 wallet은 전환할 때까지 자신의 것을 아무것도 보지 못합니다. 주소 칩은 앱 자체의 계정 패널을 엽니다. 복사 동작이 있는 전체 주소, network, 지원되는 다른 각 network로의 전환, 연결 해제입니다. wallet 선택 창은 연결에만 쓰입니다. 연결된 뒤 앱은 네임 서비스 조회를 하지 않으므로, 연결된 세션은 Ethereum mainnet에서 아무것도 읽지 않고 페이지의 connect-src 목록 밖의 호스트에도 닿지 않습니다.
 
 <a id="deployments"></a>
 
@@ -1968,7 +1968,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 검토와 서명
 
-검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다.
+검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다. 검토는 미리보기 금액에서 원금과 담보의 `getNumeraireValue`를 아무것도 구속하지 않는 행으로 추가합니다.
 
 <a id="borrow-fee"></a>
 
@@ -1986,7 +1986,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 직접 요청 올리기
 
-요청은 차입자의 지갑에서 보내는 `offerType` 1, 양쪽 ERC-20의 `createOffer`입니다. `collateralAmount`를 차입자의 볼트로 옮기고(볼트가 없으면 만들고) `OfferCreated(offerId, creator, 1)`를 발생시킵니다. 대출자는 `acceptOffer`로 받습니다. 수수료를 뺀 원금은 차입자의 지갑으로, 수수료 중 송신자 몫은 보낸 대출자에게 갑니다. `cancelOffer`는 생성자에게는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터, 누구에게나 요청이 만료된 뒤 열려 있으며, 담보는 항상 생성자에게 돌아갑니다.
+요청은 차입자의 지갑에서 보내는 `offerType` 1, 양쪽 ERC-20의 `createOffer`입니다. `collateralAmount`를 차입자의 볼트로 옮기고(볼트가 없으면 만들고) `OfferCreated(offerId, creator, 1)`를 발생시킵니다. 대출자는 `acceptOffer`로 받습니다. 수수료를 뺀 원금은 차입자의 지갑으로, 수수료 중 송신자 몫은 보낸 대출자에게 갑니다. `cancelOffer`는 생성자에게는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터, 누구에게나 요청이 만료된 뒤 열려 있으며, 담보는 항상 생성자에게 돌아갑니다. 입력한 각 금액 아래에 양식은 `getNumeraireValue(asset, amount, roundUp)`(원금은 올림, 담보는 내림)를 `getNumeraireSymbol` 단위로 표시하며, 입력이 멈추면 읽습니다. 비유동 자산은 0으로 평가된 것으로, 다툼이 있는 가격은 값 없음으로, 실패한 읽기는 읽지 못함으로 표시됩니다.
 
 <a id="borrow-request-terms"></a>
 
@@ -2351,3 +2351,27 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 대여: 종료의 위험
 
 종료하면 약정일이 남아 있어도 NFT를 쓸 권리가 즉시 끝나며 되돌릴 수 없습니다. 대여료는 종료가 체인에 기록되는 시점에 세므로 그 전에 시작된 날은 하루로 냅니다. 전체 기간 요금이면 아무리 일찍 종료해도 아직 정산되지 않은 약정일을 모두 냅니다. 기간이 끝난 뒤에는 버퍼에서 연체료를 뗍니다. 전체 대여료의 1%에 늦은 날마다 0.5%를 더하며, 최대 5%이고 버퍼를 넘지 않습니다. 유예 기간이 지나면 프로토콜이 종료를 거절하며, 이후 대여는 남은 날이 하루씩 정산되어 끝나거나(누구나 할 수 있습니다) 디폴트로 끝나며, 먼저 일어나는 쪽으로 끝납니다. 검토 화면이 보여 주는 이후 시점은 기한도 한도도 아닙니다. 더 늦게 기록된 종료는 그 시점에 계산되므로 대여료나 연체료가 더 나가고 돌아오는 금액이 줄 수 있습니다. 돌아오는 금액은 받을 때까지 청구로 내 볼트에 남습니다.
+
+<a id="rewards-vpfi"></a>
+
+### 리워드: 볼트의 VPFI
+
+페이지는 `getVPFIToken`으로 토큰을 읽으며, 0 주소는 그 네트워크에 VPFI가 설정되지 않았다는 뜻입니다. 한 블록에서 지갑의 `balanceOf`, `getUserVaultAddress`의 볼트, `getTrackedVPFIBalance`의 집계된 VPFI, `withdrawableNow`의 자유 금액, 볼트 자체의 `balanceOf`를 읽습니다. 묶인 양은 집계된 양에서 자유 금액을 뺀 것이고, 미집계는 볼트 잔액 중 집계된 양을 넘는 부분입니다. 'VPFI 입금'은 볼트의 범용 `depositToVault`, 'VPFI 출금'은 그 `withdrawFromVault`(프로토콜이 일시 중지되고 비상 출구가 열려 있는 동안, 보호 모드가 아닌 계정은 `escapeWithdraw`)이며, VPFI 전용 진입점이 아닙니다. 범용 경로도 등급을 위해 VPFI를 똑같이 기록하며, 비상 출구는 범용 경로에만 있습니다. 각 검토 화면은 자체 블록에서 `getTrackedVPFIBalance`와 `getVPFIDiscountConsent`를 읽고, 결과는 트랜잭션에서 측정됩니다. `isCanonicalVpfiChain`도 함께 읽습니다. VPFI의 홈 네트워크만 자체 집계된 VPFI로 등급을 계산하고, 다른 네트워크는 그 등급의 캐시된 사본을 적용하므로, 그곳에서는 페이지와 각 영수증이 작업으로 등급이 바뀌지 않는다고 말합니다.
+
+<a id="rewards-vpfi-risks"></a>
+
+### 리워드: VPFI 이동의 위험
+
+등급은 오늘의 잔액이 아닙니다. 현재의 끊기지 않은 보유가 최소 일수에 이를 때까지는 0이고, 그 뒤에는 최근 날짜에 가중치를 둔 일별 종가 잔액 평균을 따르며, 현재 보유 기간 중 어느 날이든 가졌던 가장 낮은 등급으로 상한이 정해집니다(거슬러 보는 기간은 최대 30일). 이 둘은 서로 다른 되돌아보기입니다. 집계된 VPFI 일부를 출금하면 상한이 읽는 그날의 최저 잔액이 낮아지고, 모두 출금하면 보유 기간이 다시 시작됩니다. 추가 입금은 이를 다시 시작하지 않습니다. 대출·오퍼·청구·지급을 위해 묶인 VPFI는 풀릴 때까지 출금할 수 없습니다. 보호 계정의 출금은 풀릴 때에만 집계된 VPFI와 등급을 바꾸며, 취소된 출금은 둘 다 바꾸지 않습니다. 볼트의 VPFI는 담보가 아닙니다. 프로토콜은 VPFI를 판매하지 않고, 가격을 제시하지 않으며, 보유에 대해 아무것도 지급하지 않습니다.
+
+<a id="rewards-tier"></a>
+
+### 리워드: 수수료 할인 등급
+
+카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 홈 네트워크에서는 `getTrackedVPFIDiscountTier`(집계된 VPFI만으로 얻는 등급)도 읽고, 유효 등급이 더 낮을 때 이를 알려 줍니다. 어떤 보유 규칙이 낮추고 있는지는 프로토콜이 보고하지 않고, 규칙 설정에는 아직 읽기 뷰가 없으므로 둘 다 표시하지 않습니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
+
+<a id="rewards-vpfi-sign"></a>
+
+### 리워드: 승인 대신 서명
+
+검토 화면은 자체 블록에서 Permit2의 표준 주소에 코드가 있는지와, VPFI 토큰에 대해 지갑이 Permit2에 준 ERC-20 `allowance`를 읽습니다. Permit2가 배포되어 있고 그 allowance가 금액을 충족할 때만 "승인 대신 서명"이 제공되며, 그렇지 않으면 Advanced가 둘 중 무엇이 빠졌는지 알려 줍니다. 지갑은 VPFI 토큰과 정확히 그 금액에 대해 Permit2의 `PermitTransferFrom`에 서명합니다. spender는 Diamond, nonce는 `nonceBitmap`으로 미사용을 확인한 임의 값, 기한은 최신 블록 30분 뒤입니다. 앱은 서명과 함께 `depositVPFIToVaultWithPermit`를 시험 실행한 뒤 보냅니다. 프로토콜은 다른 토큰에 대한 permit을 거부합니다. 결과는 이 진입점이 `VaultDeposited` 대신 내보내는 `VPFIDepositedToVault`와 보관함으로의 토큰 전송으로 측정합니다. 두 경로 모두 VPFI를 등급에 같은 방식으로 반영합니다.

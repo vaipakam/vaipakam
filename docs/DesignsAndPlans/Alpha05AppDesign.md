@@ -212,6 +212,18 @@ stops the action, the approval is put back to what it was (best effort, and
 only if nothing else changed it), and a failure to put it back is said
 beside the reason, never left silent; approval resets are named honestly.
 
+The numeraire equivalent (#3225) is one shared line under a typed amount,
+and the same words in a review's rows. It is the protocol's own valuation
+now, by the rule it uses for loan-to-value (a principal rounded up, a
+collateral rounded down), in the numeraire's own symbol, read once typing
+pauses rather than on every keystroke. An asset the protocol gives no price
+is said to be valued at nothing, a price the protocol's sources dispute is
+said to be why no value is shown, and a value that could not be read is said
+to be unread: the line never shows a figure the protocol would not stand
+behind. In a review the rows are informational, never binding, since the
+price moves after signing. The borrow and lend forms and the take-an-offer
+review carry it.
+
 ### RB-MODE — mode is defined per capability
 
 Basic is the default. A capability is Basic when a first-time user needs it
@@ -403,6 +415,18 @@ a compromised deployment, which serves its own policy, or against software
 on the user's own device such as a browser extension. This is a deployment
 acceptance criterion (§3.2): a route does not reach parity on a deployment
 without it.
+
+The review is taken with a wallet connected, since some destinations are
+reached only then (#3476). A connected session must reach no host outside
+the list, and a third-party library must not reach one on the app's behalf.
+The wallet picker is used only to connect. The connected account surface
+(the full address, a copy action, the network, a switch to each other
+served network, and disconnect) is the app's own, because the picker's
+connected surfaces look up a name-service name on a network the app does
+not serve, from an endpoint the page does not name. The app shows the
+address itself. The committed live driver `e2e/live/console-watch.cjs` walks
+the main routes connected, on desktop and phone, and fails on any app console
+error or warning, any report and any failed request.
 
 ### RB-GOVERNANCE-QUEUE — queued governance changes are public
 
@@ -1778,6 +1802,74 @@ above. Each resolves here, so a route reviewer needs no private file:
   status and its rental update revoking the renter, never the owner's
   vault totals, which expired and same-block rentals move) and the
   renter's claim (inside the range the review stated).
+
+- **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
+  RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
+  its VPFI in its own vault and the fee-discount consent. On a network with
+  no VPFI token set it says so and offers no deposit or withdrawal. Otherwise
+  it reads, at one block, the VPFI in the wallet, counted in the vault (what
+  the tier reads), free to withdraw, held, and any VPFI sitting in the vault
+  uncounted (sent there directly, never raising the tier, with the way to
+  adopt it from Vault; when that figure cannot be read the panel says so
+  rather than showing nothing, which would read as none). VPFI in the vault
+  is not collateral. Deposit and
+  withdrawal use the vault's own generic deposit and withdrawal for this one
+  token, not the VPFI-only entries: those count VPFI for the tier just the
+  same, and the generic withdrawal also has the escape route while the
+  protocol is paused, which the VPFI-only one has not. A deposit is behind
+  the Terms gate; a withdrawal never is. Each receipt adds the tier's side:
+  deposited VPFI counts toward the tier under the holding rules and pledges
+  nothing; a withdrawal works the tier out again from what stays counted,
+  and taking the counted VPFI to zero restarts the holding time; whether the
+  consent is on, off or unread. A protected account's withdrawal is only
+  queued: the protocol lowers the counted VPFI when the payout is released,
+  never when it is queued, and a cancelled one never lowers it. So its
+  receipt puts each tier effect on that release, and when the route is
+  unread it names neither. The tier copy follows the contract's three
+  gates (a minimum continuous holding, a recency-weighted average, a clamp
+  to the lowest tier held over the current holding) and names no fixed
+  window for the average. Only VPFI in the vault on VPFI's home network
+  (the protocol's own flag) sets the tier; other networks apply a copy of
+  the tier worked out there. Away from it the panel says so, and the
+  receipts say a move there changes no tier instead of the tier effects;
+  when the flag is unread they say that. No VPFI pause exists apart from the protocol's,
+  so only that one is named. Nothing on the page buys, sells, prices or
+  stakes VPFI, and its copy follows RL-6.
+- **RB-REWARDS-TIER** — The Rewards page's tier card and tier table (RW-08,
+  RW-09, RW-10), shown on a network with VPFI set up. The card states the
+  tier and discount the protocol's own fee path applies now
+  (`getEffectiveDiscount`), never one worked out by the app: none while the
+  consent is off; on VPFI's home network, beside the tier the counted VPFI
+  alone would give, with one line when the holding rules hold the effective
+  tier below it; elsewhere, the copy sent from the home network, or that
+  none applies when none was sent or it lapsed. Which holding rule holds a
+  tier down, and the rules' settings, are not stated: the protocol reports
+  neither (#3459); Advanced says the settings cannot be read yet, and the
+  help names the three look-backs. The table is shown on the home network
+  only, where tiers are set: for each tier, its VPFI band with the
+  protocol's exact boundaries (tiers 1 to 3 start at their figure, tier 4
+  above its own, every digit shown), its discount after the 50% cap, and
+  the loan initiation fee and the fee on interest with that discount,
+  computed exactly from the live settings read at one block. Copy follows
+  RL-6.
+- **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
+  The deposit review offers "Sign instead of approve" only when the asset
+  is this network's VPFI, Permit2 has code at its canonical address, and the
+  wallet's own approval for Permit2 over VPFI already covers the amount,
+  all read at the review's block. The app never asks for that approval
+  itself: it is open-ended and shared with other apps, which is the
+  opposite of the exact one-off approval it would replace. The classic
+  approval of exactly the amount stays the default and is always
+  available; Advanced says which condition is missing when signing is not
+  offered. The wallet signs one `PermitTransferFrom` for exactly the
+  amount, with the Diamond as the only spender, a nonce checked unused
+  against Permit2's bitmap and a deadline 30 minutes from the latest block;
+  the receipt states what the signature allows, that only a transaction
+  this wallet sends can use it, and when it lapses. The signed call is
+  dry-run before it is sent, and the outcome is measured from the entry's
+  own `VPFIDepositedToVault` event and the token transfer into the vault.
+  The same Terms gate, pause, sanctions and protected-mode statements apply
+  as on the approval route.
 
 ## 3. Companion specifications
 

@@ -166,6 +166,86 @@
   },
   {
     "type": "function",
+    "name": "getTwaConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "c",
+        "type": "tuple",
+        "internalType": "struct VPFIDiscountFacet.TwaConfig",
+        "components": [
+          {
+            "name": "minStakedDays",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "windowDays",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "recentDays",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "recentWeight",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lookbackCapDays",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "minStakedDaysMin",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "minStakedDaysMax",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "windowDaysMin",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "windowDaysMax",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "recentDaysMin",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "recentDaysMax",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "recentWeightMin",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "recentWeightMax",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserVpfiDiscountState",
     "inputs": [
       {

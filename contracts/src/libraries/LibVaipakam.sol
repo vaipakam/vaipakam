@@ -12204,6 +12204,23 @@ library LibVaipakam {
     uint8 internal constant DEFAULT_TWA_WINDOW_DAYS = 30;
     uint8 internal constant DEFAULT_TWA_RECENT_WEIGHT = 3;
     uint8 internal constant DEFAULT_TWA_MIN_STAKED_DAYS = 3;
+
+    // #3459 — the setter bounds, stated once so `ConfigFacet`'s setters and
+    // `VPFIDiscountFacet.getTwaConfig` read the same numbers (design §5).
+    uint8 internal constant TWA_RECENT_DAYS_MIN = 1;
+    uint8 internal constant TWA_RECENT_DAYS_MAX = 14;
+    uint8 internal constant TWA_WINDOW_DAYS_MIN = 14;
+    /// @dev The window cannot exceed the 30-slot day ring buffer.
+    uint8 internal constant TWA_WINDOW_DAYS_MAX = 30;
+    uint8 internal constant TWA_RECENT_WEIGHT_MIN = 1;
+    uint8 internal constant TWA_RECENT_WEIGHT_MAX = 10;
+    /// @dev Raised from 1 by Codex round-6 P2 #13: 1 reopens same-day
+    ///      flash staking.
+    uint8 internal constant TWA_MIN_STAKED_DAYS_MIN = 2;
+    uint8 internal constant TWA_MIN_STAKED_DAYS_MAX = 14;
+    /// @dev The day ring buffer's length: the lowest-tier look-back over
+    ///      the current holding never reaches further back than this.
+    uint8 internal constant TWA_RING_DAYS = 30;
     uint32 internal constant DEFAULT_MIRROR_TIER_MAX_AGE_SEC = 5_184_000; // 60 days
 
     function cfgTwaRecentDaysEffective() internal view returns (uint8) {

@@ -993,7 +993,7 @@ ofrece ninguna usa un proxy de solo lectura. Tus cifras nunca salen
 del índice compartido. La dirección y la red que se muestran arriba
 son a las que pertenece cada cifra de la página. Si tu wallet está
 en una red que la app no atiende, no se muestra nada tuyo hasta que
-cambies.
+cambies. Toca tu dirección arriba para verla completa, copiarla, cambiar a otra red que la app atiende o desconectarte. La app muestra la dirección en sí, no un nombre de un servicio de nombres, porque no lee nada en la red principal de Ethereum.
 
 <a id="deployments"></a>
 
@@ -1120,7 +1120,7 @@ La página muestra las ofertas abiertas de prestamistas para tus dos tokens, le�
 
 ### Borrow: Revisar y firmar
 
-Antes de que se abra tu wallet, la revisión muestra cada cifra: lo que recibes, la comisión, lo que bloqueas, la tasa, lo que debes en la fecha de vencimiento, el periodo de gracia y lo que puedes perder. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos; si las cifras cambian antes de confirmar, la casilla se desmarca. Luego tu wallet te pide firmar los términos, lo que no cuesta nada, aprobar exactamente la garantía si hace falta, y enviar la aceptación, que la app prueba antes como simulación. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena el préstamo abierto, lo que llegó y lo que se bloqueó. También indica las condiciones del préstamo durante su vida, cada una aunque sea la predeterminada: el reembolso parcial, la venta de la garantía y cualquier refinanciación o préstamo vinculado. El importe adeudado supone que no hay pausa: una pausa retrasa la fecha de vencimiento y los intereses siguen corriendo durante ella.
+Antes de que se abra tu wallet, la revisión muestra cada cifra: lo que recibes, la comisión, lo que bloqueas, la tasa, lo que debes en la fecha de vencimiento, el periodo de gracia y lo que puedes perder. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos; si las cifras cambian antes de confirmar, la casilla se desmarca. Luego tu wallet te pide firmar los términos, lo que no cuesta nada, aprobar exactamente la garantía si hace falta, y enviar la aceptación, que la app prueba antes como simulación. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena el préstamo abierto, lo que llegó y lo que se bloqueó. También indica las condiciones del préstamo durante su vida, cada una aunque sea la predeterminada: el reembolso parcial, la venta de la garantía y cualquier refinanciación o préstamo vinculado. El importe adeudado supone que no hay pausa: una pausa retrasa la fecha de vencimiento y los intereses siguen corriendo durante ella. La revisión también muestra en cuánto valora ahora el protocolo el importe y la garantía; estas cifras son informativas y cambian con el precio.
 
 <a id="borrow-fee"></a>
 
@@ -1138,7 +1138,7 @@ Un préstamo puede costarte tu garantía. Si no has devuelto al final del period
 
 ### Borrow: Publicar tu propia solicitud
 
-Si ninguna oferta encaja, puedes publicar tu propia solicitud de préstamo para tus dos tokens: el importe exacto, la tasa que pagarás, el plazo y la garantía que bloqueas. Al publicarla, la garantía pasa de tu wallet a tu propio vault, donde queda mientras la solicitud esté abierta. Un prestamista que la acepte abre el préstamo al instante, con tus condiciones, sin volver a preguntarte; el importe, menos la comisión de apertura, llega a tu wallet. Puedes cancelarla a partir de cinco minutos después de publicarla, y la garantía vuelve a tu wallet. Una solicitud vencida ya no puede aceptarse; su garantía queda en tu vault hasta que tú, o cualquiera, la cierre, y entonces vuelve solo a tu wallet. Mientras la página de Ofertas de la próxima app no esté construida, sigues, cancelas y cierras una solicitud en la página de Ofertas de la app actual; la revisión lo dice antes de bloquear nada.
+Si ninguna oferta encaja, puedes publicar tu propia solicitud de préstamo para tus dos tokens: el importe exacto, la tasa que pagarás, el plazo y la garantía que bloqueas. Al publicarla, la garantía pasa de tu wallet a tu propio vault, donde queda mientras la solicitud esté abierta. Un prestamista que la acepte abre el préstamo al instante, con tus condiciones, sin volver a preguntarte; el importe, menos la comisión de apertura, llega a tu wallet. Puedes cancelarla a partir de cinco minutos después de publicarla, y la garantía vuelve a tu wallet. Una solicitud vencida ya no puede aceptarse; su garantía queda en tu vault hasta que tú, o cualquiera, la cierre, y entonces vuelve solo a tu wallet. Mientras la página de Ofertas de la próxima app no esté construida, sigues, cancelas y cierras una solicitud en la página de Ofertas de la app actual; la revisión lo dice antes de bloquear nada. Bajo cada importe que escribes, el formulario muestra en cuánto lo valora ahora el protocolo, en su propia unidad; para un activo sin precio lo dice en lugar de dar una cifra.
 
 <a id="borrow-request-terms"></a>
 
@@ -1499,3 +1499,27 @@ La página de un alquiler en curso te ofrece, como arrendatario, Cerrar el alqui
 ### Alquilar: riesgos de cerrar
 
 Cerrar termina tu derecho a usar el NFT en el acto, aunque queden días acordados, y no se puede deshacer. El alquiler se cuenta cuando el cierre se confirma, así que un día que empieza antes se paga entero; con plazo completo se paga cada día acordado aún no liquidado, por pronto que cierres. Tras el fin del plazo se toma un recargo por demora de tu margen: el 1 % del alquiler total más el 0,5 % por cada día de retraso, como máximo el 5 % y nunca más que el margen. Pasado el periodo de gracia el protocolo rechaza el cierre; el alquiler termina entonces cuando sus días restantes se liquidan uno a uno, algo que cualquiera puede hacer, o en impago, lo que ocurra primero. El momento posterior que muestra la revisión no es un plazo ni un límite: un cierre que se confirma más tarde se cuenta entonces, así que se puede cobrar más alquiler o un recargo mayor y volverte menos. Lo que vuelve se queda en tu propia bóveda como reclamo hasta que lo cobres.
+
+<a id="rewards-vpfi"></a>
+
+### Recompensas: el VPFI en tu bóveda
+
+Recompensas, en el menú, muestra tus recompensas en esta red, tu VPFI y tu consentimiento al descuento en comisiones. Tus recompensas son los reembolsos por uso que muestra Home y se reclaman igual. Debajo, la página muestra tu VPFI: en tu wallet, contado en tu propia bóveda, libre para retirar ahora y retenido para préstamos, ofertas, reclamos o pagos. El VPFI contado fija tu nivel de descuento en comisiones, y el nivel reduce tus comisiones solo mientras tu consentimiento está activado. El VPFI enviado directamente a tu bóveda, sin un depósito, no se cuenta y nunca sube tu nivel; la página lo muestra y te remite a la página Vault para adoptarlo. «Depositar VPFI» mueve VPFI de tu wallet a tu propia bóveda, que solo tu wallet controla, después de que aceptes los Términos si aún no lo has hecho; el primer depósito crea la bóveda. «Retirar VPFI» devuelve a tu wallet el VPFI libre. Cada revisión dice qué hace el movimiento con tu nivel y si tu consentimiento está activado, y después la app comprueba el resultado en la cadena. En una red donde el VPFI no está configurado, la página lo dice y no ofrece ninguna de las dos cosas. Solo el VPFI de tu bóveda en la red de origen del VPFI fija tu nivel; las demás redes aplican una copia del nivel calculado allí, así que en ellas la página y cada revisión dicen que mover VPFI no cambia ningún nivel.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Recompensas: riesgos de mover VPFI
+
+Tu nivel no es tu saldo de hoy. Es cero hasta que tu tenencia actual haya durado un número mínimo de días. Después sigue un promedio de tus saldos diarios que da más peso a los días recientes. Aparte, nunca supera el nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Así que un depósito sube tu nivel solo con el tiempo, y un aumento breve no lo eleva. Retirar parte de tu VPFI contado puede bajar tu nivel, y retirarlo todo reinicia tu tiempo de tenencia desde tu próximo depósito. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere, y el retiro de una cuenta protegida espera antes su plazo. El retiro de una cuenta protegida cambia tu VPFI contado y tu nivel solo cuando se libera, y uno cancelado no cambia ninguno de los dos. El VPFI en tu bóveda no es garantía y no respalda ningún préstamo. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
+
+<a id="rewards-tier"></a>
+
+### Recompensas: tu nivel de descuento en comisiones
+
+Debajo de tu VPFI, la página muestra el nivel de descuento que el protocolo aplica ahora a tus comisiones, leído del propio protocolo, y cuánto les quita. Mientras tu consentimiento al descuento en comisiones esté desactivado, no se aplica ningún nivel. Una tenencia nueva cuenta del todo solo con el tiempo, así que la página dice cuándo las reglas de tenencia mantienen tu nivel por debajo del que daría solo tu VPFI contado. En la red de origen del VPFI, una tabla muestra cada nivel: el VPFI contado que requiere, su descuento, y la comisión de inicio del préstamo y la comisión sobre los intereses ganados con ese descuento, calculadas con los ajustes actuales de la red. Cada nivel empieza en su cifra, salvo el más alto, que empieza justo por encima. Ningún descuento supera nunca la mitad de una comisión. En otras redes la página muestra el nivel enviado desde la red de origen, y la tabla no se muestra.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Recompensas: firmar en lugar de aprobar
+
+Si tu billetera ya aprobó Permit2 para VPFI, un contrato compartido que muchas aplicaciones usan para mover tokens con una firma, la revisión del depósito de VPFI ofrece «Firmar en lugar de aprobar». Entonces firmas una transferencia única de exactamente el importe, válida 30 minutos, y envías el depósito: dos pasos en la billetera y ninguna aprobación al protocolo. La firma se puede usar una vez, solo en una transacción que envíe tu propia billetera y solo hacia tu propia bóveda; si no se usa, caduca. La aplicación nunca te pide aprobar Permit2 en sí, porque esa aprobación es indefinida y se comparte con otras aplicaciones. Sin ella, la revisión mantiene la aprobación habitual de exactamente el importe. En una red sin Permit2 no se ofrece esta opción.

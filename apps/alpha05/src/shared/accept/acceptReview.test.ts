@@ -42,6 +42,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     creatorGate: 0,
     consent: true,
     positionFlow: 'not-bound',
+    values: { principal: { kind: 'value', value: 3n * 10n ** 18n }, collateral: { kind: 'unpriced' }, unit: 'USD' },
     readAt: 1,
     ...over,
   } as AcceptReview;
@@ -64,6 +65,15 @@ describe('reviewBlockers', () => {
 
 describe('acceptReceipt', () => {
   const labels = (r: AcceptReview) => acceptReceipt(r, null, copy).rows.map((x) => x.label);
+  it('RB-CLICKS — states what the protocol values each leg at now, never binding, and an unread one as unread', () => {
+    const rows = acceptReceipt(review(), null, copy).rows;
+    const principal = rows.find((x) => x.label === 'numeraire.rowPrincipal');
+    const collateral = rows.find((x) => x.label === 'numeraire.rowCollateral');
+    expect(principal).toMatchObject({ binding: false, value: { kind: 'text', text: 'numeraire.value' } });
+    expect(collateral).toMatchObject({ binding: false, value: { kind: 'text', text: 'numeraire.unpriced' } });
+    const unread = acceptReceipt(review({ values: { principal: null, collateral: null, unit: null } }), null, copy).rows;
+    expect(unread.find((x) => x.label === 'numeraire.rowPrincipal')?.value).toEqual({ kind: 'unknown', why: 'numeraire.rowUnread' });
+  });
   it('states every lifecycle term the signature binds, defaults included', () => {
     for (const key of ['accept.rowPartial', 'accept.rowPrepayListing', 'accept.rowParallelSale', 'accept.rowRefinance', 'accept.rowLinked'])
       expect(labels(review())).toContain(key);
