@@ -28,6 +28,7 @@ import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
 import { summarize, type LegOutcome } from './outcome';
+import { readRevertCause, revertSentence, type RevertReader } from './revertCause';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
 import { anchoredReader, type AnchoredReader } from './anchored';
@@ -101,7 +102,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   const { key } = opts;
   const entry = useTxEntry(key);
   const config = useConfig();
-  const { text } = useCopy();
+  const { text, format } = useCopy();
 
   // Every transition reads and writes the STORE, never a component's state,
   // so a promise still running after its page unmounted keeps recording.
@@ -155,7 +156,11 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       if (receipt.status === 'reverted') {
         // Reverted: one leg saying it changed nothing, whatever the chain
         // now shows, plus what the flow's clean-up put back.
-        legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: text('flow.reverted') }];
+        // Why, where the chain lets it be read (#3482): the gas spent, or a
+        // replay on the state before its block. It explains; it never
+        // changes the verdict.
+        const cause = await readRevertCause(client as unknown as RevertReader, receipt);
+        legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: `${text('flow.reverted')} ${revertSentence(cause, format)}` }];
         legs = [...legs, ...(await cleanUpAfterNoEffect(ctx))];
       } else {
         try {
@@ -167,7 +172,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
-    [apply, config, text],
+    [apply, config, text, format],
   );
 
   const run = useCallback(

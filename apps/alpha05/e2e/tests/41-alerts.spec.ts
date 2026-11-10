@@ -14,17 +14,12 @@ import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenanc
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
-import { addNotifications, resetNotifications, setIndexPosture } from '../lib/stub';
+import { addNotifications, setIndexPosture } from '../lib/stub';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
-
-test.afterEach(async () => {
-  await setIndexPosture('live');
-  await resetNotifications();
-});
 
 test('the inbox lists the wallet’s alerts, counts the new ones on the bell, and states what it cannot read', async ({ launchWallet }) => {
   const sc = scenario();

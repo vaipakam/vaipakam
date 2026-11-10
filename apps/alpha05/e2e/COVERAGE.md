@@ -11,11 +11,18 @@ RPC proxy; every spec runs twice, on a desktop window and on a phone-sized
 touch device, because about half of the app's readers are on phones) and **Live-only** (a committed driver run after the deploy, with
 the reason it cannot run on Anvil).
 
-Every CI-Anvil test runs on the chain as the suite's setup left it: the
-shared fixture (`e2e/lib/wallet.ts`) takes a snapshot before each test,
-reverts it after whatever the outcome, and mines a block so the next test's
-writes are estimated at the present time (#3482). A spec does not take its
-own snapshot to clean up after itself.
+Every CI-Anvil test runs on the chain and the stand-in services as the
+suite's setup left them: the shared fixture (`e2e/lib/wallet.ts`) takes a
+snapshot before each test, reverts it after whatever the outcome, mines a
+block so the next test's writes are estimated at the present time, and puts
+every stand-in setting back (index posture, unplaced loans, added inbox
+rows, the alert service) (#3482). A spec does not clean up after itself.
+
+A reverted transaction's finish card names why where the chain lets it be
+read (#3482): the whole gas allowance spent, or the protocol's refusal when
+the call is replayed on the state before its block (`src/shared/tx/revertCause.test.ts`;
+no spec forces a revert, since an Anvil accept that reverts only by timing
+cannot be staged on demand).
 
 | Rows | Feature | CI-Anvil | Live-only |
 | --- | --- | --- | --- |

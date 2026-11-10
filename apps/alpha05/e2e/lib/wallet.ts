@@ -7,6 +7,7 @@ import { connectWallet as connectWalletShared, walletTest } from '@vaipakam/e2e-
 import type { Page } from '@playwright/test';
 import { E2E_CHAIN_ID } from '@vaipakam/anvil-harness/fixture';
 import { ANVIL_URL, anvilRpc } from './anvil';
+import { resetStandIns } from './stub';
 import { accountFor, type Role } from './wallets';
 
 export type { WalletFlags, WalletSession } from '@vaipakam/e2e-wallet';
@@ -32,10 +33,13 @@ export function onPhone(projectName: string): boolean {
 }
 
 /**
- * Every test runs on the chain as the suite's setup left it, and leaves it
- * that way (#3482). The suite shares one node, so this is the one place the
- * isolation lives: a snapshot before each test (before any page opens) and,
- * after it, whatever the outcome, a revert to that snapshot. A test that
+ * Every test runs on the chain and the stand-in services as the suite's
+ * setup left them, and leaves them that way (#3482). The suite shares one
+ * node and one stand-in Worker, so this is the one place the isolation
+ * lives: a snapshot before each test (before any page opens) and, after it,
+ * whatever the outcome, a revert to that snapshot and a reset of every
+ * stand-in setting a spec can change (index posture, unplaced loans, added
+ * inbox rows, the alert service), which live outside the chain. A test that
  * fails part-way, or an attempt that is retried, therefore leaves no minted
  * token, allowance or offer behind for a later spec to trip over.
  *
@@ -56,8 +60,8 @@ export const test = walletTest<Role>({
   advancedModeStorage: { 'app.mode': 'advanced' },
   // Every spec runs on the desktop AND the phone project (playwright.config).
   deviceFromProject: true,
-}).extend<{ chainIsolation: void }>({
-  chainIsolation: [
+}).extend<{ isolation: void }>({
+  isolation: [
     async ({}, use) => {
       const snapshot = await anvilRpc<string>('evm_snapshot');
       try {
@@ -65,6 +69,7 @@ export const test = walletTest<Role>({
       } finally {
         const reverted = await anvilRpc<boolean>('evm_revert', [snapshot]);
         await anvilRpc('evm_mine');
+        await resetStandIns();
         if (reverted !== true) throw new Error(`the chain could not be put back after this test (snapshot ${snapshot})`);
       }
     },

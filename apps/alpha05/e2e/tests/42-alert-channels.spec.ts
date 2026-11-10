@@ -41,10 +41,6 @@ async function openChannels(page: Page): Promise<void> {
   await expect(page.getByTestId('alert-channels')).toBeVisible({ timeout: 30_000 });
 }
 
-test.beforeEach(async () => {
-  await controlAgent({ reset: true });
-});
-
 test('Telegram is linked with a code, proven by a test alert, and unlinked, each signed', async ({ launchWallet }) => {
   const { page, account } = await launchWallet('lender');
   const me = account.address;

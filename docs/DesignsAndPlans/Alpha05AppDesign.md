@@ -376,6 +376,15 @@ button that would fail. A feature whose prerequisite cannot be verified is
 never an actionable signing step; an unavailable convenience may ship with
 its gap disclosed.
 
+A transaction that mined and reverted is reported as changing nothing, and
+the finish card adds why where the chain lets it be read (#3482): when the
+receipt spent the whole gas allowance, it names that allowance and says it
+most likely ran out of gas; otherwise it replays the call on the state just
+before its block and states the protocol's refusal as the likely reason,
+since a transaction earlier in the same block can change it. A replay that
+goes through says the block most likely changed what the call relied on; a
+replay that cannot run says so. The reason never changes the verdict.
+
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant
 digits below one, cut toward zero and never rounded up, so a small amount

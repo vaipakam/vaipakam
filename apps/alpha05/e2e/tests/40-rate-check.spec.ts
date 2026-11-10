@@ -35,11 +35,6 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test.afterEach(async () => {
-  await setIndexPosture('live');
-  await setUnplacedLoans(0, false);
-});
-
 test('the rate warning compares an offer with recent loans on its pair and term, and never blocks', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
