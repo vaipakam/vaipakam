@@ -127,6 +127,14 @@ library LibTreasuryBuyback {
         uint256 toKeepers,
         uint256 overflow
     );
+    /// @notice #908 — the reward-emissions + keeper top-up headroom left
+    ///         free of other pending orders' floors (`free`) cannot hold
+    ///         what this step needs (`needed`): a commit whose `minVpfiOut`
+    ///         would not fit, a fill that would eat into another pending
+    ///         order's floor, or a target lowered below the floors held.
+    ///         Raise a top-up target, or wait for pending orders to settle
+    ///         or expire.
+    error BuybackHeadroomShort(uint256 needed, uint256 free);
     /// @notice Codex Sub 3.B round-3 P1 #1 — actual VPFI delivered
     ///         was below the operator-pinned floor. Stops
     ///         underpriced fills from draining the source-token
@@ -265,6 +273,15 @@ library LibTreasuryBuyback {
         if (amountIn > budget) {
             revert BuybackBudgetInsufficient(token, amountIn, budget);
         }
+        // #908 — hold top-up headroom for this order's VPFI floor, so the
+        // order can always settle once its auction reaches `minVpfiOut`.
+        // Without it, a commit made while both targets are zero (the
+        // default) or too low for the floor could never fill: every fill
+        // would revert `BuybackOverflowNotAllowed` until the order expired.
+        uint256 freeRoom = freeHeadroom(s);
+        if (minVpfiOut > freeRoom) revert BuybackHeadroomShort(minVpfiOut, freeRoom);
+        s.buybackVpfiFloorReserved += minVpfiOut;
+        s.buybackVpfiFloorHeld[orderHash] = minVpfiOut;
         // Codex Sub 3.B round-1 P1 #3 — LOP must be configured
         // before we can grant the allowance Fusion fills need to
         // pull the source token from the diamond.
@@ -449,6 +466,12 @@ library LibTreasuryBuyback {
             );
         }
         s.buybackVpfiDeliveredSoFar[orderHash] = uint128(cumulativeVpfi);
+        // #908 — the part of this delivery that meets the order's own floor
+        // releases that much of the headroom the order recorded at commit;
+        // anything above the floor must fit in the free headroom, checked
+        // after routing below. An order with no record (committed before
+        // the record existed) releases nothing.
+        _releaseFloor(s, orderHash, actualVpfi);
 
         // Codex round-3 P1 #2 — verify `info.token` actually left
         // the diamond. Per-partial check: source delta must >=
@@ -474,6 +497,9 @@ library LibTreasuryBuyback {
         // disables the step. #687-C removed the step-3 staking-pool
         // overflow; any remainder past both targets reverts.
         _routePriority(s, actualVpfi);
+        // #908 — a delivery above this order's floor must not take headroom
+        // held for another pending order's floor.
+        requireHeadroomHeld(s);
 
         // Codex round-1 P1 #3 — decrement the shared aggregate
         // allowance + re-apply the cap so an in-flight commit on
@@ -510,6 +536,10 @@ library LibTreasuryBuyback {
             // settled orders.
             delete s.buybackConsumedSoFar[orderHash];
             delete s.buybackVpfiDeliveredSoFar[orderHash];
+            // #908 — a filled order holds no headroom. Its floor is met by
+            // now, so this releases nothing in practice; it keeps the
+            // record and the aggregate exact if it ever does not.
+            _releaseFloor(s, orderHash, type(uint256).max);
             // Final partial event uses the cumulative actualVpfi
             // total — but we only have this partial's delta. Emit
             // `BuybackIntentFilled` with the per-partial figure and
@@ -543,6 +573,9 @@ library LibTreasuryBuyback {
         if (block.timestamp < info.expiresAt) {
             revert BuybackNotYetExpired(info.expiresAt, block.timestamp);
         }
+
+        // #908 — release the headroom still held for this order's floor.
+        _releaseFloor(s, orderHash, type(uint256).max);
 
         // T-087 Sub 3.C — release ONLY the unconsumed portion. Any
         // amount already swapped via partial fills has already been
@@ -584,6 +617,73 @@ library LibTreasuryBuyback {
         delete s.buybackVpfiDeliveredSoFar[orderHash];
 
         emit BuybackIntentExpired(orderHash, info.token, uint96(unconsumed));
+    }
+
+    // ─── #908 — top-up headroom held for pending floors ──────────────
+
+    /**
+     * @dev The top-up headroom: the gap to the reward-emissions target plus
+     *      the gap to the keeper target (a target at or below its budget
+     *      contributes nothing). It is exactly what {_routePriority} can
+     *      absorb before it reverts.
+     */
+    function topUpHeadroom(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256)
+    {
+        return _gap(s.cfgRewardEmissionsTopUpTarget, s.rewardEmissionsBudget)
+            + _gap(s.cfgKeeperRewardTopUpTarget, s.keeperRewardBudget);
+    }
+
+    /// @dev The headroom not held for any pending order's floor.
+    function freeHeadroom(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 room = topUpHeadroom(s);
+        uint256 held = s.buybackVpfiFloorReserved;
+        return room > held ? room - held : 0;
+    }
+
+    /**
+     * @dev Refuse a state in which the headroom no longer covers the floors
+     *      held. Run after a fill, and by the target setters, so neither a
+     *      delivery above its floor nor a lowered target can strand a
+     *      pending order.
+     */
+    function requireHeadroomHeld(LibVaipakam.Storage storage s) internal view {
+        uint256 room = topUpHeadroom(s);
+        uint256 held = s.buybackVpfiFloorReserved;
+        if (room < held) revert BuybackHeadroomShort(held, room);
+    }
+
+    /**
+     * @dev #908 — release up to `amount` of the headroom `orderHash` recorded
+     *      at commit, from its own record and from the aggregate together.
+     *      Bounded by the record, so it never releases headroom the order
+     *      did not hold; the record is cleared once it reaches zero.
+     */
+    function _releaseFloor(
+        LibVaipakam.Storage storage s,
+        bytes32 orderHash,
+        uint256 amount
+    ) private {
+        uint256 held = s.buybackVpfiFloorHeld[orderHash];
+        if (held == 0) return;
+        uint256 release = _min(amount, held);
+        s.buybackVpfiFloorReserved -= release;
+        if (release == held) delete s.buybackVpfiFloorHeld[orderHash];
+        else s.buybackVpfiFloorHeld[orderHash] = held - release;
+    }
+
+    function _gap(uint256 target, uint256 current) private pure returns (uint256) {
+        return target > current ? target - current : 0;
+    }
+
+    function _min(uint256 a, uint256 b) private pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     /**

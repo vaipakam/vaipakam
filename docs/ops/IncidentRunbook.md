@@ -785,7 +785,7 @@ contains the incident before considering the full `AdminFacet.pause()` (§3).
 | Incident scope | Lever | Effect |
 | --- | --- | --- |
 | A single DEX/aggregator swap venue compromised or illiquid | `AdminFacet.setSwapAdapterDisabled(adapter, true)` | Failover path **skips** the venue; split path **reverts `SwapVenuePaused`**. Other venues + the rest of the protocol keep running. Re-enable with `false` — no reshuffle. |
-| Keeper-key compromise / misbehaving bot fleet | `AdminFacet.setKeepersPaused(true)` | Freezes ALL delegated third-party keepers (liquidation follow-ups, auto-roll, backstop buyout, aggregator keeper path). Owners still act on their own positions; permissionless liquidation stays open. |
+| Keeper-key compromise / misbehaving bot fleet | `AdminFacet.setKeepersPaused(true)` | Freezes every keeper authority: delegated third-party keepers (liquidation follow-ups, auto-roll, aggregator keeper path), every `KEEPER_ROLE` entry (backstop buyout, liquidity-tier relay, reward commitment report) and the reward remittance keeper (#1638). Owners still act on their own positions; permissionless liquidation and ADMIN's own remittance stay open. On a key compromise also revoke the key's `KEEPER_ROLE` so the unpause does not hand it back. |
 | A Yearn-style external yield aggregator compromised / mispricing | `AdminFacet.setAggregatorAdaptersPaused(true)` | Blocks onboarding a new aggregator AND filling an existing aggregator's standing intent. Ordinary user intents + backstop unaffected. |
 | Peer-protocol on-chain LTV reads look manipulated | `AdminFacet.setPeerLtvReadsPaused(true)` | Depth-tiered limits fall back to the governance-set cap (never the library default). The setter also invalidates the tier-LTV cache, so an unpause can't re-trust a stale reading. |
 
@@ -798,7 +798,7 @@ asset-level `AdminFacet.pauseAsset`) before relying on one of these.
 
 - The targeted feature is actually stopped (e.g. a `triggerLiquidationSplit`
   through a paused venue reverts `SwapVenuePaused`; a paused keeper path
-  reverts `KeeperAccessRequired` / `KeepersGloballyPaused`).
+  reverts `KeeperAccessRequired`, `KeepersPaused` or `KeepersGloballyPaused`).
 - Unrelated paths still run (ordinary liquidation, repayment, claims) —
   these are surgical levers, not a global pause.
 

@@ -388,6 +388,24 @@
   },
   {
     "type": "function",
+    "name": "getBuybackTopUpHeadroom",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "headroom",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBuybackTwapMaxWindowSec",
     "inputs": [],
     "outputs": [
@@ -1680,6 +1698,22 @@
     "inputs": [
       {
         "name": "expiresAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackHeadroomShort",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "free",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -3211,6 +3245,11 @@
   {
     "type": "error",
     "name": "KeeperWhitelistFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeepersPaused",
     "inputs": []
   },
   {

@@ -419,6 +419,22 @@
   },
   {
     "type": "error",
+    "name": "BuybackHeadroomShort",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "free",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BuybackOrderNotPending",
     "inputs": [
       {

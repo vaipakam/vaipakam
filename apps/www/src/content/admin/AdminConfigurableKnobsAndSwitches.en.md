@@ -1819,29 +1819,36 @@ after handover — the same posture as the #399 backstop switches.
 - **Getter:** `AdminFacet.keepersPaused() -> bool`
 - **Setter:** `AdminFacet.setKeepersPaused(bool value)` → emits
   `KeepersPausedSet`.
-- **What `true` blocks:** all delegated third-party keeper activity
-  protocol-wide — `ConfigFacet.setKeeperTier`, the `LibAuth.requireKeeperFor`
-  / `requireKeeperForPrincipal` gates (after the owner/principal
-  short-circuit), the backstop buyout (`ClaimFacet._claimViaBackstopImpl`),
-  and the aggregator adapter's keeper path
-  (`AggregatorAdapterImplementation`). Position owners can **always** still
-  act on their own positions directly, and ordinary **permissionless**
-  liquidation stays open — only delegated keepers are frozen.
-- **What `true` does NOT block — read this before relying on it in an
-  incident.** The flag is consulted in `LibAuth` and at the sites listed
-  above; it is not a global gate on everything a `KEEPER_ROLE` holder
-  can call. `RewardCommitmentFacet.submitCommitmentBatch` is
-  `onlyRole(KEEPER_ROLE)` with no keeper-pause check, and it is the
-  entry point the production keeper's commitment-report pass uses. A
-  compromised key can therefore keep submitting — or grief — reward
-  commitments while the console shows keepers paused, which can delay
-  remittance until someone resets the accumulation. **On a key
-  compromise, pausing is not sufficient: revoke `KEEPER_ROLE` from the
-  compromised address as part of the same action.**
+- **What `true` blocks:** every keeper authority the Diamond grants
+  (#1638, owner decision D13 2026-10-16: "a pause flag that does not
+  pause is a disclosure defect").
+  - **Delegated keepers:** the `LibAuth.requireKeeperFor` /
+    `requireKeeperForPrincipal` gates (after the owner/principal
+    short-circuit), and the aggregator adapter's keeper path
+    (`AggregatorAdapterImplementation`, reverts `KeepersGloballyPaused`).
+  - **Every `KEEPER_ROLE` entry**, through the one gate
+    `LibAuth.requireActiveKeeper` (reverts `KeepersPaused`): the backstop
+    buyout (`ClaimFacet.claimAsLenderViaBackstop`), the liquidity-tier
+    relay (`ConfigFacet.setKeeperTier`) and the reward commitment report
+    (`RewardCommitmentFacet.submitCommitmentBatch`).
+  - **The reward remittance keeper** (`rewardRemittanceKeeper`, the
+    optional EOA beside ADMIN on `RewardRemittanceFacet`'s remit entry),
+    which reverts `KeepersPaused`.
+- **What `true` does NOT block:** position owners acting on their own
+  positions, ordinary **permissionless** liquidation, and ADMIN's own
+  reward remittance. Nothing a refused keeper call would have done is
+  lost: a refused commitment batch or remit batch moved no cursor and no
+  funds, so the keeper resends it after the unpause. While paused, the
+  commitment report and the keeper's remittances wait, so rewards reach
+  mirror chains later; ADMIN can remit by hand if that delay matters.
+- **What it does not replace.** The pause stops what a keeper key can do;
+  it does not take the key's role away. On a key compromise, also revoke
+  `KEEPER_ROLE` from the compromised address (and clear or replace
+  `rewardRemittanceKeeper`), so unpausing later does not hand the key
+  back its powers.
 - **When to flip on:** a keeper-key compromise or a misbehaving bot fleet
   (mass mis-priced auto-actions). It is the broad incident lever; the
-  per-user keeper revoke is the narrow one. Note the caveat above — for a
-  compromise the two are used together, not as alternatives.
+  per-user keeper revoke is the narrow one.
 
 ### `aggregatorAdaptersPaused` — external yield-aggregator pause
 

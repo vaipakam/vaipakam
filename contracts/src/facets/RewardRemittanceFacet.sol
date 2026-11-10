@@ -370,9 +370,15 @@ contract RewardRemittanceFacet is
         if (keeper == address(0) || msg.sender != keeper) {
             revert NotRewardRemitter(msg.sender);
         }
+        // #1638 — the global keeper pause stops the keeper EOA too, so the
+        // switch freezes every keeper authority the Diamond grants. ADMIN
+        // (above) can still remit while keepers are paused, and a refused
+        // batch moved nothing, so the keeper resends it after the unpause.
+        if (LibVaipakam.cfgKeepersPaused()) revert KeepersPaused();
     }
 
-    /// @dev ADMIN, or the optional keeper EOA (when configured).
+    /// @dev ADMIN, or the optional keeper EOA (when configured) while the
+    ///      global keeper pause is off.
     modifier onlyRemitter() {
         _checkRemitter();
         _;

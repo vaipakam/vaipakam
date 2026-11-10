@@ -10,6 +10,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibBackstopOracleGate} from "../src/libraries/LibBackstopOracleGate.sol";
@@ -592,7 +593,7 @@ contract BackstopAbsorbTest is SetupTest {
         vm.prank(owner);
         AdminFacet(address(diamond)).setKeepersPaused(true);
         vm.prank(owner);
-        vm.expectRevert(ClaimFacet.KeepersPaused.selector);
+        vm.expectRevert(IVaipakamErrors.KeepersPaused.selector);
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
