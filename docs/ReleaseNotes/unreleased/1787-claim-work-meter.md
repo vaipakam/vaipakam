@@ -1,4 +1,4 @@
-## Thread — Reward claims do bounded work per call (PR #<n>)
+## Thread — Reward claims do bounded work per call (PR #3473)
 
 A reward claim used to bound its walk by days alone, at most thirty finalized days per call, while the cost of a day grows with the number of the wallet's entries on it. Measured on the previous code, one claim cost 28.4 million gas for 40 loans over a month, 27.3 million for 200 loans on a single day, and 20.4 million just to prepare a 40-day backlog of 10 loans. All of these are above the 16.8 million gas a single transaction may use on Ethereum. The next claim faced the same work, so the wallet's rewards stayed locked. This needed no attacker: an ordinary user with about twenty loans who skipped a month was enough.
 
@@ -6,6 +6,6 @@ Every claim, and every step that settles a long backlog (a claim domain's prepar
 
 A day with more of the wallet's entries than one call can settle is paid over successive calls, its leading entries first. The wallet's total for the day is unchanged, because its per-day ceiling binds the same sum. How that total splits between its loans now follows the order they were settled in. A claim domain takes at most 32 entries into its snapshot, so every day of it fits one call in every step that walks it. Entries beyond that wait for the next domain, as entries accruing after a domain opens already did. The expiry clock does not run for an entry the next claim would not reach.
 
-This advances #1787. Each claim still reads every unsettled entry the wallet holds once (about 18 thousand gas each), so a wallet past roughly 500 unsettled entries is still too large for one claim. A bounded claim list with an arrival-order wait queue, the second half of the fix, follows in its own change.
+This advances #1787. Each claim still reads every unsettled entry the wallet holds once (about 18 thousand gas each), so a wallet past roughly 500 unsettled entries is still too large for one claim. A bound on how many entries one claim reads, the second half of the fix, follows in its own change.
 
 > Caveat: a wallet with more than about 500 unsettled reward entries still cannot claim until the claim list bound lands.
