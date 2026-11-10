@@ -1,4 +1,4 @@
-## Keeper — daily market-cap rankings for asset trust tiers (PR #<n>)
+## Keeper — daily market-cap rankings for asset trust tiers (PR #3495)
 
 The keeper has a new duty, the asset rankings pass. It keeps the rankings
 behind the app's asset trust tiers fresh: blue chip, top 100, and so on down
