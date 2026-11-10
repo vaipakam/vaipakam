@@ -30,7 +30,11 @@ describe('an offer’s page', () => {
     expect(detailAction(detail({ state: 'expired' }), null)).toEqual({ kind: 'connect' });
   });
   it('says where a kind this app does not take yet is taken', () => {
-    expect(detailAction(detail({}, offer({ assetType: 1 })), BORROWER)).toEqual({ kind: 'elsewhere', why: 'rental' });
+    // An owner's listing is rented here, and a renter's request is taken here.
+    expect(detailAction(detail({}, offer({ assetType: 1 })), BORROWER)).toEqual({ kind: 'rent' });
+    expect(detailAction(detail({}, offer({ assetType: 2 })), null)).toEqual({ kind: 'connect' });
+    expect(detailAction(detail({}, offer({ assetType: 1, offerType: OFFER_BORROWER, creator: BORROWER })), LENDER)).toEqual({ kind: 'take-request' });
+    expect(detailAction(detail({}, offer({ assetType: 1, offerType: OFFER_BORROWER, creator: BORROWER })), null)).toEqual({ kind: 'connect' });
     expect(detailAction(detail({}, offer({ collateralAssetType: 1 })), BORROWER)).toEqual({ kind: 'elsewhere', why: 'nft' });
     expect(detailAction(detail({ purpose: 'loan-sale', linkedLoanId: 2n }), BORROWER)).toEqual({ kind: 'elsewhere', why: 'loan-sale' });
     expect(detailAction(detail({ purpose: 'offset', linkedLoanId: 2n }), null)).toEqual({ kind: 'elsewhere', why: 'offset' });

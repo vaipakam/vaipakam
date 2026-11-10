@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPriceGuard} from "./LibPriceGuard.sol";
 
 /// @dev Minimal diamond-routed view the risk gate needs. `getEffectiveLiquidityTier`
 ///      lives on `OracleFacet`; calling it through `address(this)` (the Diamond)
@@ -69,19 +70,16 @@ library LibRiskAccess {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// @notice O6 — is `asset` blue-chip for the risk gate?
-    /// @dev    `asset==wethContract` covers WETH even when it is the sole
-    ///         (implicit-fallback) numeraire and so tiers as 0 against itself;
-    ///         `isPaaAsset` covers the explicitly-configured quote basket; the
-    ///         tier-3 clause covers everything that earns blue-chip depth on its
-    ///         own pools.
-    function _isBlueChip(LibVaipakam.Storage storage s, address asset)
-        internal
-        view
-        returns (bool)
-    {
+    /// @dev    `isPaaAsset` covers the explicitly-configured quote basket;
+    ///         `asset == WETH` (the price guard's, #3272) covers WETH even
+    ///         when it is the sole (implicit-fallback) numeraire and so tiers
+    ///         as 0 against itself; the tier-3 clause covers everything that
+    ///         earns blue-chip depth on its own pools. The storage read goes
+    ///         first, so a listed quote never pays for the guard lookup.
+    function _isBlueChip(address asset) internal view returns (bool) {
         if (asset == address(0)) return false;
-        if (asset == s.wethContract) return true;
         if (LibVaipakam.isPaaAsset(asset)) return true;
+        if (asset == LibPriceGuard.weth()) return true;
         return IRiskAccessOracle(address(this)).getEffectiveLiquidityTier(asset)
             == 3;
     }
@@ -91,12 +89,12 @@ library LibRiskAccess {
     /// @dev    Blue-chip ⇒ `BlueChipOnly` (every vault). Else tier ≥ 1 (liquid)
     ///         ⇒ `BroadLiquid`. Else (tier 0, unpriced/illiquid, and not a
     ///         numeraire) ⇒ `IlliquidCustom`.
-    function _assetRequiredLevel(LibVaipakam.Storage storage s, address asset)
+    function _assetRequiredLevel(address asset)
         internal
         view
         returns (LibVaipakam.RiskAccessLevel)
     {
-        if (_isBlueChip(s, asset)) {
+        if (_isBlueChip(asset)) {
             return LibVaipakam.RiskAccessLevel.BlueChipOnly;
         }
         uint8 tier =
@@ -113,21 +111,21 @@ library LibRiskAccess {
     ///         LENDING leg, whose risk is the substituted `prepayAsset` (so the
     ///         classification asset for a rental lend leg is the prepay token,
     ///         NOT the rented NFT).
-    function _lendLegLevel(LibVaipakam.Storage storage s, PairId memory p)
+    function _lendLegLevel(PairId memory p)
         private
         view
         returns (LibVaipakam.RiskAccessLevel level, address classAsset)
     {
         if (_isNft(p.lendType)) {
             if (p.prepayAsset != address(0)) {
-                return (_assetRequiredLevel(s, p.prepayAsset), p.prepayAsset); // rental
+                return (_assetRequiredLevel(p.prepayAsset), p.prepayAsset); // rental
             }
             return (LibVaipakam.RiskAccessLevel.IlliquidCustom, p.lendAsset); // bare NFT loan
         }
-        return (_assetRequiredLevel(s, p.lendAsset), p.lendAsset);
+        return (_assetRequiredLevel(p.lendAsset), p.lendAsset);
     }
 
-    function _collLegLevel(LibVaipakam.Storage storage s, PairId memory p)
+    function _collLegLevel(PairId memory p)
         private
         view
         returns (LibVaipakam.RiskAccessLevel level, address classAsset)
@@ -142,17 +140,17 @@ library LibRiskAccess {
         if (_isNft(p.collType)) {
             return (LibVaipakam.RiskAccessLevel.IlliquidCustom, p.collAsset);
         }
-        return (_assetRequiredLevel(s, p.collAsset), p.collAsset);
+        return (_assetRequiredLevel(p.collAsset), p.collAsset);
     }
 
     /// @notice The riskier of the two legs governs the pair's required tier.
-    function _pairRequiredLevel(LibVaipakam.Storage storage s, PairId memory p)
+    function _pairRequiredLevel(PairId memory p)
         internal
         view
         returns (LibVaipakam.RiskAccessLevel)
     {
-        (LibVaipakam.RiskAccessLevel lend,) = _lendLegLevel(s, p);
-        (LibVaipakam.RiskAccessLevel coll,) = _collLegLevel(s, p);
+        (LibVaipakam.RiskAccessLevel lend,) = _lendLegLevel(p);
+        (LibVaipakam.RiskAccessLevel coll,) = _collLegLevel(p);
         return uint8(lend) >= uint8(coll) ? lend : coll;
     }
 
@@ -284,7 +282,7 @@ library LibRiskAccess {
         address actor,
         PairId memory p
     ) internal view returns (bool) {
-        if (_pairRequiredLevel(s, p) != LibVaipakam.RiskAccessLevel.BroadLiquid) {
+        if (_pairRequiredLevel(p) != LibVaipakam.RiskAccessLevel.BroadLiquid) {
             return false;
         }
         return _strictModeEffective(s, actor)
@@ -314,7 +312,7 @@ library LibRiskAccess {
         address actor,
         PairId memory p
     ) internal view {
-        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
+        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(p);
         LibVaipakam.RiskAccessLevel actorTier = effectiveTier(s, actor);
         if (uint8(actorTier) < uint8(required)) {
             revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
@@ -350,7 +348,7 @@ library LibRiskAccess {
         address actor,
         PairId memory p
     ) internal view returns (uint8) {
-        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
+        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(p);
         if (uint8(effectiveTier(s, actor)) < uint8(required)) return 1;
         if (
             required == LibVaipakam.RiskAccessLevel.IlliquidCustom

@@ -16,6 +16,8 @@ import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardConfig} from "../lib/PriceGuardConfig.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
@@ -439,10 +441,13 @@ abstract contract PositiveFlowsBase is Script {
         _fundIfNeeded(newLender, 0.05 ether);
         _fundIfNeeded(newBorrower, 0.05 ether);
 
-        OracleAdminFacet(diamond).setChainlinkRegistry(address(registryRef));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOMINATION);
-        OracleAdminFacet(diamond).setWethContract(address(weth));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeedRef));
+        // #3272 part 2 - the price guard holds the pricing config; the
+        // rehearsal chain's zero delay applies each entry at once.
+        {
+            PriceGuard guard = PriceGuardConfig.guardOf(diamond);
+            PriceGuardConfig.requireIdentity(guard, USD_DENOMINATION, address(0));
+            PriceGuardConfig.pointAt(guard, address(registryRef), address(weth), address(wethFeedRef));
+        }
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Ref));
         // WETH plus a quote other than WETH, so WETH itself has a tier
         // route (#2747; the setter refuses WETH alone).

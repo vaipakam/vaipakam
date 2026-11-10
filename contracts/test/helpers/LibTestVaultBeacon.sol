@@ -21,6 +21,8 @@ interface IEndpointReads {
 interface IExecutorSeaport {
     function seaport() external view returns (address);
 }
+import {MockProtocolRegistry} from "../mocks/MockProtocolRegistry.sol";
+import {LibTestPriceGuard} from "./LibTestPriceGuard.sol";
 import {VaultOutflowFacet} from "../../src/facets/VaultOutflowFacet.sol";
 import {VaultDepositoryFacet} from "../../src/facets/VaultDepositoryFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -41,11 +43,16 @@ library LibTestVaultBeacon {
     ///      is installed here (idempotently) and the endpoints start as the
     ///      test convention (the Diamond its own treasury, nothing else set).
     ///      A suite that configures more calls {sync} (live Diamond reads) or
-    ///      {setEndpoints} afterwards.
+    ///      {setEndpoints} afterwards. #3272 part 2 — the Diamond records a
+    ///      protocol registry and prices through the guard it names
+    ///      ({LibTestPriceGuard}); the vault code fixes the same guard.
     function install(address diamond, address owner) internal returns (VaultBeacon beacon) {
         address nft = address(LibTestPositionNFT.install(diamond, owner));
+        MockProtocolRegistry registry = new MockProtocolRegistry(diamond);
+        LibTestPriceGuard.install(diamond, owner, registry);
         VaultOutflowTypes.VaultEndpoints memory e;
         e.treasury = diamond;
+        e.priceGuard = LibTestPriceGuard.guardOf(diamond);
         address impl = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name, abi.encode(nft, e));
         beacon = VaultBeacon(
             ArtifactDeploy.deploy(type(VaultBeacon).name, abi.encode(owner, diamond, owner, impl))

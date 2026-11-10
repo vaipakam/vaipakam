@@ -11,6 +11,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /// @title VolatilityLTVTest
 /// @notice Pinpoint coverage for the 110% LTV collapse trigger — the
@@ -225,7 +226,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
         // 1 wei × 1 ÷ 10^(18 + 18 − 18) floors to 0.
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(uint256(1), uint8(18))
         );
@@ -238,7 +239,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
     ///      nothing (or a debt that is not there).
     function testCollapsedPredicateRefusesZeroPrice() public {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(0, 8)
         );

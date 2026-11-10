@@ -278,6 +278,21 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().protocolCfg.discountPathEnabled = enabled;
     }
 
+    /// @notice #910 — write an asset's keeper tier directly, for tests that
+    ///         don't cut `ConfigFacet`.
+    function setKeeperTierRaw(address asset, uint8 tier) external {
+        LibVaipakam.storageSlot().keeperTier[asset] = tier;
+    }
+
+    /// @notice #910 — write the per-tier discount overrides directly, for
+    ///         tests that don't cut `ConfigFacet` (0 = library default).
+    function setTierLiqDiscountBpsRaw(uint16 tier1Bps, uint16 tier2Bps, uint16 tier3Bps) external {
+        LibVaipakam.ProtocolConfig storage cfg = LibVaipakam.storageSlot().protocolCfg;
+        cfg.tier1LiqDiscountBps = tier1Bps;
+        cfg.tier2LiqDiscountBps = tier2Bps;
+        cfg.tier3LiqDiscountBps = tier3Bps;
+    }
+
     /// @notice Flip `ProtocolConfig.depthTieredLtvEnabled` directly
     ///         for tests that don't cut `ConfigFacet` into the diamond.
     ///         MarketRateWidgetAndDepthTieredLTV.md §4.2 kill-switch
@@ -381,24 +396,6 @@ contract TestMutatorFacet {
     ///         the global totals. Test-only escape hatch for the §4a gate.
     function setKnownGlobalSet(uint256 day, bool isSet) external {
         LibVaipakam.storageSlot().knownGlobalSet[day] = isSet;
-    }
-
-    /// @notice Write the ETH/USD Chainlink feed address directly. Lets
-    ///         reward-cap coverage tests exercise the §4 per-user cap
-    ///         without cutting OracleAdminFacet into the harness.
-    function setEthUsdFeedRaw(address feed) external {
-        LibVaipakam.storageSlot().ethNumeraireFeed = feed;
-    }
-
-    /// @notice Test-only: stamp `s.wethContract` directly without going
-    ///         through `OracleAdminFacet.setWethContract` (which the
-    ///         minimal test fixtures don't cut). Used by
-    ///         `NotificationFeeTest` to exercise
-    ///         `LibNotificationFee`'s Phase 1 fallback path
-    ///         (ETH/USD via OracleFacet × fixed VPFI/ETH rate),
-    ///         which reads `s.wethContract`.
-    function setWethContractRaw(address weth) external {
-        LibVaipakam.storageSlot().wethContract = weth;
     }
 
     /// @notice Write the admin-configurable per-user interaction-reward

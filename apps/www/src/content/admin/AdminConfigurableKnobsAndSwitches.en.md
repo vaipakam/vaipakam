@@ -179,9 +179,9 @@ value is range-checked, so the reads are trusted unconditionally.
   set again on the new scale. A nonzero floor is bounded to `[1e18, 100_000e18]` (1 to
   100,000 numeraire units): the cap so a misconfigured floor can't turn every
   routine partial into a full close, the minimum so an old-scale value is
-  refused (`InvalidPartialLiqSizing`) instead of silently accepted. A
-  numeraire rotation (`setNumeraire`) resets the floor to `0` and emits
-  `PartialLiquidationSizingSet` saying so. **Setting a nonzero floor both widens (the pre-existing-dust
+  refused (`InvalidPartialLiqSizing`) instead of silently accepted. The
+  numeraire is fixed at deploy (#3272), so the floor's unit never changes
+  under it. **Setting a nonzero floor both widens (the pre-existing-dust
   waiver) AND narrows (the leave-fresh-dust prevention) what a keeper may do —
   it is not a harmless one-way knob — and `0` is the explicit disable path.**
   Plan for keeper partials to start reverting `PartialLeavesDust` (and require
@@ -439,9 +439,7 @@ redeploy.
 > and no longer converted through `OracleFacet.getAssetPrice(WETH)` ×
 > `VPFI_PER_ETH_FIXED_PHASE1` — the launch-era conversion class (§14.2)
 > is forbidden, so a flat native-VPFI tariff replaces it. Consequently
-> the tariff has **no numeraire linkage**: it is deliberately absent from
-> the atomic `setNumeraire` rotation (which would otherwise clobber a
-> VPFI quantity with a fiat-denominated value), and is tuned only via
+> the tariff has **no numeraire linkage**, and is tuned only via
 > `setNotificationFee`. The billed tariff moves into Diamond custody and
 > credits the recycle bucket (`RecycleSource.NotificationFee`) — the
 > first live non-forfeit absorption class (governor §4.1 Layer 0) — never
@@ -476,6 +474,39 @@ when the next window may open.
 
 ## Oracle stack
 
+**Every setting in this section is a price-guard entry, not a Diamond
+setting (#3272).** The Diamond holds no pricing configuration: every price
+it reads comes from the chain's `PriceGuard`, a standalone, non-upgradeable
+contract it finds through the protocol registry it records once, at deploy.
+Each setting below is one `PriceGuard.Kind` entry, changed in two steps:
+
+- the guard's owner (the admin, then the Timelock after the handover)
+  proposes it with `proposeChange(kind, subject, value)`;
+- anyone applies it with `executeChange(kind, subject)` once the guard's
+  delay has passed: 1 to 14 days on a production chain (3 by default),
+  zero allowed on a testnet, where a change applies at once.
+
+The guardian (the Pauser Safe) may cancel a pending change, and may stop a
+secondary source counting at once; re-enabling one waits the delay. Each
+bound below is the guard's, checked when a change is proposed and again
+when it is executed (`InvalidChange`), and an address entry must name a
+contract (`NotAContract`). `ConfigureOracle` proposes a chain's wiring
+through `PriceGuardConfig`. The protocol console reads every entry from the
+guard; the guard announces each change with its own `ConfigSet` event.
+
+### Price guard address, owner, guardian and delay
+
+The guard the Diamond prices through is the protocol registry's
+`PRICE_GUARD` pointer (`getPriceGuard`), and the registry is recorded on the
+Diamond once (`initializeProtocolRegistry`, which also records the guard's
+numeraire). Pointing the registry at another guard is the registry's own
+delayed change, and the Diamond refuses to price through a guard whose
+numeraire differs from the one it recorded (`PriceGuardNumeraireMismatch`).
+The guard's owner is `Ownable2Step` and cannot renounce; its guardian and
+delay are its own settings. A raised delay applies at once; a lowered one
+waits the current delay, and a change keeps the delay in force when it was
+proposed.
+
 ### Secondary-oracle max deviation BPS
 
 (Tellor / API3 / DIA quorum
@@ -497,8 +528,8 @@ Default is 1 hour.
 ### Pyth oracle address
 
 (T-033 cross-check oracle, single feed per
-chain — ETH/<numeraire> on the active deploy; rotates with the
-numeraire when governance switches). Address-only; no numeric range.
+chain — ETH/<numeraire>; entry `PythOracle`). Address-only; no numeric
+range.
 Zero disables the cross-check gate globally — the protocol falls
 back to Chainlink-only on the WETH/numeraire leg.
 
@@ -514,9 +545,9 @@ back to Chainlink-only on the WETH/numeraire leg.
 Single 32-byte Pyth price feed identifier — Pyth's ETH/<numeraire>
 peg ID for cross-validating the Chainlink ETH/<numeraire> reading.
 Zero disables at the feed-id layer (same soft-skip semantics as a
-zero `pythOracle`). Governance updates this together with
-`ethNumeraireFeed` whenever the numeraire rotates (atomic
-`setNumeraire` setter takes both as args).
+zero `pythOracle`). Entry `PythFeedId`. The numeraire never rotates
+(see "Numeraire, fixed at deploy" below), so the id changes only to
+replace a feed.
 
 ### Pyth max staleness seconds
 
@@ -544,38 +575,47 @@ be a useful cross-check. Default is 1%.
 (staleness + minimum valid
 answer). Per-feed override of the chain's default feed-staleness
 budget. Useful for a feed that the operator knows publishes at a
-different cadence than the chain default. The override pair is set
-together; either field non-zero replaces the chain default for that
-feed.
+different cadence than the chain default. Two entries keyed by the
+feed, `FeedMaxStaleness` and `FeedMinAnswer`, each its own change; a
+non-zero value replaces the chain default for that feed. A staleness
+budget may only tighten the default, never extend it.
 
 ### Stable-token feed override
 
-Per-symbol override that pins a
-specific Chainlink feed to a token's symbol; used when the Feed
-Registry doesn't have an entry. Address-only.
+Per-symbol reference feed for a stable peg (entry `StableRef`, keyed by a
+symbol of 1 to 10 characters; zero removes it). At most 16 are held.
+Address-only.
 
 ### Sequencer uptime feed
 
 Address of the chain's L2 sequencer
-uptime feed (Arbitrum, Optimism). Zero means "no sequencer-down
-guard" — appropriate on L1s but a misconfig on L2s. Address-only.
+uptime feed (Arbitrum, Optimism; entry `SequencerFeed`). Zero means "no
+sequencer-down guard" — appropriate on L1s but a misconfig on L2s.
+Address-only.
 While set, price reads are held back while the sequencer is down and
 for a fixed one-hour grace period after it comes back up
 (`SEQUENCER_GRACE_PERIOD`, a compile-time constant).
 
-### Chainlink Feed Registry / USD denominator / ETH denominator / WETH contract / ETH-USD feed / Uniswap V3 factory
+### Feed registry / numeraire, anchor and ETH keys / WETH / ETH-numeraire feed / Uniswap V3 factory
 
-All address-only
-configs that wire the chain-specific oracle stack. No numeric range;
-zero disables the corresponding flow.
+The address-only wiring of the chain's oracle stack. The feed registry
+(`FeedRegistry`) and the ETH/<numeraire> feed (`EthNumeraireFeed`) refuse
+zero, since without either nothing is priced; WETH (`Weth`) may be zero,
+which prices no WETH.
 
 The feed registry is the chain's own `VaipakamFeedRegistry` on every chain
-(#2880), never Chainlink's (which exists on Ethereum mainnet only), and the
-USD and ETH denominators are that registry's own keys. `ConfigureOracle`
-writes all three from the recorded `.feedRegistry`. Which feed prices which
-token is not a Diamond setting at all: it lives in the registry, where each
-change waits a delay (3 days by default on a production chain, 1 to 14
-allowed; 0 allowed on a testnet) that the Pauser Safe can veto.
+(#2880), never Chainlink's (which exists on Ethereum mainnet only). The keys
+it is asked under (the numeraire's, the pricing anchor's and ETH's) are not
+entries at all: they are the guard's identity, fixed when it is built from
+that registry's own constants, and the deploy records the registry the
+guard reads. Which feed prices which token is not a guard entry either: it
+lives in the registry, where each change waits a delay (3 days by default on
+a production chain, 1 to 14 allowed; 0 allowed on a testnet) that the Pauser
+Safe can veto.
+
+The Uniswap V3 factory is the one Diamond setting here
+(`OracleAdminFacet.setUniswapV3Factory`): it drives the liquidity probe,
+not the price.
 
 ## Reward subsystem (cross-chain interest aggregation)
 
@@ -1093,12 +1133,9 @@ which, under the post-deploy default (`numeraireSymbol` empty,
 > numeraire-quoted natively from the rotated Chainlink feeds), so
 > the comparison sites (`OfferFacet`, `RiskFacet`,
 > `DefaultedFacet`) compare numeraire-vs-numeraire — no boundary
-> conversion. To rotate the reference currency, governance uses the
-> atomic multi-arg `setNumeraire` (under "Periodic Interest Payment"
-> below) which re-anchors every feed-side slot AND every
-> numeraire-denominated value in the same tx; the per-knob
-> `updateKYCThresholds` setter only re-tunes within the same
-> numeraire.
+> conversion. The reference currency is fixed at deploy (see
+> "Numeraire, fixed at deploy" under "Periodic Interest Payment"
+> below); `updateKYCThresholds` re-tunes within it.
 
 ## Range orders and the matching kill-switch
 
@@ -1170,9 +1207,8 @@ adapter's included.
   re-applies the rule.
 - **Also the least capital a listed intent commits.** The keeper feed
   lists an intent only once its capital covers one smallest fill.
-- **Reset on numeraire rotation.** `setNumeraire` returns it to the
-  default and emits the event, since the old value was denominated in
-  the old numeraire.
+- **One numeraire for life.** The numeraire is fixed at deploy (#3272),
+  so the value's unit never changes under it.
 
 ### Offer-book bounds (`minOfferValueNumeraire`, `maxOpenOffersPerWallet`)
 
@@ -1203,9 +1239,8 @@ by it too, because a fill is never smaller than the offer's amount.
 - **Applied when an offer is created or its amount changes, not
   afterwards.** Raising the floor, or a price move, closes no offer
   already open.
-- **Reset on numeraire rotation.** `setNumeraire` returns it to the
-  default and emits the event, since the old value was denominated in
-  the old numeraire.
+- **One numeraire for life.** The numeraire is fixed at deploy (#3272),
+  so the value's unit never changes under it.
 
 **Open-offer cap (`maxOpenOffersPerWallet`).** The most offers one
 wallet may have open at once, every offer type counted. An expired offer
@@ -1290,7 +1325,7 @@ just-stamps the period when the borrower paid in time). Multi-year
 loans (`durationDays > 365`) carry a mandatory annual floor — even
 small-principal multi-year loans must settle interest yearly.
 
-The feature ships dormant on every fresh deploy. Five governance
+The feature ships dormant on every fresh deploy. Three governance
 levers control its visibility and behavior; each is bounded the same
 way every other knob in this document is.
 
@@ -1311,102 +1346,33 @@ post-deploy. While off:
 Governance flips this on once the rest of the protocol is ready to
 honor cadence-bearing loans on-chain. Boolean — no range.
 
-### Numeraire swap enabled flag (numeraireSwapEnabled)
+### Numeraire, fixed at deploy
 
-Independent kill-switch gating the atomic `setNumeraire` rotation
-setter. Default `false`. While off, governance cannot rotate the
-numeraire away from the USD-as-default behavior — the protocol ships
-USD-denominated until this flag flips AND governance has all the
-numeraire-side feed addresses on hand. Threshold-only updates within
-the same numeraire (`setMinPrincipalForFinerCadence`,
-`setNotificationFee`, `updateKYCThresholds`) are NOT gated by this
-flag — governance can re-tune individual values freely. Boolean — no
-range.
+The protocol's reference currency is part of the price guard's identity:
+the registry key it is quoted in and its lowercase symbol (`usd` on the
+retail deploy), set when the guard is built and recorded on the Diamond,
+once, with the protocol registry (#3272). Nothing rotates it. There is no
+numeraire setter, no swap switch, and the Diamond refuses a guard in another
+numeraire (`PriceGuardNumeraireMismatch`). Moving a deployment to another
+reference currency is a fresh deployment.
 
-### Numeraire-rotation surface — Generalizing Numeraire (B1)
+Every value denominated in it (`minPrincipalForFinerCadence`, the offer
+value floor, the standing-intent floor, the KYC tier thresholds) is tuned on
+its own setter, within the one numeraire. The feeds that quote it are guard
+entries (`EthNumeraireFeed`, `PythFeedId`, above).
 
-After Generalizing Numeraire to the oracle layer (B1, 2026-05-03), the
-protocol's reference currency
-is captured by **four feed-side slots** + **four numeraire-denominated
-value knobs**. The per-knob `INumeraireOracle` boundary-conversion
-oracle was retired — `OracleFacet.getAssetPrice` now returns
-numeraire-quoted prices natively, sourced from the renamed feed
-slots. Comparison sites compare numeraire-vs-numeraire with no
-intermediate USD detour.
-
-**Feed-side slots** (drive `OracleFacet.getAssetPrice` paths 1/2/3
-
-- Tellor / API3 / DIA query construction + Pyth cross-check):
-  - `s.ethNumeraireFeed` — Chainlink AggregatorV3 returning ETH/<numeraire>
-    price. ETH/USD on USD-as-numeraire deploys; rotates to ETH/EUR /
-    ETH/XAU / etc. when the numeraire changes.
-  - `s.numeraireChainlinkDenominator` — Chainlink Feed Registry
-    constant for the active numeraire. `Denominations.USD` by default;
-    `Denominations.EUR` / etc. on rotation. Drives Path 2 of
-    `_primaryPrice` (direct asset/<numeraire> registry lookup).
-  - `s.numeraireSymbol` — `bytes32` lowercase ASCII symbol of the
-    active numeraire (e.g. `bytes32("eur")`). Empty default is
-    interpreted as `"usd"` so the post-deploy behaviour is unchanged
-    out of the box. Drives Tellor / API3 / DIA query construction
-    (`<symbol>/<numeraireSymbol>`).
-  - `s.pythCrossCheckFeedId` — Pyth ETH/<numeraire> feed id for the
-    T-033 cross-check gate (see "Pyth cross-check feed id" above).
-
-**Value-side knobs** (each per-knob bounded; settable individually
-within the same numeraire OR atomically as part of `setNumeraire`):
-
-- `minPrincipalForFinerCadence` (numeraire-units, 1e18-scaled)
-- `kycTier0ThresholdNumeraire` + `kycTier1ThresholdNumeraire`
-
-> The notification tariff is **NOT** a value-side knob here anymore —
-> Recycling M1 (#1346) made it a flat native-VPFI quantity with no
-> numeraire linkage, so it is deliberately excluded from this rotation
-> (tune it via `setNotificationFee`; see "Notification fee" above).
-
-**Atomic rotation setter** —
-`setNumeraire(ethNumeraireFeed, numeraireChainlinkDenominator,
-numeraireSymbol, pythCrossCheckFeedId, threshold,
-kycTier0, kycTier1)`. Seven args, single Safe transaction. By
-construction governance cannot rotate the numeraire without
-simultaneously re-anchoring every value denominated in it AND every
-oracle-side input that produces numeraire-quoted prices.
-
-Inconsistent intermediate state ("numeraire = EUR but a threshold
-still in USD-units" or "Tellor still queries `<symbol>/usd`") is
-unreachable.
-
-Each numeraire-denominated value carries its per-knob bounded
-validator. KYC tier monotonicity is enforced when both tier values
-come in non-zero. The three feed-side inputs (`ethNumeraireFeed`,
-`numeraireChainlinkDenominator`, `numeraireSymbol`) reject zero —
-they're load-bearing and missing them would brick `_primaryPrice` /
-secondary queries. `pythCrossCheckFeedId` accepts zero (disables the
-Pyth gate).
-
-Per-knob within-the-same-numeraire updates remain available:
-`setMinPrincipalForFinerCadence(uint256)`, `setNotificationFee(uint256)`,
-`updateKYCThresholds(uint256, uint256)`. Use these when governance
-just wants to tune a value within the active currency, not rotate.
-
-> **PredominantlyAvailableDenominator (T-047, planned)**: secondary
-> oracle coverage in non-USD numeraires (Tellor / API3 / DIA) is
-> sparse — the cross-validation property weakens after a non-USD
-> rotation. The T-048 follow-up below ships the
-> `predominantDenominator` (PAD = USD by default) so primary
-> pricing routes through Chainlink's universally-🟢-rated USD feed
-> set when the active numeraire is non-USD; the secondary-oracle
-> quorum follow-up still tracks separately under T-047 for the
-> divergence-detection layer.
+> **History.** Before #3272 part 2 the Diamond carried the numeraire in its
+> own storage and rotated it with an atomic `setNumeraire` behind a
+> `numeraireSwapEnabled` switch. Both are retired; no deployment carries
+> them.
 
 ### Predominantly Available Denominator (PAD)
 
-Anchor for **primary pricing** when the active numeraire is non-USD.
-PAD is a Chainlink Feed Registry denomination constant
-(`Denominations.USD` by post-deploy default — the universally-
-covered, near-100%-🟢-verified-rated denomination across every
-chain Vaipakam supports). `OracleFacet._primaryPrice` queries
-`asset/PAD` first and converts to the active numeraire only when
-PAD ≠ numeraire.
+Anchor for **primary pricing** when the numeraire is not USD. The PAD is
+the guard's `PAD_DENOMINATOR` identity, fixed when the guard is built; left
+unset it is the numeraire, which is the retail case. The guard queries
+`asset/PAD` in the feed registry and converts to the numeraire only when the
+PAD differs from it.
 
 **Why PAD-first instead of asset/<numeraire>-first**: Chainlink's
 feed-rating metadata (🟢 verified / 🟡 monitored / 🔴 specialized)
@@ -1415,59 +1381,22 @@ non-USD pairs is rare AND frequently 🟡-rated when it exists,
 with looser deviation thresholds and slower heartbeats than the
 🟢 USD equivalents. Routing all pricing through PAD biases toward
 verified-rated feeds **structurally**, without requiring operators
-to manually curate per-asset feed quality. The FX-multiply cost
-(one extra Chainlink read for PAD/<numeraire>) is bounded; the
-trust gain from never accidentally pricing through a 🟡 feed is
-real.
+to manually curate per-asset feed quality.
 
-**Per-asset opt-in override**: when an operator explicitly verifies
-a specific asset/<numeraire> feed is 🟢-rated on their chain, they
-can call `setAssetNumeraireDirectFeedOverride(asset, feed)` and
-that asset's pricing skips the PAD pivot entirely. Operator vouches
-for the feed quality; the protocol does not cross-check overrides
-against Pyth.
+**Entries, read only while the PAD differs from the numeraire**:
 
-**Four feed-side slots, atomic rotation via `setPredominantDenominator(denom, symbol, ethPadFeed, padNumeraireRateFeed)`**:
+- **`EthPadFeed`** — ETH/<PAD>. Prices WETH and anchors the ETH pivot.
+  Zero means the ETH/<numeraire> feed is used.
+- **`PadNumeraireRateFeed`** — a direct PAD/<numeraire> rate (e.g.
+  USD/EUR). Zero means the rate is derived as `ETH/<numeraire> ÷
+  ETH/PAD`.
+- **`AssetDirectFeed`** (keyed by asset) — an asset/<numeraire> feed an
+  operator has verified, which skips the pivot for that asset. Refused on a
+  retail guard, where nothing would read it.
 
-- **`predominantDenominator`** (address) — Chainlink Feed Registry
-  denomination constant. `Denominations.USD` (`0x0000…0000348`)
-  post-deploy default. Reverts `ParameterOutOfRange` on zero.
-- **`predominantDenominatorSymbol`** (bytes32) — lowercase ASCII
-  symbol used by Tellor / API3 / DIA when querying asset/PAD pairs.
-  Empty bytes32 reads as `"usd"` per the existing fallback
-  convention.
-- **`ethPadFeed`** (address) — Chainlink ETH/<PAD> AggregatorV3.
-  REQUIRED on every chain post-T-048 — load-bearing for (a) WETH
-  pricing and (b) the derived PAD/<numeraire> rate when no direct
-  feed is set. Reverts `ParameterOutOfRange` on zero.
-- **`padNumeraireRateFeed`** (address, optional) — Chainlink direct
-  PAD/<numeraire> AggregatorV3 (e.g. USD/EUR on Ethereum mainnet).
-  Zero is valid; the protocol derives the rate from
-  `ETH/<numeraire> ÷ ETH/PAD` using existing infrastructure.
-
-**Activation gate**:
-
-- **Retail (PAD == numeraire == USD)** — PAD reads collapse to the
-  single Feed Registry asset/USD query. Zero added gas, zero new
-  failure modes, math identical to pre-T-048.
-- **Pre-T-048 deploy (predominantDenominator == 0)** — legacy
-  numeraire-direct path stays active. Existing deploys keep working
-  unchanged until the operator opts in.
-- **Industrial-fork (PAD ≠ numeraire, e.g. PAD=USD numeraire=EUR)**
-  — PAD pivot activates. Per-asset override takes priority when set;
-  otherwise asset/USD × USD/EUR multiplication composes the
-  numeraire-quoted price.
-
-**New error types**: `PadNumeraireRateUnavailable` (no FX rate path
-reachable), `PadPivotFeedUnavailable(asset)` (asset has no
-PAD-quoted feed AND no asset/ETH-pivot feed), `PadNumeraireRateFeedStale`
-(direct rate feed is stale beyond budget).
-
-**Operator deploy checklist (post-T-048)**: every chain's deploy
-script MUST call `setPredominantDenominator(Denominations.USD,
-bytes32("usd"), <chain's Chainlink ETH/USD feed>, address(0))`
-before opening offers. Pre-mainnet pre-flight should assert
-`getEthPadFeed() != address(0)` after deploy.
+**Errors**: `PadNumeraireRateUnavailable` (no rate path reachable),
+`NoPriceFeed` (the asset has neither a PAD-quoted feed nor an ETH-quoted
+one).
 
 ### Min principal for finer cadence (minPrincipalForFinerCadence)
 

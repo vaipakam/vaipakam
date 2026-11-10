@@ -1080,19 +1080,13 @@ export interface ProtocolKnobValues {
   rateModelMaxDeviationBps?: string;
   rateModelRelativeDeviationBps?: string;
   rateModelMinDeviationBps?: string;
-  secondaryOracleMaxDeviationBps?: string;
-  secondaryOracleMaxStalenessSeconds?: string;
-  pythOracle?: string;
-  pythCrossCheckFeedId?: string;
-  pythMaxStalenessSeconds?: string;
-  pythCrossCheckMaxDeviationBps?: string;
-  pythConfidenceMaxBps?: string;
-  sequencerUptimeFeed?: string;
+  /** #3272 part 2 — the registry the Diamond recorded, and the price
+   *  guard it names. */
+  protocolRegistry?: string;
+  priceGuard?: string;
   rewardGraceSeconds?: string;
   periodicInterestEnabled?: boolean;
-  numeraireSwapEnabled?: boolean;
   numeraireSymbol?: string;
-  ethNumeraireFeed?: string;
   minPrincipalForFinerCadence?: string;
   preNotifyDays?: string;
   autoLendEnabled?: boolean;
@@ -1111,14 +1105,6 @@ export interface ProtocolKnobValues {
   minOfferValueNumeraire?: string;
   maxOpenOffersPerWallet?: string;
   treasury?: string;
-  // #2680 — single-output settings added with the multi-part reads.
-  /** The predominant denominator (PAD) and its feeds; the zero address /
-   *  zero symbol while none is set. */
-  predominantDenominator?: string;
-  predominantDenominatorSymbol?: string;
-  ethPadFeed?: string;
-  padNumeraireRateFeed?: string;
-  wethContract?: string;
   pancakeswapV3Factory?: string;
   sushiswapV3Factory?: string;
   // #2680 — settings read as one part of a multi-part answer
@@ -1133,12 +1119,32 @@ export interface ProtocolKnobValues {
   tier1LiqDiscountBps?: string;
   tier2LiqDiscountBps?: string;
   tier3LiqDiscountBps?: string;
-  /** The Chainlink feed registry and the two keys the oracle asks it
-   *  under. The primary key is the effective one: the PAD when set, the
-   *  numeraire's Chainlink denominator otherwise. */
-  feedRegistry?: string;
+  // #3272 part 2 — the pricing settings, read from the price guard
+  // (`PRICE_GUARD_KNOB_GETTERS`): its governance, its fixed numeraire
+  // identity, its chain wiring and its cross-checks.
+  priceGuardOwner?: string;
+  priceGuardGuardian?: string;
+  priceGuardDelaySeconds?: string;
+  /** The keys the feed registry knows the numeraire, the pricing anchor
+   *  (PAD) and ETH by. The anchor is the numeraire's key unless the guard
+   *  was built with a separate one; it is the key main prices are asked
+   *  under. */
+  numeraireDenominator?: string;
   feedRegistryPrimaryKey?: string;
   feedRegistryEthKey?: string;
+  feedRegistry?: string;
+  wethContract?: string;
+  ethNumeraireFeed?: string;
+  ethPadFeed?: string;
+  padNumeraireRateFeed?: string;
+  sequencerUptimeFeed?: string;
+  pythOracle?: string;
+  pythCrossCheckFeedId?: string;
+  pythMaxStalenessSeconds?: string;
+  pythCrossCheckMaxDeviationBps?: string;
+  pythConfidenceMaxBps?: string;
+  secondaryOracleMaxDeviationBps?: string;
+  secondaryOracleMaxStalenessSeconds?: string;
   /** The notification fee per loan side, in VPFI (1e18), effective. */
   notificationFeeVpfi?: string;
   /** The loan-default grace schedule; an empty list means none is set and

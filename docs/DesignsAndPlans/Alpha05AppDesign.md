@@ -504,6 +504,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   already done. While the action's own receipt is unknown the grant still
   stands, and the page says so beside the transaction. A take-back that did
   not land or could not be read is stated with what to do in the wallet.
+  An approval or grant that mined but could not be read back is put back
+  (or taken back) at once, before the flow stops, since nothing else holds
+  it to clean up; the stop states both. One whose receipt never read is
+  stated with its transaction and what to do in the wallet, never reset
+  while it may still be pending.
 - **RB-RANGE** — a ranged offer (OFF-10) is shown at both ends it can be
   taken at, never as one figure: what a direct taker gets (for a borrower's
   request, the smallest amount against the floor collateral, the rest of the
@@ -1563,12 +1568,14 @@ above. Each resolves here, so a route reviewer needs no private file:
 - **RB-DATA-RIGHTS** — Your data (ACC-55) needs no wallet and no Terms. It
   states what this browser keeps for the app (its own records, the wallet
   connection's items, this tab's items, the site's databases or that they
-  cannot be listed, and the shared language cookie) and how many items an
-  erasure would remove, before the reader confirms. The download carries
+  cannot be listed, the shared language cookie, and the service worker's
+  saved copies of this build's files, counted file by file) and how many
+  items an erasure would remove, before the reader confirms. The download carries
   the app's own records only, names the wallet addresses in them, and counts
   without copying the wallet connection's session material. Erasure ends
   every wallet connection first so nothing is written back, then sweeps this
-  site's storage, databases and the shared language cookie at every scope,
+  site's storage, databases, saved-file stores and the shared language
+  cookie at every scope (saved files come back as the app is used),
   writes back only the wallet libraries' "disconnected" markers (for every
   connector that was connected or already marked, so the reload's automatic
   reconnection cannot reconnect a wallet that still authorises the site),
@@ -1623,6 +1630,154 @@ above. Each resolves here, so a route reviewer needs no private file:
   says that anything relying on it refuses until approved again, and a
   Permit2 withdrawal leaves the token's own approval for Permit2, which other
   apps may use, unchanged.
+- **RB-KEEPERS** — Settings › Keepers (ACC-34) shows the wallet's keeper
+  settings on its network in one block: the master switch, each approved
+  keeper (at most five) and the actions it holds, each action with whose side
+  it drives and where it reaches. Everything starts off, and the section
+  states that a keeper acts only while access is on and it holds the action,
+  that a step on a loan also needs that loan or offer to name the keeper
+  while an account action (the signed fill, the auto-roll, the lock) does
+  not, and the receipt of a grant that adds an account action says so; that
+  a keeper never receives funds and
+  cannot claim, withdraw or transfer, that a position follows its current
+  holder's settings, and when the protocol has paused every keeper. This
+  app's keeper on a network is named only from the deployment record.
+  Turning access off and removing a keeper are offered in either mode;
+  turning access on, approving a keeper and changing its actions are
+  Advanced. Only a change that gives a keeper more (access on, a new keeper,
+  an action it did not hold) asks for the Terms where a version is in force;
+  taking a permission away never does. Each change is one
+  signed transaction through RB-CONFIDENCE, built from settings read when the
+  review opens, refused before the wallet where the protocol would refuse it,
+  read again before the wallet opens and measured at the receipt's block.
+  The protocol's pause closes every change, removing included, and is stated
+  rather than offered.
+- **RB-INSTALL** — The app is installable (ACC-11): a manifest names it,
+  its icons (a maskable one among them) and four shortcuts (Offers,
+  Positions, Vault, Alerts). Settings › Install the app is Advanced. It
+  offers the browser's own install prompt only where the browser offered
+  one, and states the browser's answer; otherwise it says which case this
+  is (already installed, an iPhone or iPad with the Share route, or a
+  browser that has not offered it), never a button that does nothing. A
+  production build ships a service worker written from that build's output:
+  it keeps a copy of one of this build's hashed files once the page asks for
+  it, answers later requests for that file from the copy, deletes every
+  earlier build's store when it takes over, and lets everything else pass
+  uncached: a page load, any request to another origin (RPC, Workers), any
+  file not on the build's list. A file is kept only when the answer is that
+  file (never the host's HTML fallback), and a store that fails to open,
+  read or write is a miss, never a failed file. Before registering its own
+  worker, each load removes every other worker on this origin, one refusal
+  not stopping the rest. The section says what is kept on the device
+  and that pages and every figure are always read from the network, and
+  states when the browser cannot keep files or refused the worker. Data
+  rights count and erase the saved files (RB-DATA-RIGHTS).
+- **RB-RENT** — Rent (NFT-02, NFT-03, NFT-04, NFT-38) uses rental words,
+  never a loan's. Every rental term is stated as days of use: a pause moves
+  only the late-fee and default dates, never the end of the renter's use,
+  and the term says so. The Rent page lists the rentals tab of the offer book
+  alone, owners' listings first; an empty book on a test network offers the
+  faucet. A rental row and an offer page state "no collateral and no ratio",
+  never a zero ratio. An owner's listing is rented from its offer page
+  through its own review: the up-front total is the daily fee times the term
+  plus the buffer, by the protocol's rule on the listing's own figures, and
+  the buffer says whether the listing fixed it or today's setting applies.
+  The receipt states what the renter gets (the right to use the NFT, which
+  stays in the owner's vault), the rent rule, what comes back on a timely
+  close, the late fee from the buffer, the grace as today's setting, that a
+  rental closes by itself only once every agreed day has been settled
+  (which anyone may do, and which returns the buffer to the renter as a
+  claim) and otherwise needs the renter's close (RB-RENT-CLOSE) or a
+  default, and what a default takes. A listing that fixed no buffer says the protocol applies
+  today's setting at the start: the app re-reads it just before sending, a
+  change after that is refused under an exact approval and taken under an
+  earlier one that covers it, and the outcome states what moved. A wallet short of
+  rent plus buffer is told so before any wallet step. The flow is the
+  acceptance's (sign the exact terms, approve exactly, dry run, send, put an
+  unused approval back), and the outcome is measured: the rental opened,
+  the payment into the renter's own vault, and the owner's vault naming the
+  renter as the NFT's user (for an ERC-1155, the units rented out grew by
+  the rental's quantity). A renter's request is not taken here yet, and
+  says where it is.
+- **RB-RENT-LIST** — An owner lists an NFT for rent (NFT-01) on the Rent
+  page, behind the Terms gate. The form has no collateral or rate fields
+  and one daily fee, never a range. The review states that the NFT moves
+  from the wallet into the owner's own vault and stays there while the
+  listing is open and while it is rented, what a renter pays up front with
+  the buffer share the listing fixes at posting, what the owner receives
+  (the rent due less the protocol's share, named as today's figure fixed at
+  the rental's start) and what a default does; a token the wallet does not
+  hold, or too few units, is said before any wallet step. The approval is
+  the one ERC-721 token, or for an ERC-1155 the operator approval for this
+  listing alone, taken back afterwards whatever happens; the outcome is
+  measured (the listing recorded and the NFT in the owner's vault).
+  A click on review that cannot go on always says why: a field's own
+  error, a failed read of the network's longest term (stated with a
+  retry), or that a read the listing needs has not answered yet, in which
+  case the click is kept and the review opens by itself once it answers
+  (any edit withdraws it).
+
+- **RB-RENT-REQUEST** — A renter posts a request to rent a named NFT
+  (NFT-02) on the Rent page, behind the Terms gate, through the same form
+  as a listing worded for the renter. Only one of the two forms is open at
+  a time, and the rental book steps aside while either is. The review
+  states that the rent for the whole term and the buffer move from the
+  wallet into the renter's own vault now and stay there while the request
+  is open, the buffer share at today's setting (the request keeps the
+  setting in force when it lands, and the review states that a change in
+  between is refused under an exact approval, taken under an earlier one,
+  and stated in the outcome, so neither the buffer nor the total is shown
+  as bound), that the term
+  runs from when an owner takes it and that taking it starts the rental at
+  once with no further step from the renter, and what closing late or a
+  default does. A shortfall is said before any wallet step; a token that
+  does not exist yet is noted, and a token the wallet already holds is
+  refused. The approval is exactly the rent and buffer, put back if the
+  request does not go through; the outcome is measured (the request
+  recorded and the rent and buffer in the renter's vault).
+
+- **RB-RENT-TAKE** — An owner takes a renter's request (NFT-01 / NFT-02)
+  from the request's own page, which names it a renter's request and offers
+  "Rent out your NFT", behind the Terms gate. The review states that the NFT
+  moves from the wallet into the owner's own vault and stays there until
+  the rental ends, who the renter is and that the renter becomes its user
+  at once, the term from now, the rent and buffer already in the renter's
+  vault with the buffer share the request fixed, what the owner receives
+  (the rent less the protocol's share, fixed at this start, paid into the
+  owner's vault as each finished day is settled, the rest at close as a
+  claim), the three ways a rental ends (every agreed day settled, the
+  renter's close, a default) and what a default does; a token the wallet
+  does not hold, or too few units, is said before any wallet step. The terms are signed, the approval is the one
+  ERC-721 token (or for an ERC-1155 the operator approval for this rental
+  alone, taken back afterwards whatever happens), and the acceptance is
+  sent only after a dry run with that signature; the outcome is measured
+  (the rental, the NFT in the owner's vault, the renter as its user).
+
+- **RB-RENT-CLOSE** — The renter closes a running rental (NFT-05) from its
+  position page with "Close the rental"; a rental is never offered a
+  repayment, and anyone else reading it is told the three ways it ends.
+  The rule is the protocol's: the renter-position holder only, the rental
+  running, and not past the end of its grace period. After that the
+  review says the rental ends by its remaining days being settled one at
+  a time (anyone may) or by a default, whichever comes first, never by a
+  default alone. The close is the
+  protocol's repayment of a rental, paid from the rent and buffer already
+  in the renter's own vault, so the review states that nothing leaves the
+  wallet and asks for no approval. It states the rent owed now and at the
+  latest moment it reaches, counted by the protocol's own rule from the
+  rental as stored (the protocol publishes no figure for it, and the
+  review says how it is counted), the days already settled, the late fee
+  as the protocol quotes it now and at that moment, what comes back to the
+  renter as a claim, what the owner receives (the rent and late fee less
+  the protocol's share, as a claim), and that the use ends when the close
+  lands. The later moment is not a limit: the close carries no deadline
+  or minimum refund, so the review says that a close landing later is
+  counted then and can take more. A prepayment that cannot cover the close
+  is refused before the wallet opens. One prompt, sent only after a dry
+  run; the outcome is measured from the close's own log (the rental's
+  status and its rental update revoking the renter, never the owner's
+  vault totals, which expired and same-block rentals move) and the
+  renter's claim (inside the range the review stated).
 
 ## 3. Companion specifications
 

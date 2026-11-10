@@ -7,7 +7,8 @@
  * this app's: its own records (named below), the wallet connection's records
  * (written by the wallet libraries), and per-tab session items. Erasure
  * removes all of them, plus the language cookie this app shares with the
- * other Vaipakam sites. The download carries the app's own records only; the
+ * other Vaipakam sites and the copies of this build's files the service
+ * worker keeps (ACC-11), which are kept again as the app is used. The download carries the app's own records only; the
  * wallet connection's records are session material for the wallet link, not
  * a record about the reader, and are counted but not copied out.
  *
@@ -39,6 +40,9 @@ export interface Inventory {
   session: number;
   /** Named databases this site holds (wallet libraries use them). */
   databases: string[] | 'unknown';
+  /** Copies of this build's files the service worker keeps, counted file
+   *  by file (ACC-11). */
+  cacheFiles: number | 'unknown';
   /** Whether the shared language cookie is set. */
   langCookie: boolean;
   /** Storage this browser refused to let the app read. */
@@ -70,6 +74,8 @@ export interface Sources {
   local: () => StorageLike;
   session: () => StorageLike;
   databases: () => Promise<string[] | 'unknown'>;
+  /** Each saved-file store this site holds, with how many files it keeps. */
+  caches: () => Promise<{ name: string; files: number }[] | 'unknown'>;
   cookie: () => string;
 }
 
@@ -88,12 +94,30 @@ export function browserSources(): Sources {
         return 'unknown';
       }
     },
+    caches: async () => {
+      if (typeof caches === 'undefined') return [];
+      try {
+        const names = await caches.keys();
+        return await Promise.all(names.map(async (name) => ({ name, files: (await (await caches.open(name)).keys()).length })));
+      } catch {
+        return 'unknown';
+      }
+    },
     cookie: () => document.cookie,
   };
 }
 
 export async function takeInventory(src: Sources = browserSources()): Promise<Inventory> {
-  const inv: Inventory = { app: [], connector: 0, session: 0, databases: await src.databases(), langCookie: false, unreadable: [] };
+  const stores = await src.caches();
+  const inv: Inventory = {
+    app: [],
+    connector: 0,
+    session: 0,
+    databases: await src.databases(),
+    cacheFiles: stores === 'unknown' ? 'unknown' : stores.reduce((n, c) => n + c.files, 0),
+    langCookie: false,
+    unreadable: [],
+  };
   try {
     const local = src.local();
     for (const key of keysOf(local)) {
@@ -118,7 +142,9 @@ export async function takeInventory(src: Sources = browserSources()): Promise<In
 }
 
 /** How many items an erasure would remove, as the page states before the
- *  reader confirms. Unknown databases are not counted, and the page says so. */
+ *  reader confirms. Unknown databases are not counted, and the page says so.
+ *  Saved files are stated on their own: they are copies of the app, not
+ *  records, and they come back as the app is used. */
 export function itemCount(inv: Inventory): number {
   return inv.app.length + inv.connector + inv.session + (inv.databases === 'unknown' ? 0 : inv.databases.length) + (inv.langCookie ? 1 : 0);
 }
@@ -138,6 +164,7 @@ export function downloadBody(inv: Inventory, at: Date, wallets: readonly string[
         walletConnectionItems: inv.connector,
         perTabItems: inv.session,
         databases: inv.databases,
+        savedAppFiles: inv.cacheFiles,
         why: 'These are the wallet connection’s own session records and per-tab items. Erasing removes them; they are not copied into this file.',
       },
       ...(inv.unreadable.length > 0 ? { incomplete: `This browser refused to let the app read: ${inv.unreadable.join(', ')}. This file may be missing records.` } : {}),
@@ -160,14 +187,15 @@ export interface EraseReport {
   /** Whether a wallet was connected when erasure started, and whether every
    *  connection ended. Null when none was connected. */
   disconnected: boolean | null;
-  removed: { app: number; connector: number; session: number; databases: number; langCookie: boolean };
+  removed: { app: number; connector: number; session: number; databases: number; cacheFiles: number; langCookie: boolean };
   /** The wallet libraries' "disconnected" markers written back after the
    *  sweep, so no wallet reconnects by itself on the reload. */
   kept: number;
   /** What could not be removed (or, for a marker, kept), each with its own
    *  reason. */
-  refused: { what: 'local' | 'session' | 'database' | 'cookie' | 'marker'; name?: string; reason: string }[];
+  refused: { what: 'local' | 'session' | 'database' | 'cache' | 'cookie' | 'marker'; name?: string; reason: string }[];
   databasesUnknown: boolean;
+  cachesUnknown: boolean;
 }
 
 export interface EraseSteps extends Sources {
@@ -179,6 +207,8 @@ export interface EraseSteps extends Sources {
    *  read back. */
   keepDisconnected: () => Promise<number>;
   deleteDatabase: (name: string) => Promise<void>;
+  /** Deletes one saved-file store; false when the browser kept it. */
+  deleteCache: (name: string) => Promise<boolean>;
   clearCookie: (name: string) => void;
 }
 
@@ -191,10 +221,11 @@ export async function eraseAll(steps: EraseSteps, now: number = Date.now()): Pro
   const report: EraseReport = {
     at: now,
     disconnected: null,
-    removed: { app: 0, connector: 0, session: 0, databases: 0, langCookie: false },
+    removed: { app: 0, connector: 0, session: 0, databases: 0, cacheFiles: 0, langCookie: false },
     kept: 0,
     refused: [],
     databasesUnknown: false,
+    cachesUnknown: false,
   };
   try {
     report.disconnected = await steps.disconnect();
@@ -239,6 +270,18 @@ export async function eraseAll(steps: EraseSteps, now: number = Date.now()): Pro
       }
     }
   }
+  const stores = await steps.caches();
+  if (stores === 'unknown') report.cachesUnknown = true;
+  else {
+    for (const c of stores) {
+      try {
+        if (await steps.deleteCache(c.name)) report.removed.cacheFiles += c.files;
+        else report.refused.push({ what: 'cache', name: c.name, reason: 'the browser kept it' });
+      } catch (e) {
+        report.refused.push({ what: 'cache', name: c.name, reason: (e as Error).message || 'the browser kept it' });
+      }
+    }
+  }
   try {
     const had = readCookie(LANG_COOKIE, steps.cookie()) !== null;
     if (had) {
@@ -260,6 +303,10 @@ export function deleteDatabase(name: string): Promise<void> {
     // Blocked: another tab holds it open; it is deleted once that tab lets go.
     req.onblocked = () => reject(new Error('another tab of this site holds it open'));
   });
+}
+
+export async function deleteCache(name: string): Promise<boolean> {
+  return typeof caches === 'undefined' ? true : caches.delete(name);
 }
 
 /** Expire the shared cookie at every scope it may have been set at. */

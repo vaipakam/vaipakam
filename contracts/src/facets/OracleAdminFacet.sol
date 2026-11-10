@@ -2,35 +2,42 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
+import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {IProtocolRegistryReader} from "../interfaces/IProtocolRegistryReader.sol";
+import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
+import {RegistryKeys} from "../governance/RegistryKeys.sol";
 
 /**
  * @title OracleAdminFacet
- * @notice Admin facet exposing oracle configuration setters. All functions
- *         are owner-only (enforced in the LibVaipakam internal setters).
- *         Per README §1.5, liquidity classification is never manually
- *         overrideable — assets must pass the on-chain Chainlink +
- *         v3-style AMM checks or be treated as Illiquid.
+ * @notice Admin facet for the oracle settings the Diamond still holds: the
+ *         pool factory and the peer-protocol and reference-asset inputs of
+ *         the liquidity classification. It also records, once, the protocol
+ *         registry through which the Diamond finds its price guard.
+ * @dev    No price setting lives here (#3272 part 2). Every input of a price
+ *         (feeds, the feed registry, WETH, staleness, the secondary sources,
+ *         the Pyth cross-check, the sequencer feed) is the price guard's own
+ *         config, changed under the guard's delay by its owner, the Timelock.
+ *         The Diamond has no write path into it. Per README §1.5, liquidity
+ *         classification is never manually overrideable: an asset passes the
+ *         on-chain price and pool checks or is Illiquid.
  */
-contract OracleAdminFacet {
-    // ─── Bound-related errors (post-audit hardening, 2026-05-14) ──────
-    // Two gaps closed off `docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`:
-    // `setStableTokenFeed` accepting an unbounded `string symbol`
-    // (storage / observability noise vector), and `setTierReferenceAssets`
-    // accepting an unbounded array (hot-path-cost vector).
-    //
-    // The audit's Gap #1 candidate (`setUsdChainlinkDenominator`
-    // accepting zero) turned out to be a false positive — zero is an
-    // intentional sentinel mirroring `setChainlinkRegistry`'s
-    // "disable this leg, fall through to the ETH path" semantics. The
-    // existing `testOwnerCanZeroUsdDenominator` documents the
-    // supported flow: post-zero, `getAssetPrice` reverts cleanly with
-    // `NoPriceFeed` (no silent breakage). Closing it out
-    // (revert-on-zero) would break the documented l2 / fallback path.
+contract OracleAdminFacet is DiamondAccessControl {
+    /// @notice {initializeProtocolRegistry} was given an address with no
+    ///         code, or a registry that names no price guard.
+    error ProtocolRegistryMismatch(address registry);
 
-    /// @notice `setStableTokenFeed.symbol` exceeded MAX_STABLE_SYMBOL_LEN
-    ///         (10 bytes — accommodates every ISO 4217 fiat code +
-    ///         common precious-metal tickers like "XAU" / "XAG").
-    error StableSymbolTooLong(uint256 length, uint256 maxLength);
+    /// @notice {initializeProtocolRegistry} was already called.
+    error AlreadyInitialized();
+
+    /// @notice Emitted once, when the deploy records the protocol registry
+    ///         and, from its price guard, the numeraire the Diamond keeps.
+    /// @custom:event-category informational/config
+    event ProtocolRegistrySet(address indexed registry, bytes32 numeraireSymbol);
+
+    // ─── Bound-related errors (post-audit hardening, 2026-05-14) ──────
+    // `setTierReferenceAssets` accepted an unbounded array (hot-path-cost
+    // vector) until `docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`.
 
     /// @notice `setTierReferenceAssets.assets` exceeded
     ///         MAX_TIER_REFERENCE_ASSETS (20). The cache-refresh
@@ -39,187 +46,10 @@ contract OracleAdminFacet {
     ///         permissionless refresh.
     error TierReferenceAssetsTooLong(uint256 length, uint256 maxLength);
 
-    /// @dev See {StableSymbolTooLong}.
-    uint256 internal constant MAX_STABLE_SYMBOL_LEN = 10;
-
     /// @dev See {TierReferenceAssetsTooLong}. 20 leaves headroom over
     ///      today's 4-asset Tier-3 reference set without permitting
     ///      a 1000-asset hot-path-DoS vector.
     uint256 internal constant MAX_TIER_REFERENCE_ASSETS = 20;
-
-    /**
-     * @notice Sets the feed registry OracleFacet uses for asset/USD and
-     *         asset/ETH lookups: the chain's `VaipakamFeedRegistry` (#2880),
-     *         which every chain deploys, since Chainlink runs its own
-     *         registry on Ethereum mainnet only.
-     * @dev Owner-only (enforced inside `LibVaipakam.setChainlinkRegistry`).
-     *      Setting `address(0)` leaves WETH as the only priced asset (read
-     *      from the direct `ethNumeraireFeed`); the launch readiness check
-     *      refuses a chain in that state.
-     * @param registry The feed registry contract address.
-     */
-    function setChainlinkRegistry(address registry) external {
-        LibVaipakam.setChainlinkRegistry(registry);
-    }
-
-    /**
-     * @notice Sets the Chainlink USD denominator used when querying
-     *         asset → USD feeds via the Feed Registry.
-     * @dev Owner-only. Must match the denominator registered in the Feed
-     *      Registry (typically the canonical USD pseudo-address).
-     * @param denominator The USD-denominator address recognised by the
-     *                    Chainlink Feed Registry.
-     */
-    function setUsdChainlinkDenominator(address denominator) external {
-        LibVaipakam.setUsdChainlinkDenominator(denominator);
-    }
-
-    /**
-     * @notice Sets the Chainlink ETH denominator used by the asset/ETH
-     *         fallback price path in OracleFacet.getAssetPrice.
-     * @dev Owner-only. Set to `address(0)` on L2s where the Feed Registry
-     *      is not deployed — disables the ETH-route fallback (assets
-     *      without a direct asset/USD feed then revert NoPriceFeed).
-     * @param denominator The ETH-denominator address recognised by the
-     *                    Chainlink Feed Registry (typically
-     *                    0x0000...0000eEeeE...).
-     */
-    function setEthChainlinkDenominator(address denominator) external {
-        LibVaipakam.setEthChainlinkDenominator(denominator);
-    }
-
-    /**
-     * @notice Sets the canonical WETH ERC-20 used by OracleFacet as the
-     *         v3-style AMM asset/WETH pool-depth quote asset AND as the
-     *         fallback PAA list entry when {paaAssets} is empty.
-     * @dev Owner-only. Setting to `address(0)` fail-closes every asset
-     *      to Illiquid (no pool to discover).
-     *
-     *      **Chain-specificity** (per the 2026-05-14 WETH chain-safety
-     *      audit, `docs/internal/WethChainSafetyAudit-2026-05-14.md`):
-     *      this value MUST be the chain's canonical bridged-WETH9 ERC-20,
-     *      NOT the chain's wrapped-native (WBNB / WMATIC / etc.).
-     *
-     *      Specifically:
-     *      - **Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM**:
-     *        the chain's wrapped-native IS WETH (native gas is ETH);
-     *        wrapped-native and bridged-WETH are the same address; either
-     *        intent works.
-     *      - **BNB Chain mainnet (chainId 56)**: native gas is BNB, NOT
-     *        ETH. Wrapped-native = WBNB (`0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c`),
-     *        bridged-WETH9 = `0x2170Ed0880ac9A755fd29B2688956BD959F933F8`.
-     *        **MUST set the bridged-WETH9**, never WBNB — the pool-depth
-     *        leg assumes ETH-denominated value, and using WBNB would
-     *        mis-price every depth-tier classification.
-     *      - **Polygon PoS mainnet (chainId 137)**: native gas is POL,
-     *        NOT ETH. Wrapped-native = WPOL/WMATIC, bridged-WETH9 =
-     *        `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. **MUST set
-     *        the bridged-WETH9**, never WPOL.
-     *
-     *      Nothing in the protocol enforces this — this setter is the
-     *      ONLY surface, not the equivalent of one, and it is purely an
-     *      operator responsibility. There is no runtime check that the
-     *      address is WETH-shaped, so verify against the chain's official
-     *      bridge registry before setting it. **That registry, not this
-     *      comment, is the source for the address itself.**
-     *
-     *      Read the two addresses above as worked examples of the policy,
-     *      not as an address table (Codex #1653 r4 P2). They are spelled
-     *      out because BNB Chain and Polygon PoS are where the
-     *      wrapped-native-vs-bridged-WETH distinction actually bites and
-     *      picking the wrong one is silent; on the ETH-gas chains the two
-     *      coincide, so there is no trap to warn about and no address is
-     *      given. An operator who needs a specific address for any chain
-     *      should be reading the bridge registry regardless — a hardcoded
-     *      list in a contract comment is exactly the kind of thing that
-     *      goes stale without anyone noticing.
-     *
-     *      This note previously deferred the guarantee to "the
-     *      VPFIBuyAdapter's payment-token policy", which was removed in
-     *      the #687-A legal excision along with the cross-chain buy lane
-     *      it governed — so the check this setter leans on had no
-     *      enforcer left anywhere (#1641). It also pointed at a CLAUDE.md
-     *      section that no longer exists. Its replacement claimed the
-     *      canonical addresses lived here, which was equally untrue for
-     *      five of the seven chains named above.
-     *
-     * @param weth The bridged-WETH9 ERC-20 contract address on the active
-     *             network (NOT the wrapped-native on non-ETH-gas chains).
-     */
-    function setWethContract(address weth) external {
-        LibVaipakam.setWethContract(weth);
-    }
-
-    /// @notice The WETH ERC-20 the oracle layer prices from the ETH
-    ///         reference feed ({setWethContract}); zero when unset.
-    /// @dev Read by the launch readiness check (#945), which asks the
-    ///      Diamond's own oracle for WETH's price instead of re-deriving
-    ///      the oracle's acceptance rules.
-    function getWethContract() external view returns (address) {
-        return LibVaipakam.storageSlot().wethContract;
-    }
-
-    /// @notice #2880 — the feed registry the oracle prices through and the
-    ///         two quote keys it passes to it: the primary key (the
-    ///         predominant denominator, or the numeraire's while that is
-    ///         unset, {LibVaipakam.effectivePadDenominator}) and the ETH key
-    ///         of the asset/ETH fallback.
-    /// @dev Read by the launch readiness check, which requires the registry
-    ///      to be the declared one and to have a quote registered under each
-    ///      key, so no lookup can miss a feed by asking under a key the
-    ///      registry does not file under.
-    function getFeedRegistryLookup()
-        external
-        view
-        returns (address registry, address padDenominator, address ethDenominator)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.chainlnkRegistry, LibVaipakam.effectivePadDenominator(), s.ethChainlinkDenominator);
-    }
-
-    /**
-     * @notice Sets the direct Chainlink ETH/USD AggregatorV3 feed.
-     * @dev Owner-only. REQUIRED — used to price WETH itself, to
-     *      convert asset/WETH pool depth into USD for the Liquid /
-     *      Illiquid classification, AND to multiply against the
-     *      asset/ETH fallback feed when no direct asset/USD feed
-     *      is available. Setting to `address(0)` disables every
-     *      ETH-quoted code path; WETH pricing reverts NoPriceFeed
-     *      and every asset classifies Illiquid.
-     *
-     *      **Chain-specificity** (per the 2026-05-14 WETH chain-safety
-     *      audit, `docs/internal/WethChainSafetyAudit-2026-05-14.md`):
-     *      this MUST be the **ETH/USD** feed on every chain, NOT the
-     *      chain's native-gas/USD feed. Specifically:
-     *      - **Ethereum / Base / Arbitrum / Optimism / Polygon zkEVM**:
-     *        native gas IS ETH; the chain's "native-gas/USD" feed AND
-     *        the "ETH/USD" feed are the same Chainlink aggregator.
-     *        Either intent works.
-     *      - **BNB Chain mainnet (chainId 56)**: native gas is BNB,
-     *        NOT ETH. **MUST set the chain's ETH/USD aggregator** (the
-     *        BNB-side Chainlink feed that prices ETH in USD), NEVER
-     *        the BNB/USD aggregator. The asset/ETH fallback formula
-     *        is `asset/ETH × ETH/USD`; with BNB/USD substituted, asset
-     *        prices mis-report by the ETH-to-BNB ratio (~6× as of
-     *        2026-05). Every depth-tier classification + every LTV /
-     *        HF read that traverses the fallback path mis-prices.
-     *      - **Polygon PoS mainnet (chainId 137)**: native gas is POL
-     *        (formerly MATIC), NOT ETH. **MUST set the chain's ETH/USD
-     *        aggregator**, NEVER POL/USD. Same failure mode as BNB.
-     *
-     *      The storage slot is named `ethNumeraireFeed` for historical
-     *      reasons (pre-numeraire-generalization). Read it as "the
-     *      ETH-side reference feed", not "the numeraire feed for the
-     *      chain's native asset". CLAUDE.md's deploy runbook + the
-     *      bounds-audit doc cover the canonical addresses per chain.
-     *
-     * @param feed The ETH/USD Chainlink aggregator contract address
-     *             on the active network (NOT the native-gas/USD feed
-     *             on non-ETH-gas chains).
-     */
-    function setEthUsdFeed(address feed) external {
-        LibVaipakam.setEthUsdFeed(feed);
-    }
 
     /**
      * @notice Sets the v3-style AMM factory used by
@@ -232,283 +62,54 @@ contract OracleAdminFacet {
         LibVaipakam.setUniswapV3Factory(factory);
     }
 
+    // ─── #3272 part 2 — where the Diamond finds its price guard ─────────
+
     /**
-     * @notice Registers, replaces, or deregisters a fiat / commodity peg
-     *         reference feed for OracleFacet's generalized peg-aware
-     *         stable-staleness branch.
-     * @dev Owner-only. The implicit USD $1 peg is always honoured and
-     *      does not need to be registered. Call with `feed == address(0)`
-     *      to deregister a previously-set symbol.
-     *
-     *      Example configs:
-     *        setStableTokenFeed("EUR", 0xb49f...); // EUR/USD aggregator
-     *        setStableTokenFeed("JPY", 0xBcE2...); // JPY/USD aggregator
-     *        setStableTokenFeed("XAU", 0x214e...); // XAU/USD aggregator
-     *
-     *      The peg-loop in OracleFacet walks the registered set only
-     *      once an asset's own feed has aged past the 2h volatile
-     *      ceiling; the reference feed itself must still be fresh
-     *      within the 25h stable ceiling to anchor the check.
-     * @param symbol Short fiat / commodity ticker, e.g. "EUR".
-     * @param feed   Chainlink `<symbol>/USD` aggregator (8 decimals);
-     *               `address(0)` to deregister.
+     * @notice Records the protocol registry through which the Diamond finds
+     *         its price guard (pointer `RegistryKeys.PRICE_GUARD`). One-shot,
+     *         at deploy.
+     * @dev    ADMIN_ROLE-only. The registry must have code and already name a
+     *         guard, so a Diamond is never left pointing at a registry that
+     *         prices nothing. The guard's numeraire is recorded with it: every
+     *         numeraire-denominated threshold the Diamond holds is in that
+     *         unit, and a guard swapped in later must price in it too
+     *         ({LibPriceGuard.guard}). Which guard the Diamond reads is then
+     *         decided by the registry (Timelock-owned, its pointer swap
+     *         delayed and cancellable by the guardian), never by Diamond
+     *         storage.
+     * @param  registry The chain's `ProtocolRegistry`.
      */
-    function setStableTokenFeed(string calldata symbol, address feed) external {
-        // Gap #2 from the 2026-05-14 bounds audit
-        // (`docs/internal/ConfigKnobBoundsAudit-2026-05-14.md`):
-        // `symbol` was unconstrained. A fat-fingered or malicious
-        // governance call could register a 100-KB symbol, polluting
-        // the peg-lookup table + bloating storage. Cap at 10 bytes —
-        // covers every ISO 4217 fiat ticker ("USD", "EUR", "JPY", …)
-        // and the precious-metal tickers ("XAU" / "XAG") the design
-        // anticipates.
-        uint256 len = bytes(symbol).length;
-        if (len > MAX_STABLE_SYMBOL_LEN) {
-            revert StableSymbolTooLong(len, MAX_STABLE_SYMBOL_LEN);
+    function initializeProtocolRegistry(address registry)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.protocolRegistry != address(0)) revert AlreadyInitialized();
+        if (registry.code.length == 0) revert ProtocolRegistryMismatch(registry);
+        bytes32 numeraire;
+        try IProtocolRegistryReader(registry).pointer(RegistryKeys.PRICE_GUARD) returns (address g) {
+            if (g.code.length == 0) revert ProtocolRegistryMismatch(registry);
+            numeraire = IPriceGuard(g).NUMERAIRE_SYMBOL();
+        } catch {
+            revert ProtocolRegistryMismatch(registry);
         }
-        LibVaipakam.setStableTokenFeed(symbol, feed);
+        s.protocolRegistry = registry;
+        s.numeraireSymbol = numeraire;
+        emit ProtocolRegistrySet(registry, numeraire);
     }
 
-    /**
-     * @notice Sets the Chainlink l2 Sequencer Uptime feed used as an
-     *         oracle circuit breaker on l2 deployments.
-     * @dev Owner-only. Setting to `address(0)` disables the check —
-     *      correct for l1/Ethereum mainnet where no sequencer exists;
-     *      required on L2s (Base, Arbitrum, Optimism, etc.) where
-     *      Chainlink publishes a uptime feed. When non-zero,
-     *      `OracleFacet.getAssetPrice` and `checkLiquidity` will revert
-     *      with `SequencerDown` (sequencer currently offline) or
-     *      `SequencerGracePeriod` (came back up <1h ago) before any
-     *      price read.
-     * @param feed The Chainlink l2 Sequencer Uptime feed address.
-     */
-    function setSequencerUptimeFeed(address feed) external {
-        LibVaipakam.setSequencerUptimeFeed(feed);
+    /// @notice The protocol registry the Diamond records; zero until the
+    ///         deploy records one.
+    function getProtocolRegistry() external view returns (address) {
+        return LibVaipakam.storageSlot().protocolRegistry;
     }
 
-    /**
-     * @notice Sets a per-feed staleness override + minimum-valid-answer
-     *         floor for a specific Chainlink aggregator.
-     * @dev Owner-only (enforced inside `LibVaipakam.setFeedOverride`).
-     *      An override can only make a feed STRICTER (#2742): the two-tier
-     *      global defaults (ORACLE_VOLATILE_STALENESS, ORACLE_STABLE_STALENESS
-     *      and the stable-peg check) always apply, and the override adds
-     *      bounds on top of them, on both the price read and the liquidity
-     *      check:
-     *        - `maxStaleness` is a shorter age budget (seconds), at most
-     *          `ORACLE_STABLE_STALENESS`; a larger value is refused.
-     *        - `minValidAnswer` imposes a hard floor on the aggregator's
-     *          returned answer, in the aggregator's own decimals. A
-     *          reading below this floor triggers `StalePriceData`.
-     *
-     *      Pass `maxStaleness = 0` to clear the override entirely (both
-     *      fields are cleared regardless of `minValidAnswer`). Emits
-     *      {LibVaipakam.FeedOverrideSet}.
-     *
-     * @param feed           The Chainlink aggregator address.
-     * @param maxStaleness   Max age in seconds, at most 25h. 0 = clear.
-     * @param minValidAnswer Minimum acceptable raw answer from this feed.
-     *                       0 or negative = no floor (only the baseline
-     *                       `answer > 0` sanity check applies).
-     */
-    function setFeedOverride(
-        address feed,
-        uint40 maxStaleness,
-        int256 minValidAnswer
-    ) external {
-        LibVaipakam.setFeedOverride(feed, maxStaleness, minValidAnswer);
-    }
-
-    /**
-     * @notice Reads the current per-feed override (if any) for a given
-     *         aggregator. Used by UI + monitoring to surface tightened
-     *         staleness bounds to users and to let audit tooling diff
-     *         the configured policy vs. expected policy.
-     * @param feed The Chainlink aggregator address.
-     * @return maxStaleness   Current max age in seconds; 0 means no
-     *                        override is set.
-     * @return minValidAnswer Current minimum-valid-answer floor;
-     *                        0 or negative means no floor.
-     */
-    function getFeedOverride(
-        address feed
-    ) external view returns (uint40 maxStaleness, int256 minValidAnswer) {
-        LibVaipakam.FeedOverride storage ovr = LibVaipakam
-            .storageSlot()
-            .feedOverrides[feed];
-        return (ovr.maxStaleness, ovr.minValidAnswer);
-    }
-
-    // ─── Phase 7b.2 — Tellor + API3 + DIA + chain-level deviation cfg ──
-    //
-    // Pyth was removed in Phase 7b.2 because its `priceId` requires a
-    // per-asset governance mapping that conflicts with the platform's
-    // no-per-asset-config policy. The three replacement sources
-    // (Tellor / API3 / DIA) all derive their lookup key from the
-    // asset's ERC-20 symbol on-chain, so adding new collateral assets
-    // never requires a per-asset governance write.
-
-    /**
-     * @notice Set the chain's Tellor oracle address. Owner-only.
-     *         Zero disables Tellor's leg of the secondary deviation
-     *         check globally; the price view falls back to Chainlink-
-     *         only (plus API3 if configured).
-     *
-     *         No per-asset config: {OracleFacet} derives Tellor's
-     *         queryId at call time by reading `asset.symbol()` and
-     *         packing the standard SpotPrice query
-     *         (`keccak256(abi.encode("SpotPrice", abi.encode(symbol,
-     *         "usd")))`). Assets without a Tellor reporter are
-     *         silently skipped — the deviation check only fires when
-     *         Tellor returns non-zero data.
-     * @param oracle Tellor contract address on this chain, or zero.
-     */
-    function setTellorOracle(address oracle) external {
-        LibVaipakam.setTellorOracle(oracle);
-    }
-
-    /// @notice Read the configured Tellor oracle address. Zero
-    ///         indicates Tellor is disabled.
-    function getTellorOracle() external view returns (address) {
-        return LibVaipakam.storageSlot().tellorOracle;
-    }
-
-    /**
-     * @notice Set the chain's API3 ServerV1 contract address. Same
-     *         no-per-asset-config policy as Tellor — {OracleFacet}
-     *         derives the dAPI name from `asset.symbol()` at call
-     *         time. Owner-only.
-     * @param server API3 ServerV1 address on this chain, or zero.
-     */
-    function setApi3ServerV1(address server) external {
-        LibVaipakam.setApi3ServerV1(server);
-    }
-
-    /// @notice Read the configured API3 ServerV1 address. Zero
-    ///         indicates API3 is disabled.
-    function getApi3ServerV1() external view returns (address) {
-        return LibVaipakam.storageSlot().api3ServerV1;
-    }
-
-    /**
-     * @notice Set the chain's DIA Oracle V2 contract address. Same
-     *         no-per-asset-config policy as Tellor + API3 — {OracleFacet}
-     *         derives the DIA key (`<SYMBOL>/USD`) from `asset.symbol()`
-     *         at call time. Owner-only.
-     * @param oracle DIA Oracle V2 address on this chain, or zero.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function setDIAOracleV2(address oracle) external {
-        LibVaipakam.setDIAOracleV2(oracle);
-    }
-
-    /// @notice Read the configured DIA Oracle V2 address. Zero
-    ///         indicates DIA is disabled.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function getDIAOracleV2() external view returns (address) {
-        return LibVaipakam.storageSlot().diaOracleV2;
-    }
-
-    /**
-     * @notice Set the chain-level deviation tolerance applied to
-     *         every secondary oracle (Tellor / API3) when it
-     *         disagrees with the Chainlink primary.
-     * @dev Owner-only. Must be in (0, 10000) basis points.
-     * @param bps Allowed deviation, e.g. 500 = 5%.
-     */
-    function setSecondaryOracleMaxDeviationBps(uint16 bps) external {
-        LibVaipakam.setSecondaryOracleMaxDeviationBps(bps);
-    }
-
-    /// @notice Read the effective secondary-oracle deviation tolerance.
-    function getSecondaryOracleMaxDeviationBps() external view returns (uint16) {
-        return LibVaipakam.effectiveSecondaryOracleMaxDeviationBps();
-    }
-
-    /**
-     * @notice Set the chain-level secondary-oracle staleness tolerance.
-     * @dev Owner-only. Must be non-zero (seconds).
-     */
-    function setSecondaryOracleMaxStaleness(uint40 maxStaleness) external {
-        LibVaipakam.setSecondaryOracleMaxStaleness(maxStaleness);
-    }
-
-    /// @notice Read the effective secondary-oracle staleness tolerance.
-    function getSecondaryOracleMaxStaleness() external view returns (uint40) {
-        return LibVaipakam.effectiveSecondaryOracleMaxStaleness();
-    }
-
-    // ─── T-033 — Pyth numeraire-redundancy admin surface ───────────────────
-    //
-    // Single Pyth feed per chain (ETH/USD, or bridged WETH/USD on
-    // BNB / Polygon mainnet). Used as a sanity gate alongside the
-    // existing Chainlink WETH/USD reading — divergence > tolerance
-    // reverts the price view (`OracleCrossCheckDivergence`). Per-asset
-    // redundancy is unchanged: the symbol-derived Tellor + API3 +
-    // DIA quorum continues to handle that. Pyth here is specifically
-    // the redundancy on the most load-bearing oracle reading in the
-    // protocol, with zero per-asset governance overhead.
-    //
-    // Every tunable below is bounded by compiled-in min/max so a
-    // compromised admin / governance multisig can't push the value
-    // outside the policy range without a contract upgrade.
-
-    /// @notice Set the chain's Pyth contract address. Zero disables
-    ///         the numeraire gate globally — protocol falls back to
-    ///         Chainlink-only on the WETH/USD leg.
-    function setPythOracle(address oracle) external {
-        LibVaipakam.setPythOracle(oracle);
-    }
-
-    /// @notice Read the configured Pyth contract address.
-    function getPythOracle() external view returns (address) {
-        return LibVaipakam.storageSlot().pythOracle;
-    }
-
-    /// @notice Set the Pyth feed id used as the chain's numeraire
-    ///         (ETH/USD on ETH-native chains; bridged-WETH/USD on
-    ///         non-ETH-native chains).
-    function setPythCrossCheckFeedId(bytes32 feedId) external {
-        LibVaipakam.setPythCrossCheckFeedId(feedId);
-    }
-
-    /// @notice Read the configured Pyth numeraire feed id.
-    function getPythNumeraireFeedId() external view returns (bytes32) {
-        return LibVaipakam.storageSlot().pythCrossCheckFeedId;
-    }
-
-    /// @notice Set the Pyth max-staleness budget (seconds). Bounded
-    ///         to [60, 3600]. See `PYTH_MAX_STALENESS_*` constants
-    ///         in {LibVaipakam} for the policy rationale.
-    function setPythMaxStalenessSeconds(uint64 secondsBudget) external {
-        LibVaipakam.setPythMaxStalenessSeconds(secondsBudget);
-    }
-
-    /// @notice Read the effective Pyth max-staleness budget.
-    function getPythMaxStalenessSeconds() external view returns (uint64) {
-        return LibVaipakam.effectivePythMaxStalenessSeconds();
-    }
-
-    /// @notice Set the Chainlink ↔ Pyth max-deviation tolerance, in
-    ///         basis points. Bounded to [100, 2000] (1% to 20%).
-    function setPythCrossCheckMaxDeviationBps(uint16 bps) external {
-        LibVaipakam.setPythCrossCheckMaxDeviationBps(bps);
-    }
-
-    /// @notice Read the effective Pyth deviation tolerance.
-    function getPythNumeraireMaxDeviationBps() external view returns (uint16) {
-        return LibVaipakam.effectivePythCrossCheckMaxDeviationBps();
-    }
-
-    /// @notice Set the Pyth confidence-fraction ceiling, in basis
-    ///         points. Bounded to [50, 500] (0.5% to 5%).
-    function setPythConfidenceMaxBps(uint16 bps) external {
-        LibVaipakam.setPythConfidenceMaxBps(bps);
-    }
-
-    /// @notice Read the effective Pyth confidence ceiling.
-    function getPythConfidenceMaxBps() external view returns (uint16) {
-        return LibVaipakam.effectivePythConfidenceMaxBps();
+    /// @notice The price guard every price the Diamond reads comes from: the
+    ///         registry's `PRICE_GUARD` pointer now. Its config (feeds,
+    ///         sources, staleness, the delay) is read from the guard itself.
+    /// @dev    Reverts until the registry is recorded.
+    function getPriceGuard() external view returns (address) {
+        return address(LibPriceGuard.guard());
     }
 
     /**

@@ -64,6 +64,10 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Auto-pause duration seconds': { shown: ['autoPauseDurationSeconds'] },
   // #2843 — the heading also documents `autoPauseAvailableAt()`.
   'Auto-pause cooldown seconds': { shown: ['autoPauseCooldownSeconds', 'autoPauseAvailableAt'] },
+  // #3272 part 2 — the price guard, and the registry that names it.
+  'Price guard address, owner, guardian and delay': {
+    shown: ['priceGuard', 'protocolRegistry', 'priceGuardOwner', 'priceGuardGuardian', 'priceGuardDelaySeconds'],
+  },
   'Secondary-oracle max deviation BPS': { shown: ['secondaryOracleMaxDeviationBps'] },
   'Secondary-oracle max staleness seconds': { shown: ['secondaryOracleMaxStalenessSeconds'] },
   'Pyth oracle address': { shown: ['pythOracle'] },
@@ -76,15 +80,19 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Per-asset Chainlink feed override': { notShown: 'per-asset-or-chain' },
   'Stable-token feed override': { notShown: 'per-asset-or-chain' },
   'Sequencer uptime feed': { shown: ['sequencerUptimeFeed'] },
-  // #2680 — the USD denominator is read only as the registry's key in
-  // force (`feedRegistryPrimaryKey`, which is it while no pricing anchor is
-  // set); the ETH-USD feed is `ethNumeraireFeed`, claimed under the
-  // numeraire-rotation heading below.
-  'Chainlink Feed Registry / USD denominator / ETH denominator / WETH contract / ETH-USD feed / Uniswap V3 factory':
-    {
-      shown: ['feedRegistry', 'feedRegistryPrimaryKey', 'feedRegistryEthKey', 'wethContract'],
-      alsoNotShown: { usdChainlinkDenominator: 'no-getter', uniswapV3Factory: 'no-getter' },
-    },
+  // #3272 part 2 — the three registry keys are the price guard's fixed
+  // identity; the Uniswap V3 factory is the one Diamond setting here.
+  'Feed registry / numeraire, anchor and ETH keys / WETH / ETH-numeraire feed / Uniswap V3 factory': {
+    shown: [
+      'feedRegistry',
+      'numeraireDenominator',
+      'feedRegistryPrimaryKey',
+      'feedRegistryEthKey',
+      'wethContract',
+      'ethNumeraireFeed',
+    ],
+    alsoNotShown: { uniswapV3Factory: 'no-getter' },
+  },
   'Reward grace seconds': { shown: ['rewardGraceSeconds'] },
   'Reward messenger / base chain id / canonical reward chain flag': { notShown: 'rewards-and-recycling' },
   'Interaction-rewards launch timestamp': { notShown: 'rewards-and-recycling' },
@@ -120,20 +128,15 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
     shown: ['tier1LiqDiscountBps', 'tier2LiqDiscountBps', 'tier3LiqDiscountBps'],
   },
   'Periodic interest enabled flag (periodicInterestEnabled)': { shown: ['periodicInterestEnabled'] },
-  'Numeraire swap enabled flag (numeraireSwapEnabled)': { shown: ['numeraireSwapEnabled'] },
-  // The heading's feed-side slots are the symbol, the ETH feed, the
-  // Chainlink denominator and the Pyth feed id (its own heading above);
-  // its value-side knobs are the finer-cadence threshold (its own heading)
-  // and the KYC tier thresholds.
-  'Numeraire-rotation surface — Generalizing Numeraire (B1)': {
-    shown: ['numeraireSymbol', 'ethNumeraireFeed'],
-    alsoNotShown: {
-      numeraireChainlinkDenominator: 'no-getter',
-      kycTierThresholdsNumeraire: 'not-on-retail',
-    },
+  // #3272 part 2 — fixed at deploy; its value-side knobs have their own
+  // headings, and the KYC tier thresholds are not on retail.
+  'Numeraire, fixed at deploy': {
+    shown: ['numeraireSymbol'],
+    alsoNotShown: { kycTierThresholdsNumeraire: 'not-on-retail' },
   },
   'Predominantly Available Denominator (PAD)': {
-    shown: ['predominantDenominator', 'predominantDenominatorSymbol', 'ethPadFeed', 'padNumeraireRateFeed'],
+    shown: ['ethPadFeed', 'padNumeraireRateFeed'],
+    alsoNotShown: { assetDirectFeed: 'per-asset-or-chain' },
   },
   'Min principal for finer cadence (minPrincipalForFinerCadence)': { shown: ['minPrincipalForFinerCadence'] },
   'Pre-notify lead time in days (preNotifyDays)': { shown: ['preNotifyDays'] },

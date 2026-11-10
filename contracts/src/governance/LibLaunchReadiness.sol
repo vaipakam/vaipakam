@@ -11,13 +11,9 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 interface ILaunchReadableDiamond {
     function getTreasury() external view returns (address);
     function getSanctionsOracle() external view returns (address);
-    function getWethContract() external view returns (address);
+    function getPriceGuard() external view returns (address);
     function getSwapAdapters() external view returns (address[] memory);
     function getPaaAssets() external view returns (address[] memory);
-    function getFeedRegistryLookup()
-        external
-        view
-        returns (address registry, address padDenominator, address ethDenominator);
     function isSwapAdapterDisabled(address adapter) external view returns (bool);
     function isLiquidityQuoteUsable(address quote) external view returns (bool);
     // forge-lint: disable-next-line(mixed-case-function)
@@ -96,6 +92,7 @@ interface ILaunchVaultCode {
     function ORDER_PROTOCOL() external view returns (address);
     function CONDUIT() external view returns (address);
     function CONDUIT_KEY() external view returns (bytes32);
+    function PRICE_GUARD() external view returns (address);
 }
 
 /// @dev Seaport's conduit controller, reached through the vault's Seaport.
@@ -111,6 +108,17 @@ interface ILaunchConduitController {
 interface ILaunchListingExecutor {
     function seaport() external view returns (address);
     function approvedConduits(address conduit) external view returns (bool);
+}
+
+/// @dev #3272 — what the readiness check reads of the price guard, the one
+///      place WETH and the feed registry are configured.
+interface ILaunchPriceGuard {
+    function weth() external view returns (address);
+    function feedRegistry() external view returns (address);
+    // forge-lint: disable-next-line(mixed-case-function)
+    function PAD_DENOMINATOR() external view returns (address);
+    // forge-lint: disable-next-line(mixed-case-function)
+    function ETH_DENOMINATOR() external view returns (address);
 }
 
 library LibLaunchReadiness {
@@ -159,7 +167,7 @@ library LibLaunchReadiness {
         Lane[] lanes;
         /// @dev The WETH the proposal names for review. No on-chain record
         ///      says which token is the chain's bridged WETH9 (the
-        ///      `setWethContract` policy names the bridge registry as the
+        ///      WETH policy (the price guard's Weth entry) names the bridge registry as the
         ///      source), so its identity is the reviewers' to establish; the
         ///      check refuses any other configured WETH.
         address weth;
@@ -352,6 +360,14 @@ library LibLaunchReadiness {
                 return c;
             }
         } catch {}
+        // #3272 part 2 — the vault code's price guard is the one the Diamond
+        // prices through (the registry's PRICE_GUARD, read by the Diamond).
+        try d.getPriceGuard() returns (address g) {
+            if (g != v.PRICE_GUARD()) {
+                c.detail = "the vault code's PRICE_GUARD is not the guard the Diamond prices through";
+                return c;
+            }
+        } catch {}
         if (!_conduitKeyResolves(v)) {
             c.detail = "the vault code's CONDUIT_KEY does not resolve to its CONDUIT: every listing would be refused";
             return c;
@@ -370,7 +386,7 @@ library LibLaunchReadiness {
             }
         } catch {}
         c.met = true;
-        c.detail = "the vault code's treasury, backstop, order protocol, Seaport and conduit match the Diamond's";
+        c.detail = "the vault code's treasury, backstop, order protocol, price guard, Seaport and conduit match the Diamond's";
     }
 
     /// @dev #3431 — whether the vault code's conduit key resolves, through
@@ -566,16 +582,14 @@ library LibLaunchReadiness {
     ///      stored by mistake does not.
     function _priceFeed(address diamond, address declaredWeth) private view returns (Check memory c) {
         c.label = "WETH is the declared token and priced";
-        address weth;
-        try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
-            weth = w;
-        } catch {
-            c.detail = "getWethContract() unreadable";
+        (bool found, address weth) = _guardWeth(diamond);
+        if (!found) {
+            c.detail = "the Diamond's price guard or its WETH is unreadable (getPriceGuard)";
             return c;
         }
         if (weth == address(0)) {
             c.checkable = true;
-            c.detail = "no WETH configured (setWethContract): run the configure phase";
+            c.detail = "no WETH configured in the price guard (its Weth entry): run the configure phase";
             return c;
         }
         if (declaredWeth == address(0)) {
@@ -655,7 +669,7 @@ library LibLaunchReadiness {
     ///      Diamond, through `isLiquidityQuoteUsable`, the same quote-leg
     ///      question the search asks (Codex #2890 r1), rather than keeping a
     ///      copy of its rule: a listed quote with no price feed (a peg
-    ///      reference set by `setStableTokenFeed` prices nothing) is not a
+    ///      reference (the guard's StableRef entry) prices nothing) is not a
     ///      route. The answer is read live, so a quote whose round is stale
     ///      or distrusted at that moment is NOT MET until it recovers. Whether
     ///      the quote's pools are deep enough for a higher tier is a market
@@ -663,11 +677,9 @@ library LibLaunchReadiness {
     ///      detail says so.
     function _wethQuoteRoute(address diamond) private view returns (Check memory c) {
         c.label = "WETH has a liquidity-tier quote route";
-        address weth;
-        try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
-            weth = w;
-        } catch {
-            c.detail = "getWethContract() unreadable";
+        (bool found, address weth) = _guardWeth(diamond);
+        if (!found) {
+            c.detail = "the Diamond's price guard or its WETH is unreadable (getPriceGuard)";
             return c;
         }
         address[] memory quotes;
@@ -710,18 +722,14 @@ library LibLaunchReadiness {
     ///      service fills it under the registry's own delay.
     function _feedRegistry(address diamond, address declaredRegistry) private view returns (Check memory c) {
         c.label = "the declared feed registry keys every price lookup";
-        address registry;
-        address padKey;
-        address ethKey;
-        try ILaunchReadableDiamond(diamond).getFeedRegistryLookup() returns (address r, address p, address e) {
-            (registry, padKey, ethKey) = (r, p, e);
-        } catch {
-            c.detail = "getFeedRegistryLookup() unreadable";
+        (bool found, address registry, address padKey, address ethKey) = _guardFeedLookup(diamond);
+        if (!found) {
+            c.detail = "the Diamond's price guard or its feed lookup is unreadable (getPriceGuard)";
             return c;
         }
         if (registry == address(0)) {
             c.checkable = true;
-            c.detail = "no feed registry configured (setChainlinkRegistry), so only WETH is priced: run the configure phase";
+            c.detail = "no feed registry configured in the price guard (its FeedRegistry entry), so only WETH is priced: run the configure phase";
             return c;
         }
         if (declaredRegistry == address(0)) {
@@ -750,6 +758,55 @@ library LibLaunchReadiness {
                 " feed(s)"
             )
             : "the Diamond prices through the declared registry, which files a quote under both keys (its feed count is unreadable)";
+    }
+
+    /// @dev #3272 — the price guard the Diamond reads, and its WETH. `found`
+    ///      is false when either read fails.
+    function _guardWeth(address diamond) private view returns (bool found, address weth) {
+        address guard;
+        try ILaunchReadableDiamond(diamond).getPriceGuard() returns (address g) {
+            guard = g;
+        } catch {
+            return (false, address(0));
+        }
+        try ILaunchPriceGuard(guard).weth() returns (address w) {
+            return (true, w);
+        } catch {
+            return (false, address(0));
+        }
+    }
+
+    /// @dev #3272 — the price guard's feed registry and the two keys its
+    ///      price read asks the registry under: the predominant denominator
+    ///      (the numeraire's own on retail) and the ETH denominator of the
+    ///      asset/ETH fallback. `found` is false when any read fails.
+    function _guardFeedLookup(address diamond)
+        private
+        view
+        returns (bool found, address registry, address padKey, address ethKey)
+    {
+        address guard;
+        try ILaunchReadableDiamond(diamond).getPriceGuard() returns (address g) {
+            guard = g;
+        } catch {
+            return (false, address(0), address(0), address(0));
+        }
+        try ILaunchPriceGuard(guard).feedRegistry() returns (address r) {
+            registry = r;
+        } catch {
+            return (false, address(0), address(0), address(0));
+        }
+        try ILaunchPriceGuard(guard).PAD_DENOMINATOR() returns (address p) {
+            padKey = p;
+        } catch {
+            return (false, address(0), address(0), address(0));
+        }
+        try ILaunchPriceGuard(guard).ETH_DENOMINATOR() returns (address e) {
+            ethKey = e;
+        } catch {
+            return (false, address(0), address(0), address(0));
+        }
+        found = true;
     }
 
     /// @dev Whether `registry` answers `quoteSymbol(quote)` with a

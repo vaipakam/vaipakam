@@ -55,6 +55,7 @@ import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
 import {LibTestVaultBeacon as LibTestVaultBeaconPayout} from "../helpers/LibTestVaultBeacon.sol";
+import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
 /**
  * @title Scenario2_NFTRentalLending
@@ -119,7 +120,7 @@ contract Scenario2_NFTRentalLending is Test {
 
     function mockOraclePrice(address asset, uint256 price, uint8 decimals) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );

@@ -89,26 +89,21 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'rateModelMaxDeviationBps', getter: 'getRateModelMaxDeviationBps', setterEvents: ['RateModelBandSet'] },
   { key: 'rateModelRelativeDeviationBps', getter: 'getRateModelRelativeDeviationBps', setterEvents: ['RateModelBandSet'] },
   { key: 'rateModelMinDeviationBps', getter: 'getRateModelMinDeviationBps', setterEvents: ['RateModelBandSet'] },
-  // Oracle stack
-  { key: 'secondaryOracleMaxDeviationBps', getter: 'getSecondaryOracleMaxDeviationBps', setterEvents: ['SecondaryOracleMaxDeviationBpsSet'] },
-  { key: 'secondaryOracleMaxStalenessSeconds', getter: 'getSecondaryOracleMaxStaleness', setterEvents: ['SecondaryOracleMaxStalenessSet'] },
-  { key: 'pythOracle', getter: 'getPythOracle', setterEvents: ['PythOracleSet'] },
-  { key: 'pythCrossCheckFeedId', getter: 'getPythNumeraireFeedId', setterEvents: ['PythNumeraireFeedIdSet', 'NumeraireUpdated'] },
-  { key: 'pythMaxStalenessSeconds', getter: 'getPythMaxStalenessSeconds', setterEvents: ['PythMaxStalenessSecondsSet'] },
-  { key: 'pythCrossCheckMaxDeviationBps', getter: 'getPythNumeraireMaxDeviationBps', setterEvents: ['PythNumeraireMaxDeviationBpsSet'] },
-  { key: 'pythConfidenceMaxBps', getter: 'getPythConfidenceMaxBps', setterEvents: ['PythConfidenceMaxBpsSet'] },
-  // #2685 — the setter announces the change since the event was added.
-  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', setterEvents: ['SequencerUptimeFeedSet'] },
+  // #3272 part 2 — the price guard the Diamond reads every price from, and
+  // the registry that names it. The Diamond records the registry once, with
+  // the guard's numeraire. Which guard the registry names is the registry's
+  // own delayed entry, announced by the registry contract rather than the
+  // Diamond, so the snapshot cannot hear it change. The guard's settings are
+  // read from the guard itself: see PRICE_GUARD_KNOB_GETTERS.
+  { key: 'protocolRegistry', getter: 'getProtocolRegistry', setterEvents: ['ProtocolRegistrySet'] },
+  { key: 'priceGuard', getter: 'getPriceGuard', setterEvents: ['ProtocolRegistrySet'], eventless: true },
   // Cross-chain reward reporting
   { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds', setterEvents: ['RewardReporterConfigUpdated'] },
-  // Periodic interest and the numeraire
+  // Periodic interest and the numeraire. The numeraire is the price guard's,
+  // recorded with the registry (#3272 part 2); nothing changes it after.
   { key: 'periodicInterestEnabled', getter: 'getPeriodicInterestEnabled', setterEvents: ['PeriodicInterestEnabledSet'] },
-  { key: 'numeraireSwapEnabled', getter: 'getNumeraireSwapEnabled', setterEvents: ['NumeraireSwapEnabledSet'] },
-  { key: 'numeraireSymbol', getter: 'getNumeraireSymbol', setterEvents: ['NumeraireUpdated'] },
-  // Two setters write this slot: `setNumeraire` (NumeraireUpdated) and
-  // `OracleAdminFacet.setEthUsdFeed` (EthNumeraireFeedSet, since #2685).
-  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed', setterEvents: ['NumeraireUpdated', 'EthNumeraireFeedSet'] },
-  { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence', setterEvents: ['MinPrincipalForFinerCadenceSet', 'NumeraireUpdated'] },
+  { key: 'numeraireSymbol', getter: 'getNumeraireSymbol', setterEvents: ['ProtocolRegistrySet'] },
+  { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence', setterEvents: ['MinPrincipalForFinerCadenceSet'] },
   { key: 'preNotifyDays', getter: 'getPreNotifyDays', setterEvents: ['PreNotifyDaysSet'] },
   // Automation and pauses
   { key: 'autoLendEnabled', getter: 'getAutoLendEnabled', setterEvents: ['AutoLendEnabledSet'] },
@@ -133,30 +128,68 @@ export const PROTOCOL_KNOB_GETTERS = [
   // #2760 — the effective value: the default when governance has set none.
   { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire', setterEvents: ['MinIntentFillNumeraireSet'] },
   // #3242 — the offer-book bounds, each the effective value (the default
-  // when governance has set none). A numeraire rotation resets the floor and
-  // emits its event.
+  // when governance has set none).
   { key: 'minOfferValueNumeraire', getter: 'getMinOfferValueNumeraire', setterEvents: ['MinOfferValueNumeraireSet'] },
   { key: 'maxOpenOffersPerWallet', getter: 'getMaxOpenOffersPerWallet', setterEvents: ['MaxOpenOffersPerWalletSet'] },
   // Treasury
   { key: 'treasury', getter: 'getTreasury', setterEvents: ['TreasurySet'] },
-  // #2680 — the oracle stack's chain wiring, each a single stored address.
-  // The four PAD slots move together in `setPredominantDenominator`.
-  { key: 'predominantDenominator', getter: 'getPredominantDenominator', setterEvents: ['PredominantDenominatorUpdated'] },
-  { key: 'predominantDenominatorSymbol', getter: 'getPredominantDenominatorSymbol', setterEvents: ['PredominantDenominatorUpdated'] },
-  { key: 'ethPadFeed', getter: 'getEthPadFeed', setterEvents: ['PredominantDenominatorUpdated'] },
-  { key: 'padNumeraireRateFeed', getter: 'getPadNumeraireRateFeed', setterEvents: ['PredominantDenominatorUpdated'] },
-  { key: 'wethContract', getter: 'getWethContract', setterEvents: ['WethContractSet'] },
   // #2680 — the swap venues' factories that have a getter. (The 0x proxy
   // and the Uniswap V3 factory have none; the console says so.)
   { key: 'pancakeswapV3Factory', getter: 'getPancakeswapV3Factory', setterEvents: ['PancakeswapV3FactorySet'] },
   { key: 'sushiswapV3Factory', getter: 'getSushiswapV3Factory', setterEvents: ['SushiswapV3FactorySet'] },
 ] as const satisfies readonly ProtocolKnobGetter[];
 
-/** The settings that can change without announcing it on chain (see
- *  {@link ProtocolKnobGetter}). */
-export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set(
-  PROTOCOL_KNOB_GETTERS.filter((k): boolean => 'eventless' in k && k.eventless === true).map((k) => k.key),
-);
+/**
+ * #3272 part 2 — the pricing settings. They live in the price guard the
+ * Diamond names ({@link PROTOCOL_KNOB_GETTERS}' `priceGuard`), not in the
+ * Diamond, so each is read from the guard, at the same block as the rest.
+ * Every getter is a no-argument view with one output, so the value is the
+ * getter's whole answer (the guard is not a Diamond, and there is no facet
+ * to bind a part name to).
+ *
+ * The guard announces each change with its own `ConfigSet` event, from its
+ * own address. The snapshot hears only the Diamond's events, so every entry
+ * here is eventless from its point of view: refreshed on the indexer's
+ * schedule, and the console says so on each row. A change to one of them
+ * waits the guard's delay after it is proposed (zero on a test network), so
+ * the pending window is longer than that schedule on a production chain.
+ *
+ * Where a setting kept its meaning when it moved off the Diamond, it keeps
+ * the key the console and `/config` published it under.
+ */
+export const PRICE_GUARD_KNOB_GETTERS = [
+  // The guard's own governance.
+  { key: 'priceGuardOwner', getter: 'owner' },
+  { key: 'priceGuardGuardian', getter: 'guardian' },
+  { key: 'priceGuardDelaySeconds', getter: 'delay' },
+  // The numeraire identity, fixed when the guard was built.
+  { key: 'numeraireDenominator', getter: 'NUMERAIRE_DENOMINATOR' },
+  { key: 'feedRegistryPrimaryKey', getter: 'PAD_DENOMINATOR' },
+  { key: 'feedRegistryEthKey', getter: 'ETH_DENOMINATOR' },
+  // The chain wiring.
+  { key: 'feedRegistry', getter: 'feedRegistry' },
+  { key: 'wethContract', getter: 'weth' },
+  { key: 'ethNumeraireFeed', getter: 'ethNumeraireFeed' },
+  { key: 'ethPadFeed', getter: 'ethPadFeed' },
+  { key: 'padNumeraireRateFeed', getter: 'padNumeraireRateFeed' },
+  { key: 'sequencerUptimeFeed', getter: 'sequencerFeed' },
+  // The cross-checks.
+  { key: 'pythOracle', getter: 'pythOracle' },
+  { key: 'pythCrossCheckFeedId', getter: 'pythFeedId' },
+  { key: 'pythMaxStalenessSeconds', getter: 'pythMaxStaleness' },
+  { key: 'pythCrossCheckMaxDeviationBps', getter: 'pythMaxDeviationBps' },
+  { key: 'pythConfidenceMaxBps', getter: 'pythConfidenceMaxBps' },
+  { key: 'secondaryOracleMaxDeviationBps', getter: 'secondaryMaxDeviationBps' },
+  { key: 'secondaryOracleMaxStalenessSeconds', getter: 'secondaryMaxStaleness' },
+] as const satisfies readonly { readonly key: string; readonly getter: string }[];
+
+/** The settings that can change without announcing it on chain where the
+ *  snapshot listens (see {@link ProtocolKnobGetter}), the price guard's
+ *  included. */
+export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set([
+  ...PROTOCOL_KNOB_GETTERS.filter((k): boolean => 'eventless' in k && k.eventless === true).map((k) => k.key),
+  ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key),
+]);
 
 /**
  * #2680 — a setting readable only as part of a multi-part answer.
@@ -188,8 +221,7 @@ export type LabelledKnobGetter =
     };
 
 export const LABELLED_KNOB_GETTERS = [
-  // Graduated partial-liquidation sizing (#395). `setNumeraire` rescales
-  // the dust floor and announces it with the same event.
+  // Graduated partial-liquidation sizing (#395).
   {
     kind: 'tuple',
     getter: 'getPartialLiquidationSizing',
@@ -212,27 +244,6 @@ export const LABELLED_KNOB_GETTERS = [
       tier3Bps: 'tier3LiqDiscountBps',
     },
     setterEvents: ['TierLiqDiscountBpsSet'],
-  },
-  // The feed registry and the two keys the oracle asks it under. The
-  // primary key is the predominant denominator, or the numeraire's
-  // Chainlink denominator while that is unset, so every event that writes
-  // either one refreshes it.
-  {
-    kind: 'tuple',
-    getter: 'getFeedRegistryLookup',
-    host: 'oracleAdminFacet',
-    fields: {
-      registry: 'feedRegistry',
-      padDenominator: 'feedRegistryPrimaryKey',
-      ethDenominator: 'feedRegistryEthKey',
-    },
-    setterEvents: [
-      'ChainlinkRegistrySet',
-      'UsdChainlinkDenominatorSet',
-      'EthChainlinkDenominatorSet',
-      'PredominantDenominatorUpdated',
-      'NumeraireUpdated',
-    ],
   },
   // The notification fee per loan side, effective value. `feesAccrued` is a
   // running total of fees billed, not a setting: it moves on every bill.
@@ -275,6 +286,7 @@ type LabelledListKey = Extract<(typeof LABELLED_KNOB_GETTERS)[number], { kind: '
  *  compile time that it declares each one. */
 export type ProtocolKnobKey =
   | (typeof PROTOCOL_KNOB_GETTERS)[number]['key']
+  | (typeof PRICE_GUARD_KNOB_GETTERS)[number]['key']
   | LabelledTupleKey
   | LabelledListKey;
 
@@ -293,8 +305,9 @@ export interface ProtocolKnobRead {
   /** Every setting the chain answered, by key. */
   values: Record<string, ProtocolKnobPublished>;
   /** Every listed setting the chain did NOT answer (a Diamond without that
-   *  getter, or a call that reverted). Stated, never left implicit: a key
-   *  in neither list means the reader did not ask for it. */
+   *  getter, a call that reverted, or, for a price-guard setting, a Diamond
+   *  that names no guard). Stated, never left implicit: a key in neither
+   *  list means the reader did not ask for it. */
   unreported: string[];
 }
 
@@ -318,11 +331,16 @@ function toKnobValue(v: unknown): ProtocolKnobValue | null {
  * at. A labelled getter is published only when that host is the one
  * `facets` (the caller's deployment artifact) records for it; otherwise
  * every key it would publish is unreported.
+ *
+ * #3272 part 2 — the price guard's settings are a second batch, to the
+ * guard the first batch's `getPriceGuard` named, at the same block.
  */
 export async function readProtocolKnobGetters(opts: {
   client: PublicClient;
   diamond: Address;
   abi: Abi;
+  /** The price guard's ABI (`PriceGuardABI`), for its settings. */
+  guardAbi: Abi;
   blockNumber: bigint;
   /** The caller's deployment-artifact facet addresses, by facet key.
    *  `undefined` (no artifact for the chain) leaves every labelled getter
@@ -375,6 +393,27 @@ export async function readProtocolKnobGetters(opts: {
     }
     if (published === null) unreported.push(...labelledKeys(g));
     else Object.assign(values, published);
+  }
+  const guard = values.priceGuard;
+  if (typeof guard === 'string' && /^0x[0-9a-fA-F]{40}$/.test(guard) && BigInt(guard) !== 0n) {
+    const answers = await opts.client.multicall({
+      contracts: PRICE_GUARD_KNOB_GETTERS.map((k) => ({
+        address: guard as Address,
+        abi: opts.guardAbi,
+        functionName: k.getter,
+      })),
+      allowFailure: true,
+      blockNumber: opts.blockNumber,
+      multicallAddress: MULTICALL3_ADDRESS,
+    });
+    PRICE_GUARD_KNOB_GETTERS.forEach((k, i) => {
+      const r = answers[i];
+      const v = r && r.status === 'success' ? toKnobValue(r.result) : null;
+      if (v === null) unreported.push(k.key);
+      else values[k.key] = v;
+    });
+  } else {
+    unreported.push(...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key));
   }
   return { values, unreported };
 }

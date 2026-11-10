@@ -8,12 +8,20 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 /**
  * @title NumeraireConfigFacet
  * @author Vaipakam Developer Team
- * @notice Numeraire / Predominant-Available-Denominator (PAD) / periodic-interest
- *         configuration surface, carved out of {ConfigFacet} (#394 / Codex #647)
- *         to keep ConfigFacet's runtime bytecode under the EIP-170 24,576-byte
- *         limit. Shares the same `LibVaipakam` storage and the same
- *         ADMIN_ROLE gating; behaviour is identical to the pre-split code —
- *         this is a pure facet split, not a behaviour change.
+ * @notice The numeraire-denominated thresholds and the periodic-interest
+ *         configuration surface, carved out of {ConfigFacet} (#394 / Codex
+ *         #647) to keep ConfigFacet's runtime bytecode under the EIP-170
+ *         24,576-byte limit. Shares the same `LibVaipakam` storage and the
+ *         same ADMIN_ROLE gating.
+ *
+ *         The numeraire itself is not configured here (#3272 part 2, owner
+ *         decision 2026-11-09 "Fix numeraire at deploy"): it is the price
+ *         guard's identity, fixed when the guard is built, and the Diamond
+ *         records it when it records the protocol registry. A guard swapped
+ *         in later must carry the same numeraire, or every price read
+ *         refuses ({LibPriceGuard.guard}). So these thresholds and the
+ *         prices are always in one unit; a different numeraire is a new
+ *         deployment.
  * @dev    Every setter is ADMIN_ROLE-gated (routed through the governance
  *         timelock after handover). Getters resolve the effective value
  *         (override or library default). All functions operate on the shared
@@ -23,27 +31,6 @@ contract NumeraireConfigFacet is DiamondAccessControl {
     // ── T-034 — Periodic Interest Payment setters + getters ──────────────
     // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md
     // §6 (numeraire abstraction), §10 (kill-switches).
-
-    /// @notice Emitted when the numeraire address AND its companion
-    ///         threshold value flip atomically via {setNumeraire}.
-    /// @notice Emitted on every atomic numeraire rotation. After
-    ///         Numeraire generalization (b1), the numeraire is identified by its
-    ///         feed-side config (ETH/<numeraire> Chainlink feed +
-    ///         lowercase ASCII symbol that drives Tellor/API3/DIA
-    ///         queries) — there is no longer a single numeraireOracle
-    ///         contract. Off-chain monitors index `numeraireSymbol` to
-    ///         identify which currency the rotation targets ("usd",
-    ///         "eur", "xau", etc.).
-    /// @param oldEthFeed Previous ETH/<numeraire> Chainlink feed.
-    /// @param newEthFeed New ETH/<numeraire> Chainlink feed.
-    /// @param numeraireSymbol Lowercase ASCII symbol of the new
-    ///        numeraire (e.g. `bytes32("eur")`).
-    /// @custom:event-category informational/config
-    event NumeraireUpdated(
-        address indexed oldEthFeed,
-        address indexed newEthFeed,
-        bytes32 numeraireSymbol
-    );
 
     /// @notice Emitted when the principal threshold for finer cadences
     ///         is updated within the same numeraire.
@@ -60,206 +47,11 @@ contract NumeraireConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event PeriodicInterestEnabledSet(bool enabled);
 
-    /// @notice Emitted when the cross-numeraire swap kill-switch is
-    ///         toggled.
-    /// @custom:event-category informational/config
-    event NumeraireSwapEnabledSet(bool enabled);
-
-    /// @notice The #395 partial-liquidation sizing knobs changed. Declared
-    ///         byte-identical to `AdminFacet.PartialLiquidationSizingSet`
-    ///         (same topic hash), because {setNumeraire} resets the dust
-    ///         floor and must say so in the event indexers already follow.
-    ///         The two HF values are the raw stored overrides (0 = the
-    ///         library default), exactly as the AdminFacet setter emits them.
-    /// @custom:event-category informational/config
-    event PartialLiquidationSizingSet(
-        uint16 targetHfCeilingBps,
-        uint16 deepUnderwaterHfBps,
-        uint256 dustFloorNumeraire
-    );
-
-    /// @notice #2760 — the standing-intent fill floor changed. Byte-identical
-    ///         to `LenderIntentFacet.MinIntentFillNumeraireSet`, emitted here
-    ///         when a rotation resets the floor to its default. `minimum` is
-    ///         the effective floor after the write.
-    /// @custom:event-category informational/config
-    event MinIntentFillNumeraireSet(uint256 minimum);
-
     /// @notice #3242 — the floor on an offer principal's value changed.
     ///         `minimum` is the effective floor after the write (the default
     ///         when zero was written, or when a numeraire rotation reset it).
     /// @custom:event-category informational/config
     event MinOfferValueNumeraireSet(uint256 minimum);
-
-    /// @notice T-034 Numeraire generalization (b1) — atomic numeraire rotation.
-    ///         The struct carries ALL state that defines the protocol's
-    ///         reference currency at once. By construction, governance
-    ///         cannot rotate the numeraire without simultaneously
-    ///         re-anchoring every value denominated in it AND every
-    ///         oracle-side input that produces numeraire-quoted prices.
-    ///
-    ///         Inconsistent intermediate state ("numeraire = EUR but
-    ///         notification fee still in USD-units" or "Tellor still
-    ///         queries `<symbol>/usd`") is unreachable.
-    /// @param ethNumeraireFeed Chainlink ETH/<numeraire> AggregatorV3.
-    ///        ETH/USD by default; rotates to ETH/EUR / ETH/XAU / etc.
-    ///        as the numeraire changes. Zero address rejected.
-    /// @param numeraireChainlinkDenominator Chainlink Feed Registry
-    ///        constant for the active numeraire (e.g. `Denominations.USD`,
-    ///        `Denominations.EUR`). Drives Path 2 of `_primaryPrice`
-    ///        (direct asset/<numeraire> registry lookup). Zero rejected.
-    /// @param numeraireSymbol Lowercase ASCII bytes32 of the numeraire's
-    ///        symbol (e.g. `bytes32("usd")`, `bytes32("eur")`). Drives
-    ///        Tellor / API3 / DIA query construction. Zero rejected.
-    /// @param pythCrossCheckFeedId Pyth ETH/<numeraire> feed id for the
-    ///        T-033 cross-check gate. Zero is acceptable (disables the
-    ///        Pyth gate — soft-skip behaviour).
-    /// @param newThresholdInNewNumeraire Finer-cadence principal
-    ///        threshold in numeraire-units (1e18-scaled). 0 ⇒ default.
-    /// @param newKycTier0InNewNumeraire KYC Tier-0 threshold in
-    ///        numeraire-units (1e18-scaled). 0 ⇒ default. MUST be <
-    ///        `newKycTier1InNewNumeraire` when both non-zero.
-    /// @param newKycTier1InNewNumeraire KYC Tier-1 threshold in
-    ///        numeraire-units (1e18-scaled). 0 ⇒ default.
-    /// @dev The partial-liquidation dust floor is a numeraire value too, but
-    ///      it is configured on its own (`AdminFacet.setPartialLiquidationSizing`)
-    ///      and has no default, so a rotation RESETS it to 0 — dust handling
-    ///      off — rather than carrying a figure across currencies (#2419).
-    ///      The reset is emitted as {PartialLiquidationSizingSet} with the
-    ///      HF knobs unchanged; governance sets a floor in the new numeraire
-    ///      to switch dust handling back on.
-    ///
-    ///      Recycling M1 (#1346): the notification tariff is NO LONGER a
-    ///      numeraire-denominated knob — it is a flat native-VPFI quantity
-    ///      (`LibNotificationFee`), so it is deliberately absent from this
-    ///      rotation. Rotating it here would clobber a VPFI amount with a
-    ///      fiat-denominated value on the next numeraire change; tune it
-    ///      only via `ConfigFacet.setNotificationFee`.
-    function setNumeraire(
-        address ethNumeraireFeed,
-        address numeraireChainlinkDenominator,
-        bytes32 numeraireSymbol,
-        bytes32 pythCrossCheckFeedId,
-        uint256 newThresholdInNewNumeraire,
-        uint256 newKycTier0InNewNumeraire,
-        uint256 newKycTier1InNewNumeraire
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibVaipakam.ProtocolConfig storage c =
-            LibVaipakam.storageSlot().protocolCfg;
-        if (!c.numeraireSwapEnabled) revert IVaipakamErrors.NumeraireSwapDisabled();
-
-        // The three feed-side inputs are load-bearing — without them,
-        // `_primaryPrice` and the secondary-quorum query construction
-        // would break.
-        if (ethNumeraireFeed == address(0)) revert IVaipakamErrors.InvalidAddress();
-        if (numeraireChainlinkDenominator == address(0))
-            revert IVaipakamErrors.InvalidAddress();
-        if (numeraireSymbol == bytes32(0))
-            revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("numeraireSymbol"), 0, 1, type(uint256).max
-            );
-
-        // Range checks per value knob — zero accepted as "reset to default".
-        if (
-            newThresholdInNewNumeraire != 0 &&
-            (
-                newThresholdInNewNumeraire <
-                    LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR ||
-                newThresholdInNewNumeraire >
-                    LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
-            )
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("minPrincipalForFinerCadence"),
-                newThresholdInNewNumeraire,
-                LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR,
-                LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL
-            );
-        }
-        // KYC tier monotonicity — only enforce when both are non-zero
-        // (zero pair = "reset both to defaults", which the lib defaults
-        // satisfy by construction).
-        if (
-            newKycTier0InNewNumeraire != 0 &&
-            newKycTier1InNewNumeraire != 0 &&
-            newKycTier0InNewNumeraire >= newKycTier1InNewNumeraire
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("kycTier0VsTier1"),
-                newKycTier0InNewNumeraire,
-                0,
-                newKycTier1InNewNumeraire
-            );
-        }
-        if (
-            newKycTier0InNewNumeraire != 0 &&
-            (
-                newKycTier0InNewNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
-                newKycTier0InNewNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
-            )
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("kycTier0ThresholdNumeraire"),
-                newKycTier0InNewNumeraire,
-                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
-                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
-            );
-        }
-        if (
-            newKycTier1InNewNumeraire != 0 &&
-            (
-                newKycTier1InNewNumeraire < LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR ||
-                newKycTier1InNewNumeraire > LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
-            )
-        ) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("kycTier1ThresholdNumeraire"),
-                newKycTier1InNewNumeraire,
-                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR,
-                LibVaipakam.KYC_THRESHOLD_NUMERAIRE_MAX_CEIL
-            );
-        }
-
-        // Atomic write: feed-side first (so any subsequent oracle read
-        // in the same tx sees the new state), then value-side.
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address oldEthFeed = s.ethNumeraireFeed;
-        s.ethNumeraireFeed = ethNumeraireFeed;
-        s.numeraireChainlinkDenominator = numeraireChainlinkDenominator;
-        s.numeraireSymbol = numeraireSymbol;
-        s.pythCrossCheckFeedId = pythCrossCheckFeedId;
-        c.minPrincipalForFinerCadence = newThresholdInNewNumeraire;
-        // Recycling M1 (#1346): notification tariff is a flat native-VPFI
-        // knob, intentionally NOT rotated here (see the setter's @dev).
-        s.kycTier0ThresholdNumeraire = newKycTier0InNewNumeraire;
-        s.kycTier1ThresholdNumeraire = newKycTier1InNewNumeraire;
-        emit NumeraireUpdated(oldEthFeed, ethNumeraireFeed, numeraireSymbol);
-        // #2419 — the dust floor was denominated in the old numeraire.
-        if (s.liquidationDustFloorNumeraire != 0) {
-            s.liquidationDustFloorNumeraire = 0;
-            emit PartialLiquidationSizingSet(
-                s.partialLiqTargetHfCeilingBps,
-                s.partialLiqDeepUnderwaterHfBps,
-                0
-            );
-        }
-        // #2760 — so was the standing-intent fill floor; it returns to its
-        // default until governance sets one in the new unit.
-        if (s.minIntentFillNumeraire != 0) {
-            s.minIntentFillNumeraire = 0;
-            emit MinIntentFillNumeraireSet(LibVaipakam.cfgMinIntentFillNumeraire());
-        }
-        // #3242 — and so was the offer value floor.
-        if (s.minOfferValueNumeraire != 0) {
-            s.minOfferValueNumeraire = 0;
-            emit MinOfferValueNumeraireSet(LibVaipakam.cfgMinOfferValueNumeraire());
-        }
-    }
 
     /**
      * @notice #3242 — set the floor on the value of an offer's principal, in
@@ -370,180 +162,12 @@ contract NumeraireConfigFacet is DiamondAccessControl {
         emit PeriodicInterestEnabledSet(enabled);
     }
 
-    /// @notice Independent kill-switch gating the cross-numeraire
-    ///         batched setter `setNumeraire`. Default `false` — a
-    ///         fresh deploy ships USD-as-numeraire and governance
-    ///         cannot rotate to a different numeraire until this
-    ///         flag flips.
-    function setNumeraireSwapEnabled(bool enabled)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.storageSlot().protocolCfg.numeraireSwapEnabled = enabled;
-        emit NumeraireSwapEnabledSet(enabled);
-    }
-
-    /// @notice Individual getter for `numeraireSymbol` — the lowercase
-    ///         ASCII bytes32 symbol of the active numeraire (e.g.
-    ///         `bytes32("usd")`, `bytes32("eur")`). Empty bytes32
-    ///         indicates the post-deploy default ("usd"). Frontend
-    ///         knob card reads this for currency labels.
+    /// @notice The lower-case ASCII symbol of the numeraire every price and
+    ///         every numeraire-denominated threshold is in (`bytes32("usd")`
+    ///         on retail): the price guard's identity, recorded with the
+    ///         protocol registry at deploy (#3272). Zero until then.
     function getNumeraireSymbol() external view returns (bytes32) {
         return LibVaipakam.storageSlot().numeraireSymbol;
-    }
-
-    /// @notice Individual getter for `ethNumeraireFeed` — the
-    ///         Chainlink ETH/<numeraire> AggregatorV3 address.
-    function getEthNumeraireFeed() external view returns (address) {
-        return LibVaipakam.storageSlot().ethNumeraireFeed;
-    }
-
-    // ─── T-048 — Predominantly Available Denominator (PAD) ─────────────
-
-    /// @notice Emitted when governance rotates the PAD config. Indexes
-    ///         the old → new denominator transition for off-chain
-    ///         monitoring; the symbol + feeds are non-indexed because
-    ///         most chains will never rotate (PAD stays at USD).
-    /// @custom:event-category informational/config
-    event PredominantDenominatorUpdated(
-        address indexed oldDenominator,
-        address indexed newDenominator,
-        bytes32 newSymbol,
-        address newEthPadFeed,
-        address newPadNumeraireRateFeed
-    );
-
-    /// @notice Emitted when governance sets / clears a per-asset
-    ///         numeraire-direct feed override.
-    /// @custom:event-category informational/config
-    event AssetNumeraireDirectFeedOverrideSet(
-        address indexed asset,
-        address indexed previous,
-        address indexed next
-    );
-
-    /// @notice Atomic rotation of the Predominantly Available
-    ///         Denominator config — all four slots in one tx so the
-    ///         PAD identity is never half-rotated. PAD is the
-    ///         universally-covered Chainlink denomination
-    ///         (`Denominations.USD` by post-deploy default) the
-    ///         protocol pivots through when the active numeraire is
-    ///         non-USD. See README §16 / docs/AdminConfigurableKnobsAndSwitches.md.
-    /// @dev    Admin-only. The setter accepts:
-    ///          - `newDenominator`: the Chainlink Feed Registry
-    ///            denomination constant (e.g.
-    ///            `0x0000…0000348` for USD). Must be non-zero;
-    ///            zeroing the slot would disable the PAD pivot
-    ///            entirely and is reachable only via a governance
-    ///            decision to revert to a pre-T-048 deploy shape
-    ///            (use `clearPredominantDenominator` for that).
-    ///          - `newSymbol`: lowercase ASCII bytes32 (e.g.
-    ///            `bytes32("usd")`) for symbol-derived secondary
-    ///            oracles. Empty bytes32 is interpreted as `"usd"`.
-    ///          - `newEthPadFeed`: Chainlink ETH/<PAD> AggregatorV3.
-    ///            REQUIRED on every chain because it's the load-
-    ///            bearing leg of (a) WETH pricing and (b) the
-    ///            derived PAD/<numeraire> rate. Must be non-zero.
-    ///          - `newPadNumeraireRateFeed`: optional Chainlink
-    ///            PAD/<numeraire> AggregatorV3 (e.g. USD/EUR on
-    ///            mainnet). Zero is valid — the protocol derives the
-    ///            rate from `ethNumeraireFeed ÷ ethPadFeed`.
-    function setPredominantDenominator(
-        address newDenominator,
-        bytes32 newSymbol,
-        address newEthPadFeed,
-        address newPadNumeraireRateFeed
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        if (newDenominator == address(0)) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "predominantDenominator",
-                0,
-                1,
-                type(uint256).max
-            );
-        }
-        if (newEthPadFeed == address(0)) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "ethPadFeed",
-                0,
-                1,
-                type(uint256).max
-            );
-        }
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address oldDenominator = s.predominantDenominator;
-        s.predominantDenominator = newDenominator;
-        s.predominantDenominatorSymbol = newSymbol;
-        s.ethPadFeed = newEthPadFeed;
-        s.padNumeraireRateFeed = newPadNumeraireRateFeed;
-
-        emit PredominantDenominatorUpdated(
-            oldDenominator,
-            newDenominator,
-            newSymbol,
-            newEthPadFeed,
-            newPadNumeraireRateFeed
-        );
-    }
-
-    /// @notice Set / clear a per-asset numeraire-direct feed override.
-    ///         When set non-zero, `OracleFacet._primaryPrice` reads
-    ///         this Chainlink feed directly as the asset's
-    ///         numeraire-quoted price and skips the PAD pivot.
-    ///         Operator vouches the feed is verified-rated; the
-    ///         protocol does NOT cross-check it against Pyth.
-    /// @dev    Pass `address(0)` to clear and revert to PAD-pivot
-    ///         behaviour for that asset. Admin-only.
-    function setAssetNumeraireDirectFeedOverride(address asset, address feed)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address previous = s.assetNumeraireDirectFeedOverride[asset];
-        s.assetNumeraireDirectFeedOverride[asset] = feed;
-        emit AssetNumeraireDirectFeedOverrideSet(asset, previous, feed);
-    }
-
-    /// @notice Read the active PAD denomination — the Chainlink
-    ///         Feed Registry denominator that `_primaryPrice` queries
-    ///         first. Zero on a pre-T-048 deploy where PAD wasn't set
-    ///         (legacy numeraire-direct path active).
-    function getPredominantDenominator() external view returns (address) {
-        return LibVaipakam.storageSlot().predominantDenominator;
-    }
-
-    /// @notice Read the active PAD symbol — bytes32 lowercase ASCII
-    ///         used by symbol-derived secondary oracles when querying
-    ///         asset/PAD pairs. Empty bytes32 (post-deploy default)
-    ///         reads as `"usd"` per `LibVaipakam.effectivePadSymbol()`.
-    function getPredominantDenominatorSymbol() external view returns (bytes32) {
-        return LibVaipakam.storageSlot().predominantDenominatorSymbol;
-    }
-
-    /// @notice Read the Chainlink ETH/<PAD> AggregatorV3 address.
-    ///         REQUIRED post-T-048; load-bearing for WETH pricing
-    ///         and for the derived PAD/<numeraire> rate.
-    function getEthPadFeed() external view returns (address) {
-        return LibVaipakam.storageSlot().ethPadFeed;
-    }
-
-    /// @notice Read the optional Chainlink PAD/<numeraire>
-    ///         AggregatorV3 address. Zero means the protocol derives
-    ///         the FX rate from existing ETH-pivot feeds.
-    function getPadNumeraireRateFeed() external view returns (address) {
-        return LibVaipakam.storageSlot().padNumeraireRateFeed;
-    }
-
-    /// @notice Read the per-asset numeraire-direct feed override.
-    ///         Zero means the asset routes through the PAD pivot.
-    function getAssetNumeraireDirectFeedOverride(address asset)
-        external
-        view
-        returns (address)
-    {
-        return LibVaipakam.storageSlot().assetNumeraireDirectFeedOverride[asset];
     }
 
     /// @notice Individual getter for `minPrincipalForFinerCadence`.
@@ -569,25 +193,17 @@ contract NumeraireConfigFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().protocolCfg.periodicInterestEnabled;
     }
 
-    /// @notice Individual getter for `numeraireSwapEnabled` independent
-    ///         kill-switch.
-    function getNumeraireSwapEnabled() external view returns (bool) {
-        return LibVaipakam.storageSlot().protocolCfg.numeraireSwapEnabled;
-    }
-
     /// @notice Bundled getter for the entire T-034 config surface,
     ///         intended for the frontend `usePeriodicInterestConfig`
-    ///         hook. Numeraire generalization (b1) — the per-knob `numeraireOracle`
-    ///         field is gone; the numeraire identity is captured by
-    ///         the symbol (`getNumeraireSymbol()`) + ETH feed
-    ///         (`getEthNumeraireFeed()`) — both readable individually.
-    /// @return symbol Lowercase ASCII bytes32 of the active numeraire.
+    ///         hook.
+    /// @return symbol Lowercase ASCII bytes32 of the numeraire: the price
+    ///         guard's, recorded once with the protocol registry
+    ///         ({getNumeraireSymbol}).
     /// @return threshold The effective `minPrincipalForFinerCadence`
     ///         (override or library default), in numeraire-units.
     /// @return preNotify The effective `preNotifyDays` (override or
     ///         library default).
     /// @return periodicEnabled Master kill-switch state.
-    /// @return numeraireSwapEnabled_ Numeraire-swap kill-switch state.
     function getPeriodicInterestConfig()
         external
         view
@@ -595,8 +211,7 @@ contract NumeraireConfigFacet is DiamondAccessControl {
             bytes32 symbol,
             uint256 threshold,
             uint8 preNotify,
-            bool periodicEnabled,
-            bool numeraireSwapEnabled_
+            bool periodicEnabled
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -609,6 +224,5 @@ contract NumeraireConfigFacet is DiamondAccessControl {
             ? LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT
             : c.preNotifyDays;
         periodicEnabled = c.periodicInterestEnabled;
-        numeraireSwapEnabled_ = c.numeraireSwapEnabled;
     }
 }

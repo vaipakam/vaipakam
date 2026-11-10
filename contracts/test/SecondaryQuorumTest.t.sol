@@ -16,11 +16,13 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {IFeedRegistryPairBase} from "../src/interfaces/IFeedRegistryPairBase.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @title SecondaryQuorumTest
- * @notice Phase 7b.2 — exercises the Soft 2-of-N decision rule in
- *         {OracleFacet._enforceSecondaryQuorum}.
+ * @notice Phase 7b.2 — exercises the Soft 2-of-N decision rule the price
+ *         guard runs (#3272 part 2), read through {OracleFacet.getAssetPrice}.
  *
  * Decision rule under test:
  *   - All three secondaries Unavailable → accept Chainlink
@@ -91,26 +93,7 @@ contract SecondaryQuorumTest is Test {
         accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
-        // Phase 7b.2 — OracleAdminFacet now has 11 selectors:
-        //   7 base + 4 (chain-level Tellor / API3 / DIA / deviation /
-        //   staleness setters' 6 functions, but 4 distinct setters &
-        //   matching getters via getEffective*). We register all the
-        //   ones the tests actually call.
-        bytes4[] memory oracleAdminSelectors = new bytes4[](14);
-        oracleAdminSelectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
-        oracleAdminSelectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
-        oracleAdminSelectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
-        oracleAdminSelectors[3] = OracleAdminFacet.setWethContract.selector;
-        oracleAdminSelectors[4] = OracleAdminFacet.setEthUsdFeed.selector;
-        oracleAdminSelectors[5] = OracleAdminFacet.setUniswapV3Factory.selector;
-        oracleAdminSelectors[6] = OracleAdminFacet.setStableTokenFeed.selector;
-        oracleAdminSelectors[7] = OracleAdminFacet.setTellorOracle.selector;
-        oracleAdminSelectors[8] = OracleAdminFacet.setApi3ServerV1.selector;
-        oracleAdminSelectors[9] = OracleAdminFacet.setDIAOracleV2.selector;
-        oracleAdminSelectors[10] = OracleAdminFacet.setSecondaryOracleMaxDeviationBps.selector;
-        oracleAdminSelectors[11] = OracleAdminFacet.setSecondaryOracleMaxStaleness.selector;
-        oracleAdminSelectors[12] = OracleAdminFacet.getSecondaryOracleMaxDeviationBps.selector;
-        oracleAdminSelectors[13] = OracleAdminFacet.getSecondaryOracleMaxStaleness.selector;
+        bytes4[] memory oracleAdminSelectors = helperTest.getOracleAdminFacetSelectors();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
@@ -139,10 +122,12 @@ contract SecondaryQuorumTest is Test {
 
         vm.warp(7 days);
 
-        OracleAdminFacet(address(diamond)).setUsdChainlinkDenominator(mockDenom);
-        OracleAdminFacet(address(diamond)).setChainlinkRegistry(mockRegistry);
-        OracleAdminFacet(address(diamond)).setWethContract(mockWeth);
-        OracleAdminFacet(address(diamond)).setEthUsdFeed(mockEthUsdFeed);
+        // #3272 part 2 - the Diamond prices through a guard keyed by these
+        // denominators, named by the registry it records.
+        LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, LibTestPriceGuard.ETH));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
 
         // Default ETH/USD: $2000, 8 decimals, fresh.
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
@@ -289,15 +274,15 @@ contract SecondaryQuorumTest is Test {
     }
 
     function _enableTellor() internal {
-        OracleAdminFacet(address(diamond)).setTellorOracle(mockTellor);
+        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Tellor, mockTellor);
     }
 
     function _enableApi3() internal {
-        OracleAdminFacet(address(diamond)).setApi3ServerV1(mockApi3);
+        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Api3, mockApi3);
     }
 
     function _enableDia() internal {
-        OracleAdminFacet(address(diamond)).setDIAOracleV2(mockDia);
+        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Dia, mockDia);
     }
 
     function _readPrice() internal view returns (uint256, uint8) {
@@ -598,7 +583,7 @@ contract SecondaryQuorumTest is Test {
             abi.encodeWithSignature(
                 "getDataBefore(bytes32,uint256)",
                 _tellorQueryId("eth"),
-                block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER
+                block.timestamp - PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).TELLOR_DISPUTE_BUFFER()
             )
         );
         _readPrice();
@@ -651,7 +636,7 @@ contract SecondaryQuorumTest is Test {
             abi.encodeWithSignature(
                 "getDataBefore(bytes32,uint256)",
                 _tellorQueryId("eth"),
-                block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER
+                block.timestamp - PriceGuard(LibTestPriceGuard.guardOf(address(diamond))).TELLOR_DISPUTE_BUFFER()
             )
         );
         OracleFacet(address(diamond)).getAssetPrice(mockWeth);
@@ -676,7 +661,7 @@ contract SecondaryQuorumTest is Test {
         assertEq(price, CHAINLINK_PRICE_8DEC);
 
         // Tighten to 100bps (1%) — same 2%-off data now disagrees.
-        OracleAdminFacet(address(diamond)).setSecondaryOracleMaxDeviationBps(100);
+        LibTestPriceGuard.setUint(address(diamond), PriceGuard.Kind.SecondaryMaxDeviationBps, 100);
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
         OracleFacet(address(diamond)).getAssetPrice(mockAsset);
     }
@@ -698,7 +683,7 @@ contract SecondaryQuorumTest is Test {
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
 
-        OracleAdminFacet(address(diamond)).setSecondaryOracleMaxStaleness(14400); // 4h
+        LibTestPriceGuard.setUint(address(diamond), PriceGuard.Kind.SecondaryMaxStaleness, 14400); // 4h
         (uint256 price2, ) = _readPrice();
         assertEq(price2, CHAINLINK_PRICE_8DEC);
     }
@@ -841,7 +826,7 @@ contract SecondaryQuorumTest is Test {
     ///         classified the same way.
     function testPriceStatus_pythCrossCheckDivergence_isDivergent() public {
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockAsset),
             _crossCheckDivergence()
         );
@@ -853,7 +838,7 @@ contract SecondaryQuorumTest is Test {
     ///         that only borrows a divergence selector is not one.
     function testPriceStatus_divergenceSelectorAtTheWrongLength_isUnavailable() public {
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockAsset),
             abi.encodeWithSelector(OracleFacet.OracleCrossCheckDivergence.selector)
         );
@@ -890,7 +875,7 @@ contract SecondaryQuorumTest is Test {
     ///         has stood undisputed for the buffer, it counts.
     function testTellorBuffer_freshSubmissionIsNotConsumed() public {
         TellorRecordMock tellor = new TellorRecordMock();
-        OracleAdminFacet(address(diamond)).setTellorOracle(address(tellor));
+        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Tellor, address(tellor));
         _enableApi3();
         _mockApi3Disagree();
         tellor.submit(SECONDARY_AGREE_18DEC, block.timestamp);
@@ -909,7 +894,7 @@ contract SecondaryQuorumTest is Test {
 
     function testTellorBuffer_readsTheNewestValueOutsideTheBuffer() public {
         TellorRecordMock tellor = new TellorRecordMock();
-        OracleAdminFacet(address(diamond)).setTellorOracle(address(tellor));
+        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Tellor, address(tellor));
         // An agreeing value 30 minutes old, then a disagreeing one 5 minutes
         // old: the buffer hides the newer one, so Tellor agrees.
         tellor.submit(SECONDARY_AGREE_18DEC, block.timestamp - 30 minutes);

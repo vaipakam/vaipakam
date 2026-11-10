@@ -16,6 +16,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 /**
  * @title SaleFloorTest
@@ -221,7 +222,7 @@ contract SaleFloorTest is SetupTest {
         _twoCheckpoints();
         _tier(3);
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             "stale"
         );
@@ -256,7 +257,7 @@ contract SaleFloorTest is SetupTest {
     function test_checkpointSkipsAnUnreadablePrice() public {
         uint256 hour = block.timestamp / 1 hours;
         vm.mockCallRevert(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             "stale"
         );

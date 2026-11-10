@@ -71,6 +71,7 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 contract LoanFacetTest is Test {
     VaipakamDiamond diamond;
@@ -108,7 +109,7 @@ contract LoanFacetTest is Test {
         uint8 decimals
     ) internal {
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
             abi.encode(price, decimals)
         );
@@ -392,7 +393,7 @@ contract LoanFacetTest is Test {
 
         // Mock prices: $1 for simplicity
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockERC20
@@ -400,7 +401,7 @@ contract LoanFacetTest is Test {
             abi.encode(1e8, 8) // $1, 8 decimals
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
@@ -408,7 +409,7 @@ contract LoanFacetTest is Test {
             abi.encode(1e8, 8)
         );
         vm.mockCall(
-            address(diamond),
+            LibTestPriceGuard.guardOf(address(diamond)),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockIlliquidERC20

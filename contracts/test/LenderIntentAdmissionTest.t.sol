@@ -137,22 +137,6 @@ contract LenderIntentAdmissionTest is SetupTest {
         _set(mockERC20, mockCollateralERC20, 100 ether);
     }
 
-    /// The floor is denominated in the numeraire, so rotating the numeraire
-    /// returns it to the default until governance restates it in the new unit.
-    function test_numeraireRotation_resetsTheFloor() public {
-        vm.startPrank(owner);
-        LenderIntentFacet(address(diamond)).setMinIntentFillNumeraire(5e18);
-        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
-        vm.expectEmit(address(diamond));
-        emit NumeraireConfigFacet.MinIntentFillNumeraireSet(100e18);
-        NumeraireConfigFacet(address(diamond)).setNumeraire(
-            // forge-lint: disable-next-line(unsafe-typecast)
-            makeAddr("ethEurFeed"), makeAddr("eurDenom"), bytes32("eur"), bytes32(0), 5_000e18, 0, 0
-        );
-        vm.stopPrank();
-        assertEq(LenderIntentFacet(address(diamond)).getMinIntentFillNumeraire(), 100e18, "back to the default");
-    }
-
     // ─── Priced legs ────────────────────────────────────────────────────────
 
     function test_unpricedLendingLeg_reverts() public {
