@@ -163,6 +163,11 @@ export interface Candles {
   /** The index read only the market's newest loans, so the oldest periods
    *  are not drawn. */
   truncated: boolean;
+  /** The read ended inside the only period the index returned, so that
+   *  period's figures may count only part of its loans. When the read ends
+   *  inside one of several periods the index drops that period instead, so
+   *  every period it returns is whole. */
+  partial: boolean;
   unplaced: Unplaced;
   /** The width of one period, in seconds. */
   stepSec: number;
@@ -209,7 +214,8 @@ export async function readCandles(indexer: IndexerClient, chainId: number, m: Ma
     }
   }
   candles.sort((a, b) => a.t - b.t);
-  return { candles, unread, truncated: body.truncated === true, unplaced, stepSec: step.seconds };
+  const truncated = body.truncated === true;
+  return { candles, unread, truncated, partial: truncated && body.buckets.length === 1, unplaced, stepSec: step.seconds };
 }
 
 /** Runs of periods that follow one another with no empty period between;

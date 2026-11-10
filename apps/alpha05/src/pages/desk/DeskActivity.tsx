@@ -277,7 +277,11 @@ function ChartView({
       {!failed && data === undefined && <p className="tier-b">{text('desk.chartReading')}</p>}
       {data !== undefined && (
         <>
-          {data.truncated && <p className="tier-a">{text('desk.chartTruncated')}</p>}
+          {data.truncated && (
+            <p className="tier-a" data-testid="desk-chart-truncated">
+              {text(data.partial ? 'desk.chartPartial' : 'desk.chartTruncated')}
+            </p>
+          )}
           {data.unread > 0 && <p className="tier-a">{format('desk.chartUnread', { count: String(data.unread) })}</p>}
           {unplaced !== null && <p className="tier-a">{unplaced}</p>}
           {data.candles.length === 0 ? (
@@ -296,6 +300,7 @@ function ChartView({
                 nowSec={nowSec}
                 label={format('desk.chartLabel', { market: marketLabel, count: String(data.candles.length) })}
                 amount={amount}
+                partial={data.partial}
                 copy={copy}
               />
               <details className="chart-table" data-testid="desk-chart-table">
@@ -325,6 +330,7 @@ function ChartView({
                           <td>
                             {amount(c.principalTotal)}
                             {c.unrecorded > 0 && ` (${format('desk.chartTipUnrecorded', { count: String(c.unrecorded) })})`}
+                            {data.partial && ` (${text('desk.chartTipPartial')})`}
                           </td>
                         </tr>
                       ))}
@@ -359,6 +365,7 @@ function RateChart({
   nowSec,
   label,
   amount,
+  partial,
   copy,
 }: {
   candles: Candle[];
@@ -368,9 +375,10 @@ function RateChart({
   nowSec: number;
   label: string;
   amount: (v: bigint) => string;
+  partial: boolean;
   copy: CopyAccess;
 }) {
-  const { format } = copy;
+  const { format, text } = copy;
   const [boxRef, width] = useWidth<HTMLDivElement>(320);
   // The active period is held by its start time, not its position, so a
   // refresh that drops or adds a period never points at the wrong one.
@@ -485,6 +493,7 @@ function RateChart({
           <p>{format('desk.chartTipFills', { count: String(tip.fills) })}</p>
           <p>{format('desk.chartTipAmount', { amount: amount(tip.principalTotal) })}</p>
           {tip.unrecorded > 0 && <p>{format('desk.chartTipUnrecorded', { count: String(tip.unrecorded) })}</p>}
+          {partial && <p>{text('desk.chartTipPartial')}</p>}
         </div>
       )}
     </div>

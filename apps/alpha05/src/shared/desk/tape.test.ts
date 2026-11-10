@@ -135,7 +135,15 @@ describe('the executed-rate chart (OFF-75)', () => {
     expect(c.candles.map((x) => x.t)).toEqual([3_600, 7_200]);
     expect(c.unread).toBe(1);
     expect(c.truncated).toBe(true);
+    expect(c.partial).toBe(false);
     expect(c.stepSec).toBe(3_600);
+  });
+
+  it('says the only period is partial when the read ended inside it', async () => {
+    const c = await readCandles(indexer([{ buckets: [bucket({ t: 3_600 })], unplaced: UNPLACED, truncated: true }]), 84532, MARKET, '7d');
+    expect(c.partial).toBe(true);
+    const whole = await readCandles(indexer([{ buckets: [bucket({ t: 3_600 })], unplaced: UNPLACED, truncated: false }]), 84532, MARKET, '7d');
+    expect(whole.partial).toBe(false);
   });
 
   it('joins only periods that follow one another, so an empty period stays a gap', () => {
