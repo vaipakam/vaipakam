@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -1219,6 +1220,14 @@ contract OfferCreateFacet is
         LibProtectedAccount.requireCanOpen(creator);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
+
+        // #3443 — the terms are set now, so the offer can be filled only once
+        // they have stood the minimum age. A signed offer materialized for its
+        // own fill carries no age: its terms were set off-chain, and it is
+        // bound by its signature and the taker's signed terms instead.
+        if (route != LibOfferAdmission.Route.SignedMaterialize) {
+            LibTiming.stampOfferTerms(offer);
+        }
 
         unchecked {
             offer.positionTokenId = ++s.nextTokenId;

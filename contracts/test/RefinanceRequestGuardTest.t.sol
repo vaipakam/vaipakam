@@ -32,6 +32,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title RefinanceRequestGuardTest
@@ -119,6 +120,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, expiresAt)
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     /// The standing request for `loanId` (`getRefinanceRequest`'s `live`), or 0.

@@ -14,6 +14,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @title OfferExpiryTest
 /// @notice #195 — GTT (Good-Till-Time) offer-expiry coverage. The
@@ -282,6 +283,8 @@ contract OfferExpiryTest is SetupTest {
     function testPreviewAcceptIsCleanWhenUnexpired() public {
         uint64 deadline = uint64(block.timestamp + ONE_HOUR);
         uint256 id = _createLender(deadline);
+        // #3443 — past the minimum terms age, so only expiry is in question.
+        LibTestTiming.waitOutTermsAge(address(diamond), id);
 
         OfferAcceptFacet.AcceptPreview memory p =
             OfferPreviewFacet(address(diamond)).previewAccept(id, borrower);

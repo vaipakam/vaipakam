@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -889,6 +890,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.backstopEligibleAfter = 0;
             emit OfferBackstopEligibilitySet(offerId, 0);
         }
+        // #3443 — the terms changed now, so the offer fills again only once
+        // the new terms have stood the minimum age.
+        LibTiming.stampOfferTerms(offer);
         // #3413 — the offer's terms changed: its token cools down, so a sale
         // of the offer position cannot fill against terms changed just before.
         LibPositionNFT.markOfferValueOut(offerId);

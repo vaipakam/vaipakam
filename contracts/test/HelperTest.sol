@@ -8,6 +8,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -710,11 +711,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
-        selectors[2] = OfferMatchFacet.matchSignedOffer.selector;
         return selectors;
+    }
+
+    /// @dev #3443 — the signed-offer keeper-matcher, split off
+    ///      OfferMatchFacet. Mirrors `DeployDiamond._getSignedOfferMatchSelectors`.
+    function getSignedOfferMatchFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = SignedOfferMatchFacet.matchSignedOffer.selector;
     }
 
     /// @dev OfferMutateFacet — #193 in-place modification surface.
@@ -1970,7 +1977,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](85);
+        selectors = new bytes4[](87);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2118,6 +2125,9 @@ contract HelperTest {
         // #3242 — the per-wallet open-offer cap.
         selectors[83] = ConfigFacet.setMaxOpenOffersPerWallet.selector;
         selectors[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
+        // #3443 — the minimum age of an offer's terms at fill.
+        selectors[85] = ConfigFacet.setMinTermsAgeSec.selector;
+        selectors[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

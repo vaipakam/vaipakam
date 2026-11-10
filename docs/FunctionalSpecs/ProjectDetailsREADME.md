@@ -1132,6 +1132,45 @@ An offer may be created two ways, both reaching the same on-chain offer state:
 - See `docs/DesignsAndPlans/OfferExpiryGTTDesign.md` for the full
   rationale, alternatives table, and failure-mode coverage.
 
+### Timing rules on actions and fills (#3412, #3443)
+
+One timing rule, applied in one place, governs when an action may land.
+It has two bounds.
+
+- **Valid until (the caller's deadline).** An action that commits its
+  caller to a price or a rate carries a deadline the caller chose, and is
+  refused if it lands after it. A transaction that waited in a public
+  queue can therefore never execute hours later on terms its sender no
+  longer wants. The deadline second itself is still valid. Accepting an
+  offer, a signed offer's own signature and a lender's bounded direct sale
+  already carry such a deadline and share this one rule and its refusal.
+  For actions that only rescue a position (repaying, adding collateral) a
+  late landing does no harm, so a deadline there is optional.
+- **Not before (the age of an offer's terms).** A standing on-chain offer,
+  or a lender intent, can be filled only once its terms have stood for a
+  minimum age. The terms are set when the offer is created and again on
+  every change of its amount, rate or collateral, and each change
+  restarts the wait. This holds on every route that fills an offer:
+  a direct accept, a match, an intent fill, a lender's direct sale into a
+  standing offer to buy, and an obligation handover into a standing
+  borrower offer. It stops an offer from being created, or re-priced, and
+  filled in the same block. That closes self-dealing funded inside one
+  transaction, reward farming, and faked activity in the market-rate
+  signal. It does not stop another taker from reaching an old offer first,
+  and it is not slippage protection.
+- The minimum age is measured in time, never in block numbers, because
+  block times differ from chain to chain. It is 5 seconds by default and
+  can be changed by the admin (and later governance) within 1 to 60
+  seconds. The floor of one second means a fill always lands in a later
+  block than the one that set the terms, on every chain.
+- A signed off-chain offer has no on-chain time at which its terms were
+  set: it becomes an on-chain offer only at the moment it is filled. It is
+  bound instead by its own signature deadline and by the taker's signed
+  acceptance terms, so the age rule does not apply to it.
+- Previews report a fill refused for terms that are too new as its own
+  reason, distinct from an expired or taken offer, so an interface can
+  say that the offer becomes available within seconds.
+
 ### Process:
 
 - Offers are created through a React-based web interface.

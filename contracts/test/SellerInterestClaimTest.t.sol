@@ -24,6 +24,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @title SellerInterestClaimTest
 /// @notice #1209 + #1808 — a lender who sells keeps the interest they earned,
@@ -84,6 +85,7 @@ contract SellerInterestClaimTest is SetupTest {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Lender, DURATION_DAYS)
         );
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
 
@@ -113,6 +115,7 @@ contract SellerInterestClaimTest is SetupTest {
         p.amountMax = p.amount;
         vm.prank(buyer);
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(p);
+        LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(seller);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
     }
@@ -302,6 +305,7 @@ contract SellerInterestClaimTest is SetupTest {
         vm.prank(buyer);
         uint256 buyOfferId =
             OfferCreateFacet(address(diamond)).createOffer(_params(LibVaipakam.OfferType.Lender, remaining));
+        LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(holder);
         vm.expectRevert(full);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
@@ -386,6 +390,7 @@ contract SellerInterestClaimTest is SetupTest {
         p.amountMax = p.amount;
         vm.prank(buyer);
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(p);
+        LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(holder);
         vm.expectRevert(blocked);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
@@ -405,7 +410,9 @@ contract SellerInterestClaimTest is SetupTest {
         address incoming = _provisionFundedActor("incoming-borrower", mockCollateralERC20, COLLATERAL * 2);
         vm.prank(incoming);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_params(LibVaipakam.OfferType.Borrower, 40));
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);
+        LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId);
 

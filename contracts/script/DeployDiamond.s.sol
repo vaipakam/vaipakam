@@ -124,6 +124,7 @@ import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -530,6 +531,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3205 part 2 — the forced-sale previews, split off ForcedSaleFacet.
         ForcedSalePreviewFacet forcedSalePreviewFacet =
             ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
+        // #3443 — the signed-offer keeper-matcher, split off OfferMatchFacet.
+        SignedOfferMatchFacet signedOfferMatchFacet =
+            SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -578,7 +582,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](113);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](114);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -693,6 +697,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[110] = _buildCut(address(saleFloorFacet), _getSaleFloorSelectors());
         cuts[111] = _buildCut(address(vaultOutflowFacet), _getVaultOutflowSelectors());
         cuts[112] = _buildCut(address(forcedSalePreviewFacet), _getForcedSalePreviewSelectors());
+        cuts[113] = _buildCut(address(signedOfferMatchFacet), _getSignedOfferMatchSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1427,6 +1432,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("forcedSalePreviewFacet", address(forcedSalePreviewFacet));
+        Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2031,17 +2037,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      matching surface. Carved out of OfferFacet to bring it
     ///      under EIP-170; same selectors, separate facet.
     function _getOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         // `matchOffers` is the write entry bots submit; `previewMatch`
         // is the structured-error view they consult before
-        // submitting. `matchSignedOffer` (#396 v0.6) is the keeper entry
-        // for filling a signed off-chain offer against an on-chain
-        // counterparty. `matchIntent` (#393 v1-b) lives on
-        // OfferMatchIntentFacet since the #1219 host split (EIP-170). All
-        // gated on the `partialFillEnabled` master flag inside the facet body.
+        // submitting. `matchSignedOffer` (#396 v0.6) lives on
+        // SignedOfferMatchFacet since #3443, and `matchIntent` (#393 v1-b)
+        // on OfferMatchIntentFacet since the #1219 host split (both
+        // EIP-170). All gated on the `partialFillEnabled` master flag
+        // inside the facet body.
         s[0] = OfferMatchFacet.matchOffers.selector;
         s[1] = OfferMatchFacet.previewMatch.selector;
-        s[2] = OfferMatchFacet.matchSignedOffer.selector;
+    }
+
+    /// @dev #3443 — the signed-offer keeper-matcher (#396 v0.6), split off
+    ///      OfferMatchFacet for EIP-170: fills a signed off-chain offer
+    ///      against an on-chain counterparty.
+    function _getSignedOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = SignedOfferMatchFacet.matchSignedOffer.selector;
     }
 
     /// @dev OfferCancelFacet — cancellation + read views carved out of
@@ -3263,7 +3276,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](85);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -3440,6 +3453,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3242 — the per-wallet open-offer cap.
         s[83] = ConfigFacet.setMaxOpenOffersPerWallet.selector;
         s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
+        // #3443 — the minimum age of an offer's terms at fill.
+        s[85] = ConfigFacet.setMinTermsAgeSec.selector;
+        s[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

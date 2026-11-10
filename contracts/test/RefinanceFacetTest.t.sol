@@ -35,6 +35,7 @@ import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
 import {LibPermit2, ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @dev Drives {LibRefinanceNetting} directly. Each case runs inside ONE call,
 ///      because the record is transient: it is meant to live for one
@@ -544,6 +545,8 @@ contract RefinanceFacetTest is SetupTest {
         uint256 oldLenderVaultBefore = _bal(_vault(lender));
         uint256 borrowerWalletBefore = _bal(borrower);
         uint256 matcherBefore = _bal(address(this));
+        LibTestTiming.backdateTerms(address(diamond), lenderOfferId); // #3443
+        LibTestTiming.backdateTerms(address(diamond), taggedOfferId); // #3443
 
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
 

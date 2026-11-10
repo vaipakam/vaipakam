@@ -256,7 +256,9 @@ contract LenderIntentFacet is
             maxInitLtvBps: maxInitLtvBps,
             maxDurationDays: maxDurationDays,
             minFillAmount: minFillAmount,
-            requiresKeeperAuth: requiresKeeperAuth
+            requiresKeeperAuth: requiresKeeperAuth,
+            // #3443 — a fill waits until these terms have stood the minimum age.
+            termsSetAt: uint64(block.timestamp)
         });
 
         // #625 WI-2a — sync the discovery registry. A bare registration commits NO

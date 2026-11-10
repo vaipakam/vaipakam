@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibOfferAdmission} from "./LibOfferAdmission.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibTiming} from "./LibTiming.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
 import {LibOfferBounds} from "./LibOfferBounds.sol";
 import {LibInitRiskGate} from "./LibInitRiskGate.sol";
@@ -89,7 +90,13 @@ library LibOfferMatch {
         // `OfferPreviewFacet.requireOriginationCadenceAdmitted`'s revert for
         // the borrower offer and `matchAmount`. Appended last to keep every
         // prior ordinal ABI-stable.
-        CadenceNotAdmitted
+        CadenceNotAdmitted,
+        // #3443 — either offer's terms were set (created or last edited) less
+        // than the minimum age ago (`LibTiming.minTermsAgeSec`). `matchOffers`
+        // reverts `LibTiming.OfferTermsTooFresh(offerId, readyAt)`. Transient:
+        // the pair becomes matchable on its own a few seconds later. Appended
+        // last to keep every prior ordinal ABI-stable.
+        TermsTooFresh
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -157,7 +164,11 @@ library LibOfferMatch {
         // #3242 — the slice's principal is worth less than the offer value
         // floor it meets as it enters the book (OfferBelowMinimumValue).
         // APPENDED — prior ordinals stay stable.
-        SliceBelowMinOfferValue
+        SliceBelowMinOfferValue,
+        // #3443 — the intent's terms were set less than the minimum age ago
+        // (`IntentTermsTooFresh`); it can be filled within seconds. Checked
+        // right after `Inactive`, where `matchIntent` checks it. APPENDED.
+        TermsTooFresh
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -433,7 +444,6 @@ library LibOfferMatch {
             r.errorCode = MatchError.OfferExpired;
             return r;
         }
-
         // #194 — self-trade short-circuit. Matching two offers from the
         // same creator would land both lender and borrower on a single
         // address; `_acceptOffer` reverts `SelfTradeForbidden(party)`
@@ -723,6 +733,16 @@ library LibOfferMatch {
         }
 
         r.lenderRemainingPostMatch = lenderRemaining - r.matchAmount;
+        // #3443 — both offers' terms must have stood the minimum age, so
+        // neither side can be created or re-priced and matched in the same
+        // block. A signed slice materialized for this fill carries no age.
+        // Checked LAST: it is the one refusal that clears by itself within
+        // seconds, so a pair that can never match reports why first, and a
+        // pair that only needs to wait reports the computed terms with it.
+        if (!LibTiming.termsAged(L.termsSetAt) || !LibTiming.termsAged(B.termsSetAt)) {
+            r.errorCode = MatchError.TermsTooFresh;
+            return r;
+        }
         r.errorCode = MatchError.Ok;
         return r;
     }
@@ -807,6 +827,9 @@ library LibOfferMatch {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];
         if (!intent.active) return _intentFail(res, IntentError.Inactive);
+        if (!LibTiming.termsAged(intent.termsSetAt)) {
+            return _intentFail(res, IntentError.TermsTooFresh);
+        }
         if (
             intent.requiresKeeperAuth &&
             !LibAuth.isKeeperForPrincipal(
