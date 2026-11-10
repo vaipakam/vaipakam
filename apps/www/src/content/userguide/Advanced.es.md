@@ -2649,7 +2649,7 @@ La página lee el token con `getVPFIToken`; la dirección cero significa que el 
 
 ### Recompensas: riesgos de mover VPFI
 
-El nivel no es tu saldo de hoy. Es cero hasta que tu tenencia continua actual alcance el número mínimo de días; después sigue un promedio de tus saldos de cierre diarios ponderado hacia los días recientes; y queda limitado al nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Son dos miradas atrás distintas. Retirar parte de tu VPFI contado baja el saldo mínimo de ese día, que es el que lee el límite, y retirarlo todo reinicia tu tiempo de tenencia. Un aumento no lo reinicia. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere. El VPFI en tu bóveda no es garantía. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
+El nivel no es tu saldo de hoy. Es cero hasta que tu tenencia continua actual alcance el número mínimo de días; después sigue un promedio de tus saldos de cierre diarios ponderado hacia los días recientes; y queda limitado al nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Son dos miradas atrás distintas. Retirar parte de tu VPFI contado baja el saldo mínimo de ese día, que es el que lee el límite, y retirarlo todo reinicia tu tiempo de tenencia. Un aumento no lo reinicia. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere. El retiro de una cuenta protegida cambia tu VPFI contado y tu nivel solo cuando se libera, y uno cancelado no cambia ninguno de los dos. El VPFI en tu bóveda no es garantía. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
 
 <a id="rewards-tier"></a>
 

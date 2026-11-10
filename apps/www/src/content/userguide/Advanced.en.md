@@ -2857,7 +2857,7 @@ The page reads the token with `getVPFIToken`; the zero address means VPFI is not
 
 ### Rewards: Risks of Moving VPFI
 
-The tier is not today's balance. It is zero until your current continuous holding has lasted the minimum number of days; it then follows a recency-weighted average of your daily closing balances; and it is clamped to the lowest tier you held on any day of your current holding, looking back at most 30 days. These are two separate look-backs. Withdrawing part of your counted VPFI lowers that day's lowest balance, which the clamp reads, and withdrawing all of it restarts your holding time. A top-up does not restart it. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released. VPFI in your vault is not collateral. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.
+The tier is not today's balance. It is zero until your current continuous holding has lasted the minimum number of days; it then follows a recency-weighted average of your daily closing balances; and it is clamped to the lowest tier you held on any day of your current holding, looking back at most 30 days. These are two separate look-backs. Withdrawing part of your counted VPFI lowers that day's lowest balance, which the clamp reads, and withdrawing all of it restarts your holding time. A top-up does not restart it. VPFI held for a loan, offer, claim or payout cannot be withdrawn until it is released. A protected account's withdrawal changes your counted VPFI and your tier only when it is released, and a cancelled one changes neither. VPFI in your vault is not collateral. The protocol sells no VPFI, quotes no price for it and pays nothing for holding it.
 
 <a id="rewards-tier"></a>
 

@@ -35,18 +35,27 @@ describe('the receipt notes', () => {
     expect(emptiesTier({ tracked: 4n, consent: true, home: true }, 4n)).toBe(true);
     expect(emptiesTier({ tracked: 4n, consent: true, home: true }, 3n)).toBe(false);
     expect(emptiesTier({ tracked: 0n, consent: true, home: true }, 3n)).toBe(false);
-    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: true }, 4n, copy)).toEqual([
+    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: true }, 4n, 'wallet', copy)).toEqual([
       'rewardsVault.withdrawTier',
       'rewardsVault.withdrawEmpties',
       'rewardsVault.consentStays',
     ]);
-    expect(vpfiWithdrawNotes({ tracked: 9n, consent: true, home: true }, 4n, copy)).not.toContain('rewardsVault.withdrawEmpties');
-    expect(vpfiWithdrawNotes({ tracked: null, consent: true, home: true }, 4n, copy)).toContain('rewardsVault.withdrawTrackedUnread');
+    expect(vpfiWithdrawNotes({ tracked: 9n, consent: true, home: true }, 4n, 'wallet', copy)).not.toContain('rewardsVault.withdrawEmpties');
+    expect(vpfiWithdrawNotes({ tracked: null, consent: true, home: true }, 4n, 'wallet', copy)).toContain('rewardsVault.withdrawTrackedUnread');
+  });
+  it('a queued withdrawal puts each tier effect on its release, and an unread route names neither', () => {
+    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: true }, 4n, 'queued', copy)).toEqual([
+      'rewardsVault.withdrawQueuedTier',
+      'rewardsVault.withdrawQueuedEmpties',
+      'rewardsVault.consentStays',
+    ]);
+    expect(vpfiWithdrawNotes({ tracked: 9n, consent: true, home: true }, 4n, 'queued', copy)).toEqual(['rewardsVault.withdrawQueuedTier', 'rewardsVault.consentStays']);
+    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: true }, 4n, 'unknown', copy)).toEqual(['rewardsVault.withdrawRouteUnread', 'rewardsVault.consentStays']);
   });
   it('away from VPFI’s home network a move changes no tier, and an unread home says so', () => {
     expect(vpfiDepositNotes({ tracked: 0n, consent: true, home: false }, copy)).toEqual(['rewardsVault.depositAway']);
-    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: false }, 4n, copy)).toEqual(['rewardsVault.withdrawAway', 'rewardsVault.consentStays']);
+    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: false }, 4n, 'wallet', copy)).toEqual(['rewardsVault.withdrawAway', 'rewardsVault.consentStays']);
     expect(vpfiDepositNotes({ tracked: 0n, consent: true, home: null }, copy)).toEqual(['rewardsVault.homeUnread', 'rewardsVault.consentOn']);
-    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: null }, 4n, copy)).toEqual(['rewardsVault.homeUnread', 'rewardsVault.consentStays']);
+    expect(vpfiWithdrawNotes({ tracked: 4n, consent: true, home: null }, 4n, 'wallet', copy)).toEqual(['rewardsVault.homeUnread', 'rewardsVault.consentStays']);
   });
 });

@@ -127,6 +127,11 @@ export function VpfiVault({ chain, own }: { chain: SupportedChain; own: OwnState
           )}
           {b.home === null && <p className="tier-a">{text('rewardsVault.homeUnread')}</p>}
           {b.vault === null && <p className="tier-b">{text('rewardsVault.noVault')}</p>}
+          {b.vault !== null && fig.uncounted === null && (
+            <p className="tier-a" data-testid="rewards-vpfi-uncounted-unread">
+              {text('rewardsVault.uncountedUnread')}
+            </p>
+          )}
           {fig.uncounted !== null && fig.uncounted > 0n && (
             <p className="tier-a" data-testid="rewards-vpfi-uncounted">
               {format('rewardsVault.uncounted', { amount: amount(fig.uncounted) })} <Link to="/vault">{text('rewardsVault.adopt')}</Link>

@@ -1786,7 +1786,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   it reads, at one block, the VPFI in the wallet, counted in the vault (what
   the tier reads), free to withdraw, held, and any VPFI sitting in the vault
   uncounted (sent there directly, never raising the tier, with the way to
-  adopt it from Vault). VPFI in the vault is not collateral. Deposit and
+  adopt it from Vault; when that figure cannot be read the panel says so
+  rather than showing nothing, which would read as none). VPFI in the vault
+  is not collateral. Deposit and
   withdrawal use the vault's own generic deposit and withdrawal for this one
   token, not the VPFI-only entries: those count VPFI for the tier just the
   same, and the generic withdrawal also has the escape route while the
@@ -1795,7 +1797,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   deposited VPFI counts toward the tier under the holding rules and pledges
   nothing; a withdrawal works the tier out again from what stays counted,
   and taking the counted VPFI to zero restarts the holding time; whether the
-  consent is on, off or unread. The tier copy follows the contract's three
+  consent is on, off or unread. A protected account's withdrawal is only
+  queued: the protocol lowers the counted VPFI when the payout is released,
+  never when it is queued, and a cancelled one never lowers it. So its
+  receipt puts each tier effect on that release, and when the route is
+  unread it names neither. The tier copy follows the contract's three
   gates (a minimum continuous holding, a recency-weighted average, a clamp
   to the lowest tier held over the current holding) and names no fixed
   window for the average. Only VPFI in the vault on VPFI's home network
