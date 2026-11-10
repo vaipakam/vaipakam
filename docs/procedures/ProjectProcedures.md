@@ -206,7 +206,7 @@ final stage.
    (only if the PR changes behaviour — skip for pure docs / chore / CI-config PRs)
 ☐ FunctionalSpecs updated if behaviour changed (see §6)
 ☐ Locally green:
-   `cd contracts && nice -n -10 ionice -c 2 -n 0 forge build && bash script/predeploy-check.sh`
+   `cd contracts && forge build && bash script/predeploy-check.sh`
    then (from repo root) per-workspace typechecks matching CI —
    `pnpm --filter @vaipakam/keeper typecheck && pnpm --filter @vaipakam/indexer typecheck && pnpm --filter @vaipakam/agent typecheck && pnpm --filter @vaipakam/app typecheck && pnpm --filter @vaipakam/www typecheck`
    (don't use `pnpm -r typecheck` — the fan-out silently passes if a
@@ -1274,7 +1274,7 @@ the parent of both repos).
 
 ```bash
 cd contracts
-nice -n -10 ionice -c 2 -n 0 forge build --skip test   # always before exporting
+forge build --skip test   # always before exporting
 
 # Frontend / Workers — writes to packages/contracts/src/abis/
 bash script/exportFrontendAbis.sh
@@ -1393,29 +1393,14 @@ to a decision. Listed by category.
   imports break the diamond pattern and miss the cut-table guarantees.
 
 - **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
-  every build. Prefix every long forge invocation with
-  `nice -n -10 ionice -c 2 -n 0` for the same priority reason — **but
-  `nice -n -10` needs CAP_SYS_NICE**, and without it the prefix is
-  silently ineffective rather than fatal. Do not probe it by exit status: on coreutils 9.4 an
-  unprivileged `nice -n -10 cmd` prints `nice: cannot set niceness:
-  Permission denied`, still runs `cmd` at niceness 0, and returns `cmd`'s
-  own exit status (verified on this machine: `nice -n -10 true` exits 0),
-  so a `sudo -n true` or exit-code check selects the wrong branch. Probe
-  the EFFECTIVE niceness — `nice -n -10 nice` prints `0` when the caller
-  lacks the capability and `-10` when it has it — and when the caller lacks it,
-  OMIT the CPU boost — do NOT run the build under `sudo`: a root-run
-  `forge` leaves root-owned `out/` and `cache/` entries that break the
-  next unprivileged build or cleanup. (Granting the capability to the
-  user is an operator decision outside this runbook.) Keep
-  `ionice -c 2 -n 0 forge ...` in every case — the I/O
-  class is available unprivileged, and it is the knob that matters:
-  ```bash
-  nice -n -10 ionice -c 2 -n 0 forge build
-  nice -n -10 ionice -c 2 -n 0 forge test
-  nice -n -10 ionice -c 2 -n 0 forge script <ScriptName>
-  ```
-  viaIR runs 5-15 min and ~8 GB RSS; low priority causes 2-3×
-  slowdowns under parallel desktop load.
+  every build. viaIR runs 5-15 min and ~8 GB RSS. **No priority prefix
+  is needed** (owner, 2026-11-10): the owner's machine raises a running
+  `solc` process's priority automatically, so run plain `forge build`,
+  `forge test` and `forge script <ScriptName>`. The
+  `nice -n -10 ionice -c 2 -n 0` prefix this section used to require is
+  retired. Never run forge under `sudo`: a root-run `forge` leaves
+  root-owned `out/` and `cache/` entries that break the next
+  unprivileged build or cleanup.
 
 **Design-and-change discipline (folded from agent memory, 2026-09-07):**
 
@@ -1610,21 +1595,16 @@ assert it.
   admin/governance, treasury, cross-chain, sanctions Tier-1/2 paths,
   every external entry point.
 
-- **Tests run with `nice -n -10 ionice -c 2 -n 0`** for the same
-  performance reason as the build (§12.3).
-
 - **Inner loop is `FOUNDRY_PROFILE=quick forge build` plus a targeted
   `forge test --match-path <glob>` (or `--match-test` / `--match-contract`);** the full regression (`run-regression.sh`) is not a
   routine per-PR gate — it runs before a testnet deployment, and CI runs it
   on PRs targeting `release/**` (`mainnet-gate.yml`'s
   `predeploy-check.sh --full`), which is the one PR shape where it IS the
   gate. Kill any stale
-  `forge`/`solc` process before starting a new build, and use the priority
-  prefix from §12.3 (`ionice -c 2 -n 0`, plus `nice -n -10` only when
-  `nice -n -10 nice` prints `-10`) — the cost is per profile (`CLAUDE.md` table): `quick` ≈ 44 s /
-  677 MB cold, `cifast` ≈ 5 min / 3.2 GB, and the `default` whole unit
-  14–19 min / ≈ 17.7 GB peak — and low I/O priority makes the long ones
-  2–3× slower under desktop load.
+  `forge`/`solc` process before starting a new build (no priority prefix
+  is needed, §12.3). The cost is per profile (`CLAUDE.md` table): `quick`
+  ≈ 44 s / 677 MB cold, `cifast` ≈ 5 min / 3.2 GB, and the `default`
+  whole unit 14–19 min / ≈ 17.7 GB peak.
 
 ### 12.9 Workers + frontend
 
