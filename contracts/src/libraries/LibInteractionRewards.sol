@@ -3311,8 +3311,10 @@ library LibInteractionRewards {
     ///         stops, so later sides count nothing. #1787 — which day and
     ///         which entries count is {_nextClaimDay}'s, the model the
     ///         per-entry read shares: only the entries the work meter carries,
-    ///         nothing on a side the claim would not walk, and the borrower
-    ///         side only behind an empty lender side. The EXACT figure is
+    ///         the meter carried from the lender side's day to the borrower
+    ///         side's as the walk carries it, nothing on a side the claim would
+    ///         not walk, and the borrower side only where the lender side's
+    ///         walk is known to end at the day read. The EXACT figure is
     ///         the claim itself in a reverting frame
     ///         ({RewardClaimFacet.simulateClaimInteractionRewards}); this read
     ///         is for the callers that cannot make a call — the lens, the
@@ -3328,38 +3330,56 @@ library LibInteractionRewards {
         uint256 drawnDay = type(uint256).max;
         uint256 drawnFresh;
         uint256 drawnRecycled;
+        // #1787 — the call's work meter, carried across the sides as the walk
+        // carries it ({WalkCtx.workLeft}).
+        uint256 left = LibClaimWork.BUDGET;
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
                 ? LibVaipakam.RewardSide.Lender
                 : LibVaipakam.RewardSide.Borrower;
             // #1787 — the next claim's day on this side, as {_nextClaimDay}
-            // models it: none pending reads nothing; a side the claim would
-            // not walk (its domain's, a borrower side behind a pending
-            // lender day) is not this claim's and reads `capHit`; otherwise
-            // the leading entries the work meter carries.
-            (uint256 d, uint256[] memory taken, bool walks) = _nextClaimDay(s, user, side);
-            if (d != type(uint256).max) {
-                if (!walks) {
+            // models it with what is left of the call's work meter: none
+            // pending reads nothing; a side the claim would not walk (its
+            // domain's) is not this claim's and reads `capHit`; otherwise the
+            // leading entries the meter carries. A pending day the meter
+            // cannot reach at all is the next call's: it reads `capHit`.
+            NextClaimDay memory nd = _nextClaimDay(s, user, side, left);
+            if (nd.d != type(uint256).max) {
+                if (!nd.walks || nd.taken.length == 0) {
                     need.capHit = true;
                     break;
                 }
-                (uint256 pf, uint256 pr) = LibRewardCustody.cursorBatchRooms(s, d);
-                if (d == drawnDay) {
+                (uint256 pf, uint256 pr) = LibRewardCustody.cursorBatchRooms(s, nd.d);
+                if (nd.d == drawnDay) {
                     pf = pf > drawnFresh ? pf - drawnFresh : 0;
                     pr = pr > drawnRecycled ? pr - drawnRecycled : 0;
                 }
                 bool stop;
-                (drawnFresh, drawnRecycled, stop) =
-                    _fillDayStatic(s, user, side, d, taken, pool, need, pf, pr);
-                drawnDay = d;
+                bool advanced;
+                (drawnFresh, drawnRecycled, stop, advanced) =
+                    _fillDayStatic(s, user, side, nd.d, nd.taken, pool, need, pf, pr);
+                drawnDay = nd.d;
+                left -= nd.cost;
                 // The walk ends the claim where a day is a record's or a
                 // transport cap hit, whichever side it is on
                 // ({_walkShareOfPoolDays}); the sides after it pay
                 // nothing, so the read counts nothing for them. A plain
-                // shortfall ends only its side, and so does this read. The
-                // borrower side is read only behind an empty lender side
-                // ({_nextClaimDay}), so a priced lender day ends the read.
-                if (stop || side == LibVaipakam.RewardSide.Lender) break;
+                // shortfall ends only its side, and so does this read.
+                if (stop) break;
+                // The lender side's walk is known to end at this day when the
+                // day does not advance (the shortfall ends the side) or is the
+                // side's only pending day; the meter then holds exactly
+                // `left` for the borrower side, which the read goes on to, as
+                // the walk does. A lender side that pays this day and has later
+                // days goes on spending the meter and the call's days by an
+                // amount this read does not price, so it cannot say the
+                // borrower day is reached: it stops, and a pending borrower
+                // day reads `capHit`.
+                if (side == LibVaipakam.RewardSide.Lender && advanced && !nd.onlyDay) {
+                    if (_lowestPendingDay(s, _shareOfPoolWorklist(s, user, LibVaipakam.RewardSide.Borrower, true))
+                        != type(uint256).max) need.capHit = true;
+                    break;
+                }
             }
             unchecked { ++sideIdx; }
         }
@@ -3395,54 +3415,77 @@ library LibInteractionRewards {
         // work meter reaches it. Anything else reads `capHit` (not
         // executable), never a figure that could be over-generous; the clock
         // then waits rather than runs.
-        (uint256 d, uint256[] memory taken, bool walks) = _nextClaimDay(s, e.user, e.side);
-        if (!walks || _shareOfPoolCursorDay(s, id, e) != d || !_contains(taken, id)) {
+        // The lender side walks first and spends the meter by an amount this
+        // read does not price (it prices one day, not the lender's), so a
+        // borrower entry is this claim's only while no lender day is pending.
+        if (e.side == LibVaipakam.RewardSide.Borrower && _lowestPendingDay(
+            s, _shareOfPoolWorklist(s, e.user, LibVaipakam.RewardSide.Lender, true)
+        ) != type(uint256).max) {
             need.capHit = true;
             return need;
         }
-        (uint256 pf, uint256 pr) = LibRewardCustody.cursorBatchRooms(s, d);
-        _fillDayStatic(s, e.user, e.side, d, taken, pool, need, pf, pr);
+        NextClaimDay memory nd = _nextClaimDay(s, e.user, e.side, LibClaimWork.BUDGET);
+        if (!nd.walks || _shareOfPoolCursorDay(s, id, e) != nd.d || !_contains(nd.taken, id)) {
+            need.capHit = true;
+            return need;
+        }
+        (uint256 pf, uint256 pr) = LibRewardCustody.cursorBatchRooms(s, nd.d);
+        _fillDayStatic(s, e.user, e.side, nd.d, nd.taken, pool, need, pf, pr);
+    }
+
+    /// @dev #1787 — {_nextClaimDay}'s answer for one side.
+    /// @param d The side's lowest pending day; `type(uint256).max` when none,
+    ///        and then nothing else is meaningful.
+    /// @param taken The leading entries of day `d` the meter carries, in the
+    ///        walk's order; the claim pays the rest on a later call.
+    /// @param walks Whether the claim walks day `d` at all.
+    /// @param cost What walking `taken` charges the meter (0 when empty).
+    /// @param onlyDay Whether `d` is the side's only pending day, so the
+    ///        side's walk ends with it.
+    struct NextClaimDay {
+        uint256 d;
+        uint256[] taken;
+        bool walks;
+        uint256 cost;
+        bool onlyDay;
     }
 
     /// @notice #1787 — the ONE static model of what the NEXT claim walks on
-    ///         `user`'s `side`, read by both static reads
-    ///         ({userArmedFreshNeedWithLegsView}, {entryArmedNeedView}) so the
-    ///         preview, the funding figure and the expiry clock agree with the
-    ///         claim and with each other.
+    ///         `user`'s `side` with `left` of the call's work meter, read by
+    ///         both static reads ({userArmedFreshNeedWithLegsView},
+    ///         {entryArmedNeedView}) so the preview, the funding figure and
+    ///         the expiry clock agree with the claim and with each other.
     /// @dev    The claim walks a side's days oldest first, lender side first,
-    ///         on one work meter shared by both sides. So, conservatively:
-    ///         - `d` is the side's lowest pending day (`type(uint256).max`
-    ///           when none, and then nothing else is meaningful);
-    ///         - `walks` is false where the claim would not walk that day: the
-    ///           side has a claim domain in any phase (the side is then the
-    ///           domain's: the claim prepares it or defers on it, and an entry
-    ///           outside its snapshot waits for the next domain), its pending
-    ///           extent is longer than one chunk (the claim opens a domain
-    ///           and pays nothing), or it is the borrower side while a lender
-    ///           day is pending (the lender days spend the meter first, by an
-    ///           amount a static read cannot price);
-    ///         - `taken` is the leading entries of day `d` a fresh call's work
-    ///           meter carries ({LibClaimWork.freshWalkCapacity}), in the
-    ///           walk's order: the claim pays the rest on a later call.
+    ///         on one work meter shared by both sides. `walks` is false where
+    ///         the claim would not walk the side's day: the side has a claim
+    ///         domain in any phase (the side is then the domain's: the claim
+    ///         prepares it or defers on it, and an entry outside its snapshot
+    ///         waits for the next domain), or its pending extent is longer
+    ///         than one chunk (the claim opens a domain and pays nothing).
+    ///         Which side a caller may read with what meter is the caller's:
+    ///         the aggregate read carries the meter across the sides, the
+    ///         per-entry read keeps a borrower entry waiting behind any
+    ///         pending lender day.
     function _nextClaimDay(
         LibVaipakam.Storage storage s,
         address user,
-        LibVaipakam.RewardSide side
-    ) private view returns (uint256 d, uint256[] memory taken, bool walks) {
+        LibVaipakam.RewardSide side,
+        uint256 left
+    ) private view returns (NextClaimDay memory nd) {
         uint256[] memory work = _shareOfPoolWorklist(s, user, side, true);
-        d = _lowestPendingDay(s, work);
-        if (d == type(uint256).max) return (d, taken, false);
+        nd.d = _lowestPendingDay(s, work);
+        if (nd.d == type(uint256).max) return nd;
         if (s.stagingDomains[LibRewardCustody.domainKey(user, side)].phase != LibVaipakam.DomainPhase.None) {
-            return (d, taken, false);
+            return nd;
         }
         (, uint256 last) = _sideExtent(s, work);
-        if (last >= d && last - d + 1 > LibVaipakam.MAX_INTERACTION_CLAIM_DAYS) return (d, taken, false);
-        if (side == LibVaipakam.RewardSide.Borrower) {
-            uint256[] memory lender = _shareOfPoolWorklist(s, user, LibVaipakam.RewardSide.Lender, true);
-            if (_lowestPendingDay(s, lender) != type(uint256).max) return (d, taken, false);
-        }
-        taken = LibClaimWork.prefix(_entriesAtDay(s, work, d), LibClaimWork.freshWalkCapacity());
-        walks = true;
+        if (last >= nd.d && last - nd.d + 1 > LibVaipakam.MAX_INTERACTION_CLAIM_DAYS) return nd;
+        uint256[] memory set = _entriesAtDay(s, work, nd.d);
+        uint256 k;
+        (k, nd.cost) = LibClaimWork.fitFresh(set.length, left);
+        nd.taken = LibClaimWork.prefix(set, k);
+        nd.onlyDay = last <= nd.d;
+        nd.walks = true;
     }
 
     /// @dev Whether `id` is one of `set`.
@@ -3520,8 +3563,8 @@ library LibInteractionRewards {
         ArmedNeed memory need,
         uint256 pf,
         uint256 pr
-    ) private view returns (uint256 drawnFresh, uint256 drawnRecycled, bool stop) {
-        if (set.length == 0) return (0, 0, false);
+    ) private view returns (uint256 drawnFresh, uint256 drawnRecycled, bool stop, bool advanced) {
+        if (set.length == 0) return (0, 0, false, false);
         // A day with a standing record is THAT RECORD'S to settle (A2-i, the
         // ratified rule): the claim walk stops there, and the claimant's
         // expiry clock does not run while the record holds it — in any
@@ -3529,7 +3572,7 @@ library LibInteractionRewards {
         // executable, no figure; the record's own views carry its state.
         if (s.stagingRecords[LibRewardCustody.stagingKey(user, side, d)].phase != LibVaipakam.StagingPhase.None) {
             need.capHit = true;
-            return (0, 0, true);
+            return (0, 0, true, false);
         }
         DayContext memory dc;
         dc.preparedOnly = true;
@@ -3538,8 +3581,9 @@ library LibInteractionRewards {
         (DayCharge memory charge, ) = processUserSideDay(user, d, set, pool, dc);
         if (!charge.advanced) {
             need.capHit = true;
-            return (0, 0, charge.transportCapHit);
+            return (0, 0, charge.transportCapHit, false);
         }
+        advanced = true;
         drawnFresh = charge.transportUser.armedFresh + charge.transportTreasury.armedFresh;
         drawnRecycled = charge.transportUser.recycled + charge.transportTreasury.recycled;
         uint256 gross = charge.toUser.armedFresh + charge.toTreasury.armedFresh;

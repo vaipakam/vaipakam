@@ -101,6 +101,18 @@ library LibClaimWork {
         return (BUDGET - WALK_DAY) / WALK_ENTRY_FIRST;
     }
 
+    /// @notice {fit} for one walk day of `n` entries none of which the call has
+    ///         touched yet, with `left` of the meter remaining: how many it
+    ///         takes and what that costs. Pure, so a static read can follow the
+    ///         meter from one side's day to the next without the transient
+    ///         marks a running claim keeps. `(0, 0)` when not even one fits.
+    function fitFresh(uint256 n, uint256 left) internal pure returns (uint256 k, uint256 cost) {
+        if (n == 0 || left < WALK_DAY + WALK_ENTRY_FIRST) return (0, 0);
+        k = (left - WALK_DAY) / WALK_ENTRY_FIRST;
+        if (k > n) k = n;
+        cost = WALK_DAY + k * WALK_ENTRY_FIRST;
+    }
+
     /// @notice How many claim calls a domain's preparation needs: `days_`
     ///         days, each a record over at most `entries` entries, prepared by
     ///         calls that each carry as many WHOLE days as the meter fits
