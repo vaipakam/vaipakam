@@ -11,7 +11,7 @@
  * the phone project; the chain is reverted after each test.
  */
 import { erc20Abi, parseEther } from 'viem';
-import { openLoan, postLenderOffer, repayInFull, WETH } from '@vaipakam/anvil-harness/lending';
+import { openLoan, postLenderOffer, repayInFull, waitOutTermsAge, WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
@@ -35,6 +35,9 @@ async function soldLoan(sc: ReturnType<typeof scenario>): Promise<{ loanId: bigi
   await anvilRpc('evm_increaseTime', [10 * 86_400]);
   await anvilRpc('evm_mine');
   const buyOfferId = await postLenderOffer(sc, { lender: 'other', ...terms });
+  // #3443 — the buy offer is filled only once its terms have stood the minimum age.
+  const { termsSetAt } = await sc.read<{ termsSetAt: bigint }>('getOffer', [buyOfferId]);
+  await waitOutTermsAge(sc, termsSetAt);
   await sc.diamondWrite('lender', 'sellLoanViaBuyOffer', [loanId, buyOfferId]);
   const [, , , claims] = await sc.read<Ledger>('getInterestLedger', [loanId]);
   const mine = claims.find((c) => c.seller.toLowerCase() === sc.address('lender').toLowerCase());

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Vm} from "forge-std/Vm.sol";
+import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibTiming} from "../../src/libraries/LibTiming.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
@@ -16,8 +16,20 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 ///         in the same call frame moves the chain to the moment the terms
 ///         become fillable first, the way `LibTestPositionNFT.waitOutCooldown`
 ///         does for a position's transfer cooldown.
+///
+///         Scripts use it too, and there it can only step a SIMULATION: under
+///         `--broadcast` a wait that is still owed reverts
+///         {TermsAgeNeedsStagedRun} before anything is sent.
 library LibTestTiming {
     Vm private constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    /// @notice A `--broadcast` script tried to fill terms that become
+    ///         fillable only at `readyAt`. One broadcast cannot wait between
+    ///         its own transactions, so a flow that posts and then fills must
+    ///         run without `--broadcast` (a simulation, which this library
+    ///         steps through), or in stages with the chain's clock past
+    ///         `readyAt` between them (#3502).
+    error TermsAgeNeedsStagedRun(uint256 readyAt);
 
     /// @notice Moves time (and the block) forward to the moment offer
     ///         `offerId`'s terms become fillable. Does nothing for terms that
@@ -86,6 +98,12 @@ library LibTestTiming {
 
     function _waitUntil(uint256 readyAt) private {
         if (VM.getBlockTimestamp() >= readyAt) return;
+        // A forge script broadcasts what its simulation recorded, back to
+        // back, at the chain's own clock: the warp below moves the
+        // simulation only, so the fill would land in the next block, before
+        // `readyAt`, and revert. Refuse here, before anything is sent,
+        // rather than let the run fail part-way (#3412).
+        if (VM.isContext(VmSafe.ForgeContext.ScriptBroadcast)) revert TermsAgeNeedsStagedRun(readyAt);
         VM.warp(readyAt);
         VM.roll(VM.getBlockNumber() + 1);
     }

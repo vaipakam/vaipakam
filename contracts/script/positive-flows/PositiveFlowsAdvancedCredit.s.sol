@@ -6,6 +6,7 @@ import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "../../test/helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "../../test/helpers/LibTestTiming.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
@@ -260,6 +261,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         }
         uint256 lenderOfferId = _createLenderOffer(newLenderKey);
         console.log("Refinance request / standing lender offer:", requestId, lenderOfferId);
+        // The offer-age rule (#3412): a fill waits until the terms have stood
+        // the minimum age. Steps a simulation only; see {LibTestTiming}.
+        LibTestTiming.waitOutTermsAge(diamond, lenderOfferId, requestId);
 
         // Gate 2: the matcher is refused while the switch is off.
         bool switchWasOn = AdminFacet(diamond).getAutoRefinanceEnabled();
@@ -390,6 +394,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         );
         vm.stopBroadcast();
         console.log("Borrower offer 1 (matchable):", borrowerOffer1);
+        // The offer-age rule (#3412): a fill waits until the terms have stood
+        // the minimum age. Steps a simulation only; see {LibTestTiming}.
+        LibTestTiming.waitOutTermsAge(diamond, lenderOfferId, borrowerOffer1);
 
         // Preview the match before submitting — real bot's flow.
         LibOfferMatch.MatchResult memory preview =
@@ -439,6 +446,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         uint256 borrowerOffer2 = OfferCreateFacet(diamond).createOffer(
             _matchableBorrowerOfferAs(newBorrower, 2_000e6, 500, b2Collateral)
         );
+        vm.stopBroadcast();
+        LibTestTiming.waitOutTermsAge(diamond, borrowerOffer2);
+        vm.startBroadcast(newBorrowerKey);
         LibOfferMatch.MatchResult memory preview2 =
             OfferMatchFacet(diamond).previewMatch(lenderOfferId, borrowerOffer2, newBorrower, newBorrower);
         // newBorrower also doubles as the matcher here — fine, the
@@ -643,6 +653,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben));
         vm.stopBroadcast();
         console.log("Ben's takeover offer:", benOfferId);
+        LibTestTiming.waitOutTermsAge(diamond, benOfferId);
 
         // alice calls transferObligation, paying accrued + shortfall.
         // Approve generous principal — at t≈0 accrued is tiny but
@@ -830,6 +841,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
         console.log("bob's buy offer:", buyOfferId);
+        LibTestTiming.waitOutTermsAge(diamond, buyOfferId);
 
         // Step 3: liam sells the position to bob.
         vm.startBroadcast(newLenderKey);
@@ -889,6 +901,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        // Aged before the floor probe below, so its refusal can only be the
+        // solvency floor and not the offer-age rule (#3412).
+        LibTestTiming.waitOutTermsAge(diamond, buyOfferId);
 
         uint256 hfHealthy = RiskFacet(diamond).calculateHealthFactor(loanId);
         console.log("HF at $2000 collateral:", hfHealthy);

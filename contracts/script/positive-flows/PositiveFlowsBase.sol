@@ -103,6 +103,17 @@ import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPer
  *         spends a nonce of that account the chain never sees, so its next
  *         broadcast is signed one nonce ahead and never mines.
  *
+ *         Offer-age rule (#3412): an offer, or a lender intent, can be filled
+ *         only once its terms have stood the minimum age (5 s by default).
+ *         The scenarios post and then fill, so they step the simulation's
+ *         clock past that moment ({LibTestTiming}). A broadcast cannot: forge
+ *         sends the recorded transactions back to back at the chain's own
+ *         clock, and its on-chain simulation runs them all at one block
+ *         time. So under `--broadcast` a scenario that fills a fresh offer
+ *         stops with `TermsAgeNeedsStagedRun` before anything is sent. Run
+ *         the modules as simulations (no `--broadcast`) until they are
+ *         staged like {PositiveFlowsTimed} (#3502).
+ *
  *         Env vars: DEPLOYER_PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
  *         LENDER_PRIVATE_KEY, LENDER_ADDRESS, BORROWER_PRIVATE_KEY,
  *         BORROWER_ADDRESS, NEW_LENDER_PRIVATE_KEY, NEW_LENDER_ADDRESS,

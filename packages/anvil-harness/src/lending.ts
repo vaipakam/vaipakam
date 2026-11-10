@@ -203,11 +203,25 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
   return acceptPostedOffer(sc, t.borrower, offerId);
 }
 
+/** #3443 — an offer can be filled only once its terms have stood the
+ *  Diamond's minimum age (`getMinTermsAgeSec`, 5 s by default). A live taker
+ *  simply arrives later; a scenario that posts and accepts back to back moves
+ *  the chain to the moment the terms become fillable first. Terms that carry
+ *  no age (0), or a Diamond without the rule, need no wait. */
+export async function waitOutTermsAge(sc: ScenarioChain, termsSetAt: bigint | undefined): Promise<void> {
+  if (!termsSetAt) return;
+  const minAge = await sc.read<bigint>('getMinTermsAgeSec').catch(() => 0n);
+  const readyAt = Number(termsSetAt + minAge);
+  const now = await sc.now();
+  if (readyAt > now) await sc.warp(readyAt - now);
+}
+
 /** `who` signs the acceptance terms of a posted offer exactly as it stands
  *  and accepts it, whatever it carries (a loan offer or a rental listing);
  *  the caller funds and approves whatever the acceptance pulls first. */
 export async function acceptPostedOffer(sc: ScenarioChain, who: Party, offerId: bigint): Promise<OpenedLoan> {
   const o = await sc.read<Record<string, unknown>>('getOffer', [offerId]);
+  await waitOutTermsAge(sc, o.termsSetAt as bigint | undefined);
   const linkedLoanId = await sc.read<bigint>('getOfferLinkedLoanId', [offerId]);
   const riskTermsHash = await sc.read<Hex>('getCurrentRiskTermsHash').catch(() => ZERO_HASH);
   const chainNow = BigInt(await sc.now());

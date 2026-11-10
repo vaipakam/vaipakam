@@ -401,6 +401,33 @@ function randomNonce(): bigint {
   return nonce;
 }
 
+/** #3443 — an offer can be filled only once its terms have stood the
+ *  Diamond's minimum age (`getMinTermsAgeSec`, 5 s by default). A live
+ *  taker simply arrives later; a test that posts and fills back to back
+ *  advances the chain by exactly the shortfall first, never otherwise. */
+export async function waitOutTermsAge(...offerIds: bigint[]): Promise<void> {
+  let minAge = 0n;
+  try {
+    minAge = (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getMinTermsAgeSec',
+    })) as bigint;
+  } catch {
+    return; // a Diamond without the rule needs no wait
+  }
+  let readyAt = 0n;
+  for (const id of offerIds) {
+    const { termsSetAt } = (await getOffer(id)) as { termsSetAt?: bigint | number };
+    // 0 = terms that carry no age (a signed offer turned on-chain at its fill).
+    if (termsSetAt && BigInt(termsSetAt) + minAge > readyAt) readyAt = BigInt(termsSetAt) + minAge;
+  }
+  const { timestamp: now } = await pub.getBlock({ blockTag: 'latest' });
+  // The fill lands in the NEXT block (timestamp >= now + 1); the protocol
+  // refuses only while strictly before readyAt.
+  if (readyAt > now + 1n) await increaseTime(Number(readyAt - now));
+}
+
 /** Direct-write accept of an ERC-20/ERC-20 offer of EITHER side (both
  *  shapes seedDeskOffer creates): escrow the acceptor's leg, sign the
  *  canonical AcceptTerms bound to the LIVE getOffer fields, send
@@ -451,6 +478,7 @@ export async function acceptOfferDirect(
   });
   await confirm(approveHash, 'approve (acceptOffer allowance)');
 
+  await waitOutTermsAge(offerId);
   // The chain clock judges the signature deadline — never Date.now()
   // (evm_increaseTime moves the fork far from wall time).
   const chainNow = (await pub.getBlock({ blockTag: 'latest' })).timestamp;
