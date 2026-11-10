@@ -1431,6 +1431,39 @@ contract ProtectedVaultTest is Test {
         assertFalse(requireCosign, "cleared on apply");
     }
 
+    /// @dev Codex #3489 r2 — one co-sign rule, read per row: the view agrees
+    ///      with the release, the account's setting binds only while it has a
+    ///      signer, and an unverified destination needs a co-sign with the
+    ///      setting off.
+    function testPayoutNeedsCosignFollowsTheReleaseRule() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        uint256 toFriend = _queue(1 ether, friend);
+        uint256 toUser = _queue(1 ether, user);
+        assertTrue(_pay().payoutNeedsCosign(toFriend), "unverified destination, setting off");
+        assertFalse(_pay().payoutNeedsCosign(toUser), "the owner's wallet, setting off");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CosignRequired.selector, toFriend));
+        _pay().releasePayout(toFriend);
+
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        assertTrue(_pay().payoutNeedsCosign(toUser), "setting on, a signer to give it");
+        (, bool on,) = _prot().getProtection(user);
+        assertTrue(on);
+        // The last signer leaves: the setting stops binding before anyone applies.
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
+        assertFalse(_pay().payoutNeedsCosign(toUser), "no signer left");
+        (, on,) = _prot().getProtection(user);
+        assertFalse(on, "reported as it binds");
+        _pay().releasePayout(toUser);
+        assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
+    }
+
     /// @dev An allowlisted destination that has protected mode on is paid
     ///      into its own vault, which the paying vault accepts.
     function testAllowlistedProtectedDestinationIsPaidIntoItsVault() public {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestVaultEndpoints} from "../helpers/LibTestVaultEndpoints.sol";
 import {Test} from "forge-std/Test.sol";
@@ -49,7 +50,6 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "../mocks/MockZeroExLegacyAdapter.sol";
-import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
@@ -159,7 +159,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         helperTest = new HelperTest();
         vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -269,14 +269,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
             functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
 
-        // #3379 B2: the protected-mode reads every owner action makes are
-        // hosted on ProtectedAccountFacet (self-calls), so it is cut here too.
-        cuts[26] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));

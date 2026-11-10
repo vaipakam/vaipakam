@@ -332,6 +332,42 @@ contract VaultProtectionTest is SetupTest {
         vault.protect(abi.encodeCall(VaultProtection.removeAllowlisted, (dest, _signed(acct, expiry, cancelSig))));
     }
 
+    /// @dev Codex #3489 r2 — a signed replacement cancel names the proposal
+    ///      (nominee and round): one held for an earlier proposal never
+    ///      aborts a later one, even a re-proposal of the same nominee.
+    function test_aHeldCancelNeverAbortsALaterProposal() public {
+        P.addSigner(address(diamond), acct, acct, signerA, DELAY);
+        P.propose(address(diamond), acct, acct, nominee);
+        uint64 expiry = uint64(vm.getBlockTimestamp() + 1 hours);
+        uint8 purpose = code.PURPOSE_REPLACEMENT();
+        uint256 n = vault.protectionNonce(signerA, purpose);
+        bytes memory held = _sig(
+            SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_CANCEL_TYPEHASH(), nominee, uint32(1), n, expiry))
+        );
+        P.propose(address(diamond), acct, acct, nominee); // round 2, same nominee
+        uint8 cancel = code.REPLACE_CANCEL();
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, signerA));
+        vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, nominee, _signed(signerA, expiry, held))));
+        // Signed for the proposal in force, it cancels.
+        bytes memory current = _sig(
+            SIGNER_KEY, keccak256(abi.encode(code.REPLACEMENT_CANCEL_TYPEHASH(), nominee, uint32(2), n, expiry))
+        );
+        vm.prank(relayer);
+        vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, nominee, _signed(signerA, expiry, current))));
+        (address pending,,,) = vault.replacementProposal();
+        assertEq(pending, address(0), "cancelled");
+    }
+
+    /// @dev A cancel naming another nominee is refused on-chain too.
+    function test_aCancelNamingAnotherNomineeIsRefused() public {
+        P.propose(address(diamond), acct, acct, nominee);
+        uint8 cancel = code.REPLACE_CANCEL();
+        vm.prank(acct);
+        vm.expectRevert(VaultProtection.NoProposal.selector);
+        vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, relayer, P.direct(acct))));
+    }
+
     /// @dev A verification must name this vault's account and Diamond.
     function test_aVerificationNamingAnotherAccountOrDiamondIsRefused() public {
         P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));

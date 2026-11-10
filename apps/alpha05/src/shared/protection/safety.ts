@@ -399,19 +399,28 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
   const find = (name: string) => events.filter((e) => e.eventName === name);
   const findVault = (name: string) => vaultEvents.filter((e) => e.eventName === name);
   const applied = find('ProtectionApplied');
+  // The vault's own change and the platform's application are measured apart
+  // (Codex #3489 r2): when the vault step landed and the apply did not, the
+  // protection is in force in the vault, and the card says the platform side
+  // is still to be applied rather than reporting the whole action as undone.
+  const platformPending: LegOutcome = { status: 'not-done', label: text('safety.legPlatform'), reason: text('safety.platformPending') };
   if (r.action === 'enable') {
     const on = applied.find((e) => e.args.enabled === true);
-    if (!on) return [{ status: 'not-done', label: text('safety.titleEnable'), reason: text('safety.notEnabled') }];
-    const delay = Number(on.args.delaySeconds as number | bigint);
-    const label = format('safety.legEnabled', { delay: formatSpan(delay) });
-    if (r.draft !== null && delay !== r.draft.delaySeconds) return [{ status: 'unknown', label, reason: text('safety.enabledOther') }];
-    return [{ status: 'done', label }];
+    const inVault = findVault('ProtectionEnabled')[0];
+    const delayOf = on ? Number(on.args.delaySeconds as number | bigint) : inVault ? Number(inVault.args.delay as number | bigint) : null;
+    if (delayOf === null) return [{ status: 'not-done', label: text('safety.titleEnable'), reason: text('safety.notEnabled') }];
+    const label = format('safety.legEnabled', { delay: formatSpan(delayOf) });
+    const leg: LegOutcome = r.draft !== null && delayOf !== r.draft.delaySeconds ? { status: 'unknown', label, reason: text('safety.enabledOther') } : { status: 'done', label };
+    return on ? [leg] : [leg, platformPending];
   }
   if (r.action === 'lock') {
-    if (!applied.some((e) => e.args.locked === true)) return [{ status: 'not-done', label: text('safety.titleLock'), reason: text('safety.lockNotRecorded') }];
+    const platform = applied.some((e) => e.args.locked === true);
+    const inVault = findVault('VaultLocked').length > 0;
+    if (!platform && !inVault) return [{ status: 'not-done', label: text('safety.titleLock'), reason: text('safety.lockNotRecorded') }];
     const cancelled = find('PayoutCancelled').length;
     const legs: LegOutcome[] = [{ status: 'done', label: text('safety.legLocked') }];
     if (cancelled > 0) legs.push({ status: 'done', label: format('safety.legCancelled', { count: String(cancelled) }) });
+    if (!platform) legs.push(platformPending);
     return legs;
   }
   if (r.action === 'unlock') {

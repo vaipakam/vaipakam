@@ -56,6 +56,8 @@ import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.s
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
+import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 // #229 — the remaining production facets being added to SetupTest's
 // 28-facet cut. DiamondLoupeFacet + OracleAdminFacet + LegalFacet
 // have no existing import in HelperTest because the prior
@@ -1427,25 +1429,20 @@ contract HelperTest {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function getProtectedAccountFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](13);
-        selectors[0] = ProtectedAccountFacet.applyProtection.selector;
-        selectors[1] = ProtectedAccountFacet.cancelSettingChange.selector;
-        selectors[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
-        selectors[3] = ProtectedAccountFacet.getProtection.selector;
-        selectors[4] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
-        selectors[5] = ProtectedAccountFacet.getRetiredAccountOf.selector;
-        selectors[6] = ProtectedAccountFacet.isListingLegAllowed.selector;
-        selectors[7] = ProtectedAccountFacet.lockPositionNfts.selector;
-        selectors[8] = ProtectedAccountFacet.lockVaultFor.selector;
-        selectors[9] = ProtectedAccountFacet.setRequireCosign.selector;
-        selectors[10] = ProtectedAccountFacet.isProtectionOn.selector;
-        selectors[11] = ProtectedAccountFacet.protectionManagerOf.selector;
-        selectors[12] = ProtectedAccountFacet.requireCanOpenFor.selector;
+        return LibTestProtectedCut.selectors();
+    }
+
+    /// @dev The ProtectedAccountFacet cut as a one-entry list, built here so
+    ///      a test contract near solc's size limits adds it with one external
+    ///      call instead of inlining {LibTestProtectedCut.withProtected}.
+    function protectedAccountCut() public returns (IDiamondCut.FacetCut[] memory cuts) {
+        cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = LibTestProtectedCut.cut();
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function getVaultPayoutFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](15);
         selectors[0] = VaultPayoutFacet.applyPayoutGate.selector;
         selectors[1] = VaultPayoutFacet.cancelPayout.selector;
         selectors[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -1462,6 +1459,8 @@ contract HelperTest {
         // #3361 — the global open-payout set, for the keepers.
         selectors[12] = VaultPayoutFacet.getOpenPayoutCount.selector;
         selectors[13] = VaultPayoutFacet.getOpenPayoutIds.selector;
+        // Codex #3489 r2 — the release's co-sign rule, per row.
+        selectors[14] = VaultPayoutFacet.payoutNeedsCosign.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

@@ -117,6 +117,14 @@ class FakeDiamond {
   accounts = new Map<Address, ProtectedAccount>();
   payouts = new Map<bigint, Payout>();
   transfers = new Map<bigint, Transfer>();
+  /** The release's co-sign rule (Codex #3489 r2): accounts whose co-sign
+   *  setting does not bind (no signer left), and unverified destinations. */
+  signerless = new Set<Address>();
+  unverified = new Set<Address>();
+  needsCosign(p: Payout): boolean {
+    const acct = this.acct(p.user);
+    return (acct.requireCosign && !this.signerless.has(p.user)) || this.unverified.has(p.recipient);
+  }
   allowlist = new Map<string, Set<Address>>();
   allowPending = new Map<string, bigint>();
   signerChanges = new Map<string, { addAt: bigint; accepted: boolean; removeAt: bigint }>();
@@ -190,6 +198,10 @@ class FakeDiamond {
       case 'getPendingPayout': {
         const p = ((blockNumber !== undefined ? this.finalPayouts : null) ?? this.payouts).get(a[0]);
         return { user: p?.user ?? ZERO, kind: 0, state: p?.state ?? 0, cosigned: p?.cosigned ?? false, releaseAt: p?.releaseAt ?? 0n, asset: ASSET, recipient: p?.recipient ?? ZERO, tokenId: 0n, amount: p?.amount ?? 0n, delivered: 0n };
+      }
+      case 'payoutNeedsCosign': {
+        const p = this.payouts.get(a[0]);
+        return p !== undefined && p.state === 1 && this.needsCosign(p);
       }
       case 'getPendingPositionTransfer': {
         const t = this.transfers.get(a[0]);
@@ -314,7 +326,7 @@ class FakeDiamond {
         if (this.now < p.releaseAt) throw revert('PayoutNotDue', [a[0], p.releaseAt]);
         const acct = this.acct(p.user);
         if (acct.locked) throw revert('ProtectedVaultLocked', [p.user]);
-        if (acct.requireCosign && !p.cosigned) throw revert('CosignRequired', [a[0]]);
+        if (this.needsCosign(p) && !p.cosigned) throw revert('CosignRequired', [a[0]]);
         if (p.recipient === FLAGGED) throw revert('SanctionedAddress', [FLAGGED]);
         return () => {
           p.state = 2;
@@ -555,6 +567,19 @@ describe('a run', () => {
           expect(users.has(d.payouts.get(c.args?.[0] as bigint)!.user), `payout ${c.args?.[0]} without its account`).toBe(true);
         }
       }
+    });
+
+    it('reads the co-sign rule per row: an unverified destination waits, a signerless account releases (Codex #3489 r2)', async () => {
+      const DEST = '0x00000000000000000000000000000000000000d5' as Address;
+      d.accounts.set(ALICE, account({ requireCosign: false }));
+      d.accounts.set(BOB, account({ requireCosign: true }));
+      d.unverified.add(DEST);
+      d.signerless.add(BOB);
+      queuePayout(1n, { recipient: DEST });
+      queuePayout(2n, { user: BOB, recipient: BOB });
+      const r = await run();
+      expect(d.sent.map((s) => s.args[0])).toEqual([2n]);
+      expect(r.waiting.get('payout-needs-cosign')).toBe(1);
     });
 
     it('starts each run at a different row of the page, so slow refusals at its top cannot starve a row below them', async () => {

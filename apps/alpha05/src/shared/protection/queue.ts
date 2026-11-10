@@ -53,6 +53,11 @@ export interface PendingPayout {
   /** Unix seconds from which it can be released. */
   releaseAt: number;
   cosigned: boolean;
+  /** Whether its release needs a co-signature, by the release's own rule
+   *  (`payoutNeedsCosign`, Codex #3489 r2): the account's co-sign setting
+   *  while it has a signer, or an unverified allowlisted destination
+   *  (#3415). Null when that read failed. */
+  needsCosign: boolean | null;
 }
 
 /** A row of the queue: its id, the row (null when its read failed), and its
@@ -155,7 +160,7 @@ export async function readAccountQueue(c: PublicClient, diamond: Hex, account: H
  *  code, each null when its read failed. */
 export async function readQueueRow(c: PublicClient, diamond: Hex, id: bigint): Promise<QueueRow> {
   const read = <T>(functionName: string) => answerOrNull(c.readContract({ address: diamond, abi: PAYOUT, functionName, args: [id] }) as Promise<T>);
-  const [p, code] = await Promise.all([read<RawPayout>('getPendingPayout'), read<number | bigint>('requestCode')]);
+  const [p, code, needs] = await Promise.all([read<RawPayout>('getPendingPayout'), read<number | bigint>('requestCode'), read<boolean>('payoutNeedsCosign')]);
   return {
     id,
     payout:
@@ -171,6 +176,7 @@ export async function readQueueRow(c: PublicClient, diamond: Hex, id: bigint): P
             recipient: p.recipient,
             releaseAt: Number(p.releaseAt),
             cosigned: p.cosigned,
+            needsCosign: needs,
           },
     code: code === null ? null : formatRequestCode(code),
   };
@@ -247,7 +253,7 @@ export function queueVerdict(action: QueueAction, q: AccountQueue, row: QueueRow
     if (nowSec < p.releaseAt) return refuse('PayoutNotDue', text('queue.notDue'), p.releaseAt);
     if (q.mode === null) return unread();
     if (q.mode.locked) return refuse('ProtectedVaultLocked', text('queue.locked'));
-    if (q.mode.requireCosign && !p.cosigned) return refuse('CosignRequired', text('queue.cosignNeeded'));
+    if (rowNeedsCosign(p, q.mode) && !p.cosigned) return refuse('CosignRequired', text('queue.cosignNeeded'));
     return open();
   }
 
@@ -270,8 +276,15 @@ export function queueVerdict(action: QueueAction, q: AccountQueue, row: QueueRow
   if (!signer) return refuse('NotSigner', text('queue.notSigner'));
   if (p.cosigned) return refuse('AlreadyCosigned', text('queue.alreadyCosigned'));
   if (q.mode === null) return unread();
-  if (!q.mode.requireCosign) return refuse('CosignNotRequired', text('queue.cosignNotRequired'));
+  if (!rowNeedsCosign(p, q.mode)) return refuse('CosignNotRequired', text('queue.cosignNotRequired'));
   return open();
+}
+
+/** Whether a row needs a co-signature: its own reading of the release rule
+ *  (Codex #3489 r2), or, when that read failed, the account's co-sign
+ *  setting (the release itself still enforces the full rule). */
+export function rowNeedsCosign(p: Pick<PendingPayout, 'needsCosign'>, mode: Pick<QueueMode, 'requireCosign'>): boolean {
+  return p.needsCosign ?? mode.requireCosign;
 }
 
 /** Whether `viewer` holds a role this action needs (cancel: manager or

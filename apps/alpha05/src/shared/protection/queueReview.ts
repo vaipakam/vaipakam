@@ -29,6 +29,7 @@ import {
   readAccountQueue,
   readQueueRow,
   releaseCancels,
+  rowNeedsCosign,
   type AccountQueue,
   type QueueAction,
   type QueueRow,
@@ -158,7 +159,7 @@ export function queueReceipt(r: QueueReview, viewer: Hex, what: PayoutWords, cop
     rows.push({ label: text('queue.rowPayout'), value: textValue(figured(what)), binding: true });
     rows.push({ label: text('queue.rowDestination'), value: { kind: 'text', text: destinationWords(r.queue, p.recipient, viewer, copy) }, binding: r.action === 'release' });
     rows.push({ label: text('queue.rowDue'), value: { kind: 'time', unixSeconds: p.releaseAt }, binding: false });
-    const cosign = r.queue.mode === null ? null : !r.queue.mode.requireCosign ? text('queue.cosignOff') : p.cosigned ? text('queue.cosignGiven') : text('queue.cosignMissing');
+    const cosign = r.queue.mode === null ? null : !rowNeedsCosign(p, r.queue.mode) ? text('queue.cosignOff') : p.cosigned ? text('queue.cosignGiven') : text('queue.cosignMissing');
     rows.push({ label: text('queue.rowCosign'), value: cosign === null ? unknown : { kind: 'text', text: cosign }, binding: false });
   }
   const consequences: ReceiptText[] = [];

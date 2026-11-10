@@ -246,7 +246,10 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.ProtectedAccount storage a = s.protectedAccount[account];
-        return (s.userVaipakamVaults[account], a.requireCosign, a.pendingCosignOffAt);
+        // The co-sign setting as it binds: it never binds an account with no
+        // signer, even before `applyProtection` clears the stored flag
+        // (Codex #3489 r2).
+        return (s.userVaipakamVaults[account], LibProtectedAccount.cosignSettingInForce(account), a.pendingCosignOffAt);
     }
 
     /// @notice Whether a listing `seller` authored may pay `recipient`

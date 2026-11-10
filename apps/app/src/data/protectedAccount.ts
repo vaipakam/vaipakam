@@ -83,6 +83,11 @@ export interface PendingPayoutRow {
   recipient: `0x${string}`;
   tokenId: bigint;
   amount: bigint;
+  /** Whether the release needs a co-signature, by the release's own rule
+   *  (`payoutNeedsCosign`, Codex #3489 r2): the account's co-sign setting
+   *  while it has a signer, or an unverified allowlisted destination (#3415).
+   *  Null when that read failed. */
+  needsCosign: boolean | null;
 }
 
 export interface PendingTransferRow {
@@ -177,14 +182,24 @@ export type PayoutStatus = 'waiting' | 'due' | 'needsCosign' | 'locked';
 /** What a queued payout is waiting on, in the order the contract checks:
  *  the lock first, then the time, then the co-signature. */
 export function payoutStatus(
-  row: Pick<PendingPayoutRow, 'releaseAt' | 'cosigned'>,
+  row: Pick<PendingPayoutRow, 'releaseAt' | 'cosigned'> & { needsCosign?: boolean | null },
   record: Pick<ProtectedAccountRecord, 'locked' | 'requireCosign'>,
   chainNow: bigint,
 ): PayoutStatus {
   if (record.locked) return 'locked';
   if (chainNow < row.releaseAt) return 'waiting';
-  if (record.requireCosign && !row.cosigned) return 'needsCosign';
+  if (needsCosign(row, record) && !row.cosigned) return 'needsCosign';
   return 'due';
+}
+
+/** Whether a row needs a co-signature: the row's own reading of the release
+ *  rule (Codex #3489 r2), or, when that read failed, the account's co-sign
+ *  setting (the release itself still enforces the full rule). */
+export function needsCosign(
+  row: { needsCosign?: boolean | null },
+  record: Pick<ProtectedAccountRecord, 'requireCosign'>,
+): boolean {
+  return row.needsCosign ?? record.requireCosign;
 }
 
 /** A pending timed change is due once its time has passed (0 = none). */
@@ -705,8 +720,10 @@ function useProtectedAccountQueryOptions() {
                 ]),
               );
               if (!r) return null;
+              const needs = await soft(read<boolean>('payoutNeedsCosign', [id]));
               return {
                 id,
+                needsCosign: needs,
                 code: await code(id),
                 kind: Number(r.kind),
                 state: Number(r.state),

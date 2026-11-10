@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
@@ -48,7 +49,6 @@ import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
 import {SaleFloorFacet} from "../../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
-import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
@@ -205,7 +205,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -410,14 +410,7 @@ contract InvariantBase is Test {
             functionSelectors: helperTest.getAutoLifecycleFacetSelectors()
         });
 
-        // #3379 B2: the protected-mode reads every owner action makes are
-        // hosted on ProtectedAccountFacet (self-calls), so it is cut here too.
-        cuts[42] = IDiamondCut.FacetCut({
-            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
-        });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
         LibTestVaultBeacon.installDepository(address(diamond));
         // The payoff permit is pulled through Permit2; the mock moves tokens on the owner's

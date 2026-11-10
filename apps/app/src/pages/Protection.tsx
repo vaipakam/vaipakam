@@ -48,6 +48,7 @@ import {
   isDue,
   isManager,
   payoutStatus,
+  needsCosign,
   replacementStage,
   useProtectedAccount,
   useRetiredAccountOf,
@@ -564,7 +565,7 @@ function AccountView({
                       {p.release}
                     </button>
                   ) : null}
-                  {signer && record.requireCosign && !row.cosigned ? (
+                  {signer && needsCosign(row, record) && !row.cosigned ? (
                     <button
                       type="button"
                       className="btn btn-secondary"

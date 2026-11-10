@@ -221,6 +221,19 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         return LibVaipakam.storageSlot().pendingPayouts[id];
     }
 
+    /// @notice Whether queued payout `id` needs a secondary signer's
+    ///         co-signature to be released, by the same rule the release
+    ///         enforces ({LibProtectedAccount.cosignNeeded}): the account's
+    ///         co-sign setting while it has a signer, or an unverified
+    ///         allowlisted destination (#3415). False for a row that is not
+    ///         queued. Whether the co-signature was already given is the row's
+    ///         own `cosigned`.
+    function payoutNeedsCosign(uint256 id) external view returns (bool) {
+        LibVaipakam.PendingPayout storage p = LibVaipakam.storageSlot().pendingPayouts[id];
+        if (p.state != LibProtectedAccount.ROW_QUEUED) return false;
+        return LibProtectedAccount.cosignNeeded(p.user, p.recipient);
+    }
+
     /// @notice Ids of `account`'s queued payouts.
     function getPendingPayoutIds(address account) external view returns (uint256[] memory) {
         return LibVaipakam.storageSlot().pendingPayoutIds[account].values();

@@ -2539,7 +2539,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function _getVaultPayoutSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](15);
         s[0] = VaultPayoutFacet.applyPayoutGate.selector;
         s[1] = VaultPayoutFacet.cancelPayout.selector;
         s[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -2556,6 +2556,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3361 — the global open-payout set, for the keepers.
         s[12] = VaultPayoutFacet.getOpenPayoutCount.selector;
         s[13] = VaultPayoutFacet.getOpenPayoutIds.selector;
+        // Codex #3489 r2 — the release's co-sign rule, per row.
+        s[14] = VaultPayoutFacet.payoutNeedsCosign.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

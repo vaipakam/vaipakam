@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
@@ -430,7 +431,7 @@ contract DefaultedFacetTest is Test {
             functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
 
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -986,6 +987,7 @@ contract DefaultedFacetTest is Test {
     function test_1955_timeDefault_lenderFull_shiftsInterestFeeToLender() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Default");
         AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+        LibTestVaultBeacon.sync(address(diamond));
 
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,

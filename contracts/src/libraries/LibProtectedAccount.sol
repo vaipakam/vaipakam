@@ -298,6 +298,23 @@ library LibProtectedAccount {
         return signers.length != 0;
     }
 
+    /// @notice The ONE co-sign rule for a payout from `account` to
+    ///         `recipient` (Codex #3489 r2): the account's own co-sign
+    ///         setting, which binds only while the account has a signer
+    ///         (removing the last one leaves nobody to co-sign), or #3415's
+    ///         unverified destination. The release enforces it and
+    ///         `VaultPayoutFacet.payoutNeedsCosign` reports it, so a keeper or
+    ///         an interface never decides it from the stored flag alone.
+    function cosignNeeded(address account, address recipient) internal view returns (bool) {
+        return cosignSettingInForce(account) || unverifiedNeedsCosign(account, recipient);
+    }
+
+    /// @notice Whether `account`'s own co-sign setting is in force: set, and
+    ///         the account has a signer to give one.
+    function cosignSettingInForce(address account) internal view returns (bool) {
+        return _s().protectedAccount[account].requireCosign && hasSigners(account);
+    }
+
     /// @notice #3415 — whether a payout from `account` to `recipient` needs a
     ///         secondary signer's co-signature: the recipient is an allowlisted
     ///         destination that has not verified itself, and the account has
@@ -545,9 +562,7 @@ library LibProtectedAccount {
         // account has signers, whatever the account's own co-sign setting.
         // The account's own co-sign setting binds only while it has a signer
         // (removing the last one leaves nobody to co-sign, Codex #3489 r1).
-        bool cosignNeeded = (s.protectedAccount[p.user].requireCosign && hasSigners(p.user))
-            || unverifiedNeedsCosign(p.user, p.recipient);
-        if (cosignNeeded && !p.cosigned) revert CosignRequired(id);
+        if (cosignNeeded(p.user, p.recipient) && !p.cosigned) revert CosignRequired(id);
         p.state = ROW_RELEASED;
         s.pendingPayoutIds[p.user].remove(id);
         s.openPayoutIds.remove(id);

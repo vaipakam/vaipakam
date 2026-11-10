@@ -99,6 +99,7 @@ const PICK: ReadonlySet<string> = new Set([
   'lockVaultFor',
   'requestCode',
   'getPendingPayout',
+  'payoutNeedsCosign',
   'getPendingPositionTransfer',
   'releasePositionTransfer',
   // #3379 B2: the Diamond names the account's vault and keeps the co-sign
@@ -783,9 +784,21 @@ class Step {
           this.wait('payout-lock-requested');
           continue;
         }
-        if (a.requireCosign && !p.cosigned) {
-          this.wait('payout-needs-cosign');
-          continue;
+        // Whether the row needs a co-signature is the release's own rule,
+        // read per row (Codex #3489 r2): the account's co-sign setting binds
+        // only while it has a signer, and an unverified allowlisted
+        // destination needs one whatever that setting says (#3415).
+        if (!p.cosigned) {
+          // eslint-disable-next-line no-await-in-loop
+          const [needs] = await this.r.many([{ functionName: 'payoutNeedsCosign', args: [id] }], `cosign:${id}`);
+          if (typeof needs !== 'boolean') {
+            this.sender.noteUnread(`release:${id}`, 'whether it needs a co-signature');
+            continue;
+          }
+          if (needs) {
+            this.wait('payout-needs-cosign');
+            continue;
+          }
         }
         // eslint-disable-next-line no-await-in-loop
         const res = await this.sender.call('release', String(id), 'releasePayout', [id]);

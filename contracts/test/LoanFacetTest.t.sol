@@ -312,6 +312,9 @@ contract LoanFacetTest is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #3379 B2 — ProtectedAccountFacet, built in HelperTest: inlining the
+        // library here takes this contract past solc's assembly tag limit.
+        IDiamondCut(address(diamond)).diamondCut(helperTest.protectedAccountCut(), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();

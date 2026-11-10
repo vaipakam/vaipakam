@@ -16,7 +16,7 @@ import { FormField } from '../ui/FormField';
 import { OwnStamp } from '../ui/OwnStamp';
 import { formatSpan, formatUtc, shortAddress } from '../ui/format';
 import { useNow } from '../ui/useNow';
-import { holdsRole, queueClock, queueVerdict, readAccountQueue, releaseCancels, type AccountQueue, type QueueAction, type QueueRow } from './queue';
+import { holdsRole, queueClock, queueVerdict, readAccountQueue, releaseCancels, rowNeedsCosign, type AccountQueue, type QueueAction, type QueueRow } from './queue';
 import { destinationWords } from './queueReview';
 import type { QueueReview } from './queueReview';
 import { payoutWords, QUEUE_KEY_PREFIX, queueActionKey, QueuePayoutAction, useQueueActionHeld } from './QueueAction';
@@ -254,7 +254,7 @@ function QueueRowCard({ q, row, own, chain, meta }: { q: AccountQueue; row: Queu
         <dd>{destinationWords(q, p.recipient, viewer, copy)}</dd>
         <dt className="tier-b">{text('queue.rowDue')}</dt>
         <dd>{nowSec !== null && nowSec >= p.releaseAt ? text('queue.dueNow') : formatUtc(p.releaseAt)}</dd>
-        {q.mode?.requireCosign && (
+        {q.mode !== null && rowNeedsCosign(p, q.mode) && (
           <>
             <dt className="tier-b">{text('queue.rowCosign')}</dt>
             <dd>{text(p.cosigned ? 'queue.cosignGiven' : 'queue.cosignMissing')}</dd>

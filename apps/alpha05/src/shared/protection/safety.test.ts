@@ -234,3 +234,22 @@ describe('sendSafetySteps and safetyLogs', () => {
     ).rejects.toThrow('refused');
   });
 });
+
+// Codex #3489 r2: the vault's change and the platform's application are
+// measured apart, so a landed vault step is never reported as undone.
+describe('measureSafety: vault step landed, platform apply did not', () => {
+  it('a lock in the vault is done, with the platform side stated as pending', () => {
+    const locked = eventLog('VaultLocked', { by: ME }, { types: [], values: [] }, VAULT);
+    const legs = measureSafety(review('lock', { mode: ON }), [locked], DIAMOND, copy);
+    expect(legs.map((l) => [l.status, l.label])).toEqual([
+      ['done', 'safety.legLocked'],
+      ['not-done', 'safety.legPlatform'],
+    ]);
+  });
+  it('a switch-on in the vault is done, with the platform side stated as pending', () => {
+    const on = eventLog('ProtectionEnabled', {}, { types: [{ type: 'uint32' }, { type: 'address' }], values: [2 * DAY, ME] }, VAULT);
+    const legs = measureSafety(review('enable'), [on], DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
+    expect(legs[1]).toMatchObject({ reason: 'safety.platformPending' });
+  });
+});

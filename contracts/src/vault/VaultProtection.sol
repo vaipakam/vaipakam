@@ -108,6 +108,11 @@ contract VaultProtection {
         keccak256("SignerChange(uint8 action,address signer,uint256 nonce,uint64 expiry)");
     bytes32 public constant REPLACEMENT_TYPEHASH =
         keccak256("Replacement(uint8 action,address nominee,uint256 nonce,uint64 expiry)");
+    /// @dev Codex #3489 r2 — a cancel names the proposal it cancels: its
+    ///      nominee AND its round, so a cancel signed for one proposal never
+    ///      aborts a later one, even a re-proposal of the same nominee.
+    bytes32 public constant REPLACEMENT_CANCEL_TYPEHASH =
+        keccak256("ReplacementCancel(address nominee,uint32 round,uint256 nonce,uint64 expiry)");
     bytes32 public constant LOCK_TYPEHASH = keccak256("Lock(uint256 nonce,uint64 expiry)");
     /// @dev #3415 — the destination names the account (the vault's creation
     ///      owner), the Diamond and, through the domain, the chain and vault.
@@ -509,7 +514,10 @@ contract VaultProtection {
     ///         cancel; the owner may not while a lock a signer placed holds.
     function replacement(uint8 action, address nominee, Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
-        bytes32 h = keccak256(abi.encode(REPLACEMENT_TYPEHASH, action, nominee, _nonce(auth.key, PURPOSE_REPLACEMENT), auth.expiry));
+        uint256 nonce = _nonce(auth.key, PURPOSE_REPLACEMENT);
+        bytes32 h = action == REPLACE_CANCEL
+            ? keccak256(abi.encode(REPLACEMENT_CANCEL_TYPEHASH, nominee, l.round, nonce, auth.expiry))
+            : keccak256(abi.encode(REPLACEMENT_TYPEHASH, action, nominee, nonce, auth.expiry));
         address owner = _owner();
         bool bySigner = auth.key != owner;
         if (bySigner) {
@@ -541,7 +549,9 @@ contract VaultProtection {
             if (l.nominee == address(0) || l.nominee != nominee) revert NoProposal();
             _approve(l, auth.key);
         } else if (action == REPLACE_CANCEL) {
-            if (l.nominee == address(0)) revert NoProposal();
+            // A cancel acts only on the proposal it names (Codex #3489 r2):
+            // the nominee is checked here and the round is in the signed hash.
+            if (l.nominee == address(0) || l.nominee != nominee) revert NoProposal();
             emit ReplacementCancelled(l.nominee, auth.key);
             _clearProposal(l);
         } else {
