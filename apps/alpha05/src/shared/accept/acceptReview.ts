@@ -35,7 +35,10 @@ import {
   type WalletFunds,
 } from '../offers/reads';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { readNumeraireSymbol } from '../reads/numeraire';
+import { equivalentText, readEquivalentFor, type NumeraireEquivalent, type ValueLeg } from '../reads/numeraireValue';
+import type { ReceiptRow } from '../receipt/types';
+import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { allowanceSteps } from '../tx/approval';
 import { shortAddress } from '../ui/format';
 
@@ -85,6 +88,11 @@ export interface AcceptReview {
   /** #3205 — the indexer's word on whether the loan position this offer is
    *  bound to moved since it opened (the chain has no view yet). */
   positionFlow: PositionFlowVerdict;
+  /** RB-CLICKS — what the protocol values the principal and the collateral
+   *  at now, by its loan-to-value rule; each null when it could not be read
+   *  (`unit` null: the numeraire's symbol unset or unread). Shown, never
+   *  compared in a re-check: a price moves every block. */
+  values: { principal: NumeraireEquivalent | null; collateral: NumeraireEquivalent | null; unit: string | null };
   readAt: number;
 }
 
@@ -121,6 +129,13 @@ export async function readAcceptReview(
       r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
       flows ? flows(offerId) : Promise.resolve<PositionFlowVerdict>('unknown'),
     ]);
+  const value = (asset: Hex, amount: bigint, leg: ValueLeg, cls: AssetClass) =>
+    r<NumeraireEquivalent>((c) => readEquivalentFor(c, diamond, asset, amount, leg, cls)).catch(() => null);
+  const [principalValue, collateralValue, unit] = await Promise.all([
+    value(offer.lendingAsset, preview.effectivePrincipal, 'debt', lendingClass),
+    value(offer.collateralAsset, preview.collateralAmount, 'collateral', collateralClass),
+    r<string | null>((c) => readNumeraireSymbol(c, diamond)).catch(() => null),
+  ]);
   const pay = payLeg(role, offer, preview).amount;
   const approvalSteps =
     funds.allowance >= pay ? 0 : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, payAsset, account, diamond, amount)) }, funds.allowance, pay)).length;
@@ -146,8 +161,21 @@ export async function readAcceptReview(
     creatorGate,
     consent,
     positionFlow,
+    values: { principal: principalValue, collateral: collateralValue, unit },
     readAt: Date.now(),
   };
+}
+
+/** RB-CLICKS — the principal's and the collateral's value now, as the
+ *  protocol values them, for either side's receipt. Informational, never
+ *  binding: the price moves after signing. */
+export function valueRows(r: Pick<AcceptReview, 'offer' | 'values'>, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): ReceiptRow[] {
+  const row = (label: CopyKey, eq: NumeraireEquivalent | null, asset: Hex): ReceiptRow => ({
+    label: copy.text(label),
+    value: eq === null ? { kind: 'unknown', why: copy.text('numeraire.rowUnread') } : { kind: 'text', text: equivalentText(eq, r.values.unit, assetName(asset, meta), copy) },
+    binding: false,
+  });
+  return [row('numeraire.rowPrincipal', r.values.principal, r.offer.lendingAsset), row('numeraire.rowCollateral', r.values.collateral, r.offer.collateralAsset)];
 }
 
 /** What this acceptance takes from the wallet (payLeg), for the review. */

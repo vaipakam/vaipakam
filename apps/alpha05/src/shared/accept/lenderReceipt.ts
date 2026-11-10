@@ -13,7 +13,7 @@ import { lenderFigures, refinancePayoff } from '../offers/model';
 import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
-import { cadenceText, needsApproval, promptCount, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
+import { cadenceText, needsApproval, promptCount, valueRows, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 
 type Hex = `0x${string}`;
 
@@ -44,6 +44,7 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
     // and it lowers the fee (and the share paid back), never raises it.
     ...(o.creatorFull ? [textRow('lendAccept.rowFeeTariff', text('lendAccept.feeTariff'), false)] : []),
     { label: text('lendAccept.rowCollateral'), value: amount(collateral, f.collateral), binding: true },
+    ...valueRows(r, meta, copy),
     textRow('accept.rowRate', format('accept.rate', { rate: formatBps(f.rateBps) }), true),
     { label: text(cadence ? 'lendAccept.rowInterestTotal' : 'lendAccept.rowInterestDue'), value: amount(lending, f.interest), binding: true },
     // Today's setting: the loan fixes the share in force when it opens, and

@@ -1968,7 +1968,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 검토와 서명
 
-검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다.
+검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다. 검토는 미리보기 금액에서 원금과 담보의 `getNumeraireValue`를 아무것도 구속하지 않는 행으로 추가합니다.
 
 <a id="borrow-fee"></a>
 
@@ -1986,7 +1986,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 직접 요청 올리기
 
-요청은 차입자의 지갑에서 보내는 `offerType` 1, 양쪽 ERC-20의 `createOffer`입니다. `collateralAmount`를 차입자의 볼트로 옮기고(볼트가 없으면 만들고) `OfferCreated(offerId, creator, 1)`를 발생시킵니다. 대출자는 `acceptOffer`로 받습니다. 수수료를 뺀 원금은 차입자의 지갑으로, 수수료 중 송신자 몫은 보낸 대출자에게 갑니다. `cancelOffer`는 생성자에게는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터, 누구에게나 요청이 만료된 뒤 열려 있으며, 담보는 항상 생성자에게 돌아갑니다.
+요청은 차입자의 지갑에서 보내는 `offerType` 1, 양쪽 ERC-20의 `createOffer`입니다. `collateralAmount`를 차입자의 볼트로 옮기고(볼트가 없으면 만들고) `OfferCreated(offerId, creator, 1)`를 발생시킵니다. 대출자는 `acceptOffer`로 받습니다. 수수료를 뺀 원금은 차입자의 지갑으로, 수수료 중 송신자 몫은 보낸 대출자에게 갑니다. `cancelOffer`는 생성자에게는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터, 누구에게나 요청이 만료된 뒤 열려 있으며, 담보는 항상 생성자에게 돌아갑니다. 입력한 각 금액 아래에 양식은 `getNumeraireValue(asset, amount, roundUp)`(원금은 올림, 담보는 내림)를 `getNumeraireSymbol` 단위로 표시하며, 입력이 멈추면 읽습니다. 비유동 자산은 0으로 평가된 것으로, 다툼이 있는 가격은 값 없음으로, 실패한 읽기는 읽지 못함으로 표시됩니다.
 
 <a id="borrow-request-terms"></a>
 
