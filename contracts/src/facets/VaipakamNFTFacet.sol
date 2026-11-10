@@ -149,8 +149,59 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
      */
     function checkPositionTransfer(address, address from, address to, uint256 tokenId) external nonReentrant {
         if (msg.sender != LibPositionNFT._storage().core) revert NotAuthorized();
+        (uint64 valueOutBlock, uint64 readyAt) = LibPositionNFT.cooldownOf(tokenId);
+        if (valueOutBlock != 0 && (block.number <= valueOutBlock || block.timestamp < readyAt)) {
+            revert PositionCoolingDown(tokenId, valueOutBlock, readyAt);
+        }
         LibVaipakam.assertPositionMoveNotSanctioned(from, to);
         _syncTierExclusion(LibPositionNFT._storage().loanIds[tokenId]);
+    }
+
+    // ─── #3413 transfer cooldown ─────────────────────────────────────────
+
+    /// @notice A position may not move in the block value last left it, nor
+    ///         until `readyAt`.
+    error PositionCoolingDown(uint256 tokenId, uint64 valueOutBlock, uint64 readyAt);
+    /// @notice A cooldown outside {LibPositionNFT.MIN_TRANSFER_COOLDOWN_SEC}..
+    ///         {LibPositionNFT.MAX_TRANSFER_COOLDOWN_SEC}.
+    error InvalidPositionTransferCooldown(uint32 sec);
+    /// @notice The transfer cooldown changed.
+    event PositionTransferCooldownSet(uint32 sec);
+
+    /**
+     * @notice Set how long a position NFT may not move after value leaves its
+     *         position (#3413). A payout to the holder, a collateral
+     *         withdrawal or a terms change stamps the position; its token
+     *         may then not move in that block, nor for this many seconds.
+     *         Every marketplace fill of a seller who emptied the position
+     *         just before it therefore reverts.
+     * @dev    Admin only (the timelocked admin role). Bounded to
+     *         1..600 seconds; the default, until set, is 5.
+     */
+    function setPositionTransferCooldownSec(uint32 sec) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (sec < LibPositionNFT.MIN_TRANSFER_COOLDOWN_SEC || sec > LibPositionNFT.MAX_TRANSFER_COOLDOWN_SEC) {
+            revert InvalidPositionTransferCooldown(sec);
+        }
+        LibPositionNFT._storage().transferCooldownSec = sec;
+        emit PositionTransferCooldownSet(sec);
+    }
+
+    /// @notice The transfer cooldown in force, in seconds, and its bounds.
+    function positionTransferCooldownSec() external view returns (uint32 sec, uint32 minSec, uint32 maxSec) {
+        return (
+            LibPositionNFT.transferCooldownSec(),
+            LibPositionNFT.MIN_TRANSFER_COOLDOWN_SEC,
+            LibPositionNFT.MAX_TRANSFER_COOLDOWN_SEC
+        );
+    }
+
+    /**
+     * @notice When `tokenId` may next move: the block of the latest value-out
+     *         on its loan or offer (it may not move in that block) and the
+     *         earliest time after it. Both 0 when nothing has left it.
+     */
+    function positionTransferCooldown(uint256 tokenId) external view returns (uint64 valueOutBlock, uint64 readyAt) {
+        return LibPositionNFT.cooldownOf(tokenId);
     }
 
     /**

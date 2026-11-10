@@ -880,7 +880,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](17);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -895,6 +895,10 @@ contract HelperTest {
         selectors[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         selectors[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         selectors[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
+        // #3413 — the transfer cooldown after a value-out.
+        selectors[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
+        selectors[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
+        selectors[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
         return selectors;
     }
 

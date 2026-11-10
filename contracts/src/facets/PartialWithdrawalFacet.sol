@@ -10,6 +10,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
@@ -218,6 +219,9 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
         // Update loan collateral
         loan.collateralAmount -= amount;
+        // #3413 — collateral left the position, whichever branch paid it:
+        // the loan's tokens cool down, so a sale cannot fill against it.
+        LibPositionNFT.markLoanValueOut(loanId);
 
 
         emit PartialCollateralWithdrawn(

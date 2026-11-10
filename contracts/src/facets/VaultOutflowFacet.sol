@@ -393,6 +393,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // A consolidation moves custody under the lien: the move books it.
             // A holder payout is free money for the holder: booked here.
             payeeOwner = holder;
+            // #3413 — value left the position: its tokens cool down, so a sale
+            // cannot fill against a position emptied just before it. A
+            // consolidation keeps the value under the lien and is no payout.
+            if (c != VaultOutflowTypes.OutflowClass.Consolidation) LibPositionNFT.markLoanValueOut(o.ref);
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist

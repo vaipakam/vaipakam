@@ -187,6 +187,53 @@
   },
   {
     "type": "function",
+    "name": "positionTransferCooldown",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "valueOutBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "positionTransferCooldownSec",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "retirePosition",
     "inputs": [
       {
@@ -258,6 +305,19 @@
         "name": "royaltyBps",
         "type": "uint96",
         "internalType": "uint96"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPositionTransferCooldownSec",
+    "inputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -358,6 +418,19 @@
   },
   {
     "type": "event",
+    "name": "PositionTransferCooldownSet",
+    "inputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RoyaltyUpdated",
     "inputs": [
       {
@@ -435,6 +508,17 @@
   },
   {
     "type": "error",
+    "name": "InvalidPositionTransferCooldown",
+    "inputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidRoyalty",
     "inputs": []
   },
@@ -442,6 +526,27 @@
     "type": "error",
     "name": "NotAuthorized",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionCoolingDown",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "valueOutBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",

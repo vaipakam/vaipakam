@@ -1789,7 +1789,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // transfer check and royalty). The token's metadata (tokenURI,
         // contractURI and their image / external_url configuration) is cut
         // to VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](14);
+        s = new bytes4[](17);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -1805,6 +1805,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         // #3336 — the dead-route read the keeper's teardown sweep uses.
         s[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
+        // #3413 — the transfer cooldown after a value-out.
+        s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
+        s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
+        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and

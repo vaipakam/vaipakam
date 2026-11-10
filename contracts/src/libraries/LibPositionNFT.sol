@@ -108,7 +108,26 @@ library LibPositionNFT {
         mapping(uint256 => bool) retired;
         /// @dev The token's transfer count when its open route started.
         mapping(uint256 => uint256) routeTransferCount;
+        // ─── #3413 ───────────────────────────────────────────────────────
+        /// @dev When value last left each loan's positions (a payout to a
+        ///      holder, a collateral withdrawal, a terms change): the block
+        ///      number in the high bits, the timestamp in the low 64 bits
+        ///      ({_stampNow}). One word, so each stamp is one cheap write.
+        mapping(uint256 => uint256) loanValueOut;
+        /// @dev When each offer's terms last changed, packed the same way.
+        mapping(uint256 => uint256) offerValueOut;
+        /// @dev The transfer cooldown in seconds after a value-out; 0 = the
+        ///      default ({DEFAULT_TRANSFER_COOLDOWN_SEC}).
+        uint32 transferCooldownSec;
     }
+
+    /// @notice #3413 — the transfer cooldown when none is set.
+    uint32 internal constant DEFAULT_TRANSFER_COOLDOWN_SEC = 5;
+    /// @notice #3413 — the bounds of a set cooldown. At least one second;
+    ///         at most ten minutes, so a position paid regularly is never
+    ///         held for long.
+    uint32 internal constant MIN_TRANSFER_COOLDOWN_SEC = 1;
+    uint32 internal constant MAX_TRANSFER_COOLDOWN_SEC = 600;
 
     error PositionNFTNotSet();
     error PositionNFTAlreadySet();
@@ -125,6 +144,48 @@ library LibPositionNFT {
         assembly {
             es.slot := position
         }
+    }
+
+    // ─── #3413 transfer cooldown ─────────────────────────────────────────
+
+    /// @notice Record that value left loan `loanId`'s positions now: a payout
+    ///         to a holder, a collateral withdrawal or a terms change. Neither
+    ///         side's token may then move in this block, nor until the
+    ///         cooldown has passed, so a sale cannot fill against a position
+    ///         emptied just before it.
+    function markLoanValueOut(uint256 loanId) internal {
+        _storage().loanValueOut[loanId] = _stampNow();
+    }
+
+    /// @notice As {markLoanValueOut}, for a change to offer `offerId`'s terms.
+    function markOfferValueOut(uint256 offerId) internal {
+        _storage().offerValueOut[offerId] = _stampNow();
+    }
+
+    /// @notice The transfer cooldown in force, in seconds.
+    function transferCooldownSec() internal view returns (uint32 sec) {
+        sec = _storage().transferCooldownSec;
+        if (sec == 0) sec = DEFAULT_TRANSFER_COOLDOWN_SEC;
+    }
+
+    /// @notice The latest value-out on `tokenId`'s loan or offer, and the
+    ///         earliest time the token may move after it. Both 0 when none.
+    ///         The token may not move in block `valueOutBlock` either.
+    function cooldownOf(uint256 tokenId) internal view returns (uint64 valueOutBlock, uint64 readyAt) {
+        ERC721Storage storage es = _storage();
+        uint256 loanId = es.loanIds[tokenId];
+        uint256 offerId = es.offerIds[tokenId];
+        uint256 st = loanId != 0 ? es.loanValueOut[loanId] : 0;
+        uint256 o = offerId != 0 ? es.offerValueOut[offerId] : 0;
+        // Block number is the high part, so the larger word is the later stamp.
+        if (o > st) st = o;
+        if (st == 0) return (0, 0);
+        return (uint64(st >> 64), uint64(st) + uint64(transferCooldownSec()));
+    }
+
+    /// @dev The block number above the timestamp, in one word.
+    function _stampNow() private view returns (uint256) {
+        return (block.number << 64) | block.timestamp;
     }
 
     // ─── The core ────────────────────────────────────────────────────────

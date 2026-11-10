@@ -1090,6 +1090,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             FeeEntitlementRepriceFailed.selector
         );
 
+        // #3413 — terms changed and accrued interest was paid out: the
+        // loan's tokens cool down.
+        LibPositionNFT.markLoanValueOut(loanId);
+
         emit LoanExtended(
             loanId,
             msg.sender,
