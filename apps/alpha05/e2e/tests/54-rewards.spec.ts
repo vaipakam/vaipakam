@@ -12,10 +12,14 @@
  * the chain agrees that nothing stays counted. Away from VPFI's home network
  * (the admin's flag turned off), the page and the deposit receipt say vault
  * VPFI there sets no tier, and the tier table is not shown there. On the
- * home network the tier card states the protocol's own effective tier (none
- * while the consent is off; with 200 counted and the consent on, tier 1 by
- * the counted VPFI but tier 0 by the holding rules, said in one line), and
- * the table states each tier's VPFI band with the protocol's boundaries,
+ * home network the tier card states the protocol's own effective tier and
+ * names the holding rule that holds it down, from the protocol's own
+ * explanation: with 200 counted and the consent on, a holding just begun is
+ * held at tier 0 until the minimum holding period ends; four days on tier 1
+ * applies (and with the consent off, the card says tier 1 would apply with
+ * it on); a same-day dip to tier 0 then holds it at tier 0 by the
+ * look-back. Advanced shows each rule's figure and the rules' settings. The
+ * table states each tier's VPFI band with the protocol's boundaries,
  * its discount and both fees with it, from the live settings. Where the
  * wallet has already approved Permit2 for VPFI (and only then), the deposit
  * offers to sign instead of approve: one signature and one transaction, the
@@ -26,6 +30,7 @@
 import { erc20Abi, maxUint256, parseEther, type Hex } from 'viem';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
+import { increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -159,27 +164,29 @@ test('away from VPFI’s home network, the page and the deposit receipt say vaul
   await fitsWidth(page);
 });
 
-test('the tier card states the tier the protocol applies, held down by the holding rules, and the table each tier’s fees from the live settings', async ({ launchWallet }) => {
-  test.setTimeout(180_000);
+test('the tier card states the tier the protocol applies, names the holding rule that holds it down, and the table each tier’s fees from the live settings', async ({ launchWallet }) => {
+  test.setTimeout(240_000);
   const sc = scenario({ borrower: 'freshBorrower' });
   const me = sc.address('borrower');
   const token = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!;
   await sc.diamondWrite('admin', 'setVPFIToken', [token]);
   await sc.diamondWrite('admin', 'setCanonicalVPFIChain', [true]);
-  // The fixture keeps the protocol's default tier settings and fees; the
-  // table below is stated from them.
+  // The fixture keeps the protocol's default tier settings, holding rules
+  // and fees; the table and the rules below are stated from them.
   expect(await sc.read<readonly bigint[]>('getVpfiTierThresholds')).toEqual([parseEther('100'), parseEther('1000'), parseEther('5000'), parseEther('20000')]);
   expect(await sc.read<readonly bigint[]>('getVpfiTierDiscountBps')).toEqual([1000n, 1500n, 2000n, 2400n]);
   expect(await sc.read<readonly bigint[]>('getFeesConfig')).toEqual([200n, 20n]);
+  expect(await sc.read<Record<string, number>>('getTwaConfig')).toMatchObject({ minStakedDays: 3, windowDays: 30, recentDays: 7, recentWeight: 3, lookbackCapDays: 30 });
   await sc.write('borrower', token, TOKEN_ABI, 'mint', [me, parseEther('200')]);
   const symbol = await sc.pub.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' });
 
-  const { page } = await launchWallet('freshBorrower');
+  const { page } = await launchWallet('freshBorrower', { advanced: true });
   await page.goto('/rewards');
   await connectWallet(page);
   const now = page.getByTestId('rewards-tier-now');
   await expect(now).toHaveAttribute('data-state', 'consent-off', { timeout: 60_000 });
   await expect(now).toContainText('Your fee discount is off, so no tier applies to your fees.');
+  await expect(page.getByTestId('rewards-tier-would')).toHaveCount(0);
   const rows = page.getByTestId('rewards-tier-row');
   await expect(rows).toHaveCount(5, { timeout: 60_000 });
   await expect(rows.nth(0)).toContainText(`Below 100 ${symbol}`);
@@ -194,15 +201,55 @@ test('the tier card states the tier the protocol applies, held down by the holdi
   await fitsWidth(page);
 
   // Consent on and 200 counted: the counted VPFI alone gives tier 1, but a
-  // holding only just begun is held at tier 0 by the holding rules.
+  // holding only just begun is held at tier 0 until its minimum period ends.
   await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [true]);
   await sc.write('borrower', token, erc20Abi, 'approve', [sc.diamond, parseEther('200')]);
   await sc.diamondWrite('borrower', 'depositVPFIToVault', [parseEther('200')]);
   expect(await sc.read<readonly [number, number]>('getEffectiveDiscount', [me])).toEqual([0, 0]);
   await expect(now).toHaveAttribute('data-state', 'held-down', { timeout: 60_000 });
   await expect(now).toHaveAttribute('data-tier', '0');
-  await expect(page.getByTestId('rewards-tier-held')).toHaveText('Your counted VPFI reaches tier 1, but the holding rules hold it at tier 0 for now.');
+  const held = page.getByTestId('rewards-tier-held');
+  await expect(held).toHaveAttribute('data-held', 'too-young');
+  await expect(held).toContainText('Your counted VPFI reaches tier 1, but your current holding began');
+  await expect(held).toContainText('no tier applies until it has lasted the minimum holding period without falling to zero, on');
   await expect(now).toContainText('Tier 0 applies now');
+  const facts = page.getByTestId('rewards-tier-rules');
+  await expect(facts).toContainText(`200 ${symbol}, tier 1`);
+  await expect(facts).toContainText('Held without falling to zero since');
+  await expect(facts).toContainText('A tier applies only once the current holding has lasted 3 days.');
+  await expect(facts).toContainText('Over the last 30 days of the current holding; the last 7 days count 3 times.');
+  await expect(facts).toContainText('Over the current holding, looking back at most 30 days.');
+  await expect(facts).toContainText('Tier 0, 0% off, with your fee discount on');
+  await fitsWidth(page);
+
+  // Four days on, every rule allows tier 1, and it applies.
+  await increaseTime(4 * 86_400);
+  await mine();
+  expect(await sc.read<readonly [number, number]>('getEffectiveDiscount', [me])).toEqual([1, 1000]);
+  await page.reload();
+  await connectWallet(page);
+  await expect(now).toHaveAttribute('data-state', 'applies', { timeout: 60_000 });
+  await expect(now).toContainText('Tier 1 applies now: 10% off your fees.');
+  await expect(facts).toContainText('Tier 1, 10% off, with your fee discount on');
+
+  // With the consent off, no tier applies, and the card says what would.
+  await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
+  await expect(now).toHaveAttribute('data-state', 'consent-off', { timeout: 60_000 });
+  await expect(page.getByTestId('rewards-tier-would')).toHaveText('With it on, tier 1 would apply now: 10% off your fees.');
+  await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [true]);
+
+  // A dip to 50 and back the same day: the average stays in tier 1, but the
+  // look-back over the holding holds the tier at the lowest one held.
+  await sc.diamondWrite('borrower', 'withdrawVPFIFromVault', [parseEther('150')]);
+  await sc.write('borrower', token, erc20Abi, 'approve', [sc.diamond, parseEther('150')]);
+  await sc.diamondWrite('borrower', 'depositVPFIToVault', [parseEther('150')]);
+  expect(await sc.read<{ heldBy: number }>('explainTier', [me])).toMatchObject({ heldBy: 4, rawTier: 1, lookbackTier: 0 });
+  await expect(now).toHaveAttribute('data-state', 'held-down', { timeout: 60_000 });
+  await expect(held).toHaveAttribute('data-held', 'lookback-dip');
+  await expect(held).toHaveText(
+    'Your counted VPFI reaches tier 1, but during the look-back over your current holding it fell to tier 0, and a tier never exceeds the lowest one held then, so tier 0 applies.',
+  );
+  await expect(facts).toContainText('Tier 0');
   await fitsWidth(page);
 });
 

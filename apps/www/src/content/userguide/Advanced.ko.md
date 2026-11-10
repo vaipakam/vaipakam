@@ -2400,7 +2400,7 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### 리워드: 수수료 할인 등급
 
-카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 홈 네트워크에서는 `getTrackedVPFIDiscountTier`(집계된 VPFI만으로 얻는 등급)도 읽고, 유효 등급이 더 낮을 때 이를 알려 줍니다. 어떤 보유 규칙이 낮추고 있는지는 프로토콜이 보고하지 않고, 규칙 설정에는 아직 읽기 뷰가 없으므로 둘 다 표시하지 않습니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
+카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 같은 블록에서 `explainTier`와 `getTwaConfig`도 읽습니다. `explainTier`는 동의 여부와 관계없이 집계된 VPFI만으로 얻는 등급, 각 보유 규칙의 수치, 유효 등급을 그보다 낮게 두는 규칙을 돌려줍니다. 카드는 설명이 수수료 경로가 적용하는 것과 같은 등급일 때만 그 규칙을 알려 주며, 동의가 꺼져 있으면 켰을 때 어떤 등급이 적용될지 알려 줍니다. Advanced에서는 각 규칙의 수치와 `getTwaConfig`가 돌려주는 설정을 보여 주며, 평균 기간과 되돌아보는 기간을 서로 다른 두 길이로 표시합니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
 
 <a id="rewards-vpfi-sign"></a>
 
