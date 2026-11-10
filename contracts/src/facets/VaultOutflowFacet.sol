@@ -234,7 +234,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // moves and the tracked balance is unchanged until a release pays it
         // through this same function.
         if (
-            LibVaipakam.storageSlot().protectedAccount[user].enabled
+            LibProtectedAccount.isEnabled(user)
                 && IVaultOutflowPayoutGate(address(this)).applyPayoutGate(
                     user, _assetType(o.kind), o.asset, o.tokenId, o.amount, o.to
                 )
@@ -525,7 +525,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
     function _protectedRecipientVault(address user, address recipient) private view returns (address) {
         if (recipient == user) return address(0);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.protectedAccount[recipient].enabled) return address(0);
+        if (!LibProtectedAccount.isEnabled(recipient)) return address(0);
         return s.userVaipakamVaults[recipient];
     }
 

@@ -743,7 +743,7 @@ contract VaipakamVaultImplementation is
         if (c == VaultOutflowTypes.OutflowClass.Treasury) return TREASURY != address(0) && o.to == TREASURY;
         if (c == VaultOutflowTypes.OutflowClass.Backstop) {
             address backstop = BACKSTOP;
-            return backstop != address(0) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultOwner() == backstop;
+            return backstop != address(0) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultCreationOwner() == backstop;
         }
         // #3431 — a swap leaves only through {swapOut}, judged by its result;
         // a plain transfer to an adapter is never a destination.
@@ -776,9 +776,13 @@ contract VaipakamVaultImplementation is
         if (POSITION_NFT == address(0)) return false;
         address holder = IPositionHolderView(POSITION_NFT).holderOf(positionToken);
         if (holder == address(0)) return false;
-        if (to == address(this)) return ownerWallet == holder;
+        // #3379 B2 — a holder's vault is the one created for them: its
+        // creation owner is the holder. A verified primary replacement moves
+        // the owner record, not the vault, so positions held by the replaced
+        // wallet keep paying the vault its new owner now controls.
+        if (to == address(this)) return creationOwner == holder;
         if (!_isGenuineVault(to)) return false;
-        return IVaultOwnerView(to).vaultOwner() == holder;
+        return IVaultOwnerView(to).vaultCreationOwner() == holder;
     }
 
     /// @dev Whether `to` runs the same BeaconProxy code as this vault (§3.4):
@@ -853,6 +857,18 @@ contract VaipakamVaultImplementation is
     {
         LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
         return (l.enabled, l.locked, l.delay, l.cooldownUntil, l.lockedBy, l.signers, l.allowlist);
+    }
+
+    /// @notice The Diamond this vault serves.
+    function vaultDiamond() external view returns (address) {
+        return diamond;
+    }
+
+    /// @notice The four facts every Diamond read of protected mode needs, in
+    ///         one call: on, locked, the delay, and the owner record.
+    function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.enabled, l.locked, l.delay, ownerWallet);
     }
 
     /// @notice One allowlist entry (#3415 `verified` included).

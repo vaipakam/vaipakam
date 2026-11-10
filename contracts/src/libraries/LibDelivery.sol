@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 
 /// @dev Protected account mode — the host that credits a protected owner's
@@ -157,7 +158,7 @@ library LibDelivery {
     ///      credited to the wallet's vault ({creditIfProtected}), refused
     ///      unless all of it arrived at both hops.
     function pullExact(address token, address from, address to, uint256 amount) internal {
-        if (amount != 0 && LibVaipakam.storageSlot().protectedAccount[to].enabled) {
+        if (amount != 0 && LibProtectedAccount.isEnabled(to)) {
             uint256 held = IERC20(token).balanceOf(address(this));
             // slither-disable-next-line arbitrary-send-erc20
             IERC20(token).safeTransferFrom(from, address(this), amount);
@@ -232,7 +233,7 @@ library LibDelivery {
         internal
         returns (bool credited, uint256 received)
     {
-        if (amount == 0 || !LibVaipakam.storageSlot().protectedAccount[to].enabled) return (false, 0);
+        if (amount == 0 || !LibProtectedAccount.isEnabled(to)) return (false, 0);
         return (true, IProtectedVaultCredit(address(this)).creditOwnerVault(token, to, amount));
     }
 

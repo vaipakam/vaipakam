@@ -1240,7 +1240,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         // so when its vault could not take the credit above (a mandatory
         // vault upgrade it has not made), the delivery goes to its vault
         // anyway, recorded as tracked, and leaves only through the delay.
-        if (s.protectedAccount[user].enabled) {
+        if (LibProtectedAccount.isEnabled(user)) {
             address proxy = s.userVaipakamVaults[user];
             uint256 amount = fresh + recycled + epoch;
             LibRewardCustody.releaseMeasured(token, holder, proxy, amount);

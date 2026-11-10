@@ -1427,43 +1427,17 @@ contract HelperTest {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function getProtectedAccountFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](36);
-        selectors[0] = ProtectedAccountFacet.acceptSignerRole.selector;
-        selectors[1] = ProtectedAccountFacet.addAllowlisted.selector;
-        selectors[2] = ProtectedAccountFacet.addSigner.selector;
-        selectors[3] = ProtectedAccountFacet.approveReplacement.selector;
-        selectors[4] = ProtectedAccountFacet.cancelAddAllowlisted.selector;
-        selectors[5] = ProtectedAccountFacet.cancelAddSigner.selector;
-        selectors[6] = ProtectedAccountFacet.cancelRemoveSigner.selector;
-        selectors[7] = ProtectedAccountFacet.cancelReplacement.selector;
-        selectors[8] = ProtectedAccountFacet.cancelSettingChange.selector;
-        selectors[9] = ProtectedAccountFacet.enableProtectedMode.selector;
-        selectors[10] = ProtectedAccountFacet.finalizeAddAllowlisted.selector;
-        selectors[11] = ProtectedAccountFacet.finalizeAddSigner.selector;
-        selectors[12] = ProtectedAccountFacet.finalizeRemoveSigner.selector;
-        selectors[13] = ProtectedAccountFacet.finalizeReplacement.selector;
-        selectors[14] = ProtectedAccountFacet.finalizeSettingChanges.selector;
-        selectors[15] = ProtectedAccountFacet.getAllowlist.selector;
-        selectors[16] = ProtectedAccountFacet.getAllowlistPendingAt.selector;
-        selectors[17] = ProtectedAccountFacet.getProtectedAccount.selector;
-        selectors[18] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
-        selectors[19] = ProtectedAccountFacet.getProtectedSigners.selector;
-        selectors[20] = ProtectedAccountFacet.getReplacement.selector;
-        selectors[21] = ProtectedAccountFacet.getRetiredAccountOf.selector;
-        selectors[22] = ProtectedAccountFacet.getSignerChange.selector;
-        selectors[23] = ProtectedAccountFacet.lockVault.selector;
-        selectors[24] = ProtectedAccountFacet.lockVaultFor.selector;
-        selectors[25] = ProtectedAccountFacet.proposeReplacement.selector;
-        selectors[26] = ProtectedAccountFacet.removeAllowlisted.selector;
-        selectors[27] = ProtectedAccountFacet.requestDisableProtectedMode.selector;
-        selectors[28] = ProtectedAccountFacet.requestRemoveSigner.selector;
-        selectors[29] = ProtectedAccountFacet.requestUnlock.selector;
-        selectors[30] = ProtectedAccountFacet.setProtectedDelay.selector;
-        selectors[31] = ProtectedAccountFacet.setRequireCosign.selector;
-        selectors[32] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
-        selectors[33] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
-        selectors[34] = ProtectedAccountFacet.isListingLegAllowed.selector;
-        selectors[35] = ProtectedAccountFacet.lockPositionNfts.selector;
+        selectors = new bytes4[](10);
+        selectors[0] = ProtectedAccountFacet.applyProtection.selector;
+        selectors[1] = ProtectedAccountFacet.cancelSettingChange.selector;
+        selectors[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
+        selectors[3] = ProtectedAccountFacet.getProtection.selector;
+        selectors[4] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
+        selectors[5] = ProtectedAccountFacet.getRetiredAccountOf.selector;
+        selectors[6] = ProtectedAccountFacet.isListingLegAllowed.selector;
+        selectors[7] = ProtectedAccountFacet.lockPositionNfts.selector;
+        selectors[8] = ProtectedAccountFacet.lockVaultFor.selector;
+        selectors[9] = ProtectedAccountFacet.setRequireCosign.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.

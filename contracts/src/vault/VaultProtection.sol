@@ -8,6 +8,7 @@ import {LibVaultProtectionStorage as P} from "./LibVaultProtectionStorage.sol";
 ///      itself (a call to `address(this)` while running in the vault).
 interface IProtectedVaultSelf {
     function vaultOwner() external view returns (address);
+    function vaultDiamond() external view returns (address);
     function setOwnerFromProtection(address newOwner) external;
 }
 
@@ -414,6 +415,29 @@ contract VaultProtection {
             _clearProposal(l);
         }
         emit VaultLocked(auth.key);
+    }
+
+    /// @notice The platform locks the vault (its keeper relaying a LOCK the
+    ///         owner sent from a linked chat, under the owner's keeper grant,
+    ///         which the Diamond checks). Only the Diamond may call it, and
+    ///         only to lock: a lock only stops value leaving, and only the
+    ///         owner may unlock, after the delay. Same effects as {lock}.
+    function lockByPlatform(address by) external onlyDelegateCall {
+        P.Layout storage l = _enabled();
+        if (msg.sender != IProtectedVaultSelf(address(this)).vaultDiamond()) revert NotOwnerOrSigner(msg.sender);
+        bool was = l.locked;
+        if (!was) {
+            l.locked = true;
+            l.lockedAt = uint64(block.timestamp);
+            l.lockedBy = by;
+        }
+        l.pendingUnlockAt = 0;
+        _dropPending(l);
+        if (l.nominee != address(0) && l.proposedBy == _owner()) {
+            emit ReplacementCancelled(l.nominee, by);
+            _clearProposal(l);
+        }
+        emit VaultLocked(by);
     }
 
     // ─── Replacement of the primary ─────────────────────────────────────

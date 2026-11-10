@@ -181,8 +181,8 @@ contract SaleExitVerdictFacet {
         // Protected account mode — a locked or retired holder's position does
         // not leave it by sale; the lock lifts only by its delayed unlock (no
         // known reopening time), and a retired account never reopens.
-        LibVaipakam.ProtectedAccount storage pa = s.protectedAccount[holder];
-        if (pa.enabled && (pa.locked || pa.retired)) {
+        LibProtectedAccount.Core memory pa = LibProtectedAccount.core(holder);
+        if (pa.retired || (pa.enabled && pa.locked)) {
             _add(
                 r,
                 pa.retired

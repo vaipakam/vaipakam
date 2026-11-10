@@ -63,6 +63,7 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {VaultProtection} from "../src/vault/VaultProtection.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -162,6 +163,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #3431 — the backstop vault provisioned in step 5c-iii, before the
     ///      vault code (5d) fixes its address.
     address internal backstopVault;
+    /// @dev #3379 B2 — the VaultProtection code fixed in the vault code (5d).
+    address internal vaultProtection;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
     bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
@@ -1322,6 +1325,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writePositionNFT(positionNFT);
         Deployments.writeProtocolRegistry(protocolRegistry);
         Deployments.writeBackstopVault(backstopVault);
+        Deployments.writeVaultProtection(vaultProtection);
         Deployments.writePriceGuard(priceGuard);
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
@@ -1552,7 +1556,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      price guard is the #3447 guard this deploy built in 5c-ii.
     function _vaultEndpoints(address treasury, address backstop)
         internal
-        view
         returns (VaultOutflowTypes.VaultEndpoints memory e)
     {
         e.treasury = treasury;
@@ -1563,6 +1566,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
             "VAULT_LISTING_CONDUIT_KEY", bytes32(0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000)
         );
         e.priceGuard = priceGuard; // #3447, built in 5c-ii
+        // #3379 B2 — the protected-mode code every vault delegatecalls:
+        // stateless, not upgradeable, fixed in the vault code.
+        vaultProtection = ArtifactDeploy.deploy(type(VaultProtection).name);
+        e.protection = vaultProtection;
         bool production = Deployments.requiresProductionGovernance();
         if (production) {
             require(e.seaport.code.length != 0, "DeployDiamond: no code at the vault's Seaport");
@@ -2514,43 +2521,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function _getProtectedAccountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](36);
-        s[0] = ProtectedAccountFacet.acceptSignerRole.selector;
-        s[1] = ProtectedAccountFacet.addAllowlisted.selector;
-        s[2] = ProtectedAccountFacet.addSigner.selector;
-        s[3] = ProtectedAccountFacet.approveReplacement.selector;
-        s[4] = ProtectedAccountFacet.cancelAddAllowlisted.selector;
-        s[5] = ProtectedAccountFacet.cancelAddSigner.selector;
-        s[6] = ProtectedAccountFacet.cancelRemoveSigner.selector;
-        s[7] = ProtectedAccountFacet.cancelReplacement.selector;
-        s[8] = ProtectedAccountFacet.cancelSettingChange.selector;
-        s[9] = ProtectedAccountFacet.enableProtectedMode.selector;
-        s[10] = ProtectedAccountFacet.finalizeAddAllowlisted.selector;
-        s[11] = ProtectedAccountFacet.finalizeAddSigner.selector;
-        s[12] = ProtectedAccountFacet.finalizeRemoveSigner.selector;
-        s[13] = ProtectedAccountFacet.finalizeReplacement.selector;
-        s[14] = ProtectedAccountFacet.finalizeSettingChanges.selector;
-        s[15] = ProtectedAccountFacet.getAllowlist.selector;
-        s[16] = ProtectedAccountFacet.getAllowlistPendingAt.selector;
-        s[17] = ProtectedAccountFacet.getProtectedAccount.selector;
-        s[18] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
-        s[19] = ProtectedAccountFacet.getProtectedSigners.selector;
-        s[20] = ProtectedAccountFacet.getReplacement.selector;
-        s[21] = ProtectedAccountFacet.getRetiredAccountOf.selector;
-        s[22] = ProtectedAccountFacet.getSignerChange.selector;
-        s[23] = ProtectedAccountFacet.lockVault.selector;
-        s[24] = ProtectedAccountFacet.lockVaultFor.selector;
-        s[25] = ProtectedAccountFacet.proposeReplacement.selector;
-        s[26] = ProtectedAccountFacet.removeAllowlisted.selector;
-        s[27] = ProtectedAccountFacet.requestDisableProtectedMode.selector;
-        s[28] = ProtectedAccountFacet.requestRemoveSigner.selector;
-        s[29] = ProtectedAccountFacet.requestUnlock.selector;
-        s[30] = ProtectedAccountFacet.setProtectedDelay.selector;
-        s[31] = ProtectedAccountFacet.setRequireCosign.selector;
-        s[32] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
-        s[33] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
-        s[34] = ProtectedAccountFacet.isListingLegAllowed.selector;
-        s[35] = ProtectedAccountFacet.lockPositionNfts.selector;
+        s = new bytes4[](10);
+        s[0] = ProtectedAccountFacet.applyProtection.selector;
+        s[1] = ProtectedAccountFacet.cancelSettingChange.selector;
+        s[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
+        s[3] = ProtectedAccountFacet.getProtection.selector;
+        s[4] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
+        s[5] = ProtectedAccountFacet.getRetiredAccountOf.selector;
+        s[6] = ProtectedAccountFacet.isListingLegAllowed.selector;
+        s[7] = ProtectedAccountFacet.lockPositionNfts.selector;
+        s[8] = ProtectedAccountFacet.lockVaultFor.selector;
+        s[9] = ProtectedAccountFacet.setRequireCosign.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.

@@ -8,6 +8,42 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibDepositoryLedger} from "./LibDepositoryLedger.sol";
 import {LibPausable} from "./LibPausable.sol";
 
+/// @dev #3379 B2 — the vault's own protected-mode record, as the Diamond reads it.
+interface IVaultProtectionRead {
+    function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner);
+    function allowEntry(address destination) external view returns (ProtectionEntry memory);
+    function signerEntry(address who) external view returns (ProtectionSigner memory);
+    function protectionState()
+        external
+        view
+        returns (
+            bool enabled,
+            bool locked,
+            uint32 delay,
+            uint64 cooldownUntil,
+            address lockedBy,
+            address[] memory signers,
+            address[] memory allowlist
+        );
+}
+
+/// @dev Mirrors `LibVaultProtectionStorage.Entry` (ABI-identical).
+struct ProtectionEntry {
+    uint64 readyAt;
+    uint64 epoch;
+    bool active;
+    bool verified;
+}
+
+/// @dev Mirrors `LibVaultProtectionStorage.Signer` (ABI-identical).
+struct ProtectionSigner {
+    uint64 addAt;
+    uint64 removeAt;
+    uint64 epoch;
+    bool accepted;
+    bool active;
+}
+
 /**
  * @title LibProtectedAccount
  * @notice The rules of protected account mode, in one place, so the vault
@@ -168,9 +204,34 @@ library LibProtectedAccount {
         return LibVaipakam.storageSlot();
     }
 
+    /// @notice #3379 B2 — what the Diamond knows of `account`'s protected
+    ///         mode, read from the account's own vault (the only writer). No
+    ///         vault yet means protected mode is off and the account manages
+    ///         itself.
+    struct Core {
+        address vault;
+        bool enabled;
+        bool locked;
+        bool retired;
+        uint32 delay;
+        address manager;
+    }
+
+    function core(address account) internal view returns (Core memory c) {
+        c.vault = _s().userVaipakamVaults[account];
+        c.manager = account;
+        if (c.vault == address(0)) return c;
+        address owner;
+        (c.enabled, c.locked, c.delay, owner) = IVaultProtectionRead(c.vault).protectionCore();
+        c.manager = owner;
+        // A verified replacement moved the owner record: the account wallet
+        // has lost every right over it, and the new owner manages it.
+        c.retired = owner != account;
+    }
+
     /// @notice Whether protected account mode is on for `account`.
     function isEnabled(address account) internal view returns (bool) {
-        return _s().protectedAccount[account].enabled;
+        return core(account).enabled;
     }
 
     /// @notice Whether `account`'s positions are held against leaving it:
@@ -180,37 +241,53 @@ library LibProtectedAccount {
     ///         every right over it. A protocol route that would take a
     ///         position out of the account (a lender sale) reads this.
     function protectsNfts(address account) internal view returns (bool) {
-        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        return (a.enabled && a.retired) || LibPositionNFT.isHolderLocked(account);
+        return core(account).retired || LibPositionNFT.isHolderLocked(account);
     }
 
-    /// @notice The wallet that manages `account`: its controller once
-    ///         retired by a replacement, else the account wallet itself.
+    /// @notice The wallet that manages `account`: the vault's owner record
+    ///         (the account wallet, or the wallet a verified replacement
+    ///         moved it to).
     function manager(address account) internal view returns (address) {
-        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        return a.retired ? a.controller : account;
+        return core(account).manager;
     }
 
     /// @notice The one authority rule for an owner action on `account`: the
     ///         caller must be its manager (the account's own wallet, or its
-    ///         controller once a replacement retired it). Called with
-    ///         `msg.sender` as the account, it refuses a retired wallet acting
-    ///         as itself, which lost every right over the account.
+    ///         replacement once one moved the vault's owner record). Called
+    ///         with `msg.sender` as the account, it refuses a replaced wallet
+    ///         acting as itself, which lost every right over the account.
     function requireManager(address account) internal view {
         if (msg.sender != manager(account)) revert NotAccountManager(account, msg.sender);
     }
 
-    /// @notice Whether `account` is an active secondary signer's account.
+    /// @notice Whether `who` is an active secondary signer of `account`.
     function isSigner(address account, address who) internal view returns (bool) {
-        return _s().protectedSigners[account].contains(who);
+        address vault = _s().userVaipakamVaults[account];
+        if (vault == address(0)) return false;
+        return IVaultProtectionRead(vault).signerEntry(who).active;
     }
 
     /// @notice Whether a payout from `account` may go to `recipient`: the
     ///         manager wallet always may; otherwise only an active
-    ///         allowlisted destination.
+    ///         allowlisted destination on the vault's own record.
     function isAllowed(address account, address recipient) internal view returns (bool) {
-        if (recipient == manager(account)) return true;
-        return _s().protectedAllowlist[account].contains(recipient);
+        Core memory c = core(account);
+        if (recipient == c.manager) return true;
+        if (c.vault == address(0)) return false;
+        return IVaultProtectionRead(c.vault).allowEntry(recipient).active;
+    }
+
+    /// @notice #3415 — whether a payout from `account` to `recipient` needs a
+    ///         secondary signer's co-signature: the recipient is an allowlisted
+    ///         destination that has not verified itself, and the account has
+    ///         signers. The manager wallet and an account without signers are
+    ///         unaffected.
+    function unverifiedNeedsCosign(address account, address recipient) internal view returns (bool) {
+        Core memory c = core(account);
+        if (c.vault == address(0) || recipient == c.manager) return false;
+        if (IVaultProtectionRead(c.vault).allowEntry(recipient).verified) return false;
+        (,,,,, address[] memory signers,) = IVaultProtectionRead(c.vault).protectionState();
+        return signers.length != 0;
     }
 
     /// @notice The ONE rule for a payment a seller's own listing makes
@@ -224,9 +301,9 @@ library LibProtectedAccount {
     ///         replacement or an allowlist removal after posting stops the
     ///         fill instead of paying a leg the payout queue never saw.
     function listingLegAllowed(address seller, address recipient) internal view returns (bool) {
-        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[seller];
-        if (!a.enabled) return true;
-        if (a.retired || a.locked) return false;
+        Core memory c = core(seller);
+        if (!c.enabled) return true;
+        if (c.retired || c.locked) return false;
         return isAllowed(seller, recipient);
     }
 
@@ -234,10 +311,10 @@ library LibProtectedAccount {
     ///         intent, a signed fill, a sale or offset listing) for a locked
     ///         or retired account. Loan servicing is never refused.
     function requireCanOpen(address account) internal view {
-        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        if (!a.enabled) return;
-        if (a.retired) revert AccountRetired(account);
-        if (a.locked) revert ProtectedVaultLocked(account);
+        Core memory c = core(account);
+        if (c.retired) revert AccountRetired(account);
+        if (!c.enabled) return;
+        if (c.locked) revert ProtectedVaultLocked(account);
     }
 
     /// @notice Refuse an owner's OWN withdrawal that the payout gate would
@@ -249,9 +326,9 @@ library LibProtectedAccount {
     ///         Every voluntary withdraw entry that pays through the gate
     ///         calls this first, as `withdrawFromVault` already refuses.
     function requirePayoutRoom(address account) internal view {
-        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        if (!a.enabled) return;
-        if (a.locked) revert ProtectedVaultLocked(account);
+        Core memory c = core(account);
+        if (!c.enabled) return;
+        if (c.locked) revert ProtectedVaultLocked(account);
         if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
     }
 
@@ -357,20 +434,20 @@ library LibProtectedAccount {
         uint256 amount,
         address recipient
     ) internal returns (bool held) {
-        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        if (!a.enabled) return false;
+        Core memory c = core(account);
+        if (!c.enabled) return false;
         if (consumeRelease(account, asset, tokenId, amount, recipient)) return false;
-        if (recipient != account && recipient != a.controller) return false;
+        if (recipient != account && recipient != c.manager) return false;
         // Held, never refused: a protocol settlement must not revert because
         // the payee's account is locked or its queue is full. The asset stays
         // in the vault, tracked and credited to the depository ledger, for the
         // owner to withdraw later.
-        if (a.locked || openRows(account) >= MAX_OPEN_ROWS) {
+        if (c.locked || openRows(account) >= MAX_OPEN_ROWS) {
             LibDepositoryLedger.credit(account, asset, tokenId, amount);
             emit PayoutHeldInVault(account, asset, tokenId, amount);
             return true;
         }
-        address to = a.retired ? a.controller : recipient;
+        address to = c.retired ? c.manager : recipient;
         queuePayout(account, kind, asset, tokenId, amount, to);
         return true;
     }
@@ -387,12 +464,12 @@ library LibProtectedAccount {
         address recipient
     ) internal returns (uint256 id) {
         LibVaipakam.Storage storage s = _s();
-        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[account];
-        if (a.locked) revert ProtectedVaultLocked(account);
+        Core memory c = core(account);
+        if (c.locked) revert ProtectedVaultLocked(account);
         if (!isAllowed(account, recipient)) revert RecipientNotAllowlisted(account, recipient);
         if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
         id = ++s.protectedRowSeq;
-        uint64 releaseAt = uint64(block.timestamp) + a.delaySeconds;
+        uint64 releaseAt = uint64(block.timestamp) + c.delay;
         s.pendingPayouts[id] = LibVaipakam.PendingPayout({
             user: account,
             kind: kind,
@@ -437,9 +514,12 @@ library LibProtectedAccount {
         p = s.pendingPayouts[id];
         if (p.state != ROW_QUEUED) revert RowNotQueued(id);
         if (block.timestamp < p.releaseAt) revert PayoutNotDue(id, p.releaseAt);
-        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[p.user];
-        if (a.locked) revert ProtectedVaultLocked(p.user);
-        if (a.requireCosign && !p.cosigned) revert CosignRequired(id);
+        if (core(p.user).locked) revert ProtectedVaultLocked(p.user);
+        // #3415 — an unverified destination needs a co-signature when the
+        // account has signers, whatever the account's own co-sign setting.
+        bool cosignNeeded =
+            s.protectedAccount[p.user].requireCosign || unverifiedNeedsCosign(p.user, p.recipient);
+        if (cosignNeeded && !p.cosigned) revert CosignRequired(id);
         p.state = ROW_RELEASED;
         s.pendingPayoutIds[p.user].remove(id);
         s.openPayoutIds.remove(id);
