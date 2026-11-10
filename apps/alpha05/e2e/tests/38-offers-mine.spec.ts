@@ -15,7 +15,7 @@ import { postLenderOffer, WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
-import { scenario } from '../lib/chain';
+import { scenario, txDeadline } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 type Hex = `0x${string}`;
@@ -116,6 +116,7 @@ test('an expired borrowing request is cleaned up, and its collateral returns to 
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
     },
+    await txDeadline(sc),
   ]);
   const ev = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   const id = BigInt(ev!.args.offerId as bigint).toString();

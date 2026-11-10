@@ -106,7 +106,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
     function _borrowerOfferRepayClaim() internal {
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Borrower created offer:", offerId);
 
@@ -168,7 +168,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         p.collateralAmountMax = 200e18;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender offer created:", offerId);
 
@@ -189,7 +189,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         p.collateralTokenId = 110; // the borrower's
         vm.startBroadcast(borrowerKey);
         nft721.approve(diamond, 110);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Borrower offer with ERC-721 collateral:", offerId);
 
@@ -211,7 +211,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         p.collateralQuantity = 10;
         vm.startBroadcast(borrowerKey);
         nft1155.setApprovalForAll(diamond, true);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Borrower offer with ERC-1155 collateral:", offerId);
 
@@ -253,7 +253,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         vm.startBroadcast(newLenderKey);
         if (assetType == LibVaipakam.AssetType.ERC721) nft721.approve(diamond, tokenId);
         else nft1155.setApprovalForAll(diamond, true);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender rental offer:", offerId);
 
@@ -292,7 +292,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         p.collateralAmountMax = 1000e18;
         vm.startBroadcast(lenderKey);
         illiquidLending.approve(diamond, 500e18);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender offer (both legs illiquid):", offerId);
 
@@ -316,7 +316,7 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         p.prepayAsset = address(illiquidToken);
         vm.startBroadcast(lenderKey);
         illiquidToken.approve(diamond, 200e18);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender offer (illiquid lending, liquid collateral):", offerId);
 

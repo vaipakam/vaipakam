@@ -4209,6 +4209,22 @@ const copySource = {
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
+    // #3412 — the direct sale is bound to the chain's own quote of the two
+    // seller figures (`quoteSellerBounds`, the listing's computation), read
+    // when the review opens, and refused rather than made if either is worse
+    // when it runs.
+    floorLoading: 'Reading the least this sale would pay you…',
+    floorUnavailable:
+      'The least this sale would pay you couldn’t be read right now, so it can’t be reviewed until it can. Try again shortly.',
+    receiptFloor: tmpl(
+      'At least {{amount}} {{sym}} once the rate top-up is taken, if the sale goes through within the next 30 minutes. The sale is refused rather than made if it would pay you less.',
+      ['amount', 'sym'],
+    ),
+    receiptHeld: tmpl(
+      '{{amount}} {{sym}} already set aside for the lender on this loan moves to the buyer with the position. The sale is refused if more than this has been set aside by the time it runs.',
+      ['amount', 'sym'],
+    ),
+
     moreOffers: tmpl(
       '{{count}} more matching offers pay less than the ones shown.',
       ['count'],

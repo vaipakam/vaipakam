@@ -6,6 +6,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -133,11 +134,18 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     /// @param loanId               The loan to partially repay.
     /// @param collateralSwapAmount The collateral input to swap.
     /// @param adapterCalls         Keeper-ranked try-list.
+    /// @param validUntil           The caller's MANDATORY transaction deadline
+    ///                          (#3412): a swap is price-exposed, so one that
+    ///                          waited in a queue and lands after this reverts
+    ///                          instead of selling at a price the borrower never
+    ///                          saw. `LibTiming.requireDeadline`.
     function swapToRepayPartial(
         uint256 loanId,
         uint256 collateralSwapAmount,
-        LibSwap.AdapterCall[] calldata adapterCalls
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         // T-090 v1.1 (#389) §5.8 — same custody-conflict rationale
         // as `swapToRepayFull`; block partial-atomic while the
         // intent surface holds the collateral.

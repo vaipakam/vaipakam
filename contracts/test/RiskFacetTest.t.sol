@@ -963,7 +963,8 @@ contract RiskFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         LibAcceptTestSigner.signAndAccept(
@@ -1898,7 +1899,8 @@ contract RiskFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId
@@ -2883,7 +2885,8 @@ contract RiskFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         uint256 loanId = LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId

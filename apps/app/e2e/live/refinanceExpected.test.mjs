@@ -37,6 +37,7 @@ import {
   REQUEST_WINDOW_SEC,
   refinancePlanSteps,
   SET_PAYOFF_PERMIT_SIGNATURE,
+  TX_DEADLINE_SEC,
   ZERO_HASH,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
@@ -49,6 +50,7 @@ import {
   setPayoffPermitCall,
 } from '../../src/contracts/refinancePayoffPermit';
 import { PERMIT2_ADDRESS as APP_PERMIT2_ADDRESS } from '../../src/contracts/usePermit2Signing';
+import { TX_DEADLINE_SECONDS } from '@vaipakam/lib/txDeadline';
 
 const DAY = 86_400n;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -183,6 +185,8 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     const call = expectedCreateOfferCall({ loan: LOAN, loanId: 22n, rateBps: 1200n, days: 30n, anchor: () => NOW });
     const fn = ABI.find((e) => e.type === 'function' && e.name === 'createOffer');
     expect(Object.keys(call.args.params).sort()).toEqual(fn.inputs[0].components.map((c) => c.name).sort());
+    // #3412 — and the transaction deadline, the call's only other argument.
+    expect(Object.keys(call.args).sort()).toEqual(fn.inputs.map((i) => i.name).sort());
     expect(call.args.params.interestRateBps).toBe(0n);
     expect(call.args.params.interestRateBpsMax).toBe(1200n);
   });
@@ -238,7 +242,11 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       useFullTermInterest: true,
     };
     const createReq = decodeTxForComparison(
-      { from: BORROWER, to: DIAMOND, data: encodeFunctionData({ abi: ABI, functionName: 'createOffer', args: [params] }) },
+      {
+        from: BORROWER,
+        to: DIAMOND,
+        data: encodeFunctionData({ abi: ABI, functionName: 'createOffer', args: [params, NOW + TX_DEADLINE_SEC] }),
+      },
       () => ABI,
     );
     // Caps and both approvals are optional — the app may skip them.
@@ -454,6 +462,8 @@ describe('refinanceExpected — the payoff-permit route (#3295)', () => {
         refinanceTargetLoanId: 22n,
         useFullTermInterest: true,
       },
+      // The app's chain read at the send, 2 s after the anchor (#3412).
+      ANCHOR + 2n + TX_DEADLINE_SEC,
     ]);
 
   /** The eth_signTypedData_v4 request viem's wallet client sends for the
@@ -680,5 +690,22 @@ describe('refinanceExpected — the payoff-permit route (#3295)', () => {
     const exp = expectedPayoffPermitTypedData({ chainId: CHAIN, diamond: DIAMOND, signer: BORROWER, token: LOAN.principalAsset, maxAmount: SHARE, deadline: DEADLINE, loanId: 22n, offerId: REQUEST_ID });
     expect(structMismatches(exp, (await permitRequest({ nonce: 0n })).actual)).toEqual([]);
     expect(structMismatches(exp, (await permitRequest({ nonce: 2n ** 256n - 1n })).actual)).toEqual([]);
+  });
+});
+
+describe('refinanceExpected — the transaction deadline window (#3412)', () => {
+  it('restates the shared window exactly', () => {
+    expect(TX_DEADLINE_SEC).toBe(BigInt(TX_DEADLINE_SECONDS));
+  });
+
+  it('refuses a createOffer whose deadline is not the app\u2019s chain-time window', () => {
+    const call = expectedCreateOfferCall({ loan: LOAN, loanId: 22n, rateBps: 1200n, days: 30n, anchor: () => NOW });
+    const params = { ...call.args.params, expiresAt: NOW + REQUEST_WINDOW_SEC };
+    const actual = (validUntil) => ({ functionName: 'createOffer', args: { params, validUntil } });
+    expect(structMismatches(call, actual(NOW + TX_DEADLINE_SEC))).toEqual([]);
+    // A deadline a day out is not the reviewed window.
+    expect(structMismatches(call, actual(NOW + DAY))).not.toEqual([]);
+    // Nor is a missing one.
+    expect(structMismatches(call, { functionName: 'createOffer', args: { params } })).not.toEqual([]);
   });
 });

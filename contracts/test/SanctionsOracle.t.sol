@@ -131,7 +131,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 lender
             )
         );
-        OfferCreateFacet(address(diamond)).createOffer(_buildLenderOfferParams());
+        OfferCreateFacet(address(diamond)).createOffer(_buildLenderOfferParams(), type(uint64).max);
     }
 
     // ─── acceptOffer enforcement ───────────────────────────────────────────
@@ -140,7 +140,8 @@ contract SanctionsOracleTest is RiskFacetTest {
         // Step 1: clean creator posts an offer.
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderOfferParams()
+            _buildLenderOfferParams(),
+            type(uint64).max
         );
 
         // Step 2: install oracle + flag the borrower.
@@ -170,7 +171,8 @@ contract SanctionsOracleTest is RiskFacetTest {
         // acceptor doesn't unwittingly pair with a now-tainted counterparty.
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderOfferParams()
+            _buildLenderOfferParams(),
+            type(uint64).max
         );
 
         MockSanctionsList m = _installSanctions();

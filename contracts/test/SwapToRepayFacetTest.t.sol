@@ -210,7 +210,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            maxCollateralIn
+            maxCollateralIn,
+            type(uint64).max
         );
 
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(1);
@@ -242,7 +243,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(
             1,
             collateralSwapAmount,
-            _adapterTryList(1)
+            _adapterTryList(1),
+            type(uint64).max
         );
 
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(1);
@@ -280,7 +282,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(
             1,
             250 ether,
-            _adapterTryList(1)
+            _adapterTryList(1),
+            type(uint64).max
         );
     }
 
@@ -301,7 +304,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            maxCollateralIn
+            maxCollateralIn,
+            type(uint64).max
         );
     }
 
@@ -318,7 +322,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _twoAdapterFailoverList(),
-            1_100 ether
+            1_100 ether,
+            type(uint64).max
         );
 
         // adapter1's `callCount += 1` rolled back with its revert in the
@@ -348,7 +353,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _twoAdapterFailoverList(),
-            1_100 ether
+            1_100 ether,
+            type(uint64).max
         );
     }
 
@@ -366,7 +372,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            1_100 ether
+            1_100 ether,
+            type(uint64).max
         );
     }
 
@@ -384,7 +391,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            1_100 ether
+            1_100 ether,
+            type(uint64).max
         );
     }
 
@@ -413,7 +421,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            1_100 ether
+            1_100 ether,
+            type(uint64).max
         );
     }
 
@@ -433,7 +442,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(
             1,
             LOAN_COLLATERAL,
-            _adapterTryList(1)
+            _adapterTryList(1),
+            type(uint64).max
         );
     }
 
@@ -457,7 +467,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            maxCollateralIn
+            maxCollateralIn,
+            type(uint64).max
         );
 
         uint256 borrowerEoaPrincipalAfter = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
@@ -486,7 +497,8 @@ contract SwapToRepayFacetTest is SetupTest {
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
             1,
             _adapterTryList(1),
-            maxCollateralIn
+            maxCollateralIn,
+            type(uint64).max
         );
 
         // The diamond never withdrew the unsold collateral; it stays in
@@ -518,7 +530,7 @@ contract SwapToRepayFacetTest is SetupTest {
         uint256 diamondBefore = IERC20(address(collateralAsset)).balanceOf(address(diamond));
 
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(3), maxCollateralIn);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(3), maxCollateralIn, type(uint64).max);
 
         uint256 spent = (toSell * 9_000) / 10_000;
         assertEq(
@@ -571,7 +583,7 @@ contract SwapToRepayFacetTest is SetupTest {
 
         uint256 eoaBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL, type(uint64).max);
 
         assertEq(
             IERC20(address(collateralAsset)).balanceOf(borrowerVault),
@@ -603,7 +615,7 @@ contract SwapToRepayFacetTest is SetupTest {
         assertEq(tight, loose, "the sale size does not depend on how generous the bound is");
 
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL, type(uint64).max);
         assertEq(
             IERC20(address(collateralAsset)).balanceOf(borrowerVault),
             LOAN_COLLATERAL - tight,
@@ -757,7 +769,7 @@ contract SwapToRepayFacetTest is SetupTest {
 
         // MUST complete (no SanctionedRecipientHasNoVault brick).
         vm.prank(holder);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether, type(uint64).max);
 
         // Surplus withheld from the flagged holder, not handed to their EOA.
         assertEq(
@@ -792,7 +804,7 @@ contract SwapToRepayFacetTest is SetupTest {
         uint256 holderBefore = IERC20(address(principalAsset)).balanceOf(holder);
 
         vm.prank(holder);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether, type(uint64).max);
 
         // Fail-closed: the freeze branch ran (the surplus is parked behind the
         // claim gate and the fail-closed marker is stamped for the registered
@@ -822,7 +834,7 @@ contract SwapToRepayFacetTest is SetupTest {
         MockSanctionsList sanctions = _transferBorrowerNftThenSanction(holder);
 
         vm.prank(holder);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether, type(uint64).max);
 
         // Still flagged → the whole borrower claim (collateral + surplus) is gated.
         vm.prank(holder);
@@ -871,7 +883,7 @@ contract SwapToRepayFacetTest is SetupTest {
             IERC20(address(principalAsset)).balanceOf(lenderVault);
 
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether, type(uint64).max);
 
         // Close-out completes despite the flagged lender.
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(1);
@@ -922,7 +934,7 @@ contract SwapToRepayFacetTest is SetupTest {
         // MUST complete: `getOrCreateUserVault(borrowerEoa)` inside the collateral
         // withdraw would revert `SanctionedAddress` without the move-out exemption.
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_100 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_100 ether, type(uint64).max);
 
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(
@@ -947,7 +959,7 @@ contract SwapToRepayFacetTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lenderEoa)
         );
-        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1), type(uint64).max);
     }
 
     // ── ─────────────────────────────────────────────────────── ──
@@ -981,7 +993,7 @@ contract SwapToRepayFacetTest is SetupTest {
         assertEq(toSell, LOAN_COLLATERAL, "fixture: the debt now needs all of the collateral");
 
         vm.prank(holder);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL, type(uint64).max);
 
         // A pending surplus row exists; collateral claim is empty.
         (, uint256 surplusAmt, bool surplusClaimed) =
@@ -1030,7 +1042,7 @@ contract SwapToRepayFacetTest is SetupTest {
         _transferBorrowerNftThenSanction(holder);
 
         vm.prank(holder);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_500 ether, type(uint64).max);
 
         // Raw tracked VPFI in the stored borrower's vault IS the frozen surplus...
         uint256 rawTracked =
@@ -1096,7 +1108,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_100 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_100 ether, type(uint64).max);
         uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
         assertGt(base, 0, "reference collected a treasury cut");
 
@@ -1107,7 +1119,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 t1 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayFull(2, _adapterTryList(1), 1_100 ether);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(2, _adapterTryList(1), 1_100 ether, type(uint64).max);
         uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t1;
 
         assertEq(disc, base - (base * 1000) / 10_000, "Full lender -> 10% off the treasury cut");
@@ -1124,7 +1136,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1), type(uint64).max);
         uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
         assertGt(base, 0, "reference collected a treasury cut");
 
@@ -1134,7 +1146,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 t1 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1), type(uint64).max);
         uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t1;
 
         assertEq(disc, base - (base * 1000) / 10_000, "Full lender -> 10% off (partial)");
@@ -1156,7 +1168,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 r0 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1), type(uint64).max);
         uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - r0;
         assertGt(base, 0, "reference collected a treasury cut");
 
@@ -1171,7 +1183,7 @@ contract SwapToRepayFacetTest is SetupTest {
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
         uint256 newLenderBefore = IERC20(address(principalAsset)).balanceOf(newLender);
         vm.prank(borrowerEoa);
-        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1), type(uint64).max);
 
         // Full stamp (loan-scoped) honored on the transferred position — the
         // treasury cut is discounted — AND the CURRENT holder (not the stale

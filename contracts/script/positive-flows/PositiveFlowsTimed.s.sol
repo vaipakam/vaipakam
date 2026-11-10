@@ -338,7 +338,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     function _openBorrowerOffer() internal {
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        borrowerOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard());
+        borrowerOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Borrower offer created:", borrowerOfferId);
         _requireCooldownHolds(borrower, borrowerOfferId, "PF-046");
@@ -425,7 +425,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         offer.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, PERIODIC_PRINCIPAL);
-        periodicOfferId = OfferCreateFacet(diamond).createOffer(offer);
+        periodicOfferId = OfferCreateFacet(diamond).createOffer(offer, type(uint64).max);
         vm.stopBroadcast();
         periodicLoanId = _acceptAs(borrowerKey, periodicOfferId, address(weth), PERIODIC_COLLATERAL);
         if (finerCadenceThresholdLowered) _restoreFinerCadenceThreshold();

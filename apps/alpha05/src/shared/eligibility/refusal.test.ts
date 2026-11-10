@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UNRECOGNISED, USER_REJECTED, refusalFromError } from './refusal';
+import { DEADLINE_PASSED, UNRECOGNISED, USER_REJECTED, refusalFromError } from './refusal';
 
 describe('refusalFromError', () => {
   it('names the wallet decline', () => {
@@ -12,6 +12,15 @@ describe('refusalFromError', () => {
     const r = refusalFromError(err);
     expect(r.code).toBe('InsufficientCollateral');
     expect(r.reason).toMatch(/^The protocol refused this step: /);
+  });
+  it('words a deadline that ran out in plain copy (#3412)', () => {
+    const err = Object.assign(new Error('reverted'), { cause: { data: { errorName: 'DeadlinePassed' } } });
+    const r = refusalFromError(err);
+    expect(r.code).toBe(DEADLINE_PASSED);
+    expect(r.reason).toMatch(/waited too long/);
+    expect(r.reason).toMatch(/send it again/);
+    // Known by its selector alone, it reads the same.
+    expect(refusalFromError(Object.assign(new Error('x'), { data: '0xbfb22adf' + '00'.repeat(32) })).code).toBe(DEADLINE_PASSED);
   });
   it('resolves a known selector without a decoded name', () => {
     const err = Object.assign(new Error('x'), { data: '0xa9ad62f8' });

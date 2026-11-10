@@ -441,7 +441,7 @@ contract MeasuredDeliveryTest is SetupTest {
     ///         a lien over collateral the vault does not hold.
     function test_Accept_CollateralRefusedUnlessAllArrives() public {
         vm.prank(lender);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer());
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer(), type(uint64).max);
         _chargesFee(col, address(0));
 
         LibAcceptTerms.AcceptTerms memory t =
@@ -463,7 +463,7 @@ contract MeasuredDeliveryTest is SetupTest {
     /// @dev    Kills: the borrower owing principal they never received.
     function test_Accept_PrincipalRefusedUnlessAllArrives() public {
         vm.prank(lender);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer());
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer(), type(uint64).max);
         _chargesFee(mockERC20, _vault(lender));
 
         LibAcceptTerms.AcceptTerms memory t =
@@ -1013,7 +1013,8 @@ contract MeasuredDeliveryTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         assertEq(

@@ -1101,7 +1101,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
             useFullTermInterest: false
         });
         vm.prank(lender_);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower_, borrowerPk_, offerId);
         _fcSetRisk(loanId, FC_HF_HEALTHY, FC_LTV_HEALTHY);
         assertEq(uint8(_fcStatus(loanId)), uint8(LibVaipakam.LoanStatus.Active), "fixture-live: the loan opened Active");

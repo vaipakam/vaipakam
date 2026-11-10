@@ -625,7 +625,7 @@ abstract contract PositiveFlowsBase is Script {
     function _createLenderOffer(uint256 key) internal returns (uint256 offerId) {
         vm.startBroadcast(key);
         usdc.approve(diamond, LOAN_AMOUNT);
-        offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender offer created:", offerId);
     }

@@ -61,13 +61,15 @@ import { toFunctionSelector } from 'viem';
 import { anvilRpc, increaseTime, mine, setBalance } from '../lib/anvil';
 import { callDataMatching, failRpcCalls } from '../lib/rpcFault';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS, WETH } from '../lib/chain';
+import { BOUNDED_LISTING_SELECTOR } from '@vaipakam/lib/saleHold';
 
 /** The read the page uses to ask whether this deployment has bounded sale
  *  listings — the capability half of its sale-hold check (#2089). */
 const FACET_ADDRESS_SELECTOR = toFunctionSelector('function facetAddress(bytes4)');
-const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
-  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
-);
+// The capability selector is the app's OWN (`@vaipakam/lib/saleHold`), not a
+// copy: the fault below must fail exactly the read the page makes, and a
+// hand-kept copy went stale when #3412 reshaped `createLoanSaleOffer`.
+
 
 /** How far past maturity to step, and how many steps to allow.
  *
@@ -247,7 +249,7 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   // that says whether a sale is linked would otherwise lose the whole
   // close-out surface, which reads as "nothing to do here". Only that read
   // is failed — the deployment-capability probe for bounded sale listings,
-  // `facetAddress(createLoanSaleOffer(uint256,uint256,bool,uint64))` — so
+  // `facetAddress(BOUNDED_LISTING_SELECTOR)` — so
   // every other fact behind the card still answers.
   const saleHoldFault = await failRpcCalls(
     afterWarp.page,

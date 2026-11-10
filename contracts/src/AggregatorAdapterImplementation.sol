@@ -31,7 +31,8 @@ interface IVaipakamIntentSurface {
         uint32 maxDurationDays,
         uint256 minFillAmount,
         bool requiresKeeperAuth,
-        bool riskAndTermsConsent
+        bool riskAndTermsConsent,
+        uint64 validUntil
     ) external;
 
     function cancelLenderIntent(address lendingAsset, address collateralAsset)
@@ -346,7 +347,8 @@ contract AggregatorAdapterImplementation is
             intentMaxDurationDays,
             intentMinFillAmount,
             true, // requiresKeeperAuth — only the owner (this adapter) may fill
-            true // riskAndTermsConsent
+            true, // riskAndTermsConsent
+            uint64(block.timestamp) // validUntil — in-transaction, no queue to wait in (#3412)
         );
     }
 

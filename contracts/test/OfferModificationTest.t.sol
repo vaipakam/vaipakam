@@ -110,12 +110,12 @@ contract OfferModificationTest is SetupTest {
 
     function _createLender() internal returns (uint256) {
         vm.prank(lender);
-        return OfferCreateFacet(address(diamond)).createOffer(_baseLenderParams());
+        return OfferCreateFacet(address(diamond)).createOffer(_baseLenderParams(), type(uint64).max);
     }
 
     function _createBorrower() internal returns (uint256) {
         vm.prank(borrower);
-        return OfferCreateFacet(address(diamond)).createOffer(_baseBorrowerParams());
+        return OfferCreateFacet(address(diamond)).createOffer(_baseBorrowerParams(), type(uint64).max);
     }
 
     function _mutate() internal view returns (OfferMutateFacet) {
@@ -127,7 +127,7 @@ contract OfferModificationTest is SetupTest {
     function testSetOfferRateHappyPath() public {
         uint256 id = _createLender();
         vm.prank(lender);
-        _mutate().setOfferRate(id, 700, 900);
+        _mutate().setOfferRate(id, 700, 900, type(uint64).max);
 
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.interestRateBps, 700, "floor updated");
@@ -138,21 +138,21 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.InvalidRateRange.selector);
-        _mutate().setOfferRate(id, 900, 700); // max < min
+        _mutate().setOfferRate(id, 900, 700, type(uint64).max); // max < min
     }
 
     function testSetOfferRateRevertsAboveCeiling() public {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.InterestRateAboveCeiling.selector);
-        _mutate().setOfferRate(id, 0, LibVaipakam.MAX_INTEREST_BPS + 1);
+        _mutate().setOfferRate(id, 0, LibVaipakam.MAX_INTEREST_BPS + 1, type(uint64).max);
     }
 
     function testSetOfferRateRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
-        _mutate().setOfferRate(id, 700, 900);
+        _mutate().setOfferRate(id, 700, 900, type(uint64).max);
     }
 
     // ─── setOfferAmount — Lender ERC-20 (delta in lendingAsset) ─────
@@ -166,7 +166,7 @@ contract OfferModificationTest is SetupTest {
 
         // Shrink amountMax from 1000 → 600. Delta = 400 returns to wallet.
         vm.prank(lender);
-        _mutate().setOfferAmount(id, 500 ether, 600 ether);
+        _mutate().setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
 
         assertEq(
             ERC20Mock(mockERC20).balanceOf(lender) - walletBefore,
@@ -192,7 +192,7 @@ contract OfferModificationTest is SetupTest {
 
         // Grow amountMax 1000 → 1500. Delta = 500 pulled from wallet.
         vm.prank(lender);
-        _mutate().setOfferAmount(id, 1000 ether, 1500 ether);
+        _mutate().setOfferAmount(id, 1000 ether, 1500 ether, type(uint64).max);
 
         assertEq(
             walletBefore - ERC20Mock(mockERC20).balanceOf(lender),
@@ -210,28 +210,28 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.AmountMustBePositive.selector);
-        _mutate().setOfferAmount(id, 0, 1000 ether);
+        _mutate().setOfferAmount(id, 0, 1000 ether, type(uint64).max);
     }
 
     function testSetOfferAmountRevertsAmountMaxMustBePositive() public {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.AmountMaxMustBePositive.selector);
-        _mutate().setOfferAmount(id, 1000 ether, 0);
+        _mutate().setOfferAmount(id, 1000 ether, 0, type(uint64).max);
     }
 
     function testSetOfferAmountRevertsInvalidAmountRange() public {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.InvalidAmountRange.selector);
-        _mutate().setOfferAmount(id, 1000 ether, 500 ether);
+        _mutate().setOfferAmount(id, 1000 ether, 500 ether, type(uint64).max);
     }
 
     function testSetOfferAmountRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
-        _mutate().setOfferAmount(id, 500 ether, 600 ether);
+        _mutate().setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
     }
 
     function testSetOfferAmountRevertsAlreadyAccepted() public {
@@ -242,7 +242,7 @@ contract OfferModificationTest is SetupTest {
 
         vm.prank(lender);
         vm.expectRevert(OfferMutateFacet.OfferAlreadyAccepted.selector);
-        _mutate().setOfferAmount(id, 500 ether, 600 ether);
+        _mutate().setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
     }
 
     // ─── setOfferCollateral — Borrower ERC-20 (delta in collateralAsset)
@@ -256,7 +256,7 @@ contract OfferModificationTest is SetupTest {
 
         // Shrink collateralAmountMax 5000 → 3000. Delta = 2000 returns.
         vm.prank(borrower);
-        _mutate().setOfferCollateral(id, 2000 ether, 3000 ether);
+        _mutate().setOfferCollateral(id, 2000 ether, 3000 ether, type(uint64).max);
 
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(borrower) - walletBefore,
@@ -282,7 +282,7 @@ contract OfferModificationTest is SetupTest {
 
         // Grow collateralAmountMax 5000 → 7500. Delta = 2500 pulled.
         vm.prank(borrower);
-        _mutate().setOfferCollateral(id, 5000 ether, 7500 ether);
+        _mutate().setOfferCollateral(id, 5000 ether, 7500 ether, type(uint64).max);
 
         assertEq(
             walletBefore - ERC20Mock(mockCollateralERC20).balanceOf(borrower),
@@ -301,7 +301,7 @@ contract OfferModificationTest is SetupTest {
         // Lender offers require collateralAmount == collateralAmountMax.
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.LenderCollateralRangeNotAllowed.selector);
-        _mutate().setOfferCollateral(id, 4000 ether, 6000 ether);
+        _mutate().setOfferCollateral(id, 4000 ether, 6000 ether, type(uint64).max);
     }
 
     function testSetOfferCollateralLenderUpdatesNoDelta() public {
@@ -312,7 +312,7 @@ contract OfferModificationTest is SetupTest {
         uint256 vaultBefore = ERC20Mock(mockCollateralERC20).balanceOf(lenderVault);
 
         vm.prank(lender);
-        _mutate().setOfferCollateral(id, 7000 ether, 7000 ether);
+        _mutate().setOfferCollateral(id, 7000 ether, 7000 ether, type(uint64).max);
 
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(lenderVault),
@@ -347,7 +347,7 @@ contract OfferModificationTest is SetupTest {
         // invariant scaffold is wired even if the alreadyFilled
         // branch isn't exercised here.
         vm.expectRevert(LibOfferShape.InvalidAmountRange.selector);
-        _mutate().setOfferAmount(id, 500 ether, 200 ether);
+        _mutate().setOfferAmount(id, 500 ether, 200 ether, type(uint64).max);
     }
 
     // ─── modifyOffer (combined atomic) ──────────────────────────────
@@ -370,7 +370,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 800,
                 collateralAmount: 6000 ether,
                 collateralAmountMax: 6000 ether  // lender single-value
-            })
+            }),
+            type(uint64).max
         );
 
         // amountMax shrunk by 200 → refund 200 to wallet.
@@ -411,7 +412,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 700,
                 collateralAmount: 4000 ether,
                 collateralAmountMax: 7000 ether   // grow by 2000
-            })
+            }),
+            type(uint64).max
         );
 
         // collateralAmountMax grew by 2000 → pulled from wallet.
@@ -442,7 +444,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 500,
                 collateralAmount: 5000 ether,
                 collateralAmountMax: 5000 ether
-            })
+            }),
+            type(uint64).max
         );
 
         assertEq(
@@ -470,7 +473,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 700, // invalid
                 collateralAmount: 5000 ether,
                 collateralAmountMax: 5000 ether
-            })
+            }),
+            type(uint64).max
         );
 
         // Original amount preserved.
@@ -523,7 +527,8 @@ contract OfferModificationTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Now combine-modify just the daily fee + rate while leaving
@@ -540,7 +545,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmount: 0,    // unchanged
                 collateralAmountMax: 0         // unchanged
-            })
+            }),
+            type(uint64).max
         );
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 12 ether, "amount updated");
@@ -582,7 +588,8 @@ contract OfferModificationTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         vm.prank(borrower);
@@ -596,7 +603,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmount: 2 ether,    // changed!
                 collateralAmountMax: 2 ether  // changed!
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -633,7 +641,7 @@ contract OfferModificationTest is SetupTest {
         params.collateralAmountMax = 0;
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.CollateralMustBePositive.selector);
-        OfferCreateFacet(address(diamond)).createOffer(params);
+        OfferCreateFacet(address(diamond)).createOffer(params, type(uint64).max);
     }
 
     function testSetOfferCollateralStillRejectsMixedZeroOnERC20Pair() public {
@@ -643,7 +651,7 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createLender();
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.CollateralMustBePositive.selector);
-        _mutate().setOfferCollateral(id, 0, 100 ether);
+        _mutate().setOfferCollateral(id, 0, 100 ether, type(uint64).max);
     }
 
     // ─── NFT rentals are single-value on amount (#1281 item 021) ────
@@ -692,10 +700,10 @@ contract OfferModificationTest is SetupTest {
     function testCreateRentalOfferWithAmountRangeReverts() public {
         vm.prank(borrower);
         vm.expectRevert(LibOfferShape.RentalAmountRangeNotAllowed.selector);
-        OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 11 ether));
+        OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 11 ether), type(uint64).max);
 
         vm.prank(borrower);
-        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether));
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether), type(uint64).max);
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 10 ether, "fixture-live: the single-value rental offer exists");
         assertEq(o.amountMax, 10 ether, "at one daily fee");
@@ -705,11 +713,11 @@ contract OfferModificationTest is SetupTest {
     ///         a range; a single-value edit still goes through.
     function testEditRentalOfferIntoAmountRangeReverts() public {
         vm.prank(borrower);
-        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether));
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether), type(uint64).max);
 
         vm.prank(borrower);
         vm.expectRevert(LibOfferShape.RentalAmountRangeNotAllowed.selector);
-        _mutate().setOfferAmount(id, 10 ether, 12 ether);
+        _mutate().setOfferAmount(id, 10 ether, 12 ether, type(uint64).max);
 
         vm.prank(borrower);
         vm.expectRevert(LibOfferShape.RentalAmountRangeNotAllowed.selector);
@@ -722,11 +730,12 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmount: 0,
                 collateralAmountMax: 0
-            })
+            }),
+            type(uint64).max
         );
 
         vm.prank(borrower);
-        _mutate().setOfferAmount(id, 12 ether, 12 ether);
+        _mutate().setOfferAmount(id, 12 ether, 12 ether, type(uint64).max);
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 12 ether, "a single-value edit still applies");
         assertEq(o.amountMax, 12 ether, "and stays single-value");
@@ -752,11 +761,11 @@ contract OfferModificationTest is SetupTest {
             if (field == 5) p.collateralQuantity = 1;
             vm.prank(borrower);
             vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
-            OfferCreateFacet(address(diamond)).createOffer(p);
+            OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         }
 
         vm.prank(borrower);
-        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether));
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether), type(uint64).max);
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.collateralAsset, address(0), "the rental names no collateral asset");
         assertEq(o.collateralAmountMax, 0, "and no collateral amount");
@@ -771,11 +780,11 @@ contract OfferModificationTest is SetupTest {
         LibVaipakam.CreateOfferParams memory p = _rentalBorrowerParams(10 ether, 10 ether);
         p.offerType = LibVaipakam.OfferType.Lender;
         vm.prank(lender);
-        uint256 id = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
 
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
-        _mutate().setOfferCollateral(id, 1 ether, 1 ether);
+        _mutate().setOfferCollateral(id, 1 ether, 1 ether, type(uint64).max);
 
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.RentalCollateralNotAllowed.selector);
@@ -788,7 +797,8 @@ contract OfferModificationTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmount: 1 ether,
                 collateralAmountMax: 1 ether
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -805,7 +815,7 @@ contract OfferModificationTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(ProfileFacet.SanctionedAddress.selector, lender)
         );
-        _mutate().setOfferRate(id, 600, 800);
+        _mutate().setOfferRate(id, 600, 800, type(uint64).max);
     }
 
     // ─── Test fake-oracle plumbing for sanctions test ──────────────

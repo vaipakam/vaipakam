@@ -34,6 +34,10 @@
       "types": "./src/gasLimit.ts",
       "default": "./src/gasLimit.ts"
     },
+    "./txDeadline": {
+      "types": "./src/txDeadline.ts",
+      "default": "./src/txDeadline.ts"
+    },
     "./periodicEligibility": {
       "types": "./src/periodicEligibility.ts",
       "default": "./src/periodicEligibility.ts"

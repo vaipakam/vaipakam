@@ -45,6 +45,7 @@ import { CollateralPrecheck } from './CollateralPrecheck';
 import { SelectMenu } from './SelectMenu';
 import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { useTxSimulation, type TxSimInput } from '../contracts/useTxSimulation';
+import { PREVIEW_VALID_UNTIL, readTxValidUntil } from '../contracts/txDeadline';
 import {
   ensureAllowance,
   isAddressLike,
@@ -1162,7 +1163,9 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
         data: encodeFunctionData({
           abi: DIAMOND_ABI_VIEM,
           functionName: 'createOffer',
-          args: [payload],
+          // Advisory dry run, never sent: the send carries the deadline
+          // read from chain time at submit (#3412).
+          args: [payload, PREVIEW_VALID_UNTIL],
         }),
         value: 0n,
         // The submit path grants the deposit-leg allowance first, so
@@ -1214,7 +1217,9 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
         data: encodeFunctionData({
           abi: DIAMOND_ABI_VIEM,
           functionName: 'createOffer',
-          args: [payload],
+          // Advisory dry run, never sent: the send carries the deadline
+          // read from chain time at submit (#3412).
+          args: [payload, PREVIEW_VALID_UNTIL],
         }),
         value: 0n,
         allowAllowanceRevert: true,
@@ -1924,6 +1929,11 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
           // first, so the user's MANUAL retry routes classic instead
           // of re-entering a permit path that may be structurally
           // broken (locked-out wallets were Codex round-2's P2).
+          //
+          // The transaction deadline (#3412), read from chain time at the
+          // send and outside the catch: a failed read is not a Permit2
+          // failure and must not trip the breaker.
+          const validUntil = await readTxValidUntil(publicClient);
           stepper.next('send');
           reachedFinalSendRef.current = true;
           try {
@@ -1931,6 +1941,7 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
               payload,
               signed.permit,
               signed.signature,
+              validUntil,
             ]);
             return hash;
           } catch (permitErr) {
@@ -1949,9 +1960,12 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
       amount,
       onPrompt: () => stepper.next('approve'),
     });
+    // The transaction deadline (#3412), read from chain time after any
+    // approval mined, immediately before the send.
+    const validUntil = await readTxValidUntil(publicClient);
     stepper.next('send');
     reachedFinalSendRef.current = true;
-    const { hash } = await write('createOffer', [payload]);
+    const { hash } = await write('createOffer', [payload, validUntil]);
     return hash;
   }
 

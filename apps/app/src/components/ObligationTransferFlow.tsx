@@ -29,6 +29,7 @@ import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
+import { readTxValidUntil } from '../contracts/txDeadline';
 import {
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
@@ -522,9 +523,14 @@ export function ObligationTransferFlow({
           return;
         }
       }
+      // The transaction deadline (#3412), read from chain time at the send:
+      // a handover that waits in a queue past it is refused, never made
+      // late against a replacement offer the user no longer reviewed.
+      const validUntil = await readTxValidUntil(publicClient);
       await write('transferObligationViaOffer', [
         BigInt(row.loanId),
         BigInt(picked.offerId),
+        validUntil,
       ]);
       onDone();
       onCloseConfirm();

@@ -173,7 +173,8 @@ contract BorrowerPartialFillTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
@@ -221,7 +222,8 @@ contract BorrowerPartialFillTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }

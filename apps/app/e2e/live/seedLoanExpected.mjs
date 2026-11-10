@@ -39,6 +39,7 @@ import { encodeAbiParameters, keccak256 } from 'viem';
 import { is } from './expectedPayload.mjs';
 import {
   ACCEPT_DEADLINE_SEC,
+  TX_DEADLINE_SEC,
   afterAnchor,
   approvalBetween,
   expectedAcceptOfferCall,
@@ -92,7 +93,10 @@ export function expectedFaucetMintCall({ to, decimals }) {
 }
 
 /**
- * The borrow request's `createOffer(params)`, all 26 fields of
+ * The borrow request's `createOffer(params, validUntil)`. `validUntil` is
+ * the transaction deadline the app reads from chain time right before the
+ * send (#3412), judged against the drive's borrower `anchor` — chain time
+ * read before the post click. `params` is all 26 fields of
  * `CreateOfferParams`, through offerSchema.ts' BORROWER mapping:
  *   - offerType 1; the typed principal as both `amount` and `amountMax`
  *     (single-value: a borrower's direct accept binds `amount`);
@@ -107,8 +111,14 @@ export function expectedFaucetMintCall({ to, decimals }) {
  *     repay, full-term interest ON, no cadence, Partial fill, GTC (expiry
  *     0), no prepay listing, no parallel sale, no refinance tag.
  */
-export function expectedRequestCreateOfferCall(intent) {
-  return { functionName: 'createOffer', args: { params: requestParams(intent) } };
+export function expectedRequestCreateOfferCall(intent, anchor) {
+  return {
+    functionName: 'createOffer',
+    args: {
+      params: requestParams(intent),
+      validUntil: afterAnchor('transaction deadline', anchor, TX_DEADLINE_SEC),
+    },
+  };
 }
 
 /** The CreateOfferParams the intent maps to — shared by the createOffer
@@ -299,6 +309,11 @@ export function expectedRequestAcceptTerms({ requestId, stored, lender, riskTerm
  * the borrower (createOffer escrows it), the principal for the lender. A
  * reset must be followed by its set (`requires`).
  *
+ * `borrowerAnchor()` / `lenderAnchor()` return the chain time the drive
+ * read before each party's submit (null before, which refuses the step that
+ * needs it): the request's transaction deadline is judged against the first,
+ * the AcceptTerms deadline against the second.
+ *
  * `requestId()` / `storedRequest()` return the request's id and stored
  * record once the create step has been pinned (null before, which refuses
  * every lender step); `signedAcceptTerms()` returns the consumed l-sign
@@ -315,6 +330,7 @@ export function seedPlanSteps({
   borrower,
   lender,
   riskTermsHash,
+  borrowerAnchor,
   lenderAnchor,
   illiquidLegs,
   requestId,
@@ -376,7 +392,7 @@ export function seedPlanSteps({
       role: 'borrower',
       kind: 'tx',
       purpose: 'createOffer(borrow request, illiquid collateral)',
-      expected: tx(borrower, diamond, expectedRequestCreateOfferCall(intent)),
+      expected: tx(borrower, diamond, expectedRequestCreateOfferCall(intent, borrowerAnchor)),
     },
     {
       id: 'l-sign',

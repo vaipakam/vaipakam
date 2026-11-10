@@ -15,6 +15,7 @@
  */
 import { encodeAbiParameters, keccak256, parseEther, type Address, type Hex } from 'viem';
 import { TOKEN_ABI, type Party, type ScenarioChain } from './scenarioChain';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
 
 export const WETH: Address = '0x4200000000000000000000000000000000000006';
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
@@ -102,6 +103,9 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
   const collateral = parseEther(t.collateralTliq);
   await sc.write(t.lender, WETH, TOKEN_ABI, 'deposit', [], principal);
   await sc.write(t.lender, WETH, TOKEN_ABI, 'approve', [sc.diamond, principal]);
+  // The transaction deadline (#3412): the chain's own time plus the shared
+  // window, never the host clock.
+  const validUntil = txValidUntil(BigInt(await sc.now()));
   const created = await sc.diamondWrite(t.lender, 'createOffer', [
     {
       offerType: 0,
@@ -131,6 +135,7 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       refinanceTargetLoanId: 0n,
       useFullTermInterest: t.fullTermInterest ?? false,
     },
+    validUntil,
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
@@ -157,6 +162,9 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
   const collateralAsset = tliq(sc);
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'mint', [sc.address(t.borrower), collateral]);
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'approve', [sc.diamond, collateral]);
+  // The transaction deadline (#3412): the chain's own time plus the shared
+  // window, never the host clock.
+  const validUntil = txValidUntil(BigInt(await sc.now()));
   const created = await sc.diamondWrite(t.borrower, 'createOffer', [
     {
       offerType: 1,
@@ -186,6 +194,7 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
     },
+    validUntil,
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
@@ -272,7 +281,7 @@ export async function acceptPostedOffer(sc: ScenarioChain, who: Party, offerId: 
     acknowledgedIlliquidLendingAsset: o.lendingAsset as Address,
     acknowledgedIlliquidCollateralAsset: o.collateralAsset as Address,
     nonce: BigInt(Date.now()),
-    deadline: chainNow + 1800n,
+    deadline: txValidUntil(chainNow),
     riskTermsHash,
     acceptorFull: false,
     acceptorMaxCStar: 0n,

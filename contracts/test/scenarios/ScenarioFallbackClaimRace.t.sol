@@ -88,7 +88,7 @@ contract ScenarioFallbackClaimRaceTest is Test {
                 useFullTermInterest: false
         });
         vm.prank(lender);
-        offerId = OfferCreateFacet(diamond).createOffer(p);
+        offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
     }
 
     function _acceptAsBorrower(address borrower, uint256 borrowerPk, uint256 offerId)

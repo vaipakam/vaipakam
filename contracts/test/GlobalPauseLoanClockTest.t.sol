@@ -96,7 +96,8 @@ contract GlobalPauseLoanClockTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         assertEq(
@@ -469,7 +470,10 @@ contract GlobalPauseLoanClockTest is SetupTest {
         uint256 loanId = _pausedTenDaysThenAt(DURATION_DAYS + 1); // past the ORIGINAL maturity
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -481,7 +485,10 @@ contract GlobalPauseLoanClockTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -561,7 +568,8 @@ contract GlobalPauseLoanClockTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 start = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
@@ -627,7 +635,8 @@ contract GlobalPauseLoanClockTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 start = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;

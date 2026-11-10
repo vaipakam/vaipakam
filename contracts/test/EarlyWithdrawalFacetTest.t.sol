@@ -516,7 +516,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
@@ -551,7 +552,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
@@ -567,7 +569,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     function testSellLoanRevertsForNonExistentLoan() public {
@@ -576,7 +578,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     function testSellLoanRevertsInvalidSaleOffer_AlreadyAccepted() public {
@@ -588,7 +590,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1); // offer 1 is accepted
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1, 0, type(uint256).max, type(uint64).max); // offer 1 is accepted
     }
 
     function testSellLoanRevertsInvalidSaleOffer_RangedBuyOffer() public {
@@ -603,7 +605,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     function testSellLoanRevertsInvalidSaleOffer_PartiallyFilledBuyOffer() public {
@@ -617,7 +619,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #1503 design item 21 — while a Preclose Option-3 offset is live on
@@ -671,7 +673,10 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -744,7 +749,10 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(l.lender, newLender, "an agreeing offer completes the sale");
@@ -797,7 +805,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), borrowerBuyOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), borrowerBuyOffer); // #3443
@@ -810,7 +819,10 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, borrowerBuyOffer
+            activeLoanId, borrowerBuyOffer,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -838,7 +850,10 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -860,7 +875,10 @@ contract EarlyWithdrawalFacetTest is Test {
         );
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
         LibVaipakam.Loan memory l =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -874,7 +892,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalDirectFacet.OffsetActiveOnLoan.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -901,7 +922,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 o.expiresAt
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Boundary: `isOfferExpired` treats `now >= expiresAt` as expired, so
@@ -924,7 +945,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 o.expiresAt
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The GTC sentinel (`expiresAt == 0`) means "never expires", NOT
@@ -946,7 +967,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     // ─── sellLoanViaBuyOffer success ──────────────────────────────────────────
@@ -962,7 +983,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Topic-only check (data=false in expectEmit above); zero placeholders.
         emit EarlyWithdrawalDirectFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -983,7 +1004,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         uint64 atBlock = uint64(vm.getBlockNumber());
         uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
 
@@ -1015,7 +1036,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, newLender));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Protected account mode: with NFT protection on, a seller's lender
@@ -1031,7 +1052,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, lender)
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #2440 (Codex r2) — the direct sale is voluntary: the seller's net
@@ -1048,7 +1069,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
         assertGt(net, 0, "fixture: the seller is paid a net");
         vm.revertToState(snap);
@@ -1061,7 +1082,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The fee-on-transfer switch for the two seller-net cells: etched
@@ -1096,7 +1117,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         uint256 newTokenId =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
@@ -1170,7 +1191,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 openingSeller = ERC20(mockERC20).balanceOf(lender);
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         assertEq(
@@ -1227,7 +1248,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function _stageAcceptedSaleListingAtRate(uint256 rateBps) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, rateBps, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, rateBps, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, rateBps);
@@ -1360,7 +1381,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_saleListing_principalChangeTripsTheFloor() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // The partial repayment: the live principal shrinks after listing.
@@ -1411,8 +1432,9 @@ contract EarlyWithdrawalFacetTest is Test {
             .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
-            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld,
+            type(uint64).max
         );
         vm.clearMockedCalls();
         (uint256 recFloor, uint256 recHeld, bool recorded,) =
@@ -1439,8 +1461,9 @@ contract EarlyWithdrawalFacetTest is Test {
         // The SELECTOR is what shows the bound fired rather than some earlier
         // listing guard.
         vm.expectPartialRevert(IVaipakamErrors.ListingFloorBelowReviewed.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
-            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld,
+            type(uint64).max
         );
         vm.clearMockedCalls();
     }
@@ -1453,8 +1476,9 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.warp(block.timestamp + 1 days);
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
-            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld,
+            type(uint64).max
         );
         vm.clearMockedCalls();
     }
@@ -1477,8 +1501,9 @@ contract EarlyWithdrawalFacetTest is Test {
                 0
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
-            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld,
+            type(uint64).max
         );
         vm.clearMockedCalls();
     }
@@ -1492,8 +1517,9 @@ contract EarlyWithdrawalFacetTest is Test {
         assertGt(quotedFloor, 0, "fixture floor is nonzero, so a weaker review exists");
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
-            activeLoanId, 500, true, 7 days, quotedFloor - 1, quotedHeld + 1
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, 7 days, quotedFloor - 1, quotedHeld + 1,
+            type(uint64).max
         );
         vm.clearMockedCalls();
         (,, bool recorded,) =
@@ -1539,7 +1565,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectEmit(true, true, false, true, address(diamond));
         emit CapacitySpent(role, keeper, 1e18, 0); // the keeper's one free action
         vm.prank(keeper);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         // The charge landed on the KEEPER: its bucket is spent, so the next keeper action is refused.
         vm.prank(address(diamond));
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, keeper, 1e18, 0));
@@ -1550,7 +1576,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Keeper);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days); // no refusal, no charge
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max); // no refusal, no charge
         assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, lender).seen, "the owner's own action touched no bucket");
     }
 
@@ -1560,7 +1586,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // KeeperAccessRequired (the unified requireKeeperFor gate).
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     function testCreateSaleOfferRevertsForNonExistentLoan() public {
@@ -1568,7 +1594,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Active by the shared sale-exit verdict, before any NFT lookup.
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(999, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(999, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @notice #819 — a CLEAN keeper acting for a SANCTIONED lender-position
@@ -1596,7 +1622,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender)
         );
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     // ─── createLoanSaleOffer success ─────────────────────────────────────────
@@ -1607,7 +1633,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(3)));
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         // If no revert, the sale offer was created
     }
 
@@ -1626,7 +1652,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCreateLoanSaleOfferSuccessUnmocked() public {
         vm.recordLogs();
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
 
         // Recover the linked sale-offer id from
         // LoanSaleOfferLinked(loanId, saleOfferId) — both indexed, so
@@ -1658,7 +1684,7 @@ contract EarlyWithdrawalFacetTest is Test {
         assertFalse(before_, "nothing recorded before listing");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
 
         (bool recorded, uint256 floorNet, uint256 maxHeld, uint256 expiry, uint256 heldNow) =
             RiskPreviewFacet(address(diamond)).getSaleListingBounds(activeLoanId);
@@ -1676,11 +1702,11 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      reverts instead of minting a duplicate that strands the link.
     function testCreateLoanSaleOfferRevertsOnDuplicate() public {
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.SaleOfferAlreadyExists.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #951 (Codex #959) — a sale vehicle for an NFT-collateral loan must NOT
@@ -1698,7 +1724,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalFacet.SaleOfferCollateralMustBeERC20.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #951 (Codex #959 round-2) — the cross-facet completion entry is gated
@@ -1714,7 +1740,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function _listSaleOffer() internal returns (uint256 saleOfferId) {
         vm.recordLogs();
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
         for (uint256 i; i < logs.length; i++) {
@@ -1731,7 +1757,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 saleOfferId = _listSaleOffer();
         vm.prank(lender);
         vm.expectRevert(OfferMutateFacet.SaleVehicleImmutable.selector);
-        OfferMutateFacet(address(diamond)).setOfferRate(saleOfferId, 600, 600);
+        OfferMutateFacet(address(diamond)).setOfferRate(saleOfferId, 600, 600, type(uint64).max);
     }
 
     /// @dev #951 (redesign D3) — a linked sale vehicle cannot be filled through
@@ -1771,7 +1797,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), lenderOfferId); // #3443
         LibTestTiming.backdateTerms(address(diamond), lenderOfferId); // #3443
@@ -2170,7 +2197,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestPositionNFT.core(address(diamond)).lock();
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, lender));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #3318 (Raaj 08:22) — once the lender position moves, anyone may
@@ -2821,7 +2848,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.SaleOfferAlreadyExists.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -3216,7 +3246,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         loanId = LibAcceptTestSigner.signAndAccept(
@@ -3483,7 +3514,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(bytes("boom"));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3527,7 +3558,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), localBuyOffer); // #3443
 
@@ -3537,7 +3569,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), localBuyOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer, 0, type(uint256).max, type(uint64).max);
 
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -3553,7 +3585,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers LoanNotActive in createLoanSaleOffer
@@ -3562,7 +3594,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers shortfall > accrued branch in sellLoanViaBuyOffer (higher rate buy offer)
@@ -3599,7 +3631,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), highRateBuyOffer); // #3443
 
@@ -3612,7 +3645,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), highRateBuyOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateBuyOffer, 0, type(uint256).max, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -3654,7 +3687,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), slightlyHigherOffer); // #3443
 
@@ -3664,7 +3698,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), slightlyHigherOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, slightlyHigherOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, slightlyHigherOffer, 0, type(uint256).max, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -3705,7 +3739,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), sameRateOffer); // #3443
 
@@ -3715,7 +3750,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), sameRateOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sameRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sameRateOffer, 0, type(uint256).max, type(uint64).max);
 
         LibVaipakam.Loan memory loan2 = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan2.lender, newLender);
@@ -3732,7 +3767,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("offer fail"));
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3767,7 +3802,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), buyOffer); // #3443
 
@@ -3776,7 +3812,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3811,7 +3847,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), buyOffer); // #3443
 
@@ -3821,7 +3858,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("burn fail"));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3856,7 +3893,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), buyOffer); // #3443
 
@@ -3867,7 +3905,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("mint fail"));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3914,13 +3952,14 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), wrongOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), wrongOffer); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongOffer, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers InvalidSaleOffer when buyOffer.amount < loan.principal
@@ -3954,7 +3993,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), lowOffer); // #3443
         MockVaultWithdraw.deliversAll(address(diamond));
@@ -3972,7 +4012,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 PRINCIPAL
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -4012,7 +4052,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), shortOffer); // #3443
 
@@ -4027,7 +4068,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 uint256(10 days)
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, shortOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, shortOffer, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #1923 (#1503 item 9) — one-directional: an offer LONGER than the
@@ -4067,13 +4108,14 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), longOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), longOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer, 0, type(uint256).max, type(uint64).max);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -4095,7 +4137,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(
             EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     // ─── #1922 (#1503 item 6): the bound direct-sale entry ────────────────────
@@ -4108,7 +4150,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_1922_boundFillsWithinReviewedBounds() public {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId, 0, type(uint256).max, uint64(block.timestamp + 1 days)
         );
         assertEq(
@@ -4131,7 +4173,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 PRINCIPAL + 1
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId, PRINCIPAL + 1, type(uint256).max, uint64(block.timestamp + 1 days)
         );
     }
@@ -4150,7 +4192,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 uint256(pastDeadline)
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId, 0, type(uint256).max, pastDeadline
         );
     }
@@ -4174,7 +4216,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 uint256(40 ether)
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId, 0, 40 ether, uint64(block.timestamp + 1 days)
         );
     }
@@ -4192,7 +4234,7 @@ contract EarlyWithdrawalFacetTest is Test {
         deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId, 0, 50 ether, uint64(block.timestamp + 1 days)
         );
         assertEq(
@@ -4214,7 +4256,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(
             LibTiming.DeadlineRequired.selector
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId, 0, type(uint256).max, 0
         );
     }
@@ -4250,14 +4292,15 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), highCollOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), highCollOffer); // #3443
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highCollOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highCollOffer, 0, type(uint256).max, type(uint64).max);
     }
 
     // ─── completeLoanSale keeper access ────────────────────────────────────
@@ -4269,7 +4312,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // SaleNotLinked would fire first and mask the auth rejection.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAccepted(50);
 
@@ -4289,7 +4332,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // is the one exercised rather than SaleNotLinked.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAccepted(50);
 
@@ -4323,7 +4366,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // #1841 - both routes now report past maturity with one error.
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers _depositForNewLender with amount == 0 (early return path)
@@ -4358,7 +4401,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), lowRateOffer); // #3443
 
@@ -4368,7 +4412,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), lowRateOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowRateOffer, 0, type(uint256).max, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -4406,7 +4450,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), localBuyOffer); // #3443
 
@@ -4417,7 +4462,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("burn fail"));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -4431,7 +4476,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers InvalidSaleOffer for prepayAsset mismatch
@@ -4474,14 +4519,15 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), wrongPrepay); // #3443
         LibTestTiming.backdateTerms(address(diamond), wrongPrepay); // #3443
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongPrepay);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongPrepay, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers InvalidSaleOffer for collateral asset mismatch
@@ -4524,14 +4570,15 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), wrongColl); // #3443
         LibTestTiming.backdateTerms(address(diamond), wrongColl); // #3443
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #1923 (#1503 item 15) — an offer whose amount EXCEEDS the principal
@@ -4569,7 +4616,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), excessOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), excessOffer); // #3443
@@ -4582,7 +4630,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 PRINCIPAL
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer, 0, type(uint256).max, type(uint64).max);
     }
 
     // ─── createLoanSaleOffer NFT revert ─────────────────────────────────────
@@ -4592,7 +4640,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     // ─── completeLoanSale additional branches ───────────────────────────────
@@ -4602,7 +4650,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Create a sale offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // Offer 50 is not accepted → should revert
@@ -4616,7 +4664,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Create a sale offer with higher rate
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // Set up offer 50 as accepted with higher interestRateBps
@@ -4743,7 +4791,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_completeLoanSale_FlaggedBuyer_CompletesNotBricked() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 1000);
@@ -4781,7 +4829,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleNoShortfall() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 300, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 300, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 300);
@@ -4806,7 +4854,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleRevertsNewLenderNotFound() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // Mark offer accepted but don't set offerIdToLoanId (tempLoanId = 0)
@@ -4821,7 +4869,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleBurnTempLenderNFTFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -4848,7 +4896,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleShortfallExceedsAccrued() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 2000, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 2000, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 2000);
@@ -4871,7 +4919,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleNoShortfallAccruedToTreasury() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 300, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 300, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 300);
@@ -4906,7 +4954,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -4921,7 +4969,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(newLender, LibVaipakam.KYCTier.Tier2);
@@ -4931,7 +4979,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleRevertsNewLenderZeroAddress() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -4954,7 +5002,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleNoShortfallAccruedZero() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 500);
@@ -4985,7 +5033,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Covers completeLoanSale where the live loan burn NFT succeeds but mint NFT succeeds,
@@ -4993,7 +5041,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleBurnOldLenderNFTFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5017,7 +5065,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleShortfallCoveredByAccrued() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 600);
@@ -5051,7 +5099,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -5069,7 +5117,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -5077,7 +5125,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleBurnTempBorrowerNFTFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5112,7 +5160,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleMintNewNFTFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5135,7 +5183,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleReleaseTempCollateral() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5157,7 +5205,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleReleaseTempCollateralFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5190,7 +5238,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleWithPriorHeldMigration() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // Set heldForLender[activeLoanId] > 0 (mapping write is layout-independent)
@@ -5216,7 +5264,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSalePriorHeldMigrationFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
@@ -5246,7 +5294,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), "fail");
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -5260,7 +5308,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Create sale offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // Set up offer 50 as accepted
@@ -5313,7 +5361,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         // Restore KYC
         vm.prank(owner);
@@ -5332,7 +5380,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // the ineffective writes.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5364,7 +5412,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // without the ineffective writes.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5393,7 +5441,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleHigherRateAccruedCoversShortfall() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 600);
@@ -5460,7 +5508,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), buyOffer); // #3443
 
@@ -5475,7 +5524,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer, 0, type(uint256).max, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -5518,7 +5567,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), highRateOffer); // #3443
 
@@ -5528,7 +5578,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), highRateOffer); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateOffer, 0, type(uint256).max, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -5542,7 +5592,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5570,7 +5620,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleTransferToNewLenderVaultFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5603,7 +5653,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleERC721CollateralReleaseFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5638,7 +5688,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleERC1155CollateralReleaseFails() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(50);
@@ -5674,7 +5724,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleAccruedLessThanShortfall() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 5000, true, 7 days); // high rate
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 5000, true, 7 days, 0, type(uint256).max, type(uint64).max); // high rate
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 5000);
@@ -5733,7 +5783,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Sell the loan to the new lender.
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         // Reservation re-keyed old → new, where the held VPFI now physically lives.
         assertEq(
@@ -5785,7 +5835,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         (uint40 sellerStart1, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
@@ -5834,7 +5884,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(nftHolder);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         (uint40 storedLenderStart, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
@@ -5899,7 +5949,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         (uint40 buyerStart1, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
@@ -5967,7 +6017,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), selfOfferId); // #3443
 
@@ -5982,7 +6033,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), selfOfferId); // #3443
 
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, selfOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, selfOfferId, 0, type(uint256).max, type(uint64).max);
 
         (uint40 start1, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
@@ -6005,7 +6056,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_1817_listedRecoveryCompletionSkipsBuyerRestamp() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         // Equal rate (500 == the loan's), no escrow recorded, no held VPFI:
@@ -6046,7 +6097,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_1817_listedSaleCompletionRefreshesBothParties() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAcceptedAndRate(50, 1000);
@@ -6158,7 +6209,10 @@ contract EarlyWithdrawalFacetTest is Test {
         );
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            activeLoanId, buyOfferId
+            activeLoanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -6456,12 +6510,18 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalFacet.SaleListingWindowInvalid.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 30 minutes // < MIN_SALE_LISTING_SECONDS
+            activeLoanId, 500, true, 30 minutes, // < MIN_SALE_LISTING_SECONDS
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalFacet.SaleListingWindowInvalid.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 31 days // > MAX_SALE_LISTING_SECONDS
+            activeLoanId, 500, true, 31 days, // > MAX_SALE_LISTING_SECONDS
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -6476,7 +6536,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.recordLogs();
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 30 days
+            activeLoanId, 500, true, 30 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
@@ -6500,7 +6563,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalFacet.SaleListingWindowInvalid.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 7 days
+            activeLoanId, 500, true, 7 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -6553,14 +6619,20 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 7 days
+            activeLoanId, 500, true, 7 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         // …and permitted once it passes.
         vm.warp(availableAt);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 7 days
+            activeLoanId, 500, true, 7 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -6610,13 +6682,19 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 7 days
+            activeLoanId, 500, true, 7 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         vm.warp(availableAt);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 7 days
+            activeLoanId, 500, true, 7 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -6681,7 +6759,10 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, 7 days
+            activeLoanId, 500, true, 7 days,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -6805,7 +6886,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 floor
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     function test_createLoanSaleOffer_revertsBelowSolvencyFloor() public {
@@ -6819,7 +6900,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 floor
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev THE case the floor exists for: the listing is published while the
@@ -6926,7 +7007,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -7016,7 +7097,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The principal leg is judged too, and names itself — `which == 1`.
@@ -7037,7 +7118,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The staleness half of #1655, in the direction that used to let a
@@ -7074,7 +7155,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The mirror direction, and the reason the snapshot is still read.
@@ -7104,7 +7185,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev Codex #1635 r8 — the refusal must NOT depend on the
@@ -7191,7 +7272,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 tightened
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The gate is one-directional: a loan STRICTER than today's terms is
@@ -7207,7 +7288,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -7282,7 +7363,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 uint256(lowered)
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev One-directional, exactly as the risk snapshots. A loan originated
@@ -7305,7 +7386,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -7350,7 +7431,7 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(lender);
-        try EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId) {
+        try EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max) {
             revert("sale must have been refused");
         } catch (bytes memory err) {
             bytes4 sel;
@@ -7399,7 +7480,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 cap
             )
         );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The preview must agree with the accept. A preview that checked only
@@ -7613,13 +7694,16 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(caller);
         vm.expectRevert(direct[0].reason);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.revertToState(snap);
 
         vm.prank(caller);
         vm.expectRevert(listing[0].reason);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
         vm.revertToState(snap);
     }
@@ -7720,7 +7804,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(listing[0].reason);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -7753,7 +7840,10 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_SaleExitVerdict_RelistCooldownNamesItsEnd() public {
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
         vm.warp(block.timestamp + LibVaipakam.MIN_SALE_LISTING_SECONDS + 1);
         OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
@@ -7779,7 +7869,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(listing[0].reason);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
     }
 
@@ -7950,7 +8043,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         vm.expectRevert(listing[0].reason);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
-            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            activeLoanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS),
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         vm.warp(listing[0].reopensAt);

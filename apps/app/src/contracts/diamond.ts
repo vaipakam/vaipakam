@@ -19,6 +19,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 import { isExitWrite } from './tosWriteGate';
 import { tosQueryKey, isVerdictStale, type TosVerdictData } from './tosGate';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { bestEffortGasLimit, type EncodedMulticallCall, type MulticallResult } from '../data/multicall';
 
 export { DIAMOND_ABI_VIEM };
@@ -194,10 +195,39 @@ export function useDiamondWrite() {
           );
         }
       }
-      // #126 — a best-effort batch is never sent at the node's estimate,
-      // which starves its items of gas and mines them all as skipped. One
-      // rule for every batch (Claim all, Repay all, batch sale, batch
-      // refinance): see `bestEffortGasLimit`.
+      // A single write: the read node's estimate plus the shared margin.
+      // When the estimate itself fails (the call would revert now), no
+      // limit is set and the wallet estimates: it then reports the same
+      // refusal it always did, which is what the error surfaces read.
+      const singleWriteGasLimit = async (): Promise<bigint | undefined> => {
+        try {
+          return gasLimitFromEstimate(
+            await publicClient.estimateContractGas({
+              address: opts?.target?.address ?? walletChain.diamondAddress,
+              abi: opts?.target?.abi ?? DIAMOND_ABI_VIEM,
+              functionName,
+              args: args as unknown[],
+              account: address,
+            }),
+          );
+        } catch {
+          return undefined;
+        }
+      };
+      // The gas limit is never the node's bare estimate (`@vaipakam/lib/
+      // gasLimit` — the one rule for every sender). The estimate is the
+      // LOWEST limit that works in the latest block's environment, and
+      // the write mines in a later block: an oracle read whose cost moves
+      // with the timestamp then needs a little more, and at a zero-margin
+      // limit a nested cross-facet call runs out of gas under the 63/64
+      // rule and the whole write reverts with no reason. Measured on the
+      // e2e chain: an accept estimated at 5,397,099 gas, ran clean at that
+      // limit in the parent block's environment, and ran out of gas inside
+      // `initiateLoan` when mined one second later.
+      //
+      // #126 — a best-effort batch additionally needs its estimate taken on
+      // the STRICT form, or its items are starved and mine as skipped: see
+      // `bestEffortGasLimit`, which applies the same margin.
       const gas =
         functionName === 'multicall' && !opts?.target
           ? await bestEffortGasLimit(args[0] as EncodedMulticallCall[], {
@@ -220,7 +250,7 @@ export function useDiamondWrite() {
                   })
                 ).result as readonly MulticallResult[],
             })
-          : undefined;
+          : await singleWriteGasLimit();
       const hash = await walletClient.writeContract({
         address: opts?.target?.address ?? walletChain.diamondAddress,
         abi: opts?.target?.abi ?? DIAMOND_ABI_VIEM,

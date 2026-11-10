@@ -319,7 +319,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
@@ -371,7 +372,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(
-            _refinanceTaggedOfferParams(loanId, 400)
+            _refinanceTaggedOfferParams(loanId, 400),
+            type(uint64).max
         );
     }
 
@@ -391,7 +393,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(
-            _refinanceTaggedOfferParams(loanId, 400)
+            _refinanceTaggedOfferParams(loanId, 400),
+            type(uint64).max
         );
     }
 
@@ -421,7 +424,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(
-            _refinanceTaggedOfferParams(loanId, 400)
+            _refinanceTaggedOfferParams(loanId, 400),
+            type(uint64).max
         );
     }
 
@@ -448,7 +452,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _refinanceTaggedOfferParams(loanId, 400)
+            _refinanceTaggedOfferParams(loanId, 400),
+            type(uint64).max
         );
 
         assertEq(
@@ -476,7 +481,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(loanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(loanId, 400), type(uint64).max);
         // Offer has the tag persisted.
         LibVaipakam.Offer memory o =
             OfferCancelFacet(address(diamond)).getOfferDetails(refinanceOfferId);
@@ -624,7 +629,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _f().setAutoRefinanceCaps(loanId, true, 600, uint64(block.timestamp + 365 days));
         vm.prank(borrower);
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(loanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(loanId, 400), type(uint64).max);
 
         vm.prank(borrower);
         vm.expectRevert(
@@ -849,7 +854,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
@@ -882,7 +888,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             OfferCreateFacet.InvalidRefinanceTarget.selector
         );
         vm.prank(borrower);
-        OfferCreateFacet(address(diamond)).createOffer(params);
+        OfferCreateFacet(address(diamond)).createOffer(params, type(uint64).max);
     }
 
     // ─── T-092 #548 — fixture helpers smoke test ────────────────────────
@@ -964,7 +970,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // Step 3: borrower creates the refinance-tagged offer.
         vm.prank(borrower);
         uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
 
         // Step 4: provision a new lender with wallet + vault funded
         // via the #548 fixture helpers.
@@ -1015,7 +1021,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _f().setAutoRefinanceCaps(oldLoanId, true, 600, uint64(block.timestamp + 365 days));
         vm.prank(borrower);
         uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
         // #576 — the persisted carry-over decision is stamped true at create
         // for this clean original-borrower / single-value / live-lien /
         // matching-identity offer.
@@ -1103,7 +1109,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         vm.prank(borrower);
         uint256 offerId =
-            OfferCreateFacet(address(diamond)).createOffer(params);
+            OfferCreateFacet(address(diamond)).createOffer(params, type(uint64).max);
 
         LibVaipakam.Offer memory o =
             OfferCancelFacet(address(diamond)).getOfferDetails(offerId);
@@ -1126,7 +1132,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
 
         // setOfferCollateral on a tagged offer reverts.
         vm.prank(borrower);
@@ -1134,7 +1140,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             OfferMutateFacet.CollateralMutationUnsupportedForShape.selector
         );
         OfferMutateFacet(address(diamond)).setOfferCollateral(
-            taggedOfferId, LOAN_COLLATERAL, LOAN_COLLATERAL
+            taggedOfferId, LOAN_COLLATERAL, LOAN_COLLATERAL,
+            type(uint64).max
         );
 
         // modifyOffer's collateral cluster on a tagged offer reverts too.
@@ -1151,7 +1158,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 interestRateBpsMax: 400,
                 collateralAmount: LOAN_COLLATERAL + 1 ether,
                 collateralAmountMax: LOAN_COLLATERAL + 1 ether
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1170,7 +1178,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
 
         // Kill-switch OFF ⇒ the matched-refinance completion path is gated.
         _admin().setAutoRefinanceEnabled(false);
@@ -1224,7 +1232,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1240,7 +1249,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         taggedOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
         RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
     }
 
@@ -1302,7 +1311,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             OfferMutateFacet.AmountMutationUnsupportedForShape.selector
         );
         OfferMutateFacet(address(diamond)).setOfferAmount(
-            taggedOfferId, LOAN_PRINCIPAL + 1 ether, LOAN_PRINCIPAL + 1 ether
+            taggedOfferId, LOAN_PRINCIPAL + 1 ether, LOAN_PRINCIPAL + 1 ether,
+            type(uint64).max
         );
 
         // modifyOffer's amount cluster on a tagged offer reverts too.
@@ -1319,7 +1329,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 interestRateBpsMax: 400,
                 collateralAmount: LOAN_COLLATERAL,
                 collateralAmountMax: LOAN_COLLATERAL
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -1363,7 +1374,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         vm.prank(borrower);
         vm.expectRevert(OfferCreateFacet.InvalidRefinanceTarget.selector);
-        OfferCreateFacet(address(diamond)).createOffer(params);
+        OfferCreateFacet(address(diamond)).createOffer(params, type(uint64).max);
     }
 
     function test_576_refinanceTaggedOffer_notTransferableViaObligation()
@@ -1387,13 +1398,14 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
         LibTestTiming.waitOutTermsAge(address(diamond), taggedOfferId); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(
-            otherLoanId, taggedOfferId
+            otherLoanId, taggedOfferId,
+            type(uint64).max
         );
     }
 
@@ -1445,7 +1457,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         vm.prank(borrower);
         taggedOfferId = OfferCreateFacet(address(diamond))
-            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
         newLender = _provisionFundedActorWithVault(
             lenderLabel, mockERC20, LOAN_PRINCIPAL * 4
         );

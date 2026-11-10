@@ -91,7 +91,7 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
         uint256 collateralAmount = _collateralFor(PRINCIPAL, 30_000); // 300%
         _fundWallet(borrower, collateral, collateralAmount);
         vm.prank(borrower);
-        uint256 openingRequest = OfferCreateFacet(diamond).createOffer(_request(collateralAmount, 0));
+        uint256 openingRequest = OfferCreateFacet(diamond).createOffer(_request(collateralAmount, 0), type(uint64).max);
         _fundLender(lenderA, PRINCIPAL * 4);
         uint256 oldLoanId = LibAcceptTestSigner.signAndAccept(diamond, lenderA, lenderAPk, openingRequest);
         assertEq(
@@ -110,7 +110,7 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
             oldLoanId, true, uint16(RATE_BPS), uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
-        uint256 taggedRequest = OfferCreateFacet(diamond).createOffer(_request(collateralAmount, oldLoanId));
+        uint256 taggedRequest = OfferCreateFacet(diamond).createOffer(_request(collateralAmount, oldLoanId), type(uint64).max);
         _fundWallet(borrower, weth, PRINCIPAL * 2);
         RefinancePayoffPermitHelper.attachSignedIfRouted(
             diamond, borrowerPk, weth, oldLoanId, taggedRequest, uint256(keccak256("forkRefiPayoff"))

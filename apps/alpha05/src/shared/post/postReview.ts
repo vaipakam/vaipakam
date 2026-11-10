@@ -27,6 +27,7 @@ import { shortfall } from '../offers/model';
 import { CONFIG, ORACLE, readGraceSeconds, readLifBps, readTreasuryFeeBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../offers/reads';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { askThrough } from '../tx/simulate';
+import { chainValidUntil } from '../tx/deadline';
 import { allowanceSteps } from '../tx/approval';
 import { formatBps, shortAddress } from '../ui/format';
 import { createParams, isRanged, stakeOf, type CreateParams, type ParsedPost, type PostPair, type PostSide } from './postModel';
@@ -340,7 +341,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
   const allowanceCovers = !needsApproval({ holding, draft, diamond });
   // The post exactly as it is sent: with a guard, the batch that arms it
   // (guardPost), so the protocol's verdict covers the guard too.
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...postCall(CREATE_ABI, params, parsed.guardBps), account }));
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...postCall(CREATE_ABI, params, parsed.guardBps, await chainValidUntil(c)), account }));
   const verdict = judgeDryRun(dry, allowanceCovers);
   // A token is never priced, so only a liquid ERC-20 pair has a risk figure.
   const priced = leg.kind === 'erc20' && lendingClass === 'liquid' && collateralClass === 'liquid';
@@ -363,12 +364,12 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     // The create dry run applies the limit at the largest point only; the
     // direct point is asked as a single-value request there.
     priced && ranged
-      ? askThrough(own, (c) =>
+      ? askThrough(own, async (c) =>
           c.simulateContract({
             address: diamond,
             abi: CREATE_ABI,
             functionName: 'createOffer',
-            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }],
+            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }, await chainValidUntil(c)],
             account,
           }),
         )

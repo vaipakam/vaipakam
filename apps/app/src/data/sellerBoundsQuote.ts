@@ -14,7 +14,7 @@
  * - `maxHeld` — the CEILING on what is already set aside for the lender on the
  *   loan. That money goes to the buyer with the position, not to the seller.
  *
- * The listing is sent through `createLoanSaleOfferBound` with the figures the
+ * The listing is sent through `createLoanSaleOffer` (bound) with the figures the
  * seller reviewed, and the chain refuses it if the figures it would record are
  * WORSE for the seller (`ListingFloorBelowReviewed` /
  * `ListingHeldAboveReviewed`). Two things make an honest quote differ from a

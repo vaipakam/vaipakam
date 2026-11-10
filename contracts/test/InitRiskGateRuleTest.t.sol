@@ -82,11 +82,13 @@ contract InitRiskGateRuleTest is SetupTest {
     {
         vm.prank(lender);
         lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, collateralAsset)
+            _params(LibVaipakam.OfferType.Lender, collateralAsset),
+            type(uint64).max
         );
         vm.prank(borrower);
         borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, collateralAsset)
+            _params(LibVaipakam.OfferType.Borrower, collateralAsset),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), lenderOfferId, borrowerOfferId); // #3443
     }

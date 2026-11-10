@@ -16,7 +16,7 @@ import { parseAbi, parseEther, type Hex } from 'viem';
 import type { Page } from '@playwright/test';
 import { acceptPostedOffer } from '@vaipakam/anvil-harness/lending';
 import { increaseTime, mine } from '../lib/anvil';
-import { scenario } from '../lib/chain';
+import { scenario, txDeadline } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -76,6 +76,7 @@ test('a renter closes a rental: nothing from the wallet, the rent and claim stat
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
     },
+    await txDeadline(sc),
   ]);
   const offerId = BigInt(sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated')!.args.offerId as bigint);
 

@@ -74,7 +74,7 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
         uint256 borrowerBefore = usdc.balanceOf(borrower);
         uint256 treasuryBefore = _treasuryUsdc();
         vm.startBroadcast(borrowerKey);
-        SwapToRepayFacet(diamond).swapToRepayFull(loanId, route, COLLATERAL_AMOUNT);
+        SwapToRepayFacet(diamond).swapToRepayFull(loanId, route, COLLATERAL_AMOUNT, type(uint64).max);
         vm.stopBroadcast();
 
         require(LoanFacet(diamond).getLoanDetails(loanId).status == LibVaipakam.LoanStatus.Repaid,
@@ -121,7 +121,7 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
         uint256 borrowerBefore = usdc.balanceOf(borrower);
         uint256 treasuryBefore = _treasuryUsdc();
         vm.startBroadcast(borrowerKey);
-        SwapToRepayPartialFacet(diamond).swapToRepayPartial(loanId, sell, route);
+        SwapToRepayPartialFacet(diamond).swapToRepayPartial(loanId, sell, route, type(uint64).max);
         vm.stopBroadcast();
 
         LibVaipakam.Loan memory afterLoan = LoanFacet(diamond).getLoanDetails(loanId);
@@ -149,7 +149,7 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
     function _openLoan(LibVaipakam.CreateOfferParams memory offer) internal returns (uint256 loanId) {
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, offer.amount);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(offer);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(offer, type(uint64).max);
         vm.stopBroadcast();
         loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated:", loanId);

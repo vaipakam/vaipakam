@@ -153,7 +153,8 @@ contract FeeEntitlementFacetTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;
@@ -372,7 +373,8 @@ contract FeeEntitlementFacetTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;
@@ -932,7 +934,8 @@ contract FeeEntitlementFacetTest is SetupTest {
                 fillMode: target != 0 ? LibVaipakam.FillMode.Aon : LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: target,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;

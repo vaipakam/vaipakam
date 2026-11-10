@@ -24,20 +24,24 @@ function zeroParams(): Record<string, unknown> {
 
 describe('postCall', () => {
   it('posts with createOffer alone when no guard is armed', () => {
-    const call = postCall(CREATE_ABI, zeroParams(), null);
+    const call = postCall(CREATE_ABI, zeroParams(), null, 1_800n);
     expect(call.functionName).toBe('createOffer');
+    expect(call.args[1]).toBe(1_800n);
     expect(call.abi).toBe(CREATE_ABI);
   });
 
   it('arms the guard first, then posts, in one batch that fails whole', () => {
     const params = zeroParams();
-    const call = postCall(CREATE_ABI, params, 500);
+    const call = postCall(CREATE_ABI, params, 500, 1_800n);
     expect(call.functionName).toBe('multicall');
     const [calls] = call.args as unknown as [{ callData: Hex; allowFailure: boolean }[]];
     expect(calls.map((c) => c.allowFailure)).toEqual([false, false]);
     const arm = decodeFunctionData({ abi: PRICE_GUARD, data: calls[0]!.callData });
     expect(arm).toMatchObject({ functionName: 'armOfferPriceGuard', args: [500] });
-    expect(decodeFunctionData({ abi: CREATE_ABI, data: calls[1]!.callData }).functionName).toBe('createOffer');
+    const post = decodeFunctionData({ abi: CREATE_ABI, data: calls[1]!.callData });
+    expect(post.functionName).toBe('createOffer');
+    // The deadline rides inside the batch's post step (#3412).
+    expect(post.args?.[1]).toBe(1_800n);
     // Both steps' refusals stay nameable through the batch, each once.
     const errors = (call.abi as Abi).filter((i) => i.type === 'error').map((i) => (i as { name: string }).name);
     expect(errors).toContain('OfferPriceGuardUnpriced');

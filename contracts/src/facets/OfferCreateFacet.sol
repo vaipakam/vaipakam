@@ -344,11 +344,20 @@ contract OfferCreateFacet is
      *      amount, InvalidAssetType on unknown asset enums.
      *      Emits OfferCreated. Callable by anyone when not paused.
      * @param params CreateOfferParams struct containing all offer parameters.
+     * @param validUntil The caller's deadline (unix seconds) for this
+     *        transaction, MANDATORY (#3412): posting an offer is
+     *        price-exposed, so a transaction that waited in a queue and lands
+     *        after it reverts instead of posting terms the creator no longer
+     *        wants. Checked by `LibTiming.requireDeadline`, the one rule every
+     *        price-exposed entry uses. Distinct from `params.expiresAt`, which
+     *        is how long the posted OFFER lives.
      * @return offerId The ID of the created offer.
      */
     function createOffer(
-        LibVaipakam.CreateOfferParams calldata params
+        LibVaipakam.CreateOfferParams calldata params,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        LibTiming.requireDeadline(validUntil);
         address vault;
         (offerId, vault) = _createOfferSetup(msg.sender, params);
         _pullCreatorAssetsClassic(offerId, msg.sender, params, vault);
@@ -409,13 +418,17 @@ contract OfferCreateFacet is
      * @param params    Same `CreateOfferParams` as {createOffer}.
      * @param permit    `PermitTransferFrom` struct the user signed.
      * @param signature 65-byte ECDSA signature over the EIP-712 digest.
+     * @param validUntil The caller's MANDATORY transaction deadline, exactly
+     *        as {createOffer}.
      * @return offerId  The created offer's id.
      */
     function createOfferWithPermit(
         LibVaipakam.CreateOfferParams calldata params,
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        bytes calldata signature
+        bytes calldata signature,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        LibTiming.requireDeadline(validUntil);
         // Permit2 only covers ERC-20 pulls. Reject NFT offers here so
         // the caller can't accidentally sign a Permit2 payload that
         // never gets honoured.

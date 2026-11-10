@@ -36,6 +36,7 @@ import {
 } from '../../data/tariff';
 import { VPFI_DECIMALS } from '../../data/vpfi';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
+import { readTxValidUntil } from '../../contracts/txDeadline';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -462,16 +463,21 @@ function AmendForm({
       // RPC read-diet PR A (§4.1.2) — same blocking row-action
       // preflight as cancel: an amend against a just-consumed offer
       // surfaces inline instead of as a doomed signature.
-      if (publicClient && address && walletChain) {
+      //
+      // The transaction deadline (#3412) is read from chain time here, as
+      // late as possible, and the preflight simulates the very call sent.
+      if (!publicClient) throw new Error(copy.errors.noRpcClient);
+      const validUntil = await readTxValidUntil(publicClient);
+      if (address && walletChain) {
         await assertRowActionStillValid({
           publicClient,
           diamond: walletChain.diamondAddress,
           account: address,
           functionName: 'modifyOffer',
-          args: [BigInt(offer.offerId), parsed],
+          args: [BigInt(offer.offerId), parsed, validUntil],
         });
       }
-      await write('modifyOffer', [BigInt(offer.offerId), parsed]);
+      await write('modifyOffer', [BigInt(offer.offerId), parsed, validUntil]);
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['deskBook'] });

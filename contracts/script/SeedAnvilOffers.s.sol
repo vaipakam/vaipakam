@@ -130,7 +130,8 @@ contract SeedAnvilOffers is Script {
         vm.startBroadcast(LENDER_ANVIL_KEY);
         IERC20(mUsdc).approve(diamond, LENDER_AMOUNT_MAX);
         uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(
-            _lenderOfferParams(mUsdc, mWbtc)
+            _lenderOfferParams(mUsdc, mWbtc),
+            type(uint64).max
         );
         vm.stopBroadcast();
 
@@ -138,7 +139,8 @@ contract SeedAnvilOffers is Script {
         vm.startBroadcast(BORROWER_ANVIL_KEY);
         IERC20(mWbtc).approve(diamond, BORROWER_COLLAT);
         uint256 borrowerOfferId = OfferCreateFacet(diamond).createOffer(
-            _borrowerOfferParams(mUsdc, mWbtc)
+            _borrowerOfferParams(mUsdc, mWbtc),
+            type(uint64).max
         );
         vm.stopBroadcast();
 

@@ -112,7 +112,7 @@ contract DiamondBornPausedTest is Test {
 
         LibVaipakam.CreateOfferParams memory params;
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferCreateFacet(address(diamond)).createOffer(params);
+        OfferCreateFacet(address(diamond)).createOffer(params, type(uint64).max);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────

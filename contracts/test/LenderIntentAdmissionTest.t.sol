@@ -36,7 +36,8 @@ contract LenderIntentAdmissionTest is SetupTest {
         vm.prank(user);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             lendAsset, collAsset, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION_DAYS, minFill, false, true
+            MAX_DURATION_DAYS, minFill, false, true,
+            type(uint64).max
         );
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -162,70 +163,51 @@ contract EarlyWithdrawalFacet is
      *      (`SALE_RELIST_COOLDOWN_SECONDS`) so the borrower's re-unblocked
      *      partial-repay / collateral-withdrawal paths get a real action
      *      window before the freeze can be re-established.
+     *
+     *      #1810 / #3412 — the listing is BOUND to what the seller reviewed:
+     *      after it records its seller bounds (LibSaleListing.recordSellerBounds)
+     *      the recorded figures are checked against what
+     *      `RiskPreviewFacet.quoteSellerBounds` showed the seller, and the
+     *      listing reverts on ADVERSE drift only — a floor below the reviewed
+     *      one, or a held ceiling above it. Better-than-reviewed passes. This
+     *      closes the quote→listing seam (#1812 binds listing→fill): a borrower
+     *      partial-repay or parked interest landing between the quote and the
+     *      listing would otherwise record a WORSE floor/ceiling than reviewed.
+     *      The comparison runs AFTER the impl so it reads the very figures
+     *      `recordSellerBounds` persisted — one computation, not a mirror (the
+     *      #1801 lesson). A revert unwinds the whole listing atomically, lock
+     *      and link included.
+     *
+     *      This is the ONE listing entry. The unbound variant that kept an
+     *      older frontend working was retired with #3412 (prelive: no
+     *      compatibility shims), because it accepted no deadline and so left
+     *      a price-exposed listing that could land at any time.
+     *
      * @param loanId The loan ID to sell.
      * @param interestRateBps The sale interest rate (may differ from original).
      * @param creatorRiskAndTermsConsent Consent for illiquid assets (if applicable).
      * @param listingSeconds Seller-chosen listing window in seconds; bounded
      *        to [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] and
      *        clamped at the loan's maturity.
+     * @param reviewedMinSellerNet The floor `quoteSellerBounds` showed the
+     *        seller; the recorded floor must be at least this.
+     * @param reviewedMaxHeld The held ceiling the seller reviewed; the
+     *        recorded ceiling must not exceed it.
+     * @param validUntil The caller's MANDATORY transaction deadline (#3412):
+     *        a listing is price-exposed, so one that lands after this reverts.
+     *        Distinct from `listingSeconds`, which is how long the LISTING
+     *        lives once posted.
      */
     function createLoanSaleOffer(
         uint256 loanId,
         uint256 interestRateBps,
         bool creatorRiskAndTermsConsent,
-        uint64 listingSeconds
-    ) external nonReentrant whenNotPaused {
-        _createLoanSaleOfferImpl(
-            loanId, interestRateBps, creatorRiskAndTermsConsent, listingSeconds
-        );
-    }
-
-    /**
-     * @notice #1810 — list the lender position for sale, BOUND to the quote
-     *         the seller reviewed. Identical to {createLoanSaleOffer} except
-     *         that after the listing records its seller bounds
-     *         (LibSaleListing.recordSellerBounds), the recorded figures are
-     *         checked against what the seller was shown by
-     *         `RiskPreviewFacet.quoteSellerBounds`, and the listing reverts on
-     *         ADVERSE drift only: a floor below the reviewed one, or a held
-     *         ceiling above it. Better-than-reviewed passes.
-     *
-     * @dev    Closes the quote→listing seam Codex raised as a P1 on #1812: the
-     *         unbound entry recomputes both bounds from live state at mining
-     *         time, so a borrower partial-repay (or parked interest) between
-     *         the seller reading a quote and their transaction landing makes
-     *         the listing record a WORSE floor/ceiling than reviewed — and the
-     *         #1812 enforcement then faithfully protects the worse figure.
-     *         #1812 binds listing→fill; this binds quote→listing.
-     *
-     *         ADDITIVE on purpose: {createLoanSaleOffer} stays routed and
-     *         unchanged so the deployed frontend keeps working — changing its
-     *         signature would mean a new selector plus an explicit Remove leg
-     *         (the split-Diamond hazard CLAUDE.md documents) for no benefit.
-     *
-     *         The comparison runs AFTER the impl so it reads the very figures
-     *         `recordSellerBounds` persisted — one computation, not a mirror
-     *         of it (the #1801 lesson). A revert unwinds the whole listing
-     *         atomically, lock and link included.
-     *
-     * @param loanId The loan ID to sell.
-     * @param interestRateBps The sale interest rate (may differ from original).
-     * @param creatorRiskAndTermsConsent Consent for illiquid assets (if applicable).
-     * @param listingSeconds Seller-chosen listing window in seconds; bounded
-     *        and clamped exactly as {createLoanSaleOffer}.
-     * @param reviewedMinSellerNet The floor `quoteSellerBounds` showed the
-     *        seller; the recorded floor must be at least this.
-     * @param reviewedMaxHeld The held ceiling the seller reviewed; the
-     *        recorded ceiling must not exceed it.
-     */
-    function createLoanSaleOfferBound(
-        uint256 loanId,
-        uint256 interestRateBps,
-        bool creatorRiskAndTermsConsent,
         uint64 listingSeconds,
         uint256 reviewedMinSellerNet,
-        uint256 reviewedMaxHeld
+        uint256 reviewedMaxHeld,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         _createLoanSaleOfferImpl(
             loanId, interestRateBps, creatorRiskAndTermsConsent, listingSeconds
         );

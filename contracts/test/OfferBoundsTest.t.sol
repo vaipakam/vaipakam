@@ -63,7 +63,8 @@ contract OfferBoundsTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -100,7 +101,8 @@ contract OfferBoundsTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -153,7 +155,7 @@ contract OfferBoundsTest is SetupTest {
         uint256 id = _createLender(1000 ether, 2000 ether); // valid
         vm.prank(lender);
         vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
-        _mutate().setOfferCollateral(id, 1500 ether, 1500 ether); // 1500 < floor
+        _mutate().setOfferCollateral(id, 1500 ether, 1500 ether, type(uint64).max); // 1500 < floor
     }
 
     /// @dev A mutate can't raise a borrower offer's amount past the ceiling.
@@ -161,14 +163,14 @@ contract OfferBoundsTest is SetupTest {
         uint256 id = _createBorrower(500 ether, 1000 ether); // valid
         vm.prank(borrower);
         vm.expectPartialRevert(LibOfferBounds.MaxLendingAboveCeiling.selector);
-        _mutate().setOfferAmount(id, 1000 ether, 1000 ether); // 1000 > ceiling ~566
+        _mutate().setOfferAmount(id, 1000 ether, 1000 ether, type(uint64).max); // 1000 > ceiling ~566
     }
 
     /// @dev An in-bounds mutate settles fine (raise collateral, still valid).
     function test_S15_mutateWithinBoundsPasses() public {
         uint256 id = _createLender(1000 ether, 2000 ether);
         vm.prank(lender);
-        _mutate().setOfferCollateral(id, 2500 ether, 2500 ether); // still ≥ floor
+        _mutate().setOfferCollateral(id, 2500 ether, 2500 ether, type(uint64).max); // still ≥ floor
         assertGt(id, 0);
     }
 

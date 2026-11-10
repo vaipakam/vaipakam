@@ -147,7 +147,8 @@ contract PriorityRoutingPerkTest is SetupTest {
     function _setIntent() internal {
         vm.prank(lender);
         _intentFacet().setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            type(uint64).max
         );
         LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
     }
@@ -241,7 +242,8 @@ contract PriorityRoutingPerkTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }

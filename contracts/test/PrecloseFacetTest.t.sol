@@ -457,7 +457,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
@@ -562,7 +563,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.OfferCreationFailed.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -574,7 +575,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
     }
 
     function testTransferObligationRevertsLoanNotActive() public {
@@ -583,7 +584,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
     }
 
     /// @notice #819 — a CLEAN keeper acting for a SANCTIONED borrower-position
@@ -625,7 +626,7 @@ contract PrecloseFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedHolder)
         );
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
     }
 
     function testTransferObligationRevertsInvalidOfferType() public {
@@ -633,7 +634,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
     }
 
     function testTransferObligationRevertsWrongLendingAsset() public {
@@ -676,14 +677,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badOffer, type(uint64).max);
     }
 
     function testTransferObligationRevertsDurationTooLong() public {
@@ -718,14 +720,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), longOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), longOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, longOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, longOffer, type(uint64).max);
     }
 
     function testTransferObligationRevertsInsufficientCollateral() public {
@@ -758,14 +761,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), lowCollOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), lowCollOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InsufficientCollateral.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, lowCollOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, lowCollOffer, type(uint64).max);
     }
 
     function testTransferObligationRevertsWrongPrincipalAmount() public {
@@ -798,14 +802,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), wrongAmtOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), wrongAmtOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, wrongAmtOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, wrongAmtOffer, type(uint64).max);
     }
 
     function testTransferObligationRevertsInvalidNewBorrowerSelf() public {
@@ -839,14 +844,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), selfOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), selfOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidNewBorrower.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, selfOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, selfOffer, type(uint64).max);
     }
 
     /// @dev #1773 — builds the same valid new-borrower offer the success path
@@ -882,7 +888,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), oid_); // #3443
         LibTestTiming.backdateTerms(address(diamond), oid_); // #3443
@@ -909,7 +916,7 @@ contract PrecloseFacetTest is Test {
                 deadline
             )
         );
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId, type(uint64).max);
     }
 
     /// @dev Boundary: `isOfferExpired` treats `now >= expiresAt` as expired, so
@@ -930,7 +937,7 @@ contract PrecloseFacetTest is Test {
                 deadline
             )
         );
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId, type(uint64).max);
     }
 
     /// @dev The GTC sentinel (`expiresAt == 0`) means "never expires", NOT
@@ -947,7 +954,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId, type(uint64).max);
     }
 
     /// @dev #3318 Codex r6 — an obligation handover moves the borrower position
@@ -984,7 +991,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -993,7 +1001,7 @@ contract PrecloseFacetTest is Test {
         LibTestPositionNFT.core(address(diamond)).lock();
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, borrower));
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
     }
 
     function testTransferObligationSuccess() public {
@@ -1026,7 +1034,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -1045,7 +1054,7 @@ contract PrecloseFacetTest is Test {
         //  newDueTimestamp, newHealthFactor)
         emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0, 0);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
@@ -1097,7 +1106,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -1120,7 +1130,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         assertFalse(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerNotifBilled,
@@ -1204,7 +1214,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
         LibTestTiming.backdateTerms(address(diamond), offerId); // #3443
@@ -1232,7 +1243,7 @@ contract PrecloseFacetTest is Test {
         // Gate stays OFF; ben is the default BlueChipOnly tier.
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loanA = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loanA.borrower, newBorrower, "transfer settles with gate off");
@@ -1259,7 +1270,7 @@ contract PrecloseFacetTest is Test {
             )
         );
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1280,7 +1291,7 @@ contract PrecloseFacetTest is Test {
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loanB = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loanB.borrower, newBorrower, "transfer settles with incoming borrower armed");
@@ -1324,7 +1335,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), partialOffer); // #3443
         // Simulate a prior matchOffers partial fill.
@@ -1336,7 +1348,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, partialOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, partialOffer, type(uint64).max);
     }
 
     function testTransferObligationWithShortfall() public {
@@ -1372,7 +1384,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), highRateOffer); // #3443
 
@@ -1384,7 +1397,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), highRateOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, highRateOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, highRateOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
@@ -1421,7 +1434,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), lowRateOffer); // #3443
 
@@ -1433,7 +1447,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), lowRateOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, lowRateOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, lowRateOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1473,7 +1487,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -1482,7 +1497,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1493,7 +1508,7 @@ contract PrecloseFacetTest is Test {
         // without keeper auth revert with KeeperAccessRequired.
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsLoanNotActive() public {
@@ -1501,7 +1516,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsWrongCollateralAsset() public {
@@ -1509,7 +1524,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, otherToken, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, otherToken, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsDurationTooLong() public {
@@ -1517,13 +1532,13 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsInsufficientCollateral() public {
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InsufficientCollateral.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL - 1, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL - 1, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetWithShortfall() public {
@@ -1534,7 +1549,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 1000, 25, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 1000, 25, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1542,7 +1557,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 300, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 300, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1554,7 +1569,8 @@ contract PrecloseFacetTest is Test {
     function _postRealOffset(uint256 durationDays) internal returns (uint256 newOfferId) {
         vm.prank(borrower);
         newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, durationDays, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, durationDays, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
     }
 
@@ -1698,7 +1714,7 @@ contract PrecloseFacetTest is Test {
         // OffsetNotLinked would fire first and mask the auth rejection.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAccepted(99);
 
@@ -1720,7 +1736,7 @@ contract PrecloseFacetTest is Test {
         // would fire first and mask the auth rejection under test.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAccepted(99);
 
@@ -1740,7 +1756,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         // Offer 99 is not actually accepted
@@ -1753,7 +1769,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(99);
@@ -1781,7 +1797,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         // durationDays == 30 == original term, at elapsed 0 (equality: OK at request).
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAcceptedWithDuration(99, 30);
 
@@ -1801,7 +1817,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         // 20-day replacement on a 30-day original: even accepted 5 days late the
         // replacement matures at now+20d = start+25d ≤ start+30d.
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAcceptedWithDuration(99, 20);
 
@@ -1830,7 +1846,8 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
 
         // No prepay parked in the old lender's vault at posting.
@@ -1854,7 +1871,8 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
 
         // #664 — the cancel cooldown applies to every fresh offer.
@@ -1878,7 +1896,8 @@ contract PrecloseFacetTest is Test {
         // past the original loan's deadline.
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
     }
 
@@ -1886,11 +1905,11 @@ contract PrecloseFacetTest is Test {
     function testOffsetRejectsSecondWhileOneLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
 
         vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1900,13 +1919,13 @@ contract PrecloseFacetTest is Test {
     function testTransferObligationRejectedWhileOffsetLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         LibTestTiming.backdateTerms(address(diamond), 12345); // #3443
 
         vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 12345);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 12345, type(uint64).max);
     }
 
     /// @dev #1001 (S3, Codex #1070) — while an offset is live, listing the lender
@@ -1918,12 +1937,12 @@ contract PrecloseFacetTest is Test {
     function testCreateLoanSaleRejectedWhileOffsetLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         vm.expectRevert(EarlyWithdrawalFacet.OffsetActiveOnLoan.selector);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @dev #1001 (S3, Codex #1070) — a linked offset offer is immutable: its
@@ -1931,12 +1950,13 @@ contract PrecloseFacetTest is Test {
     function testOffsetOfferImmutableWhileLinked() public {
         vm.prank(borrower);
         uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
 
         vm.expectRevert(OfferMutateFacet.OffsetVehicleImmutable.selector);
         vm.prank(borrower);
-        OfferMutateFacet(address(diamond)).setOfferRate(newOfferId, 400, 400);
+        OfferMutateFacet(address(diamond)).setOfferRate(newOfferId, 400, 400, type(uint64).max);
     }
 
     // ─── precloseDirect NFT rental path ─────────────────────────────────────
@@ -2053,7 +2073,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     // ─── offsetWithNewOffer wrong prepayAsset ───────────────────────────────
@@ -2063,7 +2083,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, otherToken);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, otherToken, type(uint64).max);
     }
 
     // ─── transferObligationViaOffer with wrong collateral/prepay asset ─────
@@ -2107,14 +2127,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), badCollOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), badCollOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badCollOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badCollOffer, type(uint64).max);
     }
 
     // ─── transferObligationViaOffer burn/mint NFT failures ─────────────────
@@ -2149,7 +2170,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2160,7 +2182,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(bytes("burn fail"));
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2194,7 +2216,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2206,7 +2229,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(bytes("mint fail"));
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2273,7 +2296,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2286,7 +2310,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
@@ -2327,7 +2351,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2340,7 +2365,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
@@ -2384,7 +2409,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2397,7 +2423,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
@@ -2449,7 +2475,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         // The incoming offer names no collateral either, as a rental's does.
@@ -2473,7 +2500,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower, "the replacement renter holds the rental");
@@ -2523,7 +2550,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2539,7 +2567,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         // newPrepay = PRINCIPAL * 30; buffer must be 5% of it (the offer snapshot),
@@ -2613,7 +2641,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2646,7 +2675,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2665,7 +2694,8 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerErc20Offer(perDay, 20)
+            _borrowerErc20Offer(perDay, 20),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2687,7 +2717,7 @@ contract PrecloseFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2715,14 +2745,15 @@ contract PrecloseFacetTest is Test {
         // Full-remaining-term offer → no shortfall, no rent due.
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerErc20Offer(perDay, 30)
+            _borrowerErc20Offer(perDay, 30),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         _mockRentalTransferCalls();
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(after_.borrower, newBorrower, "transfer must complete (no underflow) for a prepaid rental");
         vm.clearMockedCalls();
@@ -2750,7 +2781,8 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerErc20Offer(perDay, 20)
+            _borrowerErc20Offer(perDay, 20),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2766,7 +2798,7 @@ contract PrecloseFacetTest is Test {
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2792,7 +2824,8 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerErc20Offer(perDay, 23)
+            _borrowerErc20Offer(perDay, 23),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2807,7 +2840,7 @@ contract PrecloseFacetTest is Test {
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2833,7 +2866,8 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerErc20Offer(perDay, 23)
+            _borrowerErc20Offer(perDay, 23),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -2848,7 +2882,7 @@ contract PrecloseFacetTest is Test {
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -2921,7 +2955,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
@@ -2974,7 +3008,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
@@ -2983,7 +3018,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badOffer, type(uint64).max);
     }
 
     // ─── Test: transferObligationViaOffer wrong prepayAsset ─────────────────
@@ -3028,14 +3063,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), badOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, badOffer, type(uint64).max);
     }
 
     // ─── Test: transferObligationViaOffer updateLenderNFT failure ──────────
@@ -3071,7 +3107,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -3085,7 +3122,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(bytes("update fail"));
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3122,7 +3159,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -3154,7 +3192,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(bytes("burn offer fail"));
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3181,7 +3219,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(99);
@@ -3202,7 +3240,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(99);
@@ -3243,7 +3281,8 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 200, 20, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 200, 20, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
         vm.clearMockedCalls();
     }
@@ -3281,7 +3320,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20);
+        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
@@ -3340,14 +3379,15 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         // Restore KYC
         vm.prank(owner);
@@ -3389,7 +3429,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -3409,7 +3450,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert();
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -3453,7 +3494,8 @@ contract PrecloseFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
 
@@ -3471,7 +3513,7 @@ contract PrecloseFacetTest is Test {
         // flagged lender's receive-side vault resolution).
         LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
 
         LibVaipakam.Loan memory after_ =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -3509,7 +3551,8 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
     }
 

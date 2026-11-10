@@ -2749,25 +2749,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
+        // #1810 / #3412 — the one listing entry: quote-bound (adverse-drift
+        // check against the reviewed quote) and deadline-bound. The unbound
+        // variant was retired with #3412.
         s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry for the
         // accept-then-complete auto-link (skips the outer nonReentrant guard).
         s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
-        // #1810 — quote-bound listing creation (adverse-drift check against
-        // the reviewed quote); the unbound entry stays routed unchanged.
-        s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
     }
 
     /// @dev #1780 — the direct lender-exit route's own facet. It carries the
     ///      whole Option-1 body, which is why the split bought the listed route
-    ///      its EIP-170 headroom back. #1922 (#1503 item 6) added the bound
-    ///      entry `sellLoanViaBuyOfferBound` beside the unbound one.
+    ///      its EIP-170 headroom back. #1922 (#1503 item 6) bound the sale to
+    ///      the seller's reviewed quote; #3412 made that the only entry.
     function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](1);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
-        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {

@@ -748,6 +748,10 @@ export const copy = {
     checking: B('Checking the latest state before your wallet opens…'),
     changed: A('{{what}} changed since this review opened. The review shows the new state: check it, then confirm again.'),
     unreadable: A('This could not be checked just now ({{reason}}), so your wallet was not opened. Try again in a moment.'),
+    // #3412 — the protocol's `DeadlinePassed`: a price-exposed transaction
+    // carries a deadline thirty minutes ahead of the chain's clock, and one
+    // that lands later is refused whole.
+    deadlinePassed: A('This transaction waited too long before it was included, so it expired without doing anything. Review it again and send it again.'),
     signing: B('Your wallet is open: confirm or decline the request there.'),
     submitted: B('Sent. Waiting for the network to include it:'),
     mined: B('Included in block {{block}}. Reading the outcome back from the chain…'),

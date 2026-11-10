@@ -22,6 +22,8 @@ import {
   type Hex,
 } from 'viem';
 import type { Page } from '@playwright/test';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { chooseMenuValue, newestOfferIdFor, newestLoanIdFor } from './flows';
 import {
   CHAIN_ID,
@@ -222,11 +224,14 @@ export async function seedDeskOffer(opts: {
     refinanceTargetLoanId: 0n,
     useFullTermInterest: opts.terms?.useFullTermInterest ?? false,
   };
+  // The transaction deadline (#3412): the chain's latest block time plus
+  // the shared window, never the host clock (the e2e chain's clock is warped).
+  const { timestamp: chainNow } = await pub.getBlock({ blockTag: 'latest' });
   const hash = await wallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'createOffer',
-    args: [params],
+    args: [params, txValidUntil(chainNow)],
     account,
     chain: forkChain,
   });
@@ -532,10 +537,11 @@ export async function acceptOfferDirect(
     primaryType: 'AcceptTerms',
     message: terms,
   });
-  // Pad the estimate the way the app does (x1.3). The estimate is taken
-  // against the latest block and the fill lands in the next one, so a
-  // time-dependent branch can cost more than was measured; an unpadded
-  // limit then runs out exactly at the estimate.
+  // The estimate plus the shared margin (`@vaipakam/lib/gasLimit`), the
+  // rule the app's writes follow. The estimate is taken against the latest
+  // block and the fill lands in the next one, so a time-dependent branch can
+  // cost more than was measured; an unpadded limit then runs out exactly at
+  // the estimate.
   const estimate = await pub.estimateContractGas({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -550,7 +556,7 @@ export async function acceptOfferDirect(
     args: [offerId, terms, signature],
     account,
     chain: forkChain,
-    gas: (estimate * 13n) / 10n,
+    gas: gasLimitFromEstimate(estimate),
   });
   await confirm(hash, 'acceptOffer');
   // The acceptor's side is the mirror of the creator's.

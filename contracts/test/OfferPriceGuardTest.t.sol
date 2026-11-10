@@ -86,7 +86,8 @@ contract OfferPriceGuardTest is SetupTest {
     function _lenderOffer() internal returns (uint256 offerId) {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
+            _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), offerId);
     }
@@ -319,7 +320,8 @@ contract OfferPriceGuardTest is SetupTest {
         for (uint256 i = 1; i <= posts; ++i) {
             calls[i] = MulticallFacet.Call(
                 abi.encodeWithSelector(
-                    OfferCreateFacet.createOffer.selector, _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
+                    OfferCreateFacet.createOffer.selector, _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500),
+                    type(uint64).max
                 ),
                 false
             );
@@ -371,7 +373,8 @@ contract OfferPriceGuardTest is SetupTest {
         );
         calls[1] = MulticallFacet.Call(
             abi.encodeWithSelector(
-                OfferCreateFacet.createOffer.selector, _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
+                OfferCreateFacet.createOffer.selector, _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500),
+                type(uint64).max
             ),
             false
         );
@@ -388,7 +391,8 @@ contract OfferPriceGuardTest is SetupTest {
         lenderOfferId = _lenderOffer();
         vm.prank(borrower);
         borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500)
+            _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), borrowerOfferId);
     }
@@ -437,7 +441,8 @@ contract OfferPriceGuardTest is SetupTest {
         address buyer = _provisionFundedActor("guard-buyer", mockERC20, PRINCIPAL * 2);
         vm.prank(buyer);
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500)
+            _params(LibVaipakam.OfferType.Lender, PRINCIPAL, 500),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId);
         vm.prank(buyer);
@@ -445,12 +450,12 @@ contract OfferPriceGuardTest is SetupTest {
 
         vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.OfferPairNoCheckpoint.selector, buyOfferId));
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         vm.prank(buyer);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(buyOfferId, 0);
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(loanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         assertTrue(OfferCancelFacet(address(diamond)).getOffer(buyOfferId).accepted, "sold once unguarded");
     }
 
@@ -461,7 +466,8 @@ contract OfferPriceGuardTest is SetupTest {
         address incoming = _provisionFundedActor("guard-incoming", mockCollateralERC20, PLEDGED * 2);
         vm.prank(incoming);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500)
+            _params(LibVaipakam.OfferType.Borrower, PRINCIPAL, 500),
+            type(uint64).max
         );
         // Backdated rather than waited: a handover's incoming offer must end
         // by the loan's maturity, so the clock must not move.
@@ -472,12 +478,12 @@ contract OfferPriceGuardTest is SetupTest {
 
         vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.OfferPairNoCheckpoint.selector, offerId));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId, type(uint64).max);
 
         vm.prank(incoming);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 0);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(loanId, offerId, type(uint64).max);
         assertTrue(OfferCancelFacet(address(diamond)).getOffer(offerId).accepted, "handed over once unguarded");
     }
 }

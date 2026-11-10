@@ -34,7 +34,8 @@ interface IBackstopDiamond {
         uint32 maxDurationDays,
         uint256 minFillAmount,
         bool requiresKeeperAuth,
-        bool riskAndTermsConsent
+        bool riskAndTermsConsent,
+        uint64 validUntil
     ) external;
 
     function withdrawLenderIntentCapital(
@@ -154,7 +155,8 @@ contract BackstopVaultImplementation is
             maxDurationDays,
             minFillAmount,
             true, // requiresKeeperAuth — self-only
-            true // riskAndTermsConsent
+            true, // riskAndTermsConsent
+            uint64(block.timestamp) // validUntil — in-transaction, no queue to wait in (#3412)
         );
     }
 

@@ -5,13 +5,15 @@
  *  listing expires, the same card grows the permissionless "Free held
  *  options" cleanup and clicking it releases the hold on-chain.
  *
- *  The bounded 4-arg `createLoanSaleOffer` is ASSERTED routed, not
+ *  The bound `createLoanSaleOffer` (since #3412: the reviewed seller bounds
+ *  and a transaction deadline after the 4 listing args) is ASSERTED routed, not
  *  probed. This spec used to skip itself while the forked live Diamond
  *  predated that route (PR #1505's migration). The e2e chain now carries
  *  the repository's current contracts (#2334), so a missing route here is
  *  a regression in this tree, and a skip would hide it.
  */
-import { toFunctionSelector } from 'viem';
+import { maxUint256, toFunctionSelector } from 'viem';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
 import { test, expect } from '../lib/wallet-fixture';
 import {
   postLenderOffer,
@@ -24,7 +26,7 @@ import { accountFor } from '../lib/wallets';
 import { confirm, pub, walletFor, DIAMOND, DIAMOND_ABI_VIEM, forkChain } from '../lib/chain';
 
 const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
-  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
+  'function createLoanSaleOffer(uint256,uint256,bool,uint64,uint256,uint256,uint64)',
 );
 
 async function boundedListingCutLive(): Promise<boolean> {
@@ -42,7 +44,7 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
 }) => {
   expect(
     await boundedListingCutLive(),
-    'the current Diamond must route the bounded 4-arg createLoanSaleOffer',
+    'the current Diamond must route the bound createLoanSaleOffer (#3412 shape)',
   ).toBe(true);
 
   // Active loan between the fixture wallets.
@@ -62,12 +64,19 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
   // The lender lists the position directly on-chain (the listing FORM
   // is the lender's surface, covered by its own follow-up spec — this
   // spec is about what the BORROWER sees). Minimum window: 1 hour.
+  //
+  // The seller bounds are the NO-BOUND values (a floor of 0, no ceiling):
+  // this setup listing is not the seller's reviewed one — the listing form
+  // and its quote are spec 40's — so nothing here is held to a figure. The
+  // deadline is the chain's latest block time plus the shared window
+  // (#3412), never the host clock.
   const lenderWallet = walletFor(accountFor('lender'));
+  const { timestamp: chainNow } = await pub.getBlock({ blockTag: 'latest' });
   const listHash = await lenderWallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'createLoanSaleOffer',
-    args: [loanId, 800n, true, 3600n],
+    args: [loanId, 800n, true, 3600n, 0n, maxUint256, txValidUntil(chainNow)],
     account: accountFor('lender'),
     chain: forkChain,
   });

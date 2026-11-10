@@ -1660,13 +1660,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](3);
+        // #1810 / #3412 — the one quote-bound listing entry.
         selectors[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         selectors[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry.
         selectors[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
-        // #1810 — quote-bound listing creation.
-        selectors[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
         return selectors;
     }
 
@@ -1676,9 +1675,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
+        // #1922 / #3412 — the one bound direct-sale entry.
         selectors[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
-        selectors[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
         return selectors;
     }
 

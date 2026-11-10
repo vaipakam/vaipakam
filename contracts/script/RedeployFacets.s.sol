@@ -124,6 +124,9 @@ contract RedeployFacets is Script {
     /// @notice #3205 part 2 - the target Diamond predates the vault outflow
     ///         policy; see {_requireVaultOutflowPolicy}.
     error PredatesVaultOutflowPolicy(address diamond);
+    /// @notice #3412 - the target Diamond predates the required transaction
+    ///         deadline on price-exposed entries; see {_requireValidUntilEntries}.
+    error PredatesValidUntilEntries(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -171,6 +174,8 @@ contract RedeployFacets is Script {
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
         _requirePositionNFTDiamond(diamond);
+        // #3412 - and one from before the required transaction deadlines.
+        _requireValidUntilEntries(diamond);
         // #3272 part 2 - and one from before the price guard.
         PriceGuardCrossing.requireRecorded(diamond);
         // #666 - and one whose OracleFacet cannot answer the fallback's
@@ -394,22 +399,14 @@ contract RedeployFacets is Script {
         // existing diamond), so the fixed Replace slot below stays valid.
         (bytes4[] memory dfToAdd, bytes4[] memory dfToReplace) =
             _partitionByRouting(diamond, _defaultedSelectors());
-        // #1810 — EarlyWithdrawalFacet gained `createLoanSaleOfferBound`, so
-        // its list is partitioned like the others: on a pre-#1810 diamond the
-        // three older selectors are routed (Replace) and the bound entry is
-        // new (Add); the routed subset is never empty (createLoanSaleOffer is
-        // routed on every existing diamond), so the fixed Replace slot below
-        // stays valid.
+        // #1810 — partitioned like the others. Since #3412 this script refuses
+        // a Diamond from before the re-signed entries, so every selector is
+        // routed and the partition yields Replace only; it is kept so the
+        // script stays correct if the facet gains a selector again.
         (bytes4[] memory ewToAdd, bytes4[] memory ewToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalSelectors());
-        // #1922 (#1503 item 6) — EarlyWithdrawalDirectFacet gained the bound
-        // entry `sellLoanViaBuyOfferBound`, so its list is no longer a blanket
-        // Replace (the #1780 assumption below is now stale). On a pre-#1922
-        // diamond `sellLoanViaBuyOffer` is routed (Replace) and the bound entry
-        // is new (Add); a blanket Replace would revert on the unrouted new
-        // selector. The routed subset is never empty (`sellLoanViaBuyOffer` is
-        // routed on every post-#1780 diamond), so the fixed Replace slot stays
-        // valid.
+        // #1922 / #3412 — partitioned for the same reason as the listing
+        // host above; on any Diamond this script accepts it is Replace only.
         (bytes4[] memory ewdToAdd, bytes4[] memory ewdToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalDirectSelectors());
         // #2349 — RefinanceFacet gained `refinanceLoanFromMatch` (the matcher-
@@ -608,10 +605,9 @@ contract RedeployFacets is Script {
         // #1780 — `sellLoanViaBuyOffer` is already routed on every existing
         // diamond (it was part of EarlyWithdrawalFacet's surface), so it is a
         // plain Replace that repoints the selector to the new address.
-        // #1922 — the bound entry `sellLoanViaBuyOfferBound` is NOT routed on a
-        // pre-#1922 diamond, so only the routed subset (`ewdToReplace`) may go
-        // through this fixed Replace; the unrouted bound selector (`ewdToAdd`) is
-        // issued as an Add in the partitioned block below.
+        // Only the routed subset (`ewdToReplace`) goes through this fixed
+        // Replace; an unrouted selector (`ewdToAdd`, empty on any Diamond this
+        // script accepts since #3412) would be issued as an Add below.
         cuts[8] = _replace(address(earlyWithdrawalDirectFacet), ewdToReplace);
         // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
         // because each gained new-and-possibly-unrouted selectors.
@@ -910,6 +906,24 @@ contract RedeployFacets is Script {
     function _requireVaultBeaconDiamond(address diamond) internal view {
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
             revert PredatesVaultBeacon(diamond);
+        }
+    }
+
+    /// @dev #3412 - refuse a Diamond from before the required transaction
+    ///      deadline. #3412 re-signed thirteen price-exposed entries (each now
+    ///      takes `validUntil`) and retired the two unbound sale entries. This
+    ///      curated set carries only three of the facets involved (Preclose and
+    ///      both sale hosts), so across the boundary it would leave the old
+    ///      selectors of every other entry routed to stale bytecode that takes
+    ///      no deadline, and its fixed Preclose Replace would revert on the
+    ///      re-signed selectors. Crossing the boundary is a fresh deploy (or
+    ///      the all-facets refresh, which sweeps stale routes), never this
+    ///      refresh. The marker is the routing of the re-signed
+    ///      `offsetWithNewOffer`, read from the compiled facet. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireValidUntilEntries(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(PrecloseFacet.offsetWithNewOffer.selector) == address(0)) {
+            revert PredatesValidUntilEntries(diamond);
         }
     }
 
@@ -1364,7 +1378,7 @@ contract RedeployFacets is Script {
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #1123 (Codex #1126 r4 P1) — `completeLoanSaleInternal` (the
@@ -1386,21 +1400,18 @@ contract RedeployFacets is Script {
         // facet's WHOLE routed surface (#778/#779) — which, since the #1780
         // split moved `sellLoanViaBuyOffer` to its own facet, is these 3.
         s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
-        // #1810 — the quote-bound listing entry. NEW, so this list is now cut
-        // via the Add/Replace-by-routing partition rather than a fixed Replace
-        // (a Replace reverts on an unrouted selector on any pre-#1810 target).
-        s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
+        // #3412 — `createLoanSaleOffer` (s[0]) is now the one quote- and
+        // deadline-bound listing entry; the separate bound entry is retired.
+        // This script refuses a Diamond from before #3412
+        // ({_requireValidUntilEntries}), so every selector here is routed.
     }
 
     /// @dev #1780 — the direct lender-exit route's whole routed surface.
-    ///      Mirrors `DeployDiamond._getEarlyWithdrawalDirectSelectors`. #1922
-    ///      (#1503 item 6) added `sellLoanViaBuyOfferBound` — both must be cut
-    ///      or a curated refresh strands one on stale bytecode (the split
-    ///      Diamond `CLAUDE.md` documents).
+    ///      Mirrors `DeployDiamond._getEarlyWithdrawalDirectSelectors`. #3412
+    ///      left one entry, the quote- and deadline-bound sale.
     function _earlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](1);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
-        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
     }
 
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors

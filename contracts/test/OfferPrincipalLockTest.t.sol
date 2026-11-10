@@ -110,7 +110,8 @@ contract OfferPrincipalLockTest is SetupTest {
     {
         vm.prank(lender);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
-            _lenderParams(amount, amountMax)
+            _lenderParams(amount, amountMax),
+            type(uint64).max
         );
         LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
         return oid_;
@@ -209,7 +210,7 @@ contract OfferPrincipalLockTest is SetupTest {
         // decremented BEFORE the refund withdraw (else the chokepoint
         // would treat the 400 as still encumbered and revert).
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 500 ether, 600 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
 
         assertEq(_lock(), 600 ether, "lock follows the new ceiling");
         assertEq(
@@ -222,7 +223,7 @@ contract OfferPrincipalLockTest is SetupTest {
     function test_modifyShrink_remainderStillLocked() public {
         uint256 id = _createLenderOffer(1000 ether, 1000 ether);
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 500 ether, 600 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
 
         // The post-shrink 600 stays locked — the decrement freed exactly
         // the 400 refunded, never the live remainder.
@@ -246,7 +247,7 @@ contract OfferPrincipalLockTest is SetupTest {
 
         // Grow the ceiling 1000 → 1500: 500 more pulled in + locked.
         vm.prank(lender);
-        OfferMutateFacet(address(diamond)).setOfferAmount(id, 1000 ether, 1500 ether);
+        OfferMutateFacet(address(diamond)).setOfferAmount(id, 1000 ether, 1500 ether, type(uint64).max);
 
         assertEq(_lock(), 1500 ether, "lock grows with the ceiling");
         assertEq(

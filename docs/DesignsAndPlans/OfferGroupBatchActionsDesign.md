@@ -174,7 +174,7 @@ show.
    Positions page a card per group with "Repay all" and, in Advanced mode
    like the loan page's own early close, "Close all early".
 2. **Lender: list all for sale.** One bound listing
-   (`createLoanSaleOfferBound`) per loan with the same rate and window
+   (`createLoanSaleOffer`, named `createLoanSaleOfferBound` until #3412) per loan with the same rate and window
    (each carries its own mandatory expiry). See below.
 3. **Borrower: refinance all.** One refinance request per loan with the
    same rate ceiling and duration, each after its guardrail write when

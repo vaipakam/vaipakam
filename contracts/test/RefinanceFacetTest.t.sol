@@ -156,7 +156,8 @@ contract RefinanceFacetTest is SetupTest {
 
         vm.prank(lender);
         uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, OLD_RATE_BPS, COLLATERAL, 0)
+            _params(LibVaipakam.OfferType.Lender, OLD_RATE_BPS, COLLATERAL, 0),
+            type(uint64).max
         );
         oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, lenderOfferId);
 
@@ -166,7 +167,8 @@ contract RefinanceFacetTest is SetupTest {
         );
         vm.prank(borrower);
         taggedOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, oldLoanId)
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, oldLoanId),
+            type(uint64).max
         );
         // #1558 — the wallet's share is pulled through the request's payoff
         // permit, never a Diamond allowance, so the borrower holds none.
@@ -449,7 +451,8 @@ contract RefinanceFacetTest is SetupTest {
         OfferCancelFacet(address(diamond)).cancelOffer(taggedOfferId);
         vm.prank(borrower);
         taggedOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, fresh, oldLoanId)
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, fresh, oldLoanId),
+            type(uint64).max
         );
         assertFalse(
             OfferCancelFacet(address(diamond)).getOfferDetails(taggedOfferId).refinanceCarryOver,
@@ -539,7 +542,8 @@ contract RefinanceFacetTest is SetupTest {
         ERC20(mockERC20).approve(_vault(standing), type(uint256).max);
         vm.prank(standing);
         uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, NEW_RATE_BPS, COLLATERAL, 0)
+            _params(LibVaipakam.OfferType.Lender, NEW_RATE_BPS, COLLATERAL, 0),
+            type(uint64).max
         );
 
         uint256 oldLenderVaultBefore = _bal(_vault(lender));
@@ -646,7 +650,8 @@ contract RefinanceFacetTest is SetupTest {
     function test_UntaggedBorrowerOffer_IsAnOrdinaryLoan() public {
         vm.prank(borrower);
         uint256 plain = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, 0)
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, 0),
+            type(uint64).max
         );
         uint256 walletBefore = _bal(borrower);
         _signAndAcceptOffer(newLender, newLenderPk, plain);

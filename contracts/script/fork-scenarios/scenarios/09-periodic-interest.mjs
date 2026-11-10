@@ -15,7 +15,7 @@
  * contract path, not an interface gap.
  */
 import { ADMIN, DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, chainNow, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor, STATUS, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, txValidUntil, positionOf, read, snapshot, vaultAddressFor, STATUS, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -63,7 +63,7 @@ async function runPeriodic(initial) {
   // deployment's own setting (the `finally` in run() restores it).
   await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.numeraireConfig, functionName: 'setPeriodicInterestEnabled', args: [false] });
   const dark = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
-    [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
+    [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY }), await txValidUntil()],
     lender.address);
   expectRefusal('A9.2', 'while dark, an offer carrying a cadence is refused outright rather than silently downgraded to None', dark, 'PeriodicInterestDisabled');
 
@@ -71,7 +71,7 @@ async function runPeriodic(initial) {
   // 4,385 days, so a term one day past the ceiling exceeds every valid
   // setting — the probe cannot be defeated by a legitimate retune.
   const tooLong = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
-    [await offerParams({ durationDays: 4386n })], lender.address);
+    [await offerParams({ durationDays: 4386n }), await txValidUntil()], lender.address);
   expectRefusal('A9.3', 'offer terms are capped — a term past the setter\'s ceiling is refused, naming the live cap', tooLong, 'OfferDurationExceedsCap');
 
   // ------------------------------------------- armed on the fork only
@@ -83,12 +83,12 @@ async function runPeriodic(initial) {
 
   // Admission filters, each named by the chain.
   const shortTerm = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
-    [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 20n, periodicInterestCadence: MONTHLY })],
+    [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 20n, periodicInterestCadence: MONTHLY }), await txValidUntil()],
     lender.address);
   expectRefusal('A9.5', 'a monthly cadence on a term shorter than one interval is refused', shortTerm, 'CadenceNotAllowed');
 
   const small = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
-    [await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.0125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
+    [await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.0125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY }), await txValidUntil()],
     lender.address);
   // The threshold is in NUMERAIRE units, so the 10-token principal is valued
   // at the live oracle price (token and feed decimals from the chain, not a

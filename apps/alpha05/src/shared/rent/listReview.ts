@@ -20,6 +20,7 @@ import { readGraceSeconds, readTreasuryFeeBps, readVault } from '../offers/reads
 import { CREATE_ABI, judgeDryRun, readMaxDurationDays, type CreateVerdict } from '../post/postReview';
 import { needFromRefusal, type RiskNeed, type RiskPair } from '../risk/riskAccess';
 import { askThrough } from '../tx/simulate';
+import { chainValidUntil } from '../tx/deadline';
 import { shortAddress } from '../ui/format';
 import type { TokenMetaMap } from '../reads/tokens';
 import { listParams, type ListDraft, type ListParams } from './listModel';
@@ -93,7 +94,7 @@ export async function readListReview(own: OwnStateClient, diamond: Hex, draft: L
   ]);
   const holding: ListHolding = draft.standard === 'erc721' ? { kind: 'erc721', state: held as Erc721State } : { kind: 'erc1155', state: held as Erc1155State };
   const covers = !needsMove({ holding, diamond });
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params], account }));
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params, await chainValidUntil(c)], account }));
   return {
     identity,
     account,

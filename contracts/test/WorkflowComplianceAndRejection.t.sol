@@ -435,7 +435,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         activeLoanId = LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, erc20OfferId
@@ -497,7 +498,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower accepts the NFT rental offer (pays prepay from mockUsdc)
@@ -545,7 +547,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // sanctionedUser (IR) tries to accept -> CountriesNotCompatible.
@@ -596,7 +599,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower (US) tries to transfer obligation to sanctionedUser (IR) -> CountriesNotCompatible
@@ -605,7 +609,7 @@ contract WorkflowComplianceAndRejection is Test {
         LibTestTiming.waitOutTermsAge(address(diamond), sanctionedOfferId); // #3443
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, sanctionedOfferId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, sanctionedOfferId, type(uint64).max);
     }
 
     /// @notice sanctionedUser creates a lender offer. Original lender tries sellLoanViaBuyOffer -> reverts CountriesNotCompatible
@@ -642,14 +646,15 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Lender (US) tries to sell to sanctionedUser (IR) -> CountriesNotCompatible
         LibTestTiming.waitOutTermsAge(address(diamond), sanctionedOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -701,7 +706,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Tier0 user can accept small offer (no KYC required)
@@ -755,7 +761,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Tier0 user cannot accept large offer -> KYCRequired.
@@ -807,14 +814,15 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Lender tries to sell NFT rental loan -> InvalidSaleOffer (assetType != ERC20)
         LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @notice NFT rental loan: createLoanSaleOffer reverts InvalidSaleOffer
@@ -822,7 +830,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Lender tries to create a sale offer for NFT rental loan -> InvalidSaleOffer
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @notice NFT rental loan: a refinance request against it is refused at
@@ -860,7 +868,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Aon,
                 refinanceTargetLoanId: nftLoanId,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 

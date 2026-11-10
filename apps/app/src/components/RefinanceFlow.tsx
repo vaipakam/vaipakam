@@ -59,6 +59,7 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '.
 import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import { TxNotSettledError } from '../contracts/ownReceipt';
 import { assertErc20BalanceLive } from '../contracts/preflights';
+import { readTxValidUntil } from '../contracts/txDeadline';
 import { loanEndTimeOf, type LoanLive } from '../contracts/loanLive';
 import type { PermitAttachProgress } from '../data/refinancePending';
 import {
@@ -509,7 +510,11 @@ export function RefinanceFlow({
           return;
         }
       }
-      const { receipt } = await write('createOffer', [payload], {
+      // The transaction deadline (#3412), read from chain time at the send.
+      // Distinct from the request's own expiry above: this bounds when the
+      // POSTING may land, that bounds how long the request stays fillable.
+      const validUntil = await readTxValidUntil(publicClient);
+      const { receipt } = await write('createOffer', [payload, validUntil], {
         onSubmitted: (hash) => {
           createOfferTx = hash;
         },

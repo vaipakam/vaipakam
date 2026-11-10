@@ -58,6 +58,15 @@ export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
     'Offer expiry must be a future timestamp. Pick a deadline at least 1 second past now.',
   '0x252d948e':
     'Offer expiry is too far in the future (1-year horizon cap). Pick an earlier deadline.',
+  // #3412 / #3443 — the one timing rule (LibTiming)
+  '0xbfb22adf':
+    'This transaction waited too long before it reached the chain, so it expired without doing anything. Review the terms and send it again.',
+  '0xc01cfcfc':
+    'This action needs a time limit and none was sent. Nothing was done; reload the page and try again.',
+  '0x1debda9c':
+    'This offer was posted or changed a few seconds ago, and an offer can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
+  '0x18af14b3':
+    'This standing offer was set or changed a few seconds ago, and it can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
   '0xa04ac4d0':
     "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls.",
   '0xc681ed8e':
@@ -325,6 +334,12 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     'The minimum this listing would guarantee you has dropped since you reviewed it (time has passed, or the loan has changed). Nothing was listed. Review the listing again to see the current figure.',
   ListingHeldAboveReviewed:
     'More has been set aside for the lender on this loan since you reviewed the listing. Nothing was listed. Review the listing again to see the current figures.',
+  // #3412 — the direct sale into a standing offer to buy is bound to the
+  // figures the seller reviewed, like a listing.
+  SaleNetBelowReviewed:
+    'This sale would now pay you less than the minimum you reviewed (part of the loan may have been repaid). Nothing was sold. Review the sale again to see the current figure.',
+  SaleHeldAboveReviewed:
+    'More has been set aside for the lender on this loan since you reviewed the sale. Nothing was sold. Review the sale again to see the current figures.',
   SaleBelowSellerFloor:
     "This listing can't be bought any more: the loan has changed since it was listed (for example, part of it was repaid), so the sale would pay the seller less than the minimum their listing guarantees. Nothing was taken. The seller can cancel it and list again.",
   SaleAboveHeldCeiling:
@@ -589,6 +604,11 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xd9e46813': 'OfferExpired(uint256,uint64)',
   '0x7900bcc7': 'OfferExpiryInPast()',
   '0x252d948e': 'OfferExpiryAboveCap(uint64,uint256)',
+  // #3412 / #3443 — LibTiming
+  '0xbfb22adf': 'DeadlinePassed(uint256)',
+  '0xc01cfcfc': 'DeadlineRequired()',
+  '0x1debda9c': 'OfferTermsTooFresh(uint256,uint256)',
+  '0x18af14b3': 'IntentTermsTooFresh(address,uint256)',
   '0xa04ac4d0': 'NotCreatorOrNotExpired(address,uint64)',
   '0xc681ed8e': 'CancelCooldownActive()',
   // #194 — self-trade prevention
@@ -695,6 +715,9 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xfff1caa4': 'ListingHeldAboveReviewed(uint256,uint256)',
   '0x12de31e0': 'SaleBelowSellerFloor(uint256,uint256)',
   '0xb7ea2f98': 'SaleAboveHeldCeiling(uint256,uint256)',
+  // #3412 — the direct sale's binding to what the seller reviewed.
+  '0xe5ee16cb': 'SaleNetBelowReviewed(uint256,uint256)',
+  '0x95d7fb8a': 'SaleHeldAboveReviewed(uint256,uint256)',
 
   // ── Partial withdrawal ────────────────────────────────────────────────
   '0xfd7850ad': 'AmountTooHigh()',

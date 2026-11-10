@@ -567,6 +567,7 @@ const INTENT = {
 };
 let REQUEST_ID = null;
 let REQUEST_STORED = null;
+let BORROWER_ANCHOR = null;
 let LENDER_ANCHOR = null;
 PLAN = createWritePlan(
   seedPlanSteps({
@@ -579,6 +580,7 @@ PLAN = createWritePlan(
     borrower: BORROWER,
     lender: LENDER,
     riskTermsHash: pre.riskTermsHash,
+    borrowerAnchor: () => BORROWER_ANCHOR,
     lenderAnchor: () => LENDER_ANCHOR,
     illiquidLegs: pre.illiquidLegs,
     requestId: () => REQUEST_ID,
@@ -821,6 +823,9 @@ try {
     return post.isEnabled();
   }, { timeoutMs: 120_000, everyMs: 3_000 });
   if (!bReady) stop('the deployed UI never enabled "Post borrow request"');
+  // Chain time before the post click: the request's transaction deadline
+  // (#3412) is read by the app after this, so it is judged from here.
+  BORROWER_ANCHOR = await chainNow();
   await armedClick('borrower', bp, post, bp.getByText(EN.borrow.posted), 'posting the borrow request');
   await session.shot('seed-02-borrower-posted');
 
