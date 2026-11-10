@@ -305,6 +305,25 @@ export function stakeOf(side: PostSide, p: Pick<ParsedPost, 'collateral' | 'amou
 }
 
 /**
+ * The lifecycle terms a request or offer carries beyond its amount, rate,
+ * term and collateral: the interest model, partial repayment, listing
+ * consent and the periodic-interest schedule, as the protocol call states
+ * them. One place, so the call and every check that compares these terms
+ * with a counterparty's (a standing lender's fixed terms, #3319) read the
+ * same answer.
+ */
+export function lifecycleTerms(p: Pick<PostInput, 'fullTerm' | 'allowsPartialRepay' | 'cadence'>) {
+  return {
+    useFullTermInterest: p.fullTerm,
+    allowsPartialRepay: p.allowsPartialRepay,
+    allowsPrepayListing: false,
+    periodicInterestCadence: p.cadence,
+  } as const;
+}
+
+export type LifecycleTerms = ReturnType<typeof lifecycleTerms>;
+
+/**
  * The protocol call for this request or offer (`createOffer`'s
  * parameters). The range fields carry the range (equal ends for a single
  * value); the rate's two ends are the one rate: the most a borrower pays,
@@ -336,17 +355,14 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     collateralAssetType: leg.kind === 'erc721' ? ASSET_ERC721 : leg.kind === 'erc1155' ? ASSET_ERC1155 : ASSET_ERC20,
     collateralTokenId: leg.kind === 'erc20' ? 0n : leg.tokenId,
     collateralQuantity: leg.kind === 'erc721' ? 1n : leg.kind === 'erc1155' ? leg.quantity : 0n,
-    allowsPartialRepay: p.allowsPartialRepay,
     amountMax: p.amountMax,
     interestRateBpsMax: p.rateBps,
     collateralAmountMax: nft ? 0n : p.collateral,
-    periodicInterestCadence: p.cadence,
     expiresAt: expiry,
     fillMode: FILL_MODE_CODE[p.fillMode],
-    allowsPrepayListing: false,
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
-    useFullTermInterest: p.fullTerm,
+    ...lifecycleTerms(p),
   } as const;
 }
 

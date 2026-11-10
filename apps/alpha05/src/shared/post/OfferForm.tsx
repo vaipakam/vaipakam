@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatUnits } from 'viem';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -100,6 +100,9 @@ interface OfferFormProps {
    *  review on it. */
   onReview: (draft: PostDraft) => void;
   onCancel: () => void;
+  /** What the page states under the form's heading (#3319: the lenders
+   *  standing ready for the pair), given the terms as typed so far. */
+  lead?: (input: PostInput) => ReactNode;
 }
 
 /**
@@ -128,7 +131,7 @@ interface OfferFormProps {
  * Full fee tariff, quoted at the whole amount, the largest loan the offer
  * opens (a direct take).
  */
-export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onCancel }: OfferFormProps) {
+export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onCancel, lead }: OfferFormProps) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
   const k = POST_KEYS[side];
@@ -640,6 +643,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     >
       <h2 id={lender ? 'lend-offer-form' : 'borrow-request-form'}>{text(k.formTitle)}</h2>
       <WhyLink summaryKey={k.openSummary} detailKey={k.openWhy} />
+      {lead?.(input)}
       {metaMissing && (
         <Notice tone="warn" tier="A">
           {text('request.metaUnread')}
