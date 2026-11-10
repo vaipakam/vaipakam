@@ -1,4 +1,4 @@
-## Thread — alpha05: Positions adds up a wallet's live loans in one card (PR #TBD)
+## Thread — alpha05: Positions adds up a wallet's live loans in one card (PR #3488)
 
 In the new app (`apps/alpha05`), Positions now opens with one card that adds up the wallet's live loans whenever it holds two or more, so a borrower or lender with several loans sees the whole picture before the list. With one loan the card is not shown, since that loan's row already says all of it, and the side choice (all, lent, borrowed) narrows the card with the lists.
 
