@@ -37,6 +37,7 @@ import {
 } from './chain';
 import { accountFor, type Role } from './wallets';
 import { increaseTime } from './anvil';
+import { waitOutTermsAge } from './termsAge';
 import { fetchSignedBook } from './signed';
 import { ensureWeth } from './seed';
 
@@ -401,32 +402,9 @@ function randomNonce(): bigint {
   return nonce;
 }
 
-/** #3443 — an offer can be filled only once its terms have stood the
- *  Diamond's minimum age (`getMinTermsAgeSec`, 5 s by default). A live
- *  taker simply arrives later; a test that posts and fills back to back
- *  advances the chain by exactly the shortfall first, never otherwise. */
-export async function waitOutTermsAge(...offerIds: bigint[]): Promise<void> {
-  let minAge = 0n;
-  try {
-    minAge = (await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getMinTermsAgeSec',
-    })) as bigint;
-  } catch {
-    return; // a Diamond without the rule needs no wait
-  }
-  let readyAt = 0n;
-  for (const id of offerIds) {
-    const { termsSetAt } = (await getOffer(id)) as { termsSetAt?: bigint | number };
-    // 0 = terms that carry no age (a signed offer turned on-chain at its fill).
-    if (termsSetAt && BigInt(termsSetAt) + minAge > readyAt) readyAt = BigInt(termsSetAt) + minAge;
-  }
-  const { timestamp: now } = await pub.getBlock({ blockTag: 'latest' });
-  // The fill lands in the NEXT block (timestamp >= now + 1); the protocol
-  // refuses only while strictly before readyAt.
-  if (readyAt > now + 1n) await increaseTime(Number(readyAt - now));
-}
+/** #3443 offer-age wait — lives in `termsAge.ts` (see its header for
+ *  why); re-exported so the desk specs keep importing it from here. */
+export { waitOutTermsAge } from './termsAge';
 
 /** Direct-write accept of an ERC-20/ERC-20 offer of EITHER side (both
  *  shapes seedDeskOffer creates): escrow the acceptor's leg, sign the
@@ -554,6 +532,17 @@ export async function acceptOfferDirect(
     primaryType: 'AcceptTerms',
     message: terms,
   });
+  // Pad the estimate the way the app does (x1.3). The estimate is taken
+  // against the latest block and the fill lands in the next one, so a
+  // time-dependent branch can cost more than was measured; an unpadded
+  // limit then runs out exactly at the estimate.
+  const estimate = await pub.estimateContractGas({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'acceptOffer',
+    args: [offerId, terms, signature],
+    account,
+  });
   const hash = await wallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -561,6 +550,7 @@ export async function acceptOfferDirect(
     args: [offerId, terms, signature],
     account,
     chain: forkChain,
+    gas: (estimate * 13n) / 10n,
   });
   await confirm(hash, 'acceptOffer');
   // The acceptor's side is the mirror of the creator's.

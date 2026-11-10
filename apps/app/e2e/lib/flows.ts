@@ -8,6 +8,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { MOCKS, WETH, pub, DIAMOND, DIAMOND_ABI_VIEM } from './chain';
 import { connectWallet } from './wallet-fixture';
+import { waitOutTermsAge } from './termsAge';
 
 /** Choose a SelectMenu row by its stable data-value. The app's
  *  dropdowns are the custom SelectMenu (button + listbox), not native
@@ -149,6 +150,9 @@ export async function acceptAsBorrower(
   page: Page,
   offerId: bigint,
 ): Promise<void> {
+  // #3443: an offer posted moments ago is not fillable yet, and on the
+  // idle Anvil it would stay "fresh" in every simulation (termsAge.ts).
+  await waitOutTermsAge(offerId);
   await page.goto(`/borrow?offer=${offerId}`, { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   await signAcceptReview(page);
@@ -165,6 +169,7 @@ export async function acceptViaGuidedMatch(
   page: Page,
   offerId: bigint,
 ): Promise<void> {
+  await waitOutTermsAge(offerId); // #3443, as in acceptAsBorrower
   await page.goto('/borrow', { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
   await pickCuratedAsset(page, 'lending-asset', WETH);
