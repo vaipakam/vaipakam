@@ -72,6 +72,7 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
+import { handleAssetRankings } from './assetRankings';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -554,6 +555,17 @@ export default {
       if (req.method === 'GET') {
         return handleIngestHealth(earlyRouteEnv(env).DB, configuredScanChains(env));
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /assets/rankings ───────────────────────────────────────
+    // #3446 — public market-cap rankings of tokens, by token chain, as the
+    // keeper's daily fetch stored them. D1 only, so dispatched before
+    // `resolveEnv` like /health/ingest: a degraded Secrets Store must not
+    // take down a list the app reads to warn about unfamiliar tokens.
+    if (url.pathname === '/assets/rankings') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleAssetRankings(req, earlyRouteEnv(env).DB);
       return new Response('Not found', { status: 404 });
     }
 
