@@ -1,4 +1,4 @@
-## Thread — alpha05 has a Rewards page with your VPFI (PR #<n>)
+## Thread — alpha05 has a Rewards page with your VPFI (PR #3474)
 
 The new app now has its own Rewards page. It shows the wallet's rewards
 through the same claim widget Home uses, the VPFI in the wallet's own vault,
