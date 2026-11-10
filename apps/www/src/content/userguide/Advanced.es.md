@@ -2638,3 +2638,27 @@ La revisión lee el alquiler con `getLoanDetails`, sus fechas con `getLoanDeadli
 ### Alquilar: riesgos de cerrar
 
 Cerrar termina tu derecho a usar el NFT en el acto, aunque queden días acordados, y no se puede deshacer. El alquiler se cuenta cuando el cierre se confirma, así que un día que empieza antes se paga entero; con plazo completo se paga cada día acordado aún no liquidado, por pronto que cierres. Tras el fin del plazo se toma un recargo por demora de tu margen: el 1 % del alquiler total más el 0,5 % por cada día de retraso, como máximo el 5 % y nunca más que el margen. Pasado el periodo de gracia el protocolo rechaza el cierre; el alquiler termina entonces cuando sus días restantes se liquidan uno a uno, algo que cualquiera puede hacer, o en impago, lo que ocurra primero. El momento posterior que muestra la revisión no es un plazo ni un límite: un cierre que se confirma más tarde se cuenta entonces, así que se puede cobrar más alquiler o un recargo mayor y volverte menos. Lo que vuelve se queda en tu propia bóveda como reclamo hasta que lo cobres.
+
+<a id="rewards-vpfi"></a>
+
+### Recompensas: el VPFI en la bóveda
+
+La página lee el token con `getVPFIToken`; la dirección cero significa que el VPFI no está configurado en esa red. En un mismo bloque lee el `balanceOf` de la wallet, la bóveda con `getUserVaultAddress`, el VPFI contado con `getTrackedVPFIBalance`, el importe libre con `withdrawableNow` y el `balanceOf` de la propia bóveda. Lo retenido es lo contado menos lo libre; lo no contado es el saldo de la bóveda por encima de lo contado. «Depositar VPFI» es el `depositToVault` genérico de la bóveda, y «Retirar VPFI» su `withdrawFromVault` (`escapeWithdraw` mientras el protocolo está en pausa y la vía de escape está abierta, para una cuenta sin modo protegido), no las entradas exclusivas de VPFI: las vías genéricas registran el VPFI para el nivel igual, y solo ellas tienen la vía de escape. Cada revisión lee `getTrackedVPFIBalance` y `getVPFIDiscountConsent` en su propio bloque, y el resultado se mide a partir de la transacción. `isCanonicalVpfiChain` se lee con ellos: solo la red de origen del VPFI calcula el nivel a partir de su propio VPFI contado, y las demás aplican una copia en caché de ese nivel, así que allí la página y cada recibo dicen que un movimiento no cambia ningún nivel.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Recompensas: riesgos de mover VPFI
+
+El nivel no es tu saldo de hoy. Es cero hasta que tu tenencia continua actual alcance el número mínimo de días; después sigue un promedio de tus saldos de cierre diarios ponderado hacia los días recientes; y queda limitado al nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Son dos miradas atrás distintas. Retirar parte de tu VPFI contado baja el saldo mínimo de ese día, que es el que lee el límite, y retirarlo todo reinicia tu tiempo de tenencia. Un aumento no lo reinicia. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere. El retiro de una cuenta protegida cambia tu VPFI contado y tu nivel solo cuando se libera, y uno cancelado no cambia ninguno de los dos. El VPFI en tu bóveda no es garantía. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
+
+<a id="rewards-tier"></a>
+
+### Recompensas: el nivel de descuento en comisiones
+
+En un mismo bloque, la tarjeta lee `getVPFIDiscountConsent`, `isCanonicalVpfiChain` y `getEffectiveDiscount`, que devuelve el nivel y el descuento que aplica el cálculo de comisiones: cero con el consentimiento desactivado, limitado al 50 % y, en otras redes, la copia enviada desde la red de origen. En la red de origen también lee `getTrackedVPFIDiscountTier`, el nivel que da solo el VPFI contado, y dice cuándo el nivel efectivo es menor. El protocolo no informa qué regla de tenencia lo frena, y los ajustes de las reglas aún no tienen vista de lectura, así que no se muestra ninguna de las dos cosas. La tabla lee `getVpfiTierThresholds`, `getVpfiTierDiscountBps` y `getFeesConfig` en un mismo bloque. Los niveles 1 a 3 empiezan en su umbral y el nivel 4 por encima del suyo. Cada comisión es la comisión de lista por uno menos el descuento limitado, calculada con exactitud. La tabla se muestra solo en la red de origen, donde se fijan los niveles.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Recompensas: firmar en lugar de aprobar
+
+En su propio bloque, la revisión lee si Permit2 tiene código en su dirección canónica y la `allowance` ERC-20 de la billetera hacia Permit2 para el token VPFI. Solo cuando Permit2 está desplegado y esa autorización cubre el importe se ofrece «Firmar en lugar de aprobar»; si no, Advanced dice cuál de las dos cosas falta. La billetera firma el `PermitTransferFrom` de Permit2 para el token VPFI y exactamente el importe, con el Diamond como gastador, un nonce aleatorio comprobado como no usado en `nonceBitmap` y un plazo de 30 minutos tras el último bloque. La aplicación simula `depositVPFIToVaultWithPermit` con la firma y luego lo envía; el protocolo rechaza un permiso para cualquier otro token. El resultado se mide a partir de `VPFIDepositedToVault`, que esa entrada emite en lugar de `VaultDeposited`, y de la transferencia del token a la bóveda. Ambas vías cuentan el VPFI para el nivel del mismo modo.

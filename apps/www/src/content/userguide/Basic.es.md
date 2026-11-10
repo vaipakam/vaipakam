@@ -1499,3 +1499,27 @@ La página de un alquiler en curso te ofrece, como arrendatario, Cerrar el alqui
 ### Alquilar: riesgos de cerrar
 
 Cerrar termina tu derecho a usar el NFT en el acto, aunque queden días acordados, y no se puede deshacer. El alquiler se cuenta cuando el cierre se confirma, así que un día que empieza antes se paga entero; con plazo completo se paga cada día acordado aún no liquidado, por pronto que cierres. Tras el fin del plazo se toma un recargo por demora de tu margen: el 1 % del alquiler total más el 0,5 % por cada día de retraso, como máximo el 5 % y nunca más que el margen. Pasado el periodo de gracia el protocolo rechaza el cierre; el alquiler termina entonces cuando sus días restantes se liquidan uno a uno, algo que cualquiera puede hacer, o en impago, lo que ocurra primero. El momento posterior que muestra la revisión no es un plazo ni un límite: un cierre que se confirma más tarde se cuenta entonces, así que se puede cobrar más alquiler o un recargo mayor y volverte menos. Lo que vuelve se queda en tu propia bóveda como reclamo hasta que lo cobres.
+
+<a id="rewards-vpfi"></a>
+
+### Recompensas: el VPFI en tu bóveda
+
+Recompensas, en el menú, muestra tus recompensas en esta red, tu VPFI y tu consentimiento al descuento en comisiones. Tus recompensas son los reembolsos por uso que muestra Home y se reclaman igual. Debajo, la página muestra tu VPFI: en tu wallet, contado en tu propia bóveda, libre para retirar ahora y retenido para préstamos, ofertas, reclamos o pagos. El VPFI contado fija tu nivel de descuento en comisiones, y el nivel reduce tus comisiones solo mientras tu consentimiento está activado. El VPFI enviado directamente a tu bóveda, sin un depósito, no se cuenta y nunca sube tu nivel; la página lo muestra y te remite a la página Vault para adoptarlo. «Depositar VPFI» mueve VPFI de tu wallet a tu propia bóveda, que solo tu wallet controla, después de que aceptes los Términos si aún no lo has hecho; el primer depósito crea la bóveda. «Retirar VPFI» devuelve a tu wallet el VPFI libre. Cada revisión dice qué hace el movimiento con tu nivel y si tu consentimiento está activado, y después la app comprueba el resultado en la cadena. En una red donde el VPFI no está configurado, la página lo dice y no ofrece ninguna de las dos cosas. Solo el VPFI de tu bóveda en la red de origen del VPFI fija tu nivel; las demás redes aplican una copia del nivel calculado allí, así que en ellas la página y cada revisión dicen que mover VPFI no cambia ningún nivel.
+
+<a id="rewards-vpfi-risks"></a>
+
+### Recompensas: riesgos de mover VPFI
+
+Tu nivel no es tu saldo de hoy. Es cero hasta que tu tenencia actual haya durado un número mínimo de días. Después sigue un promedio de tus saldos diarios que da más peso a los días recientes. Aparte, nunca supera el nivel más bajo que tuviste en algún día de tu tenencia actual, mirando atrás como mucho 30 días. Así que un depósito sube tu nivel solo con el tiempo, y un aumento breve no lo eleva. Retirar parte de tu VPFI contado puede bajar tu nivel, y retirarlo todo reinicia tu tiempo de tenencia desde tu próximo depósito. El VPFI retenido para un préstamo, oferta, reclamo o pago no se puede retirar hasta que se libere, y el retiro de una cuenta protegida espera antes su plazo. El retiro de una cuenta protegida cambia tu VPFI contado y tu nivel solo cuando se libera, y uno cancelado no cambia ninguno de los dos. El VPFI en tu bóveda no es garantía y no respalda ningún préstamo. El protocolo no vende VPFI, no le pone precio y no paga nada por tenerlo.
+
+<a id="rewards-tier"></a>
+
+### Recompensas: tu nivel de descuento en comisiones
+
+Debajo de tu VPFI, la página muestra el nivel de descuento que el protocolo aplica ahora a tus comisiones, leído del propio protocolo, y cuánto les quita. Mientras tu consentimiento al descuento en comisiones esté desactivado, no se aplica ningún nivel. Una tenencia nueva cuenta del todo solo con el tiempo, así que la página dice cuándo las reglas de tenencia mantienen tu nivel por debajo del que daría solo tu VPFI contado. En la red de origen del VPFI, una tabla muestra cada nivel: el VPFI contado que requiere, su descuento, y la comisión de inicio del préstamo y la comisión sobre los intereses ganados con ese descuento, calculadas con los ajustes actuales de la red. Cada nivel empieza en su cifra, salvo el más alto, que empieza justo por encima. Ningún descuento supera nunca la mitad de una comisión. En otras redes la página muestra el nivel enviado desde la red de origen, y la tabla no se muestra.
+
+<a id="rewards-vpfi-sign"></a>
+
+### Recompensas: firmar en lugar de aprobar
+
+Si tu billetera ya aprobó Permit2 para VPFI, un contrato compartido que muchas aplicaciones usan para mover tokens con una firma, la revisión del depósito de VPFI ofrece «Firmar en lugar de aprobar». Entonces firmas una transferencia única de exactamente el importe, válida 30 minutos, y envías el depósito: dos pasos en la billetera y ninguna aprobación al protocolo. La firma se puede usar una vez, solo en una transacción que envíe tu propia billetera y solo hacia tu propia bóveda; si no se usa, caduca. La aplicación nunca te pide aprobar Permit2 en sí, porque esa aprobación es indefinida y se comparte con otras aplicaciones. Sin ella, la revisión mantiene la aprobación habitual de exactamente el importe. En una red sin Permit2 no se ofrece esta opción.

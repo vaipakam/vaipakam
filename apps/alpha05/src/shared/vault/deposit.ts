@@ -18,7 +18,7 @@
  * protocol still takes a deposit then), so the review states which.
  */
 import { erc20Abi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, ProtectedAccountFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ProtectedAccountFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI, VPFIDiscountFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { ASSET_TYPE, diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State, type Standard } from '../nft/nft';
@@ -28,6 +28,8 @@ import { frozenState, readSanctionsPosture, type FrozenState } from '../sanction
 import { allowanceSteps } from '../tx/approval';
 import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAnswer, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
+import { readVpfiFacts, type VpfiFacts } from '../rewards/vpfiFacts';
+import { permitCovers, readPermitRoute, type PermitRoute, type PermitTransfer } from '../permit2/signatureTransfer';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -36,6 +38,7 @@ const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const PROTECTED = ProtectedAccountFacetABI as Abi;
+const VPFI_DISCOUNT = VPFIDiscountFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 /** What the reader chose: the asset, its standard as its contract claims,
@@ -65,7 +68,41 @@ export interface DepositReview {
   /** The account's protected mode; null when unread. */
   protection: Protection | null;
   holding: DepositHolding;
+  /** The fee-discount tier's side when the asset is this network's VPFI;
+   *  null for any other asset. */
+  vpfi: VpfiFacts | null;
+  /** Whether a signed transfer can stand in for the approval (RW-03): read
+   *  for this network's VPFI only, the one asset whose entry takes one;
+   *  null for any other asset. */
+  permit: PermitRoute | null;
   readAt: number;
+}
+
+/** How the deposit is funded: an approval of exactly the amount (any
+ *  asset), or a one-time signed transfer (VPFI, where offered). */
+export type DepositRoute = 'approve' | 'sign';
+
+/** Whether signing instead of approving is offered for this review: the
+ *  asset is this network's VPFI, Permit2 is deployed here, and the wallet's
+ *  own approval for Permit2 already covers the amount, so the signature
+ *  needs no new approval. */
+export function signOffered(r: DepositReview): boolean {
+  return r.draft.standard === 'erc20' && r.vpfi !== null && r.permit !== null && permitCovers(r.permit, r.draft.amount) === true;
+}
+
+/** The route a deposit takes: the chosen one when it is offered, otherwise
+ *  the approval, which is always available. */
+export function depositRoute(r: DepositReview, chosen: DepositRoute | null): DepositRoute {
+  return chosen === 'sign' && signOffered(r) ? 'sign' : 'approve';
+}
+
+/** The VPFI deposit with a signed transfer in place of the approval. */
+export function permitDepositCall(amount: bigint, permit: PermitTransfer, signature: Hex) {
+  return {
+    abi: VPFI_DISCOUNT,
+    functionName: 'depositVPFIToVaultWithPermit' as const,
+    args: [amount, permit, signature] as const,
+  };
 }
 
 /** The call a draft stands for. */
@@ -108,7 +145,11 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         holding = { kind: 'erc20', balance, allowance, approvalSteps: 0 };
       }
       const protection = protectionFrom(account_);
+      const vpfi = draft.standard === 'erc20' ? await readVpfiFacts(c, diamond, account, draft.asset, block) : null;
+      const permit = vpfi !== null ? await readPermitRoute(c, account, draft.asset, block) : null;
       return {
+        vpfi,
+        permit,
         vault: vault.toLowerCase() === ZERO ? null : vault,
         paused,
         frozen: frozenState(posture),
@@ -130,7 +171,7 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
     );
     holding = { ...h, approvalSteps: steps.length };
   }
-  return { identity, draft, vault: facts.vault, paused: facts.paused, frozen: facts.frozen, retired: facts.retired, protection: facts.protection, holding, readAt: Date.now() };
+  return { identity, draft, vault: facts.vault, paused: facts.paused, frozen: facts.frozen, retired: facts.retired, protection: facts.protection, holding, vpfi: facts.vpfi, permit: facts.permit, readAt: Date.now() };
 }
 
 /** How what this deposit adds can leave the vault for the wallet later:
@@ -142,8 +183,10 @@ export function withdrawRoute(protection: Protection | null): PayoutRoute {
   return payoutRoute(protection, ZERO, ZERO);
 }
 
-/** The wallet prompts the deposit takes: the approval's, then the deposit. */
-export const depositPromptCount = (r: DepositReview): number => r.holding.approvalSteps + 1;
+/** The wallet prompts the deposit takes: the approval's (or the one
+ *  signature), then the deposit. */
+export const depositPromptCount = (r: DepositReview, route: DepositRoute = 'approve'): number =>
+  route === 'sign' ? 2 : r.holding.approvalSteps + 1;
 
 /** What the wallet holds of the chosen asset short of the draft, in the
  *  asset's own unit; null when it holds enough. An ERC-721 token the wallet
@@ -173,8 +216,9 @@ export function depositBlockers(r: DepositReview, account: Hex, copy: Copy, shor
 }
 
 /** What a re-read found changed, in words, or null when nothing the review
- *  states moved. */
-export function depositChanged(a: DepositReview, b: DepositReview, copy: Pick<CopyAccess, 'text'>): string | null {
+ *  states moved. On the signed route the approval for the protocol plays no
+ *  part, so a change to it is not one; whether signing is still offered is. */
+export function depositChanged(a: DepositReview, b: DepositReview, copy: Pick<CopyAccess, 'text'>, route: DepositRoute = 'approve'): string | null {
   const { text } = copy;
   if ((a.vault ?? '').toLowerCase() !== (b.vault ?? '').toLowerCase()) return text('vaultDeposit.changedVault');
   if (a.paused !== b.paused || a.frozen !== b.frozen || a.retired !== b.retired) return text('repay.changedVerdict');
@@ -182,11 +226,15 @@ export function depositChanged(a: DepositReview, b: DepositReview, copy: Pick<Co
     return text('payout.changed');
   const x = a.holding;
   const y = b.holding;
-  if (x.kind !== y.kind || x.approvalSteps !== y.approvalSteps) return text('repay.changedFunds');
+  const sign = route === 'sign';
+  if (sign && signOffered(a) !== signOffered(b)) return text('vpfiPermit.changed');
+  if (x.kind !== y.kind || (!sign && x.approvalSteps !== y.approvalSteps)) return text('repay.changedFunds');
   if (x.kind === 'erc20' && y.kind === 'erc20' && x.balance >= a.draft.amount !== y.balance >= b.draft.amount) return text('repay.changedFunds');
-  if (x.kind === 'erc20' && y.kind === 'erc20' && x.allowance !== y.allowance) return text('repay.changedFunds');
+  if (!sign && x.kind === 'erc20' && y.kind === 'erc20' && x.allowance !== y.allowance) return text('repay.changedFunds');
   if (x.kind === 'erc721' && y.kind === 'erc721' && (x.state.owner ?? '').toLowerCase() !== (y.state.owner ?? '').toLowerCase()) return text('repay.changedFunds');
   if (x.kind === 'erc1155' && y.kind === 'erc1155' && x.state.balance >= a.draft.amount !== y.state.balance >= b.draft.amount) return text('repay.changedFunds');
+  if ((a.vpfi?.consent ?? null) !== (b.vpfi?.consent ?? null)) return text('rewardsVault.changedConsent');
+  if ((a.vpfi?.home ?? null) !== (b.vpfi?.home ?? null)) return text('rewardsVault.changedHome');
   return null;
 }
 
@@ -200,6 +248,20 @@ export function deposited(logs: readonly Log[], diamond: Hex, account: Hex, d: D
     if (args.account?.toLowerCase() !== account.toLowerCase() || args.asset?.toLowerCase() !== d.asset.toLowerCase()) continue;
     if (Number(args.kind) !== ASSET_TYPE[d.standard]) continue;
     if (d.standard !== 'erc20' && args.tokenId !== d.tokenId) continue;
+    if (args.amount !== undefined) return args.amount;
+  }
+  return null;
+}
+
+/** The VPFI deposit the transaction's record names for `account` on the
+ *  signed route (`VPFIDepositedToVault`, which that entry emits in place of
+ *  the depository's own event), or null when it names none. */
+export function vpfiDeposited(logs: readonly Log[], diamond: Hex, account: Hex): bigint | null {
+  const events = parseEventLogs({ abi: VPFI_DISCOUNT, logs: logs as Log[], eventName: 'VPFIDepositedToVault', strict: false });
+  for (const e of events) {
+    if (e.address.toLowerCase() !== diamond.toLowerCase()) continue;
+    const args = e.args as { user?: Hex; amount?: bigint };
+    if (args.user?.toLowerCase() !== account.toLowerCase()) continue;
     if (args.amount !== undefined) return args.amount;
   }
   return null;

@@ -47,6 +47,7 @@ function review(p: Partial<WithdrawReview> = {}): WithdrawReview {
   const route = p.route ?? (protection === null ? 'unknown' : !protection.enabled ? 'wallet' : protection.locked ? 'held' : 'queued');
   return {
     identity: 'i',
+    vpfi: null,
     draft: erc20Draft,
     vault: VAULT,
     paused: false,
