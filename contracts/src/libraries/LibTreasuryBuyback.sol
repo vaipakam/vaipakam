@@ -127,6 +127,14 @@ library LibTreasuryBuyback {
         uint256 toKeepers,
         uint256 overflow
     );
+    /// @notice #908 — the reward-emissions + keeper top-up headroom left
+    ///         free of other pending orders' floors (`free`) cannot hold
+    ///         what this step needs (`needed`): a commit whose `minVpfiOut`
+    ///         would not fit, a fill that would eat into another pending
+    ///         order's floor, or a target lowered below the floors held.
+    ///         Raise a top-up target, or wait for pending orders to settle
+    ///         or expire.
+    error BuybackHeadroomShort(uint256 needed, uint256 free);
     /// @notice Codex Sub 3.B round-3 P1 #1 — actual VPFI delivered
     ///         was below the operator-pinned floor. Stops
     ///         underpriced fills from draining the source-token
@@ -265,6 +273,14 @@ library LibTreasuryBuyback {
         if (amountIn > budget) {
             revert BuybackBudgetInsufficient(token, amountIn, budget);
         }
+        // #908 — hold top-up headroom for this order's VPFI floor, so the
+        // order can always settle once its auction reaches `minVpfiOut`.
+        // Without it, a commit made while both targets are zero (the
+        // default) or too low for the floor could never fill: every fill
+        // would revert `BuybackOverflowNotAllowed` until the order expired.
+        uint256 freeRoom = freeHeadroom(s);
+        if (minVpfiOut > freeRoom) revert BuybackHeadroomShort(minVpfiOut, freeRoom);
+        s.buybackVpfiFloorReserved += minVpfiOut;
         // Codex Sub 3.B round-1 P1 #3 — LOP must be configured
         // before we can grant the allowance Fusion fills need to
         // pull the source token from the diamond.
@@ -449,6 +465,12 @@ library LibTreasuryBuyback {
             );
         }
         s.buybackVpfiDeliveredSoFar[orderHash] = uint128(cumulativeVpfi);
+        // #908 — the part of this delivery that meets the order's own floor
+        // releases that much of the held headroom; anything above the floor
+        // must fit in the free headroom, checked after routing below.
+        s.buybackVpfiFloorReserved -= _min(
+            actualVpfi, _floorLeft(info.minVpfiOut, priorVpfiDelivered)
+        );
 
         // Codex round-3 P1 #2 — verify `info.token` actually left
         // the diamond. Per-partial check: source delta must >=
@@ -474,6 +496,9 @@ library LibTreasuryBuyback {
         // disables the step. #687-C removed the step-3 staking-pool
         // overflow; any remainder past both targets reverts.
         _routePriority(s, actualVpfi);
+        // #908 — a delivery above this order's floor must not take headroom
+        // held for another pending order's floor.
+        requireHeadroomHeld(s);
 
         // Codex round-1 P1 #3 — decrement the shared aggregate
         // allowance + re-apply the cap so an in-flight commit on
@@ -544,6 +569,11 @@ library LibTreasuryBuyback {
             revert BuybackNotYetExpired(info.expiresAt, block.timestamp);
         }
 
+        // #908 — release the headroom still held for this order's floor.
+        s.buybackVpfiFloorReserved -= _floorLeft(
+            info.minVpfiOut, uint256(s.buybackVpfiDeliveredSoFar[orderHash])
+        );
+
         // T-087 Sub 3.C — release ONLY the unconsumed portion. Any
         // amount already swapped via partial fills has already been
         // released proportionally in `postInteractionImpl`.
@@ -584,6 +614,63 @@ library LibTreasuryBuyback {
         delete s.buybackVpfiDeliveredSoFar[orderHash];
 
         emit BuybackIntentExpired(orderHash, info.token, uint96(unconsumed));
+    }
+
+    // ─── #908 — top-up headroom held for pending floors ──────────────
+
+    /**
+     * @dev The top-up headroom: the gap to the reward-emissions target plus
+     *      the gap to the keeper target (a target at or below its budget
+     *      contributes nothing). It is exactly what {_routePriority} can
+     *      absorb before it reverts.
+     */
+    function topUpHeadroom(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256)
+    {
+        return _gap(s.cfgRewardEmissionsTopUpTarget, s.rewardEmissionsBudget)
+            + _gap(s.cfgKeeperRewardTopUpTarget, s.keeperRewardBudget);
+    }
+
+    /// @dev The headroom not held for any pending order's floor.
+    function freeHeadroom(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 room = topUpHeadroom(s);
+        uint256 held = s.buybackVpfiFloorReserved;
+        return room > held ? room - held : 0;
+    }
+
+    /**
+     * @dev Refuse a state in which the headroom no longer covers the floors
+     *      held. Run after a fill, and by the target setters, so neither a
+     *      delivery above its floor nor a lowered target can strand a
+     *      pending order.
+     */
+    function requireHeadroomHeld(LibVaipakam.Storage storage s) internal view {
+        uint256 room = topUpHeadroom(s);
+        uint256 held = s.buybackVpfiFloorReserved;
+        if (room < held) revert BuybackHeadroomShort(held, room);
+    }
+
+    /// @dev What is left of an order's floor after `delivered` VPFI.
+    function _floorLeft(uint256 minVpfiOut, uint256 delivered)
+        private
+        pure
+        returns (uint256)
+    {
+        return minVpfiOut > delivered ? minVpfiOut - delivered : 0;
+    }
+
+    function _gap(uint256 target, uint256 current) private pure returns (uint256) {
+        return target > current ? target - current : 0;
+    }
+
+    function _min(uint256 a, uint256 b) private pure returns (uint256) {
+        return a < b ? a : b;
     }
 
     /**

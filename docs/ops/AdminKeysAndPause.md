@@ -181,7 +181,10 @@ signer, not just an off-chain credential.** Its EOA can hold
 **not** closed by rotating the stored value: the stolen EOA keeps
 its on-chain authority until both are explicitly revoked —
 `revokeRole(KEEPER_ROLE, …)` per chain AND
-`setRewardRemittanceKeeper(…)` on Base. The row below carries the
+`setRewardRemittanceKeeper(…)` on Base. `setKeepersPaused(true)`
+stops both authorities at once (#1638) and is the fastest first move,
+but it is a pause, not a revocation: unpausing hands the stolen EOA its
+powers back. The row below carries the
 full sequence; an earlier revision of this lead-in classified the
 whole section as "never on-chain protocol authority", which is
 exactly the assumption that would leave the attacker authorized

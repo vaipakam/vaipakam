@@ -1796,6 +1796,7 @@
     "L|vaipakam|692|8|uint16|saleFloorCfg.cushionBps",
     "L|vaipakam|696|0|address|protocolRegistry",
     "L|vaipakam|6|0|address|allowanceTarget",
+    "L|vaipakam|700|0|uint256|buybackVpfiFloorReserved",
     "L|vaipakam|7|0|address|retiredNumeraireChainlinkDenominator",
     "L|vaipakam|80|0|address|retiredSequencerUptimeFeed",
     "L|vaipakam|85|0|uint256|activeLoansCount",

@@ -204,6 +204,11 @@ interface IVaipakamErrors {
     error KYCRequired();
     error CountriesNotCompatible();
     error KeeperAccessRequired();
+    /// @notice #1638 — the global keeper pause (`AdminFacet.setKeepersPaused`)
+    ///         is on, so a `KEEPER_ROLE` entry point refuses. Raised by
+    ///         {LibAuth.requireActiveKeeper}, the one gate every such entry
+    ///         point uses.
+    error KeepersPaused();
     error KeeperAlreadyApproved();
     error KeeperNotApproved();
     error KeeperWhitelistFull();

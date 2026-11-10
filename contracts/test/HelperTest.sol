@@ -1573,7 +1573,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](45);
+        selectors = new bytes4[](46);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -1626,6 +1626,7 @@ contract HelperTest {
         selectors[42] = TreasuryFacet.setKeeperRewardEnabled.selector;
         selectors[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
         selectors[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
+        selectors[45] = TreasuryFacet.getBuybackTopUpHeadroom.selector; // #908
         // #687-C: former selectors[56] getKeeperRewardTwapMaxAgeSec relocated to [23].
         return selectors;
     }

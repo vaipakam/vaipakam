@@ -10,6 +10,8 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 
 /// @title RewardCommitmentTest
 /// @notice #1222 M3 B2-c/B2-d1 — the reward-mesh commitment REPORT end to end:
@@ -525,6 +527,36 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         vm.expectRevert();
         _com().submitCommitmentBatch(DAY, 0, none);
+    }
+
+    /// @dev #1638 — the global keeper pause refuses a commitment batch (the
+    ///      switch must stop every KEEPER_ROLE entry), moves no cursor, and the
+    ///      same batch goes through once the pause lifts.
+    function test_mirror_keepersPaused_refusesBatch_thenResumes() public {
+        _configureMirror();
+        _armAndStamp();
+        _localClose();
+        (uint256 e1, uint256 e2, uint256 e3) = _seedLenderDemand();
+
+        AdminFacet(address(diamond)).setKeepersPaused(true);
+        vm.expectRevert(IVaipakamErrors.KeepersPaused.selector);
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e1));
+
+        // A non-keeper still sees the role error, paused or not.
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector,
+                alice,
+                LibAccessControl.KEEPER_ROLE
+            )
+        );
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e1));
+
+        AdminFacet(address(diamond)).setKeepersPaused(false);
+        // The refused batch left the cursor where it was: e1 is still next.
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e1));
+        _com().submitCommitmentBatch(DAY, 0, _ids2(e2, e3));
     }
 
     function test_mirror_readiness_requiresMirrorAndWiring() public {

@@ -8268,6 +8268,16 @@ library LibVaipakam {
         ///      `LibOfferPriceGuard`, read at every fill of the offer.
         ///      Appended — append-only.
         mapping(uint256 => OfferPriceGuard) offerPriceGuard;
+        /// @dev #908 — the reward-emissions + keeper top-up headroom held for
+        ///      the VPFI floors of every pending buyback order: the sum, over
+        ///      pending orders, of `minVpfiOut` less what the order has
+        ///      already delivered (never below zero). A commit is refused
+        ///      unless the free headroom covers its floor, a fill may use
+        ///      only its own floor plus free headroom, and a target may not
+        ///      be lowered below what is held, so every committed order can
+        ///      always settle at its floor. Written only by
+        ///      `LibTreasuryBuyback`. Appended — append-only.
+        uint256 buybackVpfiFloorReserved;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
