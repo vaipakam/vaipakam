@@ -15,6 +15,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibClaimWork} from "../src/libraries/LibClaimWork.sol";
+import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
@@ -283,5 +284,63 @@ contract RewardClaimWorkMeterTest is SetupTest {
     function _assertWaits(uint256 id) internal view {
         (, , , , , bool capHit, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(id);
         assertTrue(capHit, "outside the snapshot while the domain stands: not the next claim's");
+    }
+
+    // ───────────────────────── the claim window ─────────────────────────
+
+    function _window() internal view returns (uint256 from, uint256 to, uint256 total) {
+        return InteractionRewardsLensFacet(address(diamond)).getRewardClaimWindow(alice);
+    }
+
+    /// @dev A wallet with no more entries than the window reads them all, and
+    ///      its window never moves.
+    function test_ASmallWallet_TheWindowIsTheWholeIndex() public {
+        _scene(40, 1);
+        (uint256 from, uint256 to, uint256 total) = _window();
+        assertEq(from, 0);
+        assertEq(to, 40);
+        assertEq(total, 40);
+    }
+
+    /// @dev A wallet with more entries than the window: each claim reads one
+    ///      window of its index, so what one claim reads is bounded; the window
+    ///      moves on after each claim and comes back to the start, so every
+    ///      entry is reached and paid once.
+    function test_AWalletOverTheWindow_IsServedWindowByWindow_EveryEntryOnce() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        uint256 n = 2 * w + 10;
+        uint256[] memory ids = _scene(n, 1, type(uint256).max);
+        (uint256 from, uint256 to, uint256 total) = _window();
+        assertEq(from, 0);
+        assertEq(to, w, "the first claim reads one window");
+        assertEq(total, n);
+
+        assertTrue(_claimOnce());
+        uint256 reach = LibClaimWork.freshWalkCapacity();
+        assertEq(_processedCount(ids), reach, "the meter's reach, inside the window");
+        uint256 share = vpfi.balanceOf(alice) / reach;
+        // The settled entries left the index, and the window moved on.
+        (from, to, total) = _window();
+        assertEq(total, n - reach, "the window's settled entries retired");
+        assertEq(from, w, "the next claim reads the next window");
+        assertEq(to, total < 2 * w ? total : 2 * w);
+
+        uint256 calls = 1 + _claimUntilDone(32);
+        assertLe(calls, 16);
+        assertEq(_processedCount(ids), n, "every entry reached and settled");
+        assertEq(vpfi.balanceOf(alice), n * share, "every entry paid its share, once");
+        (from, to, total) = _window();
+        assertEq(total, 0, "the index is empty");
+    }
+
+    /// @dev An entry outside the window is not the next claim's: its expiry
+    ///      clock waits (`capHit`) until a claim's window reaches it.
+    function test_AnEntryOutsideTheWindow_ItsClockWaits() public {
+        uint256 w = LibInteractionRewards.CLAIM_WINDOW_ENTRIES;
+        uint256[] memory ids = _scene(w + 20, 1, type(uint256).max);
+        (, , , , , bool capIn, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(ids[0]);
+        (, , , , , bool capOut, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(ids[w + 5]);
+        assertFalse(capIn, "inside the window and the meter's reach");
+        assertTrue(capOut, "outside the window: not the next claim's");
     }
 }

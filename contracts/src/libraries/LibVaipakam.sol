@@ -8226,6 +8226,15 @@ library LibVaipakam {
         ///      `numeraireSymbol` from the guard. No price setting lives in
         ///      this storage. Appended — append-only.
         address protocolRegistry;
+        /// @dev #1787 — per wallet, the first position of the CLAIM WINDOW in
+        ///      `userRewardEntryIds[user]`: the at most
+        ///      `LibInteractionRewards.CLAIM_WINDOW_ENTRIES` entries the next
+        ///      claim reads. A wallet with no more entries than that reads them
+        ///      all and keeps 0 here. Written only by
+        ///      `LibInteractionRewards.retireAndAdvanceClaimWindow`, at the end of each
+        ///      claim; a value at or past the list's length reads as 0.
+        ///      Appended — append-only.
+        mapping(address => uint256) rewardClaimWindowStart;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
