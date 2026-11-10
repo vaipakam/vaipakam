@@ -2287,7 +2287,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31); // #3012 +getRewardEntrySettlementProgress +getStagingRecordMark
+        selectors = new bytes4[](32); // #1787 +getRewardClaimWindow
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2325,6 +2325,7 @@ contract HelperTest {
         selectors[28] = InteractionRewardsLensFacet.getUserSoonestRewardExpiry.selector; // #2489 r16: the on-chain soonest deadline over a page
         selectors[29] = InteractionRewardsLensFacet.getRewardEntrySettlementProgress.selector; // #3012: an entry's settlement progress
         selectors[30] = InteractionRewardsLensFacet.getStagingRecordMark.selector; // #3012: a staging record's progress mark
+        selectors[31] = InteractionRewardsLensFacet.getRewardClaimWindow.selector; // #1787: the next claim's window
         return selectors;
     }
 

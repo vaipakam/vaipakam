@@ -91,8 +91,9 @@ handover rotates it there before ownership leaves the admin (a testnet deployed
 without a Pauser Safe starts with the admin as guardian).
 
 **Every change waits a delay the Safe can veto.** That covers adds, replaces
-and removals alike. The delay is bounded at 1–14 days on a production chain and
-defaults to 3 days. A testnet chain (`TestnetChains`) may set 0, so the mock
+and removals alike. The delay is bounded at 7–14 days on a production chain and
+defaults to 7 days, the same floor as the price guard that reads these feeds and
+the vault code delay (owner decision 2026-11-10). A testnet chain (`TestnetChains`) may set 0, so the mock
 rig can register its feeds in the same transaction batch.
 
 There is no instant removal. Unpricing a collateral asset stops health-factor

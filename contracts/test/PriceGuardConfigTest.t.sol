@@ -128,22 +128,28 @@ contract PriceGuardConfigTest is Test {
 
     // ─── Delay bounds ────────────────────────────────────────────────────
 
-    function test_AProductionChainHoldsTheDelayBetweenOneAndFourteenDays() public {
+    /// @dev The production floor matches the vault code delay (owner
+    ///      decision 2026-11-10): no price setting applies sooner than a vault
+    ///      code change could.
+    function test_AProductionChainHoldsTheDelayBetweenSevenAndFourteenDays() public {
         vm.chainId(1);
         PriceGuard.Change[] memory none;
-        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 0, 1 days, 14 days));
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 0, 7 days, 14 days));
         _new(owner, guardian, _identity(), 0, none);
-        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 15 days, 1 days, 14 days));
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 7 days - 1, 7 days, 14 days));
+        _new(owner, guardian, _identity(), 7 days - 1, none);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 15 days, 7 days, 14 days));
         _new(owner, guardian, _identity(), 15 days, none);
-        PriceGuard g = _new(owner, guardian, _identity(), 1 days, none);
+        PriceGuard g = _new(owner, guardian, _identity(), 7 days, none);
         assertFalse(g.TESTNET());
+        assertEq(g.MIN_DELAY(), 7 days);
 
         // Lowering below the floor is refused at proposal.
         vm.prank(owner);
-        g.raiseDelay(3 days);
+        g.raiseDelay(10 days);
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 12 hours, 1 days, 14 days));
-        g.proposeChange(PriceGuard.Kind.Delay, bytes32(0), bytes32(uint256(12 hours)));
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.DelayOutOfRange.selector, 3 days, 7 days, 14 days));
+        g.proposeChange(PriceGuard.Kind.Delay, bytes32(0), bytes32(uint256(3 days)));
     }
 
     function test_ATestnetMaySetNoDelay() public {
@@ -548,7 +554,7 @@ contract PriceGuardConfigTest is Test {
     /// @dev Whatever the timing, a change applies exactly when its delay has
     ///      passed and never before.
     function testFuzz_AChangeAppliesOnlyOnceItsDelayHasPassed(uint64 delay_, uint64 wait, uint16 bps) public {
-        delay_ = uint64(bound(delay_, 1 days, 14 days));
+        delay_ = uint64(bound(delay_, 7 days, 14 days));
         wait = uint64(bound(wait, 0, 20 days));
         bps = uint16(bound(bps, 100, 2000));
         vm.chainId(1);

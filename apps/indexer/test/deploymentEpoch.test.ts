@@ -78,7 +78,11 @@ function seedEveryChainScopedTable(h: ReturnType<typeof createSqliteD1>, tables:
         }
         if (c.nn === 1 && c.d === null && !(c.pk === 1 && /INT/i.test(c.type))) {
           names.push(c.name);
-          values.push(enumFor.get(c.name) ?? (/INT|REAL|NUM/i.test(c.type) ? 1 : `seed-${chain}`));
+          // A column the DDL pins to a 42-character address (asset_ranking,
+          // #3446) gets a lowercase per-chain address: `INSERT OR IGNORE`
+          // would otherwise drop the row on the CHECK without a word.
+          const address = new RegExp(`length\\(${c.name}\\)\\s*=\\s*42`).test(ddl) ? `0x${chain.toString(16).padStart(40, '0')}` : null;
+          values.push(enumFor.get(c.name) ?? address ?? (/INT|REAL|NUM/i.test(c.type) ? 1 : `seed-${chain}`));
         }
       }
       try {

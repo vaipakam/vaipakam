@@ -335,6 +335,18 @@ const CLASSIFICATION = {
       'within 10 minutes, and §6 clears it while the keeper is stopped, so a forged lease cannot ' +
       'hold the restored keeper off',
   },
+  asset_ranking: {
+    class: 'replay-derived',
+    reason:
+      'public market-cap rankings (#3446), refetched whole by the keeper\'s daily assetRankings pass; ' +
+      'cleared WITH asset_ranking_run, which makes every source and chain due on the next hourly run',
+  },
+  asset_ranking_run: {
+    class: 'replay-derived',
+    reason:
+      'the assetRankings pass\'s per-source, per-chain run record (#3446), cleared WITH asset_ranking; ' +
+      'an empty record makes every pair due, so the pass refetches rather than trusting a restored row',
+  },
 };
 
 // Tables written by tooling/infra, not domain state.

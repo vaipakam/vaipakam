@@ -2067,11 +2067,15 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 各トークンの区分はその場で読み取ります。まず `getAssetPriceStatus(asset)`（Divergent は信頼されていないと読み、新規ローンを止めます）、次に `checkLiquidityOnActiveNetwork(asset)`（0 は流動、1 は非流動）。`OraclePriceDivergence` または `OracleCrossCheckDivergence` での revert は信頼されていないと読み、それ以外の失敗は理由とともに読み取り不能と表示します。提案リストはデプロイ記録のラップドネイティブトークンとテストトークンで、貼り付けたアドレスは形式のみ確認します。
 
+信頼階層はインデックスから `GET /assets/rankings?chainId=<token chain>` を読みます。インデックスは keeper が毎日取得する2つの公開時価総額リスト（各上位500）を提供し、アドレスごとに各リストの順位・名前・シンボルを1件にまとめ、各リストの `listFetchedAt` と最後の実行結果も返します。アプリは小文字のアドレスをキーにし、リスト間で最も良い順位を採ります。順位 ≤ 20 で `getAssetPriceStatus(asset)` が priced ならブルーチップ、次に ≤ 100、200、300、500 です。別のリストが同じシンボルを別のアドレスに載せ、どちらのリストも両方のアドレスを載せていない場合、そのトークンは未確認になります。ランク外のトークンで `symbol()` か `name()` がランク入りのシンボルや名前と一致するものはコピーの可能性、それ以外はランク外です。デプロイ記録のテストトークンはテストと表示され、保存済みリストのないチェーンはテストネットではテストネットワーク、メインネットではリストなしとして扱われます。`listFetchedAt` より後に失敗した `lastRun` は明示されます。階層は表示のみで、オンチェーンの扱いは何も変えません。検索はランク入りのシンボルと名前を部分一致で照合し、最良順位を先に、その後に推奨トークンをシンボルで並べます。`0x` で始まる文字列はアドレスとして解釈されます。
+
 <a id="borrow-offers"></a>
 
 ### Borrow: オファーを選ぶ
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` がペアの公開オファー ID と総数を返します。各 ID について `getOffer`、`getOfferState`、ウォレットがあれば `previewAccept(offerId, wallet)` を読みます。その `errorCode` がプロトコルの拒否理由です。ローン・トゥ・バリューは現在価格での `calculateLTV` で、非流動または価格のない側はない理由を示します。直接の受諾は貸し手の `amountMax` を `interestRateBps` で拘束します。借入リクエスト、NFT の側を持つオファー、自分のオファーは数えますが一覧には出しません。
+
+アプリは受諾が拘束する金利（`interestRateBps`）で行をまとめ、低い順に並べます。段の中ではリストの順序を保ちます。最高金利と、Advanced での最高ローン・トゥ・バリューは読み取った行を絞り込むだけです。`calculateLTV` が数値でない行は残し、数に含めます。待機中の貸し手の行は `getActiveLenderIntents(offset, 50)` を最大四ページ読み、ペアのインテントを残し、それぞれ `availableCapital` と `maxExposure` から `livePrincipal` を引いた値の小さい方を取り、`minFillAmount` を下回るものは除きます。数、単独で最大の値、最低の `minRateBps` を示し、Advanced では最大の `maxDurationDays` と `maxInitLtvBps` も示します。マッチングサービスはこれらの上限内でのみインテントでリクエストを成立させるため、成立は保証されません。 この行には`getPartialFillEnabled`と`isLenderIntentEnabled`の両方がtrueであることが必要で、リストの各ページと同じブロックで読み取ります。どちらかがfalseなら、それらに対してリクエストは約定しないとページは示し、どちらかを読み取れなければ、それは分からないと示します。再読み取りに失敗した場合は前回の結果を残し、変わっている可能性があると示します。 `owner`が接続中のアカウントであるintentは除外されます(自分自身とのマッチはself-tradeとして拒否されます)。すべてのintent約定はリクエストの`useFullTermInterest`も必要とし、`allowsPartialRepay`を拒否します(`LenderIntentFullTermRequired`、`LenderIntentPartialRepayNotAllowed`)。この方法は両方を示し、リクエストフォームはどちらかを満たさない選択を、約定の見込みの代わりに示します。`keepersPaused()`も同じブロックで読み取ります。trueの間はプロトコルのマッチングサービスは何も約定させないため、ページは成立の見込みの代わりにそれを示し、貸し手は自分のintentから約定させられること、`requiresKeeperAuth`のないintentは誰でも約定させられることを添えます。読み取れなければ、それは分からないと示します。intentでの約定には、リクエストの`periodicInterestCadence`がなしであることも必要です。intentのスライスはスケジュールを持たず、マッチングはライフサイクル条件の異なる組み合わせを拒否するためです（`LifecycleTermsMismatch`）。リクエストフォームは、スケジュールを選ぶと成立の見込みの代わりにそれを示します。`requiresKeeperAuth`を持つintentは別に集計・表示され、成立の見込みの行は決して適用されません。約定させられるのは貸し手か、貸し手が`KEEPER_ACTION_SIGNED_FILL`を許可したsolverだけで、マッチングサービスがその許可を持つかは読み取らないため、ページは分からないと示します。判定は同じブロックで`paused()`と`aggregatorAdaptersPaused()`も読み取ります。全体の一時停止は他のどの条件よりも優先され、停止中と表示されます。アグリゲーターが一時停止中は、各所有者をそのブロックで`isAggregatorAdapter`により確認し、`matchIntent`が拒否するためそのintentを除外します。確認が読み取れない場合、判定は不明になります。
 
 <a id="borrow-review"></a>
 
@@ -2231,6 +2235,8 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 サイドの選択は、支払い・進行中・終了の各行を保有サイドで絞り込みます。「何もない」と表示するのは、ポジションと支払いのたどりが両方完了し、最新の読み取りが成功したときだけです。上限で止まったたどりは不完全と表示します。行は `/positions/<id>` を開き、そこで適格性の判定が各操作を決めます。一覧はトランザクションを送りません。
 
+サイドを選んだ後に進行中の行が2件以上あるときは、最初にまとめカードが表示されます。サイドごとに、ERC-20の`principalAsset`ごとに`principal`を合計し、トークンをまたいで合算することはありません(価値の比較はエクスポージャーの行が担います)。元本がNFTの行はレンタルとして件数で数えます。次の日付は、各行が使うステージのうちまだ来ていない最も早いものです。進行中または期日間近の満期(返済)、または次の定期チェックポイント(利息)で、同じ日付ならローンIDの小さい方を取ります。猶予期間が終わったローン(満期またはチェックポイントで)、猶予期間中のローン、FallbackPendingのローンはIDで列挙され、それぞれ最も深刻なステージの下に一度だけ表示されます。期限を読み取れなかったローンは件数で数えます。利息は含まれません。カードはリスト自身の読み取りだけを使い、走査が途中で止まった場合はそう示します。NFT元本の行の満期はレンタルの終了（`rental-close`）であり、返済ではありません。レンタルは前払い賃料で終了するため、サマリーも各行と同じ呼び方をします。
+
 <a id="position"></a>
 
 ### Position: ローンの読み方
@@ -2248,6 +2254,8 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、借り手ポジションの開いているルートが `SwapToRepayIntent` の間も止まります（Diamond 上の `positionRoute(borrowerTokenId)`。#3205 より前のデプロイメントでは `positionLock(borrowerTokenId)`）。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
 
 確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、返済がローンを残した状態をその `LoanRepaid` ログから読み（ブロック時点の状態ではありません。同じブロックの後続の請求で既に清算済みになっている場合があるためです）、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。その数値を超える allowance（無制限を含む）も同じ数値まで下げます。`repayLoan(loanId)` には上限も期限もないためです。戻す処理では、その後に元の大きい値に戻します。
+
+猶予期間中（`getLoanDeadlines` による `maturity ≤ now ≤ graceEnd`）、全額返済と一部返済の確認画面はチェーンの時計で `graceEnd` までカウントダウンします。チェーンの時刻は、確認画面が読んだブロックのタイムスタンプにその後の経過秒数を足して推定します。`block.timestamp > graceEnd` になると `repayLoan` と `repayPartial` は `RepaymentPastGracePeriod` でリバートし、以後 `triggerDefault` は誰でも呼べるため、遅れた返済はデフォルトと競争になります。残り1時間以下では、今すぐ送るよう表示します。表示のみであり、送信前に読み直す判定がゲートです。一時停止は `graceEnd` を後ろへずらします。ブロックを埋めて返済を猶予期間後まで遅らせる攻撃は、脅威モデルで許容する低リスクとして記録しています。
 
 <a id="interest-schedule"></a>
 

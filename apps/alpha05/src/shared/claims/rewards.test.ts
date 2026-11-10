@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, parseAbi, type Log } from 'viem';
-import { claimRecord, deliveryOutcome, inFinalNotice, moreRemains, pendingFromRevert, revertOf, soonestFrom, vpfiArrivals, type ExpiryPage } from './rewards';
+import { claimRecord, deliveryOutcome, inFinalNotice, moreRemains, onlyMovesOn, pendingFromRevert, readsPartOfEntries, revertOf, soonestFrom, vpfiArrivals, type ExpiryPage } from './rewards';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
 const ME = '0x00000000000000000000000000000000000000a1' as const;
@@ -104,6 +104,30 @@ describe('moreRemains', () => {
     expect(moreRemains(exact(0n, 31n, 35n, 100n), 100n)).toBe(true);
     expect(moreRemains({ kind: 'none' }, 100n)).toBe(false);
     expect(moreRemains(null, 100n)).toBe(false);
+  });
+  it('does not offer a zero that only moves the claim on to the next part of the entries (#1787)', () => {
+    const part = { from: 0n, to: 128n, total: 300n };
+    expect(moreRemains({ ...exact(0n, 0n, 0n, 100n), window: part }, 100n)).toBe(false);
+    expect(moreRemains({ ...exact(5n, 0n, 0n, 100n), window: part }, 100n)).toBe(true);
+    // A window that is the whole index keeps the zero's old meaning.
+    expect(moreRemains({ ...exact(0n, 31n, 35n, 100n), window: { from: 0n, to: 90n, total: 90n } }, 100n)).toBe(true);
+  });
+});
+
+describe('the claim window (#1787)', () => {
+  const exact = (amount: bigint, window?: { from: bigint; to: bigint; total: bigint }) => ({ kind: 'exact' as const, amount, fromDay: 0n, toDay: 0n, atBlock: 1n, ...(window ? { window } : {}) });
+  it('reads part of the entries only when the window is shorter than the index', () => {
+    expect(readsPartOfEntries(exact(1n, { from: 128n, to: 256n, total: 300n }))).toBe(true);
+    expect(readsPartOfEntries(exact(1n, { from: 256n, to: 300n, total: 300n }))).toBe(true);
+    expect(readsPartOfEntries(exact(1n, { from: 0n, to: 128n, total: 128n }))).toBe(false);
+    expect(readsPartOfEntries(exact(1n))).toBe(false);
+    expect(readsPartOfEntries({ kind: 'none' })).toBe(false);
+  });
+  it('names a zero over part of the entries as only moving on', () => {
+    expect(onlyMovesOn(exact(0n, { from: 0n, to: 128n, total: 129n }))).toBe(true);
+    expect(onlyMovesOn(exact(2n, { from: 0n, to: 128n, total: 129n }))).toBe(false);
+    expect(onlyMovesOn(exact(0n))).toBe(false);
+    expect(onlyMovesOn(null)).toBe(false);
   });
 });
 

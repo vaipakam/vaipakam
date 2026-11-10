@@ -36,6 +36,10 @@ export interface Payoff {
   now: bigint;
   /** The latest block's time (unix seconds). */
   chainNow: bigint;
+  /** When `chainNow` was read, in unix milliseconds: the pair a clock
+   *  estimates the chain's time from. A refresh that keeps the review's own
+   *  read time still carries the new pair here. */
+  chainReadAt: number;
   /** The protocol's figure as of `by`. */
   atBy: bigint;
   /** The moment `atBy` is read for (unix seconds). */
@@ -70,10 +74,11 @@ export async function readPayoffAt(client: PublicClient, diamond: Hex, loanId: b
 export async function readPayoff(client: PublicClient, diamond: Hex, loanId: bigint, cap: bigint | null): Promise<Payoff> {
   // The figure "now" is read at the block whose time is stated with it.
   const block = await client.getBlock({ blockTag: 'latest' });
+  const chainReadAt = Date.now();
   const now = (await client.readContract({ address: diamond, abi: REPAY, functionName: 'calculateRepaymentAmount', args: [loanId], blockNumber: block.number })) as bigint;
   const chainNow = block.timestamp;
   const ahead = chainNow + BigInt(PAYOFF_WINDOW_SECONDS);
   const by = cap !== null && cap < ahead ? (cap > chainNow ? cap : chainNow) : ahead;
   const atBy = by === chainNow ? now : await readPayoffAt(client, diamond, loanId, by);
-  return { now, chainNow, atBy, by };
+  return { now, chainNow, chainReadAt, atBy, by };
 }

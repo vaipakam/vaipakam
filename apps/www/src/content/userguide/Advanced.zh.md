@@ -1800,11 +1800,15 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 每种代币的类别实时读取：先读 `getAssetPriceStatus(asset)`（Divergent 视为不受信任并关闭新贷款），再读 `checkLiquidityOnActiveNetwork(asset)`（0 为有流动性，1 为无流动性）。以 `OraclePriceDivergence` 或 `OracleCrossCheckDivergence` 回滚视为不受信任；其他任何失败都显示为无法读取并附上原因。推荐列表为部署记录中的包装原生代币和测试代币；粘贴的地址只检查格式。
 
+信任等级从索引读取 `GET /assets/rankings?chainId=<token chain>`，索引提供 keeper 每日抓取的两份公开市值列表（各取前 500 名）：每个地址一条记录，包含每份列表的排名、名称和符号，以及每份列表的 `listFetchedAt` 和上次运行情况。应用以小写地址为键，取各列表中的最佳排名：排名 ≤ 20 且 `getAssetPriceStatus(asset)` 为已定价时为蓝筹，其后为 ≤ 100、200、300 和 500。如果另一份列表把同一符号排在另一个地址上，且没有任何列表同时排名这两个地址，该代币即为未验证；未排名代币的 `symbol()` 或 `name()` 与已排名的符号或名称相同时，为可能的仿冒；其余为未排名。部署记录中的测试代币标注为测试；没有存储列表的链在测试网上显示为测试网络，在主网上显示为无列表。在 `listFetchedAt` 之后失败的 `lastRun` 会被说明。等级仅用于显示，不改变任何链上处理。搜索按子串匹配已排名的符号和名称，最佳排名在前，然后按符号匹配推荐代币；以 `0x` 开头的文本则按地址解析。
+
 <a id="borrow-offers"></a>
 
 ### Borrow: 选择报价
 
 `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 返回该交易对的公开报价 id 和总数。对每个 id，页面读取 `getOffer`、`getOfferState`，有钱包时还读取 `previewAccept(offerId, wallet)`，其中 `errorCode` 即协议的拒绝原因。贷款价值比为按今日价格计算的 `calculateLTV`；无流动性或无价格的一侧会说明为何没有。直接接受按出借人的 `amountMax` 和 `interestRateBps` 绑定。借款请求、带 NFT 一侧的报价和自己的报价只计数，不列出。
+
+应用按接受时绑定的利率（`interestRateBps`）对行分组，最低的在前；同一档内保持列表顺序。最高利率以及 Advanced 模式下的最高贷款价值比只筛选已读取的行；`calculateLTV` 不是数值的行会保留并计数。待命出借人一行读取 `getActiveLenderIntents(offset, 50)`，最多四页，保留该币对的意向，并对每个意向取 `availableCapital` 与 `maxExposure` 减 `livePrincipal` 中较小者，低于 `minFillAmount` 的意向被剔除。它显示数量、最大的单个数值和最低的 `minRateBps`，Advanced 模式下还显示最高的 `maxDurationDays` 和 `maxInitLtvBps`。撮合服务只在这些限制内用某个意向成交请求，因此成交并无保证。 这一行要求 `getPartialFillEnabled` 和 `isLenderIntentEnabled` 都为 true，并与列表每一页在同一区块读取；任一为 false 时，页面会说明不会针对它们成交任何请求；任一未能读取时，页面会说明这一点未知。重新读取失败时会保留上一次的结果，并说明它可能已经变化。 `owner` 为当前连接账户的 intent 会被剔除（与自己撮合会作为 self-trade 被拒绝）。每次 intent 成交还要求请求的 `useFullTermInterest`，并拒绝 `allowsPartialRepay`（`LenderIntentFullTermRequired`、`LenderIntentPartialRepayNotAllowed`）；该方式说明了这两点，请求表单会在不满足其一的选项下以说明代替“可能成交”。`keepersPaused()` 也在同一区块读取：只要它为 true，协议的撮合服务就不会成交任何请求，因此页面会以此替代“很可能成交”的说法，并补充说明出借人仍可用自己的 intent 成交，且任何成交方都可成交未设置 `requiresKeeperAuth` 的 intent；未能读取时，页面会说明这一点未知。intent 成交还要求请求的 `periodicInterestCadence` 为无，因为 intent 的切片不带付息计划，而撮合会拒绝生命周期条款不一致的配对（`LifecycleTermsMismatch`）；请求表单会以所选计划替代“很可能成交”的说法。设置了 `requiresKeeperAuth` 的 intent 会单独汇总和列出，且从不对其使用“很可能成交”的说法：只有出借人或其为 `KEEPER_ACTION_SIGNED_FILL` 授权的 solver 才能成交，而撮合服务是否持有该授权不会被读取，因此页面会说明这一点未知。该判断还会在同一区块读取 `paused()` 和 `aggregatorAdaptersPaused()`：全局暂停优先于其他所有条件，并显示为已停止；聚合器暂停期间，会在该区块用 `isAggregatorAdapter` 检查每个不同的所有者，并剔除其 intent，因为 `matchIntent` 会拒绝它们；若检查未能读取，判断即为未知。
 
 <a id="borrow-review"></a>
 
@@ -1964,6 +1968,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 方向选择按所持一方筛选待领款项、进行中和已结束的行。只有当仓位遍历和待领款项遍历都已完成且最新读取成功时，才会显示“没有”；在上限处停止的遍历会标明不完整。每一行打开 `/positions/<id>`，由资格判定决定每项操作；列表不发送任何交易。
 
+按方向筛选后若有两行或更多进行中的贷款，页面最前面会先显示一张汇总卡片。它按每一方、按每个 ERC-20 `principalAsset` 分别汇总 `principal`，从不跨代币相加（价值比较留给敞口那一行），并把本金为 NFT 的行计为租赁。下一个日期取各行所用阶段中最早且尚未到来的那个：进行中或即将到期的到期日（还款），或即将到来的周期检查点（利息）；日期相同时取贷款 id 较小者。宽限期已结束的贷款（在到期日或某个检查点上）、处于宽限期的贷款以及 FallbackPending 贷款按 id 列出，每笔只在其最严重的阶段下出现一次；期限未能读取的贷款会被计数。利息不包含在内。卡片只使用列表自身的读取结果，并会说明遍历不完整。NFT 本金行的到期是租赁结束（`rental-close`），而不是还款：租赁以预付租金结束，因此摘要与各行的称呼一致。
+
 <a id="position"></a>
 
 ### Position：贷款如何读取
@@ -1981,6 +1987,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），借款人仓位的开放路径为 `SwapToRepayIntent` 期间也暂停（Diamond 上的 `positionRoute(borrowerTokenId)`，#3205 之前的部署则为 `positionLock(borrowerTokenId)`）。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
 
 确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，从其 `LoanRepaid` 日志读取还款使贷款所处的状态（而非该区块的状态，同一区块中随后的领取可能已将其结清），根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。高于该数字的 allowance（包括无限额度）同样会降到这个数字，因为 `repayLoan(loanId)` 不设上限也不设期限；之后的恢复会还原原来的较大值。
+
+在宽限期内（`getLoanDeadlines` 给出的 `maturity ≤ now ≤ graceEnd`），全额与部分还款的审核会按链上时钟倒计时到 `graceEnd`，链上时间以审核读取的区块时间戳加上此后经过的秒数估算。一旦 `block.timestamp > graceEnd`，`repayLoan` 与 `repayPartial` 会以 `RepaymentPastGracePeriod` 回滚，此后任何人都可调用 `triggerDefault`，因此迟到的还款会与违约竞速。剩余一小时或更少时，倒计时提示立即发送。它只作说明：发送前重新读取的判定才是门槛，暂停会把 `graceEnd` 推后。通过塞满区块把还款拖过宽限期，已在威胁模型中记录为可接受的低风险。
 
 <a id="interest-schedule"></a>
 

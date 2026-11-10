@@ -988,7 +988,11 @@ library LibInteractionRewards {
         _removeUserEntry(s, oldUser, id);
         s.userRewardEntryIds[newUser].push(id);
         // #1067 — maintain the O(1) membership index on the newUser push.
-        s.rewardEntryUserIdx[id] = s.userRewardEntryIds[newUser].length;
+        uint256 newLen = s.userRewardEntryIds[newUser].length;
+        s.rewardEntryUserIdx[id] = newLen;
+        // #1787 — the entry joins the holder's index, perhaps inside its claim
+        // window: no interval observed before now may count toward its expiry.
+        if (newLen > CLAIM_WINDOW_ENTRIES) _noteClaimWindowChange(s, newUser);
         e.user = newUser;
         // Per-loan pointer already references `id`; sweep + per-user claim now
         // resolve to `newUser`.
@@ -1073,6 +1077,17 @@ library LibInteractionRewards {
         }
         ids.pop();
         s.rewardEntryUserIdx[id] = 0;
+        // #1787 — a swap-pop on an index longer than one window can move the
+        // tail into the claim window, and a shrink can make the window the
+        // whole index: either changes which entries the window holds. Once
+        // the index fits one window, the window starts at 0 again, so it
+        // cannot jump when the index next grows past one window.
+        if (n > CLAIM_WINDOW_ENTRIES) {
+            _noteClaimWindowChange(s, user);
+            if (lastIdx <= CLAIM_WINDOW_ENTRIES && s.rewardClaimWindowStart[user] != 0) {
+                s.rewardClaimWindowStart[user] = 0;
+            }
+        }
     }
 
     /// @dev Codex #2489 r16 — THE live predicate for a reward entry, shared by
@@ -1085,16 +1100,113 @@ library LibInteractionRewards {
         return !e.processed && !e.expiryBegun;
     }
 
+    // ─── #1787 claim window ─────────────────────────────────────────────────
+
+    /// @notice #1787 — the most of a wallet's indexed reward entries one claim
+    ///         reads. Every per-wallet walk a claim makes (the legacy slices,
+    ///         the armed worklists, the cursor advance, the funding and forfeit
+    ///         sums, the previews) reads only the CLAIM WINDOW, so what a claim
+    ///         costs no longer grows with the number of entries a wallet holds
+    ///         (each costs about 18k gas to scan). A wallet with no more entries
+    ///         than this reads them all, exactly as before.
+    uint256 internal constant CLAIM_WINDOW_ENTRIES = 128;
+
+    /// @notice #1787 — the claim window moved: the next claim of `user` reads
+    ///         index positions from `start` (of `total`).
+    /// @custom:event-category state-change/reward-entry
+    event RewardClaimWindowAdvanced(address indexed user, uint256 start, uint256 total);
+
+    /// @notice #1787 — `user`'s claim window: index positions `[from, to)` of
+    ///         `userRewardEntryIds[user]`, the entries its next claim reads.
+    /// @dev    A stored start at or past the list's end (the list shrank since)
+    ///         reads as 0. The window never wraps: the last one of a cycle may
+    ///         be shorter, and the next starts again at 0.
+    function claimWindow(LibVaipakam.Storage storage s, address user)
+        internal
+        view
+        returns (uint256 from, uint256 to)
+    {
+        uint256 n = s.userRewardEntryIds[user].length;
+        if (n <= CLAIM_WINDOW_ENTRIES) return (0, n);
+        from = s.rewardClaimWindowStart[user];
+        if (from >= n) from = 0;
+        to = from + CLAIM_WINDOW_ENTRIES;
+        if (to > n) to = n;
+    }
+
+    /// @notice #1787 — whether entry `id` sits in its user's claim window, so
+    ///         that the user's next claim reads it. An entry outside it is
+    ///         not that claim's: its expiry clock waits ({entryArmedNeedView}).
+    function inClaimWindow(LibVaipakam.Storage storage s, uint256 id) internal view returns (bool) {
+        uint256 idxPlus1 = s.rewardEntryUserIdx[id];
+        if (idxPlus1 == 0) return false;
+        (uint256 from, uint256 to) = claimWindow(s, s.rewardEntries[id].user);
+        return idxPlus1 > from && idxPlus1 <= to;
+    }
+
+    /// @notice #1787 — the claim's end: retire the settled entries of the
+    ///         window it read, then move the window on by one window's length,
+    ///         back to the start after the last. Every claim reads the next
+    ///         slice of the wallet's entries, so no entry waits on others that
+    ///         stay open: each is read once every `ceil(total / window)` claims.
+    ///         Bookkeeping only; moves no value.
+    ///         A moved window is the claim's progress even when the window it
+    ///         read paid nothing, so it marks `res.advancedAnyDay` and the
+    ///         claim stands instead of reverting: otherwise a window whose
+    ///         entries have nothing claimable yet would hold the window in
+    ///         place, and the entries beyond it, claimable or not, would never
+    ///         be read.
+    /// @param  res The claim's entry result, whose progress flag it sets.
+    function retireAndAdvanceClaimWindow(address user, ClaimEntriesResult memory res) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (uint256 from, ) = claimWindow(s, user);
+        // The start as this claim found it: retiring an entry can reset the
+        // stored start to zero (the index came to fit one window), and that
+        // reset is the window moving, so it is compared against here rather
+        // than read back afterwards (Codex #3487 r3).
+        uint256 start = s.rewardClaimWindowStart[user];
+        _retireSettledFrom(s, user, from, CLAIM_WINDOW_ENTRIES);
+        uint256 n = s.userRewardEntryIds[user].length;
+        uint256 next;
+        if (n > CLAIM_WINDOW_ENTRIES) {
+            next = from + CLAIM_WINDOW_ENTRIES;
+            if (next >= n) next = 0;
+        }
+        if (next != start) {
+            s.rewardClaimWindowStart[user] = next;
+            _noteClaimWindowChange(s, user);
+            emit RewardClaimWindowAdvanced(user, next, n);
+            res.advancedAnyDay = true;
+        }
+    }
+
+    /// @dev #1787 — record that `user`'s claim window may now hold different
+    ///      entries ({LibVaipakam.Storage.rewardClaimWindowChangedAt}).
+    function _noteClaimWindowChange(LibVaipakam.Storage storage s, address user) private {
+        if (s.rewardClaimWindowChangedAt[user] != block.timestamp) {
+            s.rewardClaimWindowChangedAt[user] = uint64(block.timestamp);
+        }
+    }
+
+    /// @notice #1787 — whether an executable observation of `user`'s entry
+    ///         taken at `obsAt` predates a change of the claim window. The
+    ///         entry may have been outside the window for part of the interval
+    ///         since, when it was not claimable, so the horizon sweep and its
+    ///         estimate credit none of it (they re-baseline, as across a
+    ///         pause). `<=`: a change in the observation's own block is
+    ///         ambiguous in order and is treated as spanned.
+    function claimWindowChangedSince(LibVaipakam.Storage storage s, address user, uint256 obsAt)
+        internal
+        view
+        returns (bool)
+    {
+        return obsAt <= uint256(s.rewardClaimWindowChangedAt[user]);
+    }
+
     /// @notice Codex #2489 r17 — `retired` SETTLED entries left `user`'s reward
     ///         entry index, which now holds `remaining` entries.
     /// @custom:event-category state-change/reward-entry
     event RewardEntryIndexCompacted(address indexed user, uint256 retired, uint256 remaining);
-
-    /// @dev Codex #2489 r17 — index positions a claim examines at its end (the
-    ///      claim has just settled every entry it could, so that is where
-    ///      settled entries appear). Bounded so a long history never makes the
-    ///      claim's gas grow; the permissionless compactor covers the rest.
-    uint256 internal constant CLAIM_INDEX_COMPACT_STEPS = 256;
 
     /// @notice Codex #2489 r17 ROOT — RETIRE `user`'s SETTLED entries from its
     ///         reward entry index: examine at most `maxSteps` positions from the
@@ -1119,8 +1231,18 @@ library LibInteractionRewards {
         address user,
         uint256 maxSteps
     ) internal returns (uint256 retired, uint256 remaining) {
+        return _retireSettledFrom(s, user, 0, maxSteps);
+    }
+
+    /// @dev {retireSettledUserEntries} from index position `from`.
+    function _retireSettledFrom(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 from,
+        uint256 maxSteps
+    ) private returns (uint256 retired, uint256 remaining) {
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 i;
+        uint256 i = from;
         uint256 steps;
         while (i < ids.length && steps < maxSteps) {
             uint256 id = ids[i];
@@ -2243,11 +2365,12 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         backingRoom = LibVpfiRecycle.freshBackingRoom(s);
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
+        // #1787 — only the claim window: what one claim reads is bounded.
+        (uint256 from, uint256 len) = claimWindow(s, user);
 
         // #1008 (S13) — the §4 cap is baked into `cumMin*Rpn18` at finalization,
         // so the claim no longer reads the ETH feed / cap ratio here.
-        for (uint256 i = 0; i < len; ) {
+        for (uint256 i = from; i < len; ) {
             (EntrySplit memory u, EntrySplit memory t, uint256 epochFresh, bool stepped) =
                 _processEntry(s, ids[i]);
             if (stepped) res.advancedAnyDay = true; // a legacy slice moved: the claim made progress
@@ -2429,7 +2552,12 @@ library LibInteractionRewards {
                 : LibVaipakam.RewardSide.Borrower;
             uint256[] memory work =
                 _shareOfPoolWorklist(s, user, side, false);
-            if (work.length != 0) {
+            // #1787 — an open domain continues on every claim, whichever
+            // entries the claim window holds: its entries are its snapshot's.
+            if (
+                work.length != 0 ||
+                s.stagingDomains[LibRewardCustody.domainKey(user, side)].phase != LibVaipakam.DomainPhase.None
+            ) {
                 // A side whose pending armed days exceed one chunk is a
                 // DOMAIN (A2-ii): prepared as day records and paid nothing
                 // until every day is reserved — never walked and paid in
@@ -2495,10 +2623,11 @@ library LibInteractionRewards {
             ? s.cumLenderCursor
             : s.cumBorrowerCursor;
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
-        uint256[] memory buf = new uint256[](len);
+        // #1787 — only the claim window: what one claim reads is bounded.
+        (uint256 from, uint256 len) = claimWindow(s, user);
+        uint256[] memory buf = new uint256[](len - from);
         uint256 n;
-        for (uint256 i; i < len; ) {
+        for (uint256 i = from; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
             if (
@@ -3115,8 +3244,7 @@ library LibInteractionRewards {
     ///      pool-truncated transfer), so the gate never reaps unfairly. The
     ///      window walk is
     ///      capped at MAX_INTERACTION_CLAIM_DAYS and the entry scans are bounded
-    ///      by the user's entry count — acceptable for the dark, keeper-run
-    ///      reaper.
+    ///      by the user's claim window (#1787, {CLAIM_WINDOW_ENTRIES}).
     function userClaimFundingNeed(
         LibVaipakam.Storage storage s,
         address user
@@ -3140,10 +3268,11 @@ library LibInteractionRewards {
         address user
     ) private {
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
+        // #1787 — only the claim window: what one claim reads is bounded.
+        (uint256 from, uint256 len) = claimWindow(s, user);
         uint256 maxLender;
         uint256 maxBorrower;
-        for (uint256 i; i < len; ) {
+        for (uint256 i = from; i < len; ) {
             LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
             if (!e.processed && e.endDay != 0) {
                 uint256 needD = e.endDay - 1;
@@ -3178,8 +3307,9 @@ library LibInteractionRewards {
         address user
     ) private view returns (uint256 fresh) {
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
-        for (uint256 i; i < len; ) {
+        // #1787 — only the claim window: what one claim reads is bounded.
+        (uint256 from, uint256 len) = claimWindow(s, user);
+        for (uint256 i = from; i < len; ) {
             LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
             // Cheap pre-filter only — the forfeit ROUTING decision itself is
             // the core's (`st.forfeit`), not re-derived here.
@@ -3395,6 +3525,13 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         PoolBudget memory pool = _staticPool(s, e.user, need);
+        // #1787 — an entry outside its user's claim window is not the next
+        // claim's, legacy slice or armed day alike: its clock waits until the
+        // window reaches it.
+        if (!inClaimWindow(s, id)) {
+            need.capHit = true;
+            return need;
+        }
         if (s.governorCommitArmedFromDay == 0) return need;
         uint256[] memory work = _shareOfPoolWorklist(s, e.user, e.side, true);
         bool listed;
@@ -3686,8 +3823,9 @@ library LibInteractionRewards {
         returns (uint256 userTotal)
     {
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
-        for (uint256 i = 0; i < len; ) {
+        // #1787 — only the claim window: what one claim reads is bounded.
+        (uint256 from, uint256 len) = claimWindow(s, user);
+        for (uint256 i = from; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
             if (
@@ -3817,10 +3955,11 @@ library LibInteractionRewards {
         returns (uint256 userLegs, uint256 treasuryLegs, uint256 legacyFresh)
     {
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
+        // #1787 — only the claim window: what one claim reads is bounded.
+        (uint256 from, uint256 len) = claimWindow(s, user);
         uint256 armedFrom = s.governorCommitArmedFromDay;
 
-        for (uint256 i = 0; i < len; ) {
+        for (uint256 i = from; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
             // Pre-merge adversarial review (2026-08-17) P3 — the claim
@@ -4764,8 +4903,11 @@ library LibInteractionRewards {
         // prior observation is ambiguous in ordering, so treat an equal
         // timestamp as spanning the pause too — conservatively drop it rather
         // than credit a possibly-paused interval (Codex #1317 r2 xkm).
+        // #1787 — likewise an interval across a change of the claim window:
+        // the entry may have been outside it, not claimable, for part of it.
         bool spannedPause =
-            uint256(lastObs) <= uint256(LibPausable.lastPauseBoundaryAt());
+            uint256(lastObs) <= uint256(LibPausable.lastPauseBoundaryAt()) ||
+            claimWindowChangedSince(s, e.user, uint256(lastObs));
         if (!s.rewardEntryObsBlocked[id]) {
             uint256 gap = block.timestamp - uint256(lastObs);
             if (
@@ -5350,6 +5492,7 @@ library LibInteractionRewards {
             uint256 gap = block.timestamp - lastObs;
             if (
                 lastObs > uint256(LibPausable.lastPauseBoundaryAt()) &&
+                !claimWindowChangedSince(s, e.user, lastObs) &&
                 gap <=
                 uint256(LibVaipakam.REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS) *
                     1 days
