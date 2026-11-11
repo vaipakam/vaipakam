@@ -32,7 +32,7 @@ push, instead of when it may. The keeper's tier-push retry delivers only
 those lanes and no longer treats an owed raise as its work. The connected
 app does not offer the delivery call yet, so for now a raised tier reaches
 another chain only through a direct contract call; a "use my discount on
-other chains" action in the apps is a follow-up.
+other chains" action in the apps is follow-up #3579.
 
 Closes #1277.
 
