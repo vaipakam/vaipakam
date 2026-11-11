@@ -15,6 +15,9 @@ export interface Env {
   FRONTEND_ORIGIN?: string;
   /** The per-caller budget (one slot per HTTP request). */
   RPC_CALLER_RATELIMIT?: RateLimitBinding;
+  /** The per-caller call budget, charged by the weight of the calls a
+   *  request forwards (#1283). */
+  RPC_CALL_RATELIMIT?: RateLimitBinding;
   /** One upstream URL per served chain, named by `RPC_PROXY_CHAINS`. */
   [secret: `RPC_PROXY_${string}`]: SecretBinding | undefined;
 }
