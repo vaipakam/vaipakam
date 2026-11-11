@@ -31,8 +31,8 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *        EarlyWithdrawalFacet.completeLoanSale       → COMPLETE_LOAN_SALE
  *        PrecloseFacet.precloseDirect                → initPreclose
  *        PrecloseFacet.transferObligationViaOffer    → initPreclose
- *        PrecloseFacet.offsetWithNewOffer            → initPreclose
- *        PrecloseFacet.completeOffset                → COMPLETE_OFFSET
+ *        PrecloseOffsetFacet.offsetWithNewOffer            → initPreclose
+ *        PrecloseOffsetFacet.completeOffset                → COMPLETE_OFFSET
  *
  *      (#3042 retired `RefinanceFacet.refinanceLoan` → REFINANCE: a
  *      refinance now completes only inside the accept of its tagged offer.)

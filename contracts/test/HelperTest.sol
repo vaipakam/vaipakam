@@ -19,6 +19,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
@@ -39,6 +40,7 @@ import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
@@ -590,7 +592,7 @@ contract HelperTest {
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
         selectors[2] = OfferCreateFacet.createOfferWithPermit.selector;
-        // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
+        // Cross-facet entry consumed by PrecloseOffsetFacet.offsetWithNewOffer
         // (Option 3 offset flow) — address(this)-only gating.
         selectors[3] = OfferCreateFacet.createOfferInternal.selector;
         // #396 v0.5 — cross-facet materialize entries used by
@@ -1064,33 +1066,45 @@ contract HelperTest {
         // retired `isOrderValid` validator); it signs for the order it hashed.
     }
 
-    /// @notice T-092 Phase 1 (#499) — AutoLifecycleFacet selectors.
+    /// @notice T-092 (#503 / #2738 / #2814) — AutoLifecycleFacet selectors:
+    ///         the execution surface. The consent setters and readers moved
+    ///         to AutoLifecycleSettingsFacet in #3410.
     function getAutoLifecycleFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
-        selectors[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
-        selectors[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
-        selectors[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
-        selectors[3] = AutoLifecycleFacet.getAutoOptInOnNewLoan.selector;
-        selectors[4] = AutoLifecycleFacet.setDefaultAutoRefinanceCaps.selector;
-        selectors[5] = AutoLifecycleFacet.getDefaultAutoRefinanceCaps.selector;
-        selectors[6] = AutoLifecycleFacet.setAutoRefinanceCaps.selector;
-        selectors[7] = AutoLifecycleFacet.getAutoRefinanceCaps.selector;
-        selectors[8] = AutoLifecycleFacet.setAutoExtendBorrowerCaps.selector;
-        selectors[9] = AutoLifecycleFacet.getAutoExtendBorrowerCaps.selector;
-        selectors[10] = AutoLifecycleFacet.setAutoExtendLenderCaps.selector;
-        selectors[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
+        selectors = new bytes4[](5);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
-        selectors[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
+        selectors[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
-        selectors[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
+        selectors[1] = AutoLifecycleFacet.getAutoExtendWindow.selector;
         // #2814 — the extension reserve: fund, withdraw, and what is ready.
-        selectors[14] = AutoLifecycleFacet.fundExtendReserve.selector;
-        selectors[15] = AutoLifecycleFacet.withdrawExtendReserve.selector;
-        selectors[16] = AutoLifecycleFacet.getExtendFunding.selector;
+        selectors[2] = AutoLifecycleFacet.fundExtendReserve.selector;
+        selectors[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
+        selectors[4] = AutoLifecycleFacet.getExtendFunding.selector;
+    }
+
+    /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface,
+    ///         split out of AutoLifecycleFacet in #3410.
+    function getAutoLifecycleSettingsFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](12);
+        selectors[0] = AutoLifecycleSettingsFacet.setAutoLendConsent.selector;
+        selectors[1] = AutoLifecycleSettingsFacet.getAutoLendConsent.selector;
+        selectors[2] = AutoLifecycleSettingsFacet.setAutoOptInOnNewLoan.selector;
+        selectors[3] = AutoLifecycleSettingsFacet.getAutoOptInOnNewLoan.selector;
+        selectors[4] = AutoLifecycleSettingsFacet.setDefaultAutoRefinanceCaps.selector;
+        selectors[5] = AutoLifecycleSettingsFacet.getDefaultAutoRefinanceCaps.selector;
+        selectors[6] = AutoLifecycleSettingsFacet.setAutoRefinanceCaps.selector;
+        selectors[7] = AutoLifecycleSettingsFacet.getAutoRefinanceCaps.selector;
+        selectors[8] = AutoLifecycleSettingsFacet.setAutoExtendBorrowerCaps.selector;
+        selectors[9] = AutoLifecycleSettingsFacet.getAutoExtendBorrowerCaps.selector;
+        selectors[10] = AutoLifecycleSettingsFacet.setAutoExtendLenderCaps.selector;
+        selectors[11] = AutoLifecycleSettingsFacet.getAutoExtendLenderCaps.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
@@ -1699,13 +1713,23 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](2);
         selectors[0] = PrecloseFacet.precloseDirect.selector;
-        selectors[1] = PrecloseFacet.offsetWithNewOffer.selector;
-        selectors[2] = PrecloseFacet.completeOffset.selector;
-        selectors[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        selectors[1] = PrecloseFacet.transferObligationViaOffer.selector;
+        return selectors;
+    }
+
+    /// @notice #3410 — the offset route, split out of PrecloseFacet.
+    function getPrecloseOffsetFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = PrecloseOffsetFacet.offsetWithNewOffer.selector;
+        selectors[1] = PrecloseOffsetFacet.completeOffset.selector;
         // Cross-facet entry consumed by OfferFacet._acceptOffer's auto-link.
-        selectors[4] = PrecloseFacet.completeOffsetInternal.selector;
+        selectors[2] = PrecloseOffsetFacet.completeOffsetInternal.selector;
         return selectors;
     }
 

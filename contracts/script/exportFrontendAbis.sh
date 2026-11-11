@@ -235,6 +235,8 @@ FACETS=(
   "OracleFacet"
   "PartialWithdrawalFacet"
   "PrecloseFacet"
+  # #3410 — the offset route, split off PrecloseFacet for EIP-170.
+  "PrecloseOffsetFacet"
   "PrepayListingFacet"
   "NFTPrepayListingFacet"
   "NFTPrepayDutchListingFacet"
@@ -311,6 +313,8 @@ FACETS=(
   "SwapToRepayIntentFacet"
   "IntentDispatchFacet"
   "AutoLifecycleFacet"
+  # #3410 — the consent and caps surface, split off AutoLifecycleFacet.
+  "AutoLifecycleSettingsFacet"
   "EncumbranceMutateFacet"
   "IntentConfigFacet"
   "TreasuryFacet"

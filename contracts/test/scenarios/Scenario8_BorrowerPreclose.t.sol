@@ -8,6 +8,7 @@ import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../../src/facets/PrecloseOffsetFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
@@ -143,7 +144,7 @@ contract Scenario8_BorrowerPreclose is Test {
         helperTest = new HelperTest();
 
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -171,6 +172,12 @@ contract Scenario8_BorrowerPreclose is Test {
         cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
+        // #3410 — split out of PrecloseFacet.
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseOffsetFacetSelectors()
+        });
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),    action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
@@ -471,10 +478,10 @@ contract Scenario8_BorrowerPreclose is Test {
         );
 
         vm.expectEmit(true, true, true, false);
-        emit PrecloseFacet.OffsetOfferCreated(activeLoanId, expectedNewOfferId, borrower, 0);
+        emit PrecloseOffsetFacet.OffsetOfferCreated(activeLoanId, expectedNewOfferId, borrower, 0);
 
         vm.prank(borrower);
-        uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        uint256 newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -501,9 +508,9 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Step 2: Verify completeOffset requires the offer to be accepted
         // First, it should revert with OffsetOfferNotAccepted
-        vm.expectRevert(PrecloseFacet.OffsetOfferNotAccepted.selector);
+        vm.expectRevert(PrecloseOffsetFacet.OffsetOfferNotAccepted.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         // Step 3: Simulate offer acceptance by writing offer.accepted = true
         // and creator = borrower via the layout-resilient mutator (the
@@ -525,7 +532,7 @@ contract Scenario8_BorrowerPreclose is Test {
         // Expect OffsetCompleted event — (originalLoanId, newOfferId,
         // borrower, newStatus). data=false, so newStatus is a placeholder.
         vm.expectEmit(true, true, true, false);
-        emit PrecloseFacet.OffsetCompleted(activeLoanId, expectedNewOfferId, borrower, 0);
+        emit PrecloseOffsetFacet.OffsetCompleted(activeLoanId, expectedNewOfferId, borrower, 0);
 
         // Complete the offset (permissionless)
         address lenderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
@@ -533,7 +540,7 @@ contract Scenario8_BorrowerPreclose is Test {
         uint256 borrowerBalBeforeComplete = ERC20(mockERC20).balanceOf(borrower);
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         // Verify: original loan is now Repaid
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);

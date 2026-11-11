@@ -122,7 +122,7 @@ abstract contract DiamondFacetNames {
     ///      price-move guard on an offer).
     ///      114 → 115 with `SignedOfferMatchFacet` (#3443 — the signed-offer
     ///      keeper-matcher, split off OfferMatchFacet).
-    function cutFacetNames() internal pure returns (string[115] memory) {
+    function cutFacetNames() internal pure returns (string[117] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -280,6 +280,11 @@ abstract contract DiamondFacetNames {
             "OfferPriceGuardFacet",
             // The signed-offer keeper-matcher (#3443, split off OfferMatchFacet).
             "SignedOfferMatchFacet",
+            // The auto-lifecycle consent and caps surface (#3410, split off
+            // AutoLifecycleFacet).
+            "AutoLifecycleSettingsFacet",
+            // The borrower's offset route (#3410, split off PrecloseFacet).
+            "PrecloseOffsetFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

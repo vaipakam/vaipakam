@@ -13,6 +13,7 @@ import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../../src/facets/PrecloseOffsetFacet.sol";
 import {OfferMatchFacet} from "../../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../../src/libraries/LibOfferMatch.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
@@ -23,7 +24,7 @@ import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LibSaleSolvency} from "../../src/libraries/LibSaleSolvency.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../../src/facets/AutoLifecycleSettingsFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {LibAutoRefinanceCheck} from "../../src/libraries/LibAutoRefinanceCheck.sol";
@@ -168,7 +169,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         request.refinanceTargetLoanId = oldLoanId;
 
         vm.startBroadcast(borrowerKey);
-        AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(diamond).setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         uint256 requestId = OfferCreateFacet(diamond).createOffer(request, type(uint64).max);
@@ -235,7 +236,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
 
         uint16 capRateBps = 600;
         vm.startBroadcast(borrowerKey);
-        AutoLifecycleFacet(diamond).setAutoRefinanceCaps(oldLoanId, true, capRateBps, uint64(block.timestamp + 365 days));
+        AutoLifecycleSettingsFacet(diamond).setAutoRefinanceCaps(oldLoanId, true, capRateBps, uint64(block.timestamp + 365 days));
         vm.stopBroadcast();
 
         // Gate 1: a request whose rate ceiling is above the cap.
@@ -765,7 +766,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // Total ≈ 2 × LOAN_AMOUNT + small accrued; we approve 3× for
         // headroom.
         usdc.approve(diamond, LOAN_AMOUNT * 3);
-        uint256 offsetOfferId = PrecloseFacet(diamond).offsetWithNewOffer(
+        uint256 offsetOfferId = PrecloseOffsetFacet(diamond).offsetWithNewOffer(
             loanL1,
             INTEREST_BPS,           // same rate as l1 — minimal shortfall
             HANDOVER_DURATION_DAYS, // fits inside l1's remaining term
@@ -779,7 +780,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         console.log("Alice's offset offer:", offsetOfferId);
 
         // charlie accepts. The auto-link inside `_acceptOffer` fires
-        // `PrecloseFacet.completeOffset(l1)` which closes l1 and
+        // `PrecloseOffsetFacet.completeOffset(l1)` which closes l1 and
         // releases alice's collateral.
         LibAcceptTerms.AcceptTerms memory _t8 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(charlieKey), offsetOfferId, true, loanL1);
         bytes memory _sig8 = LibAcceptTestSigner.sign(diamond, _t8, charlieKey);

@@ -16,6 +16,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
@@ -133,7 +134,7 @@ contract PauseGatingTest is SetupTest {
 
     function test_pause_offsetWithNewOffer() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             0, 0, 0, address(0), 0, false, address(0),
             type(uint64).max
         );
@@ -141,7 +142,7 @@ contract PauseGatingTest is SetupTest {
 
     function test_pause_completeOffset() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        PrecloseFacet(address(diamond)).completeOffset(0);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(0);
     }
 
     // ── RefinanceFacet ──────────────────────────────────────────────────────

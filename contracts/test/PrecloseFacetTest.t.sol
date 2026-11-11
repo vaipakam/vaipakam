@@ -12,6 +12,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -207,7 +208,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](35);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](36);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -235,6 +236,12 @@ contract PrecloseFacetTest is Test {
         cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
+        // #3410 — split out of PrecloseFacet.
+        cuts[35] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseOffsetFacetSelectors()
+        });
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
@@ -563,7 +570,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.OfferCreationFailed.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1508,7 +1515,7 @@ contract PrecloseFacetTest is Test {
         // without keeper auth revert with KeeperAccessRequired.
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsLoanNotActive() public {
@@ -1516,7 +1523,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsWrongCollateralAsset() public {
@@ -1524,7 +1531,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, otherToken, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, otherToken, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsDurationTooLong() public {
@@ -1532,13 +1539,13 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetRevertsInsufficientCollateral() public {
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InsufficientCollateral.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL - 1, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL - 1, true, mockERC20, type(uint64).max);
     }
 
     function testOffsetWithShortfall() public {
@@ -1549,7 +1556,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 1000, 25, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 1000, 25, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1557,7 +1564,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 300, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 300, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1568,7 +1575,7 @@ contract PrecloseFacetTest is Test {
     ///      storage and its stamped `expiresAt` can be read back.
     function _postRealOffset(uint256 durationDays) internal returns (uint256 newOfferId) {
         vm.prank(borrower);
-        newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, durationDays, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -1704,7 +1711,7 @@ contract PrecloseFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
     }
 
     /// @dev Third-party caller blocked when keeperAccessEnabled is false (default)
@@ -1714,14 +1721,14 @@ contract PrecloseFacetTest is Test {
         // OffsetNotLinked would fire first and mask the auth rejection.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAccepted(99);
 
         address thirdParty = makeAddr("thirdParty");
         vm.prank(thirdParty);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
     }
 
     /// @dev Lender is rejected from completeOffset — this is a borrower-
@@ -1736,19 +1743,19 @@ contract PrecloseFacetTest is Test {
         // would fire first and mask the auth rejection under test.
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAccepted(99);
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
     }
 
     function testCompleteOffsetRevertsOffsetNotLinked() public {
-        vm.expectRevert(PrecloseFacet.OffsetNotLinked.selector);
+        vm.expectRevert(PrecloseOffsetFacet.OffsetNotLinked.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
     }
 
     function testCompleteOffsetRevertsOfferNotAccepted() public {
@@ -1756,20 +1763,20 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         // Offer 99 is not actually accepted
-        vm.expectRevert(PrecloseFacet.OffsetOfferNotAccepted.selector);
+        vm.expectRevert(PrecloseOffsetFacet.OffsetOfferNotAccepted.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
     }
 
     function testCompleteOffsetSuccess() public {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(99);
@@ -1778,7 +1785,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -1797,7 +1804,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
         // durationDays == 30 == original term, at elapsed 0 (equality: OK at request).
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAcceptedWithDuration(99, 30);
 
@@ -1806,7 +1813,7 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + 2 days);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
     }
 
     /// @dev Companion to the drift guard: a SHORTER replacement term that still
@@ -1817,14 +1824,14 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         // 20-day replacement on a 30-day original: even accepted 5 days late the
         // replacement matures at now+20d = start+25d ≤ start+30d.
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         _setOfferAcceptedWithDuration(99, 20);
 
         vm.warp(block.timestamp + 5 days);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -1845,7 +1852,7 @@ contract PrecloseFacetTest is Test {
         uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -1870,7 +1877,7 @@ contract PrecloseFacetTest is Test {
         uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
 
         vm.prank(borrower);
-        uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        uint256 newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -1895,7 +1902,7 @@ contract PrecloseFacetTest is Test {
         // cooldown wait moved the clock, and a replacement term may not end
         // past the original loan's deadline.
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -1905,11 +1912,11 @@ contract PrecloseFacetTest is Test {
     function testOffsetRejectsSecondWhileOneLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
 
         vm.expectRevert(PrecloseFacet.OffsetAlreadyActive.selector);
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
     }
 
@@ -1919,7 +1926,7 @@ contract PrecloseFacetTest is Test {
     function testTransferObligationRejectedWhileOffsetLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
         LibTestTiming.backdateTerms(address(diamond), 12345); // #3443
 
@@ -1937,7 +1944,7 @@ contract PrecloseFacetTest is Test {
     function testCreateLoanSaleRejectedWhileOffsetLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         vm.expectRevert(EarlyWithdrawalFacet.OffsetActiveOnLoan.selector);
@@ -1949,7 +1956,7 @@ contract PrecloseFacetTest is Test {
     ///      terms are pinned to the loan it offsets until accepted or cancelled.
     function testOffsetOfferImmutableWhileLinked() public {
         vm.prank(borrower);
-        uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        uint256 newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -2073,7 +2080,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
     // ─── offsetWithNewOffer wrong prepayAsset ───────────────────────────────
@@ -2083,7 +2090,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, otherToken, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, otherToken, type(uint64).max);
     }
 
     // ─── transferObligationViaOffer with wrong collateral/prepay asset ─────
@@ -2955,7 +2962,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
@@ -2966,7 +2973,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -3219,7 +3226,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(99);
@@ -3229,7 +3236,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(bytes("nft update fail"));
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
         vm.clearMockedCalls();
     }
 
@@ -3240,7 +3247,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setOfferAccepted(99);
@@ -3262,7 +3269,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
         vm.prank(keeper);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -3280,7 +3287,7 @@ contract PrecloseFacetTest is Test {
         // Use lower interestRateBps to create shortfall
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 200, 20, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -3320,7 +3327,7 @@ contract PrecloseFacetTest is Test {
         // Create offset offer
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
         vm.clearMockedCalls();
 
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
@@ -3331,7 +3338,7 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
 
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).completeOffset(activeLoanId);
+        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -3550,7 +3557,7 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );

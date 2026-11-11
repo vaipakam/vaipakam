@@ -349,7 +349,7 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///         the loan's CURRENT lender's vault behind the receive-side exemption
     ///         (so a flagged lender doesn't brick the close-out), then the
     ///         lender-side frozen-claimant marker is recorded iff that holder is
-    ///         affirmatively flagged. Used by `PrecloseFacet.completeOffsetInternal`
+    ///         affirmatively flagged. Used by `PrecloseOffsetFacet.completeOffsetInternal`
     ///         to stay under the size limit.
     function parkLenderPayoffAndFreeze(
         address payer,

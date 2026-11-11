@@ -72,7 +72,7 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
  *      On accept, initiates the loan via cross-facet call to
  *      {LoanFacet.initiateLoan} and auto-completes any linked lender-sale
  *      vehicle ({EarlyWithdrawalFacet.completeLoanSale}) or borrower-offset
- *      offer ({PrecloseFacet.completeOffset}) atomically.
+ *      offer ({PrecloseOffsetFacet.completeOffset}) atomically.
  */
 contract OfferCreateFacet is
     DiamondReentrancyGuard,
@@ -365,7 +365,7 @@ contract OfferCreateFacet is
     }
 
     /// @notice Cross-facet entry used exclusively by
-    ///         `PrecloseFacet.offsetWithNewOffer` (Option 3 offset
+    ///         `PrecloseOffsetFacet.offsetWithNewOffer` (Option 3 offset
     ///         flow) to mint a new lender offer mid-flight. Skips the
     ///         outer `nonReentrant` modifier because the calling facet
     ///         already holds the diamond's reentrancy guard — without

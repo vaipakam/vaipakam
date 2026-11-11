@@ -31,6 +31,7 @@ import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
@@ -212,6 +213,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
@@ -340,6 +342,7 @@ contract SetupTest is Test {
     IntentDispatchFacet intentDispatchFacet;
     // T-092 Phase 1 (#499) — auto-lifecycle consent surface.
     AutoLifecycleFacet autoLifecycleFacet;
+    AutoLifecycleSettingsFacet autoLifecycleSettingsFacet;
     EncumbranceMutateFacet encumbranceMutateFacet;
     // #396 v0.5 — gasless signed off-chain offer book fill surface.
     SignedOfferFacet signedOfferFacet;
@@ -377,6 +380,7 @@ contract SetupTest is Test {
     EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet;
     PartialWithdrawalFacet partialWithdrawalFacet;
     PrecloseFacet precloseFacet;
+    PrecloseOffsetFacet precloseOffsetFacet;
     PrepayListingFacet prepayListingFacet;
     NFTPrepayListingFacet nftPrepayListingFacet;
     NFTPrepayDutchListingFacet nftPrepayDutchListingFacet;
@@ -524,6 +528,7 @@ contract SetupTest is Test {
         swapToRepayIntentFacet = SwapToRepayIntentFacet(ArtifactDeploy.deploy(type(SwapToRepayIntentFacet).name));
         intentDispatchFacet = IntentDispatchFacet(ArtifactDeploy.deploy(type(IntentDispatchFacet).name));
         autoLifecycleFacet = AutoLifecycleFacet(ArtifactDeploy.deploy(type(AutoLifecycleFacet).name));
+        autoLifecycleSettingsFacet = AutoLifecycleSettingsFacet(ArtifactDeploy.deploy(type(AutoLifecycleSettingsFacet).name));
         encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         signedOfferFacet = SignedOfferFacet(ArtifactDeploy.deploy(type(SignedOfferFacet).name));
         lenderIntentFacet = LenderIntentFacet(ArtifactDeploy.deploy(type(LenderIntentFacet).name));
@@ -554,6 +559,7 @@ contract SetupTest is Test {
         earlyWithdrawalDirectFacet = EarlyWithdrawalDirectFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name));
         partialWithdrawalFacet = PartialWithdrawalFacet(ArtifactDeploy.deploy(type(PartialWithdrawalFacet).name));
         precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
+        precloseOffsetFacet = PrecloseOffsetFacet(ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name));
         prepayListingFacet = PrepayListingFacet(ArtifactDeploy.deploy(type(PrepayListingFacet).name));
         nftPrepayListingFacet = NFTPrepayListingFacet(ArtifactDeploy.deploy(type(NFTPrepayListingFacet).name));
         nftPrepayDutchListingFacet = NFTPrepayDutchListingFacet(ArtifactDeploy.deploy(type(NFTPrepayDutchListingFacet).name));
@@ -640,7 +646,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](116);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1136,6 +1142,17 @@ contract SetupTest is Test {
             facetAddress: address(signedOfferMatchFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSignedOfferMatchFacetSelectors()
+        });
+        // #3410 — split out of AutoLifecycleFacet and PrecloseFacet.
+        cuts[116] = IDiamondCut.FacetCut({
+            facetAddress: address(autoLifecycleSettingsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getAutoLifecycleSettingsFacetSelectors()
+        });
+        cuts[117] = IDiamondCut.FacetCut({
+            facetAddress: address(precloseOffsetFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseOffsetFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

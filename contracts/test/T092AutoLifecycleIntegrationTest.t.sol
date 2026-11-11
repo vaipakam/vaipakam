@@ -5,6 +5,7 @@ import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -79,6 +80,11 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         return AutoLifecycleFacet(address(diamond));
     }
 
+    /// @dev The consent and caps surface (#3410: AutoLifecycleSettingsFacet).
+    function _s() internal view returns (AutoLifecycleSettingsFacet) {
+        return AutoLifecycleSettingsFacet(address(diamond));
+    }
+
     function _admin() internal view returns (AdminFacet) {
         return AdminFacet(address(diamond));
     }
@@ -88,22 +94,22 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_KillSwitch_AutoLend_BlocksOptIn() public {
         _admin().setAutoLendEnabled(false);
         address user = makeAddr("intUser1");
-        vm.expectRevert(AutoLifecycleFacet.AutoLendDisabled.selector);
+        vm.expectRevert(AutoLifecycleSettingsFacet.AutoLendDisabled.selector);
         vm.prank(user);
-        _f().setAutoLendConsent(true);
+        _s().setAutoLendConsent(true);
     }
 
     function test_KillSwitch_AutoLend_AllowsRevoke() public {
         address user = makeAddr("intUser2");
         vm.prank(user);
-        _f().setAutoLendConsent(true);
+        _s().setAutoLendConsent(true);
         _admin().setAutoLendEnabled(false);
         // Revocation still permitted even when the feature is
         // disabled — protects users from being trapped in consent
         // when admin disables.
         vm.prank(user);
-        _f().setAutoLendConsent(false);
-        assertFalse(_f().getAutoLendConsent(user));
+        _s().setAutoLendConsent(false);
+        assertFalse(_s().getAutoLendConsent(user));
     }
 
     /// @notice #3175 (owner decision 2026-11-05, "Free borrower") — the
@@ -175,9 +181,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_SetDefaultAutoRefinanceCaps_AcceptsZeroRate() public {
         address user = makeAddr("zeroRateUser");
         vm.prank(user);
-        _f().setDefaultAutoRefinanceCaps(true, 0, uint64(block.timestamp + 90 days));
+        _s().setDefaultAutoRefinanceCaps(true, 0, uint64(block.timestamp + 90 days));
         LibVaipakam.AutoRefinanceCaps memory caps =
-            _f().getDefaultAutoRefinanceCaps(user);
+            _s().getDefaultAutoRefinanceCaps(user);
         assertTrue(caps.enabled);
         assertEq(caps.maxRateBps, 0);
     }
@@ -190,8 +196,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // LoanFacet's existing suite.
         address user = makeAddr("optInUser");
         vm.prank(user);
-        _f().setAutoOptInOnNewLoan(true);
-        assertTrue(_f().getAutoOptInOnNewLoan(user));
+        _s().setAutoOptInOnNewLoan(true);
+        assertTrue(_s().getAutoOptInOnNewLoan(user));
     }
 
     // ─── LibAutoRefinanceCheck error-selector guardrails ─────────────
@@ -382,7 +388,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // create-time `RefinanceRateExceedsCap`.
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             loanId,
             true,
             300, // maxRate
@@ -406,7 +412,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_RefinanceTaggedOffer_RejectsPastGraceTarget() public {
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             loanId,
             true,
             600,
@@ -437,7 +443,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_RefinanceTaggedOffer_ExpiryClampedToGraceDeadline() public {
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             loanId,
             true,
             600,
@@ -473,7 +479,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // refinance in the same transaction (#3042).
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             loanId,
             true,
             600, // maxRate above offer's 400
@@ -519,9 +525,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // Both sides opt into auto-extend within a wide rate / expiry band.
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
         vm.prank(lender);
-        _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
 
         // #2814 — the borrower reserves principal asset for the loan's
         // extensions through the one deployed route, so the extension's
@@ -626,7 +632,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_2407_ExtendInPlace_RefusedWhileARefinanceRequestIsLive() public {
         uint256 loanId = _setupExtendableLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(loanId, true, 600, uint64(block.timestamp + 365 days));
+        _s().setAutoRefinanceCaps(loanId, true, 600, uint64(block.timestamp + 365 days));
         vm.prank(borrower);
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(loanId, 400), type(uint64).max);
@@ -766,9 +772,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // The per-loan caps slot should be populated from the
         // defaults (existing behaviour, retained).
         vm.prank(borrower);
-        _f().setAutoOptInOnNewLoan(true);
+        _s().setAutoOptInOnNewLoan(true);
         vm.prank(borrower);
-        _f().setDefaultAutoRefinanceCaps(
+        _s().setDefaultAutoRefinanceCaps(
             true,
             600,
             uint64(block.timestamp + 365 days)
@@ -776,7 +782,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 loanId = _buildActiveLoan(); // ERC20 + liquid collateral
 
         LibVaipakam.AutoRefinanceCaps memory caps =
-            _f().getAutoRefinanceCaps(loanId);
+            _s().getAutoRefinanceCaps(loanId);
         assertTrue(
             caps.enabled,
             "auto-opt-in should populate caps on liquid-collateral loan"
@@ -796,9 +802,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // borrower must consciously consent, not be silently
         // enrolled via the convenience flag.
         vm.prank(borrower);
-        _f().setAutoOptInOnNewLoan(true);
+        _s().setAutoOptInOnNewLoan(true);
         vm.prank(borrower);
-        _f().setDefaultAutoRefinanceCaps(
+        _s().setDefaultAutoRefinanceCaps(
             true,
             600,
             uint64(block.timestamp + 365 days)
@@ -861,7 +867,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         // The gate skipped the populate — caps stay default-empty.
         LibVaipakam.AutoRefinanceCaps memory caps =
-            _f().getAutoRefinanceCaps(loanId);
+            _s().getAutoRefinanceCaps(loanId);
         assertFalse(
             caps.enabled,
             "auto-opt-in must NOT populate caps on illiquid-collateral loan"
@@ -875,7 +881,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // revert is the fillMode gate.
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             loanId,
             true,
             600,
@@ -960,7 +966,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // Step 2: borrower sets refinance caps that the refinance
         // attempt will satisfy.
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId,
             true,
             600,
@@ -1018,7 +1024,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_576_atomicRefinance_carriesCollateralOverViaLienRetag() public {
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(oldLoanId, true, 600, uint64(block.timestamp + 365 days));
+        _s().setAutoRefinanceCaps(oldLoanId, true, 600, uint64(block.timestamp + 365 days));
         vm.prank(borrower);
         uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400), type(uint64).max);
@@ -1096,7 +1102,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // refinance. The offer is created normally — no revert.
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
 
@@ -1127,7 +1133,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // reject a tagged offer's collateral cluster.
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
@@ -1173,7 +1179,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
@@ -1244,7 +1250,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
@@ -1365,7 +1371,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // combination at create.
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         LibVaipakam.CreateOfferParams memory params =
@@ -1393,7 +1399,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 oldLoanId = _buildActiveLoan();
         uint256 otherLoanId = _buildActiveLoan();
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
@@ -1452,7 +1458,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     {
         oldLoanId = _buildActiveLoanWith(collateralLiquidity);
         vm.prank(borrower);
-        _f().setAutoRefinanceCaps(
+        _s().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
@@ -1739,9 +1745,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         LibTestPayout.withdrawAllFree(address(diamond), borrower);
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
         vm.prank(lender);
-        _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
         _fundReserve(loanId, borrower, 1);
         _warpToExtendWindow(loanId);
         vm.prank(borrower);

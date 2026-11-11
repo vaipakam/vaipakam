@@ -633,7 +633,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      borrower position and completion re-anchors to the current holder.
     ///
     ///      The live offset is scaffolded through the raw mutator rather than by
-    ///      driving `PrecloseFacet.offsetWithNewOffer`, because this suite's
+    ///      driving `PrecloseOffsetFacet.offsetWithNewOffer`, because this suite's
     ///      diamond does not cut `PrecloseFacet` (driving it reverts
     ///      `FunctionDoesNotExist`). The scaffold is faithful: `offsetWithNewOffer`
     ///      records the live offset by writing exactly this mapping, so the state
