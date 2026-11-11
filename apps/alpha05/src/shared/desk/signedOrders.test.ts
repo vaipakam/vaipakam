@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, keccak256, type Log } from 'viem';
 import { canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { cancelCall, measureSignedCancel, orderSentence, signedCancelBlockers, signedCancelReceipt, targetKey, type SignedCancelReview } from './cancelSigned';
-import { mySignedOrderFrom, readMySignedOrders, sharedNonces, SIGNED_OFFER, standingOf, type MySignedOrder } from './mySignedOrders';
-import { lapsesAt, orderHashOf, signedStake, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from './signedOrder';
+import { fillable, mySignedOrderFrom, readMySignedOrders, sharedNonces, SIGNED_OFFER, standingOf, type MySignedOrder } from './mySignedOrders';
+import { lapsesAt, orderHashOf, signedStake, signedStakeLeft, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from './signedOrder';
 import { createIndexerClient } from '../reads/world/indexerClient';
 
 type Hex = `0x${string}`;
@@ -131,12 +131,35 @@ describe('your signed orders, from the offer book', () => {
 });
 
 describe('where the chain stands', () => {
-  it('a used hash, then a cancelled nonce, then the lapse, in that order', () => {
-    expect(standingOf(order(), 1n, true, 9999)).toBe('used');
+  it('a spent ceiling, then a cancelled nonce, then the lapse, in that order', () => {
+    // The ceiling here is 0.1 (amountMax); a fill or a cancel writes it whole.
+    expect(standingOf(order(), 100000000000000000n, true, 9999)).toBe('used');
+    expect(standingOf(order(), 200000000000000000n, false, 1)).toBe('used');
     expect(standingOf(order(), 0n, true, 9999)).toBe('nonce-cancelled');
     expect(standingOf(order(), 0n, false, 2001)).toBe('lapsed');
     expect(standingOf(order(), 0n, false, 2000)).toBe('open');
     expect(standingOf(order(), null, false, 1)).toBe('unread');
+  });
+
+  it('a fill below the ceiling leaves the rest fillable, as the matcher allows', () => {
+    expect(standingOf(order(), 1n, false, 1)).toBe('partly-filled');
+    // amountMax of zero: the ceiling falls back to amount.
+    expect(standingOf(order({ amountMax: '0' }), 99999999999999999n, false, 1)).toBe('partly-filled');
+    expect(standingOf(order({ amountMax: '0' }), 100000000000000000n, false, 1)).toBe('used');
+    // A burned nonce or a lapse still stops the rest.
+    expect(standingOf(order(), 1n, true, 1)).toBe('nonce-cancelled');
+    expect(standingOf(order(), 1n, false, 2001)).toBe('lapsed');
+    expect(fillable('partly-filled')).toBe(true);
+    expect(fillable('used')).toBe(false);
+  });
+
+  it('states what the rest of a partly filled order could still draw', () => {
+    const lend = order({ amount: '40', amountMax: '100' });
+    expect(signedStakeLeft(lend, 30n)).toEqual({ asset: WETH, amount: 70n });
+    expect(signedStakeLeft(lend, 100n).amount).toBe(0n);
+    // A borrower's collateral for the rest, at its own ratio, rounded up.
+    const bid = order({ offerType: '1', amount: '40', amountMax: '100', collateralAmount: '20', collateralAmountMax: '50' });
+    expect(signedStakeLeft(bid, 33n)).toEqual({ asset: LIQ, amount: 34n });
   });
 
   it('groups only open orders that share a nonce', () => {
@@ -146,6 +169,7 @@ describe('where the chain stands', () => {
     const open = new Map([a, b, c].map((o) => [o.orderHash, 'open' as const]));
     expect([...sharedNonces([a, b, c], open)]).toEqual([['7', [a, b]]]);
     expect(sharedNonces([a, b, c], new Map([...open, [b.orderHash, 'used' as const]])).size).toBe(0);
+    expect(sharedNonces([a, b, c], new Map([...open, [b.orderHash, 'partly-filled' as const]])).size).toBe(1);
   });
 });
 
@@ -155,6 +179,7 @@ describe('the on-chain cancel', () => {
     identity: 'id',
     target: { kind: 'order', order: o },
     standings: { [o.orderHash]: 'open' },
+    filled: { [o.orderHash]: '0' },
     paused: false,
     dryRun: null,
     readAt: 1,
@@ -178,6 +203,8 @@ describe('the on-chain cancel', () => {
     expect(signedCancelBlockers(review({ paused: true }), ME as Hex, copy)).toEqual(['signedCancel.paused']);
     expect(signedCancelBlockers(review({ dryRun: 'unread' }), ME as Hex, copy)).toEqual(['signedCancel.dryRunUnread']);
     expect(signedCancelBlockers(review(), ME as Hex, copy)).toEqual([]);
+    // A partly filled order is still cancellable: matches can draw the rest.
+    expect(signedCancelBlockers(review({ standings: { [o.orderHash]: 'partly-filled' } }), ME as Hex, copy)).toEqual([]);
   });
 
   it('says it moves nothing, that it is the only way, and the race', () => {
@@ -185,6 +212,12 @@ describe('the on-chain cancel', () => {
     expect(r.prompts).toBe(1);
     expect(r.rows.map((x) => x.label)).toEqual(['signedCancel.rowOrder', 'signedCancel.rowLapses', 'signedCancel.rowDoes', 'signedCancel.rowMoves']);
     expect(r.consequences).toEqual(['signedCancel.onlyWay', 'signedCancel.race', 'signedCancel.stake(100000000000000000)']);
+    const partly = signedCancelReceipt(
+      review({ standings: { [o.orderHash]: 'partly-filled' }, filled: { [o.orderHash]: '30000000000000000' } }),
+      (_a, v) => v.toString(),
+      copy,
+    );
+    expect(partly.consequences[2]).toBe('signedCancel.stakeLeft(30000000000000000,100000000000000000,70000000000000000)');
   });
 
   it('measures the cancel from the transaction’s own logs', () => {

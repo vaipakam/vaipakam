@@ -70,6 +70,15 @@ export function orderHashOf(o: SignedOrderWire): Hex {
   return hashStruct({ data: typedMessage(o), primaryType: 'SignedOffer', types: SIGNED_OFFER_TYPES });
 }
 
+/** The order's principal ceiling: `amountMax`, or `amount` when that is
+ *  zero. A cancel marks this figure as filled; a match fills slices up to
+ *  it (`SignedOfferMatchFacet`), so a cumulative fill below it leaves the
+ *  rest fillable. */
+export function signedCeiling(o: SignedOrderWire): bigint {
+  const max = BigInt(o.amountMax);
+  return max === 0n ? BigInt(o.amount) : max;
+}
+
 /** The stake a fill draws from the signer's vault, by the protocol's rule:
  *  a lender's whole amount (`amountMax`, or `amount` when that is zero); a
  *  borrower's whole collateral (`collateralAmountMax`, or `collateralAmount`
@@ -90,4 +99,18 @@ export function lapsesAt(o: SignedOrderWire): number | null {
   const times = [BigInt(o.expiresAt), BigInt(o.deadline)].filter((t) => t !== 0n);
   if (times.length === 0) return null;
   return Number(times.reduce((a, b) => (a < b ? a : b)));
+}
+
+/** What the rest of a partly filled order could still draw from the
+ *  signer's vault. A lender's is the principal left under the ceiling; a
+ *  borrower's is the collateral for that principal at the order's own
+ *  collateral-to-principal ratio (a matched signed order must keep that
+ *  ratio constant), rounded up so the figure is never an understatement. */
+export function signedStakeLeft(o: SignedOrderWire, filled: bigint): { asset: Hex; amount: bigint } {
+  const stake = signedStake(o);
+  const ceiling = signedCeiling(o);
+  const left = filled >= ceiling ? 0n : ceiling - filled;
+  if (o.offerType === SIGNED_LENDER) return { asset: stake.asset, amount: left };
+  if (ceiling === 0n) return { asset: stake.asset, amount: 0n };
+  return { asset: stake.asset, amount: (stake.amount * left + ceiling - 1n) / ceiling };
 }

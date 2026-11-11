@@ -18,7 +18,16 @@ import {
   type SignedCancelReview,
 } from '../../shared/desk/cancelSigned';
 import { marketKey } from '../../shared/desk/markets';
-import { readMySignedOrders, readSignedStandings, sharedNonces, SIGNED_OFFER, type SignedMarket, type SignedStanding } from '../../shared/desk/mySignedOrders';
+import {
+  fillable,
+  readMySignedOrders,
+  readSignedStandings,
+  sharedNonces,
+  SIGNED_OFFER,
+  type SignedMarket,
+  type SignedStanding,
+} from '../../shared/desk/mySignedOrders';
+import { signedCeiling } from '../../shared/desk/signedOrder';
 import { refusalFromError, StatedRefusal } from '../../shared/eligibility/refusal';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { indexReason } from '../../shared/offers/OfferBook';
@@ -41,7 +50,10 @@ type Hex = `0x${string}`;
 const SIGNED_POLL_MS = 30_000;
 
 const STANDING_KEY: Readonly<
-  Record<SignedStanding, 'signedOrders.open' | 'signedOrders.used' | 'signedOrders.nonceDone' | 'signedOrders.lapsed' | 'signedOrders.unread'>
+  Record<
+    Exclude<SignedStanding, 'partly-filled'>,
+    'signedOrders.open' | 'signedOrders.used' | 'signedOrders.nonceDone' | 'signedOrders.lapsed' | 'signedOrders.unread'
+  >
 > = {
   open: 'signedOrders.open',
   used: 'signedOrders.used',
@@ -101,6 +113,7 @@ export function MySignedOrders({
   const [open, setOpen] = useStoredValue<CancelTarget>(openKey(market));
   const amount = (asset: Hex, v: bigint, exact = false) => tokenAmount(v, asset, meta, format, exact);
   const standings = standing.data?.standings ?? new Map<Hex, SignedStanding>();
+  const filledOf = standing.data?.filled ?? new Map<Hex, bigint>();
   const groups = sharedNonces(orders, standings);
   const failed = noIndex || book.status === 'error';
   // A refresh that failed after an earlier read worked keeps the earlier
@@ -153,9 +166,15 @@ export function MySignedOrders({
                   <li key={o.orderHash} data-testid="desk-signed-order" data-order-hash={o.orderHash} data-standing={s}>
                     <p>{orderSentence(o.order, amount, copy)}</p>
                     <p className="tier-b">
-                      {lapseText(o.order, copy)} {text(STANDING_KEY[s])}
+                      {lapseText(o.order, copy)}{' '}
+                      {s === 'partly-filled'
+                        ? format('signedOrders.partlyFilled', {
+                            filled: amount(o.order.lendingAsset as Hex, filledOf.get(o.orderHash) ?? 0n),
+                            ceiling: amount(o.order.lendingAsset as Hex, signedCeiling(o.order)),
+                          })
+                        : text(STANDING_KEY[s])}
                     </p>
-                    {s === 'open' && open === null && !standingStale && (
+                    {fillable(s) && open === null && !standingStale && (
                       <button type="button" className="btn" onClick={() => setOpen(target)} data-testid="desk-signed-cancel">
                         {text('signedOrders.cancel')}
                       </button>

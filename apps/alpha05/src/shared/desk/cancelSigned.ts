@@ -26,8 +26,8 @@ import type { Receipt, ReceiptRow } from '../receipt/types';
 import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
 import { formatBps, formatUtc } from '../ui/format';
-import { readSignedStandings, SIGNED_OFFER, type MySignedOrder, type SignedStanding } from './mySignedOrders';
-import { lapsesAt, SIGNED_LENDER, signedStake, typedMessage, type SignedOrderWire } from './signedOrder';
+import { fillable, readSignedStandings, SIGNED_OFFER, type MySignedOrder, type SignedStanding } from './mySignedOrders';
+import { lapsesAt, SIGNED_LENDER, signedCeiling, signedStake, signedStakeLeft, typedMessage, type SignedOrderWire } from './signedOrder';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -58,6 +58,9 @@ export interface SignedCancelReview {
   target: CancelTarget;
   /** Each listed order's standing, keyed by its hash. */
   standings: Readonly<Record<Hex, SignedStanding>>;
+  /** Each listed order's cumulative fill on the chain, as decimal text
+   *  (absent where the read was refused). */
+  filled: Readonly<Record<Hex, string>>;
   paused: boolean | null;
   dryRun: Refusal | null | 'unread';
   readAt: number;
@@ -71,7 +74,7 @@ export function signedCancelBlockers(r: Pick<SignedCancelReview, 'target' | 'sta
   const states = orders.map((o) => r.standings[o.orderHash] ?? 'unread');
   if (orders.some((o) => o.order.signer !== viewer.toLowerCase())) return [text('signedCancel.notSigner')];
   if (states.includes('unread')) return [text('signedCancel.unread')];
-  if (!states.includes('open')) {
+  if (!states.some(fillable)) {
     if (r.target.kind === 'nonce') return [text('signedCancel.nonceNothingOpen')];
     const s = states[0]!;
     return [text(s === 'used' ? 'signedCancel.used' : s === 'nonce-cancelled' ? 'signedCancel.nonceDone' : 'signedCancel.lapsed')];
@@ -91,14 +94,18 @@ export async function readSignedCancelReview(
   copy: Copy,
 ): Promise<SignedCancelReview> {
   const viewer = own.account;
-  const { standings, paused } = await own
+  const { standings, filled, paused } = await own
     .read(async (c: PublicClient) => {
       const read = await readSignedStandings(c, diamond, targetOrders(target));
       const pausedNow = await answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', args: [] }) as Promise<boolean>);
-      return { standings: Object.fromEntries(read.standings) as Record<Hex, SignedStanding>, paused: pausedNow };
+      return {
+        standings: Object.fromEntries(read.standings) as Record<Hex, SignedStanding>,
+        filled: Object.fromEntries([...read.filled].map(([h, v]) => [h, v.toString()])) as Record<Hex, string>,
+        paused: pausedNow,
+      };
     })
     .then((x) => x.value);
-  const base: SignedCancelReview = { identity, target, standings, paused, dryRun: null, readAt: Date.now() };
+  const base: SignedCancelReview = { identity, target, standings, filled, paused, dryRun: null, readAt: Date.now() };
   if (signedCancelBlockers(base, viewer, copy).length > 0) return base;
   const call = cancelCall(target);
   const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: SIGNED_OFFER, ...call, account: viewer }));
@@ -108,7 +115,9 @@ export async function readSignedCancelReview(
 /** What a re-read found changed, in words, or null. */
 export function signedCancelChanged(a: SignedCancelReview, b: SignedCancelReview, copy: Pick<CopyAccess, 'text'>): string | null {
   const { text } = copy;
-  for (const o of targetOrders(a.target)) if (a.standings[o.orderHash] !== b.standings[o.orderHash]) return text('signedCancel.changedOrder');
+  for (const o of targetOrders(a.target)) {
+    if (a.standings[o.orderHash] !== b.standings[o.orderHash] || a.filled[o.orderHash] !== b.filled[o.orderHash]) return text('signedCancel.changedOrder');
+  }
   if (a.paused !== b.paused) return text('signedCancel.changedPause');
   if ((a.dryRun === null) !== (b.dryRun === null) || (a.dryRun === 'unread') !== (b.dryRun === 'unread')) return text('signedCancel.changedVerdict');
   return null;
@@ -173,8 +182,25 @@ export function signedCancelReceipt(r: SignedCancelReview, amount: AmountWords, 
   if (r.target.kind === 'nonce') consequences.push(text('signedCancel.nonceReach'));
   // What a fill would have drawn had it landed: said so the reader knows
   // what the cancel stops, never as something the cancel returns.
-  const stakes = orders.map((o) => signedStake(o.order));
-  if (stakes.length === 1) consequences.push(format('signedCancel.stake', { amount: amount(stakes[0]!.asset, stakes[0]!.amount) }));
+  // A partly filled order is stated as such, with only the rest it could
+  // still draw: the filled part is already a loan this cancel does not touch.
+  if (orders.length === 1) {
+    const o = orders[0]!;
+    const filled = BigInt(r.filled[o.orderHash] ?? '0');
+    if (filled > 0n) {
+      const left = signedStakeLeft(o.order, filled);
+      consequences.push(
+        format('signedCancel.stakeLeft', {
+          filled: amount(o.order.lendingAsset as Hex, filled),
+          ceiling: amount(o.order.lendingAsset as Hex, signedCeiling(o.order)),
+          amount: amount(left.asset, left.amount),
+        }),
+      );
+    } else {
+      const stake = signedStake(o.order);
+      consequences.push(format('signedCancel.stake', { amount: amount(stake.asset, stake.amount) }));
+    }
+  }
   return {
     title: text(r.target.kind === 'order' ? 'signedCancel.titleOrder' : 'signedCancel.titleNonce'),
     rows,

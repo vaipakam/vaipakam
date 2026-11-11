@@ -2208,16 +2208,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   chain is the only way to stop one: taking it off the book alone would
   not, since anyone holding the signature can still fill it. Each order's
   standing is read from the chain at one block, because the book can lag
-  both ways: used (filled or cancelled, one mark for both), its nonce
-  cancelled, lapsed on the chain's clock, or open. Each row states both
+  both ways: used (its fill has reached its ceiling: filled, or cancelled,
+  one mark for both), its nonce cancelled, lapsed on the chain's clock,
+  partly filled (a match took a slice; the rest stays fillable), or open. Each row states both
   ends of every range the order allows. When the latest standing read
   failed, the last good standings are shown with a notice that they may be
   stale and no cancel is offered. A cancel is offered only
-  on an open order, and on a nonce when the book lists two or more open
+  on an order that can still be filled (open or partly filled), and on a nonce when the book lists two or more open
   orders under it. The review says what the cancel does, that it moves
   nothing and returns nothing because nothing was held, that a fill already
   sent can land first, what a fill would have drawn from the viewer's own
-  vault (one order only), and, for a nonce, that it also stops orders under
+  vault (one order only; for a partly filled order, the share filled and
+  only what the rest could still draw), and, for a nonce, that it also stops orders under
   that nonce this page does not list. The protocol's own dry run runs
   before the wallet opens, a pause or an unread standing blocks the send,
   and the outcome is measured from the transaction's own cancel event,

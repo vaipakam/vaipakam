@@ -20,7 +20,7 @@ import { SignedOfferFacetABI } from '@vaipakam/contracts/abis';
 import { parseStoredOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { answerOrNull } from '../reads/answer';
 import type { IndexerClient } from '../reads/world/indexerClient';
-import { lapsesAt, orderHashOf, type SignedOrderWire } from './signedOrder';
+import { lapsesAt, orderHashOf, signedCeiling, type SignedOrderWire } from './signedOrder';
 
 type Hex = `0x${string}`;
 
@@ -90,7 +90,11 @@ export async function readMySignedOrders(indexer: IndexerClient, chainId: number
 export type SignedStanding =
   /** Nothing on the chain stops a fill. */
   | 'open'
-  /** The order hash is marked used: filled, or cancelled (one mark for both). */
+  /** A match filled part of it; the rest under its ceiling can still be
+   *  filled until it lapses or is cancelled. */
+  | 'partly-filled'
+  /** Its whole ceiling is marked filled: filled, or cancelled (one mark for
+   *  both). */
   | 'used'
   /** The signer cancelled every order carrying this nonce. */
   | 'nonce-cancelled'
@@ -98,12 +102,21 @@ export type SignedStanding =
   | 'lapsed'
   | 'unread';
 
+/** Whether the chain would still let someone fill some of the order. */
+export function fillable(s: SignedStanding | undefined): boolean {
+  return s === 'open' || s === 'partly-filled';
+}
+
+/** The chain's own rule: an order is spent only when its cumulative fill
+ *  reaches its ceiling (a cancel writes the ceiling); a fill below it is
+ *  a partial match, and the rest stays fillable. */
 export function standingOf(order: SignedOrderWire, filled: bigint | null, nonceUsed: boolean | null, chainNow: number | null): SignedStanding {
   if (filled === null || nonceUsed === null || chainNow === null) return 'unread';
-  if (filled !== 0n) return 'used';
+  if (filled >= signedCeiling(order)) return 'used';
   if (nonceUsed) return 'nonce-cancelled';
   const lapse = lapsesAt(order);
-  return lapse !== null && chainNow > lapse ? 'lapsed' : 'open';
+  if (lapse !== null && chainNow > lapse) return 'lapsed';
+  return filled > 0n ? 'partly-filled' : 'open';
 }
 
 /** Each order's standing, read at one block. A view the contract refused
@@ -113,7 +126,7 @@ export async function readSignedStandings(
   c: PublicClient,
   diamond: Hex,
   orders: readonly MySignedOrder[],
-): Promise<{ chainNow: number; standings: Map<Hex, SignedStanding> }> {
+): Promise<{ chainNow: number; standings: Map<Hex, SignedStanding>; filled: Map<Hex, bigint> }> {
   const block = await c.getBlock({ blockTag: 'latest' });
   const at = { blockNumber: block.number };
   const chainNow = Number(block.timestamp);
@@ -126,10 +139,12 @@ export async function readSignedStandings(
           c.readContract({ address: diamond, abi: SIGNED_OFFER, functionName: 'isSignedOfferNonceUsed', args: [o.order.signer, BigInt(o.order.nonce)], ...at }),
         ),
       ]);
-      return [o.orderHash, standingOf(o.order, filled, nonceUsed, chainNow)] as const;
+      return { hash: o.orderHash, standing: standingOf(o.order, filled, nonceUsed, chainNow), filled };
     }),
   );
-  return { chainNow, standings: new Map(rows) };
+  const filled = new Map<Hex, bigint>();
+  for (const r of rows) if (r.filled !== null) filled.set(r.hash, r.filled);
+  return { chainNow, standings: new Map(rows.map((r) => [r.hash, r.standing] as const)), filled };
 }
 
 /** Open orders that share a nonce with at least one other open order: one
@@ -137,7 +152,7 @@ export async function readSignedStandings(
 export function sharedNonces(orders: readonly MySignedOrder[], standings: ReadonlyMap<Hex, SignedStanding>): Map<string, MySignedOrder[]> {
   const byNonce = new Map<string, MySignedOrder[]>();
   for (const o of orders) {
-    if (standings.get(o.orderHash) !== 'open') continue;
+    if (!fillable(standings.get(o.orderHash))) continue;
     byNonce.set(o.order.nonce, [...(byNonce.get(o.order.nonce) ?? []), o]);
   }
   for (const [nonce, list] of byNonce) if (list.length < 2) byNonce.delete(nonce);
