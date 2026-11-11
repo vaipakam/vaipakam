@@ -3127,6 +3127,27 @@ Diamond-as-treasury mode. **Governance op:** to change the reserve
 mix, submit the complete new `(asset, bps)` list to
 `setTreasuryConvertTargets`.
 
+**Conversion price protection (#3414).** Each swapped leg is held to a
+minimum output the Diamond derives on-chain: the oracle value of the
+leg less `SaleFloorFacet.swapFloorBps` (the forced-sale market rule:
+the depth-tier figure when the pair is deep and calm, otherwise the
+full liquidation slippage cap). `minOuts[i]` can only raise that
+minimum, so pass 0 unless you want a tighter fill. A leg with no
+current price reverts `TreasuryConvertUnpriced`; a distrusted price
+reverts with the oracle's divergence error. Each leg emits
+`TreasuryConvertLeg` with the floor it was held to.
+**Governance op:** for a large balance, set a per-token tranche cap
+with `TreasuryFacet.setTreasuryConvertMaxTranche(token, cap)` (raw
+units; 0 = whole balance) so each call sells at most `cap`.
+
+**Treasury multisig procedure (owner decision 2026-11-09).** Where the
+treasury is an external multisig (the planned mainnet topology), the
+Diamond holds no convertible balance and the multisig converts its own
+holdings. It converts ONLY through batch or intent auctions (solvers
+compete to fill, so there is nothing to sandwich) or a time-weighted
+schedule, in tranches, from the Safe — never a plain public-mempool
+swap.
+
 **Founder salary — `PayrollFacet` (the new Layer 2).** The plan above
 listed only genesis-vest + discretionary budget; the as-built adds a
 **continuous salary stream**. `createPayrollStream` / `fundPayrollStream`

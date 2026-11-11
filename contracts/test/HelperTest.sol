@@ -1580,7 +1580,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](46);
+        selectors = new bytes4[](48);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -1634,6 +1634,8 @@ contract HelperTest {
         selectors[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
         selectors[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
         selectors[45] = TreasuryFacet.getBuybackTopUpHeadroom.selector; // #908
+        selectors[46] = TreasuryFacet.setTreasuryConvertMaxTranche.selector; // #3414
+        selectors[47] = TreasuryFacet.getTreasuryConvertMaxTranche.selector; // #3414
         // #687-C: former selectors[56] getKeeperRewardTwapMaxAgeSec relocated to [23].
         return selectors;
     }
@@ -2788,12 +2790,13 @@ contract HelperTest {
     /// #3359 - the forced-sale floor rule. Mirrors
     /// `DeployDiamond._getSaleFloorSelectors`.
     function getSaleFloorFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = SaleFloorFacet.saleFloorBps.selector;
         selectors[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         selectors[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         selectors[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         selectors[4] = SaleFloorFacet.getSaleFloorConfig.selector;
+        selectors[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
     }
 
     /// #2748 - the rate-model host (model, band, offer-rate clamp). Mirrors

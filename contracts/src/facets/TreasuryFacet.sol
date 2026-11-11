@@ -18,6 +18,9 @@ import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../libraries/LibBuybackOrderValidation.sol";
 import {LibLopDomain} from "../libraries/LibLopDomain.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
+import {LibFallback} from "../libraries/LibFallback.sol";
+import {SaleFloorFacet} from "./SaleFloorFacet.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title TreasuryFacet
@@ -58,17 +61,46 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     /// @notice Emitted on a successful `convertTreasuryAsset`.
     /// @param tokenIn The input asset whose treasury balance was converted.
-    /// @param amountIn The full input balance consumed.
+    /// @param amountIn The input consumed: the whole balance, or one tranche
+    ///        of it where a per-token tranche cap is set (#3414).
     /// @param targetCount The number of configured target legs the
-    ///        input was split across. Per-leg amounts are recoverable
-    ///        from the `treasuryBalances` deltas and the `LibSwap`
-    ///        swap-event stream (keyed on the sentinel `loanId == 0`).
+    ///        input was split across. Each swapped leg also emits
+    ///        {TreasuryConvertLeg}.
     /// @custom:event-category state-change/treasury-mutation
     event TreasuryConverted(
         address indexed tokenIn,
         uint256 amountIn,
         uint256 targetCount
     );
+
+    /// @notice #3414 — one swapped leg of a `convertTreasuryAsset`, with the
+    ///         minimum output it was held to and where that minimum came
+    ///         from, so every conversion's price protection is on the record.
+    /// @param tokenIn The asset sold.
+    /// @param tokenOut The target asset bought.
+    /// @param amountIn The amount of `tokenIn` this leg sold.
+    /// @param amountOut The amount of `tokenOut` it delivered.
+    /// @param oracleOut The oracle value of `amountIn` in `tokenOut` units.
+    /// @param floorBps The most the leg could lose against `oracleOut`
+    ///        (SaleFloorFacet.swapFloorBps).
+    /// @param minOut The minimum output enforced: the oracle floor
+    ///        (`oracleOut` less `floorBps`) or the caller's figure, whichever
+    ///        is higher.
+    /// @custom:event-category state-change/treasury-mutation
+    event TreasuryConvertLeg(
+        address indexed tokenIn,
+        address indexed tokenOut,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 oracleOut,
+        uint256 floorBps,
+        uint256 minOut
+    );
+
+    /// @notice #3414 — the per-token tranche cap for `convertTreasuryAsset`
+    ///         changed. `cap == 0` converts the whole balance per call.
+    /// @custom:event-category informational/config
+    event TreasuryConvertMaxTrancheSet(address indexed token, uint256 cap);
 
     // Facet-specific errors (InvalidAddress, NotCanonicalVPFIChain inherited
     // from IVaipakamErrors).
@@ -89,6 +121,10 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     error TreasuryConvertArityMismatch(uint256 provided, uint256 expected);
     /// @notice A conversion leg's swap soft-failed across every adapter.
     error TreasuryConvertSwapFailed(address tokenOut);
+    /// @notice #3414 — a conversion leg's pair has no current oracle price,
+    ///         so no minimum output can be derived for it. The treasury does
+    ///         not swap at a price it cannot check.
+    error TreasuryConvertUnpriced(address tokenIn, address tokenOut);
 
     // ─── T-087 Sub 3.A — buyback remittance ──────────────────────────
 
@@ -307,9 +343,26 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      *      target equals `tokenIn` is credited straight back (no
      *      self-swap).
      *
+     *      #3414 — every swapped leg is held to a minimum output derived
+     *      on-chain: the oracle value of the leg (the same reader a
+     *      liquidation prices its swap with) less the slippage floor
+     *      `SaleFloorFacet.swapFloorBps` gives the pair (the forced-sale
+     *      market rule: the depth-tier figure when the pair is calm, the
+     *      full slippage cap otherwise). `minOuts[i]` can only RAISE that
+     *      minimum, never lower it. A leg whose pair has no current price
+     *      reverts `TreasuryConvertUnpriced`; a distrusted price reverts
+     *      with the oracle's divergence error.
+     *
+     *      Tranches: where governance set a per-token cap
+     *      ({setTreasuryConvertMaxTranche}), one call converts at most the
+     *      cap and the rest of the balance stays credited for a later call,
+     *      which is priced and floored afresh.
+     *
      * @param tokenIn The treasury asset to convert (non-zero, non-empty balance).
      * @param perTargetCalls Ranked adapter try-list per configured target.
-     * @param minOuts Slippage floor per configured target.
+     * @param minOuts Per configured target, a minimum output the caller
+     *        wants ABOVE the on-chain floor; 0 (or anything at or below the
+     *        floor) leaves the floor in force.
      */
     function convertTreasuryAsset(
         address tokenIn,
@@ -346,36 +399,44 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
             revert TreasuryConvertArityMismatch(minOuts.length, n);
         }
 
-        // CEI — zero the input balance and stamp the conversion time
+        // #3414 — at most one tranche per call where a cap is set; the
+        // remainder stays credited to the treasury balance.
+        uint256 amountIn = balance;
+        uint256 trancheCap = s.cfgTreasuryConvertMaxTranche[tokenIn];
+        if (trancheCap != 0 && amountIn > trancheCap) amountIn = trancheCap;
+
+        // CEI — debit the input balance and stamp the conversion time
         // before any external swap call.
-        s.treasuryBalances[tokenIn] = 0;
+        s.treasuryBalances[tokenIn] = balance - amountIn;
         s.treasuryLastConversionAt = uint64(block.timestamp);
 
         // Split pro-rata; the final target absorbs the rounding dust so
-        // the legs always sum back to exactly `balance`.
+        // the legs always sum back to exactly `amountIn`.
         uint256 allocated;
         for (uint256 i = 0; i < n; ++i) {
             LibVaipakam.TreasuryConvertTarget storage t = s.treasuryConvertTargets[i];
             uint256 amount = (i == n - 1)
-                ? balance - allocated
-                : (balance * t.bps) / LibVaipakam.BASIS_POINTS;
+                ? amountIn - allocated
+                : (amountIn * t.bps) / LibVaipakam.BASIS_POINTS;
             allocated += amount;
             _convertLeg(tokenIn, t.asset, amount, minOuts[i], perTargetCalls[i], s);
         }
 
-        emit TreasuryConverted(tokenIn, balance, n);
+        emit TreasuryConverted(tokenIn, amountIn, n);
     }
 
     /// @dev Settle one conversion leg. `tokenIn == tokenOut` short-circuits
     ///      (the slice already IS the target — credit it straight back, no
-    ///      self-swap). Otherwise routes through `LibSwap.swapWithFailover`;
-    ///      a soft-failure across every adapter reverts the WHOLE call so
-    ///      the zeroed input balance is rolled back — funds are never lost.
+    ///      self-swap). Otherwise routes through `LibSwap.swapWithFailover`
+    ///      held to the higher of the on-chain floor and the caller's
+    ///      `callerMinOut` (#3414); a soft-failure across every adapter
+    ///      reverts the WHOLE call so the debited input balance is rolled
+    ///      back — funds are never lost.
     function _convertLeg(
         address tokenIn,
         address tokenOut,
         uint256 amountIn,
-        uint256 minOut,
+        uint256 callerMinOut,
         LibSwap.AdapterCall[] calldata calls,
         LibVaipakam.Storage storage s
     ) private {
@@ -384,6 +445,15 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
             s.treasuryBalances[tokenOut] += amountIn;
             return;
         }
+        // The oracle value of the leg, read as a liquidation reads its swap
+        // (LibFallback), and the market floor for the pair.
+        (bool priced, LibFallback.Rate memory r) = LibFallback.tryOracleRate(address(this), tokenIn, tokenOut);
+        if (!priced) revert TreasuryConvertUnpriced(tokenIn, tokenOut);
+        uint256 oracleOut = LibFallback.toPrincipal(r, amountIn);
+        uint256 floorBps = SaleFloorFacet(address(this)).swapFloorBps(tokenIn, tokenOut).bps;
+        uint256 minOut = Math.mulDiv(oracleOut, LibVaipakam.BASIS_POINTS - floorBps, LibVaipakam.BASIS_POINTS);
+        if (callerMinOut > minOut) minOut = callerMinOut;
+
         (bool ok, uint256 outAmount, ) = LibSwap.swapWithFailover(
             0, // loanId sentinel — 0 marks a treasury conversion
             tokenIn,
@@ -395,6 +465,27 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         );
         if (!ok) revert TreasuryConvertSwapFailed(tokenOut);
         s.treasuryBalances[tokenOut] += outAmount;
+        emit TreasuryConvertLeg(tokenIn, tokenOut, amountIn, outAmount, oracleOut, floorBps, minOut);
+    }
+
+    /// @notice #3414 — set the per-token tranche cap for
+    ///         `convertTreasuryAsset`, in `token`'s raw units: one call then
+    ///         converts at most `cap` of the balance, each tranche priced and
+    ///         floored on its own. `cap == 0` converts the whole balance per
+    ///         call. ADMIN_ROLE (the Timelock after handover).
+    function setTreasuryConvertMaxTranche(address token, uint256 cap)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (token == address(0)) revert InvalidAddress();
+        LibVaipakam.storageSlot().cfgTreasuryConvertMaxTranche[token] = cap;
+        emit TreasuryConvertMaxTrancheSet(token, cap);
+    }
+
+    /// @notice #3414 — the per-token tranche cap for `convertTreasuryAsset`
+    ///         (0 = the whole balance per call).
+    function getTreasuryConvertMaxTranche(address token) external view returns (uint256) {
+        return LibVaipakam.storageSlot().cfgTreasuryConvertMaxTranche[token];
     }
 
     /// @dev Conversion eligibility — true when EITHER the time since the

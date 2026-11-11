@@ -2633,12 +2633,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `SaleFloorFacet` (#3359) — the forced-sale floor
     ///      rule, its settings and the hourly price checkpoints it reads.
     function _getSaleFloorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = SaleFloorFacet.saleFloorBps.selector;
         s[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         s[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         s[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         s[4] = SaleFloorFacet.getSaleFloorConfig.selector;
+        s[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
     }
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
@@ -2679,7 +2680,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](46);
+        s = new bytes4[](48);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -2733,6 +2734,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
         s[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
         s[45] = TreasuryFacet.getBuybackTopUpHeadroom.selector; // #908
+        s[46] = TreasuryFacet.setTreasuryConvertMaxTranche.selector; // #3414
+        s[47] = TreasuryFacet.getTreasuryConvertMaxTranche.selector; // #3414
         // #687-C: former s[56] getKeeperRewardTwapMaxAgeSec relocated to s[23].
     }
 
