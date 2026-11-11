@@ -19,7 +19,7 @@
 //   2. One window of the active-loan list at one pinned block
 //      (`activeLoanWindow.ts`), walked a window per run on a larger book.
 //   3. Which of them are in grace, from the contract's own deadlines
-//      (`LoanFacet.getLoanDeadlines`: the effective due date and grace end,
+//      (`LoanClockFacet.getLoanDeadlines`: the effective due date and grace end,
 //      pause credit included), against that block's time. Nothing here
 //      re-derives grace arithmetic.
 //   4. Which of those the call can apply to, from the loan's own record: it
@@ -55,7 +55,7 @@
 // Gated by KEEPER_ENABLED + PREPAY_AUTO_LIST_ENABLED. Ships disarmed.
 
 import { createPublicClient, decodeEventLog, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
-import { LoanFacetABI, NFTPrepayAutoListFacetABI, NFTPrepayListingFacetABI } from '@vaipakam/contracts/abis';
+import { LoanClockFacetABI, LoanFacetABI, NFTPrepayAutoListFacetABI, NFTPrepayListingFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
@@ -72,6 +72,7 @@ export const ABI = [
   ...(NFTPrepayAutoListFacetABI as Abi),
   ...(NFTPrepayListingFacetABI as Abi),
   ...(LoanFacetABI as Abi),
+  ...(LoanClockFacetABI as Abi),
 ] as Abi;
 
 /** The pass's cadence, in seconds; the scheduler reads it from here. */

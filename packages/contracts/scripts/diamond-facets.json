@@ -51,6 +51,7 @@
     "ForcedSalePreviewFacet",
     "OfferPriceGuardFacet",
     "SignedOfferMatchFacet",
+    "LoanClockFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

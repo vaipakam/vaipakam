@@ -1639,6 +1639,7 @@ DELETE FROM keeper_sanctions_screen; \
 DELETE FROM keeper_sanctions_watch; \
 DELETE FROM keeper_ops_alert; \
 DELETE FROM keeper_private_nonce; \
+DELETE FROM keeper_private_send; \
 DELETE FROM keeper_deployment" )
 ```
 

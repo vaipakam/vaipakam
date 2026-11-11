@@ -293,6 +293,11 @@ const CLASSIFICATION = {
     reason:
       'next nonce reserved by a private broadcast (#3240); an empty table only forgets a reservation, and a private transaction stays pending for minutes, far less than a restore takes, so the pending count is right again by then',
   },
+  keeper_private_send: {
+    class: 'replay-derived',
+    reason:
+      'accepted private sends awaiting a possible public copy (#3408); an empty table only forgets the public fallback for sends still pending, which lasts minutes, far less than a restore takes',
+  },
   keeper_ops_alert: {
     class: 'replay-derived',
     reason:

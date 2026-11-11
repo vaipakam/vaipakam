@@ -1317,39 +1317,6 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     }
 
     /**
-     * @notice The deadlines an ACTIVE loan is held to now, with the global
-     *         pause credit applied (#668 / #935, owner decision D2).
-     * @dev    The protocol's paused time since the loan started is added to
-     *         its due date and grace end ({LibLoanClock}), so a deadline a
-     *         pause has moved is read here, never recomputed from
-     *         `startTime + durationDays`. The `dueTimestamp` in
-     *         `LoanInitiatedDetails` is the ORIGINAL due date and goes stale
-     *         after a pause. A loan that is not Active is refused: its
-     *         deadlines no longer govern anything, and the credit would keep
-     *         growing with every later pause.
-     * @param loanId The loan ID.
-     * @return originalMaturity `startTime + durationDays` days, before credit.
-     * @return pauseCredit Paused time between the loan's start and now.
-     * @return maturity The effective due date; the late fee runs past it.
-     * @return graceEnd The effective grace end; past it the loan may be
-     *         defaulted and may no longer be repaid.
-     */
-    function getLoanDeadlines(uint256 loanId)
-        external
-        view
-        returns (uint256 originalMaturity, uint256 pauseCredit, uint256 maturity, uint256 graceEnd)
-    {
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
-            revert InvalidLoanStatus();
-        }
-        originalMaturity = LibLoanClock.originalMaturity(loan);
-        pauseCredit = LibLoanClock.pauseCredit(loan);
-        maturity = originalMaturity + pauseCredit;
-        graceEnd = maturity + LibVaipakam.gracePeriod(loan.durationDays);
-    }
-
-    /**
      * @notice Returns whether both counterparties latched the combined
      *         abnormal-market + illiquid-assets fallback consent for
      *         this loan. The docs mandate this consent on every offer

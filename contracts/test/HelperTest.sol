@@ -116,6 +116,7 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -964,13 +965,21 @@ contract HelperTest {
     }
 
     function getLoanFacetSelectors() public pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](4);
+        bytes4[] memory selectors = new bytes4[](3);
         selectors[0] = LoanFacet.initiateLoan.selector;
         selectors[1] = LoanFacet.getLoanDetails.selector;
         selectors[2] = LoanFacet.getLoanConsents.selector;
-        // `markNotifBilled` moved to NotificationFeeFacet in #2769.
-        selectors[3] = LoanFacet.getLoanDeadlines.selector;
+        // `markNotifBilled` moved to NotificationFeeFacet in #2769;
+        // `getLoanDeadlines` to LoanClockFacet in #3410.
         return selectors;
+    }
+
+    /// @dev #3410 — the loan clock's disclosure, split off LoanFacet.
+    ///      Mirrors `DeployDiamond._getLoanClockSelectors`.
+    function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = LoanClockFacet.getLoanDeadlines.selector;
+        selectors[1] = LoanClockFacet.getSequencerOutageWindow.selector;
     }
 
     function getRepayFacetSelectors()

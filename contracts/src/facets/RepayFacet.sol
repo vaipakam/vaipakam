@@ -267,8 +267,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             ) revert LenderCannotRepayOwnLoan();
         }
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         // #1000 (S2) — the grace gate blocks an ORDINARY (Active) repayment past
         // graceEnd (that loan must go through DefaultedFacet). But a
         // FallbackPending CURE only exists past graceEnd (a time-based default
@@ -722,8 +721,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             if (partialAmount < minPartial) revert InsufficientPartialAmount();
         }
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // Pass-2 A2 (#1190) — capture the PRE-partial health factor for the

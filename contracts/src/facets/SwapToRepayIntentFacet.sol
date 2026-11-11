@@ -415,8 +415,7 @@ contract SwapToRepayIntentFacet is
         if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         if (LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender)
             revert IVaipakamErrors.LenderCannotRepayOwnLoan();
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // ── §5.1 step 2: field + makerTraits binding checks ─────────
@@ -1023,9 +1022,7 @@ contract SwapToRepayIntentFacet is
             loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
-        uint256 endTime = LibLoanClock.maturity(loan);
-        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
-            revert RepaymentPastGracePeriod();
+        if (block.timestamp > LibLoanClock.graceEnd(loan)) revert RepaymentPastGracePeriod();
         (lot, minTakerAmount) = _sizeCommitLot(loan, _commitMinOut(loanId));
     }
 

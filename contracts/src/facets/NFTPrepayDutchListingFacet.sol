@@ -331,8 +331,7 @@ contract NFTPrepayDutchListingFacet is
     ///      load-bearing for the split — both facets must compute the
     ///      same value from the same loan record.
     function _gracePeriodEnd(LibVaipakam.Loan storage loan) private view returns (uint256) {
-        uint256 endTime = LibLoanClock.maturity(loan);
-        return endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        return LibLoanClock.graceEnd(loan);
     }
 
     function _requireExecutor(LibVaipakam.Storage storage s)

@@ -161,7 +161,7 @@ async function loanClockView(env: Env, chainId: number): Promise<LoanClockView> 
 /**
  * An ACTIVE loan's deadlines, on the D2 loan clock (#668 / #935): the due
  * date and grace end moved by the protocol's paused time since the loan's
- * start — the figures `LoanFacet.getLoanDeadlines` returns, never
+ * start — the figures `LoanClockFacet.getLoanDeadlines` returns, never
  * `startTime + durationDays` (that is `originalMaturity`, the due date the
  * loan was announced with, and after a pause it is early).
  *

@@ -21,7 +21,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
-import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -86,6 +86,10 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #668 / #935 - the target Diamond predates the loan clock (the
     ///         global pause credit); see {_requireLoanClock}.
     error PredatesLoanClock(address diamond);
+
+    /// @notice #3410 - the target Diamond predates the sequencer-outage loan
+    ///         clock; see {_requireSequencerOutageClock}.
+    error PredatesSequencerOutageClock(address diamond);
     /// @notice #1820 - the target Diamond predates the tier record seam; see
     ///         {_requireTierRecordSeam}.
     error PredatesTierRecordSeam(address diamond);
@@ -139,6 +143,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #668 / #935 - and one from before the loan clock; see
         // {_requireLoanClock}.
         _requireLoanClock(diamond);
+        // #3410 - and one from before the sequencer-outage loan clock; see
+        // {_requireSequencerOutageClock}.
+        _requireSequencerOutageClock(diamond);
         // #1820 - and one from before the tier record seam; see
         // {_requireTierRecordSeam}.
         _requireTierRecordSeam(diamond);
@@ -548,6 +555,21 @@ contract ReplaceStaleFacets is DeployDiamond {
         ) revert PredatesNumeraireValueRule(diamond);
     }
 
+    /// @dev #3410 - refuse a Diamond from before the sequencer-outage loan
+    ///      clock. Every reader of a loan's grace end and late fee moved onto
+    ///      the outage-aware {LibLoanClock} in one change, and this curated set
+    ///      carries only some of them: across the boundary a loan could be
+    ///      repayable on one facet and defaultable on another during an
+    ///      outage's recovery window. Crossing it is a fresh deploy or
+    ///      `RefreshAllFacetsInPlace`, never this refresh. The marker is the
+    ///      routing of `LoanClockFacet.getSequencerOutageWindow`, which #3410
+    ///      introduced. Called before the broadcast starts.
+    function _requireSequencerOutageClock(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(LoanClockFacet.getSequencerOutageWindow.selector) == address(0)) {
+            revert PredatesSequencerOutageClock(diamond);
+        }
+    }
+
     /// @dev #668 / #935 (owner decision D2) - refuse a Diamond from before
     ///      the loan clock. Every facet that reads a loan deadline moved onto
     ///      {LibLoanClock} in one change, and this curated set carries only
@@ -556,10 +578,10 @@ contract ReplaceStaleFacets is DeployDiamond {
     ///      could be defaultable on one facet while still repayable without a
     ///      late fee on another. Crossing the boundary is a fresh deploy or
     ///      `RefreshAllFacetsInPlace`, never this refresh. The marker is the
-    ///      routing of `LoanFacet.getLoanDeadlines`, which D2 introduced.
+    ///      routing of `getLoanDeadlines` (on LoanClockFacet since #3410), which D2 introduced.
     ///      Called before the broadcast starts, so a refused run sends nothing.
     function _requireLoanClock(address diamond) internal view {
-        if (IDiamondLoupe(diamond).facetAddress(LoanFacet.getLoanDeadlines.selector) == address(0)) {
+        if (IDiamondLoupe(diamond).facetAddress(LoanClockFacet.getLoanDeadlines.selector) == address(0)) {
             revert PredatesLoanClock(diamond);
         }
     }

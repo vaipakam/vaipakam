@@ -24,9 +24,20 @@ export interface IndexerClient {
   getJson<T>(path: string, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T>;
 }
 
+/** The indexer's one write the app makes: a JSON POST whose answer the
+ *  caller reads by status (a refusal is an answer, not a failure). Kept
+ *  apart from {@link IndexerClient} so a reader cannot write. */
+export interface IndexerPoster {
+  readonly origin: string | null;
+  /** POST `body` as JSON to `path`. Returns the status and the parsed body
+   *  (null when it was not JSON); throws {@link IndexerUnavailable} only when
+   *  there is no origin or no answer at all. */
+  postJson(path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<{ status: number; body: unknown }>;
+}
+
 export const DEFAULT_TIMEOUT_MS = 10_000;
 
-export function createIndexerClient(origin: string | null, fetchImpl: typeof fetch = fetch): IndexerClient {
+export function createIndexerClient(origin: string | null, fetchImpl: typeof fetch = fetch): IndexerClient & IndexerPoster {
   return {
     origin,
     async getJson<T>(path: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
@@ -46,6 +57,28 @@ export function createIndexerClient(origin: string | null, fetchImpl: typeof fet
       } catch {
         throw new IndexerUnavailable('shape', `The indexer's answer for ${path} was not JSON.`);
       }
+    },
+    async postJson(path: string, body: unknown, opts: { timeoutMs?: number } = {}): Promise<{ status: number; body: unknown }> {
+      if (origin === null) throw new IndexerUnavailable('not-configured', 'This build has no indexer origin.');
+      if (!path.startsWith('/')) throw new Error(`indexer path must start with "/": ${path}`);
+      let res: Response;
+      try {
+        res = await fetchImpl(`${origin}${path}`, {
+          method: 'POST',
+          signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        throw new IndexerUnavailable('network', `The indexer did not answer: ${(e as Error).message}`);
+      }
+      let parsed: unknown = null;
+      try {
+        parsed = await res.json();
+      } catch {
+        parsed = null;
+      }
+      return { status: res.status, body: parsed };
     },
   };
 }

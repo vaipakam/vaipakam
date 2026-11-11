@@ -403,9 +403,14 @@ runs half of it on old code:
   loan could be defaultable on one facet while repayable without a late fee
   on another (a silent divergence, not a revert). Cross it by fresh deploy or
   `RefreshAllFacetsInPlace`; `RedeployFacets` and `ReplaceStaleFacets` refuse
-  a Diamond that does not already route `LoanFacet.getLoanDeadlines`
-  (`PredatesLoanClock`). Never compute `startTime + durationDays * 1 days` as
-  a deadline in new code; read `LibLoanClock`.
+  a Diamond that does not already route `getLoanDeadlines`
+  (`PredatesLoanClock`; the selector is on `LoanClockFacet` since #3410). The
+  sequencer-outage clock (#3410) crossed the same family again — every grace
+  end and late fee now also reads the latest L2 sequencer outage through the
+  price guard — and the two scripts also refuse a Diamond that does not route
+  `LoanClockFacet.getSequencerOutageWindow` (`PredatesSequencerOutageClock`).
+  Never compute `startTime + durationDays * 1 days`, or a maturity plus a grace
+  period, as a deadline in new code; read `LibLoanClock`.
 
 - **OfferPreviewFacet + every facet that admits a periodic-interest cadence
   (#3009, #3025).** The cadence rule lives once, in `LibCadenceAdmission`, and

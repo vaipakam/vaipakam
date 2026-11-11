@@ -6,6 +6,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanClockProbeFacet} from "./mocks/LoanClockProbeFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -94,7 +95,7 @@ contract PerSecondInterestTest is SetupTest {
     }
 
     function _maturity(uint256 loanId) internal view returns (uint256 m) {
-        (, , m, ) = LoanFacet(address(diamond)).getLoanDeadlines(loanId);
+        (, , m, ) = LoanClockFacet(address(diamond)).getLoanDeadlines(loanId);
     }
 
     // ─── Pro-rata ────────────────────────────────────────────────────────────

@@ -11058,9 +11058,7 @@ library LibVaipakam {
     ///         `block.timestamp == gracePeriodEnd` (Codex round-1 P3
     ///         fix on PR #356).
     function isGraceWindow(Loan storage loan) internal view returns (bool) {
-        uint256 loanEnd = LibLoanClock.maturity(loan);
-        uint256 gracePeriodEnd = loanEnd + gracePeriod(loan.durationDays);
-        return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
+        return block.timestamp >= LibLoanClock.maturity(loan) && block.timestamp < LibLoanClock.graceEnd(loan);
     }
 
     /// @notice Pass-2 D1 (#1188) — a rental loan's REMAINING prepaid days.
@@ -11271,7 +11269,7 @@ library LibVaipakam {
         returns (uint256 fee)
     {
         Loan storage loan = storageSlot().loans[loanId];
-        return (loan.principal * lateFeeBpsAt(LibLoanClock.maturity(loan), asOfTimestamp)) / 10000; // Basis points
+        return (loan.principal * lateFeeBpsAt(LibLoanClock.lateFeeStart(loan, asOfTimestamp), asOfTimestamp)) / 10000; // Basis points
     }
 
     /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
@@ -11324,7 +11322,7 @@ library LibVaipakam {
     function calculateRentalLateFee(uint256 loanId) internal view returns (uint256 fee) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        uint256 endTime = LibLoanClock.maturity(loan);
+        uint256 endTime = LibLoanClock.lateFeeStart(loan, block.timestamp);
 
         if (block.timestamp <= endTime) return 0;
 

@@ -197,8 +197,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         if (collateralSwapAmount == 0 || collateralSwapAmount > loan.collateralAmount)
             revert InvalidAmount();
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // Pass-2 A2 (#1190, Codex #1229) — capture PRE-swap HF for the

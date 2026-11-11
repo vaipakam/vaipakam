@@ -425,6 +425,13 @@ interface BaseEnv {
    *  which must have a private route. Unset allows no fallback. A plain var,
    *  never echoed when it cannot be read. */
   PRIVATE_TX_FALLBACK_CHAIN_IDS?: string;
+
+  /** #3408 — how long, in seconds, a send a private route accepted may stay
+   *  unmined before the same signed bytes go to the ordinary RPC, on the
+   *  chains `PRIVATE_TX_FALLBACK_CHAIN_IDS` names (`privateRebroadcast.ts`).
+   *  24 to 180, default 60. A plain var; a value outside the bounds sends
+   *  nothing, like every unreadable route setting. */
+  PRIVATE_TX_PUBLIC_AFTER_SECONDS?: string;
 }
 
 /**
@@ -591,6 +598,7 @@ export const PLAIN_VAR_KEYS = [
   'PARTIAL_LIQ_MIN_HF_BPS',
   'DISCOUNT_PATH_CHAIN_IDS',
   'PRIVATE_TX_FALLBACK_CHAIN_IDS',
+  'PRIVATE_TX_PUBLIC_AFTER_SECONDS',
 ] as const satisfies readonly (keyof BaseEnv)[];
 
 /** One plain-string knob's name. A reader that takes one of these, rather
@@ -791,6 +799,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PARTIAL_LIQ_MIN_HF_BPS: raw.PARTIAL_LIQ_MIN_HF_BPS,
     DISCOUNT_PATH_CHAIN_IDS: raw.DISCOUNT_PATH_CHAIN_IDS,
     PRIVATE_TX_FALLBACK_CHAIN_IDS: raw.PRIVATE_TX_FALLBACK_CHAIN_IDS,
+    PRIVATE_TX_PUBLIC_AFTER_SECONDS: raw.PRIVATE_TX_PUBLIC_AFTER_SECONDS,
     // Resolved secrets.
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,
