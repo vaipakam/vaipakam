@@ -42,12 +42,18 @@ async function session(b, opts, label) {
   await p.getByTestId('request-collateral').fill('50');
   await p.getByTestId('request-rate').fill('6.5');
   await p.getByTestId('request-expiry').selectOption('7d');
+  // #3520: one size shows all-or-none, with the modes that fill in parts
+  // waiting for a range.
+  const oneSize = p.getByTestId('request-fill');
+  const modes = await oneSize.getByRole('radio').evaluateAll((els) => els.map((e) => `${e.value}:${e.checked ? 'checked' : e.disabled ? 'disabled' : 'open'}`));
+  console.log(`--- one size: ${modes.join(' ')} | ${await p.getByTestId('request-fill-shape').innerText()}`);
   await p.getByTestId('request-range').check();
   await p.getByTestId('request-amount-max').fill('0.02');
   await p.getByTestId('request-floor').fill('30');
   await p.getByTestId('request-floor').blur();
   await p.waitForTimeout(1500);
-  console.log(`--- fill modes: ${await p.getByTestId('request-fill').innerText()}`);
+  const ranged = await p.getByTestId('request-fill').getByRole('radio').evaluateAll((els) => els.map((e) => `${e.value}:${e.checked ? 'checked' : e.disabled ? 'disabled' : 'open'}`));
+  console.log(`--- fill modes: ${ranged.join(' ')} | ${await p.getByTestId('request-fill-shape').innerText()}`);
   console.log(`--- summary: ${await p.getByTestId('request-summary').innerText()}`);
   await p.getByTestId('request-advanced').scrollIntoViewIfNeeded();
   await p.screenshot({ path: `${OUT}/live-range-${label}-form.png`, fullPage: false });

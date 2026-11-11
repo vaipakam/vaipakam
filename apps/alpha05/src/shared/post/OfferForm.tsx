@@ -23,6 +23,8 @@ import {
   expiresAt,
   FILL_MODES,
   fillModeBlock,
+  postedFillMode,
+  shownFillMode,
   partError,
   rangeError,
   ASSET_ERC1155,
@@ -225,7 +227,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   // the smallest part one match may lend, the amount typed staying the
   // whole amount locked.
   const ranged = input.ranged && !named;
-  const fillMode: FillMode = input.fillMode;
+  // #3520: a mode that fills in parts needs a range, so one size shows and
+  // posts all-or-none; a range shows the mode chosen for it.
+  const fillMode: FillMode = shownFillMode(input.fillMode, ranged);
   /** The Full tariff, chosen on either side. */
   const tariffChosen = input.tariff;
   const amountMax = ranged && !lender && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
@@ -459,7 +463,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           amountMax: max,
           collateral: locked,
           collateralFloor: floorValue,
-          fillMode,
+          fillMode: postedFillMode(fillMode, min, max),
           cadence,
           tariff: tariffChosen && ceilingValue !== null ? { maxCStar: ceilingValue, allowDowngrade: input.tariffDowngrade } : null,
           guardBps: input.guard ? guardBps : null,
@@ -490,24 +494,27 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
               type="radio"
               name="request-fill"
               value={m}
-              checked={input.fillMode === m}
-              disabled={blocked !== null && input.fillMode !== m}
+              checked={fillMode === m}
+              disabled={blocked !== null && fillMode !== m}
               onChange={() => set({ fillMode: m })}
             />
             <span>{text(m === 'aon' ? k.fillAon : FILL_LABEL[m])}</span>
           </label>
         );
       })}
-      {fillBlock !== null && (
+      {fillBlock === 'ioc-open' && (
         <Notice tone="warn" tier="A">
-          {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : k.fillIocOpen)}
+          {text(k.fillIocOpen)}
         </Notice>
       )}
+      <p className="tier-b field-hint" data-testid="request-fill-shape">
+        {text(ranged ? 'request.fillAonRange' : named ? 'request.fillOneSizeToken' : 'request.fillOneSize')}
+      </p>
       <WhyLink summaryKey={k.fillSummary} detailKey={k.fillWhy} />
     </fieldset>
   );
-  /** The range switch: the same box on both sides; turning it on drops an
-   *  all-or-none choice, which takes one amount. */
+  /** The range switch: the same box on both sides. One size shows and
+   *  posts all-or-none, and a range shows the mode chosen for it (#3520). */
   /** OFF-14: the interest schedule, for either side; only the schedules
    *  the protocol admits for the terms typed can be chosen. */
   const cadenceFieldset = (
@@ -671,7 +678,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         type="checkbox"
         checked={ranged}
         disabled={named}
-        onChange={(e) => set({ ranged: e.target.checked, ...(e.target.checked && input.fillMode === 'aon' ? { fillMode: 'partial' as const } : {}) })}
+        onChange={(e) => set({ ranged: e.target.checked })}
         data-testid="request-range"
       />
       <span>{text(k.rangeOption)}</span>
@@ -1119,9 +1126,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           </Notice>
         )
       )}
-      {fillBlock !== null && !isAdvanced && (
+      {fillBlock === 'ioc-open' && !isAdvanced && (
         <Notice tone="warn" tier="A">
-          {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : k.fillIocOpen)}
+          {text(k.fillIocOpen)}
         </Notice>
       )}
       {cadenceBlock !== null && !isAdvanced && (

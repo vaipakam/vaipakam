@@ -2189,7 +2189,7 @@ Borrow ERC-20 कोलैटरल के बदले ERC-20 के लें�
 
 ### Borrow: अनुरोध की शर्तें
 
-Basic एकल-मान अनुरोध पोस्ट करता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true। राशियाँ बेस इकाइयों में सटीक बदली जाती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़ा गया कॉन्फ़िगर किया गया अधिकतम है। `expiresAt` 0 है (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true है और `allowsPartialRepay` false।
+Basic एकल-मान अनुरोध पोस्ट करता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true। राशियाँ बेस इकाइयों में सटीक बदली जाती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़ा गया कॉन्फ़िगर किया गया अधिकतम है। `expiresAt` 0 है (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true है और `allowsPartialRepay` false।
 
 <a id="borrow-request-review"></a>
 
@@ -2213,7 +2213,7 @@ Basic एकल-मान अनुरोध पोस्ट करता है
 
 ### Borrow: अनुरोध का भराई मोड
 
-`fillMode` 0 (Partial), 1 (AON) या 2 (IOC) है और पोस्ट करने के बाद नहीं बदलता। AON के लिए `amount` = `amountMax` चाहिए (`AonRequiresSingleValueAmount`), और IOC के लिए `expiresAt` ≠ 0 चाहिए (`IocRequiresExpiry`); फ़ॉर्म अस्वीकार होने वाला कोई रूप नहीं देता। खुले अनुरोध पर राशियाँ, दर और संपार्श्विक `setOfferAmount`, `setOfferRate`, `setOfferCollateral` और `modifyOffer` से बदले जा सकते हैं, पर कभी `amountFilled` या `collateralAmountFilled` से नीचे नहीं; यह ऐप अभी इन्हें कॉल नहीं करता।
+`fillMode` 0 (Partial), 1 (AON) या 2 (IOC) है और पोस्ट करने के बाद नहीं बदलता। AON के लिए `amount` = `amountMax` चाहिए (`AonRequiresSingleValueAmount`), और IOC के लिए `expiresAt` ≠ 0 चाहिए (`IocRequiresExpiry`); फ़ॉर्म अस्वीकार होने वाला कोई रूप नहीं देता। एक आकार वाली पोस्ट AON भेजती है (#3520): `LibOfferMatch` हर मैच को `amount` और `amountMax` के बचे हिस्से के बीच रखता है, इसलिए एक आकार हमेशा पूरा ही भरता है, और Partial और IOC केवल रेंज के साथ दिए जाते हैं। खुले अनुरोध पर राशियाँ, दर और संपार्श्विक `setOfferAmount`, `setOfferRate`, `setOfferCollateral` और `modifyOffer` से बदले जा सकते हैं, पर कभी `amountFilled` या `collateralAmountFilled` से नीचे नहीं; यह ऐप अभी इन्हें कॉल नहीं करता।
 
 <a id="borrow-request-cadence"></a>
 
@@ -2267,7 +2267,7 @@ Lend किसी ERC-20 के ERC-20 कोलैटरल वाले उध
 
 ### Lend: ऑफ़र की शर्तें
 
-हिस्सों के बिना लेंडिंग ऑफ़र एकल-मूल्य वाला होता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (वह एक कोलैटरल जो उधारकर्ता को लॉक करना है), `fillMode` 0, जब तक Advanced कोई और तय न करे (अगला भाग), `periodicInterestCadence` 0 (जब तक Advanced अनुसूची न तय करे), `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, और कोई Full टैरिफ़ नहीं (जब तक Advanced इसे न चुने)। राशियाँ ठीक-ठीक बेस यूनिट में पार्स होती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़े गए कॉन्फ़िगर किए अधिकतम से तय होती है। `expiresAt` 0 (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय है, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true और `allowsPartialRepay` false है।
+हिस्सों के बिना लेंडिंग ऑफ़र एकल-मूल्य वाला होता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (वह एक कोलैटरल जो उधारकर्ता को लॉक करना है), `fillMode` 1 (AON), जब तक Advanced कोई और तय न करे (अगला भाग), `periodicInterestCadence` 0 (जब तक Advanced अनुसूची न तय करे), `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, और कोई Full टैरिफ़ नहीं (जब तक Advanced इसे न चुने)। राशियाँ ठीक-ठीक बेस यूनिट में पार्स होती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़े गए कॉन्फ़िगर किए अधिकतम से तय होती है। `expiresAt` 0 (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय है, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true और `allowsPartialRepay` false है।
 
 <a id="rate-check"></a>
 

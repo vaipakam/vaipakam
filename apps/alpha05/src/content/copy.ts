@@ -3992,7 +3992,9 @@ export const copy = {
     fillPartial: B('Partial: across one or more matches; the rest stays open'),
     fillAon: B('All or none: one lender for the whole amount'),
     fillIoc: B('Immediate or cancel: matches until it lapses, then the rest lapses'),
-    fillAonRange: A('All or none takes one amount: turn the range off to use it.'),
+    fillAonRange: B('All or none is one match for the whole amount, so it applies only to one size.'),
+    fillOneSize: B('One size fills whole, in one match. To fill it in parts, turn on the option above.'),
+    fillOneSizeToken: B('A token as collateral takes one size, which fills whole in one match.'),
     fillIocOpen: A('Immediate or cancel needs the request to lapse: choose how long it stays open.'),
     rangeSummary: B('A range lets lenders lend less than the most you ask.'),
     rangeWhy: C(

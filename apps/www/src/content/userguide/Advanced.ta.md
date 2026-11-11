@@ -2217,7 +2217,7 @@ Borrow, ERC-20 பிணையத்துக்கு எதிரான ஒர
 
 ### Borrow: கோரிக்கையின் நிபந்தனைகள்
 
-Basic ஒற்றை-மதிப்புக் கோரிக்கையை வெளியிடுகிறது: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing`, `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. தொகைகள் அடிப்படை அலகுகளுக்குத் துல்லியமாக மாற்றப்படுகின்றன; விகிதம் அதிகபட்சம் 10,000 bps. `durationDays` `getProtocolConfigBundle`-இலிருந்து படிக்கும் அமைக்கப்பட்ட அதிகபட்சத்தால் வரம்பிடப்படுகிறது. `expiresAt` 0 (ரத்தாகும் வரை திறந்திருக்கும்) அல்லது மதிப்பாய்வு திறக்கும்போது சமீபத்திய பிளாக்கிலிருந்து நிர்ணயிக்கப்படும் நேரம், அதிகபட்சம் `MAX_OFFER_EXPIRY_HORIZON` (365 நாட்கள்) முன்னால். `useFullTermInterest` இயல்பாக true, `allowsPartialRepay` false.
+Basic ஒற்றை-மதிப்புக் கோரிக்கையை வெளியிடுகிறது: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing`, `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. தொகைகள் அடிப்படை அலகுகளுக்குத் துல்லியமாக மாற்றப்படுகின்றன; விகிதம் அதிகபட்சம் 10,000 bps. `durationDays` `getProtocolConfigBundle`-இலிருந்து படிக்கும் அமைக்கப்பட்ட அதிகபட்சத்தால் வரம்பிடப்படுகிறது. `expiresAt` 0 (ரத்தாகும் வரை திறந்திருக்கும்) அல்லது மதிப்பாய்வு திறக்கும்போது சமீபத்திய பிளாக்கிலிருந்து நிர்ணயிக்கப்படும் நேரம், அதிகபட்சம் `MAX_OFFER_EXPIRY_HORIZON` (365 நாட்கள்) முன்னால். `useFullTermInterest` இயல்பாக true, `allowsPartialRepay` false.
 
 <a id="borrow-request-review"></a>
 
@@ -2241,7 +2241,7 @@ Basic ஒற்றை-மதிப்புக் கோரிக்கையை
 
 ### Borrow: கோரிக்கையின் நிரப்பும் முறை
 
-`fillMode` 0 (Partial), 1 (AON) அல்லது 2 (IOC); இடுகையிட்ட பிறகு மாறாது. AON க்கு `amount` = `amountMax` தேவை (`AonRequiresSingleValueAmount`), IOC க்கு `expiresAt` ≠ 0 தேவை (`IocRequiresExpiry`); மறுக்கப்படும் எந்த வடிவத்தையும் படிவம் வழங்காது. திறந்த கோரிக்கையில் தொகைகள், வட்டி விகிதம், பிணையம் ஆகியவற்றை `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer` மூலம் மாற்றலாம், ஆனால் `amountFilled` அல்லது `collateralAmountFilled` க்குக் கீழே ஒருபோதும் இல்லை; இந்தச் செயலி இன்னும் அவற்றை அழைப்பதில்லை.
+`fillMode` 0 (Partial), 1 (AON) அல்லது 2 (IOC); இடுகையிட்ட பிறகு மாறாது. AON க்கு `amount` = `amountMax` தேவை (`AonRequiresSingleValueAmount`), IOC க்கு `expiresAt` ≠ 0 தேவை (`IocRequiresExpiry`); மறுக்கப்படும் எந்த வடிவத்தையும் படிவம் வழங்காது. ஒரே அளவுள்ள இடுகை AON-ஐ அனுப்புகிறது (#3520): `LibOfferMatch` ஒவ்வொரு பொருத்தத்தையும் `amount`-க்கும் `amountMax`-இன் மீதிக்கும் இடையே வைக்கிறது; எனவே ஒரே அளவு எப்போதும் முழுமையாகவே நிரப்பப்படுகிறது, Partial மற்றும் IOC வரம்புடன் மட்டுமே வழங்கப்படுகின்றன. திறந்த கோரிக்கையில் தொகைகள், வட்டி விகிதம், பிணையம் ஆகியவற்றை `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer` மூலம் மாற்றலாம், ஆனால் `amountFilled` அல்லது `collateralAmountFilled` க்குக் கீழே ஒருபோதும் இல்லை; இந்தச் செயலி இன்னும் அவற்றை அழைப்பதில்லை.
 
 <a id="borrow-request-cadence"></a>
 
@@ -2295,7 +2295,7 @@ Lend, ERC-20 பிணையத்துக்கு எதிரான ERC-20 �
 
 ### Lend: சலுகையின் நிபந்தனைகள்
 
-பகுதிகள் இல்லாத கடன் சலுகை ஒற்றை மதிப்புடையது: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (கடன் வாங்குபவர் பூட்ட வேண்டிய ஒரே பிணையம்), `fillMode` 0 (Advanced வேறொன்றை அமைக்காவிட்டால்; அடுத்த பகுதி), `periodicInterestCadence` 0 (மேம்பட்டதில் அட்டவணை அமைக்காவிட்டால்), `allowsPrepayListing`, `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, மேம்பட்டதில் தேர்ந்தெடுக்காவிட்டால் Full தீர்வை இல்லை. தொகைகள் அடிப்படை அலகுகளில் துல்லியமாகப் பாகுபடுத்தப்படுகின்றன, விகிதம் அதிகபட்சம் 10,000 bps. `durationDays` `getProtocolConfigBundle`-இலிருந்து படிக்கப்படும் அமைக்கப்பட்ட அதிகபட்சத்தால் வரம்பிடப்படுகிறது. `expiresAt` 0 (ரத்து செய்யும் வரை திறந்திருக்கும்) அல்லது மதிப்பாய்வு திறக்கும்போது சமீபத்திய பிளாக்கிலிருந்து நிர்ணயிக்கப்படும் நேரம், அதிகபட்சம் `MAX_OFFER_EXPIRY_HORIZON` (365 நாட்கள்) முன்னால். `useFullTermInterest` இயல்பாக true, `allowsPartialRepay` false.
+பகுதிகள் இல்லாத கடன் சலுகை ஒற்றை மதிப்புடையது: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (கடன் வாங்குபவர் பூட்ட வேண்டிய ஒரே பிணையம்), `fillMode` 1 (AON) (Advanced வேறொன்றை அமைக்காவிட்டால்; அடுத்த பகுதி), `periodicInterestCadence` 0 (மேம்பட்டதில் அட்டவணை அமைக்காவிட்டால்), `allowsPrepayListing`, `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, மேம்பட்டதில் தேர்ந்தெடுக்காவிட்டால் Full தீர்வை இல்லை. தொகைகள் அடிப்படை அலகுகளில் துல்லியமாகப் பாகுபடுத்தப்படுகின்றன, விகிதம் அதிகபட்சம் 10,000 bps. `durationDays` `getProtocolConfigBundle`-இலிருந்து படிக்கப்படும் அமைக்கப்பட்ட அதிகபட்சத்தால் வரம்பிடப்படுகிறது. `expiresAt` 0 (ரத்து செய்யும் வரை திறந்திருக்கும்) அல்லது மதிப்பாய்வு திறக்கும்போது சமீபத்திய பிளாக்கிலிருந்து நிர்ணயிக்கப்படும் நேரம், அதிகபட்சம் `MAX_OFFER_EXPIRY_HORIZON` (365 நாட்கள்) முன்னால். `useFullTermInterest` இயல்பாக true, `allowsPartialRepay` false.
 
 <a id="rate-check"></a>
 
