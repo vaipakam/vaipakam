@@ -473,6 +473,11 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   // rewardInternal
   ...(
     [
+      // #3562 — the lender's fee-discount standing recorded as they take a
+      // lender position. It prepares the settlement's discount, whose outcome
+      // is the lender's own row (VPFIYieldFeeDiscountApplied); the figure is
+      // shown on the position through lenderHoldDiscountView, not as a row.
+      'LenderEntryStamped',
       'MirrorTierCacheWritten',
       'ProtocolTierBroadcastSent',
       'ProtocolTierBroadcastSkipped',
