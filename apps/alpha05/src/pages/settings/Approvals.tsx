@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../../shared/tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { readApprovals, readApprovalSubjects, readOverlap, readRow, revokeCall, rowKey, sameOverlap, type ApprovalRow, type Overlap } from '../../shared/approvals/approvals';
@@ -64,7 +64,7 @@ export function Approvals({ chain, own }: { chain: SupportedChain; own: OwnState
     send: async () => {
       if (!reviewed) throw new Error('no approval under review');
       const call = revokeCall(reviewed.row, diamond);
-      return writeContract(config, { ...call, chainId: chain.chainId, account });
+      return sendWrite(config, { ...call, chainId: chain.chainId, account });
     },
     measure: async (_receipt, at) => {
       if (!reviewed) return [];

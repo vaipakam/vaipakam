@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { erc20Abi, type Log } from "viem";
 import { useConfig } from "wagmi";
-import { signTypedData, writeContract } from "wagmi/actions";
+import { signTypedData } from "wagmi/actions";
+import { sendWrite } from "../tx/send";
 import { useMode } from "../../app/ModeContext";
 import type { OwnStateClient } from "../../chain/ownRail";
 import type { SupportedChain } from "../../chain/chains";
@@ -647,7 +648,7 @@ function DepositFlow({
       return stop(format("flow.unreadable", { reason: dry.reason }));
     say(text("vaultDeposit.stepSend"));
     try {
-      return await writeContract(config, {
+      return await sendWrite(config, {
         address: diamond,
         ...call,
         chainId: chain.chainId,
@@ -784,7 +785,7 @@ function DepositFlow({
       // 3. The deposit.
       say(text("vaultDeposit.stepSend"));
       try {
-        return await writeContract(config, {
+        return await sendWrite(config, {
           address: diamond,
           ...call,
           chainId: chain.chainId,

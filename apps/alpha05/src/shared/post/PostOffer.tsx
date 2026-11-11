@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -235,7 +235,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       // 3. The request or offer.
       say(text(k.stepSend));
       try {
-        return await writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account });
+        return await sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account });
       } catch (e) {
         return stop(format(k.stoppedAfterApproval, { reason: refusalFromError(e).reason }));
       }

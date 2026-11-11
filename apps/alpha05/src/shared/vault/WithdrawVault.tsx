@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -251,7 +251,7 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose, flowKey = WITHDRAW
       if (dry.kind === 'reverted') return stop(format('vaultWithdraw.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('vaultWithdraw.stepSend') }));
-      return writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account });
     },
     measure: async (receipt) => (review ? measure(review, receipt.logs) : []),
     release: async () => null,

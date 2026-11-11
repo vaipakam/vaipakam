@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { ClaimFacetABI, RepayFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -80,7 +80,7 @@ export function CloseRental({ loanId, chain, own, meta, onClose }: CloseRentalPr
       if (dry.kind === 'reverted') throw new StatedRefusal({ code: 'RentCloseStopped', reason: format('rentClose.dryRunRefused', { reason: refusalFromError(dry.error).reason }), reopensAt: null, remedy: null });
       if (dry.kind === 'unreadable') throw new StatedRefusal({ code: 'RentCloseStopped', reason: format('flow.unreadable', { reason: dry.reason }), reopensAt: null, remedy: null });
       setStep(text('rentClose.stepSend'));
-      return writeContract(config, { address: diamond, abi: REPAY_ABI, functionName: 'repayLoan', args: [loanId], chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, abi: REPAY_ABI, functionName: 'repayLoan', args: [loanId], chainId: chain.chainId, account });
     },
     unwind: async () => null,
     measure: async (receipt, at) => (review ? measure(review, receipt.logs, at) : []),

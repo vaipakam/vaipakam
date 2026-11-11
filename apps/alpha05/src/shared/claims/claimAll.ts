@@ -44,6 +44,7 @@ import { ASSET_ERC20, isFallback, type ClaimLane, type ClaimSide } from './loanC
 import { laneLabel } from './loanClaimReceipt';
 import type { LoanClaimRows } from './loanClaimRows';
 import { claimRecord, onlyMovesOn, REWARD_CLAIM_ABI, VENUE_VAULT, type HeldRewards, type PendingRewards } from './rewards';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -311,11 +312,11 @@ export function batchCalls(legs: readonly ClaimAllLeg[], account: Hex, allowFail
  * not revert, and a call allowed to fail never reverts it, so the estimate
  * can land where a payout runs out of gas and is skipped. The limit is
  * therefore taken from the same calls with every one required to succeed
- * (`batchCalls(legs, account, false)`), with the usual margin on top.
+ * (`batchCalls(legs, account, false)`), with the one margin every write
+ * carries on top (`@vaipakam/lib/gasLimit`, RB-GAS).
  */
-export const CLAIM_ALL_GAS_MARGIN_PCT = 130n;
 export function claimAllGasLimit(requiredEstimate: bigint): bigint {
-  return (requiredEstimate * CLAIM_ALL_GAS_MARGIN_PCT + 99n) / 100n;
+  return gasLimitFromEstimate(requiredEstimate);
 }
 
 /** A skipped call's refusal, from the revert bytes the batch returned. */

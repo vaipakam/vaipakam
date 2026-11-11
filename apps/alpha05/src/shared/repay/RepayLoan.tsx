@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { RepayFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -132,7 +132,7 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
 
       say(text('repay.stepSend'));
       try {
-        return await writeContract(config, { address: diamond, abi: REPAY_ABI, functionName: 'repayLoan', args: [loanId], chainId: chain.chainId, account });
+        return await sendWrite(config, { address: diamond, abi: REPAY_ABI, functionName: 'repayLoan', args: [loanId], chainId: chain.chainId, account });
       } catch (e) {
         return stop(format('repay.stoppedAfterApproval', { reason: refusalFromError(e).reason }));
       }

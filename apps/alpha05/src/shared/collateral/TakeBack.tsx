@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -180,7 +180,7 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
       if (dry.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('takeBack.stepSend') }));
-      return writeContract(config, { address: diamond, abi: WITHDRAW, functionName: 'partialWithdrawCollateral', args, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, abi: WITHDRAW, functionName: 'partialWithdrawCollateral', args, chainId: chain.chainId, account });
     },
     measure: async (receipt) => (review ? measure(review, receipt.logs) : []),
     release: async () => null,
