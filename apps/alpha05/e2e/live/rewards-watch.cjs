@@ -1,15 +1,16 @@
-// Watch-only live review of the Rewards page (#3180; RW-01..RW-10;
-// RB-REWARDS-VPFI, RB-REWARDS-TIER, RB-REWARDS-SIGN; live tier, run after
-// each deploy),
+// Watch-only live review of the Rewards page (#3180; RW-01..RW-11, RW-13,
+// RW-14; RB-REWARDS-VPFI, RB-REWARDS-TIER, RB-REWARDS-ELSEWHERE,
+// RB-REWARDS-SIGN; live tier, run after each deploy),
 // through the shared watch-only wallet (watch-wallet.cjs). The deployed build
 // opens Rewards for the watched wallet's network and prints the rewards
 // widget, the VPFI panel (whether VPFI is set up there, and the wallet's
 // VPFI in its wallet, counted, free, held and uncounted), the consent and the
 // fee-discount tier card (its state and, when the holding rules hold the tier
-// down, the rule it names). The
-// watch wallet cannot sign, so nothing is deposited or withdrawn, and the
-// signed deposit (RW-03) is never offered; all three are covered by the
-// CI-Anvil spec (54-rewards.spec.ts).
+// down, the rule it names), and the tier on other networks (its state, the
+// record for sending and each network's standing). The
+// watch wallet cannot sign, so nothing is deposited, withdrawn, updated or
+// sent, and the signed deposit (RW-03) is never offered; those are covered
+// by the CI-Anvil specs (54-rewards.spec.ts, 75-rewards-tier-elsewhere.spec.ts).
 // Usage: node e2e/live/rewards-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed
 // origin; $LIVE_CHAIN_ID picks the network, as in watch-wallet.cjs)
@@ -39,7 +40,27 @@ async function view(b, opts, label) {
   if (await tier.count()) {
     const held = p.getByTestId('rewards-tier-held');
     const rule = (await held.count()) ? ` held by ${await held.getAttribute('data-held')}` : '';
-    console.log(`--- tier [${await tier.getAttribute('data-state')} ${await tier.getAttribute('data-tier')}${rule}]: ${(await tier.innerText()).replace(/\n+/g, ' · ')}`);
+    console.log(
+      `--- tier [${await tier.getAttribute('data-state')} ${await tier.getAttribute('data-tier')}${rule}]: ${(await tier.innerText()).replace(/\n+/g, ' · ')}`,
+    );
+  }
+  const elsewhere = p.getByTestId('rewards-elsewhere');
+  if (await elsewhere.count()) {
+    await p
+      .waitForFunction(
+        () => !['checking', 'reading'].includes(document.querySelector('[data-testid="rewards-elsewhere"]')?.getAttribute('data-elsewhere') ?? ''),
+        null,
+        { timeout: 90000 },
+      )
+      .catch(() => console.log('(the tier on other networks was still being read after 90 s)'));
+    const record = p.getByTestId('rewards-elsewhere-record');
+    const rec = (await record.count()) ? ` record ${await record.getAttribute('data-record')}` : '';
+    const lanes = await p
+      .getByTestId('rewards-elsewhere-lane')
+      .evaluateAll((ls) => ls.map((l) => `${l.getAttribute('data-chain')}:${l.getAttribute('data-standing')}`).join(' '));
+    console.log(
+      `--- elsewhere [${await elsewhere.getAttribute('data-elsewhere')}${rec}${lanes ? ` lanes ${lanes}` : ''}]: ${(await elsewhere.innerText()).replace(/\n+/g, ' · ')}`,
+    );
   }
   await p.screenshot({ path: `${OUT}/live-rewards-${label}.png`, fullPage: true });
   console.log('errors:', JSON.stringify(errs));

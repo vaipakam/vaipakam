@@ -2101,6 +2101,58 @@ above. Each resolves here, so a route reviewer needs no private file:
   the loan initiation fee and the fee on interest with that discount,
   computed exactly from the live settings read at one block. Copy follows
   RL-6.
+- **RB-REWARDS-ELSEWHERE** — The wallet's tier on the protocol's other
+  networks (RW-11, RW-13, RW-14), from the protocol's own status
+  (`getTierPushStatus`, #1277) read at one block with the tier applied now
+  and the messenger's fee quote for each owed network. Since #1277 the
+  protocol pays for a message only when it lowers what another network
+  grants; a raise, a first discount or a new tier table goes out only with
+  a paid send. So this section is shown in Basic as well, a departure from
+  the matrix's Advanced mode (the matrix rows predate #1277): a user whose
+  tier rose must act, or their other networks keep the older copy. On VPFI's
+  home network it states the tier recorded for sending, says when it differs
+  from the tier applied now (the recorded figure capped at 50% before
+  comparing), and offers the update (`pokeMyTier`, gas only) only where
+  this Diamond routes it; the tier table's version has no reader, so the
+  update stays offered when the two match and the copy says a version
+  change cannot be seen here. The update and the send are gated on their
+  own routes: where the update is not routed and the record differs, the
+  section says only a VPFI deposit or withdrawal records the tier now and
+  that a send waits until the record matches. It lists
+  each network the protocol sends to with what this network last sent it
+  (whether it arrived and applies there is read on that network, and the
+  section says so; a copy there lapses at the end carried in the message
+  or earlier at that network's own maximum age, 60 days unless it set
+  another) and whether it is current, owed a lower tier the
+  protocol sends at its own cost, or owed one that goes only with a paid
+  send. A lane counts as sent only from its send time: one settled without
+  a message (its record grants no discount, so its record number moves and
+  nothing goes) is shown as nothing sent and nothing owed, never as a sent
+  tier 0. Every discount shown is capped at 50%, as the fee path applies it.
+  A review whose record moved, or that has nothing left to send, is closed
+  to signing rather than refreshed in place. The paid send
+  (`deliverTierPush`) is offered only once the record matches the tier now
+  and every owed network's fee is quoted; its value is the sum of every owed
+  network's quote plus 20%, because the protocol spends the value on owed
+  networks in its own order, and the receipt states that each fee pays one
+  message, is not refunded once sent, and that the unspent value comes back
+  in the same transaction. Because the networks share one value, a fee
+  that rises after review is met from the margin first by earlier
+  networks, so a later one can stay owed; the copy says so rather than
+  promising every network goes. The send is re-read and dry-run first; the
+  outcome is measured per network from the status at the receipt's block,
+  and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
+  value funded; a network counts as sent only from such an event, and one
+  whose record number moved without one is reported as settled with
+  nothing sent. The status lists no network alike when no messenger is
+  set, when the messenger's list refuses and when it is empty, so the
+  section reads the messenger and its list directly and says which; a list
+  that could not be read is stated as unknown, never as no network. With
+  no network listed, nothing is recorded or sent, so no action is offered. A
+  home network whose Diamond does not route the status says the section
+  cannot read or send the tier there, rather than hiding it, since the
+  vault card points to it. Away from the home network the
+  section says a higher tier is sent from there. Copy follows RL-6.
 - **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
   The deposit review offers "Sign instead of approve" only when the asset
   is this network's VPFI, Permit2 has code at its canonical address, and the

@@ -1533,6 +1533,12 @@ Your tier is not your balance today. It is zero until your current holding has l
 
 Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown. The page names the holding rule that keeps your tier down, and while your consent is off it says which tier would apply with it on.
 
+<a id="rewards-tier-elsewhere"></a>
+
+### Rewards: Your Tier on Other Networks
+
+Your fee-discount tier is worked out on VPFI's home network, and every other network the protocol serves keeps a copy sent from there. On the home network, the Rewards page shows the tier recorded for sending and, for each other network, what this network last sent it and whether more is owed. The protocol sends a lower tier at its own cost, so a discount never outlives your VPFI. A higher tier, a first discount, or a tier under a new tier table goes only when someone pays its message fee; until then the other network keeps what it last received, and a copy under an older tier table counts there as no discount. When your tier has grown since it was last recorded, the page says so and offers Update your record, which costs only network gas. Send to other networks then pays the fee for every network still owed your tier, shown before you sign, plus a small margin; what the messages do not use comes back in the same transaction. Away from the home network, the page says a higher tier is sent from there. Advanced also shows each record's number, its tier table version and when it lapses. Whether a copy has arrived and applies on another network is read on that network, not here. Each other network also stops counting a copy once it is older than its own maximum age (60 days unless that network set another), which can end it before the end the message carries.
+
 <a id="rewards-vpfi-sign"></a>
 
 ### Rewards: Signing Instead of Approving

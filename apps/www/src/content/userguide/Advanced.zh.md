@@ -2244,6 +2244,12 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。它还在同一区块读取 `explainTier` 和 `getTwaConfig`。无论是否同意，`explainTier` 都返回仅凭已计入 VPFI 得到的等级、每条持有规则的数值，以及把有效等级压在其下的规则；只有当该解释得出与手续费路径相同的等级时，卡片才会指出这条规则；同意关闭时，卡片会说明开启后将适用哪个等级。Advanced 列出每条规则的数值和 `getTwaConfig` 返回的设置，平均值的时间窗口与回看期作为两个不同的长度分别显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
 
+<a id="rewards-tier-elsewhere"></a>
+
+### 奖励：你在其他网络上的等级
+
+该部分在同一个区块读取 `getTierPushStatus(wallet)`（#1277）：最后提交待发送的推送（nonce、等级、bps、到期、表版本），以及每个广播目的地最后收到的元组、是否仍欠它已提交的推送、协议预算是否为其付费；只有当推送降低该通道授予的折扣时预算才付费。在同一区块，它读取 `getEffectiveDiscount`、来自 `getRewardReporterConfig` 的信使，以及对每个欠付通道，用已提交元组和区块时间调用信使的 `quoteSendTierUpdateTo`；报价回退时该费用保持未知，且不提供发送。当已提交等级或其按 50% 上限处理后的 bps 与实际生效值不同，记录即为落后；表版本没有读取接口，因此无论如何都提供更新。“更新你的记录”发送 `pokeMyTier()`，它重新计算并提交等级，并投递预算付费的通道。“发送到其他网络”发送 `deliverTierPush(wallet)`，附带每个欠付通道报价之和再加 20%，因为调用者的金额会按目的地顺序先支付欠付通道，包括预算付费的通道；只有在记录与当前等级一致且每个欠付通道都有报价时才提供，审核会重新读取二者并用该金额试运行调用。完成卡在收据所在区块读取每个通道已投递的 nonce，并累加带 `callerFunded` 的 `ProtocolTierBroadcastSent` 事件以说明实际支付；其余部分已在同一调用中退回。仍路由 `getTierPushSpacingSec()` 的 Diamond 早于该规则，其通道不会被读取。在不是 VPFI 主网络或没有信使的网络上，通道列表为空，此时不提供任何步骤。副本是否已到达并在其他网络上生效，要在那个网络上读取，而不是在这里。此外，每个其他网络在副本超过其自身最长有效期（除非该网络另行设置，否则为 60 天）后便不再计入，因此副本可能早于消息所带的截止时间结束。
+
 <a id="rewards-vpfi-sign"></a>
 
 ### 奖励：以签名代替授权
