@@ -17,7 +17,7 @@ const filled: TicketInput = { ...DEFAULT_TICKET, amount: '1.5', collateral: '300
 
 describe('checkTicket (OFF-74)', () => {
   it('parses every figure exactly when nothing is in the way', () => {
-    expect(checkTicket(filled, ready)).toEqual({ ok: true, amount: 15n * 10n ** 17n, collateral: 3_000_000_000n, rateBps: 725n });
+    expect(checkTicket(filled, ready)).toEqual({ ok: true, amount: 15n * 10n ** 17n, minFill: 15n * 10n ** 17n, collateral: 3_000_000_000n, rateBps: 725n });
   });
 
   it('reports only the first blocker, in the fixed order', () => {
@@ -35,7 +35,12 @@ describe('checkTicket (OFF-74)', () => {
       blocker: { code: 'field', field: 'collateral', error: 'decimals' },
     });
     expect(checkTicket({ ...filled, rate: '101' }, ready)).toEqual({ ok: false, blocker: { code: 'rate', error: 'high' } });
-    expect(checkTicket({ ...filled, fillMode: 'ioc', expiry: 'never' }, ready)).toEqual({ ok: false, blocker: { code: 'fill', block: 'ioc-open' } });
+    expect(checkTicket({ ...filled, fillMode: 'partial' }, ready)).toEqual({ ok: false, blocker: { code: 'field', field: 'minFill', error: 'empty' } });
+    expect(checkTicket({ ...filled, fillMode: 'partial', minFill: '1.5' }, ready)).toEqual({ ok: false, blocker: { code: 'min-fill' } });
+    expect(checkTicket({ ...filled, fillMode: 'ioc', minFill: '0.5', expiry: 'never' }, ready)).toEqual({
+      ok: false,
+      blocker: { code: 'fill', block: 'ioc-open' },
+    });
     expect(checkTicket(filled, { ...ready, terms: { failed: 'no answer' } })).toEqual({ ok: false, blocker: { code: 'terms-unread', reason: 'no answer' } });
   });
 
@@ -44,6 +49,23 @@ describe('checkTicket (OFF-74)', () => {
       ok: false,
       blocker: { code: 'field', field: 'amount', error: 'decimals' },
     });
+  });
+});
+
+describe('the smallest single fill', () => {
+  it('all or none reads no smallest fill and posts one amount', () => {
+    const checked = checkTicket({ ...filled, minFill: 'not read' }, ready);
+    expect(checked).toMatchObject({ ok: true, minFill: 15n * 10n ** 17n });
+  });
+
+  it('a partial ticket posts from the smallest fill to the whole amount, so a match can fill a part', () => {
+    const input: TicketInput = { ...filled, fillMode: 'partial', minFill: '0.25' };
+    const checked = checkTicket(input, ready);
+    if (!checked.ok) throw new Error('expected ok');
+    const d = ticketDraft(input, checked, market, 1n);
+    expect([d.parsed.amount, d.parsed.amountMax]).toEqual([25n * 10n ** 16n, 15n * 10n ** 17n]);
+    expect(d.parsed.collateralFloor).toBe(d.parsed.collateral);
+    expect(createParams(d.parsed, d.pair, d.expiresAt, d.side)).toMatchObject({ amount: 25n * 10n ** 16n, amountMax: 15n * 10n ** 17n, fillMode: 0 });
   });
 });
 

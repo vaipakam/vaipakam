@@ -81,10 +81,19 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
   await ticket.getByTestId('desk-ticket-rate').fill('101');
   await expect(blocker).toHaveText('The highest rate is 100% a year.');
   await ticket.getByTestId('desk-ticket-rate').fill('6.25');
+  // A fill below the whole amount needs a smallest single fill below it:
+  // one size only ever fills whole.
+  await expect(ticket.getByTestId('desk-ticket-min-fill')).toHaveCount(0);
   await ticket
     .getByTestId('desk-ticket-fill')
     .getByRole('radio', { name: /Immediate or cancel/ })
     .check();
+  await expect(blocker).toHaveText('Enter a smallest single fill.');
+  await ticket.getByTestId('desk-ticket-min-fill').fill('0.1');
+  await expect(blocker).toHaveText(
+    'A partial or immediate-or-cancel fill needs a smallest fill below the whole amount. For one fill of the whole amount, choose All or none.',
+  );
+  await ticket.getByTestId('desk-ticket-min-fill').fill('0.04');
   await ticket.getByTestId('desk-ticket-expiry').getByRole('radio', { name: 'Until taken or cancelled' }).check();
   await expect(blocker).toHaveText('Immediate or cancel needs a lapse: choose how long it stays open.');
   await ticket
@@ -93,6 +102,8 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
     .check();
   await ticket.getByTestId('desk-ticket-expiry').getByRole('radio', { name: '30 days' }).check();
   await expect(blocker).toHaveCount(0);
+  await expect(ticket.getByTestId('desk-ticket-min-fill')).toHaveCount(0);
+  await expect(ticket.getByTestId('desk-ticket-fixed')).toContainText('no collateral range, no fee tariff and no price guard');
   await expect(ticket.getByTestId('desk-ticket-fees')).toContainText('Fees at today’s list rates: the borrower pays 0.2% of the amount');
   await expect(ticket.getByTestId('desk-ticket-fees')).toContainText('you get back');
   await fitsWidth(page);
@@ -145,8 +156,19 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
   await ticket.getByTestId('desk-ticket-collateral').fill('100');
   await ticket.getByTestId('desk-ticket-rate').fill('4.5');
   await expect(ticket.getByTestId('desk-ticket-fees')).toContainText('If taken now, you receive');
+  // A partial request posts from its smallest fill to the whole amount.
+  await ticket
+    .getByTestId('desk-ticket-fill')
+    .getByRole('radio', { name: /Partial/ })
+    .check();
+  await expect(ticket).toContainText('Any loan from this request locks all of it');
+  await ticket.getByTestId('desk-ticket-min-fill').fill('0.005');
+  await expect(blocker).toHaveCount(0);
   await ticket.getByTestId('desk-ticket-review').click();
-  await expect(ticket.locator('.post-request .receipt')).toContainText('Post your borrow request', { timeout: 60_000 });
-  await expect(ticket.locator('.post-request .receipt')).toContainText('4.5% a year');
+  const request = ticket.locator('.post-request .receipt');
+  await expect(request).toContainText('Post your borrow request', { timeout: 60_000 });
+  await expect(request).toContainText('4.5% a year');
+  await expect(request).toContainText('Smallest amount a lender may lend');
+  await expect(request).toContainText('Taken directly: the smallest amount; by matches: up to the largest');
   await fitsWidth(page);
 });

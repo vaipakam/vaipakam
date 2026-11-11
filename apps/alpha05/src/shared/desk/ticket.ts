@@ -6,10 +6,13 @@
  *
  * The market fixes the lending token, the collateral token and the term.
  * The ticket adds the side, the amount, the collateral, the rate, how long
- * it stays open and how matches may fill it. Everything else is the guided
- * flows' default, stated on the ticket: full-term interest, no partial
- * repayment, interest paid at repayment, no range, no fee tariff and no
- * price guard. A ticket is always posted on the chain; gasless signed
+ * it stays open and how matches may fill it. A partial or
+ * immediate-or-cancel ticket also takes the smallest single fill, because
+ * the protocol fills a match only between the offer's smallest and largest
+ * amount: without one, every fill would be the whole amount whatever the
+ * mode said. Everything else is the guided flows' default, stated on the
+ * ticket: full-term interest, no partial repayment, interest paid at
+ * repayment, no collateral range, no fee tariff and no price guard. A ticket is always posted on the chain; gasless signed
  * orders are a later update, and the ticket says so (mode posted = mode
  * shown).
  *
@@ -49,9 +52,12 @@ export interface TicketInput {
   rate: string;
   expiry: TicketExpiry;
   fillMode: FillMode;
+  /** The smallest single fill, as typed; read only for a partial or
+   *  immediate-or-cancel ticket (all or none is one fill of the whole). */
+  minFill: string;
 }
 
-export const DEFAULT_TICKET: TicketInput = { side: 'lender', amount: '', collateral: '', rate: '', expiry: '7d', fillMode: 'partial' };
+export const DEFAULT_TICKET: TicketInput = { side: 'lender', amount: '', collateral: '', rate: '', expiry: '7d', fillMode: 'aon', minFill: '' };
 
 /** The market a ticket posts on. */
 export interface TicketMarket {
@@ -76,7 +82,7 @@ export interface TicketContext {
   terms: 'ready' | 'loading' | { failed: string };
 }
 
-export type TicketField = 'amount' | 'collateral';
+export type TicketField = 'amount' | 'collateral' | 'minFill';
 
 export type TicketBlocker =
   | { code: 'connect' }
@@ -87,10 +93,13 @@ export type TicketBlocker =
   | { code: 'term-closed'; maxDays: bigint }
   | { code: 'field'; field: TicketField; error: ParseError }
   | { code: 'rate'; error: ParseError | 'high' }
+  | { code: 'min-fill' }
   | { code: 'fill'; block: FillModeBlock }
   | { code: 'terms-unread'; reason: string };
 
-export type TicketCheck = { ok: true; amount: bigint; collateral: bigint; rateBps: bigint } | { ok: false; blocker: TicketBlocker };
+/** `amount` is the whole amount; `minFill` the smallest single fill, equal
+ *  to `amount` for an all-or-none ticket. */
+export type TicketCheck = { ok: true; amount: bigint; minFill: bigint; collateral: bigint; rateBps: bigint } | { ok: false; blocker: TicketBlocker };
 
 /** The ticket's verdict: the parsed figures, or the first thing in the way. */
 export function checkTicket(input: TicketInput, ctx: TicketContext): TicketCheck {
@@ -108,10 +117,20 @@ export function checkTicket(input: TicketInput, ctx: TicketContext): TicketCheck
   if (!collateral.ok) return stop({ code: 'field', field: 'collateral', error: collateral.error });
   const rate = parseRateBps(input.rate);
   if (!rate.ok) return stop({ code: 'rate', error: rate.error });
-  const fill = fillModeBlock(input.fillMode, false, input.expiry);
+  // A fill below the whole amount needs a smallest fill below it: an offer
+  // of one size only ever fills whole (`LibOfferMatch` keeps each match
+  // between the offer's smallest and largest amount).
+  let minFill = amount.value;
+  if (input.fillMode !== 'aon') {
+    const part = parseAmount(input.minFill, ctx.decimals.lending);
+    if (!part.ok) return stop({ code: 'field', field: 'minFill', error: part.error });
+    if (part.value >= amount.value) return stop({ code: 'min-fill' });
+    minFill = part.value;
+  }
+  const fill = fillModeBlock(input.fillMode, minFill !== amount.value, input.expiry);
   if (fill !== null) return stop({ code: 'fill', block: fill });
   if (ctx.terms !== 'ready') return stop({ code: 'terms-unread', reason: ctx.terms.failed });
-  return { ok: true, amount: amount.value, collateral: collateral.value, rateBps: rate.value };
+  return { ok: true, amount: amount.value, minFill, collateral: collateral.value, rateBps: rate.value };
 }
 
 /** The field posting locks in the poster's own vault: the amount for a
@@ -126,14 +145,15 @@ export function balanceText(balance: bigint, decimals: number): string {
   return formatUnits(balance, decimals);
 }
 
-/** The draft the posting review reads: one amount and one collateral (no
- *  range), the market's term, the guided flows' lifecycle defaults, and an
- *  expiry fixed from the chain's own clock now. */
+/** The draft the posting review reads: the amount from the smallest single
+ *  fill to the whole (one amount for all or none), one collateral (no
+ *  collateral range), the market's term, the guided flows' lifecycle
+ *  defaults, and an expiry fixed from the chain's own clock now. */
 export function ticketDraft(input: TicketInput, checked: Extract<TicketCheck, { ok: true }>, market: TicketMarket, chainNow: bigint): PostDraft {
   return {
     side: input.side,
     parsed: {
-      amount: checked.amount,
+      amount: checked.minFill,
       amountMax: checked.amount,
       collateral: checked.collateral,
       collateralFloor: checked.collateral,

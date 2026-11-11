@@ -2175,11 +2175,15 @@ above. Each resolves here, so a route reviewer needs no private file:
 - **RB-DESK-TICKET** — Below a market's ladder (OFF-74) the desk offers an
   order ticket: a limit-rate offer or request on that market, typed in one
   compact form. The market fixes the lending token, the collateral token
-  and the term; the ticket adds the side, one amount, the collateral, the
-  rate, how long it stays open and how matches may fill it. Everything else
-  is the guided flows' default and is stated on the ticket in words, never
-  implied: full-term interest, no partial repayment, interest paid at
-  repayment, no rate range, no fee tariff, no price guard. Only the FIRST
+  and the term; the ticket adds the side, the amount, the collateral, the
+  rate, how long it stays open and how matches may fill it. A partial or
+  immediate-or-cancel ticket also takes the smallest single fill, below the
+  whole amount: a match fills only between an offer's smallest and largest
+  amount, so a fill mode that promises parts must post a range, never one
+  size that only ever fills whole. Everything else is the guided flows'
+  default and is stated on the ticket in words, never implied: full-term
+  interest, no partial repayment, interest paid at repayment, no rate
+  range, no collateral range, no fee tariff, no price guard. Only the FIRST
   thing that stops the ticket is shown, beneath the action, in a fixed
   order: the wallet, the network, the market, the reads the ticket needs,
   the term, then each field in the order it is typed. "Fill to balance"

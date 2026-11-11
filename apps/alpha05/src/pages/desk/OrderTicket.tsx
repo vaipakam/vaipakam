@@ -166,13 +166,16 @@ export function OrderTicket({
     ? null
     : blockerSentence(check.blocker, { lendingSymbol, collateralSymbol, lendingDecimals, collateralDecimals, term: market.durationDays }, copy);
   const blockedField = !check.ok && check.blocker.code === 'field' ? check.blocker.field : null;
+  // A partial or immediate-or-cancel ticket takes a smallest single fill.
+  const parted = input.fillMode !== 'aon';
   const figures =
     check.ok && inputs.data
       ? lender
         ? share.data !== null
           ? { kind: 'lender' as const, f: lenderPostFigures(check.amount, check.rateBps, market.durationDays, inputs.data.lifBps, share.data) }
           : null
-        : { kind: 'borrower' as const, f: postFigures(check.amount, check.rateBps, market.durationDays, inputs.data.lifBps) }
+        : // Taken directly, a request lends its smallest amount.
+          { kind: 'borrower' as const, f: postFigures(check.minFill, check.rateBps, market.durationDays, inputs.data.lifBps) }
       : null;
 
   return (
@@ -243,7 +246,11 @@ export function OrderTicket({
                 </div>
               )}
             </FormField>
-            <FormField label={format(lender ? 'ticket.collateralLend' : 'ticket.collateralBorrow', { symbol: collateralSymbol })} error={null}>
+            <FormField
+              label={format(lender ? 'ticket.collateralLend' : 'ticket.collateralBorrow', { symbol: collateralSymbol })}
+              hint={parted ? text(lender ? 'ticket.collateralHintPartLend' : 'ticket.collateralHintPartBorrow') : undefined}
+              error={null}
+            >
               {({ id, describedBy }) => (
                 <div className="input-with-action">
                   <input
@@ -300,6 +307,26 @@ export function OrderTicket({
               </label>
             ))}
           </fieldset>
+          {parted && (
+            <FormField
+              label={format('ticket.minFillLabel', { symbol: lendingSymbol })}
+              hint={text(lender ? 'ticket.minFillHintLend' : 'ticket.minFillHintBorrow')}
+              error={null}
+            >
+              {({ id, describedBy }) => (
+                <input
+                  id={id}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  aria-describedby={describedBy}
+                  aria-invalid={blockedField === 'minFill' || (!check.ok && check.blocker.code === 'min-fill')}
+                  value={input.minFill}
+                  onChange={(e) => set({ minFill: e.target.value })}
+                  data-testid="desk-ticket-min-fill"
+                />
+              )}
+            </FormField>
+          )}
           <fieldset className="choice-group" data-testid="desk-ticket-mode">
             <legend>{text('ticket.modeLabel')}</legend>
             <label className="choice">
@@ -396,10 +423,11 @@ function blockerSentence(
     case 'term-closed':
       return format('ticket.blockTerm', { days: String(t.term), max: b.maxDays.toString() });
     case 'field': {
-      const symbol = b.field === 'amount' ? t.lendingSymbol : t.collateralSymbol;
-      const what = text(b.field === 'amount' ? 'ticket.fieldAmount' : 'ticket.fieldCollateral');
+      const onLending = b.field !== 'collateral';
+      const symbol = onLending ? t.lendingSymbol : t.collateralSymbol;
+      const what = text(b.field === 'amount' ? 'ticket.fieldAmount' : b.field === 'minFill' ? 'ticket.fieldMinFill' : 'ticket.fieldCollateral');
       if (b.error === 'decimals') {
-        return format('request.errDecimals', { symbol, decimals: String((b.field === 'amount' ? t.lendingDecimals : t.collateralDecimals) ?? 0) });
+        return format('request.errDecimals', { symbol, decimals: String((onLending ? t.lendingDecimals : t.collateralDecimals) ?? 0) });
       }
       return format(PARSE_TEXT[b.error], { what });
     }
@@ -415,6 +443,8 @@ function blockerSentence(
                 ? 'ticket.errRateHigh'
                 : 'request.errInvalid',
       );
+    case 'min-fill':
+      return text('ticket.errMinFill');
     case 'fill':
       return text('ticket.fillIocOpen');
     case 'terms-unread':
