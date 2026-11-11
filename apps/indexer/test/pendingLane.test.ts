@@ -318,6 +318,16 @@ describe('/activity?pending=1 serves the lane apart from the final events', () =
     expect(p.pending?.events.map((e) => e.loanId)).toEqual([CURSOR + 105]);
   });
 
+  it('says the lane is incomplete when the request\'s limit cuts matching events', { timeout: 60_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = chainDb();
+    await pass(h);
+    const cut = await activity(h, 'pending=1&limit=1');
+    expect(cut.pending?.events.map((e) => e.blockNumber)).toEqual([CURSOR + 115]);
+    expect(cut.pending?.complete).toBe(false);
+    expect((await activity(h, 'pending=1&limit=2')).pending?.complete).toBe(true);
+  });
+
   it('never lists an event the final feed already holds', { timeout: 60_000 }, async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const h = chainDb();

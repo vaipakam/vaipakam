@@ -201,8 +201,8 @@ export interface PendingLaneJson {
   throughBlock: number;
   latestBlock: number;
   readAt: number;
-  /** False when the read did not reach the chain's latest block, or kept only
-   *  the first events it found. */
+  /** False when the read did not reach the chain's latest block, kept only
+   *  the first events it found, or the request's limit cut matching events. */
   complete: boolean;
 }
 
@@ -240,19 +240,24 @@ export async function readPendingLane(
           ORDER BY block_number DESC, log_index DESC
           LIMIT ?`,
       )
-      .bind(chainId, chainId, cursorKind, ...filter.binds, limit),
+      // One row past the limit, so a cut the limit makes is known and stated.
+      .bind(chainId, chainId, cursorKind, ...filter.binds, limit + 1),
   ]);
   const window = windowRes?.results?.[0] as PendingWindowDb | undefined;
   if (!window) return null;
   if (nowSec - window.read_at > PENDING_STALE_SEC) return null;
-  const rows = (rowsRes?.results ?? []) as PendingRowDb[];
+  const matched = (rowsRes?.results ?? []) as PendingRowDb[];
+  // The lane is served on the first page only, so rows the limit cuts can be
+  // reached no other way: the answer must say it is incomplete (Codex #3557 r1).
+  const cutByLimit = matched.length > limit;
+  const rows = cutByLimit ? matched.slice(0, limit) : matched;
   return {
     events: rows.map(pendingToJson),
     finalThrough: window.final_through,
     throughBlock: window.through_block,
     latestBlock: window.latest_block,
     readAt: window.read_at,
-    complete: window.truncated === 0 && window.through_block >= window.latest_block,
+    complete: !cutByLimit && window.truncated === 0 && window.through_block >= window.latest_block,
   };
 }
 
