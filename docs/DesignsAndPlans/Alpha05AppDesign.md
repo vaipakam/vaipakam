@@ -2262,8 +2262,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   stated by name and blocks consent and the send. The Terms the taker
   signs are keyed to the order's hash. Where the protocol cannot yet show
   the risk-access check for a signed order before the fill (#3577), the
-  review says the dry run after signing makes it, and a refusal there opens
-  the step that clears it for the order's pair. The finish card reads the
+  review says the dry run after signing makes it; a refusal there sends
+  nothing, puts back any approval, and offers the step that clears it for
+  the order's pair where the flow stopped, which returns to a fresh review
+  of the same order. The finish card reads the
   loan from the fill's own log; a transaction with no such log says no loan
   opened. A partly matched order is not offered (a fill takes the whole
   order), nor the viewer's own, and Terms not yet accepted are accepted

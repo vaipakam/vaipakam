@@ -595,6 +595,12 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
           onBack={() => {
             setRiskOpen(null);
             setDryRisk(null);
+            // A step opened from a refused fill returns to a fresh review of
+            // the same order, where the fill can be confirmed again.
+            if (tx.phase.kind === 'failed') {
+              tx.reset();
+              tx.review();
+            }
             void load();
           }}
         />
@@ -627,6 +633,13 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
           }
           gate={gate}
           onClose={close}
+          recover={
+            // A signed fill's dry run named a risk-access step (no preview
+            // of the gate yet, #3577): it is offered where the flow stopped.
+            tx.phase.kind === 'failed' && dryRisk !== null && review !== null ? (
+              <RiskGate chain={chain} own={own} need={dryRisk} source={riskSource} pairLabel={pairLabel} onOpen={() => setRiskOpen(dryRisk)} />
+            ) : undefined
+          }
         />
       )}
     </div>

@@ -179,3 +179,66 @@ test('a signed order is filled whole from the desk: the protocol’s preview, te
   await expect(row.getByTestId('desk-signed-book-fill')).toHaveCount(0);
   await fitsWidth(page);
 });
+
+test('a fill the risk level does not cover: the dry run refuses before anything is sent, the step is offered there, then the fill lands', async ({
+  launchWallet,
+}) => {
+  test.setTimeout(300_000);
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  const head = await sc.pub.getBlock({ blockTag: 'latest' });
+  const until = String(Math.max(Number(head.timestamp), Math.floor(Date.now() / 1000)) + 7 * 86_400);
+
+  // The maker covers the pair's level itself, so the only block is the taker's.
+  const free = parseEther('0.05');
+  await sc.write('lender', WETH, TOKEN_ABI, 'deposit', [], free);
+  await sc.write('lender', WETH, TOKEN_ABI, 'approve', [sc.diamond, free]);
+  await sc.diamondWrite('lender', 'depositToVault', [0, WETH, 0n, free]);
+  await sc.diamondWrite('lender', 'setVaultRiskTier', [1]);
+  await sc.diamondWrite('admin', 'setRiskAccessGateEnabled', [true]);
+  const order = await signedLenderOrder('lender', tliq, sc.diamond, until, { nonce: '3101' });
+  const hash = orderHashOf(order);
+  const borrower = accountFor('borrower').address;
+  await sc.write('borrower', tliq, MINT_ABI, 'mint', [borrower, parseEther('250')]);
+  await sc.write('borrower', tliq, erc20Abi, 'approve', [sc.diamond, 0n]);
+
+  const { page, flags } = await launchWallet('borrower', { advanced: true });
+  await page.goto(`/desk?market=${WETH.toLowerCase()}-${tliq.toLowerCase()}-30`);
+  await connectWallet(page);
+  const section = page.getByTestId('desk-signed-book');
+  const row = section.locator(`li[data-order-hash="${hash}"]`);
+  await expect(row).toHaveAttribute('data-standing', 'open', { timeout: 60_000 });
+  await row.getByTestId('desk-signed-book-fill').click();
+  const review = section.locator(`.accept-offer[data-order-hash="${hash}"]`);
+  await expect(review.locator('.receipt')).toContainText('so the dry run after you sign makes it', { timeout: 60_000 });
+  await review.getByTestId('accept-consent').check();
+
+  // The dry run refuses: no fill is sent, the approval made is put back, and
+  // the step that clears the refusal is offered where the flow stopped.
+  const sent = flags.sentTransactions;
+  await review.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const failed = review.locator('[data-phase="failed"]');
+  await expect(failed).toBeVisible({ timeout: 90_000 });
+  const gate = failed.getByTestId('risk-gate');
+  await expect(gate).toHaveAttribute('data-risk-plan', 'raise', { timeout: 60_000 });
+  await fitsWidth(page);
+  expect(await sc.read<bigint>('signedOfferFilledAmount', [hash])).toBe(0n);
+  expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(0n);
+  // The approval and its put-back; no fill.
+  expect(flags.sentTransactions).toBe(sent + 2);
+
+  await gate.getByTestId('risk-open').click();
+  const step = review.getByTestId('risk-step');
+  await step.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const stepDone = step.locator('[data-phase="measured"]');
+  await expect(stepDone).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await stepDone.getByTestId('risk-back').click();
+
+  // Back on a fresh review of the same order: the fill now lands.
+  await expect(review.getByTestId('accept-consent')).toBeVisible({ timeout: 60_000 });
+  await review.getByTestId('accept-consent').check();
+  await review.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const finish = review.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(await sc.read<bigint>('signedOfferFilledAmount', [hash])).toBe(parseEther('0.05'));
+});
