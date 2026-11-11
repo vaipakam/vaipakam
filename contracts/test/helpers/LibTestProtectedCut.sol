@@ -23,7 +23,7 @@ library LibTestProtectedCut {
         s[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
         s[3] = ProtectedAccountFacet.getProtection.selector;
         s[4] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
-        s[5] = ProtectedAccountFacet.getRetiredAccountOf.selector;
+        s[5] = ProtectedAccountFacet.getRetiredAccountsOf.selector;
         s[6] = ProtectedAccountFacet.isListingLegAllowed.selector;
         s[7] = ProtectedAccountFacet.lockPositionNfts.selector;
         s[8] = ProtectedAccountFacet.lockVaultFor.selector;

@@ -420,11 +420,27 @@ contract VaultBeaconTest is Test {
         beacon.executePin(vaultA);
         assertEq(beacon.pinnedVersion(vaultA), 1, "fixture: pinned");
         bytes memory preRecovery = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
+        // External review 2026-11-11: the old key leaves changes pending (an
+        // unpin and a delay lowering) before the recovery; neither survives it.
+        _unpinAlice();
+        uint256 dBefore = beacon.pinDelay(vaultA);
+        bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, dBefore - 1));
+        beacon.setPinDelay(vaultA, dBefore - 1, lower);
+        (, uint256 pinAt) = beacon.pendingPinOf(vaultA);
+        (, uint256 delayAt) = beacon.pendingPinDelayOf(vaultA);
+        assertGt(pinAt, 0, "fixture: an unpin pending");
+        assertGt(delayAt, 0, "fixture: a lowering pending");
+        preRecovery = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
 
         LibTestProtection.propose(address(diamond), alice, alice, bob);
         vm.warp(vm.getBlockTimestamp() + LibProtectedAccount.MIN_DELAY);
         LibTestProtection.finalizeReplacement(address(diamond), alice);
         vm.warp(vm.getBlockTimestamp() + LibProtectedAccount.MIN_DELAY + 1); // past the cool-down
+        (, pinAt) = beacon.pendingPinOf(vaultA);
+        (, delayAt) = beacon.pendingPinDelayOf(vaultA);
+        assertEq(pinAt, 0, "the old key's pending unpin died with the recovery");
+        assertEq(delayAt, 0, "so did its pending delay lowering");
+        assertEq(beacon.pinnedVersion(vaultA), 1, "the pin itself is untouched");
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
@@ -441,6 +457,10 @@ contract VaultBeaconTest is Test {
         bytes memory controller = _sign(BOB_KEY, beacon.pinChangeDigest(vaultA, 0));
         vm.prank(bob);
         VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, controller);
+        // The retired key cannot cancel the controller's request.
+        bytes memory oldCancel = _sign(ALICE_KEY, beacon.cancelPinDigest(vaultA));
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        beacon.cancelPin(vaultA, oldCancel);
         vm.warp(vm.getBlockTimestamp() + beacon.pinDelay(vaultA));
         beacon.executePin(vaultA);
         assertEq(beacon.pinnedVersion(vaultA), 0, "the controller unpinned");

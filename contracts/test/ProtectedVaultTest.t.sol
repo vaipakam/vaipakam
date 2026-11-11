@@ -742,7 +742,8 @@ contract ProtectedVaultTest is Test {
         _replaceWithNominee();
 
         assertEq(_v().vaultOwner(), nominee, "the vault's owner record moved");
-        assertEq(_prot().getRetiredAccountOf(nominee), user);
+        assertEq(_prot().getRetiredAccountsOf(nominee).length, 1);
+        assertEq(_prot().getRetiredAccountsOf(nominee)[0], user);
 
         // The old wallet has lost the account.
         vm.prank(user);
@@ -1389,8 +1390,9 @@ contract ProtectedVaultTest is Test {
         P.finalizeReplacement(address(diamond), user);
         (,, offAt) = _prot().getProtection(user);
         assertEq(offAt, 0, "the handover dropped it");
-        assertEq(_prot().getRetiredAccountOf(nominee2), user, "the new controller is recorded");
-        assertEq(_prot().getRetiredAccountOf(nominee), address(0), "the outgoing one is not");
+        assertEq(_prot().getRetiredAccountsOf(nominee2).length, 1, "the new controller is recorded");
+        assertEq(_prot().getRetiredAccountsOf(nominee2)[0], user, "the new controller is recorded");
+        assertEq(_prot().getRetiredAccountsOf(nominee).length, 0, "the outgoing one is not");
         vm.warp(vm.getBlockTimestamp() + DELAY);
         vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
         _prot().finalizeSettingChanges(user);
@@ -1490,8 +1492,8 @@ contract ProtectedVaultTest is Test {
         v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(nominee))));
     }
 
-    /// @dev Codex #3489 r4 — after A→B→C the account stays retired, protected
-    ///      and routed through its vault, even once switched off.
+    /// @dev Codex #3489 r4/r5 — after A→B→C the account stays retired,
+    ///      protected and routed through its vault; a switch-off is refused.
     function testRetirementIsPermanentAcrossReplacementsAndASwitchOff() public {
         _deposit20(10 ether);
         _enable();
@@ -1504,11 +1506,13 @@ contract ProtectedVaultTest is Test {
         vm.warp(vm.getBlockTimestamp() + DELAY);
         P.finalizeReplacement(address(diamond), user);
         vm.warp(vm.getBlockTimestamp() + DELAY + 1);
-        P.requestDisable(address(diamond), user, third);
-        vm.warp(vm.getBlockTimestamp() + DELAY);
-        P.finalizeSettings(address(diamond), user);
+        _expectProtectRevert(
+            third,
+            abi.encodeCall(VaultProtection.requestDisable, (P.direct(third))),
+            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+        );
         (bool on,,,, bool retired) = P.vaultOf(address(diamond), user).protectionCore();
-        assertFalse(on, "fixture: switched off");
+        assertTrue(on, "a retired account cannot be switched off");
         assertTrue(retired, "still retired");
         assertTrue(_prot().isProtectionOn(user), "still governed");
         assertEq(_prot().protectionManagerOf(user), third, "managed by the latest wallet");
@@ -1569,27 +1573,51 @@ contract ProtectedVaultTest is Test {
     /// @dev Codex #3489 r3 — a replacement's routing is permanent: after the
     ///      new wallet switches protected mode off, the retired wallet's
     ///      payouts still go through the vault to the new wallet.
-    function testARetiredAccountStaysRoutedAfterASwitchOff() public {
+    /// @dev Codex #3489 r5 — a replaced account's protection cannot be
+    ///      switched off, so its payouts keep both the vault routing and the
+    ///      delay: a withdrawal queues and pays the new wallet only after it.
+    function testARetiredAccountCannotBeSwitchedOff_andKeepsItsDelay() public {
         _deposit20(10 ether);
         _enable();
         P.propose(address(diamond), user, user, nominee);
         vm.warp(vm.getBlockTimestamp() + DELAY);
         P.finalizeReplacement(address(diamond), user);
         vm.warp(vm.getBlockTimestamp() + DELAY + 1);
-        P.requestDisable(address(diamond), user, nominee);
-        vm.warp(vm.getBlockTimestamp() + DELAY);
-        P.finalizeSettings(address(diamond), user);
-        (bool on,,,,,,) = P.vaultOf(address(diamond), user).protectionState();
-        assertFalse(on, "fixture: switched off");
-        assertTrue(_prot().isProtectionOn(user), "still governed: retired");
+        _expectProtectRevert(
+            nominee,
+            abi.encodeCall(VaultProtection.requestDisable, (P.direct(nominee))),
+            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+        );
         uint256 before = token.balanceOf(user);
         vm.prank(nominee);
         uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, nominee);
         assertEq(token.balanceOf(nominee), 0, "queued, not paid at once");
+        vm.expectRevert();
+        _pay().releasePayout(id); // not before the delay
         assertEq(token.balanceOf(user), before, "the retired wallet got nothing");
         vm.warp(vm.getBlockTimestamp() + DELAY);
         _pay().releasePayout(id);
         assertEq(token.balanceOf(nominee), 1 ether, "paid to the new wallet");
+    }
+
+    /// @dev Codex #3489 r5 — a manager with protected mode on in its OWN
+    ///      account is paid a retired account's payout into its own vault,
+    ///      so its own delay and lock still hold that money.
+    function testAProtectedManagerIsPaidIntoItsOwnVault() public {
+        _deposit20(10 ether);
+        _enable();
+        P.enable(address(diamond), nominee, DELAY);
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        address managerVault = address(P.vaultOf(address(diamond), nominee));
+        uint256 before = token.balanceOf(managerVault);
+        vm.prank(nominee);
+        uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 2 ether, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(managerVault) - before, 2 ether, "landed in the manager's own vault");
+        assertEq(token.balanceOf(nominee), 0, "not in the manager's wallet");
     }
 
     /// @dev An allowlisted destination that has protected mode on is paid

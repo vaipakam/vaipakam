@@ -272,7 +272,9 @@ contract VaultProtectionTest is SetupTest {
         assertEq(vault.vaultOwner(), nominee, "the acct record follows the replacement");
         assertEq(vault.vaultCreationOwner(), acct, "the vault stays the one created for the account");
         assertEq(LibProtectedAccountProbe.manager(address(diamond), acct), nominee);
-        assertEq(ProtectedAccountFacet(address(diamond)).getRetiredAccountOf(nominee), acct);
+        address[] memory managed = ProtectedAccountFacet(address(diamond)).getRetiredAccountsOf(nominee);
+        assertEq(managed.length, 1);
+        assertEq(managed[0], acct);
     }
 
     function test_aSignerMajorityReplacementWaitsTheDelayFromTheMajority() public {
@@ -397,6 +399,72 @@ contract VaultProtectionTest is SetupTest {
         vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, relayer, P.direct(dest))));
         assertFalse(vault.allowEntry(dest).verified);
+    }
+
+    // ─── Codex #3489 round 5 ─────────────────────────────────────────────
+
+    /// @dev A lock the platform never saw lifted (an unlock finalized at the
+    ///      vault with no apply) followed by a second lock still runs the
+    ///      platform's lock effects: the co-sign switch-off asked in between
+    ///      is dropped, because the Diamond counts locks, not the lock bit.
+    function test_r5_aLockAfterAnUnseenUnlockStillVoidsWhatWasAskedBetween() public {
+        P.addSigner(address(diamond), acct, acct, signerA, DELAY);
+        ProtectedAccountFacet prot = ProtectedAccountFacet(address(diamond));
+        vm.prank(acct);
+        prot.setRequireCosign(acct, true);
+        P.lock(address(diamond), acct, acct); // locked and applied
+        P.requestUnlock(address(diamond), acct, acct);
+        vm.warp(block.timestamp + DELAY);
+        vault.protect(abi.encodeCall(VaultProtection.finalizeSettings, ())); // unlocked; the platform not told
+        (, bool locked,,,,,) = vault.protectionState();
+        assertFalse(locked, "fixture: unlocked at the vault");
+        vm.prank(acct);
+        prot.setRequireCosign(acct, false);
+        (,, uint64 offAt) = prot.getProtection(acct);
+        assertGt(offAt, 0, "fixture: a co-sign switch-off waits");
+
+        P.lock(address(diamond), acct, acct); // a second lock, then applied
+        (,, offAt) = prot.getProtection(acct);
+        assertEq(offAt, 0, "the second lock drops the switch-off asked since the first");
+        assertEq(vault.protectionLockCount(), 2, "the vault counts both locks");
+    }
+
+    /// @dev A matured signer REMOVAL stays executable after one further delay;
+    ///      only additions expire.
+    function test_r5_aMaturedSignerRemovalStaysExecutable() public {
+        P.addSigner(address(diamond), acct, acct, signerA, DELAY);
+        uint8 remove = code.SIGNER_REMOVE();
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.signerChange, (remove, signerA, P.direct(acct))));
+        vm.warp(block.timestamp + 3 * uint256(DELAY));
+        vault.protect(abi.encodeCall(VaultProtection.finalizeSigner, (signerA)));
+        assertFalse(vault.signerEntry(signerA).active, "removed well after the addition window would have closed");
+    }
+
+    /// @dev A replaced account's protection is permanent: the manager cannot
+    ///      ask to switch it off (its payouts keep the vault routing and the
+    ///      delay).
+    function test_r5_aReplacedAccountCannotSwitchProtectionOff() public {
+        P.propose(address(diamond), acct, acct, nominee);
+        vm.warp(block.timestamp + DELAY);
+        P.finalizeReplacement(address(diamond), acct);
+        vm.warp(block.timestamp + DELAY + 1); // past the cool-down
+        vm.prank(nominee);
+        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        vault.protect(abi.encodeCall(VaultProtection.requestDisable, (P.direct(nominee))));
+    }
+
+    /// @dev One manager may hold several replaced accounts; each stays listed.
+    function test_r5_aManagerOfTwoReplacedAccountsKeepsBoth() public {
+        address other = makeAddr("otherAccount");
+        P.enable(address(diamond), other, DELAY);
+        P.propose(address(diamond), acct, acct, nominee);
+        P.propose(address(diamond), other, other, nominee);
+        vm.warp(block.timestamp + DELAY);
+        P.finalizeReplacement(address(diamond), acct);
+        P.finalizeReplacement(address(diamond), other);
+        address[] memory managed = ProtectedAccountFacet(address(diamond)).getRetiredAccountsOf(nominee);
+        assertEq(managed.length, 2, "both accounts are listed for the manager");
+        assertTrue((managed[0] == acct && managed[1] == other) || (managed[0] == other && managed[1] == acct));
     }
 }
 

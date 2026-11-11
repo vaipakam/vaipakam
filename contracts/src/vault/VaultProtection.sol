@@ -185,6 +185,8 @@ contract VaultProtection {
     error NoProposal();
     error OwnerBlockedBySignerLock();
     error PendingRowsExist();
+    /// @dev Codex #3489 r5 — a replaced account's protection is permanent.
+    error RetiredAccount();
 
     constructor() {
         SELF = address(this);
@@ -231,6 +233,10 @@ contract VaultProtection {
     /// @notice Ask to switch protected mode off (the owner); waits the delay.
     function requestDisable(Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
+        // Codex #3489 r5 — a replaced account stays protected for good: its
+        // payouts keep their vault routing AND their delay (spec,
+        // REPLACEMENT), so its protection cannot be switched off.
+        if (l.retired) revert RetiredAccount();
         _loosenable(l);
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_DISABLE, uint256(0), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.pendingDisableAt = _later(l);
@@ -450,7 +456,10 @@ contract VaultProtection {
             l.signers.push(who);
             emit SignerAdded(who);
         } else if (sg.removeAt != 0) {
-            _inWindow(l, sg.removeAt);
+            // The expiry window is for ADDITIONS only (spec; Codex #3489 r5):
+            // a matured removal stays executable until it is applied or
+            // cancelled, so an owner who returns late need not start over.
+            if (block.timestamp < sg.removeAt) revert NotReady(sg.removeAt);
             sg.removeAt = 0;
             sg.active = false;
             sg.accepted = false;
@@ -479,6 +488,7 @@ contract VaultProtection {
         // by the owner: that origin bars the owner from redirecting a recovery.
         if (!was || !l.signer[l.lockedBy].active) l.lockedBy = auth.key;
         l.pendingUnlockAt = 0;
+        l.lockCount += 1;
         _dropPending(l);
         if (l.nominee != address(0) && l.proposedBy == _owner()) {
             emit ReplacementCancelled(l.nominee, auth.key);
@@ -502,6 +512,7 @@ contract VaultProtection {
             l.lockedBy = by;
         }
         l.pendingUnlockAt = 0;
+        l.lockCount += 1;
         _dropPending(l);
         if (l.nominee != address(0) && l.proposedBy == _owner()) {
             emit ReplacementCancelled(l.nominee, by);

@@ -51,7 +51,7 @@ import {
   needsCosign,
   replacementStage,
   useProtectedAccount,
-  useRetiredAccountOf,
+  useRetiredAccountsOf,
   type PendingAddition,
   type HolderLockState,
   type PendingPayoutRow,
@@ -1188,7 +1188,7 @@ function RetiredAccountCard({ account }: { account: `0x${string}` }) {
 export function Protection() {
   const { isConnected, address } = useActiveChain();
   const snap = useProtectedAccount();
-  const retired = useRetiredAccountOf();
+  const retired = useRetiredAccountsOf();
   const p = copy.protection;
   const data = snap.data;
   return (
@@ -1212,7 +1212,9 @@ export function Protection() {
         <div className="stack">
           {data.record.enabled ? <AccountView account={address} snap={data} asSigner={false} /> : <EnableForm snap={data} />}
           <OwnHolderLock snap={data} holder={address} />
-          {retired.data ? <RetiredAccountCard account={retired.data} /> : null}
+          {(retired.data ?? []).map((account) => (
+            <RetiredAccountCard key={account.toLowerCase()} account={account} />
+          ))}
           {retired.isError ? <UnavailableState body={p.managedAccountUnknown} /> : null}
           <SignerEntryCard />
         </div>

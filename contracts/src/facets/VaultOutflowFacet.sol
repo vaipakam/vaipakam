@@ -245,9 +245,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
 
         // A payment to a protected account's WALLET from anyone else's vault
         // is credited to that account's vault, so it leaves only through its
-        // delay. The holder classes pay a vault already.
+        // delay. The holder classes pay a vault already. Codex #3489 r5: the
+        // Owner class too, when a replacement made its payee (the manager) a
+        // different account; an account's own owner payout is never
+        // redirected (`_protectedRecipientVault` skips recipient == user).
         address creditTo;
-        if (_paysWallet(o.class_)) {
+        if (_paysWallet(o.class_) || o.class_ == VaultOutflowTypes.OutflowClass.Owner) {
             creditTo = _protectedRecipientVault(user, o.to);
             if (creditTo != address(0)) {
                 payeeOwner = o.to;

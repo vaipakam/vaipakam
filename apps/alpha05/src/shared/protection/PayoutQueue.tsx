@@ -24,15 +24,14 @@ import { payoutWords, QUEUE_KEY_PREFIX, queueActionKey, QueuePayoutAction, useQu
 type Hex = `0x${string}`;
 
 const PROTECTED = ProtectedAccountFacetABI as Abi;
-const ZERO = '0x0000000000000000000000000000000000000000';
 const ACTIONS: readonly QueueAction[] = ['release', 'cosign', 'cancel'];
 
 /** How the wallet relates to an account whose queue it is shown. */
 type Role = 'own' | 'managed' | 'lookup';
 
-async function readRetiredAccountOf(c: PublicClient, diamond: Hex, controller: Hex): Promise<Hex | null> {
-  const a = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getRetiredAccountOf', args: [controller] })) as Hex;
-  return a.toLowerCase() === ZERO ? null : a;
+/** Every account `manager` manages since a replacement retired it (a wallet may manage several). */
+async function readRetiredAccountsOf(c: PublicClient, diamond: Hex, manager: Hex): Promise<readonly Hex[]> {
+  return (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getRetiredAccountsOf', args: [manager] })) as readonly Hex[];
 }
 
 /**
@@ -43,7 +42,7 @@ async function readRetiredAccountOf(c: PublicClient, diamond: Hex, controller: H
  * once due), cancel (the account's manager or a secondary signer) and
  * co-sign (a signer, when the account requires it).
  *
- * The wallet's own account comes first, then an account it manages since a
+ * The wallet's own account comes first, then every account it manages since a
  * replacement retired it; Advanced mode adds a lookup of any account, for a
  * secondary signer. Whether the keeper service releases due payouts here is
  * the capability service's answer, stated as such, and the pause posture is
@@ -58,29 +57,36 @@ export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: Suppor
   const { caps } = useCapabilities();
   const keeper: Posture = caps?.keeper.find((k) => k.pass === 'protectedAccount')?.armed ?? 'unknown';
   const ownQueue = useOwnRead(['queue', diamond, wallet], (c) => readAccountQueue(c, diamond, wallet));
-  const retired = useOwnRead(['queue', 'retiredOf', diamond, wallet], (c) => readRetiredAccountOf(c, diamond, wallet));
-  const managed = retired.data ?? null;
-  const managedQueue = useOwnRead(['queue', diamond, managed], (c) => readAccountQueue(c, diamond, managed!), { enabled: managed !== null });
+  const retired = useOwnRead(['queue', 'retiredAccountsOf', diamond, wallet], (c) => readRetiredAccountsOf(c, diamond, wallet));
+  const managed: readonly Hex[] = retired.data ?? [];
+  const managedKey = managed.map((a) => a.toLowerCase()).join(',');
+  // One read for every managed account's queue, so the section's stamp and
+  // Refresh cover them together.
+  const managedQueues = useOwnRead(['queue', 'managed', diamond, managedKey], (c) => Promise.all(managed.map((a) => readAccountQueue(c, diamond, a))), {
+    enabled: managed.length > 0,
+  });
+  const managedReads: OwnRead<AccountQueue>[] = managed.map((_, i) => ({ ...managedQueues, data: managedQueues.data?.[i] ?? null }));
+  const isManaged = (a: string) => managed.some((m) => m.toLowerCase() === a);
   const [lookupText, setLookupText] = useState('');
   const lookup = isAdvanced && isAddress(lookupText.trim()) ? (lookupText.trim() as Hex) : null;
   const lookupQueue = useOwnRead(['queue', diamond, lookup], (c) => readAccountQueue(c, diamond, lookup!), { enabled: lookup !== null });
 
-  const lookupShown = lookup !== null && lookup.toLowerCase() !== wallet.toLowerCase() && lookup.toLowerCase() !== managed?.toLowerCase();
+  const lookupShown = lookup !== null && lookup.toLowerCase() !== wallet.toLowerCase() && !isManaged(lookup.toLowerCase());
   // Each read the section draws carries its age and any failed re-read in
   // the one stamp, the lookup included, and Refresh re-reads every one.
-  const stamped = [ownQueue, retired, ...(managed !== null ? [managedQueue] : []), ...(lookupShown ? [lookupQueue] : [])];
+  const stamped = [ownQueue, retired, ...(managed.length > 0 ? [managedQueues] : []), ...(lookupShown ? [lookupQueue] : [])];
   // A flow the store holds on an account no view is drawing with an answer
   // (a lookup since cleared, or a queue whose read failed) is drawn here, so
   // its progress, its Check again and its finish card stay reachable.
   const drawn = new Set(
-    [ownQueue.data, managed !== null ? managedQueue.data : null, lookupShown ? lookupQueue.data : null]
+    [ownQueue.data, ...managedReads.map((r) => r.data), lookupShown ? lookupQueue.data : null]
       .filter((q): q is AccountQueue => q !== null)
       .map((q) => q.account.toLowerCase()),
   );
   const orphans = useHeldQueueFlows(reviewIdentity(own), (account) => !drawn.has(account.toLowerCase()));
   const orphanAccounts = [...new Set(orphans.map((h) => h.account.toLowerCase()))];
 
-  const queues = [ownQueue.data, managedQueue.data, lookupQueue.data].filter((q): q is AccountQueue => q !== null);
+  const queues = [ownQueue.data, ...managedReads.map((r) => r.data), lookupQueue.data].filter((q): q is AccountQueue => q !== null);
   const assets = queues.flatMap((q) => (q.rows ?? []).flatMap((r) => (r.payout ? [r.payout.asset] : [])));
   const meta = useTokenMeta(assets).data;
 
@@ -94,7 +100,9 @@ export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: Suppor
           {text('queue.managedUnread')}
         </p>
       )}
-      {managed !== null && <AccountQueueView read={managedQueue} role="managed" own={own} chain={chain} meta={meta} keeper={keeper} />}
+      {managedReads.map((read, i) => (
+        <AccountQueueView key={managed[i]!.toLowerCase()} read={read} role="managed" own={own} chain={chain} meta={meta} keeper={keeper} />
+      ))}
       {isAdvanced && (
         <div className="queue-lookup">
           <FormField label={text('queue.lookupLabel')} hint={text('queue.lookupHint')} error={lookupText.trim() !== '' && lookup === null ? text('queue.lookupInvalid') : null}>

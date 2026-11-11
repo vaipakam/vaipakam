@@ -1884,6 +1884,8 @@ The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection 
 
 **Codex round 28 on the app PR.** The depository card's NFT approvals continue only after the approval itself ran (`assertSettled`): not after a reverted, cancelled or replaced one. The recovery page adopts ERC-20 balances only, so the card links an untracked ERC-20 there and says plainly that an untracked NFT cannot be added in the app yet. NFT adoption is deferred to #3096. NOT covered: the rendered pages.
 
+**#3489 Codex r5 — several managed accounts.** A wallet may now manage more than one replaced account: the Protection page renders one retired-account card per account `getRetiredAccountsOf` returns (it replaced the one-account `getRetiredAccountOf`), and a failed read is still the "managed account unknown" state, never an empty list. Unit-typed only; the Anvil spec has no fixture with two replacements yet, so the two-card case is owed to the live drive after the all-waves fresh deploy.
+
 <a id="cov-untracked-nfts-on-the-adoption-page-3096"></a>
 
 ## Untracked NFTs on the adoption page (#3096)

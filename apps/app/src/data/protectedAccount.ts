@@ -802,28 +802,28 @@ function useProtectedAccountQueryOptions() {
 }
 
 /**
- * The retired account the connected wallet now manages (it became that
- * account's controller through a replacement), or null. Undefined while
- * unread; a failed read is an error state, never "none".
+ * Every retired account the connected wallet now manages (it became each
+ * one's controller through a replacement; a wallet may manage several), or
+ * an empty list. Undefined while unread; a failed read is an error state,
+ * never "none".
  */
-export function useRetiredAccountOf() {
+export function useRetiredAccountsOf() {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const chainId = walletChain?.chainId;
   const publicClient = usePublicClient({ chainId });
   return useQuery({
-    queryKey: ['protectedAccount', 'retiredOf', chainId, address?.toLowerCase()],
+    queryKey: ['protectedAccount', 'retiredAccountsOf', chainId, address?.toLowerCase()],
     enabled: Boolean(publicClient) && Boolean(address) && onSupportedChain && Boolean(walletChain?.diamondAddress),
-    queryFn: async (): Promise<`0x${string}` | null> => {
+    queryFn: async (): Promise<readonly `0x${string}`[]> => {
       try {
-        const a = (await publicClient!.readContract({
+        return (await publicClient!.readContract({
           address: walletChain!.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'getRetiredAccountOf',
+          functionName: 'getRetiredAccountsOf',
           args: [address],
-        })) as `0x${string}`;
-        return a.toLowerCase() === ZERO ? null : a;
+        })) as readonly `0x${string}`[];
       } catch (e) {
-        if (isMissingSelectorError(e)) return null;
+        if (isMissingSelectorError(e)) return [];
         throw e;
       }
     },

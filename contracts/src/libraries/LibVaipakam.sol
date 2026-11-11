@@ -8131,9 +8131,10 @@ library LibVaipakam {
         ///      whether that signer approved that round's nominee. Written
         ///      only by `LibProtectedAccount`. Appended — append-only.
         mapping(address => mapping(uint32 => mapping(address => bool))) replacementApproved;
-        /// @dev Protected account mode — per replacement wallet, the retired
-        ///      account it controls (one per wallet); zero means none.
-        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        /// @dev RETIRED (Codex #3489 r5): one account per manager could not
+        ///      hold a manager of two replaced accounts. Nothing reads or
+        ///      writes it; `protectedManagedAccounts` replaces it. Kept for the
+        ///      append-only layout; do not reuse.
         mapping(address => address) protectedRetiredAccountOf;
         /// @dev Protected account mode — the last id handed to a pending
         ///      payout or position-transfer row (one sequence for both).
@@ -8331,6 +8332,12 @@ library LibVaipakam {
         ///      `SwapToRepayIntentFacet.commitSwapToRepayIntent`; replaces
         ///      the retired global `intentNonceUsed`. Appended — append-only.
         mapping(address => mapping(uint40 => bool)) intentNonceUsedByMaker;
+        /// @dev Codex #3489 r5 — per manager, every replaced account it now
+        ///      manages (a manager may hold several). Written only by
+        ///      `ProtectedAccountFacet` when it applies a replacement; replaces
+        ///      the retired one-account `protectedRetiredAccountOf`.
+        ///      Appended — append-only.
+        mapping(address => EnumerableSet.AddressSet) protectedManagedAccounts;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -8361,6 +8368,10 @@ library LibVaipakam {
         address controller;
         /// @dev #3204: retired; a pending pin change is held by the VaultBeacon.
         uint64 retiredPendingUnpinAt;
+        /// @dev Codex #3489 r5 — the vault lock count whose platform effects
+        ///      (rows cancelled, pending changes voided, NFTs held) were last
+        ///      applied. Appended.
+        uint64 lockCountApplied;
     }
 
     /// @notice Protected account mode — a pending change to one signer.

@@ -78,6 +78,12 @@ library LibVaultProtectionStorage {
         ///      owner record later says. The Diamond's protected-mode rules
         ///      read this, not a comparison of the owner record.
         bool retired;
+        /// @dev Codex #3489 r5 — how many locks this record has taken (each
+        ///      `lock` / `lockByPlatform` call, repeat locks included). The
+        ///      Diamond applies a lock's platform effects once per count, so
+        ///      a lock taken after an unlock the Diamond never saw still
+        ///      cancels the rows and changes queued since.
+        uint64 lockCount;
     }
 
     function layout() internal pure returns (Layout storage l) {

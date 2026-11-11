@@ -1556,6 +1556,11 @@
   },
   {
     "type": "error",
+    "name": "RetiredAccount",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SignatureExpired",
     "inputs": [
       {

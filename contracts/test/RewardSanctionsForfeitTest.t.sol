@@ -1319,11 +1319,11 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
     ///        reverts — the clock would run through an outage she cannot claim
     ///        in. (The fail-open screen, false on an unreadable oracle, would
     ///        read the same here; that substitution was not run.)
-    /// @notice #3379 B2, Codex #3489 r3 — a replacement's routing is
-    ///         permanent: after the new wallet switches protected mode off, the
-    ///         retired wallet's claim "to its wallet" is still paid into the
-    ///         account's vault, never to the retired wallet.
-    function test_B2_aRetiredWalletsClaimIsPaidIntoTheVaultAfterASwitchOff() public {
+    /// @notice #3379 B2, Codex #3489 r3/r5 — a replacement's routing is
+    ///         permanent: protected mode cannot be switched off on a retired
+    ///         account, and the retired wallet's claim "to its wallet" is paid
+    ///         into the account's vault, never to the retired wallet.
+    function test_B2_aRetiredWalletsClaimIsPaidIntoTheVault() public {
         _seed(bob, LOAN_B);
         address nominee = makeAddr("b2RetiredNominee");
         LibTestProtection.enable(address(diamond), bob, 2 days);
@@ -1331,12 +1331,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         vm.warp(vm.getBlockTimestamp() + 2 days);
         LibTestProtection.finalizeReplacement(address(diamond), bob);
         vm.warp(vm.getBlockTimestamp() + 2 days + 1); // past the cool-down
-        LibTestProtection.requestDisable(address(diamond), bob, nominee);
-        vm.warp(vm.getBlockTimestamp() + 2 days);
-        LibTestProtection.finalizeSettings(address(diamond), bob);
         address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(bob);
-        (bool on,,,,,,) = VaipakamVaultImplementation(vault).protectionState();
-        assertFalse(on, "fixture: protected mode is off");
         uint256 wallet0 = vpfi.balanceOf(bob);
         uint256 vault0 = vpfi.balanceOf(vault);
         uint256 paid = _claimWallet(bob);

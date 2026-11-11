@@ -11,6 +11,7 @@ import {LibPausable} from "./LibPausable.sol";
 /// @dev #3379 B2 — the vault's own protected-mode record, as the Diamond reads it.
 interface IVaultProtectionRead {
     function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner, bool retired);
+    function protectionLockCount() external view returns (uint64);
     function allowEntry(address destination) external view returns (ProtectionEntry memory);
     function signerEntry(address who) external view returns (ProtectionSigner memory);
     function protectionState()
@@ -215,6 +216,8 @@ library LibProtectedAccount {
         bool retired;
         uint32 delay;
         address manager;
+        /// @dev Codex #3489 r5 — the vault record's lock count.
+        uint64 lockCount;
     }
 
     function core(address account) internal view returns (Core memory c) {
@@ -226,6 +229,7 @@ library LibProtectedAccount {
         // r4): once replaced, the account wallet has lost every right over
         // it for good, whatever the owner record later reads.
         (c.enabled, c.locked, c.delay, c.manager, c.retired) = IVaultProtectionRead(c.vault).protectionCore();
+        c.lockCount = IVaultProtectionRead(c.vault).protectionLockCount();
     }
 
     /// @dev #3379 B2 — a protected-mode read through its host on

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {VaultBeacon} from "../VaultBeacon.sol";
 import {LibProtectedAccount, IVaultProtectionRead} from "../libraries/LibProtectedAccount.sol";
 import {LibPositionNFT, IPositionNFTCore} from "../libraries/LibPositionNFT.sol";
@@ -56,6 +57,8 @@ interface IVaultProtectionLock {
  *         B2 and no longer written or read.
  */
 contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     /// @notice Pending setting kinds, for {cancelSettingChange}.
     uint8 internal constant CHANGE_COSIGN_OFF = 4;
     /// @dev #3204 — a pending pin change held by the VaultBeacon. Cancelling it
@@ -117,7 +120,11 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         // one controller to the next), not only the first move to retired:
         // the outgoing manager's queued rows and pending changes die with it.
         bool handover = c.retired && a.controller != c.manager;
-        if ((c.locked && !a.locked) || handover) {
+        // Codex #3489 r5 — every lock the vault took since the last apply,
+        // counted, not inferred from the lock bit: a lock after an unlock
+        // the platform never saw still cancels what was queued since.
+        bool newLock = c.lockCount != a.lockCountApplied;
+        if (newLock || handover) {
             _voidBeaconPending(account);
             _voidCoreLockPending(account);
             _lockPositionNfts(account);
@@ -126,8 +133,10 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             changed = true;
         }
         if (handover) {
-            if (a.controller != address(0)) delete s.protectedRetiredAccountOf[a.controller];
-            s.protectedRetiredAccountOf[c.manager] = account;
+            // A manager may hold several replaced accounts (Codex #3489 r5):
+            // the outgoing manager loses only this one.
+            if (a.controller != address(0)) s.protectedManagedAccounts[a.controller].remove(account);
+            s.protectedManagedAccounts[c.manager].add(account);
             a.controller = c.manager;
             changed = true;
         }
@@ -151,6 +160,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         a.enabled = c.enabled;
         a.locked = c.locked;
         a.retired = c.retired;
+        a.lockCountApplied = c.lockCount;
         a.delaySeconds = c.enabled ? c.delay : 0;
         if (changed) emit ProtectionApplied(account, c.enabled, c.locked, c.retired, c.delay);
     }
@@ -261,10 +271,11 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibProtectedAccount.listingLegAllowed(seller, recipient);
     }
 
-    /// @notice The replaced account `controller` now manages; zero if none.
-    ///         Recorded when the replacement is applied ({applyProtection}).
-    function getRetiredAccountOf(address controller) external view returns (address) {
-        return LibVaipakam.storageSlot().protectedRetiredAccountOf[controller];
+    /// @notice Every replaced account `manager` now manages (empty if none;
+    ///         a manager may hold several). Recorded when each replacement is
+    ///         applied ({applyProtection}).
+    function getRetiredAccountsOf(address manager) external view returns (address[] memory) {
+        return LibVaipakam.storageSlot().protectedManagedAccounts[manager].values();
     }
 
     /// @notice #3379 B2 — the hosts of the protected-mode reads every rule

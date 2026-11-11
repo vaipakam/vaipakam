@@ -727,7 +727,16 @@ contract VaipakamVaultImplementation is
     ///      reach, on what this vault can establish without the Diamond.
     function _destinationAllowed(VaultOutflowTypes.Outflow calldata o) private view returns (bool) {
         VaultOutflowTypes.OutflowClass c = o.class_;
-        if (c == VaultOutflowTypes.OutflowClass.Owner) return o.to == ownerWallet && !_protectedLocked();
+        if (c == VaultOutflowTypes.OutflowClass.Owner) {
+            if (_protectedLocked()) return false;
+            if (o.to == ownerWallet) return true;
+            // Codex #3489 r5 — once a replacement moved the owner record, a
+            // manager with protected mode on is paid into ITS OWN vault (the
+            // outflow policy redirects it there), so its own delay and lock
+            // still hold: the vault its owner record derives, never this one.
+            return ownerWallet != creationOwner && o.to != address(this) && _isGenuineVault(o.to)
+                && IVaultOwnerView(o.to).vaultCreationOwner() == ownerWallet;
+        }
         // #3379 B2 — an allowlisted destination is one on this vault's OWN
         // protected record, finalized after its delay, while not locked.
         if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
@@ -882,6 +891,13 @@ contract VaipakamVaultImplementation is
     {
         LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
         return (l.enabled, l.locked, l.delay, ownerWallet, l.retired);
+    }
+
+    /// @notice Codex #3489 r5 — how many locks the protection record has taken
+    ///         (every lock call counts). The Diamond applies a lock's platform
+    ///         effects once per count.
+    function protectionLockCount() external view returns (uint64) {
+        return LibVaultProtectionStorage.layout().lockCount;
     }
 
     /// @notice One allowlist entry (#3415 `verified` included).
