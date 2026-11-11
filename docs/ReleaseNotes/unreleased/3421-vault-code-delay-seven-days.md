@@ -1,4 +1,4 @@
-## Thread — New vault code waits seven days (PR #<n>)
+## Thread — New vault code waits seven days (PR #3593)
 
 A new current vault version, or a revoke, now waits at least seven days
 between its proposal and its execution, up from three. The wait is a constant
