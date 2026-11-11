@@ -2499,7 +2499,7 @@ export const copy = {
     minFillHintLend: B('Matches lend from this amount up to what is left. Taken directly, a borrower borrows all of it.'),
     minFillHintBorrow: B('Matches lend from this amount up to what is left. Taken directly, a lender lends just this amount.'),
     collateralHintPartLend: B('For the whole amount; a match lending a part asks a matching share of it.'),
-    collateralHintPartBorrow: B('Any loan from this request locks all of it: the ticket posts no collateral range.'),
+    collateralHintPartBorrow: B('Taken directly, a loan locks all of it. A match locks only what its lender asks for.'),
     modeLabel: B('How it is sent'),
     modePostLend: B('Posted on the chain: you pay gas, and the amount waits in your own vault.'),
     modePostBorrow: B('Posted on the chain: you pay gas, and the collateral waits in your own vault.'),

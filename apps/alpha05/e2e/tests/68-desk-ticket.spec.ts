@@ -161,7 +161,7 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
     .getByTestId('desk-ticket-fill')
     .getByRole('radio', { name: /Partial/ })
     .check();
-  await expect(ticket).toContainText('Any loan from this request locks all of it');
+  await expect(ticket).toContainText('Taken directly, a loan locks all of it. A match locks only what its lender asks for.');
   await ticket.getByTestId('desk-ticket-min-fill').fill('0.005');
   await expect(blocker).toHaveCount(0);
   await ticket.getByTestId('desk-ticket-review').click();
