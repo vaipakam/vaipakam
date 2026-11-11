@@ -1549,6 +1549,12 @@ The Rate desk, under Advanced in the menu, shows the open token loan offers on t
 
 Below a market's ladder, the Rate desk lists every maker's signed orders on that market, as the offer book lists them: lenders' orders from the lowest rate up, and borrowers' from the highest rate down. Each one shows its terms, who signed it (or that you did), when it lapses, and where the chain stands on it: open, partly filled with what is left, fully filled or cancelled, stopped because its nonce was cancelled, or lapsed. A signed order sets nothing aside, so each order that can still be filled also shows whether its maker's vault holds free now what a fill would draw, or how far short it is. One maker's orders share that vault, and each is weighed against it alone, so one fill can use funds another order needs. You cannot fill a signed order here yet: the protocol cannot yet show you a fill's figures before you pay, and the desk says so instead of offering a button.
 
+<a id="desk-match"></a>
+
+### Rate Desk: Matching an Overlap
+
+When a market's best lender's offer asks no more than its best borrower's request will pay, the two sides overlap. A match also needs a rate both sides accept, since each offer names a range of rates; where no lender's range meets a borrower's, the band says nothing can be matched. Under the ladder, a match band then shows a pair the protocol confirms it can match now: the lender's offer and the borrower's request, the amount, the middle of the rates both accept, the collateral the borrower locks, and the most your share can be. Anyone may send the match. It opens the loan between the two who posted the offers; you take no side of it and move none of your funds into it. You pay the gas, and a small share of the initiation fee the borrower pays reaches you, only if the match lands. The share shown is the most it can be, because a borrower's fee discount, settled only at the match, lowers it. Someone else may match or take either offer first, and then your match fails and moves nothing. Matching is a protocol setting each network can switch off; while it is off the band says so. Afterwards the app checks on the chain that the loan opened and how much reached you.
+
 <a id="offer-terms-wait"></a>
 
 ### When an Offer Was Just Posted or Changed
