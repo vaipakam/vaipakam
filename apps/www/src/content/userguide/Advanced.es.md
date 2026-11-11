@@ -1998,22 +1998,25 @@ nunca hace fallar tu propia acción**: tu tier en Base queda al día de
 inmediato, y a cada una de las demás cadenas se le debe la
 actualización hasta que llega.
 
-El protocolo paga estas entregas, con un límite:
+Quién paga una entrega depende de hacia dónde se movió tu tier:
 
-- **Un tier más bajo** se envía de inmediato, siempre que el
-  presupuesto pueda pagarlo. Hasta que llega, esa cadena sigue
-  aplicando tu tier anterior, más alto.
-- **Un tier más alto**, o un cambio de la tabla de tiers, se paga como
-  mucho una vez al día por cadena (un parámetro de gobernanza entre 1
-  hora y 7 días). Hasta entonces esa cadena conserva tu tier anterior.
-- Una actualización retenida por esa espera, o que el presupuesto no
-  pudo pagar, **no se reenvía sola cuando termina la espera**. Sale con
-  la siguiente actualización de su registro de nivel en Base, o cuando
-  alguien hace la llamada de entrega por usted.
-- Cualquiera puede hacer esa llamada. Una vez pasada la espera y si el
-  presupuesto puede pagarla, la paga el protocolo; antes de eso, quien
-  llama paga la comisión cross-chain para entregarla antes. Los contratos
-  ofrecen esta llamada; la aplicación todavía no la ofrece.
+- **Un tier más bajo** se envía de inmediato y lo paga el protocolo,
+  siempre que su presupuesto pueda pagarlo. Hasta que llega, esa cadena
+  sigue aplicando tu tier anterior, más alto.
+- **Un tier más alto**, incluido tu primer descuento en una cadena,
+  nunca lo paga el protocolo. Se envía cuando alguien paga su comisión
+  cross-chain con la llamada de entrega. Hasta entonces esa cadena
+  conserva tu tier anterior. Un cambio de la tabla de tiers cuenta como
+  un tier más alto.
+- Una actualización que el presupuesto no pudo pagar **no se reenvía
+  sola**. Sale con la siguiente actualización de su registro de nivel en
+  Base, o cuando alguien hace la llamada de entrega por usted. Un tier
+  más alto espera a la llamada de entrega.
+- Cualquiera puede hacer esa llamada. El protocolo paga un tier más
+  bajo; para un tier más alto, quien llama paga la comisión cross-chain.
+  Los contratos ofrecen esta llamada; la aplicación todavía no la
+  ofrece, así que por ahora un tier más alto solo llega a otra cadena
+  mediante una llamada directa al contrato.
 
 Una copia deja de contar, y esa cadena no da descuento, cuando:
 
@@ -2058,8 +2061,6 @@ detalla aquí para quien opere su propio despliegue.
   usuario. Un presupuesto escaso hace que las demás cadenas apliquen
   tiers antiguos durante más tiempo: vigila los aplazamientos y
   recarga.
-- La ventana de espaciado de las subidas pagadas:
-  `setTierPushSpacingSec` (1 día por defecto, de 1 hora a 7 días).
 
 **En cada una de las demás cadenas:**
 
@@ -2079,9 +2080,7 @@ detalla aquí para quien opere su propio despliegue.
   por la primera actualización de tier que la lleve, de cualquier
   usuario. Desde entonces, toda copia hecha con la tabla antigua vale
   cero descuento hasta que llegue la actualización propia de ese
-  usuario, y esas actualizaciones son subidas pagadas como mucho una
-  vez por ventana de espaciado. Recarga el presupuesto antes de cambiar
-  la tabla.
+  usuario, y cada una de esas actualizaciones es un tier más alto, que solo entrega quien paga la llamada.
 - `setTwaMinStakedDays` cambia el periodo mínimo de tenencia sin hacer
   avanzar la versión. Surte efecto en la siguiente lectura.
 
@@ -2705,7 +2704,7 @@ La lista de mercados es el resumen de mercados del índice: cada combinación di
 
 ### Rate desk: las órdenes firmadas de un mercado
 
-La lista lee `/signed-offers` del índice para el mercado sin `signer`, así que contiene las órdenes de todos los creadores: las 100 filas de mejor precio por lado, con `truncated` indicado. Cada fila debe volver a serializarse en la forma canónica, su `orderHash` debe coincidir con el hash de estructura EIP-712 recalculado a partir de la orden, debe nombrar los tokens y el plazo del mercado, y su firma debe ser una firma ECDSA de 65 bytes; cualquier otra fila se cuenta como ilegible. Las asks se ordenan por `interestRateBps` ascendente y las bids por el mayor de `interestRateBps` e `interestRateBpsMax` descendente, conservando el orden del libro entre tasas iguales. La situación de cada orden se lee en un solo bloque con la misma regla que tus propias órdenes firmadas, descrita más abajo. En ese mismo bloque la app lee `freeHolding(signer, ERC20, stakeAsset, 0)` una vez por creador y activo comprometido, y para cada orden que aún puede llenarse lo compara con lo que tomaría un llenado del resto: el techo de un prestamista menos lo llenado, o la garantía de un prestatario para ese resto a la proporción propia de la orden, redondeada hacia arriba. Una lectura fallida se indica como desconocida, nunca como cero. Cada orden se mide sola contra todo el saldo libre, así que dos órdenes de un creador pueden aparecer cubiertas cuando el vault solo alcanza para una. No se ofrece llenado: `previewAccept` recibe el id de una oferta guardada, y una orden firmada no tiene ninguno hasta que un llenado la crea, así que la app no podría mostrar las cifras de un llenado antes de que el tomador pague (#3552).
+La lista lee `/signed-offers` del índice para el mercado sin `signer`, así que contiene las órdenes de todos los creadores: las 100 filas de mejor precio por lado, con `truncated` indicado. Cada fila debe volver a serializarse en la forma canónica, su `orderHash` debe coincidir con el hash de estructura EIP-712 recalculado a partir de la orden, debe nombrar los tokens y el plazo del mercado, y su firma debe ser una firma ECDSA de 65 bytes; cualquier otra fila se cuenta como ilegible. Las asks se ordenan por `interestRateBps` ascendente y las bids por el mayor de `interestRateBps` e `interestRateBpsMax` descendente, conservando el orden del libro entre tasas iguales. La situación de cada orden se lee en un solo bloque con la misma regla que tus propias órdenes firmadas, descrita más abajo. En ese mismo bloque la app lee `freeHolding(signer, ERC20, stakeAsset, 0)` una vez por creador y activo comprometido, y para cada orden que aún puede llenarse lo compara con lo que tomaría un llenado del resto: el techo de un prestamista menos lo llenado, o la garantía de un prestatario para ese resto a la proporción propia de la orden, redondeada hacia arriba. Una lectura fallida se indica como desconocida, nunca como cero. Cada orden se mide sola contra todo el saldo libre, así que dos órdenes de un creador pueden aparecer cubiertas cuando el vault solo alcanza para una. Una orden abierta que firmó otra persona puede llenarse entera. La revisión lee `previewSignedOfferAccept(order, signature, acceptor)`, que devuelve la vista previa de aceptación de la oferta que escribiría el llenado, además del hash de la orden, el activo de la aportación, la aportación que el llenado toma del vault del creador y el saldo libre de ese vault; sus rechazos (entre ellos `SignedOfferMakerShort`, `SignedOfferConsumed` y `SignedOfferNonceUsed`) se nombran y bloquean el consentimiento. La firma de los Términos se vincula al hash de la orden como su `offerKey`, y el envío es `acceptSignedOffer(order, signature, terms, termsSignature)`, que consume la orden entera, escribe la oferta desde el vault del creador y abre el préstamo en una sola transacción. La vista previa no ejecuta la comprobación de acceso por riesgo del aceptante (#3577), así que la revisión dice que la hace la prueba previa de `acceptSignedOffer`; un rechazo allí (`RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`) abre el paso de riesgo para el par de la orden. La tarjeta final busca el `SignedOfferFilled` del Diamond para el hash de la orden y lee el préstamo de él. Una orden emparejada en parte informa `SignedOfferConsumed` y no se ofrece; tus propias órdenes tampoco.
 
 <a id="desk-match"></a>
 

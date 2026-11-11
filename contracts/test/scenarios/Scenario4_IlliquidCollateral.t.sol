@@ -44,6 +44,7 @@ import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {VPFIDiscountAccumulatorFacet} from "../../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
@@ -130,7 +131,7 @@ contract Scenario4_IlliquidCollateral is Test {
         helperTest        = new HelperTest();
 
         // Cut all facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -246,6 +247,13 @@ contract Scenario4_IlliquidCollateral is Test {
             facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        // #3562 — every lender token's holder is recorded by the accumulator
+        // facet, so a Diamond that mints position NFTs must route it.
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestForcedSalePreview.install(address(diamond));

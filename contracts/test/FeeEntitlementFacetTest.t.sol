@@ -397,6 +397,36 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      refinance's interest cut. The LIF share is borrower-side and
     ///      identical in every run (no run stakes the borrower), so differences
     ///      between runs are differences in the interest cut alone.
+    /// @dev The stored lender hands the lender position to `holder` at the
+    ///      core. The refinance's consolidation is declined in
+    ///      {_refinanceTreasuryCut}, so the stored lender stays stale.
+    function _handLenderPositionTo(uint256 tokenId, address holder) private {
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, tokenId);
+    }
+
+    /// @dev #3562 — a plain transfer carries the LOWER of the recorded entry
+    ///      figure and the receiver's standing, so a holder reached by a
+    ///      transfer can only be discounted when the position was taken with a
+    ///      discount in the first place. The stored lender stakes and ages
+    ///      past the minimum holding period BEFORE the loan opens, so the
+    ///      origination records a non-zero entry. The lender's consent is never
+    ///      turned on here: the fee path resolves the holder, so this stake
+    ///      changes no fee by itself (the runs that leave the holder unstaked
+    ///      prove that).
+    function _qualifyStoredLenderAtEntry() private {
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        vm.warp(vm.getBlockTimestamp() + 4 days);
+    }
+
+    /// @dev The rental's stored lender hands its lender position to `holder`.
+    function _handRentalPositionTo(LibVaipakam.Loan memory rl, address holder) private {
+        LibTestPositionNFT.waitOutCooldown(address(diamond), rl.lenderTokenId);
+        vm.prank(rl.lender);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(rl.lender, holder, rl.lenderTokenId);
+    }
+
     function _refinanceTreasuryCut(
         uint256 oldLoanId,
         uint256 borrowerOfferId,
@@ -485,38 +515,35 @@ contract FeeEntitlementFacetTest is SetupTest {
             vm.stopPrank();
         }
 
+        _qualifyStoredLenderAtEntry();
         uint256 oldOffer = _createLenderErc20Offer();
         uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
         uint256 borrowerOfferId = _createTaggedBorrowerErc20Offer(oldLoanId);
         RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
 
-        LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
-        LibTestPositionNFT.waitOutCooldown(address(diamond), ol.lenderTokenId);
-        vm.prank(lender);
-        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, ol.lenderTokenId);
-
-        // The consolidation DECLINES — the documented skip-not-block case.
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(ConsolidationFacet.eagerConsolidateToHolder.selector),
-            abi.encode());
+        uint256 lenderTokenId = LoanFacet(address(diamond)).getLoanDetails(oldLoanId).lenderTokenId;
 
         // NO warp before the snapshot. `effectiveTierAndBps` returns (0,0) until
         // `block.timestamp >= currentStakeStartSec + cfgTwaMinStakedDays days`
         // (default 3, `VPFIDiscountAccumulatorFacet:193-197`), so a stake must
         // be placed BEFORE the time passes, not after it. Each run therefore
         // stakes first and then ages — the warp also supplies the accrued
-        // interest the treasury cut is taken from.
+        // interest the treasury cut is taken from. #3562: the position moves to
+        // the holder AFTER the aging, so the holder's standing at entry is the
+        // aged one (the discount is the lower of entry and settlement).
         uint256 snap = vm.snapshotState();
         vm.warp(block.timestamp + 15 days);
+        _handLenderPositionTo(lenderTokenId, holder);
         (uint256 baseCut, uint256 baseLender) = _refinanceTreasuryCut(
             oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
 
-        // Run 2 — the STALE lender is staked and consenting; the holder is not.
+        // Run 2 — the STALE lender is staked (since before the loan opened, in
+        // every run) and now also consenting; the holder is not.
         vm.revertToState(snap);
-        _stakeVpfi(lender, PARTY_VPFI_STAKE);
         vm.prank(lender);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         vm.warp(block.timestamp + 15 days); // age the stake past the TWA window
+        _handLenderPositionTo(lenderTokenId, holder);
         (uint256 staleStakedCut, ) = _refinanceTreasuryCut(
             oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
 
@@ -527,6 +554,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(holder);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         vm.warp(block.timestamp + 15 days); // age the stake past the TWA window
+        _handLenderPositionTo(lenderTokenId, holder);
         // Name the silent zero: if the holder has no tier the control below
         // fails as "fixture cannot discount", which is indistinguishable from
         // the resolver reading the wrong party.
@@ -1429,6 +1457,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      — a treasury-only assertion passes while the lender never receives
     ///      the wei the treasury gave up.
     function test_1955_rentalDefault_lenderHoldTier_shiftsPrepayFeeToLender() public {
+        _qualifyStoredLenderAtEntry();
         uint256 rentalOffer = _createLenderRentalOffer();
         uint256 loanId = LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, rentalOffer
@@ -1447,13 +1476,13 @@ contract FeeEntitlementFacetTest is SetupTest {
         // rentals out of scope). The stored lender on a transferred rental is
         // therefore PERMANENTLY stale, which makes the `ownerOf` keying
         // load-bearing on every rental default, not just an edge case.
+        //
+        // #3562: the move happens in each replay AFTER the aging, so the
+        // holder's standing at entry is the aged one (the discount is the
+        // lower of entry and settlement), and the stored lender entered with
+        // a discount so the transfer has a figure to carry.
         LibVaipakam.Loan memory rl = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address rHolder = makeAddr("rentalHolder1955");
-        LibTestPositionNFT.waitOutCooldown(address(diamond), rl.lenderTokenId);
-        vm.prank(rl.lender);
-        LibTestPositionNFT.core(address(diamond)).transferFrom(
-            rl.lender, rHolder, rl.lenderTokenId
-        );
         vpfiToken.transfer(rHolder, PARTY_VPFI_STAKE);
 
         // Mocks are set BEFORE the snapshot on purpose: `vm.revertToState`
@@ -1472,6 +1501,7 @@ contract FeeEntitlementFacetTest is SetupTest {
 
         // ── Replay 1: no stake, no consent — the undiscounted baseline. ──
         vm.warp(block.timestamp + 33 days + 3);
+        _handRentalPositionTo(rl, rHolder);
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -1488,6 +1518,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // returns a silent (0,0) until the stake has aged past
         // `cfgTwaMinStakedDays`. The 33-day warp to the default also ages it.
         vm.warp(block.timestamp + 33 days + 3);
+        _handRentalPositionTo(rl, rHolder);
 
         // Name the silent zero. Without this a discount of zero would make the
         // strict-inequality assertion below fail as "fixture never discounted",
@@ -1585,15 +1616,13 @@ contract FeeEntitlementFacetTest is SetupTest {
             vm.stopPrank();
         }
 
+        _qualifyStoredLenderAtEntry();
         uint256 oldOffer = _createLenderErc20Offer();
         uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
         uint256 borrowerOfferId = _createTaggedBorrowerErc20Offer(oldLoanId);
         RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, borrowerOfferId);
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
-        LibTestPositionNFT.waitOutCooldown(address(diamond), ol.lenderTokenId);
-        vm.prank(ol.lender);
-        LibTestPositionNFT.core(address(diamond)).transferFrom(ol.lender, holder, ol.lenderTokenId);
 
         // ARM THE PEG. `weiPerVpfi` is deliberately large (1 ETH per VPFI) so
         // the quoted `vpfiRequired` stays far inside the holder's stake — a
@@ -1608,6 +1637,16 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(holder);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         vm.warp(block.timestamp + 15 days);
+
+        // The position moves to the holder only once their stake has aged:
+        // the hold discount is the lower of the holder's standing when they
+        // took the position and at settlement (#3562), so a holder who took
+        // it before staking would carry no discount for this test to route.
+        // A plain transfer carries the lower of the recorded figure and the
+        // holder's, which is why the stored lender qualified at entry above.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), ol.lenderTokenId);
+        vm.prank(ol.lender);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(ol.lender, holder, ol.lenderTokenId);
 
         (uint8 hTier, uint16 hBps) =
             VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(holder);

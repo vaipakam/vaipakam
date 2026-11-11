@@ -297,9 +297,16 @@ library LibVPFIDiscount {
 
 
     /**
-     * @notice The lender's hold-tier discount BPS for this loan, resolved
-     *         from their EFFECTIVE tier at the moment of the call and
-     *         clamped to `MAX_FEE_DISCOUNT_BPS`. Rollup is required at
+     * @notice The lender's hold-tier discount BPS for this loan: the LOWER
+     *         of their discount when they took the lender position and their
+     *         discount at the moment of the call, each from their EFFECTIVE
+     *         tier and clamped to `MAX_FEE_DISCOUNT_BPS` (#3562, owner
+     *         decision 2026-11-11, replacing the settlement-only rule of
+     *         #1981). 0 when no entry is recorded for `lender` on this loan.
+     *         The entry is recorded whenever the lender position gets a new
+     *         holder ({VPFIDiscountAccumulatorFacet.stampLenderEntry}), so a
+     *         lender who stakes shortly before settlement does not get a
+     *         discount on interest earned while they held no tier. Rollup is required at
      *         MUTATION sites, NOT immediately before this read — see the
      *         developer note on {effectiveTierAndBps}. A
      *         zero `loan.startTime` or a zero-duration window (loan
@@ -335,32 +342,31 @@ library LibVPFIDiscount {
         LibVaipakam.Loan storage loan,
         address lender
     ) internal view returns (uint256 bps) {
-        // T-087 Sub 1.B: the design replaces the Phase-5 loan-window
-        // averaging with INSTANT EFFECTIVE_BPS lookup at the moment of
-        // fee application (design §3 reuse row). The `loan.startTime`
-        // gate is kept defensively — a zero-duration loan (accepted
-        // and repaid in the same block) returns 0 by parity with
-        // the previous semantics. The `loan.lenderDiscountAccAtInit`
-        // anchor stays populated (vestigial) but is no longer read.
+        // A zero-duration loan (accepted and repaid in the same block)
+        // returns 0, as it always has.
+        if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
+        // #3562 — the lower of `lender`'s discount when they took the lender
+        // position and their discount now, resolved in ONE place
+        // (`VPFIDiscountAccumulatorFacet.lenderHoldDiscountBps`, beside the
+        // one writer of the entry record). 0 when no entry names `lender`.
         //
         // #1383 — keyed on the passed `lender`, not `loan.lender`: the
         // secondary settlement paths resolve the discount for the CURRENT
         // position-NFT holder, which the non-consolidated ones do not fold
-        // back into `loan.lender`. Because the tier read is INSTANT (no
-        // per-loan window), the holder's own current tier is exactly the
-        // right "as of now" hold discount for them.
-        if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
-        ( , uint16 effBps) = effectiveTierAndBps(lender);
-        bps = uint256(effBps);
-        // #1352 (Codex P2): the 50% fee-discount ceiling is a UNIFORM cap.
-        // `ConfigFacet.setVpfiTierDiscountBps` still permits per-tier values
-        // above `MAX_FEE_DISCOUNT_BPS` (up to 9000), so clamp here — the same
-        // clamp `holdOnlyBorrowerLif` applies to the borrower LIF — or a
-        // lender could realize a >50% yield-fee reduction and under-collect
-        // treasury on repay/preclose/refinance settlements.
-        if (bps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
-            bps = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
-        }
+        // back into `loan.lender`; the entry record follows that holder.
+        //
+        // Silent 0 when the host is not cut (minimal test fixtures): no
+        // discount, the treasury keeps its whole fee. The host applies the
+        // uniform 50% ceiling (#1352) to both figures.
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(
+                VPFIDiscountAccumulatorFacet.lenderHoldDiscountBps.selector,
+                loan.id,
+                lender
+            )
+        );
+        if (!ok || ret.length < 32) return 0;
+        bps = abi.decode(ret, (uint16));
     }
 
     /**

@@ -2005,24 +2005,27 @@ lässt deine eigene Aktion nie fehlschlagen**: Dein Tier auf Base ist
 sofort aktuell, und jeder anderen Chain wird das Update geschuldet, bis
 es ankommt.
 
-Das Protokoll bezahlt diese Zustellungen, mit einer Grenze:
+Wer eine Zustellung bezahlt, hängt davon ab, in welche Richtung sich
+dein Tier bewegt hat:
 
-- **Ein niedrigeres Tier** wird sofort geschickt, solange das Budget
-  es bezahlen kann. Bis es ankommt, wendet die Chain weiter dein
-  vorheriges, höheres Tier an.
-- **Ein höheres Tier** oder eine Änderung der Tier-Tabelle wird
-  höchstens einmal pro Tag und Chain bezahlt (eine
-  Governance-Einstellung zwischen 1 Stunde und 7 Tagen). Bis dahin
-  behält die Chain dein vorheriges Tier.
-- Ein Update, das durch diese Wartezeit zurückgehalten wird oder das
-  das Budget nicht bezahlen konnte, **wird nach Ablauf der Wartezeit nicht
-  von selbst erneut gesendet**. Es geht mit der nächsten Aktualisierung
-  Ihres Tier-Eintrags auf Base hinaus, oder wenn jemand den Zustellaufruf
-  für Sie ausführt.
-- Diesen Aufruf kann jeder ausführen. Ist die Wartezeit vorbei und kann
-  das Budget zahlen, zahlt das Protokoll; vorher zahlt der Aufrufer die
-  Cross-Chain-Gebühr, um früher zuzustellen. Die Contracts bieten diesen
-  Aufruf an; die App bietet ihn noch nicht an.
+- **Ein niedrigeres Tier** wird sofort geschickt und vom Protokoll
+  bezahlt, solange sein Budget es bezahlen kann. Bis es ankommt,
+  wendet die Chain weiter dein vorheriges, höheres Tier an.
+- **Ein höheres Tier**, auch dein erster Rabatt auf einer Chain, wird
+  nie vom Protokoll bezahlt. Es wird geschickt, wenn jemand mit dem
+  Zustellaufruf die Cross-Chain-Gebühr dafür bezahlt. Bis dahin behält
+  die Chain dein vorheriges Tier. Eine Änderung der Tier-Tabelle zählt
+  als höheres Tier.
+- Ein Update, das das Budget nicht bezahlen konnte, **wird nicht von
+  selbst erneut gesendet**. Es geht mit der nächsten Aktualisierung
+  Ihres Tier-Eintrags auf Base hinaus, oder wenn jemand den
+  Zustellaufruf für Sie ausführt. Ein höheres Tier wartet auf den
+  Zustellaufruf.
+- Diesen Aufruf kann jeder ausführen. Für ein niedrigeres Tier zahlt das
+  Protokoll; für ein höheres zahlt der Aufrufer die Cross-Chain-Gebühr.
+  Die Contracts bieten diesen Aufruf an; die App bietet ihn noch nicht
+  an, ein höheres Tier erreicht eine andere Chain also vorerst nur über
+  einen direkten Contract-Aufruf.
 
 Eine Kopie zählt nicht mehr, und die Chain gibt dann keinen Rabatt,
 wenn:
@@ -2067,8 +2070,6 @@ steht hier für alle, die ein eigenes Deployment betreiben.
   Grund, und `getTierPushStatus(user)` zeigt den Stand jeder Chain für
   einen Nutzer. Ein knappes Budget bedeutet, dass andere Chains länger
   alte Tiers anwenden; beobachte die Aufschübe und lade nach.
-- Das Abstandsfenster für bezahlte Erhöhungen:
-  `setTierPushSpacingSec` (Standard 1 Tag, 1 Stunde bis 7 Tage).
 
 **Auf jeder anderen Chain:**
 
@@ -2087,9 +2088,7 @@ steht hier für alle, die ein eigenes Deployment betreiben.
   erhöhen die Version der Tabelle. Eine andere Chain erfährt die neue
   Version durch das erste Tier-Update, das sie trägt, egal von welchem
   Nutzer. Ab dann gilt jede mit der alten Tabelle erstellte Kopie als
-  kein Rabatt, bis das eigene Update dieses Nutzers ankommt, und diese
-  Updates sind Erhöhungen, die höchstens einmal pro Abstandsfenster
-  bezahlt werden. Lade das Budget auf, bevor du die Tabelle änderst.
+  kein Rabatt, bis das eigene Update dieses Nutzers ankommt, und jedes dieser Updates ist ein höheres Tier, das nur ein zahlender Aufrufer zustellt.
 - `setTwaMinStakedDays` ändert die Mindesthaltedauer, ohne die Version
   zu erhöhen. Die Änderung wirkt beim nächsten Lesen.
 
@@ -2715,7 +2714,7 @@ Die Marktliste ist die Marktübersicht des Index: jede eigene Kombination aus ve
 
 ### Rate desk: die signierten Orders eines Marktes
 
-Die Liste liest `/signed-offers` des Index für den Markt ohne `signer` und enthält so die Orders aller Maker: die 100 bestgepreisten Zeilen je Seite, mit Angabe von `truncated`. Jede Zeile muss sich in die kanonische Wire-Form zurückserialisieren lassen, ihr `orderHash` muss dem aus der Order neu berechneten EIP-712-Struct-Hash entsprechen, sie muss die Token und die Laufzeit des Marktes nennen, und ihre Signatur muss eine 65-Byte-ECDSA-Signatur sein; jede andere Zeile wird als unlesbar gezählt. Asks werden nach `interestRateBps` aufsteigend sortiert, Bids nach dem höheren Wert von `interestRateBps` und `interestRateBpsMax` absteigend, bei gleichem Zins in der Reihenfolge des Buchs. Der Stand jeder Order wird an einem Block nach derselben Regel gelesen wie bei Ihren eigenen signierten Orders, unten beschrieben. Am selben Block liest die App `freeHolding(signer, ERC20, stakeAsset, 0)` einmal je Maker und Einsatz-Asset und vergleicht es für jede noch füllbare Order mit dem, was eine Füllung des Rests ziehen würde: der Obergrenze eines Verleihers abzüglich des Gefüllten, oder der Sicherheit eines Kreditnehmers für diesen Rest zum eigenen Verhältnis der Order, aufgerundet. Ein fehlgeschlagener Lesevorgang wird als unbekannt angegeben, nie als null. Jede Order wird allein am ganzen freien Guthaben gemessen, sodass zwei Orders eines Makers jeweils als gedeckt erscheinen können, während der Vault nur für eine reicht. Eine Füllung wird nicht angeboten: `previewAccept` nimmt eine gespeicherte Angebots-ID, und eine signierte Order hat keine, bis eine Füllung sie anlegt; die App könnte die Zahlen einer Füllung also nicht zeigen, bevor der Nehmer zahlt (#3552).
+Die Liste liest `/signed-offers` des Index für den Markt ohne `signer` und enthält so die Orders aller Maker: die 100 bestgepreisten Zeilen je Seite, mit Angabe von `truncated`. Jede Zeile muss sich in die kanonische Wire-Form zurückserialisieren lassen, ihr `orderHash` muss dem aus der Order neu berechneten EIP-712-Struct-Hash entsprechen, sie muss die Token und die Laufzeit des Marktes nennen, und ihre Signatur muss eine 65-Byte-ECDSA-Signatur sein; jede andere Zeile wird als unlesbar gezählt. Asks werden nach `interestRateBps` aufsteigend sortiert, Bids nach dem höheren Wert von `interestRateBps` und `interestRateBpsMax` absteigend, bei gleichem Zins in der Reihenfolge des Buchs. Der Stand jeder Order wird an einem Block nach derselben Regel gelesen wie bei Ihren eigenen signierten Orders, unten beschrieben. Am selben Block liest die App `freeHolding(signer, ERC20, stakeAsset, 0)` einmal je Maker und Einsatz-Asset und vergleicht es für jede noch füllbare Order mit dem, was eine Füllung des Rests ziehen würde: der Obergrenze eines Verleihers abzüglich des Gefüllten, oder der Sicherheit eines Kreditnehmers für diesen Rest zum eigenen Verhältnis der Order, aufgerundet. Ein fehlgeschlagener Lesevorgang wird als unbekannt angegeben, nie als null. Jede Order wird allein am ganzen freien Guthaben gemessen, sodass zwei Orders eines Makers jeweils als gedeckt erscheinen können, während der Vault nur für eine reicht. Eine offene Order, die jemand anderes signiert hat, kann ganz gefüllt werden. Die Prüfung liest `previewSignedOfferAccept(order, signature, acceptor)`, das die Annahmevorschau des Angebots liefert, das die Füllung anlegen würde, dazu den Hash der Order, das Einsatz-Asset, den Einsatz, den die Füllung aus dem Vault des Makers zieht, und dessen freies Guthaben; seine Ablehnungen (darunter `SignedOfferMakerShort`, `SignedOfferConsumed` und `SignedOfferNonceUsed`) werden namentlich genannt und sperren die Zustimmung. Die Terms-Signatur ist an den Hash der Order als `offerKey` gebunden, und gesendet wird `acceptSignedOffer(order, signature, terms, termsSignature)`, das die ganze Order verbraucht, das Angebot aus dem Vault des Makers anlegt und den Kredit in einer Transaktion eröffnet. Die Vorschau führt die Risikozugangsprüfung des Annehmenden nicht aus (#3577), daher sagt die Prüfung, dass der Probelauf von `acceptSignedOffer` sie vornimmt; eine Ablehnung dort (`RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`) öffnet den Risikoschritt für das Paar der Order. Die Abschlusskarte findet das `SignedOfferFilled` des Diamond zum Hash der Order und liest den Kredit daraus. Eine teilweise gematchte Order meldet `SignedOfferConsumed` und wird nicht angeboten; Ihre eigenen Orders ebenfalls nicht.
 
 <a id="desk-match"></a>
 

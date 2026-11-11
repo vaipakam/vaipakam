@@ -584,6 +584,14 @@
       "from": "protocolCfg.numeraireSwapEnabled",
       "to": "protocolCfg.retiredNumeraireSwapEnabled",
       "reason": "#3272 part 2 (owner decision 2026-11-09, \"Fix numeraire at deploy\"): live numeraire switching is removed, so the switch flag gates nothing and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 642,
+      "offset": 0,
+      "from": "cfgTierPushSpacingSec",
+      "to": "retiredTierPushSpacingSec",
+      "reason": "#1277: the protocol broadcast budget pays only for a tier push that lowers what a lane grants and never for a raise, so the per-lane spacing window and its setter are removed; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

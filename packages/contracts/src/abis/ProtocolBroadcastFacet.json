@@ -34,19 +34,6 @@
   },
   {
     "type": "function",
-    "name": "getTierPushSpacingSec",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getTierPushStatus",
     "inputs": [
       {
@@ -134,9 +121,9 @@
             "internalType": "bool"
           },
           {
-            "name": "budgetEligibleAt",
-            "type": "uint40",
-            "internalType": "uint40"
+            "name": "budgetPays",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -170,19 +157,6 @@
         "name": "user",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTierPushSpacingSec",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -431,25 +405,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "TierPushSpacingSet",
-    "inputs": [
-      {
-        "name": "previous",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "current",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
@@ -511,27 +466,6 @@
     "type": "error",
     "name": "TierPushRefundFailed",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TierPushSpacingOutOfRange",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "min",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "max",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   },
   {
     "type": "error",

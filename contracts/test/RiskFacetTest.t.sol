@@ -118,6 +118,7 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {liquidationQuote, forcedSaleQuote, forcedSalePlan} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
@@ -287,7 +288,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](34);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -538,6 +539,13 @@ contract RiskFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        // #3562 — every lender token's holder is recorded by the accumulator
+        // facet, so a Diamond that mints position NFTs must route it.
+        cuts[33] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestForcedSalePreview.install(address(diamond));

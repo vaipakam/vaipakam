@@ -70,6 +70,7 @@ import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
@@ -167,7 +168,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -327,6 +328,13 @@ contract RepayFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        // #3562 — every lender token's holder is recorded by the accumulator
+        // facet, so a Diamond that mints position NFTs must route it.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.

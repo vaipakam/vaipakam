@@ -2580,9 +2580,6 @@ export const copy = {
   signedBook: {
     title: B('Signed orders on this market'),
     lead: B('Gasless orders makers signed on this market, as the offer book lists them, each checked against the chain.'),
-    notYet: A(
-      'This page does not fill signed orders yet: the protocol cannot yet show a fill’s figures before you pay, and this app does not ask you to pay without them. What each order would draw is shown below.',
-    ),
     reading: B('Reading the market’s signed orders from the offer book…'),
     failed: A('The market’s signed orders could not be read from the offer book ({{reason}}). Signed orders may stand on it that this page cannot show.'),
     failedCached: A('The offer book did not answer the latest read ({{reason}}); the list below is the last one it gave.'),
@@ -2605,12 +2602,35 @@ export const copy = {
     covers: A('The maker’s vault holds {{free}} free now, enough for the {{need}} a fill would draw.'),
     short: A('The maker’s vault holds {{free}} free now, short of the {{need}} a fill would draw, so a fill now would fail.'),
     coverUnread: A('What the maker’s vault holds free could not be read, so whether a fill would succeed is not known.'),
+    fill: B('Review a fill'),
+    fillNotOpen: B('Only an open order can be filled whole here.'),
     shared: B('A maker’s orders share one vault: each is weighed alone, so one fill can use another’s funds.'),
     whySummary: B('How a signed order is filled'),
     why: C(
       'A signed order is a maker’s signature over an offer’s terms, kept by the offer book. Nothing is set aside for it: when a taker fills it, the protocol checks the signature, draws the maker’s amount or collateral from the maker’s own vault, takes the taker’s side and opens the loan in that one transaction, so a fill fails if the maker’s vault cannot cover it then. A taker fills the whole order; only the protocol’s matcher fills one in parts, and the chain keeps what was filled against the order. The offer book can lag the chain, so each order’s standing and the maker’s vault are read from the chain here.',
       'desk-signed-book',
     ),
+  },
+  signedFill: {
+    asker: B('Filling a signed order'),
+    titleBorrow: B('Take a signed offer from {{maker}}'),
+    titleLend: B('Fund a signed request from {{maker}}'),
+    rowOrder: B('The signed order'),
+    rowStakeLender: B('Taken from the lender’s vault by this fill'),
+    rowStakeBorrower: B('Held as collateral from the borrower’s vault by this fill'),
+    rowMakerFree: B('Free in the maker’s vault now'),
+    loseWhole: A(
+      'A fill takes the whole order in one transaction: the protocol writes it as an offer from the maker’s vault, takes your side and opens the loan. If someone fills it first or its maker cancels it, your fill fails, no loan opens, and any approval this flow made is put back.',
+    ),
+    riskAtDryRun: A(
+      'The protocol cannot yet show its risk-access check for a signed order before the fill, so the dry run after you sign makes it. If that check refuses, nothing is sent, any approval this flow made is put back, and the step that clears it is offered here.',
+    ),
+    elsewhere: B('A fill review is open on another market. Finish or close it before reviewing another.'),
+    elsewhereOpen: B('Open that market'),
+    makerRiskBlocked: A('The maker’s own risk access no longer covers this pair, so the protocol will not fill this order. No step of yours can clear it.'),
+    actorUnread: A('Whose risk access refused could not be read, so no step is offered.'),
+    legNoLoan: B('Loan opened from this signed order'),
+    noLoan: B('This transaction recorded no fill of this order.'),
   },
   matchBand: {
     title: B('Match the overlap'),
@@ -3895,6 +3915,16 @@ export const copy = {
       ),
       TermsTooFresh: A('This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
+      // OFF-60 — a signed order's own refusals, reported only by the
+      // protocol's preview of a signed order's fill (#3552).
+      SignedOfferMalformed: A('This signed order chooses the Full fee tariff without the limit the protocol requires with it, so it cannot be filled.'),
+      SignedOfferDeadlinePassed: A('The deadline on the maker’s signature has passed, so this order can no longer be filled.'),
+      SignedOfferNonceUsed: A('The maker cancelled this order on the chain by its nonce, so it can no longer be filled.'),
+      SignedOfferConsumed: A('This order was already filled, partly matched or cancelled on the chain, so it cannot be filled whole.'),
+      SignedOfferBadSignature: A('The maker’s signature does not match this order, so the protocol will not fill it.'),
+      SignedOfferUnsupportedShape: A('A signed order can be filled only as a loan of one token against another, with no refinance, and this order is not one.'),
+      SignedOfferMakerShort: A('The maker’s vault does not hold free what this fill would draw from it, so a fill now would fail. It may succeed once the maker adds funds.'),
+      SignedOfferBelowMinimumValue: A('This order’s amount is below the protocol’s minimum loan value now, so it cannot be filled.'),
     },
     changedOffer: B('The offer'),
     changedPreview: B('What the offer gives you'),

@@ -15,6 +15,7 @@ import { useStoredValue } from '../../shared/tx/txStore';
 import { Notice } from '../../shared/ui/Notice';
 import { StepNav } from '../../shared/ui/StepNav';
 import { AcceptOffer, ACCEPT_KEY } from '../../shared/accept/AcceptOffer';
+import { storedSource } from '../../shared/accept/acceptSource';
 import { MatchingOffers, type MatchesView } from '../../shared/offers/MatchingOffers';
 import { PairPicker } from '../../shared/offers/PairPicker';
 import { StandingLenders } from '../../shared/offers/StandingLenders';
@@ -261,7 +262,7 @@ export function BorrowPage() {
           <h2 id="borrow-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <AcceptOffer flowKey={ACCEPT_KEY} offerId={taking} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+          <AcceptOffer flowKey={ACCEPT_KEY} source={storedSource(taking)} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
         </section>
       )}
       {draft !== null && walletChain && own && (

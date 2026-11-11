@@ -21,6 +21,7 @@ import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
@@ -404,6 +405,18 @@ contract RefinanceFacetTest is SetupTest {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(oldLoanId);
         assertEq(_bal(lender) - walletBefore, lenderDue, "old lender claims exactly the due");
+    }
+
+    /// @notice #3562 — a refinance settles the old loan on the old lender's
+    ///         entry and records the new lender's own entry on the new loan.
+    function test_EntryAnchors_OldLoanKeepsItsOwnNewLoanStampsFresh() public {
+        vm.warp(block.timestamp + 15 days);
+        uint256 newLoanId = _accept();
+        VPFIDiscountAccumulatorFacet acc = VPFIDiscountAccumulatorFacet(address(diamond));
+        assertEq(acc.lenderHoldDiscountView(oldLoanId, lender).entryHolder, lender, "the old loan keeps its entry");
+        VPFIDiscountAccumulatorFacet.LenderHoldView memory v = acc.lenderHoldDiscountView(newLoanId, newLender);
+        assertEq(v.entryHolder, newLender, "the new loan records the new lender");
+        assertEq(v.enteredAt, block.timestamp, "at the refinance");
     }
 
     /// @notice A refinance in the grace window completes, and the late fee it

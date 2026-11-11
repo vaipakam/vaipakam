@@ -17,8 +17,10 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
   return {
     identity: 'w',
     role: 'borrower',
-    offerId: 7n,
+    source: { kind: 'stored', offerId: 7n },
     offer: offer(),
+    signed: null,
+    riskPreviewed: true,
     state: 'open',
     preview: {
       effectivePrincipal: 2n * 10n ** 18n,
@@ -164,6 +166,45 @@ describe('signed-offer refusals (#3552)', () => {
       const preview = { ...review().preview, error };
       expect(reviewBlockers(review({ preview }), null, copy)).toEqual(['accept.err.Unrecognised']);
     }
+  });
+});
+
+describe('a signed order’s fill (OFF-60)', () => {
+  const HASH = `0x${'cd'.repeat(32)}` as Hex;
+  const STAKE = '0x00000000000000000000000000000000000000a1' as Hex;
+  const order = { orderHash: HASH } as unknown as Extract<AcceptReview['source'], { kind: 'signed' }>['order'];
+  const signedReview = (over: Partial<AcceptReview> = {}) =>
+    review({
+      source: { kind: 'signed', order },
+      signed: { orderHash: HASH, stakeAsset: STAKE, stakeRequired: 2n * 10n ** 18n, makerFreeHolding: 3n * 10n ** 18n },
+      riskPreviewed: false,
+      ...over,
+    });
+  it('states its own refusals by name, since its preview reports them', () => {
+    for (const error of ACCEPT_ERRORS.filter((n) => n.startsWith('SignedOffer'))) {
+      const preview = { ...review().preview, error };
+      expect(reviewBlockers(signedReview({ preview }), null, copy)).toEqual([`accept.err.${error}`]);
+    }
+  });
+  it('titles the receipt by its maker and states the stake, the maker’s free balance, the whole-order fill and where the risk check is made', () => {
+    const receipt = acceptReceipt(signedReview(), null, copy);
+    expect(receipt.title).toBe('signedFill.titleBorrow');
+    expect(receipt.rows.find((x) => x.label === 'signedFill.rowStakeLender')?.value).toEqual({ kind: 'amount', asset: STAKE, amount: 2n * 10n ** 18n });
+    expect(receipt.rows.find((x) => x.label === 'signedFill.rowMakerFree')?.value).toEqual({ kind: 'amount', asset: STAKE, amount: 3n * 10n ** 18n });
+    expect(receipt.rows.find((x) => x.label === 'signedFill.rowOrder')?.value).toEqual({ kind: 'text', text: HASH });
+    expect(receipt.consequences.slice(0, 2)).toEqual(['signedFill.loseWhole', 'signedFill.riskAtDryRun']);
+    // A stored offer's receipt carries none of it.
+    expect(acceptReceipt(review(), null, copy).consequences).not.toContain('signedFill.loseWhole');
+  });
+  it('drops the dry-run note once the risk check is previewed', () => {
+    expect(acceptReceipt(signedReview({ riskPreviewed: true }), null, copy).consequences).not.toContain('signedFill.riskAtDryRun');
+  });
+  it('reads a move in the maker’s free balance or the stake as a changed review, and another order as another subject', () => {
+    const a = signedReview();
+    expect(changedBetween(a, signedReview(), copy)).toBeNull();
+    expect(changedBetween(a, signedReview({ signed: { ...a.signed!, makerFreeHolding: 1n } }), copy)).toBe('accept.changedPreview');
+    expect(changedBetween(a, signedReview({ signed: { ...a.signed!, stakeRequired: 1n } }), copy)).toBe('accept.changedPreview');
+    expect(changedBetween(a, review(), copy)).toBe('accept.changedOffer');
   });
 });
 

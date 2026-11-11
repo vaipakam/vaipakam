@@ -847,8 +847,9 @@ See the Deployment Runbook "Auto-lend keeper address" section.
 
 ## 4. Off-chain alert-rail key compromise
 
-The watcher holds two long-lived secrets — `TG_BOT_TOKEN` (Telegram
-bot) and `PUSH_CHANNEL_PK` (Vaipakam Push channel signer). Neither
+The alert senders hold two long-lived secrets — `TG_BOT_TOKEN` (Telegram
+bot, the agent only since #1722) and `PUSH_CHANNEL_PK` (Vaipakam Push
+channel signer). Neither
 controls on-chain authority, so neither requires an emergency
 on-chain pause. Both **do** allow brand-impersonation (sending
 arbitrary notifications to our subscriber base under the Vaipakam
@@ -932,12 +933,14 @@ runs after revocation.
 
    Rotation is in the **account-level Secrets Store**, NOT per Worker.
    The pre-split `hf-watcher` Worker was removed by the Stage 3 split; the live consumers
-   are `apps/agent` and `apps/keeper`. The agent resolves `TG_BOT_TOKEN`
-   from the shared store, and a per-Worker `wrangler secret put` would not
-   rotate it. **The keeper does not read the store:** it runs on the
-   always-on machine and reads `TG_BOT_TOKEN` from
-   `/etc/vaipakam/keeper.env` ([`KeeperMachine.md`](KeeperMachine.md) §4),
-   so it needs its own write, in step 5.
+   is `apps/agent` alone. It resolves `TG_BOT_TOKEN` from the shared
+   store, and a per-Worker `wrangler secret put` would not rotate it. **The
+   keeper holds no copy** (#1722): it sends its Telegram alerts through the
+   agent's keeper routes with its own `KEEPER_AGENT_TOKEN`, so a bot
+   rotation needs no write on the keeper machine. (That route token is
+   rotated on its own: one fresh value written to the store and to
+   `/etc/vaipakam/keeper.env` together, then the agent redeployed and the
+   keeper restarted.)
 2. From `@BotFather`: `/revoke`. The old token dies within seconds and
    BotFather's reply contains the NEW token. The outage starts here.
 3. Write the new token with the id resolved in step 1 — a single
@@ -981,8 +984,7 @@ runs after revocation.
    exists only in `apps/agent`. Telegram accepts `setWebhook` against a
    dead host without complaint, so getting this wrong fails SILENTLY: the
    bot simply stops receiving updates.
-5. Redeploy the agent to flush in-memory clients tied to the old token,
-   and give the keeper the new token on its machine:
+5. Redeploy the agent to flush in-memory clients tied to the old token:
 
    ```bash
    pnpm --filter @vaipakam/agent run deploy
@@ -990,17 +992,12 @@ runs after revocation.
    # merely harmless: RECIPIENT_VALIDATING_TOKENS and OPENSEA_OFFERS_MAX_PAGES
    # are dashboard-managed and absent from its config, so a bare deploy
    # switches recipient-token validation off.
-
-   # On the keeper machine: write the new token over TG_BOT_TOKEN in the
-   # env file (the editor keeps it out of shell history), then restart so
-   # the keeper reads it.
-   sudo -e /etc/vaipakam/keeper.env
-   sudo systemctl try-restart vaipakam-keeper
    ```
 
-   Until the restart, the keeper's HF-band alerts fail against the revoked
-   token; `Telegram sendMessage failed:` lines in `journalctl -u
-   vaipakam-keeper` are that window, and they should stop after it.
+   Nothing changes on the keeper machine: the keeper holds no bot token
+   (#1722). Until the agent's redeploy, the keeper's Telegram alerts that
+   the agent could not send come back as not delivered, and the keeper's
+   run lines say so; they should stop after it.
 
 No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.

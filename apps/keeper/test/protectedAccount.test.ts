@@ -33,8 +33,10 @@ import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../
 import { SEND_RESERVE_MS } from '../src/runWindow';
 import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
-import type { Alert, DeliveryOutcome } from '../src/alertDelivery';
-import { ALERT_NEXT_ITEM, type LockOutcome, type LockRequest, type ProtectedStore, type Subscriber } from '../src/protectedTelegram';
+import type { Alert, ChannelResult, DeliveryOutcome } from '../src/alertDelivery';
+import { AgentDiamondMismatch } from '../src/agentClient';
+import { ALERT_NEXT_ITEM, shortDigits, type LockOutcome, type LockRequest, type ProtectedStore, type Subscriber } from '../src/protectedTelegram';
+import { renderTelegramAlert } from '@vaipakam/lib/telegramAlerts/message';
 
 const CHAIN = 84532;
 const DIAMOND: Address = '0x00000000000000000000000000000000000000c1';
@@ -685,14 +687,33 @@ describe('a run', () => {
   });
 });
 
+/** The agent's side of the LOCK step and the shared database's Push
+ *  subscriptions, as the protected account pass sees them (#1722). */
 class FakeStore implements ProtectedStore {
   requests: LockRequest[] = [];
   subs = new Map<string, Subscriber>();
-  handled = new Map<number, { outcome: LockOutcome; at: number }>();
+  /** The wallets linked to a Telegram chat: only the agent knows them. */
+  chats = new Map<Address, string>();
+  handled = new Map<number, LockOutcome>();
+  /** What the chat did with each LOCK answer, in order; then `sent`. */
+  answers: ChannelResult[] = [];
+  /** The answers the agent sent, by wallet and outcome. */
+  answered: [Address, LockOutcome][] = [];
   markFails = false;
+  /** The agent had the report already (an earlier answer was lost). */
+  alreadyHad = false;
+  pendingFails = false;
+  pollThrows: Error | null = null;
+  /** Polls made: each one tells the agent a keeper able to sign is working. */
+  polls = 0;
+
+  constructor(private readonly trace: string[] = []) {}
+
   /** One entry per wallet, in the order of its oldest open request, with
-   *  its newest id and time (as `d1ProtectedStore` reads them). */
+   *  its newest id and time (as the agent's poll answers). */
   async lockRequests(_chainId: number, limit: number) {
+    this.polls += 1;
+    if (this.pollThrows) throw this.pollThrows;
     const groups = new Map<Address, LockRequest>();
     for (const q of this.requests) {
       if (this.handled.has(q.id)) continue;
@@ -701,20 +722,27 @@ class FakeStore implements ProtectedStore {
     }
     return [...groups.values()].slice(0, limit);
   }
-  async markHandled(_chainId: number, wallet: Address, upToId: number, outcome: LockOutcome, at: number) {
-    if (this.markFails) throw new Error('D1 unavailable');
-    for (const q of this.requests) if (q.wallet === wallet && q.id <= upToId && !this.handled.has(q.id)) this.handled.set(q.id, { outcome, at });
+  async markHandled(_chainId: number, wallet: Address, upToId: number, outcome: LockOutcome) {
+    this.trace.push(`report:${outcome}`);
+    if (this.markFails) throw new Error('agent unavailable');
+    if (this.alreadyHad) return { recorded: false, telegram: 'off' as const };
+    let recorded = false;
+    for (const q of this.requests) {
+      if (q.wallet === wallet && q.id <= upToId && !this.handled.has(q.id)) {
+        this.handled.set(q.id, outcome);
+        recorded = true;
+      }
+    }
+    if (!recorded) return { recorded: false, telegram: 'off' as const };
+    if (outcome === 'dropped-old' || !this.chats.has(wallet)) return { recorded: true, telegram: 'off' as const };
+    this.answered.push([wallet, outcome]);
+    return { recorded: true, telegram: this.answers.shift() ?? ('sent' as const) };
   }
   async subscriber(chainId: number, wallet: Address) {
     return this.subs.get(`${chainId}:${wallet}`) ?? null;
   }
-  readiness = new Map<number, number>();
-  async publishLockReadiness(chainId: number, nowSec: number) {
-    this.readiness.set(chainId, nowSec);
-  }
-  pendingFails = false;
   async pendingLockWallets(_chainId: number, sinceSec: number) {
-    if (this.pendingFails) throw new Error('D1 unavailable');
+    if (this.pendingFails) throw new Error('agent unavailable');
     return new Set(this.requests.filter((q) => !this.handled.has(q.id) && q.requestedAt >= sinceSec).map((q) => q.wallet));
   }
 }
@@ -725,12 +753,22 @@ describe('the Telegram steps', () => {
   let cursors: ReturnType<typeof memoryScanCursors>;
   let store: FakeStore;
   let sent: Alert[];
-  /** What each channel does with the next alerts, in order; then `SENT`. */
+  let trace: string[];
+  /** What each channel does with the next alerts, in order; then what the
+   *  agent and the Push rail would do: Telegram to a linked chat, Push to a
+   *  subscriber. */
   let outcomes: DeliveryOutcome[];
   const SENT: DeliveryOutcome = { telegram: 'sent', push: 'off' };
+  /** The wallet whose chat a Telegram alert goes to. */
+  const tgTo = (a: Alert) => (a.telegram ? (a.telegram.message.to ?? a.telegram.message.wallet) : null);
+  /** The Telegram text the agent renders from the alert's data. */
+  const tgText = (a: Alert) => renderTelegramAlert(a.telegram!.message, { locale: 'en', chainName: String(CHAIN), appOrigin: 'https://app.test' }).text;
   const notify = async (a: Alert): Promise<DeliveryOutcome> => {
     sent.push(a);
-    return outcomes.shift() ?? SENT;
+    trace.push('alert');
+    expect(a.telegram?.diamond, 'every request to the agent names the Diamond').toBe(DIAMOND);
+    const to = tgTo(a);
+    return outcomes.shift() ?? { telegram: to !== null && store.chats.has(to as Address) ? 'sent' : 'off', push: a.pushSubscriber ? 'sent' : 'off' };
   };
   // The agent's clock and the chain's agree, as they do to within seconds.
   const NOW_SEC = Number(NOW);
@@ -739,7 +777,8 @@ describe('the Telegram steps', () => {
     d = new FakeDiamond();
     ledger = new FakeLedger();
     cursors = memoryScanCursors();
-    store = new FakeStore();
+    trace = [];
+    store = new FakeStore(trace);
     sent = [];
     outcomes = [];
     d.accounts.set(ALICE, account());
@@ -759,7 +798,11 @@ describe('the Telegram steps', () => {
       ledger,
       telegram: { lock, alerts, store, notify, appOrigin: 'https://app.test', nowSec: () => NOW_SEC },
     });
-  const request = (id: number, wallet: Address, ageSec = 10): LockRequest => ({ id, wallet, chatId: `chat-${id}`, requestedAt: NOW_SEC - ageSec, locale: 'en' });
+  /** A LOCK request from a wallet linked to a chat. */
+  const request = (id: number, wallet: Address, ageSec = 10): LockRequest => {
+    store.chats.set(wallet, `chat-${wallet}`);
+    return { id, wallet, requestedAt: NOW_SEC - ageSec };
+  };
 
   it('locks a granted account before any release, and answers every request with what it saw', async () => {
     d.lockGranted.add(ALICE);
@@ -782,22 +825,29 @@ describe('the Telegram steps', () => {
     expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['lockVaultFor', [ALICE]], ['lockVaultFor', [BOB]]]);
     expect(r.locks!.map((l) => l.outcome)).toEqual(['locked', 'locked-again', 'not-allowed', 'not-protected', 'already-locked', 'expired', 'dropped-old']);
     expect(r.released, 'the lock cancelled the payout before the release step').toEqual([]);
-    expect(sent.map((a) => a.tgChatId)).toEqual(['chat-8', 'chat-2', 'chat-3', 'chat-4', 'chat-5', 'chat-6']);
-    expect(sent[0].text).toMatch(/^Locked: /);
-    expect(sent[1].text).toMatch(/lock was set again, which cancels any pending unlock/);
-    expect(sent[2].text).toMatch(/not allowed the keeper to lock/);
-    expect(sent[4].text).toMatch(/was already locked\. Nothing changed\./);
-    expect(sent.every((a) => !a.pushSubscriber), 'an answer goes to the chat only').toBe(true);
-    expect([...store.handled].map(([id, h]) => [id, h.outcome, h.at])).toEqual([
-      [1, 'locked', NOW_SEC],
-      [8, 'locked', NOW_SEC],
-      [2, 'locked-again', NOW_SEC],
-      [3, 'not-allowed', NOW_SEC],
-      [4, 'not-protected', NOW_SEC],
-      [5, 'already-locked', NOW_SEC],
-      [6, 'expired', NOW_SEC],
-      [7, 'dropped-old', NOW_SEC],
+    // The agent answers every outcome in the chat but the silent one; the
+    // keeper sends no answer of its own.
+    expect(store.answered).toEqual([
+      [ALICE, 'locked'],
+      [BOB, 'locked-again'],
+      [DEST, 'not-allowed'],
+      [SIGNER, 'not-protected'],
+      [CAROL, 'already-locked'],
+      [OLD_1, 'expired'],
     ]);
+    expect(sent, 'no LOCK answer goes through the alert seam').toEqual([]);
+    expect([...store.handled]).toEqual([
+      [1, 'locked'],
+      [8, 'locked'],
+      [2, 'locked-again'],
+      [3, 'not-allowed'],
+      [4, 'not-protected'],
+      [5, 'already-locked'],
+      [6, 'expired'],
+      [7, 'dropped-old'],
+    ]);
+    expect(r.locks!.every((l) => l.recorded === true)).toBe(true);
+    expect(r.locks!.map((l) => l.answered)).toEqual([true, true, true, true, true, true, null]);
     sent = [];
     d.sent = [];
     const again = await run(true, false);
@@ -812,22 +862,21 @@ describe('the Telegram steps', () => {
     store.requests = [request(1, BOB)];
     const r = await run(true, false);
     expect(r.locks!.map((l) => l.outcome)).toEqual(['locked-again']);
-    expect(sent[0].text).toMatch(/lock was set again, which cancels any pending unlock/);
+    expect(store.answered).toEqual([[BOB, 'locked-again']]);
     expect(d.sent.map((s) => s.fn)).toEqual(['lockVaultFor']);
     expect(d.accounts.get(BOB)!.locked, 'the unlock was dropped, not applied').toBe(true);
   });
 
-  it('reads requests again when their record could not be written, and never locks for them twice', async () => {
+  it('reads requests again when their report did not land, and never locks for them twice', async () => {
     d.lockGranted.add(ALICE);
     d.lockGranted.add(BOB);
     store.requests = [request(1, ALICE), request(2, BOB)];
     store.markFails = true;
     const r = await run(true, false);
-    expect(r.locks!.map((l) => l.outcome), 'it stops at the first unrecorded request').toEqual(['locked']);
-    expect(r.unread.get(`lock:${ALICE}`)).toMatch(/the record of its LOCK request/);
-    expect(sent.map((a) => a.text), 'the lock was made, so it is still answered').toEqual([expect.stringMatching(/^Locked: /)]);
+    expect(r.locks, 'it stops at the first unreported request').toEqual([{ wallet: ALICE, outcome: 'locked', answered: null, recorded: null }]);
+    expect(r.unread.get(`lock:${ALICE}`)).toMatch(/the report of its LOCK request/);
+    expect(describeReport(r)).toMatch(/\(locked, not reported\)/);
     store.markFails = false;
-    sent = [];
     const again = await run(true, false);
     // The lock postdates Alice's request, so it is not made again.
     expect(again.locks!.map((l) => [l.wallet, l.outcome])).toEqual([[ALICE, 'already-locked'], [BOB, 'locked-again']]);
@@ -852,7 +901,7 @@ describe('the Telegram steps', () => {
       telegram: { lock: true, alerts: false, store, notify, appOrigin: '', nowSec: () => NOW_SEC },
     });
     expect(r.locks!.map((l) => [l.wallet, l.outcome])).toEqual([[ALICE, 'locked']]);
-    expect(store.handled.get(1)?.outcome).toBe('locked');
+    expect(store.handled.get(1)).toBe('locked');
   });
 
   it('leaves a request it could not finish for the next run', async () => {
@@ -869,32 +918,43 @@ describe('the Telegram steps', () => {
       telegram: { lock: true, alerts: false, store, notify, appOrigin: '', nowSec: () => NOW_SEC },
     });
     expect(r.locks).toEqual([]);
-    expect(sent).toEqual([]);
+    expect(store.answered).toEqual([]);
     expect(store.handled.size).toBe(0);
   });
 
-  it('alerts the subscribed owner on a lock, a queued payout and a proposed replacement', async () => {
-    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: true, locale: 'en' });
+  it('alerts the owner on a lock, a queued payout and a proposed replacement, as data for the agent and as text for Push', async () => {
+    store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
+    store.chats.set(ALICE, '42');
     const at = NOW_SEC - 30;
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: SIGNER }, blockAt: at, block: 1, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: at, block: 2, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: BOB, by: SIGNER, round: '1' }, blockAt: at, block: 3, log: 0, tx: '0x' });
-    ledger.rows.push({ kind: 'VaultLocked', args: { account: BOB, by: BOB }, blockAt: at, block: 4, log: 0, tx: '0x' }); // no subscription
+    ledger.rows.push({ kind: 'VaultLocked', args: { account: BOB, by: BOB }, blockAt: at, block: 4, log: 0, tx: '0x' }); // no chat, no Push
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: ALICE }, blockAt: NOW_SEC - 7200, block: 5, log: 0, tx: '0x' }); // stale
     const r = await run(false, true);
     expect(r.alerts).toEqual({ sent: 3, undelivered: 0, retrying: 0, stale: 1, unsubscribed: 1 });
-    expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['42', ALICE], ['42', ALICE], ['42', ALICE]]);
-    expect(sent[0].text).toContain(`locked by ${SIGNER}, a wallet allowed to lock it`);
-    expect(sent[1].text).toContain('2.5 USDC');
-    expect(sent[1].text).toContain(`to ${DEST}`);
-    // The app's rendering of the same code (`formatRequestCode`).
-    expect(sent[1].text).toContain('Request code AADYSA');
-    // LOCK is off in this run, so the payout alert does not suggest it (Codex #3092 r11).
-    expect(sent[1].text).not.toContain('send LOCK');
-    expect(sent[1].text).toContain('lock the vault in the app');
-    expect(sent[2].text).toContain(`naming ${BOB}`);
+    // Telegram is always asked (only the agent knows who linked a chat);
+    // Push only for a subscriber.
+    expect(sent.map((a) => [tgTo(a), a.pushSubscriber])).toEqual([[ALICE, ALICE], [ALICE, ALICE], [ALICE, ALICE], [BOB, null]]);
+    expect(sent[0].telegram!.message.alert).toEqual({ kind: 'locked', by: SIGNER });
+    expect(sent[1].telegram!.message.alert).toEqual({
+      kind: 'payout',
+      what: `2.5 USDC (${ASSET.slice(0, 8)}…${ASSET.slice(-6)})`,
+      recipient: DEST,
+      releaseAt: NOW_SEC + 3600,
+      // The app's rendering of the same code (`formatRequestCode`).
+      code: 'AADYSA',
+      // LOCK is off in this run, so the payout alert does not suggest it (Codex #3092 r11).
+      lockHint: false,
+    });
+    for (const a of sent.slice(0, 3)) expect(a.text, 'the Push text is the wording the agent renders').toBe(tgText(a));
+    expect(tgText(sent[0])).toContain(`locked by ${SIGNER}, a wallet allowed to lock it`);
+    expect(tgText(sent[1])).toContain(`to ${DEST}`);
+    expect(tgText(sent[1])).toContain('Request code AADYSA');
+    expect(tgText(sent[1])).toContain('lock the vault in the app');
+    expect(tgText(sent[2])).toContain(`naming ${BOB}`);
     // The owner cannot cancel while a signer holds a lock, and is told so.
-    expect(sent[2].text).toContain('only a signer can cancel it');
+    expect(tgText(sent[2])).toContain('only a signer can cancel it');
     expect(cursors.rows.get(ALERT_NEXT_ITEM)).toBe(encodePos(ledger.rows[4]));
     // Read again: nothing is alerted twice.
     sent = [];
@@ -906,58 +966,77 @@ describe('the Telegram steps', () => {
     const queue = () =>
       ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
 
-    it('suggests LOCK where a LOCK from the linked chat would lock the vault (Codex #3092 r11)', async () => {
+    it('suggests LOCK in the Telegram message where a LOCK from the linked chat would lock the vault (Codex #3092 r11)', async () => {
       d.lockGranted.add(ALICE);
-      store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
+      store.chats.set(ALICE, '42');
       queue();
       await run(true, true);
-      expect(sent.map((a) => a.text)).toEqual([expect.stringContaining('send LOCK')]);
+      expect(sent).toHaveLength(1);
+      expect(tgText(sent[0])).toContain('send LOCK');
       // The advice was simulated, never sent.
       expect(d.sent.filter((s) => s.fn === 'lockVaultFor')).toEqual([]);
     });
 
-    it('gives the app-only advice to a Push-only subscriber, who has no chat to send LOCK from (Codex #3092 r12)', async () => {
+    it('keeps the LOCK advice out of the Push text, which may reach an owner with no chat to send LOCK from (Codex #3092 r12)', async () => {
       d.lockGranted.add(ALICE);
-      store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: null, push: true, locale: 'en' });
+      store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
       queue();
       await run(true, true);
       expect(sent).toHaveLength(1);
+      expect(sent[0].pushSubscriber).toBe(ALICE);
       expect(sent[0].text).not.toContain('send LOCK');
       expect(sent[0].text).toContain('lock the vault in the app');
     });
 
     it('gives the app-only advice when the owner has not granted the keeper the lock', async () => {
-      store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
+      store.chats.set(ALICE, '42');
       queue();
       await run(true, true);
       expect(sent).toHaveLength(1);
-      expect(sent[0].text).not.toContain('send LOCK');
-      expect(sent[0].text).toContain('lock the vault in the app');
+      expect(tgText(sent[0])).not.toContain('send LOCK');
+      expect(tgText(sent[0])).toContain('lock the vault in the app');
     });
   });
 
   it("sends a retired account's alerts to its controller, never to the old wallet (Codex #3092 r9)", async () => {
     d.accounts.set(ALICE, account({ retired: true, controller: BOB }));
-    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: true, locale: 'en' }); // the old wallet's channels
-    store.subs.set(`${CHAIN}:${BOB}`, { tgChatId: '7', push: true, locale: 'en' });
+    store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' }); // the old wallet's channels
+    store.chats.set(ALICE, '42');
+    store.subs.set(`${CHAIN}:${BOB}`, { push: true, locale: 'en' });
+    store.chats.set(BOB, '7');
     const at = NOW_SEC - 30;
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: BOB }, blockAt: at, block: 1, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: DEST, by: SIGNER, round: '2' }, blockAt: at, block: 2, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: at, block: 3, log: 0, tx: '0x' });
     const r = await run(true, true); // LOCK on: only the retirement withholds the advice
     expect(r.alerts!.sent).toBe(3);
-    expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['7', BOB], ['7', BOB], ['7', BOB]]);
+    expect(sent.map((a) => [tgTo(a), a.telegram!.message.wallet, a.pushSubscriber])).toEqual([[BOB, ALICE, BOB], [BOB, ALICE, BOB], [BOB, ALICE, BOB]]);
     // The text still names the vault, and a lock by its controller is the owner's own.
-    expect(sent[0].text).toContain(ALICE.slice(0, 6));
-    expect(sent[0].text).not.toContain('a wallet allowed to lock it');
+    expect(tgText(sent[0])).toContain(ALICE.slice(0, 6));
+    expect(tgText(sent[0])).not.toContain('a wallet allowed to lock it');
     // A LOCK from the controller's chat would lock the controller's own
     // vault, so the payout alert does not offer it (Codex #3092 r10).
-    expect(sent[2].text).not.toContain('send LOCK');
-    expect(sent[2].text).toContain('lock the vault in the app');
+    expect(tgText(sent[2])).not.toContain('send LOCK');
+    expect(tgText(sent[2])).toContain('lock the vault in the app');
+  });
+
+  it('shows a token id too long for the alert with its ends around an ellipsis, never cut short silently', async () => {
+    store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
+    const max = (2n ** 256n - 1n).toString();
+    ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '2', tokenId: max, amount: '1', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
+    await run(false, true);
+    const alert = sent[0].telegram!.message.alert as { what: string };
+    expect(alert.what).toBe(`1 × ${ASSET.slice(0, 8)}…${ASSET.slice(-6)} #1157920892…3129639935`);
+    expect(sent[0].text).toContain('#1157920892…3129639935');
+  });
+
+  it('shortens only a number too long to show whole', () => {
+    expect(shortDigits('123456789012345678901234')).toBe('123456789012345678901234');
+    expect(shortDigits('1234567890123456789012345')).toBe('1234567890…6789012345');
   });
 
   it("waits for a payout alert's request code rather than alerting without it", async () => {
-    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
+    store.chats.set(ALICE, '42');
     d.codeFails = true;
     ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '1', recipient: DEST, releaseAt: '0' }, blockAt: NOW_SEC, block: 1, log: 0, tx: '0x' });
     const r = await run(false, true);
@@ -969,8 +1048,8 @@ describe('the Telegram steps', () => {
 
   it('says it is working LOCK requests only while it can sign', async () => {
     await run(true, false);
-    expect(store.readiness.get(CHAIN), 'a keeper with a key publishes the heartbeat').toBe(NOW_SEC);
-    store.readiness.clear();
+    expect(store.polls, 'a keeper with a key asks the agent, which is the heartbeat').toBe(1);
+    store.polls = 0;
     const r = await protectedOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
@@ -980,10 +1059,10 @@ describe('the Telegram steps', () => {
       ledger,
       telegram: { lock: true, alerts: false, store, notify, appOrigin: '', nowSec: () => NOW_SEC },
     });
-    expect(store.readiness.size, 'no key, no heartbeat: the agent stops taking LOCK').toBe(0);
+    expect(store.polls, 'no key, no poll: the agent stops taking LOCK').toBe(0);
     expect(r.unread.get('lock')).toMatch(/a signing key for this chain/);
     await run(false, true);
-    expect(store.readiness.size, 'nor while the LOCK step is off').toBe(0);
+    expect(store.polls, 'nor while the LOCK step is off').toBe(0);
   });
 
   it("holds an account's releases while its LOCK request waits for the next run", async () => {
@@ -1024,7 +1103,7 @@ describe('the Telegram steps', () => {
   });
 
   it('keeps an alert no channel took but one may, and passes over one refused for good', async () => {
-    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: true, locale: 'en' });
+    store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
     const at = NOW_SEC - 30;
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: ALICE }, blockAt: at, block: 1, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: SIGNER }, blockAt: at, block: 2, log: 0, tx: '0x' });
@@ -1041,37 +1120,57 @@ describe('the Telegram steps', () => {
     expect(cursors.rows.get(ALERT_NEXT_ITEM)).toBe(encodePos(ledger.rows[1]));
   });
 
-  it('runs the alerts before the LOCK step, and names a LOCK answer that did not reach the chat', async () => {
+  it('runs the alerts before the LOCK step, and names a LOCK answer the agent recorded but could not deliver', async () => {
     d.lockGranted.add(ALICE);
-    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: SIGNER }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
     store.requests = [request(1, ALICE)];
-    outcomes = [SENT, { telegram: 'retry', push: 'off' }];
+    store.answers = ['retry'];
     const r = await run(true, true);
-    expect(sent.map((a) => a.tgChatId)).toEqual(['42', 'chat-1']);
-    expect(r.locks).toEqual([{ wallet: ALICE, outcome: 'locked', answered: false }]);
-    expect(store.handled.get(1)?.outcome, 'the row records what was done either way').toBe('locked');
+    expect(trace).toEqual(['alert', 'report:locked']);
+    // Recorded either way, and not reported again: the agent does not send
+    // the answer later, so the run line says it did not arrive.
+    expect(r.locks).toEqual([{ wallet: ALICE, outcome: 'locked', answered: false, recorded: true }]);
+    expect(store.handled.get(1)).toBe('locked');
     expect(describeReport(r)).toMatch(/\(locked, answer not delivered\)/);
   });
 
-  it('still locks for an owner who unlinked Telegram since, and answers nowhere', async () => {
+  it('still locks for an owner who unlinked Telegram since, and the agent answers nowhere', async () => {
     d.lockGranted.add(ALICE);
-    store.requests = [{ ...request(1, ALICE), chatId: null }];
+    store.requests = [request(1, ALICE)];
+    store.chats.delete(ALICE);
     const r = await run(true, false);
     expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['lockVaultFor', [ALICE]]]);
-    expect(r.locks).toEqual([{ wallet: ALICE, outcome: 'locked', answered: null }]);
-    expect(sent, 'no chat is kept for it, so none is messaged').toEqual([]);
-    expect(store.handled.get(1)?.outcome).toBe('locked');
+    expect(r.locks).toEqual([{ wallet: ALICE, outcome: 'locked', answered: null, recorded: true }]);
+    expect(store.answered, 'no chat is linked, so none is messaged').toEqual([]);
+    expect(store.handled.get(1)).toBe('locked');
+  });
+
+  it('says so when the agent had the report already, and sends nothing twice', async () => {
+    d.lockGranted.add(ALICE);
+    store.requests = [request(1, ALICE)];
+    store.alreadyHad = true;
+    const r = await run(true, false);
+    expect(r.locks).toEqual([{ wallet: ALICE, outcome: 'locked', answered: null, recorded: false }]);
+    expect(store.answered).toEqual([]);
+    expect(describeReport(r)).toMatch(/\(locked, already on record\)/);
+  });
+
+  it('stops the chain when the agent serves another Diamond, as the epoch fence does', async () => {
+    d.payouts.set(1n, { user: ALICE, state: 1, cosigned: false, releaseAt: NOW - 1n, recipient: ALICE, amount: 100n });
+    ledger.add(PAYOUT_EVENT, { account: ALICE, id: '1' });
+    store.pollThrows = new AgentDiamondMismatch(CHAIN, '0x' + 'e'.repeat(40));
+    await expect(run(true, false)).rejects.toBeInstanceOf(AgentDiamondMismatch);
+    expect(d.sent, 'nothing was sent on chain').toEqual([]);
   });
 
   it('gives the alerts a share of the window: a slow channel leaves the LOCK step its time, and nothing sent is sent twice', async () => {
     d.lockGranted.add(ALICE);
     store.requests = [request(1, ALICE)];
-    store.subs.set(`${CHAIN}:${BOB}`, { tgChatId: '7', push: false, locale: 'en' });
+    store.chats.set(BOB, '7');
     for (let b = 1; b <= 4; b++) ledger.rows.push({ kind: 'VaultLocked', args: { account: BOB, by: BOB }, blockAt: NOW_SEC - 30, block: b, log: 0, tx: '0x' });
     const slow = async (a: Alert): Promise<DeliveryOutcome> => {
       sent.push(a);
-      if (a.tgChatId === '7') await new Promise((res) => setTimeout(res, 600));
+      if (tgTo(a) === BOB) await new Promise((res) => setTimeout(res, 600));
       return SENT;
     };
     // The read cutoff is 3 s away, so the alerts' share ends after 1 s:
@@ -1093,7 +1192,7 @@ describe('the Telegram steps', () => {
     sent = [];
     const again = await protectedOnce(CHAIN, DIAMOND, opts());
     expect(again.alerts!.sent).toBe(2);
-    expect(sent.filter((a) => a.tgChatId === '7'), 'the next run starts at the third alert').toHaveLength(2);
+    expect(sent.filter((a) => tgTo(a) === BOB), 'the next run starts at the third alert').toHaveLength(2);
     expect(cursors.rows.get(ALERT_NEXT_ITEM)).toBe(encodePos(ledger.rows[3]));
   });
 

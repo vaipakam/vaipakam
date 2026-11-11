@@ -40,6 +40,7 @@ import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {VPFIDiscountAccumulatorFacet} from "../../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {LibTestPayout} from "../helpers/LibTestPayout.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 
@@ -402,7 +403,7 @@ contract PositiveFlowsGapFillers is Test {
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         AccessControlFacet accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -555,6 +556,13 @@ contract PositiveFlowsGapFillers is Test {
             facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        // #3562 — every lender token's holder is recorded by the accumulator
+        // facet, so a Diamond that mints position NFTs must route it.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.

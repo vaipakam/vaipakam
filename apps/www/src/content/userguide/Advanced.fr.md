@@ -2011,23 +2011,26 @@ jamais échouer ta propre action** : ton tier sur Base est à jour tout
 de suite, et la mise à jour reste due à chaque autre chaîne jusqu'à ce
 qu'elle arrive.
 
-Le protocole paie ces livraisons, avec une limite :
+Qui paie une livraison dépend du sens dans lequel ton tier a bougé :
 
-- **Un tier plus bas** est envoyé immédiatement, tant que le budget
-  peut le payer. En attendant qu'il arrive, la chaîne continue
-  d'appliquer ton tier précédent, plus élevé.
-- **Un tier plus haut**, ou un changement de la table des tiers, est
-  payé au plus une fois par jour et par chaîne (un paramètre de
-  gouvernance entre 1 heure et 7 jours). D'ici là, la chaîne garde ton
-  tier précédent.
-- Une mise à jour retenue par cette attente, ou que le budget n'a pas
-  pu payer, **n'est pas renvoyée d'elle-même à la fin de l'attente**. Elle
-  part avec la prochaine mise à jour de votre enregistrement de palier sur
-  Base, ou lorsque quelqu'un effectue l'appel de livraison pour vous.
-- N'importe qui peut effectuer cet appel. Une fois l'attente passée, et
-  si le budget peut payer, le protocole paie ; avant cela, l'appelant paie
-  les frais cross-chain pour livrer plus tôt. Les contrats proposent cet
-  appel ; l'application ne le propose pas encore.
+- **Un tier plus bas** est envoyé immédiatement et payé par le
+  protocole, tant que son budget peut le payer. En attendant qu'il
+  arrive, la chaîne continue d'appliquer ton tier précédent, plus élevé.
+- **Un tier plus haut**, y compris ta première remise sur une chaîne,
+  n'est jamais payé par le protocole. Il est envoyé quand quelqu'un en
+  paie les frais cross-chain avec l'appel de livraison. D'ici là, la
+  chaîne garde ton tier précédent. Un changement de la table des tiers
+  compte comme un tier plus haut.
+- Une mise à jour que le budget n'a pas pu payer **n'est pas renvoyée
+  d'elle-même**. Elle part avec la prochaine mise à jour de votre
+  enregistrement de palier sur Base, ou lorsque quelqu'un effectue
+  l'appel de livraison pour vous. Un tier plus haut attend l'appel de
+  livraison.
+- N'importe qui peut effectuer cet appel. Le protocole paie un tier plus
+  bas ; pour un tier plus haut, l'appelant paie les frais cross-chain.
+  Les contrats proposent cet appel ; l'application ne le propose pas
+  encore, donc pour l'instant un tier plus haut n'atteint une autre
+  chaîne que par un appel direct au contrat.
 
 Une copie cesse de compter, et la chaîne ne donne alors aucune remise,
 quand :
@@ -2075,8 +2078,6 @@ déploiement.
   utilisateur. Un budget insuffisant signifie que les autres chaînes
   appliquent d'anciens tiers plus longtemps : surveille les reports et
   réalimente.
-- La fenêtre d'espacement des hausses payées : `setTierPushSpacingSec`
-  (1 jour par défaut, de 1 heure à 7 jours).
 
 **Sur chaque autre chaîne :**
 
@@ -2097,9 +2098,7 @@ déploiement.
   version par la première mise à jour de tier qui la porte, quel que
   soit l'utilisateur. À partir de là, toute copie faite avec l'ancienne
   table vaut zéro remise jusqu'à ce que la mise à jour propre à cet
-  utilisateur arrive, et ces mises à jour sont des hausses payées au
-  plus une fois par fenêtre d'espacement. Alimente le budget avant de
-  modifier la table.
+  utilisateur arrive, et chacune de ces mises à jour est un tier plus haut, que seul un appelant qui paie livre.
 - `setTwaMinStakedDays` modifie la période de détention minimale sans
   faire avancer la version. Le changement prend effet à la lecture
   suivante.
@@ -2725,7 +2724,7 @@ La liste des marchés est le résumé des marchés de l'index : chaque combinais
 
 ### Rate desk : les ordres signés d'un marché
 
-La liste lit `/signed-offers` de l'index pour le marché sans `signer`, et contient donc les ordres de tous les émetteurs : les 100 lignes les mieux placées par côté, avec `truncated` indiqué. Chaque ligne doit se resérialiser dans la forme canonique, son `orderHash` doit égaler le hash de structure EIP-712 recalculé à partir de l'ordre, elle doit nommer les jetons et la durée du marché, et sa signature doit être une signature ECDSA de 65 octets ; toute autre ligne est comptée comme illisible. Les asks sont triés par `interestRateBps` croissant et les bids par le plus haut de `interestRateBps` et `interestRateBpsMax` décroissant, l'ordre du carnet étant gardé entre taux égaux. L'état de chaque ordre est lu à un seul bloc selon la même règle que vos propres ordres signés, décrite plus bas. Au même bloc, l'app lit `freeHolding(signer, ERC20, stakeAsset, 0)` une fois par émetteur et actif engagé et, pour chaque ordre encore remplissable, le compare à ce qu'un remplissage du reste prélèverait : le plafond d'un prêteur moins ce qui a été rempli, ou la garantie d'un emprunteur pour ce reste au ratio propre de l'ordre, arrondie au supérieur. Une lecture échouée est indiquée comme inconnue, jamais comme zéro. Chaque ordre est comparé seul à tout le solde libre : deux ordres d'un émetteur peuvent donc chacun paraître couverts alors que le vault ne suffit que pour un. Aucun remplissage n'est proposé : `previewAccept` prend l'id d'une offre enregistrée, et un ordre signé n'en a pas avant qu'un remplissage le crée ; l'app ne pourrait donc pas montrer les chiffres d'un remplissage avant que le preneur paie (#3552).
+La liste lit `/signed-offers` de l'index pour le marché sans `signer`, et contient donc les ordres de tous les émetteurs : les 100 lignes les mieux placées par côté, avec `truncated` indiqué. Chaque ligne doit se resérialiser dans la forme canonique, son `orderHash` doit égaler le hash de structure EIP-712 recalculé à partir de l'ordre, elle doit nommer les jetons et la durée du marché, et sa signature doit être une signature ECDSA de 65 octets ; toute autre ligne est comptée comme illisible. Les asks sont triés par `interestRateBps` croissant et les bids par le plus haut de `interestRateBps` et `interestRateBpsMax` décroissant, l'ordre du carnet étant gardé entre taux égaux. L'état de chaque ordre est lu à un seul bloc selon la même règle que vos propres ordres signés, décrite plus bas. Au même bloc, l'app lit `freeHolding(signer, ERC20, stakeAsset, 0)` une fois par émetteur et actif engagé et, pour chaque ordre encore remplissable, le compare à ce qu'un remplissage du reste prélèverait : le plafond d'un prêteur moins ce qui a été rempli, ou la garantie d'un emprunteur pour ce reste au ratio propre de l'ordre, arrondie au supérieur. Une lecture échouée est indiquée comme inconnue, jamais comme zéro. Chaque ordre est comparé seul à tout le solde libre : deux ordres d'un émetteur peuvent donc chacun paraître couverts alors que le vault ne suffit que pour un. Un ordre ouvert signé par quelqu'un d'autre peut être rempli en entier. L'examen lit `previewSignedOfferAccept(order, signature, acceptor)`, qui renvoie l'aperçu d'acceptation de l'offre que le remplissage écrirait, avec le hash de l'ordre, l'actif engagé, la mise que le remplissage prélève dans le vault de l'émetteur et le solde libre de ce vault ; ses refus (dont `SignedOfferMakerShort`, `SignedOfferConsumed` et `SignedOfferNonceUsed`) sont nommés et bloquent le consentement. La signature des Conditions est liée au hash de l'ordre comme `offerKey`, et l'envoi est `acceptSignedOffer(order, signature, terms, termsSignature)`, qui consomme l'ordre entier, écrit l'offre depuis le vault de l'émetteur et ouvre le prêt en une seule transaction. L'aperçu n'effectue pas le contrôle d'accès au risque de l'accepteur (#3577) : l'examen dit donc que la simulation de `acceptSignedOffer` le fait ; un refus à ce stade (`RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`) ouvre l'étape de risque pour la paire de l'ordre. La carte de fin retrouve le `SignedOfferFilled` du Diamond pour le hash de l'ordre et en lit le prêt. Un ordre apparié en partie renvoie `SignedOfferConsumed` et n'est pas proposé ; vos propres ordres non plus.
 
 <a id="desk-match"></a>
 

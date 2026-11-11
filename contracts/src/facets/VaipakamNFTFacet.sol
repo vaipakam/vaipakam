@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibPositionNFT, IPositionNFTCore} from "../libraries/LibPositionNFT.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
+import {VPFIDiscountAccumulatorFacet} from "./VPFIDiscountAccumulatorFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 
@@ -155,6 +156,7 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         }
         LibVaipakam.assertPositionMoveNotSanctioned(from, to);
         _syncTierExclusion(LibPositionNFT._storage().loanIds[tokenId]);
+        _stampLenderEntry(tokenId, to, true);
     }
 
     // ─── #3413 transfer cooldown ─────────────────────────────────────────
@@ -232,6 +234,30 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         LibRevert.bubbleOnFailureTyped(ok, ret, bytes4(0));
     }
 
+    /**
+     * @dev #3562 — `holder` takes the lender position `tokenId` stands for:
+     *      record their fee-discount standing at entry. The one path to the
+     *      one writer ({VPFIDiscountAccumulatorFacet.stampLenderEntry}): every
+     *      way a loan's lender token gets a holder (minted for a loan, an
+     *      offer's token becoming a loan's, a transfer) passes here.
+     *      `carryLower` is true for a plain transfer, which splits no interest
+     *      and so can only keep or lower the recorded figure. Skipped for an
+     *      offer's own token, a borrower token, and a RETIRED token: a sale
+     *      retires the seller's old lender token but leaves it transferable,
+     *      and moving that receipt must not overwrite the live holder's
+     *      record. A failed stamp reverts the move, so no holder can take the
+     *      position unrecorded.
+     */
+    function _stampLenderEntry(uint256 tokenId, address holder, bool carryLower) private {
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
+        uint256 loanId = es.loanIds[tokenId];
+        if (loanId == 0 || !es.isLenderRoles[tokenId] || LibPositionNFT.isRetired(tokenId)) return;
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSelector(VPFIDiscountAccumulatorFacet.stampLenderEntry.selector, loanId, holder, carryLower)
+        );
+        LibRevert.bubbleOnFailureTyped(ok, ret, bytes4(0));
+    }
+
     // ==================== Vaipakam NFT Logic ====================
 
     /**
@@ -257,6 +283,7 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         es.loanIds[tokenId] = loanId;
         es.isLenderRoles[tokenId] = isLender;
         LibPositionNFT.mint(to, tokenId);
+        _stampLenderEntry(tokenId, to, false);
 
         emit NFTMinted(tokenId, to, isLender ? "Lender" : "Borrower");
     }
@@ -276,9 +303,12 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         // #3413 — an offer's own token becoming a loan's token (a direct
         // accept): the offer's deposit became a loan and the borrower side
         // took its principal, so the new loan's tokens cool down.
-        if (loanId != 0 && es.loanIds[tokenId] == 0) LibPositionNFT.markLoanValueOut(loanId);
+        bool becomesLoanToken = loanId != 0 && es.loanIds[tokenId] == 0;
+        if (becomesLoanToken) LibPositionNFT.markLoanValueOut(loanId);
         es.nftStatuses[tokenId] = newStatus;
         es.loanIds[tokenId] = loanId;
+        // #3562 — the offer's holder takes the loan's lender position here.
+        if (becomesLoanToken) _stampLenderEntry(tokenId, LibPositionNFT.core().holderOf(tokenId), false);
 
         emit NFTStatusUpdated(tokenId, newStatus);
     }
