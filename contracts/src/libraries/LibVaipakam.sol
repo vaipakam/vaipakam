@@ -8311,6 +8311,11 @@ library LibVaipakam {
         ///      `ConfigFacet.setMinTermsAgeSec`, bounded
         ///      `LibTiming.MIN_TERMS_AGE_SEC_MIN..MAX`. Appended — append-only.
         uint32 cfgMinTermsAgeSec;
+        /// @dev #3414 — per token, the most one `convertTreasuryAsset` call
+        ///      converts, in the token's raw units; 0 = the whole balance.
+        ///      Written only by `TreasuryFacet.setTreasuryConvertMaxTranche`.
+        ///      Appended — append-only.
+        mapping(address => uint256) cfgTreasuryConvertMaxTranche;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

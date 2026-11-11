@@ -111,3 +111,11 @@ export function formatUtc(unixSeconds: number | bigint, locale?: string): string
   const text = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(d);
   return `${text} UTC`;
 }
+
+/** A day in UTC, in the reader's language, labelled UTC: a chart's axis
+ *  end. Past what a date can hold, the Unix seconds are stated instead. */
+export function formatUtcDate(unixSeconds: number, locale?: string): string {
+  if (!(Math.abs(unixSeconds) <= MAX_DATE_SECONDS)) return `Unix time ${String(unixSeconds)} UTC`;
+  const text = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(unixSeconds * 1000));
+  return `${text} UTC`;
+}

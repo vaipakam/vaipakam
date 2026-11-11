@@ -161,6 +161,47 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "swapFloorBps",
+    "inputs": [
+      {
+        "name": "assetIn",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetOut",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "f",
+        "type": "tuple",
+        "internalType": "struct SaleFloorFacet.SaleFloor",
+        "components": [
+          {
+            "name": "bps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "reason",
+            "type": "uint8",
+            "internalType": "enum SaleFloorFacet.FloorReason"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "HourlyPriceCheckpointed",
     "inputs": [

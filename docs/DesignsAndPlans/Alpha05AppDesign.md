@@ -2118,6 +2118,45 @@ above. Each resolves here, so a route reviewer needs no private file:
   while it stands; the review reads the chain each block, so the refusal
   lifts by itself. When the figures cannot be read, or nothing was left at
   that block, the refusal still says it lifts within seconds.
+- **RB-DESK-TAPE** — Below a market's ladder (OFF-75) the desk shows the
+  viewer's own offers on it, the market's recent loans and the rates loans
+  were agreed at over time, all from the index. An own offer states how
+  much was taken against the most it can lend or borrow and how much is
+  open, as the index last recorded it, and opens its own page. A fill is a
+  loan's terms as agreed when it opened (its rate and amount at opening),
+  never the live terms that repayment or an extension rewrite; an amount
+  the index cannot confirm is stated as not confirmed, not guessed. A loan
+  belongs to a market only where the index places it, and the pair's loans
+  it places nowhere are counted beside the tape and the chart, never filed
+  under a term. The tape says when the market has none and when it has
+  older loans than it shows, with the last fill's rate and age on top. The
+  chart is a stepped line of each period's last agreed rate, joined only
+  across periods that follow one another, so a period with no loan is a
+  gap, never interpolated; a shaded bar spans each period's low and high;
+  the ladder's middle rate is a labelled reference; no change figure is
+  shown. Every figure is also in a table, and hover or focus shows a
+  period's figures. The period choice lives in the page address. A failed
+  read is a degraded-source warning, never an empty tape or chart.
+- **RB-DESK-HISTORY** — Below a market's activity (OFF-76) the desk shows
+  the viewer's live loans in that market and its desk history. The live
+  loans come from the viewer's own chain read of its positions, the same
+  inventory Positions reads, never from the index: each states the side
+  held, the amount and rate, and its health reading (or that there is
+  none), and opens the loan's page, where the protocol's verdict decides
+  what can be done. The section carries that read's own age, source and
+  refresh, never the index's freshness. A read that did not complete says
+  a loan may be missing. The history is the index's append-only record of the loans the
+  wallet has held a side of, token loans against token collateral only,
+  any status, newest participation first, a page at a time. A row names
+  its market by the term agreed at opening, only where the index confirms
+  it, and otherwise says the agreed term is not confirmed; never the live
+  term an extension rewrites. Its status is
+  labelled as the index's record, which can trail the chain, and each row
+  opens the loan's page, which reads the chain. An older page is offered
+  only when the index returned a row past the current one, never on a
+  full page alone; a row the reader refuses is counted, never dropped
+  silently. A failed read is a degraded-source warning, never an empty
+  history.
 
 ## 3. Companion specifications
 

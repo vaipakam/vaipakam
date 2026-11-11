@@ -1548,3 +1548,15 @@ The Rate desk, under Advanced in the menu, shows the open token loan offers on t
 ### When an Offer Was Just Posted or Changed
 
 An offer or request can be taken only once its terms have stood a few seconds since it was posted or last changed. If you open one sooner, the review says how long the terms must stand and about how long is left, and shows no step to sign. You do not need to do anything: the review checks again on its own and lets you continue once the time is up. Nothing is sent while you wait.
+
+<a id="desk-tape"></a>
+
+### Rate Desk: Your Offers, Recent Loans and Agreed Rates
+
+Below a market's ladder, the Rate desk shows three more things. First, your own offers on that ladder, with how much of each has been taken and how much is still open, as the index last recorded it; an offer's own page checks it on the chain. Second, the market's recent loans, newest first: each line is a loan agreed in this market, at the rate and amount set when it opened, and later repayments or extensions do not change it. Third, a chart of the rates loans were agreed at over the last 7, 30 or 90 days, or all time. Each step is the rate of the last loan agreed in its period, and the shaded bar spans that period's lowest and highest rate. A gap means no loan was agreed then, so nothing is drawn across it. The dashed line is the ladder's middle rate now, worked out by the app, and the same figures are in a table under the chart. When the index cannot confirm a loan's term, it does not place that loan in any market; the desk states how many such loans the token pair has.
+
+<a id="desk-history"></a>
+
+### Rate Desk: Your Live Loans and Desk History
+
+Below a market's activity, the Rate desk lists your live loans in that market. They come from the app's own reading of your positions on the chain, the same one Positions uses. Each shows the side you hold, the amount and rate, and its health factor, or says there is no health reading, and opens the loan's page, where you manage it. Below that is your desk history: every token loan against token collateral you have held a side of, at any status, newest first, twenty at a time. The status shown is the index's record, which can lag the chain, so the loan's own page is the one to trust. "Show older loans" appears only when there really are older loans, and if the history cannot be read the desk says so instead of showing an empty list.

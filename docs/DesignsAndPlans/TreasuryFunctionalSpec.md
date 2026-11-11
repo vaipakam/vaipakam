@@ -59,7 +59,8 @@ function convertTreasuryAsset(
 ) external nonReentrant whenNotPaused onlyRole(ADMIN_ROLE);
 ```
 
-Converts the entire accumulated treasury balance of one input asset
+Converts the accumulated treasury balance of one input asset (or one
+tranche of it, where a per-token cap is set — #3414)
 across the **configured target allocation** — the governance-set
 `s.treasuryConvertTargets` list of `(asset, bps)` entries (§4). One
 `tokenIn` per call — a keeper loops off-chain; each call is atomic and
@@ -74,9 +75,10 @@ configured target count.
 3. `balance = s.treasuryBalances[tokenIn]`; `balance != 0` else revert `ZeroAmount`.
 4. Eligibility gate (`_eligibleForConversion`) else revert `ConversionNotEligible` — see §3.1.
 5. `n = s.treasuryConvertTargets.length`; `n != 0` else revert `TreasuryConvertNoTargets`. `perTargetCalls.length == n` and `minOuts.length == n` else revert `TreasuryConvertArityMismatch(provided, n)`.
-6. **CEI**: `treasuryBalances[tokenIn] = 0` and `treasuryLastConversionAt = block.timestamp` are written *before* any external swap.
-7. For each target `i`: `amount = (i == n−1) ? balance − allocated : balance·targets[i].bps/10000`. The **final entry absorbs** integer-division rounding, so the legs always sum back to exactly `balance`. Settle via `_convertLeg` (§3.2).
-8. Emit `TreasuryConverted(tokenIn, balance, n)`.
+6. **Tranche (#3414)**: `amountIn = balance`, or `cfgTreasuryConvertMaxTranche[tokenIn]` when that cap is non-zero and smaller (`setTreasuryConvertMaxTranche`, ADMIN_ROLE).
+7. **CEI**: `treasuryBalances[tokenIn] = balance − amountIn` and `treasuryLastConversionAt = block.timestamp` are written *before* any external swap.
+8. For each target `i`: `amount = (i == n−1) ? amountIn − allocated : amountIn·targets[i].bps/10000`. The **final entry absorbs** integer-division rounding, so the legs always sum back to exactly `amountIn`. Settle via `_convertLeg` (§3.2).
+9. Emit `TreasuryConverted(tokenIn, amountIn, n)`.
 
 ### 3.1 Eligibility gate
 
@@ -91,7 +93,7 @@ Purpose: stops dust-sized griefing conversions and treasury stagnation.
 For each (tokenIn → tokenOut, amount) leg:
 - `amount == 0` → no-op.
 - `tokenIn == tokenOut` → **skip the swap**; credit `amount` straight back to `treasuryBalances[tokenOut]` (the slice already *is* the target — no self-swap).
-- otherwise → `LibSwap.swapWithFailover(0, tokenIn, tokenOut, amount, minOut, address(this), calls)`. The `loanId` argument is the sentinel **`0`** — loan ids are 1-based, so `0` marks a treasury conversion in the swap-event stream. On soft-failure (`success == false`, every adapter exhausted) → revert `TreasuryConvertSwapFailed(tokenOut)`; because step 7 already zeroed the input balance, the whole-call revert rolls that back — **funds are never lost**. On success, credit `outAmount` to `treasuryBalances[tokenOut]`.
+- otherwise → derive the floor (#3414): `oracleOut` = the oracle value of `amount` in `tokenOut` (`LibFallback.tryOracleRate`, the reader a liquidation prices its swap with; unpriced → revert `TreasuryConvertUnpriced(tokenIn, tokenOut)`, distrusted → the oracle's divergence error), `floorBps = SaleFloorFacet.swapFloorBps(tokenIn, tokenOut).bps`, `minOut = max(oracleOut·(10000 − floorBps)/10000, minOuts[i])` — the caller can only raise it. Then `LibSwap.swapWithFailover(0, tokenIn, tokenOut, amount, minOut, address(this), calls)` and emit `TreasuryConvertLeg(tokenIn, tokenOut, amount, outAmount, oracleOut, floorBps, minOut)`. The `loanId` argument is the sentinel **`0`** — loan ids are 1-based, so `0` marks a treasury conversion in the swap-event stream. On soft-failure (`success == false`, every adapter exhausted) → revert `TreasuryConvertSwapFailed(tokenOut)`; because step 7 already zeroed the input balance, the whole-call revert rolls that back — **funds are never lost**. On success, credit `outAmount` to `treasuryBalances[tokenOut]`.
 
 `recipient` is always `address(this)` — converted output stays inside
 the Diamond, re-credited to `treasuryBalances`. Distribution out of the

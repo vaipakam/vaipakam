@@ -20,7 +20,7 @@
  * labelled so; nothing here is a price the protocol reports.
  */
 import { getAddress } from 'viem';
-import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../positions/model';
+import { ASSET_ERC20, OFFER_TYPE_LENDER, type LiveLoanRow } from '../positions/model';
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { bookRowFrom, lapsed, type BookRow } from '../offers/book';
 
@@ -253,4 +253,46 @@ export function deskLadder(rows: readonly BookRow[], m: Pick<Market, 'lending' |
     crossed: both && bestBidBps >= bestAskBps,
     leftOut,
   };
+}
+
+/** One of the viewer's own offers on a ladder, with how much of it was
+ *  taken as the index last recorded it (OFF-75). */
+export interface OwnOrder {
+  id: bigint;
+  lender: boolean;
+  rateBps: bigint;
+  /** The most the offer can lend or borrow. */
+  total: bigint;
+  taken: bigint;
+  open: bigint;
+}
+
+/** The viewer's offers on the ladder, lenders' first, each side by rate as
+ *  the ladder orders it. Offers the ladder leaves out are not orders anyone
+ *  can take, so they are not listed here; the ladder counts them. */
+export function ownOrders(l: Pick<DeskLadder, 'asks' | 'bids'>, viewer: string): OwnOrder[] {
+  const me = viewer.toLowerCase();
+  const out: OwnOrder[] = [];
+  for (const s of [...l.asks, ...l.bids]) {
+    for (const r of s.offers) {
+      if (r.creator.toLowerCase() !== me) continue;
+      const total = r.amountMax > r.amount ? r.amountMax : r.amount;
+      out.push({ id: r.id, lender: r.offerType === OFFER_TYPE_LENDER, rateBps: s.rateBps, total, taken: r.amountFilled, open: openAmount(r) });
+    }
+  }
+  return out;
+}
+
+/** The viewer's live loans in one market: both legs tokens, the market's
+ *  two tokens and its term. The rows come from the viewer's own chain read
+ *  of its positions, never from the index. */
+export function loansInMarket(rows: readonly LiveLoanRow[], m: Pick<Market, 'lending' | 'collateral' | 'durationDays'>): LiveLoanRow[] {
+  return rows.filter(
+    (r) =>
+      r.loan.assetType === ASSET_ERC20 &&
+      r.loan.collateralAssetType === ASSET_ERC20 &&
+      r.loan.principalAsset.toLowerCase() === m.lending.toLowerCase() &&
+      r.loan.collateralAsset.toLowerCase() === m.collateral.toLowerCase() &&
+      r.loan.durationDays === BigInt(m.durationDays),
+  );
 }

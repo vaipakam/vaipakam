@@ -37,6 +37,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibFeeEntitlement} from "../src/libraries/LibFeeEntitlement.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
@@ -728,19 +729,51 @@ contract FeeEntitlementFacetTest is SetupTest {
 
     // ─── dark default (kill switch off) ────────────────────────────────────────
 
-    function testDark_NonFullAccept_NoTariffNoStamp() public {
+    /// @dev #3360 — while the tariff is dark a plain accept is charged
+    ///      nothing, but the loan is STILL stamped: its loan-side reward cap
+    ///      (`cStarOpen`, `openDays`, the cached ceiling) is recorded, so the
+    ///      cap binds once the reward cutover is armed. Before #3360 the whole
+    ///      call was skipped and the loan earned uncapped on armed days.
+    function testDark_NonFullAccept_NoTariffButCapStamped() public {
         uint256 offerId = _createLenderErc20Offer();
         uint256 bucketBefore = _config().getRecycleBucket();
+        uint256 c = _cStar();
+        assertGt(c, 0, "fixture: a priced loan has a non-zero C*");
 
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
-        // While dark the whole tariff call is skipped: no fee-entitlement record
-        // is written and the recycle bucket is untouched.
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
         assertEq(uint8(fe.borrowerMode), uint8(LibVaipakam.FeeEntitlementMode.None));
         assertEq(uint8(fe.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.None));
-        assertEq(fe.cStarOpen, 0, "no stamp while dark");
+        assertEq(fe.borrowerTariffPaid, 0, "nothing charged to the borrower");
+        assertEq(fe.lenderTariffPaid, 0, "nothing charged to the lender");
+        assertEq(fe.cStarOpen, c, "the cap base is stamped while dark");
+        assertEq(uint256(fe.openDays), 30, "the open term is stamped while dark");
+        assertGt(uint256(fe.loanSideRewardCapOpen), 0, "the per-side ceiling is cached");
         assertEq(_config().getRecycleBucket(), bucketBefore, "bucket untouched");
+    }
+
+    /// @dev #3360 — the same on the canonical reward chain, the one where the
+    ///      armed cap binds.
+    function test3360_CanonicalRewardChain_PlainAcceptStamped() public {
+        TestMutatorFacet(address(diamond)).setRewardRoleRaw(0, true, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20Offer());
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint256(fe.openDays), 30, "a canonical plain loan carries its cap");
+        assertEq(fe.cStarOpen, _cStar());
+    }
+
+    /// @dev #3360 — on a reward MIRROR the loan-side cap stays inert for now
+    ///      (mirror claims settle against Base under a commitment that assumes
+    ///      no loan-side trim), so a plain accept still skips the call and the
+    ///      loan stays unstamped. Pinned so lifting that rule is a deliberate
+    ///      change, not a side effect.
+    function test3360_Mirror_PlainAcceptStaysUnstamped() public {
+        TestMutatorFacet(address(diamond)).setRewardRoleRaw(84532, false, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20Offer());
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint256(fe.openDays), 0, "a mirror plain loan is not stamped");
+        assertEq(fe.cStarOpen, 0);
     }
 
     function testDark_FullOptIn_RevertsClosed() public {

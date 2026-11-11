@@ -13,6 +13,10 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 
 /**
  * @title TreasuryConvertAndPayroll.t.sol
@@ -68,6 +72,30 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         ERC20Mock(wethTok).mint(address(adapter), treasuryAmt);
         ERC20Mock(wbtcTok).mint(address(adapter), treasuryAmt);
         ERC20Mock(vpfiTok).mint(address(adapter), treasuryAmt);
+
+        // #3414 — every swapped leg is held to an oracle-derived floor, so
+        // the input and every target need a current price ($1 each here).
+        _priceAt(mockERC20, 1e8);
+        _priceAt(wethTok, 1e8);
+        _priceAt(wbtcTok, 1e8);
+        _priceAt(vpfiTok, 1e8);
+    }
+
+    /// @dev Give `asset` a current oracle price of `price8` ($, 8 decimals)
+    ///      on both reads a conversion leg makes: the status read its oracle
+    ///      value comes from, and the plain read the floor rule's calm test
+    ///      uses.
+    function _priceAt(address asset, uint256 price8) internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, asset),
+            abi.encode(OracleFacet.PriceStatus.Priced, price8, uint8(8))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
+            abi.encode(price8, uint8(8))
+        );
     }
 
     /// @dev Replace the convert target allocation with a 3-entry list.
@@ -210,9 +238,13 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         uint256 worth20k = 20_000e6;
         TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, worth20k);
         ERC20Mock(mockERC20).mint(address(diamond), worth20k);
-        ERC20Mock(wethTok).mint(address(adapter), worth20k);
-        ERC20Mock(wbtcTok).mint(address(adapter), worth20k);
-        ERC20Mock(vpfiTok).mint(address(adapter), worth20k);
+        // #3414 — the input now reads as 6 decimals, so a fair fill into the
+        // 18-decimal targets pays 1e12 raw units per input unit (the oracle
+        // floor holds the leg to that); the flat mock scales by bps.
+        adapter.setOutputMultiplierBps(10_000 * 1e12);
+        ERC20Mock(wethTok).mint(address(adapter), 20_000e18);
+        ERC20Mock(wbtcTok).mint(address(adapter), 20_000e18);
+        ERC20Mock(vpfiTok).mint(address(adapter), 20_000e18);
         vm.prank(owner);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(
             mockERC20, _perTargetCalls(3), _minOuts(3)
@@ -522,4 +554,194 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         vm.prank(owner);
         PayrollFacet(address(diamond)).fundPayrollStream(id, amount);
     }
+
+    // ─── #3414 — the on-chain conversion floor ───────────────────────────
+
+    /// @dev The WETH leg of a 10,000-unit conversion: 40% = 4,000 units of
+    ///      an 18-decimal input into an 18-decimal target at $1 each, so the
+    ///      oracle value is 4,000 units.
+    uint256 internal constant WETH_LEG = 4_000;
+
+    /// @dev Make `mockERC20`/`wethTok` a deep, calm pair: tier-3 close-out
+    ///      depth and the last two hourly checkpoints recorded.
+    function _deepAndCalm() internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getCloseOutLiquidityTier.selector, mockERC20),
+            abi.encode(uint8(3))
+        );
+        address[] memory assets = new address[](4);
+        assets[0] = mockERC20;
+        assets[1] = wethTok;
+        assets[2] = wbtcTok;
+        assets[3] = vpfiTok;
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(assets);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(assets);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+    }
+
+    /// @notice Invariant: with the caller asking for NO minimum, the swap
+    ///         the adapter receives still carries the oracle-derived floor —
+    ///         the oracle value less the full slippage cap where the pair is
+    ///         not proven deep and calm. Pinned on the exact calldata, like
+    ///         `LiquidationMinOutputInvariant`.
+    function test_convert_floor_isOracleDerived_whateverTheCallerPasses() public {
+        _wireConvert(10_000);
+        uint256 cap = LibVaipakam.cfgMaxLiquidationSlippageBps();
+        uint256 expectedMin = (WETH_LEG * (10_000 - cap)) / 10_000;
+        vm.expectCall(
+            address(adapter),
+            abi.encodeCall(
+                ISwapAdapter.execute,
+                (mockERC20, wethTok, WETH_LEG, expectedMin, address(diamond), bytes(""))
+            )
+        );
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TreasuryFacet.TreasuryConvertLeg(mockERC20, wethTok, WETH_LEG, WETH_LEG, WETH_LEG, cap, expectedMin);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+    }
+
+    /// @notice A fill below the floor reverts the whole conversion even
+    ///         though the caller passed a zero minimum, and the treasury
+    ///         balance is untouched.
+    function test_convert_floor_refusesAFillBelowIt_withZeroCallerMin() public {
+        _wireConvert(10_000);
+        uint256 cap = LibVaipakam.cfgMaxLiquidationSlippageBps();
+        adapter.setOutputMultiplierBps(10_000 - cap - 1); // just past the cap
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryFacet.TreasuryConvertSwapFailed.selector, wethTok));
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+        assertEq(_treasuryBal(mockERC20), 10_000, "balance intact");
+
+        // At exactly the cap the fill clears.
+        adapter.setOutputMultiplierBps(10_000 - cap);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+        assertEq(_treasuryBal(wethTok), (WETH_LEG * (10_000 - cap)) / 10_000, "filled at the floor");
+    }
+
+    /// @notice The caller can RAISE the minimum: a fill above the floor but
+    ///         below the caller's figure is refused.
+    function test_convert_callerMinAboveFloor_binds() public {
+        _wireConvert(10_000);
+        adapter.setOutputMultiplierBps(9_900); // 1% short — inside the floor
+        uint256[] memory m = _minOuts(3);
+        m[0] = WETH_LEG; // ask for the full oracle value on the WETH leg
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryFacet.TreasuryConvertSwapFailed.selector, wethTok));
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), m);
+    }
+
+    /// @notice A deep, calm pair gets the tighter tier figure (the forced-sale
+    ///         market rule, without the cushion test a loan adds).
+    function test_convert_deepCalmPair_getsTheTierFloor() public {
+        _wireConvert(10_000);
+        _deepAndCalm();
+        SaleFloorFacet.SaleFloor memory f = SaleFloorFacet(address(diamond)).swapFloorBps(mockERC20, wethTok);
+        assertEq(uint8(f.reason), uint8(SaleFloorFacet.FloorReason.Tight), "tight");
+        uint256 tier3 = LibVaipakam.cfgSaleFloor().tier3Bps;
+        assertEq(f.bps, tier3, "tier-3 figure");
+
+        // A fill losing more than the tier figure is refused...
+        adapter.setOutputMultiplierBps(10_000 - tier3 - 1);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TreasuryFacet.TreasuryConvertSwapFailed.selector, wethTok));
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+
+        // ...and one at the tier figure clears.
+        adapter.setOutputMultiplierBps(10_000 - tier3);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+        assertEq(_treasuryBal(mockERC20), 0, "converted");
+    }
+
+    /// @notice The pair moving away from its checkpoints returns the floor to
+    ///         the full cap.
+    function test_swapFloor_movingPair_isTheCap() public {
+        _wireConvert(10_000);
+        _deepAndCalm();
+        _priceAt(mockERC20, 105e6); // +5% against both checkpoints
+        SaleFloorFacet.SaleFloor memory f = SaleFloorFacet(address(diamond)).swapFloorBps(mockERC20, wethTok);
+        assertEq(uint8(f.reason), uint8(SaleFloorFacet.FloorReason.Moving), "moving");
+        assertEq(f.bps, LibVaipakam.cfgMaxLiquidationSlippageBps(), "the cap");
+    }
+
+    /// @notice A leg whose pair has no current price is refused by name, and
+    ///         the balance stays credited.
+    function test_convert_unpricedLeg_reverts() public {
+        _wireConvert(10_000);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, wethTok),
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(0))
+        );
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(TreasuryFacet.TreasuryConvertUnpriced.selector, mockERC20, wethTok)
+        );
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+        assertEq(_treasuryBal(mockERC20), 10_000, "balance intact");
+    }
+
+    /// @notice A distrusted price is not a missing one: the conversion
+    ///         reverts with the oracle's divergence error.
+    function test_convert_distrustedPrice_reverts() public {
+        _wireConvert(10_000);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, wethTok),
+            abi.encode(OracleFacet.PriceStatus.Divergent, uint256(1e8), uint8(8))
+        );
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, wethTok),
+            abi.encodeWithSelector(OracleFacet.OraclePriceDivergence.selector)
+        );
+        vm.prank(owner);
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+    }
+
+    // ─── #3414 — tranches ────────────────────────────────────────────────
+
+    function test_convert_tranche_convertsAtMostTheCap_restStaysCredited() public {
+        _wireConvert(10_000);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).setTreasuryConvertMaxTranche(mockERC20, 5_000);
+        assertEq(TreasuryFacet(address(diamond)).getTreasuryConvertMaxTranche(mockERC20), 5_000);
+
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit TreasuryFacet.TreasuryConverted(mockERC20, 5_000, 3);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+        assertEq(_treasuryBal(mockERC20), 5_000, "the rest stays credited");
+        assertEq(_treasuryBal(wethTok), 2_000, "40% of the tranche");
+
+        // The next tranche is a separate call once eligible again.
+        vm.warp(vm.getBlockTimestamp() + 31 days);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(mockERC20, _perTargetCalls(3), _minOuts(3));
+        assertEq(_treasuryBal(mockERC20), 0, "second tranche converted");
+        assertEq(_treasuryBal(wethTok), 4_000, "both tranches credited");
+    }
+
+    function test_setTreasuryConvertMaxTranche_adminOnly_andNonZeroToken() public {
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector,
+                stranger,
+                LibAccessControl.ADMIN_ROLE
+            )
+        );
+        TreasuryFacet(address(diamond)).setTreasuryConvertMaxTranche(mockERC20, 1);
+
+        vm.prank(owner);
+        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
+        TreasuryFacet(address(diamond)).setTreasuryConvertMaxTranche(address(0), 1);
+    }
+
 }
