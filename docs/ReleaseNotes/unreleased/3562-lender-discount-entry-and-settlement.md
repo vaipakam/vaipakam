@@ -1,4 +1,4 @@
-## Thread — The lender's discount takes the lower of entry and settlement (PR #<n>)
+## Thread — The lender's discount takes the lower of entry and settlement (PR #3585)
 
 A lender's yield-fee hold discount used to be their discount at the moment
 the fee was charged. The minimum holding period is 3 days by default, and the
