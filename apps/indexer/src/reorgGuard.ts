@@ -11,8 +11,9 @@
  * L2's safe head follows its L1 batch, which can itself be replaced). When it
  * happens, nothing else in the indexer would ever look at those blocks again.
  *
- * THE CHECK. When the cursor advances, the pass records an ANCHOR: the block
- * it advanced to and that block's hash (`indexer_chain_anchor`). Every later
+ * THE CHECK. When the cursor advances, the pass records an ANCHOR: the top
+ * of the window it scanned and that block's hash, read before the check and
+ * the logs (`indexer_chain_anchor`, {@link readAnchorCandidate}). Every later
  * pass with a settled head reads the anchor block by number and compares
  * hashes. One anchor per chain detects any reorganisation reaching at or
  * below it, because replacing any earlier block changes the hash of every
@@ -22,10 +23,13 @@
  * WHY THE ROLLBACK IS A REBUILD. Loans and offers are state rows, updated in
  * place by later events, not an append-only log keyed by block. A replaced
  * block cannot be undone row by row without per-row history the schema does
- * not keep. So a detected reorganisation requests the same reset a new
- * Diamond gets (`deploymentEpoch.ts`): every chain-scoped row but the user's
- * own is deleted and the scan replays from the deploy block, reading the
- * chain as it now is. It is expensive, and it is reserved for an event the
+ * not keep. So a detected reorganisation requests a REBUILD of the chain
+ * (`deploymentEpoch.ts`, `requestChainRebuild`): every row the replay derives
+ * is deleted and the scan replays from the deploy block, reading the chain as
+ * it now is. Unlike a Diamond change it keeps every row born off chain, since
+ * the Diamond is the same: the user's signed orders (their fill and cancel
+ * state restarting for the replay), alert settings and dedupe, tickets
+ * (`reorgRebuildKeep.json`). It is expensive, and it is reserved for an event the
  * chain itself said would not happen.
  *
  * WHAT A SINGLE ODD ANSWER DOES NOT DO. A rebuild wipes and replays a whole
@@ -67,7 +71,8 @@ export interface ChainAnchor {
  * - `none`: no anchor yet (a chain never scanned, or one just reset). Nothing to compare.
  * - `intact`: the anchor block still carries the recorded hash.
  * - `above-head`: the anchor sits above the head this pass resolved (a lagging
- *   replica). Not compared this pass; the scan's own regressed-head handling applies.
+ *   replica). Not compared this pass; the caller scans nothing below it until
+ *   the head passes it again.
  * - `unreadable`: the anchor block could not be read consistently. Hold the scan.
  * - `replaced`: both reads agree on a different hash. The chain replaced an indexed block.
  */
@@ -141,7 +146,8 @@ export async function checkChainAnchor(
 
 /**
  * The statement that records the anchor, for the caller to run in the SAME
- * batch as the cursor advance, so the two never describe different blocks.
+ * batch as the cursor advance (one transaction): the anchor moves only when
+ * the rows it vouches for have landed.
  *
  * Monotonic like the cursor: an older block never replaces a newer anchor,
  * so a stale or overlapping pass cannot move it back. The same block with a
@@ -166,41 +172,42 @@ export function anchorUpsert<S>(
 }
 
 /**
- * The block the cursor may advance to, with its hash, so the cursor and the
- * anchor always name the same block.
+ * The anchor a pass will record when it finishes: the top of the window it is
+ * about to scan, with that block's hash, READ BEFORE the anchor check and
+ * before any log (Codex #3528 r1 P2).
  *
- * The anchor must sit AT the cursor: it detects a replacement of any block at
- * or below itself, so an anchor left behind the cursor would leave the blocks
- * between them unguarded for good once a later anchor is written from the
- * new chain.
+ * WHY THE ORDER. The new anchor retires the old one, so it must describe a
+ * chain the pass has checked, never one fetched independently afterwards: a
+ * fork landing mid-pass would otherwise hand the pass its OWN hash as the new
+ * anchor, and the rows read from the replaced blocks would never be noticed.
+ * Read first, the candidate is caught either way:
  *
- * `known` holds the hashes the pass already learned without asking (the
- * settled head's, each processed block's and its parent's). When `target` is
- * not among them, one read asks for it. When that read fails too, the cursor
- * advances only as far as the highest known block in the window: the blocks
- * above it to `target` carry no event this pass processed (every processed
- * block is known), so the next pass re-reads only empty blocks. With no known
- * block in the window, the cursor does not advance (null).
+ * - a replacement at or below the OLD anchor that lands after this read is
+ *   seen by the anchor check that follows;
+ * - one that lands after that check, while the logs are read, leaves the
+ *   candidate naming the replaced block, so the NEXT pass's check sees a
+ *   different hash and asks for the rebuild.
+ *
+ * The cost is that the anchor can sit above the cursor (a pass the budget
+ * stopped short of its window), so a replacement of blocks the cursor has not
+ * reached yet also asks for a rebuild. That is the expensive direction, and
+ * the safe one.
+ *
+ * `headHash` is the settled head's own hash, read with the head: used when
+ * the window ends at the head, so the common pass spends no read on this.
  */
-export async function resolveAnchoredCursor(args: {
+export async function readAnchorCandidate(args: {
   client: AnchorBlockReader;
-  scanFrom: bigint;
-  target: bigint;
-  known: ReadonlyMap<bigint, BlockHash>;
+  windowTo: bigint;
+  head: bigint;
+  headHash: BlockHash | undefined;
   describe: (err: unknown) => string;
-}): Promise<{ block: bigint; hash: BlockHash; reason?: string } | null> {
-  const { client, scanFrom, target, known, describe } = args;
-  if (target < scanFrom) return null;
-  const direct = known.get(target);
-  if (direct) return { block: target, hash: direct };
-  const read = await readHash(client, target, describe);
-  if ('hash' in read) return { block: target, hash: read.hash };
-  let best: bigint | null = null;
-  for (const b of known.keys()) {
-    if (b >= scanFrom && b <= target && (best === null || b > best)) best = b;
-  }
-  if (best === null) return null;
-  return { block: best, hash: known.get(best)!, reason: read.reason };
+}): Promise<{ anchor: ChainAnchor } | { reason: string }> {
+  const { client, windowTo, head, headHash, describe } = args;
+  if (windowTo === head && headHash) return { anchor: { block: windowTo, hash: headHash } };
+  const read = await readHash(client, windowTo, describe);
+  if ('reason' in read) return { reason: read.reason };
+  return { anchor: { block: windowTo, hash: read.hash } };
 }
 
 /**

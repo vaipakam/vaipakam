@@ -42,6 +42,7 @@
  * response is never cached — a stale health answer is worse than none.
  */
 import { CURSOR_KIND } from './chainIndexer';
+import { RESET_REBUILD } from './deploymentEpoch';
 import { schemaGate, type SchemaCheck } from './schemaGate';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { readLifecycleHealth, type LifecycleHealth } from './loanLifecycleGuard';
@@ -62,8 +63,10 @@ export interface AdoptedDeployment {
   deployBlock: number;
   /** When the indexer adopted this Diamond (unix seconds). */
   adoptedAt: number;
-  /** True while a Diamond-change reset is claimed but its batch has not landed. */
+  /** True while a reset is claimed but its batch has not landed: a Diamond change, or a reorg rebuild (#3411). */
   resetPending: boolean;
+  /** Which reset is pending: `diamond-change`, `rebuild` (the reorg guard's, which keeps rows born off chain), or null. */
+  resetKind: 'diamond-change' | 'rebuild' | null;
   /** True when a first pass recorded this Diamond with nothing reset; a
    *  retired-Diamond seed may still replace it (see deploymentEpoch.ts). */
   adoptedBlind: boolean;
@@ -183,6 +186,7 @@ export async function readIngestHealth(
             deployBlock: r.deploy_block ?? 0,
             adoptedAt: r.adopted_at ?? 0,
             resetPending: (r.reset_pending ?? 0) !== 0,
+            resetKind: !r.reset_pending ? null : r.reset_pending === RESET_REBUILD ? 'rebuild' : 'diamond-change',
             adoptedBlind: (r.adopted_blind ?? 0) !== 0,
           },
   }));

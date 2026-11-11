@@ -154,7 +154,7 @@ import {
   bootstrapChainAnchor,
   checkChainAnchor,
   describeReplacedAnchor,
-  resolveAnchoredCursor,
+  readAnchorCandidate,
 } from './reorgGuard';
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
@@ -2364,14 +2364,38 @@ async function runChainPass(
   }
 
   // #3411 — THE REORG GUARD, on every settled pass before anything is read or
-  // written against this head (see reorgGuard.ts). The anchor is the block the
-  // cursor last advanced to and its hash; a changed hash means the chain
-  // replaced a block this indexer already wrote rows from, which the cursor
-  // would never revisit. A replaced anchor requests a rebuild of the chain's
-  // rows (the epoch reset, finished by the next pass with its own budget) and
-  // this pass writes nothing more. An anchor that cannot be read consistently
-  // holds the pass like an unsettled head: rows are not built on a provider
-  // that cannot answer for a block at or below its own safe head.
+  // written against this head (see reorgGuard.ts).
+  //
+  // First, the anchor this pass will record if it advances: the top of the
+  // window it is about to scan, with that block's hash, read NOW, before the
+  // check and before any log (Codex #3528 r1 P2). A hash fetched after the
+  // rows could come from a fork that landed mid-pass and retire the old
+  // anchor without anyone noticing; read first, any replacement after this
+  // point shows up either in the check below or in the next pass's.
+  const anchorWindowTo = scanFrom > head ? null : scanWindowEnd(scanFrom, head);
+  let nextAnchor: { block: bigint; hash: string } | null = null;
+  if (anchorWindowTo !== null) {
+    const candidate = await readAnchorCandidate({
+      client,
+      windowTo: anchorWindowTo,
+      head,
+      headHash: settledHead.hash,
+      describe: describeFailure,
+    });
+    if ('reason' in candidate) {
+      return holdForReorgCheck(env, chainId, scanFrom, lastBlock, `block ${anchorWindowTo}'s hash could not be read (${candidate.reason})`);
+    }
+    nextAnchor = candidate.anchor;
+  }
+
+  // Then the check. The anchor is the top of the window the last advancing
+  // pass scanned and its hash; a changed hash means the chain replaced a
+  // block this indexer already wrote rows from, which the cursor would never
+  // revisit. A replaced anchor requests a rebuild of the chain's rows
+  // (finished by the next pass with its own budget) and this pass writes
+  // nothing more. An anchor that cannot be read consistently holds the pass
+  // like an unsettled head: rows are not built on a provider that cannot
+  // answer for a block at or below its own safe head.
   const anchorCheck = await checkChainAnchor(client, anchor, head, describeFailure);
   if (anchorCheck.state === 'replaced') {
     console.error(describeReplacedAnchor(chainId, anchorCheck));
@@ -2392,24 +2416,32 @@ async function runChainPass(
     };
   }
   if (anchorCheck.state === 'unreadable') {
-    console.warn(
-      `[reorgGuard] chain ${chainId}: anchor block ${anchorCheck.anchor.block} could not be read ` +
-        `consistently (${anchorCheck.reason}); holding the scan at cursor ${lastBlock} this pass`,
-    );
-    await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
-    return {
-      ...emptyResult('reorg-check-unavailable'),
+    return holdForReorgCheck(
+      env,
       chainId,
-      scannedFrom: scanFrom,
-      scannedTo: scanFrom - 1n,
-      headBlock: undefined,
-    };
+      scanFrom,
+      lastBlock,
+      `anchor block ${anchorCheck.anchor.block} could not be read consistently (${anchorCheck.reason})`,
+    );
   }
-  // A cursor with no anchor (a chain scanned before the guard existed, or a
-  // quiet one that has not advanced since) is anchored where it stands, once,
-  // so the check covers it from here on. Fail-open: an unread hash leaves the
-  // chain unanchored and the next pass tries again.
-  if (anchorCheck.state === 'none' && cursorRow && lastBlock <= head) {
+  // An anchor above this head (a lagging replica) cannot be checked, so the
+  // pass scans nothing below it: rows read from a head that has not reached a
+  // block the indexer already vouched for are not built on.
+  if (anchorCheck.state === 'above-head' && anchorWindowTo !== null) {
+    return holdForReorgCheck(
+      env,
+      chainId,
+      scanFrom,
+      lastBlock,
+      `the settled head ${head} is below the anchor block ${anchorCheck.anchor.block}`,
+    );
+  }
+  // A caught-up cursor with no anchor (a chain scanned before the guard
+  // existed, or a quiet one that has not advanced since) is anchored where it
+  // stands, once, so the check covers it from here on. Fail-open: an unread
+  // hash leaves the chain unanchored and the next pass tries again. A pass
+  // that scans records its window's anchor instead.
+  if (anchorCheck.state === 'none' && cursorRow && anchorWindowTo === null && lastBlock <= head) {
     await bootstrapChainAnchor(env.DB, client, chainId, lastBlock, describeFailure);
   }
 
@@ -2606,12 +2638,10 @@ async function runChainPass(
       skipped: 'caught-up',
     };
   }
-  // The window this pass reads logs for. How far it then PROCESSES them is
-  // decided per block below (#2221), so the cursor is `scanTo`, not this.
-  const windowTo =
-    scanFrom + SCAN_PASS_MAX_BLOCKS > head
-      ? head
-      : scanFrom + SCAN_PASS_MAX_BLOCKS;
+  // The window this pass reads logs for (the one the anchor candidate above
+  // tops). How far it then PROCESSES them is decided per block below (#2221),
+  // so the cursor is `scanTo`, not this.
+  const windowTo = scanWindowEnd(scanFrom, head);
 
   // Single chunked scan across the full event allow-list. Public RPCs
   // (Alchemy free tier, publicnode) reject ranges > 10k blocks, so we
@@ -2742,19 +2772,11 @@ async function runChainPass(
   // the cursor records the block below it, and the pass reports an RPC error
   // so the ingest loop retries. Every time a handler reads is chain time.
   const blockTimestamps = new Map<bigint, number>();
-  // #3411 — every block hash this pass learns without asking, for the anchor
-  // the cursor write records (reorgGuard.ts). The settled head's comes with
-  // the head; each processed block's comes with its time read, and so does
-  // its parent's.
-  const knownHashes = new Map<bigint, string>();
-  if (settledHead.hash) knownHashes.set(head, settledHead.hash);
 
   const scanBlock = async (blockNumber: bigint, logs: DecodedLog[]) => {
     try {
       const block = await client.getBlock({ blockNumber });
       blockTimestamps.set(blockNumber, Number(block.timestamp));
-      if (block.hash) knownHashes.set(blockNumber, block.hash);
-      if (block.parentHash && blockNumber > 0n) knownHashes.set(blockNumber - 1n, block.parentHash);
     } catch (err) {
       // A REFUSED read is the budget stop, handled as one below.
       if (isRefusing(budget)) throw err;
@@ -2907,26 +2929,7 @@ async function runChainPass(
   // Every block below the one that stopped is finished, and so is every block
   // between the last finished one and it, since those carry no logs of ours.
   const scannedThrough = stoppedAt === null ? windowTo : stoppedAt - 1n;
-  // #3411 — the cursor and the reorg guard's anchor name the SAME block, so
-  // the cursor advances only to a block whose hash is known (reorgGuard.ts,
-  // `resolveAnchoredCursor`). Almost always that is `scannedThrough` itself;
-  // when its hash cannot be read, the cursor stops at the highest processed
-  // block instead, and the next pass re-reads only blocks with no event.
-  const anchored = await resolveAnchoredCursor({
-    client,
-    scanFrom,
-    target: scannedThrough,
-    known: knownHashes,
-    describe: describeFailure,
-  });
-  if (anchored?.reason !== undefined || (anchored === null && scannedThrough >= scanFrom)) {
-    console.warn(
-      `[reorgGuard] chain ${chainId}: block ${scannedThrough}'s hash could not be read ` +
-        `(${anchored?.reason ?? 'no processed block in the window either'}); the cursor records ` +
-        `${anchored ? anchored.block : lastBlock} instead and the next pass re-reads the blocks above it`,
-    );
-  }
-  const scanTo = anchored ? anchored.block : scanFrom - 1n;
+  const scanTo = scannedThrough;
   if (stoppedAt !== null && !stoppedForBlockTime) {
     const finished = blocks.findIndex((b) => b.blockNumber === stoppedAt);
     console.warn(
@@ -2947,21 +2950,25 @@ async function runChainPass(
   // hardens the DO's single-writer guarantee against a rollout / migration
   // overlap window (belt-and-suspenders with the in-memory `scanRunning` flag).
   //
-  // #3411 — the reorg guard's anchor is written in the SAME batch (one D1
-  // transaction), so the cursor and the anchor never name different blocks.
+  // #3411 — the reorg guard's anchor (read before the check and the logs, see
+  // above) is written in the SAME batch (one D1 transaction), so it moves only
+  // when the rows it vouches for land. A pass that finished no block moves
+  // neither (the cursor write is then a no-op, or seeds a cold start's row).
   const now = Math.floor(Date.now() / 1000);
-  if (anchored) {
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (chain_id, kind) DO UPDATE SET
-           last_block = excluded.last_block,
-           updated_at = excluded.updated_at
-         WHERE excluded.last_block > indexer_cursor.last_block`,
-      ).bind(chainId, CURSOR_KIND, blockToNumber(anchored.block), now),
-      anchorUpsert(env.DB, { chainId, block: anchored.block, hash: anchored.hash, nowSec: now }),
-    ]);
+  {
+    const cursorWrite = env.DB.prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (chain_id, kind) DO UPDATE SET
+         last_block = excluded.last_block,
+         updated_at = excluded.updated_at
+       WHERE excluded.last_block > indexer_cursor.last_block`,
+    ).bind(chainId, CURSOR_KIND, blockToNumber(scanTo), now);
+    await env.DB.batch(
+      nextAnchor && scanTo >= scanFrom
+        ? [cursorWrite, anchorUpsert(env.DB, { chainId, block: nextAnchor.block, hash: nextAnchor.hash, nowSec: now })]
+        : [cursorWrite],
+    );
   }
 
   // #1270 — market_summary sweep: recompute discovery rows for every
@@ -7923,6 +7930,37 @@ export function refinanceTargetFromDetail(v: bigint | undefined): number | null 
   if (v === undefined) return null;
   const n = Number(v);
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+/** The last block a pass starting at `scanFrom` reads logs for, given a settled `head` at or above it. */
+function scanWindowEnd(scanFrom: bigint, head: bigint): bigint {
+  return scanFrom + SCAN_PASS_MAX_BLOCKS > head ? head : scanFrom + SCAN_PASS_MAX_BLOCKS;
+}
+
+/**
+ * #3411 — a pass the reorg guard holds: nothing is read from the chain past
+ * this point and nothing is written that claims the chain's state, exactly as
+ * a pass held on an unsettled head (`settled-head-unavailable`). The one step
+ * kept is the market-summary sweep, which removes markets whose only order
+ * expired BY CLOCK. Retried within the alarm's bounded attempts
+ * (`isRetryableScanSkip`).
+ */
+async function holdForReorgCheck(
+  env: Env,
+  chainId: number,
+  scanFrom: bigint,
+  lastBlock: bigint,
+  why: string,
+): Promise<ChainIndexerResult> {
+  console.warn(`[reorgGuard] chain ${chainId}: ${why}; holding the scan at cursor ${lastBlock} this pass`);
+  await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
+  return {
+    ...emptyResult('reorg-check-unavailable'),
+    chainId,
+    scannedFrom: scanFrom,
+    scannedTo: scanFrom - 1n,
+    headBlock: undefined,
+  };
 }
 
 function emptyResult(skipped: string): ChainIndexerResult {

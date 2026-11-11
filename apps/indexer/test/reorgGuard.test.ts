@@ -1,9 +1,9 @@
 /**
  * #3411 — the reorg guard: the scan records, with every cursor advance, the
- * hash of the block it advanced to, and every later pass re-reads that block.
- * A replaced block requests a rebuild of the chain's rows, which the next
- * pass carries out through the epoch reset; an inconsistent provider holds
- * the pass instead of wiping anything.
+ * hash of the top of the window it scanned, read before the logs, and every
+ * later pass re-reads that block. A replaced block requests a rebuild of the
+ * chain's rows, which the next pass carries out, keeping every row born off
+ * chain; an inconsistent provider holds the pass instead of wiping anything.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { encodeAbiParameters, encodeEventTopics, type Abi } from 'viem';
@@ -19,9 +19,10 @@ import {
   anchorUpsert,
   bootstrapChainAnchor,
   checkChainAnchor,
-  resolveAnchoredCursor,
+  readAnchorCandidate,
   type AnchorBlockReader,
 } from '../src/reorgGuard';
+import { adoptDeployment, requestChainRebuild } from '../src/deploymentEpoch';
 import type { ChainConfig, Env } from '../src/env';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -50,7 +51,11 @@ const describe0 = (err: unknown) => String((err as Error)?.message ?? err);
 
 /** The chain as the fixture serves it: a block's hash depends on its number
  *  and, from `forkFrom` up, on which fork the chain is on. */
-const chainState: { forkFrom: number; fork: number; flicker: boolean } = { forkFrom: Infinity, fork: 0, flicker: false };
+const chainState: { forkFrom: number; fork: number; flicker: boolean; onGetLogs?: () => void } = {
+  forkFrom: Infinity,
+  fork: 0,
+  flicker: false,
+};
 /** Counts block reads, so `flicker` alternates per read and not per field. */
 let blockReads = 0;
 function hashOf(n: number): string {
@@ -89,6 +94,7 @@ function fixtureFetch() {
     if (req.method === 'eth_chainId') return ok(hex(BASE));
     if (req.method === 'eth_blockNumber') return ok(hex(HEAD));
     if (req.method === 'eth_getLogs') {
+      chainState.onGetLogs?.();
       const { fromBlock, toBlock } = (req.params?.[0] ?? {}) as { fromBlock: string; toBlock: string };
       return ok(EVENT_BLOCKS.filter((b) => b >= Number(fromBlock) && b <= Number(toBlock)).map((b) => keeperLog(b, b)));
     }
@@ -161,17 +167,40 @@ const resetPending = (h: ReturnType<typeof chainDb>) =>
   (h.db.prepare('SELECT reset_pending FROM indexer_deployment WHERE chain_id = ?').get(BASE) as { reset_pending: number })
     .reset_pending;
 
+/** Rows the user posted, which a rebuild must keep. */
+function seedOffChainRows(h: ReturnType<typeof chainDb>) {
+  h.db
+    .prepare(
+      `INSERT INTO signed_offers (chain_id, order_hash, signer, order_json, signature, offer_type, lending_asset,
+         collateral_asset, duration_days, asset_type, collateral_asset_type, interest_rate_bps, interest_rate_bps_max,
+         amount, amount_max, collateral_amount, collateral_amount_max, fill_mode, expires_at, deadline, nonce,
+         status, filled_amount, created_at, updated_at)
+       VALUES (?, ?, ?, '{}', '0xsig', 0, '0xa', '0xb', 30, 0, 0, 500, 0, '100', '0', '200', '0', 0, 0, 0, '0',
+         'filled', '100', 1, 1)`,
+    )
+    .run(BASE, `0x${'11'.repeat(32)}`, `0x${'22'.repeat(20)}`);
+  h.db
+    .prepare(
+      'INSERT INTO user_thresholds (wallet, chain_id, warn_hf, alert_hf, critical_hf, created_at, updated_at) VALUES (?, ?, 1.5, 1.2, 1.05, 1, 1)',
+    )
+    .run(`0x${'22'.repeat(20)}`, BASE);
+  h.db
+    .prepare("INSERT INTO notify_state (wallet, chain_id, loan_id, last_band) VALUES (?, ?, 7, 'warn')")
+    .run(`0x${'22'.repeat(20)}`, BASE);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   chainState.forkFrom = Infinity;
   chainState.fork = 0;
   chainState.flicker = false;
+  chainState.onGetLogs = undefined;
   blockReads = 0;
 });
 
-describe('the scan anchors the block its cursor advances to', () => {
-  it('writes the anchor with the cursor, at the same block and with that block\'s hash', { timeout: 60_000 }, async () => {
+describe('the scan anchors the window it scanned', () => {
+  it('writes the anchor with the cursor, at the window\'s top and with that block\'s hash', { timeout: 60_000 }, async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const h = chainDb();
     await pass(h);
@@ -197,6 +226,7 @@ describe('a replaced indexed block is rolled back by a rebuild', () => {
     const h = chainDb();
     await pass(h);
     expect(activityCount(h)).toBe(2);
+    seedOffChainRows(h);
 
     // The chain replaces blocks from CURSOR+50 up: the anchor (HEAD) changes.
     chainState.forkFrom = CURSOR + 50;
@@ -204,7 +234,7 @@ describe('a replaced indexed block is rolled back by a rebuild', () => {
     const detecting = await pass(h);
     expect(detecting.skipped).toBe('reorg-rebuild-requested');
     expect(detecting.reorgRebuildRequested).toBe(true);
-    expect(resetPending(h)).toBe(1);
+    expect(resetPending(h)).toBe(2);
     // Nothing is deleted by the detecting pass; it only asks.
     expect(activityCount(h)).toBe(2);
     expect(err.mock.calls.some((c) => String(c[0]).includes('REORG BELOW THE SCAN CURSOR'))).toBe(true);
@@ -226,6 +256,14 @@ describe('a replaced indexed block is rolled back by a rebuild', () => {
     expect(cursorOf(h)).toBeUndefined();
     expect(anchorOf(h)).toBeUndefined();
     expect(activityCount(h)).toBe(0);
+    // Codex #3528 r1 P1 — what the user posted survives the rebuild: the signed
+    // order is kept with its fill state handed back to the replay, and the
+    // alert settings and dedupe are kept.
+    expect(h.db.prepare('SELECT status, filled_amount, signature FROM signed_offers WHERE chain_id = ?').all(BASE)).toEqual([
+      { status: 'active', filled_amount: '0', signature: '0xsig' },
+    ]);
+    expect((h.db.prepare('SELECT COUNT(*) AS n FROM user_thresholds WHERE chain_id = ?').get(BASE) as { n: number }).n).toBe(1);
+    expect((h.db.prepare('SELECT COUNT(*) AS n FROM notify_state WHERE chain_id = ?').get(BASE) as { n: number }).n).toBe(1);
 
     await pass(h);
     expect(cursorOf(h)).toBe(HEAD);
@@ -256,6 +294,60 @@ describe('a replaced indexed block is rolled back by a rebuild', () => {
     expect(resetPending(h)).toBe(0);
     expect(activityCount(h)).toBe(2);
     expect(cursorOf(h)).toBe(HEAD);
+  });
+});
+
+describe('a rebuild is the narrower reset', () => {
+  it('a Diamond change claimed over a pending rebuild still runs in full', async () => {
+    const h = chainDb();
+    seedOffChainRows(h);
+    expect(await requestChainRebuild(h.d1, { chainId: BASE, diamond: bundle!.diamond })).toBe(true);
+    const r = await adoptDeployment(h.d1, {
+      chainId: BASE,
+      diamond: `0x${'99'.repeat(20)}`,
+      deployBlock: bundle!.deployBlock + 1_000,
+      nowSec: 5,
+    });
+    expect(r.outcome).toBe('reset');
+    expect(resetPending(h)).toBe(0);
+    // A new Diamond's rows are not this user's orders any more: cleared.
+    expect((h.db.prepare('SELECT COUNT(*) AS n FROM signed_offers').get() as { n: number }).n).toBe(0);
+    expect((h.db.prepare('SELECT COUNT(*) AS n FROM notify_state').get() as { n: number }).n).toBe(0);
+    expect((h.db.prepare('SELECT COUNT(*) AS n FROM user_thresholds').get() as { n: number }).n).toBe(1);
+  });
+});
+
+describe('the anchor is read before the logs (Codex #3528 r1 P2)', () => {
+  it('a fork landing while the logs are read is caught by the next pass, not adopted as the anchor', { timeout: 120_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = chainDb();
+    // The chain replaces blocks from CURSOR+50 up after the pass has read its
+    // anchor candidate, just as it starts reading logs.
+    chainState.forkFrom = CURSOR + 50;
+    chainState.onGetLogs = () => {
+      chainState.fork = 1;
+    };
+    await pass(h);
+    chainState.onGetLogs = undefined;
+    // The anchor names the block as it was before the fork...
+    expect(anchorOf(h)).toEqual({ block_number: HEAD, block_hash: `0x${'0'.repeat(8)}${HEAD.toString(16).padStart(56, '0')}` });
+    // ...so the next pass sees it replaced and asks for the rebuild.
+    const next = await pass(h);
+    expect(next.reorgRebuildRequested).toBe(true);
+    expect(resetPending(h)).toBe(2);
+  });
+
+  it('a settled head below the anchor holds a pass that has blocks to scan', { timeout: 60_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = chainDb();
+    h.db
+      .prepare('INSERT INTO indexer_chain_anchor (chain_id, block_number, block_hash, recorded_at) VALUES (?, ?, ?, 1)')
+      .run(BASE, HEAD + 5, '0xabc');
+    const r = await pass(h);
+    expect(r.skipped).toBe('reorg-check-unavailable');
+    expect(cursorOf(h)).toBe(CURSOR);
+    expect(activityCount(h)).toBe(0);
   });
 });
 
@@ -318,36 +410,28 @@ describe('checkChainAnchor', () => {
   });
 });
 
-describe('resolveAnchoredCursor', () => {
+describe('readAnchorCandidate', () => {
   const failing: AnchorBlockReader = {
     getBlock: async () => {
       throw new Error('down');
     },
   };
-  it('uses a known hash without asking, else one read', async () => {
+  it('uses the settled head\'s hash when the window ends there, else one read', async () => {
     expect(
-      await resolveAnchoredCursor({ client: failing, scanFrom: 1n, target: 5n, known: new Map([[5n, '0x5']]), describe: describe0 }),
-    ).toEqual({ block: 5n, hash: '0x5' });
+      await readAnchorCandidate({ client: failing, windowTo: 5n, head: 5n, headHash: '0x5', describe: describe0 }),
+    ).toEqual({ anchor: { block: 5n, hash: '0x5' } });
     const answering: AnchorBlockReader = { getBlock: async ({ blockNumber }) => ({ number: blockNumber, hash: '0xr' }) };
     expect(
-      await resolveAnchoredCursor({ client: answering, scanFrom: 1n, target: 5n, known: new Map(), describe: describe0 }),
-    ).toEqual({ block: 5n, hash: '0xr' });
+      await readAnchorCandidate({ client: answering, windowTo: 4n, head: 5n, headHash: '0x5', describe: describe0 }),
+    ).toEqual({ anchor: { block: 4n, hash: '0xr' } });
   });
-  it('falls back to the highest known block in the window, or does not advance', async () => {
-    const known = new Map([
-      [0n, '0x0'],
-      [3n, '0x3'],
-      [2n, '0x2'],
-    ]);
-    expect(await resolveAnchoredCursor({ client: failing, scanFrom: 1n, target: 5n, known, describe: describe0 })).toMatchObject({
-      block: 3n,
-      hash: '0x3',
-      reason: 'down',
-    });
+  it('a failed read gives a reason, never an anchor', async () => {
     expect(
-      await resolveAnchoredCursor({ client: failing, scanFrom: 1n, target: 5n, known: new Map([[0n, '0x0']]), describe: describe0 }),
-    ).toBeNull();
-    expect(await resolveAnchoredCursor({ client: failing, scanFrom: 6n, target: 5n, known, describe: describe0 })).toBeNull();
+      await readAnchorCandidate({ client: failing, windowTo: 4n, head: 5n, headHash: '0x5', describe: describe0 }),
+    ).toEqual({ reason: 'down' });
+    expect(
+      await readAnchorCandidate({ client: failing, windowTo: 5n, head: 5n, headHash: undefined, describe: describe0 }),
+    ).toEqual({ reason: 'down' });
   });
 });
 

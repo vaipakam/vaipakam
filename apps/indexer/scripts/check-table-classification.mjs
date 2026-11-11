@@ -400,6 +400,63 @@ if (badKeep.length > 0) {
   process.exit(1);
 }
 
+// ── Reorg-rebuild keep list (#3411, Codex #3528 r1) ──────────────────
+// A reorg rebuild replays the SAME Diamond, so it keeps every chain-scoped
+// row born off chain — the restore treatment, applied to one chain. The
+// runtime list (`src/reorgRebuildKeep.json`) is held EQUAL to the
+// classification here, so a born-off-chain or hybrid table added tomorrow
+// cannot be wiped by a rebuild without someone deciding it:
+//   - every chain-scoped born-off-chain table is in the Diamond keep list or
+//     in `keep`, and `keep` names nothing else;
+//   - every chain-scoped hybrid table is in `project`, `project` names
+//     nothing else, and its `set` equals the restore converter's projection.
+const REBUILD_KEEP_PATH = join(INDEXER_DIR, 'src', 'reorgRebuildKeep.json');
+const rebuildKeep = JSON.parse(readFileSync(REBUILD_KEEP_PATH, 'utf8'));
+{
+  const problems = [];
+  const keepEntries = rebuildKeep && typeof rebuildKeep.keep === 'object' && rebuildKeep.keep !== null ? rebuildKeep.keep : null;
+  const projEntries =
+    rebuildKeep && typeof rebuildKeep.project === 'object' && rebuildKeep.project !== null ? rebuildKeep.project : null;
+  if (!keepEntries || !projEntries) {
+    problems.push('expected { keep: { table: reason }, project: { table: { reason, set } } }');
+  } else {
+    const classOf = (t) => (Object.hasOwn(CLASSIFICATION, t) ? CLASSIFICATION[t].class : undefined);
+    for (const t of [...chainScopedFromDdl].sort()) {
+      const c = classOf(t);
+      if (c === 'born-off-chain' && !Object.hasOwn(epochKeep.keep, t) && !Object.hasOwn(keepEntries, t)) {
+        problems.push(`${t} is born off chain and chain-scoped: a rebuild would delete it; add it to keep`);
+      }
+      if (c === 'hybrid' && !Object.hasOwn(projEntries, t)) {
+        problems.push(`${t} is hybrid and chain-scoped: a rebuild would delete it; add it to project`);
+      }
+    }
+    for (const [t, reason] of Object.entries(keepEntries)) {
+      if (!chainScopedFromDdl.has(t)) problems.push(`keep.${t}: no such table with a chain_id column`);
+      else if (classOf(t) !== 'born-off-chain') problems.push(`keep.${t}: only born-off-chain tables belong here (class ${classOf(t)})`);
+      if (Object.hasOwn(epochKeep.keep, t)) problems.push(`keep.${t}: already kept on every Diamond change; remove it here`);
+      if (typeof reason !== 'string' || reason.trim() === '') problems.push(`keep.${t}: needs a reason`);
+    }
+    for (const [t, p] of Object.entries(projEntries)) {
+      if (!chainScopedFromDdl.has(t)) problems.push(`project.${t}: no such table with a chain_id column`);
+      else if (classOf(t) !== 'hybrid') problems.push(`project.${t}: only hybrid tables belong here (class ${classOf(t)})`);
+      if (!p || typeof p.reason !== 'string' || p.reason.trim() === '') problems.push(`project.${t}: needs a reason`);
+      const set = p && typeof p.set === 'object' && p.set !== null ? p.set : null;
+      const restore = Object.hasOwn(RESTORE_PROJECTIONS, t) ? RESTORE_PROJECTIONS[t]({}) : null;
+      if (!set || Object.keys(set).length === 0) problems.push(`project.${t}: needs a non-empty set`);
+      else if (!restore || JSON.stringify(Object.entries(set).sort()) !== JSON.stringify(Object.entries(restore).sort())) {
+        problems.push(`project.${t}: set must equal the restore converter's RESTORE_PROJECTIONS.${t}`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    console.error(
+      `✗ ${relative(REPO_ROOT, REBUILD_KEEP_PATH)} does not match the classification:\n` +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    );
+    process.exit(1);
+  }
+}
+
 // ── Extract written tables from Worker sources ────────────────────────
 // SQL lives in STRING/TEMPLATE LITERALS, so extraction runs over
 // string contents only — comments and identifier-position code never
