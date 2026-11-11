@@ -39,6 +39,21 @@
         "namespace_id": "3001",
         "simple": { "limit": 300, "period": 60 },
       },
+      // Per-caller CALL budget (#1283), keyed the same way. The request
+      // budget above counts HTTP requests, so a batch of fifty log scans
+      // cost what one block poll did. This one is charged by the weight of
+      // the calls a request forwards (packages/lib/src/rpcProxyPolicy.ts,
+      // rpcCallWeight): one slot per RPC_PROXY_UNITS_PER_SLOT units, at
+      // least one. A block poll every few seconds takes about 15 slots a
+      // minute, a list page's batched reads a few each, and the widest batch
+      // the proxy accepts (fifty log scans) 20. 3002 is this Worker's second
+      // namespace.
+      {
+        "name": "RPC_CALL_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "3002",
+        "simple": { "limit": 200, "period": 60 },
+      },
     ],
   },
 
