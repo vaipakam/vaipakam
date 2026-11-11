@@ -227,9 +227,6 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   // the smallest part one match may lend, the amount typed staying the
   // whole amount locked.
   const ranged = input.ranged && !named;
-  // #3520: a mode that fills in parts needs a range, so one size shows and
-  // posts all-or-none; a range shows the mode chosen for it.
-  const fillMode: FillMode = shownFillMode(input.fillMode, ranged);
   /** The Full tariff, chosen on either side. */
   const tariffChosen = input.tariff;
   const amountMax = ranged && !lender && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
@@ -241,7 +238,14 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       ? rangeError(amount.value, amountMax.value, collateral.value, floor?.ok ? floor.value : collateral.value)
       : null;
   const partShape = lender && amount?.ok && minPart?.ok ? partError(minPart.value, amount.value) : null;
-  const fillBlock = fillModeBlock(fillMode, ranged, input.expiry);
+  // #3520: a mode that fills in parts needs the smallest amount below the
+  // largest. One size, or a range whose two ends are equal, shows and posts
+  // all-or-none; a real range shows the mode chosen for it.
+  const lowEnd = lender ? minPart : amount;
+  const highEnd = lender ? amount : amountMax;
+  const parted = ranged && !(lowEnd?.ok === true && highEnd?.ok === true && lowEnd.value === highEnd.value);
+  const fillMode: FillMode = shownFillMode(input.fillMode, parted);
+  const fillBlock = fillModeBlock(fillMode, parted, input.expiry);
   // #3358: a price-move guard armed with the post. Only an ERC-20 against
   // ERC-20 offer can carry one; its limit is in the protocol's range.
   const guardTyped = input.guard ? parsePercent(input.guardPercent) : null;
@@ -487,7 +491,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     <fieldset className="choice-group" data-testid="request-fill">
       <legend>{text('request.fillLabel')}</legend>
       {FILL_MODES.map((m) => {
-        const blocked = fillModeBlock(m, ranged, input.expiry);
+        const blocked = fillModeBlock(m, parted, input.expiry);
         return (
           <label key={m} className="choice">
             <input
@@ -508,7 +512,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         </Notice>
       )}
       <p className="tier-b field-hint" data-testid="request-fill-shape">
-        {text(ranged ? 'request.fillAonRange' : named ? 'request.fillOneSizeToken' : 'request.fillOneSize')}
+        {text(parted ? 'request.fillAonRange' : ranged ? 'request.fillRangeOneSize' : named ? 'request.fillOneSizeToken' : 'request.fillOneSize')}
       </p>
       <WhyLink summaryKey={k.fillSummary} detailKey={k.fillWhy} />
     </fieldset>
