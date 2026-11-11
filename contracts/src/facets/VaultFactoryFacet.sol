@@ -97,6 +97,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     error AlreadyInitialized();
     error UpgradeFailed();
     error ProxyCallFailed(string reason);
+    /// @notice #3539 — an ERC-721 transfer into `vault` returned without the
+    ///         vault owning `tokenId` afterwards.
+    error NftNotDelivered(address asset, uint256 tokenId, address vault);
+    /// @notice #3539 — an ERC-1155 transfer into a vault raised its balance by
+    ///         `received` instead of the `quantity` asked for.
+    error NftShortDelivery(address asset, uint256 tokenId, uint256 quantity, uint256 received);
     error NoVault();
     /// @dev #902 — {vaultSetRentalUser} was asked to set the renter of an
     ///      ERC-20 loan, which rents nothing.
@@ -539,7 +545,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
         IERC721(nftContract).safeTransferFrom(from, proxy, tokenId);
-        if (IERC721(nftContract).ownerOf(tokenId) != proxy) revert ProxyCallFailed("Deposit ERC721 failed");
+        if (IERC721(nftContract).ownerOf(tokenId) != proxy) revert NftNotDelivered(nftContract, tokenId, proxy);
         LibVaipakam.recordVaultDeposit(user, nftContract, tokenId, 1);
     }
 
@@ -565,9 +571,8 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address proxy = getOrCreateUserVault(user);
         uint256 before = IERC1155(nftContract).balanceOf(proxy, tokenId);
         IERC1155(nftContract).safeTransferFrom(from, proxy, tokenId, amount, "");
-        if (IERC1155(nftContract).balanceOf(proxy, tokenId) - before != amount) {
-            revert ProxyCallFailed("Deposit ERC1155 failed");
-        }
+        uint256 received = IERC1155(nftContract).balanceOf(proxy, tokenId) - before;
+        if (received != amount) revert NftShortDelivery(nftContract, tokenId, amount, received);
         LibVaipakam.recordVaultDeposit(user, nftContract, tokenId, amount);
     }
 

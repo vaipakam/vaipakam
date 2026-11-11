@@ -286,7 +286,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestVaultBeaconPayout.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
 

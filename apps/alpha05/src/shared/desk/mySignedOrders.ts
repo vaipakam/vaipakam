@@ -50,6 +50,12 @@ export interface MySignedOrders {
 
 /** One book row as an order of `signer`'s on `market`, or null. */
 export function mySignedOrderFrom(row: unknown, signer: Hex, market: SignedMarket): MySignedOrder | null {
+  return signedOrderRowFrom(row, market, signer);
+}
+
+/** One book row as an order on `market`, or null: of `signer`'s only, or
+ *  of any maker's when `signer` is null. */
+export function signedOrderRowFrom(row: unknown, market: SignedMarket, signer: Hex | null): MySignedOrder | null {
   if (row === null || typeof row !== 'object') return null;
   const r = row as Record<string, unknown>;
   if (typeof r.orderHash !== 'string' || !HASH.test(r.orderHash)) return null;
@@ -59,7 +65,7 @@ export function mySignedOrderFrom(row: unknown, signer: Hex, market: SignedMarke
   if ('error' in parsed) return null;
   const order = parsed.order;
   if (orderHashOf(order) !== r.orderHash) return null;
-  if (order.signer !== signer.toLowerCase()) return null;
+  if (signer !== null && order.signer !== signer.toLowerCase()) return null;
   if (order.lendingAsset !== market.lending.toLowerCase() || order.collateralAsset !== market.collateral.toLowerCase()) return null;
   if (order.durationDays !== String(market.durationDays)) return null;
   return { orderHash: r.orderHash as Hex, order };
@@ -126,10 +132,12 @@ export async function readSignedStandings(
   c: PublicClient,
   diamond: Hex,
   orders: readonly MySignedOrder[],
+  /** The block to read at; the latest when not given. */
+  block?: { number: bigint; timestamp: bigint },
 ): Promise<{ chainNow: number; standings: Map<Hex, SignedStanding>; filled: Map<Hex, bigint> }> {
-  const block = await c.getBlock({ blockTag: 'latest' });
-  const at = { blockNumber: block.number };
-  const chainNow = Number(block.timestamp);
+  const read = block ?? (await c.getBlock({ blockTag: 'latest' }));
+  const at = { blockNumber: read.number };
+  const chainNow = Number(read.timestamp);
   const ask = <T>(p: Promise<unknown>) => answerOrNull(p as Promise<T>);
   const rows = await Promise.all(
     orders.map(async (o) => {

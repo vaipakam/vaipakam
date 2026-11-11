@@ -2045,6 +2045,7 @@
         "depthLoading": "Todavía se están cargando las ofertas firmadas; por ahora las tasas que se muestran provienen solo de ofertas publicadas en la blockchain, así que puede que a las mejores tasas y a la tasa media les falten algunas ofertas firmadas.",
         "depthUnavailable": "No pudimos cargar las ofertas firmadas desde el servicio del libro de ofertas, así que solo se muestran las ofertas publicadas en la blockchain. Puede que a las mejores tasas y a la tasa media les falten algunas ofertas firmadas.",
         "depthPartial": "Puede que no se hayan cargado todas las ofertas firmadas, así que en las tasas e importes mostrados (incluso en la mejor tasa) y en los totales acumulados puede faltar alguna.",
+        "depthRebuilding": "El servicio del libro de ofertas está volviendo a comprobar algunas ofertas firmadas con la cadena de bloques, porque la cadena de bloques reemplazó algunos bloques recientes. Hasta que termine, esas ofertas quedan fuera, así que en las tasas, importes y totales acumulados mostrados puede faltar alguna.",
         "depthUnconfigured": "Las ofertas firmadas no están disponibles en esta implementación (su servicio del libro de ofertas no está configurado), así que solo se muestran las ofertas publicadas en la blockchain.",
         "rangedBadgeTooltip": "Una oferta firmada con un rango de tamaño. Sigue contando, pero solo el emparejamiento automático puede tomarla, por partes, y solo mientras esté activado; no se puede tomar entera de una vez.",
         "fill": "Llenar",
@@ -2234,7 +2235,8 @@
         "signedCancelling": "Cancelando…",
         "signedCancelNote": "Publicar fue gratis, pero cancelar requiere una transacción con comisión de red: es la única forma de retirar una firma que el servicio de ofertas ya tiene.",
         "signedCancelled": "Oferta firmada cancelada.",
-        "signedTruncated": "Tienes más ofertas firmadas para este par de las que podemos mostrar a la vez — no están todas."
+        "signedTruncated": "Tienes más ofertas firmadas para este par de las que podemos mostrar a la vez — no están todas.",
+        "signedReplayPending": "El servicio del libro de ofertas está volviendo a comprobar esta oferta con la cadena de bloques, así que por ahora no se muestra a otros y el importe de arriba puede haberse tomado ya. Cualquiera que tenga su firma todavía puede tomarla, así que todavía puedes cancelarla."
       },
       "positions": {
         "loading": "Cargando tus posiciones…",

@@ -1400,6 +1400,30 @@ jobs:
         run: bash contracts/script/run-regression.test.sh
 
   # -------------------------------------------------------------------
+  # test-treasury-sync — a test changes the Diamond's treasury only through
+  # LibTestVaultBeacon.setTreasury, which also moves the vault code's fixed
+  # treasury endpoint (#3431). A raw setter call leaves the vaults refusing
+  # fee movements to the new treasury, and that shows up only in the
+  # top-level suites, which the per-PR contracts lane does not run. Bash and
+  # grep only, so it runs on every PR.
+  test-treasury-sync:
+    name: test treasury sync guard (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: The guard's own cases
+        run: bash contracts/script/check-test-treasury-sync.test.sh
+
+      - name: Every test treasury change moves the vault code with it
+        run: bash contracts/script/check-test-treasury-sync.sh
+
+  # -------------------------------------------------------------------
   # abi-drift — the classifier predeploy-check.sh step 4 uses to tell a
   # keeper-bot ABI whose functions changed (a warning: the bot's calls may
   # not match) from one whose error/event list alone changed (a note: only

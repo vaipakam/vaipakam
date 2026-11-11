@@ -52,9 +52,14 @@ evidence that the migration has completed.
   works, rather than finding out from each action's log line. The alert names
   only the kind of problem, never the key. Nothing is said while the keeper is
   switched off.
-- Only one keeper runs for a signing key. A shared lease prevents another
+- Only one keeper runs for a signing key. A lease prevents another
   instance from starting ticks while the first owns the lease. A missing
   identity or unreadable lease holds the tick.
+- The lease is kept where only the keeper can write it, never in a store the
+  indexer, the agent or the app can write: a service that could write the
+  lease could stop every keeper action, liquidations included, by holding it.
+  A lease that claims to run longer than any keeper ever takes it for is not
+  honoured; the next claim takes it.
 - Lease time is judged by the database's clock. Renewal occurs every minute,
   including while a prior pass is running; an unrenewed lease expires after
   ten minutes. A renewal failure is logged and retried. The lease cannot
@@ -101,6 +106,22 @@ evidence that the migration has completed.
   time would otherwise run out of gas at the bare estimate. Unused gas is
   not charged; the keeper's account must still hold the fee for the higher
   limit for a send to be accepted.
+- Before the keeper's key signs any transaction, the network it is signing
+  for and the fees the node proposed are checked against figures the node
+  does not supply. The transaction must be for the network the keeper was
+  configured to act on, and its fee per gas, its tip and the most its fee can
+  cost (gas limit times fee per gas) must each be at or under that network's
+  ceiling. Every network the keeper runs on has built-in ceilings well above
+  what it charges in a busy hour; an operator may set others per network. A
+  transaction outside them is not signed and not sent, its transaction
+  number is released for the next send, and operators are alerted with the
+  action and the figure that was over (at most once per network every ten
+  minutes), so a genuine fee spike above a ceiling is a decision to raise
+  it, never a silent stall. A ceiling that cannot be read holds every send on
+  that network and says why. The value a transaction carries is not part of
+  this bound: the keeper chooses it, and a paid cross-chain fee has its own
+  ceiling. A rollup's charge for posting data to its parent chain is levied
+  by the chain outside the transaction's fields and is not bounded here.
 - Every pass has a finite deadline. Ordinarily it is the scheduled minute
   plus the pass's cadence, less a thirty-second margin. A send whose queue
   slot or preparation reaches that deadline is deferred without broadcast.

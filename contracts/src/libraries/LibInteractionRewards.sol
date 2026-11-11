@@ -7066,17 +7066,18 @@ library LibInteractionRewards {
         // cap (Codex #1371 r5). A stamped zero-`C*` loan therefore falls through
         // and is capped to ~0; only a truly missing stamp skips.
         if (s.feeEntitlementByLoanId[loanId].openDays == 0) {
-            // Unstamped (mirror / dark-era / pre-cutover) ⇒ no loan-side cap here
-            // (never zeroed — Codex #1371 r1). ARMING PRECONDITION (`cStar`
-            // backfill gate): `D*` must not be armed while any reward-eligible
-            // CANONICAL loan is unstamped, because #1008 also retires on armed
-            // days ({snapshotDayCapThreshold}) and this skip would then leave it
-            // uncapped (Codex #1371 r3). On a fresh (pre-live) deploy that holds
-            // from genesis; a post-launch cutover backfills open loans first.
-            // MIRROR-chain loans (never stamped) are bounded by the D1
-            // (user, side, day) share cap on their local claim, not here. The
-            // arming-time enforcement is a deploy-assert (PR-9 #1356) coupled
-            // with the joint cutover.
+            // Unstamped (dark-era / pre-cutover / rental / sale vehicle) ⇒ no
+            // loan-side cap here (never zeroed — Codex #1371 r1). ARMING
+            // PRECONDITION (`cStar` backfill gate): `D*` must not be armed while
+            // any reward-eligible loan is unstamped, because #1008 also retires
+            // on armed days ({snapshotDayCapThreshold}) and this skip would then
+            // leave it uncapped (Codex #1371 r3). Since #3360 every ERC-20
+            // origination is stamped on every chain, mirrors included, so on a
+            // fresh (pre-live) deploy that holds from genesis; a post-launch
+            // cutover backfills open loans first. On a mirror the VPFI this cap
+            // trims is never drawn from its day's transport batch and returns
+            // to Base once the day is proven closed. The arming-time
+            // enforcement is LaunchGate's reward-cap check (PR-9 #1356, #3360).
             return (userSplit, recycleRelease, c);
         }
         uint8 side = uint8(e.side);

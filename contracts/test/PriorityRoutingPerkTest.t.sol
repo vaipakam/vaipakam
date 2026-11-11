@@ -80,7 +80,7 @@ contract PriorityRoutingPerkTest is SetupTest {
     function setUp() public {
         setupHelper();
         solver = makeAddr("prioritySolver");
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         // #3431 — the vault code fixes its treasury; bring it to this one
         // (test convenience), or every treasury leg of a fill is refused.
         LibTestVaultBeacon.sync(address(diamond));

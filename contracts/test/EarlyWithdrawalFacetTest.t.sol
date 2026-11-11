@@ -450,7 +450,7 @@ contract EarlyWithdrawalFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
 

@@ -14,12 +14,12 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title RewardDeliveredChokepointTest
@@ -67,7 +67,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         uint256 have = vpfi.balanceOf(address(this));
         if (DIAMOND_SEED > have) vpfi.mint(address(this), DIAMOND_SEED - have);
         vpfi.transfer(address(diamond), DIAMOND_SEED);
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         alice = makeAddr("alice");
         _facet().setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 5 days);

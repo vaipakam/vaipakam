@@ -201,7 +201,9 @@ liquidations, double `triggerDefault`s, and transaction-number collisions on
 the one key. Two machines would do the same.
 
 **The lease.** Every tick, on the Worker or a machine, first claims one row in
-the shared database (`keeper_runner_lease`) under its `KEEPER_RUNNER_ID`. The
+the keeper's private database (`keeper_runner_lease` in `vaipakam-keeper-db`,
+since #1722; the indexer and the agent have no binding to it, so neither can
+hold the lease to stop the keeper) under its `KEEPER_RUNNER_ID`. The
 Worker's is `cloudflare-worker` (set in `apps/keeper/wrangler.jsonc`); a
 machine's is `host:<host name>` unless its env file sets another. Which runner
 holds the lease, and until when, is decided by the database's clock, never a
@@ -211,7 +213,9 @@ runner holds an unexpired lease, the tick runs nothing and logs `tick
 declined: runner "<name>" holds the one-runner lease until <time>`. A tick
 that cannot claim it at all (no runner id, the database unreachable) declines
 too. A holder renews every minute, and a lease it stops renewing expires after
-10 minutes, so a dead machine hands over by itself.
+10 minutes, so a dead machine hands over by itself. A lease whose expiry lies
+further out than 10 minutes is one no keeper writes, so the next claim takes
+it instead of waiting.
 
 **The schema.** A machine has no deploy step: the update timer's pull and
 restart is the release. So before the lease, each tick checks that every
@@ -318,6 +322,7 @@ a commit. The template documents each line. In short:
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming any pass that alerts here: `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED` or `REWARD_DAY_CLOSE_ENABLED`.
+<<<<<<< HEAD
 - **Private submission (#3240, #3408):** `PRIVATE_TX_RPCS` (a secret) names
   the private submission endpoints per chain, as `<chainId>=<https URL>`
   entries, for example Flashbots Protect on Ethereum. A provider whose private
@@ -361,6 +366,46 @@ a commit. The template documents each line. In short:
   them a later send may hold the nonce; such a send is named in an alert. Which mainnet chains get a private route,
   and which endpoints, is an owner decision recorded in the mainnet checklist
   (#3408: Ethereum and BNB Chain, Polygon PoS before mainnet).
+=======
+- **Private submission (#3240):** `PRIVATE_TX_RPCS` (a secret) names a
+  private submission endpoint per chain, as `<chainId>=<https URL>` entries,
+  for example Flashbots Protect on Ethereum. EVERY transaction the keeper key
+  sends on a named chain is broadcast there, not only sales and liquidations,
+  because the key's sends share one nonce sequence and the chain's ordinary RPC
+  cannot see a private transaction until it is mined. Reads stay on the
+  chain's `RPC_*`. `PRIVATE_TX_FALLBACK_CHAIN_IDS` lists the chains whose
+  private sends may fall back to that RPC when the endpoint refuses or does not
+  answer; the fallback sends the same signed transaction, which then becomes
+  public. A chain not listed has no fallback. Empty settings mean every chain
+  sends publicly. A value the keeper cannot read sends nothing on any chain, so
+  check the `submission routes:` line every tick prints after `chains
+  resolved`: it names each chain's route and the endpoint's provider domain
+  (the last two labels of its host, such as `flashbots.net`), never its URL
+  or a subdomain, either of which can carry an access key. Before each private broadcast the keeper records that nonce, with its own
+  send time, in its private database (`keeper_private_nonce`, keeper migration `0007`), so a
+  restart cannot reuse the nonce of a private transaction still pending; a
+  record it cannot read or write stops that chain's sends. On a private chain
+  a dropped transaction can hold later sends on that chain for up to seven
+  minutes from its own broadcast; the sends behind it keep their own seven. Which mainnet chains get a private route is an owner decision
+  recorded in the mainnet checklist.
+- **Signing ceilings (#3543):** before the keeper key signs anything, the
+  keeper checks that the transaction is for the chain it was configured for
+  (its own chain list, not the RPC's answer) and that the fee fields the RPC
+  proposed are within that chain's ceilings: `GAS_MAX_FEE_PER_GAS_WEI` (fee
+  per gas, or gas price on a legacy chain), `GAS_MAX_PRIORITY_FEE_PER_GAS_WEI`
+  (tip) and `GAS_MAX_TX_FEE_WEI` (gas limit × fee per gas, the most one send
+  can cost). Each is optional, in the `<chainId>=<wei>[,*=<wei>]` form of the
+  CCIP fee ceilings; a chain a variable does not name keeps the built-in
+  figure for that chain (`src/signingGuard.ts`; on Base and Arbitrum 20 gwei,
+  2 gwei tip and 0.01 ETH a send, on BNB 30 gwei and 0.03 BNB). A send outside
+  them is not signed, its nonce is released, the journal has a
+  `[signing-guard]` line, and the ops chat gets `Keeper send held on chain …`
+  naming the action and the figure, at most once per chain every ten
+  minutes. If a real fee spike causes it, raise the ceiling for that chain;
+  if not, suspect the chain's `RPC_*`. A chain with no built-in figure (none
+  of the chains the keeper runs on today) holds every send until each of the
+  three variables names it or carries a `*` entry.
+>>>>>>> e08b2e17d (keeper: check chain id and fees against local ceilings before signing (#3543))
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or

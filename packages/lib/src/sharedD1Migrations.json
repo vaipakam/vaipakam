@@ -83,5 +83,7 @@
   "0084_alert_channel_changes.sql",
   "0085_position_flow_moves.sql",
   "0086_notifications_unread_index.sql",
-  "0087_asset_rankings.sql"
+  "0087_asset_rankings.sql",
+  "0088_indexer_chain_anchor.sql",
+  "0089_signed_offer_replay_pending.sql"
 ]

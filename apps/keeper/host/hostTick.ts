@@ -82,8 +82,9 @@ export function createHostTick(deps: HostTickDeps) {
 export function createHostLeaseRenewal(deps: Pick<HostTickDeps, 'vars' | 'log' | 'fetchFn'>) {
   return async (): Promise<void> => {
     const { env } = buildHostEnv(deps.vars(), deps.fetchFn);
-    if (env.DB === undefined) return;
-    const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID);
+    // #1722 — the lease lives in the keeper's private database.
+    if (env.KEEPER_DB === undefined) return;
+    const lease = await claimRunnerLease(env.KEEPER_DB, env.KEEPER_RUNNER_ID);
     if (!lease.held) deps.log(`[keeper-host] lease not renewed during a long tick: ${lease.reason}`);
   };
 }

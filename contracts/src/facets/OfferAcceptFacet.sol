@@ -19,8 +19,6 @@ import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -1366,8 +1364,8 @@ contract OfferAcceptFacet is
                 // The lender (msg.sender/acceptor) must custody the NFT in their vault
                 // for the rental duration, matching the Lender-offer model.
                 if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-                    _pullNftIntoVault(
-                        offer.assetType, offer.lendingAsset, lender, lenderVault, offer.tokenId, offer.quantity
+                    LibFacet.depositNftToVault(
+                        offer.assetType, offer.lendingAsset, lender, offer.tokenId, offer.quantity
                     );
                 }
             }
@@ -1415,11 +1413,10 @@ contract OfferAcceptFacet is
                         );
                     }
                 } else {
-                    _pullNftIntoVault(
+                    LibFacet.depositNftToVault(
                         offer.collateralAssetType,
                         offer.collateralAsset,
                         borrower,
-                        borrowerVault,
                         offer.collateralTokenId,
                         offer.collateralQuantity
                     );
@@ -1487,8 +1484,8 @@ contract OfferAcceptFacet is
         // (acceptor).
         //
         // Invoke the fee-entitlement facet, which stamps the loan-side reward
-        // cap and charges any Full tariff — for every ERC-20 origination off a
-        // reward mirror (#3360), and on a mirror only for a Full opt-in (see
+        // cap and charges any Full tariff — for every ERC-20 origination that
+        // is not a sale-vehicle accept, on every chain (#3360; see
         // {_fullTariffShouldRun}). The predicate is in a helper so its storage
         // reads stay OFF this at-viaIR-budget frame.
         if (_fullTariffShouldRun(offerId)) {
@@ -1702,72 +1699,32 @@ contract OfferAcceptFacet is
     ///      sale-vehicle accept already paid its LIF and stamped its cap at
     ///      origination).
     ///
-    ///      #3360 — on every chain that is not a reward MIRROR, it runs for
-    ///      EVERY such origination, whatever the tariff switch says and whether
-    ///      or not anyone opted into Full. A non-Full party resolves to
-    ///      HoldOnly / None and is charged nothing, but the loan is stamped, so
-    ///      the loan-side reward cap binds on armed days. Skipping it for a
-    ///      plain accept while the switch was off left the loan unstamped, and
-    ///      an unstamped loan is UNCAPPED on armed days (`_loanSideCapCompute`),
-    ///      bounded only by the per-address daily share cap that a second
-    ///      wallet walks around: self-loan reward farming. The arming rule
-    ///      ("D* must not be armed while any reward-eligible canonical loan is
-    ///      unstamped") holds by construction from genesis instead of by
-    ///      backfill.
-    ///
-    ///      On a MIRROR the loan-side cap is deliberately inert today: a mirror
-    ///      claim is funded from Base against a per-entry commitment that
-    ///      assumes no loan-side trim (#1222 B2-d), so stamping there changes
-    ///      cross-chain settlement and waits on its own design (#3360 mirror
-    ///      decision). There it keeps the old rule: it runs when a party
-    ///      presented a Full opt-in, so that opt-in fails closed / downgrades
-    ///      per the party's signed terms (kill-switch-first, rev-15 §4). Kept
-    ///      in its own frame so the compound read set stays off the
-    ///      at-viaIR-budget `_acceptOffer` path.
+    ///      #3360 — it runs for EVERY such origination, on every chain,
+    ///      whatever the tariff switch says and whether or not anyone opted
+    ///      into Full. A non-Full party resolves to HoldOnly / None and is
+    ///      charged nothing, but the loan is stamped, so the loan-side reward
+    ///      cap binds on armed days. An unstamped loan is UNCAPPED on armed
+    ///      days (`_loanSideCapCompute`), bounded only by the per-address daily
+    ///      share cap that a second wallet walks around: self-loan reward
+    ///      farming. Part A (PR #3514) did this off a reward mirror; part B
+    ///      extends it to mirrors (owner decision 2026-11-11). A mirror claim
+    ///      draws from its day's transport batch only what it pays, so the
+    ///      VPFI the cap trims stays in the batch and goes back to the Base
+    ///      that sent it once the day is proven closed
+    ///      (`RepatriationFacet.returnClosedDayRemainder`). A Full opt-in on a
+    ///      mirror still fails closed or downgrades per the party's signed
+    ///      terms, because the call now always runs (the kill-switch-first
+    ///      rule, rev-15 §4; #1369's matched-lender authorization is read
+    ///      inside `chargeFullTariff`). Kept in its own frame so its reads
+    ///      stay off the at-viaIR-budget `_acceptOffer` path.
     function _fullTariffShouldRun(uint256 offerId)
         private
         view
         returns (bool)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.assetType != LibVaipakam.AssetType.ERC20) return false;
-        if (s.saleOfferToLoanId[offerId] != 0) return false;
-        if (!LibVaipakam.isMirrorRewardChain(s)) return true;
-        if (
-            LibVaipakam.cfgFeeEntitlementEnabled() ||
-            (s.acceptAckActive && s.acceptAckAcceptorFull) ||
-            offer.creatorFull
-        ) return true;
-
-        // #1369 — a matched fill accepts the BORROWER offer, so the lender's
-        // authorization lives on THEIR offer and none of the three tests
-        // above can see it. `chargeFullTariff` was taught to read it; this
-        // predicate decides whether that function is entered at all, so
-        // leaving it behind would let the two DISAGREE about where lender
-        // auth lives — and the disagreement is only visible in the
-        // configuration that matters most.
-        //
-        // Since #3360 this is reached only on a reward MIRROR (every other
-        // chain returned true above), where the master switch is permanently
-        // OFF because it requires the canonical VPFI chain. It binds there:
-        // a lender who armed Full
-        // with `allowFullDowngrade == false` must have the fill REVERT
-        // `FeeEntitlementDisabled` (rev-14 kill-switch rule; silently
-        // continuing as non-Full is named Forbidden). Skipping the tariff
-        // call entirely is exactly that forbidden silent continue, and it
-        // would make the fail-closed guarantee depend on which venue filled
-        // the offer.
-        //
-        // Guarded on `!isLenderOffer` to mirror `chargeFullTariff` exactly:
-        // a matched LENDER offer already resolves through `offer.creatorFull`
-        // above, so the two helpers cannot drift on which side this covers.
-        uint256 lenderAuthOfferId = s.matchLenderAuthOfferId;
-        return
-            s.matchOverride.active &&
-            offer.offerType != LibVaipakam.OfferType.Lender &&
-            lenderAuthOfferId != 0 &&
-            s.offers[lenderAuthOfferId].creatorFull;
+        if (s.offers[offerId].assetType != LibVaipakam.AssetType.ERC20) return false;
+        return s.saleOfferToLoanId[offerId] == 0;
     }
 
     /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
@@ -2048,26 +2005,5 @@ contract OfferAcceptFacet is
         uint256 lifEstimate;
         uint256 collateralResidualRefund;
         AcceptError errorCode;
-    }
-
-
-    /// @dev Pull a rental or collateral NFT from `owner`'s wallet into
-    ///      `owner`'s vault (the Diamond as approved operator) and record it
-    ///      in the tracked ledger, which bounds every vault withdrawal.
-    function _pullNftIntoVault(
-        LibVaipakam.AssetType kind,
-        address asset,
-        address owner,
-        address vault,
-        uint256 tokenId,
-        uint256 quantity
-    ) private {
-        if (kind == LibVaipakam.AssetType.ERC721) {
-            IERC721(asset).safeTransferFrom(owner, vault, tokenId);
-            quantity = 1;
-        } else {
-            IERC1155(asset).safeTransferFrom(owner, vault, tokenId, quantity, "");
-        }
-        LibVaipakam.recordVaultDeposit(owner, asset, tokenId, quantity);
     }
 }

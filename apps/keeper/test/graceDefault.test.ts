@@ -40,6 +40,7 @@ import {
   type GraceLoan,
 } from '../src/graceDefault';
 import type { ServerOrchestrationResult } from '../src/serverQuotes';
+import { PREPARED_FEES_84532 } from './helpers/preparedFees';
 
 // Every send asserts the epoch fence (#2569 r4): armed here as the tick arms it.
 beforeEach(() => armHeldFence());
@@ -185,7 +186,7 @@ function harness(scene: Scene) {
     },
   } as unknown as PublicClient;
   const wallet = {
-    account: { address: KEEPER },
+    account: { address: KEEPER, type: 'local', signTransaction: async () => SIGNED },
     // The submission slot (#2486) reads the pending nonce first.
     request: async ({ method }: { method: string }) => {
       if (method === 'eth_getTransactionCount') return '0x0';
@@ -195,9 +196,8 @@ function harness(scene: Scene) {
     // recorded at the prepare, decoded, so tests read it like a call.
     prepareTransactionRequest: async (args: { data: Hex }) => {
       writes.push(decodeFunctionData({ abi: DefaultedFacetABI as Abi, data: args.data }));
-      return args;
+      return { ...args, ...PREPARED_FEES_84532 };
     },
-    signTransaction: async () => SIGNED,
     sendRawTransaction: async () => {
       if (scene.broadcast === 'lost') throw new Error('request timed out');
       if (scene.broadcast === 'refused') {

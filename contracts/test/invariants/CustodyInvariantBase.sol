@@ -80,9 +80,7 @@ abstract contract CustodyInvariantBase is SetupTest {
         _deployCustodyIntentRig();
         ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
         _deployCustodyBackstop();
-        AdminFacet(address(diamond)).setTreasury(treasuryEOA);
-        // #3431 — the vault code fixes the treasury (test convenience).
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEOA);
         sanctionsList = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctionsList));
         _onboardCustodyActors();

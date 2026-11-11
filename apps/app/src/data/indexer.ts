@@ -778,6 +778,12 @@ export interface IndexedSignedOffer {
   expiresAt: number;
   /** Signature validity deadline, unix seconds; 0 = no deadline. */
   deadline: number;
+  /** #3411 — present (true) only in a signer-scoped read, while a reorg
+   *  rebuild of the offer book is re-reading this order's fills and
+   *  cancellation from the chain: its `status` and `filledAmount` are not
+   *  yet known, so it is not offered to takers, but its signature is still
+   *  valid and the maker can still cancel it. */
+  replayPending?: boolean;
 }
 
 export interface SignedOffersBook {
@@ -787,6 +793,11 @@ export interface SignedOffersBook {
    *  depth was dropped. Optional so a not-yet-redeployed Worker still
    *  parses. */
   truncated?: boolean;
+  /** #3411 — how many of this market's signed offers a reorg rebuild is
+   *  re-reading from the chain: left out of the shared book until it has
+   *  (listed, flagged `replayPending`, in a signer-scoped read). Optional
+   *  so an older Worker still parses. */
+  awaitingReplay?: number;
 }
 
 /** The ACTIVE, unexpired signed book for one (pair, tenor) market. All

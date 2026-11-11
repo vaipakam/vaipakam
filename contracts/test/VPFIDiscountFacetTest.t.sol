@@ -28,7 +28,6 @@ import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -100,8 +99,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // Point the protocol's treasury at a real address so the yield-fee /
         // LIF treasury legs don't clash with the diamond balance assertions.
         treasuryRecipient = makeAddr("treasury");
-        AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryRecipient);
 
         // Deploy VPFI token behind an ERC1967 proxy (UUPS).
         VPFIToken impl = new VPFIToken();

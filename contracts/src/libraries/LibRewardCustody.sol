@@ -2203,6 +2203,50 @@ library LibRewardCustody {
         if (!s.transportBatches[batchId].released) {
             revert IVaipakamErrors.TransportBatchNotReleased(packetHash, batchId);
         }
+        _debitRemainder(s, batchId, amount);
+    }
+
+    /// @notice #3360 part B — the KEEPER return's take: step a batch's parked
+    ///         remainder down by `amount` for a return to the packet's issuer,
+    ///         gated on the day's CLOSURE rather than on the operator's
+    ///         acknowledgment.
+    /// @dev    Owner decision 2026-11-11: a settled day's leftover goes home by
+    ///         a keeper, with no operator step. The acknowledgment stays the
+    ///         gate for CLASSIFICATION ({takeFromReleasedRemainder}), whose
+    ///         value stays on this chain and is re-typed, which is the
+    ///         operator's disposition (Codex #2232 r7). A return disposes of
+    ///         nothing locally: the value leaves untyped to the one chain that
+    ///         sent it, which credits it to its recycle bucket. What makes it
+    ///         safe is the day's closure proof ({LibRewardClosure}), which is
+    ///         irreversible and final: every obligation covering the day has
+    ///         terminated and no later write can land on it, so nothing on
+    ///         this chain can draw on the remainder again. Parking already
+    ///         requires that proof; it is checked here too so this take can
+    ///         never be reached on a remainder parked any other way.
+    ///
+    ///         The debit is the same one rule {takeFromReleasedRemainder}
+    ///         applies ({_debitRemainder}), so the remainder's conservation
+    ///         identity holds whichever gate let the value out.
+    function takeFromClosedRemainderForReturn(
+        LibVaipakam.Storage storage s,
+        bytes32 packetHash,
+        uint256 amount
+    ) internal {
+        bytes32 batchId = s.ingressPackets[packetHash].batchId;
+        LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
+        if (batchId == bytes32(0) || rem.batchId == bytes32(0)) {
+            revert IVaipakamErrors.TransportRemainderNotParked(batchId);
+        }
+        if (!s.dayObligationsClosed[rem.dayId]) {
+            revert IVaipakamErrors.TransportDayNotClosed(batchId, rem.dayId);
+        }
+        _debitRemainder(s, batchId, amount);
+    }
+
+    /// @dev The ONE debit of a parked remainder, for both exits: refuses a
+    ///      take above what it holds, and records the exit (`debited`) as well
+    ///      as the new balance.
+    function _debitRemainder(LibVaipakam.Storage storage s, bytes32 batchId, uint256 amount) private {
         LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
         uint256 available = rem.amount;
         if (amount > available) {

@@ -27,10 +27,11 @@ import {
 import type { Env } from '../src/env';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
-const MIGRATION_0033 = readFileSync(
-  new URL('../migrations/0033_signed_offer_book.sql', import.meta.url),
-  'utf8',
-);
+// With 0089's reorg-rebuild column, which the book's readers filter on (#3411).
+const MIGRATION_0033 =
+  readFileSync(new URL('../migrations/0033_signed_offer_book.sql', import.meta.url), 'utf8') +
+  '\n' +
+  readFileSync(new URL('../migrations/0089_signed_offer_replay_pending.sql', import.meta.url), 'utf8');
 // #1270 — the market_summary table + backfill the route now reads.
 const MIGRATION_0037 = readFileSync(
   new URL('../migrations/0037_market_summary.sql', import.meta.url),

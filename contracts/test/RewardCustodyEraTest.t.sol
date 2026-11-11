@@ -5,7 +5,6 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -26,6 +25,7 @@ import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol"
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @title RewardCustodyEraTest — slice 4 PR C-1 (#1566): the custody era
 ///        registry and the carry-forward at a role change.
@@ -60,7 +60,7 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         vpfi = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         launch = block.timestamp;
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(launch);
         vm.warp(block.timestamp + 5 days);

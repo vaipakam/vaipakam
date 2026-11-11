@@ -464,10 +464,11 @@ describe('POST /signed-offers — static cadence gates (Codex #1145 r4)', () => 
 // database created from the REAL migration 0033 DDL — which also pins
 // that the migration (incl. the two per-side price indexes) parses.
 
-const MIGRATION_0033 = readFileSync(
-  new URL('../migrations/0033_signed_offer_book.sql', import.meta.url),
-  'utf8',
-);
+// With 0089's reorg-rebuild column, which the book's readers filter on (#3411).
+const MIGRATION_0033 =
+  readFileSync(new URL('../migrations/0033_signed_offer_book.sql', import.meta.url), 'utf8') +
+  '\n' +
+  readFileSync(new URL('../migrations/0089_signed_offer_replay_pending.sql', import.meta.url), 'utf8');
 const LEND = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const COLL = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const DAYS = 30;
@@ -484,6 +485,8 @@ interface SeedRow {
   signer?: string;
   /** The stored replay payload; defaults to a current (31-field) shape. */
   orderJson?: string;
+  /** #3411 — a reorg rebuild's stamp: unlisted until the replay reaches it. */
+  replayPendingThrough?: number;
 }
 
 function seedBook(rows: SeedRow[]): Env {
@@ -518,6 +521,12 @@ function seedBook(rows: SeedRow[]): Env {
       r.createdAt,
       r.createdAt,
     );
+    if (r.replayPendingThrough !== undefined) {
+      db.prepare('UPDATE signed_offers SET replay_pending_through = ? WHERE order_hash = ?').run(
+        r.replayPendingThrough,
+        r.orderHash,
+      );
+    }
   }
   return {
     DB: d1,
@@ -528,7 +537,7 @@ function seedBook(rows: SeedRow[]): Env {
 async function getBookBody(
   env: Env,
   extraParams = '',
-): Promise<{ offers: { orderHash: string; signer: string }[]; truncated: boolean }> {
+): Promise<{ offers: { orderHash: string; signer: string }[]; truncated: boolean; awaitingReplay: number }> {
   const req = new Request(
     `http://indexer.test/signed-offers?chainId=${CHAIN_ID}` +
       `&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${DAYS}` +
@@ -539,6 +548,7 @@ async function getBookBody(
   return (await res.json()) as {
     offers: { orderHash: string; signer: string }[];
     truncated: boolean;
+    awaitingReplay: number;
   };
 }
 
@@ -645,6 +655,36 @@ describe('GET /signed-offers — truncation flag + signer scope (#1247 PAG-011)'
     const body = await getBookBody(seedBook(spamAsks(101, 500)));
     expect(body.offers).toHaveLength(100);
     expect(body.truncated).toBe(true);
+  });
+
+  it('leaves out an order a reorg rebuild is re-reading, and counts it (#3411)', async () => {
+    const body = await getBookBody(
+      seedBook([
+        { orderHash: 'ask-live', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000 },
+        { orderHash: 'ask-replaying', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000, replayPendingThrough: 900 },
+      ]),
+    );
+    expect(body.offers.map((o) => o.orderHash)).toEqual(['ask-live']);
+    expect(body.awaitingReplay).toBe(1);
+  });
+
+  it('a signer-scoped read lists the maker\'s own replay-pending order, flagged, so it can still be cancelled (#3411)', async () => {
+    const res = await handleSignedOffersGet(
+      new Request(
+        `http://indexer.test/signed-offers?chainId=${CHAIN_ID}&lendingAsset=${LEND}&collateralAsset=${COLL}` +
+          `&durationDays=${DAYS}&signer=${SIGNER.address}`,
+      ),
+      seedBook([
+        { orderHash: 'ask-live', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000 },
+        { orderHash: 'ask-replaying', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000, replayPendingThrough: 900 },
+      ]),
+    );
+    const body = (await res.json()) as { offers: { orderHash: string; replayPending?: boolean }[]; awaitingReplay: number };
+    expect(body.offers.map((o) => [o.orderHash, o.replayPending === true])).toEqual([
+      ['ask-replaying', true],
+      ['ask-live', false],
+    ]);
+    expect(body.awaitingReplay).toBe(1);
   });
 
   it('reports truncated: false when both sides fit', async () => {

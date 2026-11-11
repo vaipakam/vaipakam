@@ -102,8 +102,10 @@ function rpc() {
       const number = tag === 'safe' || tag === 'latest' ? hex(HEAD) : tag;
       return ok({
         number,
-        hash: `0x${'11'.repeat(32)}`,
-        parentHash: `0x${'22'.repeat(32)}`,
+        // One chain: each block's hash is a function of its number, and its
+        // parent's is the previous block's, as the reorg guard (#3411) checks.
+        hash: `0x${BigInt(number).toString(16).padStart(64, '0')}`,
+        parentHash: `0x${(BigInt(number) - 1n).toString(16).padStart(64, '0')}`,
         timestamp: hex(1_700_000_000 + Number(number)),
         transactions: [],
         logsBloom: `0x${'00'.repeat(256)}`,

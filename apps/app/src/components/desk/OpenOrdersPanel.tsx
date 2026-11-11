@@ -1470,6 +1470,14 @@ function SignedOrdersBlock({
                     ? copy.offers.expiresLabel(formatDate(row.expiresAt))
                     : copy.offers.advancedNoExpiry}
                 </span>
+                {row.replayPending === true && !cancelledHashes.has(row.orderHash) ? (
+                  <>
+                    <br />
+                    <span className="row-sub" data-testid="signed-replay-pending">
+                      {text.signedReplayPending}
+                    </span>
+                  </>
+                ) : null}
                 {cancelledHashes.has(row.orderHash) ? (
                   <>
                     <br />

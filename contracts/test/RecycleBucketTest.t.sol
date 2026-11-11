@@ -10,11 +10,11 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  RecycleBucketTest
@@ -70,7 +70,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
 
         // External treasury so "no treasury transfer" is observable.
         treasuryRecipient = makeAddr("treasury");
-        AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryRecipient);
 
         alice = makeAddr("alice");
 

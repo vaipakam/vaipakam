@@ -29,25 +29,46 @@ export const DEFAULT_MAX_FEE_WEI = 2n * 10n ** 15n;
 const WEI = /^\d+$/;
 const KEY = /^(\*|\d+)$/;
 
-/** The fee ceiling `raw` (the value of `varName`) sets for `chainId`. */
-export function feeCeiling(raw: string | undefined, chainId: number, varName: string): SendFeeCeiling {
-  const malformed = (why: string): SendFeeCeiling => ({ unread: `this keeper's fee ceiling, ${varName} being malformed (${why})` });
+/**
+ * What a `<chainId>=<wei>[,*=<wei>]` variable says for `chainId`: its own
+ * entry, else its `*` entry, else nothing (`none`, also for an unset or empty
+ * variable). Malformed text is `unread`, never a guess. Shared by every
+ * keeper ceiling read from such a list (#2627 fee ceilings, #3543 gas
+ * ceilings), so they parse alike.
+ */
+export function chainWeiEntry(
+  raw: string | undefined,
+  chainId: number,
+  varName: string,
+): { wei: bigint; from: string } | { none: true } | { unread: string } {
   const text = (raw ?? '').trim();
-  if (text === '') return { wei: DEFAULT_MAX_FEE_WEI, from: `the default, ${varName} being unset` };
+  if (text === '') return { none: true };
   const entries = new Map<string, bigint>();
   for (const part of text.split(',')) {
     const entry = part.trim();
     const eq = entry.indexOf('=');
     const key = eq < 0 ? '' : entry.slice(0, eq).trim();
     const wei = eq < 0 ? '' : entry.slice(eq + 1).trim();
-    if (!KEY.test(key) || !WEI.test(wei)) return malformed(`"${entry}" is not <chainId>=<wei> or *=<wei>`);
+    if (!KEY.test(key) || !WEI.test(wei)) return { unread: `"${entry}" is not <chainId>=<wei> or *=<wei>` };
     const k = key === '*' ? '*' : String(Number(key));
-    if (entries.has(k)) return malformed(`${k === '*' ? '*' : `chain ${k}`} is named twice`);
+    if (entries.has(k)) return { unread: `${k === '*' ? '*' : `chain ${k}`} is named twice` };
     entries.set(k, BigInt(wei));
   }
   const own = entries.get(String(chainId));
   if (own !== undefined) return { wei: own, from: `${varName}, this chain's entry` };
   const rest = entries.get('*');
   if (rest !== undefined) return { wei: rest, from: `${varName}, its * entry` };
-  return { wei: DEFAULT_MAX_FEE_WEI, from: `the default, ${varName} naming neither this chain nor *` };
+  return { none: true };
+}
+
+/** The fee ceiling `raw` (the value of `varName`) sets for `chainId`. */
+export function feeCeiling(raw: string | undefined, chainId: number, varName: string): SendFeeCeiling {
+  const entry = chainWeiEntry(raw, chainId, varName);
+  if ('unread' in entry) return { unread: `this keeper's fee ceiling, ${varName} being malformed (${entry.unread})` };
+  if ('wei' in entry) return entry;
+  const unset = (raw ?? '').trim() === '';
+  return {
+    wei: DEFAULT_MAX_FEE_WEI,
+    from: unset ? `the default, ${varName} being unset` : `the default, ${varName} naming neither this chain nor *`,
+  };
 }

@@ -15,6 +15,8 @@
 
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
 import { armSubmissionRoutes, describeSubmissionRoutes, readSubmissionRoutes } from './submissionRoute';
+import { armSigningGuard, SIGNING_GUARD_ALERT_INTERVAL_SEC } from './signingGuard';
+import { sendOpsAlert } from './opsAlert';
 import { d1NonceReservations } from './privateNonce';
 import { d1PrivateSendRecords } from './privateRebroadcast';
 import { privateRouteEvents, runPrivateRebroadcast } from './privateRouteOps';
@@ -93,7 +95,7 @@ export async function runKeeperTick(
   // too, exactly as a maintenance build already does — the fail-closed shape,
   // said once. The machine host supplies both the same way (host/hostEnv.ts).
   const unbound = (['DB', 'KEEPER_DB'] as const).filter((b) => !hasD1Binding(env[b]));
-  if (unbound.length > 0 || env.DB === undefined) {
+  if (unbound.length > 0 || env.DB === undefined || env.KEEPER_DB === undefined) {
     // eslint-disable-next-line no-console
     console.warn(maintenanceSkipNotice(WORKER_NAME, `this tick (unbound: ${unbound.join(', ')})`));
     return;
@@ -102,7 +104,9 @@ export async function runKeeperTick(
   // #2503 — one runner at a time. Claimed before anything else reads a
   // secret or the chain, so a runner that is not the holder does no work and
   // says whose lease it is waiting on. A failure to claim declines too.
-  const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID);
+  // #1722 — in the keeper's PRIVATE database, which nothing but the keeper
+  // can write; both bindings are confirmed present just above.
+  const lease = await claimRunnerLease(env.KEEPER_DB, env.KEEPER_RUNNER_ID);
   if (!lease.held) {
     // eslint-disable-next-line no-console
     console.warn(`[keeper] tick declined: ${lease.reason}`);
@@ -168,6 +172,22 @@ export async function runKeeperTick(
   );
   const privateSends = d1PrivateSendRecords(resolved.KEEPER_DB);
   armSubmissionRoutes(routes, d1NonceReservations(resolved.KEEPER_DB), privateRouteEvents(resolved, chains, privateSends));
+  // #3543 — the ceilings every send is held to before the key signs it, and
+  // where a held send is reported: one ops alert per chain per ten minutes,
+  // naming the action and the figure, so a real fee spike above a ceiling is
+  // an operator's decision rather than a silent stall.
+  armSigningGuard(
+    {
+      GAS_MAX_FEE_PER_GAS_WEI: resolved.GAS_MAX_FEE_PER_GAS_WEI,
+      GAS_MAX_PRIORITY_FEE_PER_GAS_WEI: resolved.GAS_MAX_PRIORITY_FEE_PER_GAS_WEI,
+      GAS_MAX_TX_FEE_WEI: resolved.GAS_MAX_TX_FEE_WEI,
+    },
+    {
+      held: async (chainId, line) => {
+        await sendOpsAlert(resolved, `signing-guard-held:${chainId}`, `Keeper send held on chain ${chainId}: ${line}`, SIGNING_GUARD_ALERT_INTERVAL_SEC, Math.floor(Date.now() / 1000), chainId);
+      },
+    },
+  );
   // eslint-disable-next-line no-console
   console.log(`[keeper] submission routes: ${describeSubmissionRoutes(routes, chains)}`);
 

@@ -5,7 +5,6 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
@@ -32,6 +31,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {LibRewardSanctions} from "../src/libraries/LibRewardSanctions.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @title RewardStagingTest
 /// @notice #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's
@@ -75,7 +75,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vpfi = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 60 days);
         uint256 have = vpfi.balanceOf(address(this));

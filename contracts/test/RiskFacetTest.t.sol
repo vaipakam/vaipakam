@@ -550,7 +550,7 @@ contract RiskFacetTest is Test {
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)
             // address(0xDef1C0ded9bec7F1a1670819833240f027b25EfF)
@@ -1267,8 +1267,7 @@ contract RiskFacetTest is Test {
         public
     {
         address treasuryEoa = makeAddr("treasuryEoaFor1383");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
         uint256 loanId = createAndAcceptOffer();
         // WITHOUT THIS the loan has accrued nothing, `interestRecovered` is 0,
         // and the treasury takes only the handling fee — which the discount
@@ -1524,8 +1523,7 @@ contract RiskFacetTest is Test {
         public
     {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Split");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
 
         uint256 loanId = createAndAcceptOffer();
         // Interest must accrue or the treasury takes only the handling fee and
@@ -5153,8 +5151,7 @@ contract RiskFacetTest is Test {
     ///         directly observable as `base - base*1000/BPS`.
     function test_1955_discountedLiquidation_lenderFull_TenPercentOff() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Disc");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
 
         uint256 loanId = createAndAcceptOffer();
         // Interest must accrue or the treasury cut is zero and both replays
@@ -5628,8 +5625,7 @@ contract RiskFacetTest is Test {
         public
     {
         address treasuryEoa = makeAddr("treasuryEoaFor1955");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
 
         uint256 loanId = _setupPartialSizing(0.65e8);
         AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);

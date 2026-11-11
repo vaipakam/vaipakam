@@ -720,6 +720,79 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertFalse(found && cid == LOAN_ID, "with a live auction it is not");
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  Nonce uniqueness is per maker, as 1inch keys it (2026-11-11 review)
+    // ══════════════════════════════════════════════════════════════
+
+    /// @dev A second borrower with its own vault and an Active loan
+    ///      `loanId`, armed for a commit like `_armHappyCommit` arms loan 1.
+    function _armSecondBorrower(uint256 loanId, address eoa) internal {
+        address vault2 = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(eoa);
+        collateralAsset.mint(vault2, LOAN_COLLATERAL);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            eoa, address(collateralAsset), LOAN_COLLATERAL
+        );
+        TestMutatorFacet(address(diamond)).mintNFTRaw(lenderEoa, loanId * 2 - 1);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(eoa, loanId * 2);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        loan.id = loanId;
+        loan.borrower = eoa;
+        loan.lenderTokenId = uint128(loanId * 2 - 1);
+        loan.borrowerTokenId = uint128(loanId * 2);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            loanId, eoa, address(collateralAsset), 0, LOAN_COLLATERAL, LibVaipakam.AssetType.ERC20
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(uint256(2e18)));
+    }
+
+    /// @dev Two borrowers' orders have different makers (each borrower's
+    ///      vault), so 1inch puts them in different bit-slots: the same
+    ///      nonce must not refuse the second borrower's commit.
+    function test_Commit_SameNonceDifferentMakers_BothCommit() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        address borrower2 = makeAddr("secondBorrower");
+        _armSecondBorrower(2, borrower2);
+
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        vm.prank(borrower2);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(2, params);
+
+        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).maker, borrowerVault, "first order's maker is the first vault");
+        assertEq(
+            SwapToRepayIntentFacet(address(diamond)).getIntentCommit(2).maker,
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower2),
+            "second order's maker is the second vault"
+        );
+    }
+
+    /// @dev One maker reusing a nonce is still refused (its two orders would
+    ///      share a bit-slot), even after the first order is cancelled; a
+    ///      fresh nonce commits.
+    function test_Commit_SameMakerReusedNonce_Refused() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        vm.warp(params.deadline + 1);
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(LOAN_ID);
+
+        params = _armHappyCommit(); // fresh deadline, same nonce (0)
+        vm.prank(borrowerEoa);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SwapToRepayIntentFacet.IntentMakerTraitsMismatch.selector,
+                keccak256("makerTraits-nonce-reused")
+            )
+        );
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+
+        params.makerTraits |= (uint256(1) << 120); // nonce 1
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+    }
+
     /// @dev The committed order's hash, read from the commit event
     ///      (`topics[2]` — `orderHash` is the second indexed parameter). Requires `vm.recordLogs()` before
     ///      the commit.

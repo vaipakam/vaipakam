@@ -1,0 +1,19 @@
+-- #3411 (Codex #3528 r2) — a signed order whose lifecycle a reorg rebuild
+-- handed back to the replay is NOT listed until the replay has re-read it.
+--
+-- A rebuild keeps each signed order and sets its fill state back to where the
+-- scan starts (active, nothing filled), so the replay can re-apply every
+-- fill, cancel and nonce burn from the chain as it now is. Until the replay
+-- has passed the height the chain had been indexed to before the rebuild, an
+-- order that was in fact filled or cancelled would read as live. The rebuild
+-- therefore stamps each kept order with that height here, every reader of the
+-- live book skips a stamped order, and the scan clears the stamp (bumping
+-- `updated_at`, so the market summary picks it up again) in the same write
+-- that advances its cursor to or past it.
+--
+-- NULL means the order's state is the replay's own: listed as usual. Every
+-- row written before this migration, and every order posted since, is NULL.
+--
+-- Additive: a nullable column, safe while the previous Workers are serving
+-- (they never read or write it, and no rebuild runs before this ships).
+ALTER TABLE signed_offers ADD COLUMN replay_pending_through INTEGER;
