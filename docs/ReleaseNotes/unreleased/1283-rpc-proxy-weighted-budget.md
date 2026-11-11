@@ -1,4 +1,4 @@
-## RPC proxy — every method shaped, calls charged by weight, upstream answers capped (PR #<n>)
+## RPC proxy — every method shaped, calls charged by weight, upstream answers capped (PR #3561)
 
 The read-only RPC proxy checked the parameters of one method only, the
 log scan. Every other method it serves now has a stated shape, and a call
