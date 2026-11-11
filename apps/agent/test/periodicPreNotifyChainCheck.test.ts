@@ -26,6 +26,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import {
   CHAIN_OPENING_REQUESTS_AFTER_IDENTITY,
+  BATCH_READS,
   EXAMINED_MARK_RESERVE,
   MAX_SUBREQUESTS_PER_INVOCATION,
   MAX_SENDS_PER_LOAN,
@@ -106,7 +107,8 @@ const PRE_MESSAGE_SUBREQUESTS =
   1 + // the pause log (#2808)
   1 + // the config
   1 + // the candidate query (D1) — the examination marks ride on it (#2230)
-  1; //  the first batched status read
+  1 + // the first batched status read
+  1; //  the chats linked to the batch's wallets, one state-object call (#1722)
 
 /**
  * What one loan actually spends HERE: a subscriber lookup per counterparty,
@@ -479,6 +481,24 @@ async function atMinute(minute: number, extra: Record<string, unknown> = {}) {
   }
 }
 
+/** The Telegram state object as pre-notify reads it: one `chatsOf` per
+ *  subscriber, answered from `subscriberFor`'s `tg_chat_id`. Set
+ *  `tgStateThrows` to make the read fail. */
+let tgStateThrows = false;
+function tgStateFake() {
+  const stub = {
+    async chatsOf(pairs: { wallet: string; chainId: number }[]) {
+      if (tgStateThrows) throw new Error('state object unavailable');
+      return pairs.map((p) => {
+        const row = subscriberFor(p.wallet);
+        const chat = row?.tg_chat_id;
+        return typeof chat === 'string' ? chat : null;
+      });
+    },
+  };
+  return { idFromName: () => 'global', get: () => stub };
+}
+
 function env(extra: Record<string, unknown> = {}) {
   const writes: { sql: string; params: unknown[] }[] = [];
   const DB = {
@@ -616,6 +636,10 @@ function env(extra: Record<string, unknown> = {}) {
   return {
     env: {
       DB,
+      // #1722 — the chat now lives in the agent's Telegram state object, not
+      // on the subscriber row. The fake answers from the row the test
+      // describes, so each test still states its rails in one place.
+      TG_STATE: tgStateFake(),
       RPC_BASE_SEPOLIA: 'https://stub-84532.invalid',
       // Both rails configured, so a reminded loan costs the full four sends
       // the lane reserves for one.
@@ -742,6 +766,7 @@ beforeEach(() => {
   scanOffsets.clear();
   marks.clear();
   passes.clear();
+  tgStateThrows = false;
   d1Batches.length = 0;
   markThrows = false;
   passThrows = false;
@@ -2054,7 +2079,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // the allowance rather than say "stopping".
     expect(LOANS_PER_TICK).toBeLessThan(8);
     expect(sends.length).toBe(SENDS_PER_TICK);
-    expect(LEFTOVER_AFTER_TICK).toBeLessThan(1 + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE);
+    expect(LEFTOVER_AFTER_TICK).toBeLessThan(BATCH_READS + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE);
     expect(said).toContain(
       `outbound-request allowance is down to ${LEFTOVER_AFTER_TICK}`,
     );
@@ -2569,6 +2594,20 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { stamped, said } = await run();
     expect(sends.length).toBeGreaterThan(0); // it really did try
     expect(stamped).toEqual([]); // and kept the checkpoint retryable
+    expect(said).toContain('deferred by the service');
+  });
+
+  it('leaves a loan unstamped when the linked chats cannot be read (#1722)', async () => {
+    // The chat now lives in the agent's Telegram state object. A failed read
+    // is NOT "no chat linked": that would stamp the checkpoint and lose the
+    // Telegram reminder for good. It is a deferred rail, so the loan stays
+    // retryable, exactly as a 429 from Telegram leaves it.
+    tgStateThrows = true;
+    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
+    loanRows = tenLoans().slice(-2);
+    const { stamped, said } = await run();
+    expect(sends.length).toBe(0); // nothing went to Telegram without a chat
+    expect(stamped).toEqual([]);
     expect(said).toContain('deferred by the service');
   });
 
