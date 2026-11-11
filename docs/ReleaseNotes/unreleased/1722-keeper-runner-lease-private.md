@@ -1,4 +1,4 @@
-## Keeper — the one-runner lease moves into the keeper's private database (PR #<n>)
+## Keeper — the one-runner lease moves into the keeper's private database (PR #3549)
 
 Every keeper tick first claims a single lease row, so that only one keeper
 runner signs at a time. That row lived in the shared database, which the
