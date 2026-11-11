@@ -405,6 +405,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   // crossChain
   ...(
     [
+      'ClosedDayRemainderReturnedByKeeper',
       'CompensationConfirmed',
       'CompensationCredited',
       'CompensationDemoted',

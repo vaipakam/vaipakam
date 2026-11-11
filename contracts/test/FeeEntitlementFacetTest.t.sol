@@ -760,17 +760,18 @@ contract FeeEntitlementFacetTest is SetupTest {
         assertEq(fe.cStarOpen, _cStar());
     }
 
-    /// @dev #3360 — on a reward MIRROR the loan-side cap stays inert for now
-    ///      (mirror claims settle against Base under a commitment that assumes
-    ///      no loan-side trim), so a plain accept still skips the call and the
-    ///      loan stays unstamped. Pinned so lifting that rule is a deliberate
-    ///      change, not a side effect.
-    function test3360_Mirror_PlainAcceptStaysUnstamped() public {
+    /// @dev #3360 part B (owner decision 2026-11-11) — a reward MIRROR's
+    ///      plain loan carries the same loan-side cap as Base's: the trimmed
+    ///      reward stays in the day's delivered batch and goes back to Base
+    ///      once the day is closed (`returnClosedDayRemainder`), so the cap is
+    ///      no longer held back on a mirror.
+    function test3360_Mirror_PlainAcceptStamped() public {
         TestMutatorFacet(address(diamond)).setRewardRoleRaw(84532, false, true);
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20Offer());
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
-        assertEq(uint256(fe.openDays), 0, "a mirror plain loan is not stamped");
-        assertEq(fe.cStarOpen, 0);
+        assertEq(uint256(fe.openDays), 30, "a mirror plain loan carries its cap");
+        assertEq(fe.cStarOpen, _cStar());
+        assertGt(uint256(fe.loanSideRewardCapOpen), 0, "the per-side ceiling is cached");
     }
 
     function testDark_FullOptIn_RevertsClosed() public {
