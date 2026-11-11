@@ -510,7 +510,7 @@ ingress too; the receiver can be kept paused while other CCIP channels resume.
 
 ### Decide (post-pause triage)
 1. Is the issue a bad config (oracle/0x proxy/rewardMessenger / CCIP registry)? → Admin fix, unpause.
-2. Is the issue a bug in a facet? → Prepare a diamond-cut replacing the facet (see `UpgradeSafety.md`). Unpause **only after** cut lands and tests pass on a fork.
+2. Is the issue a bug in a facet? → Prepare a diamond-cut replacing the facet (see `UpgradeSafety.md`). Unpause **only after** cut lands and tests pass on a fork. A bug that is not yet public is shipped through §10, so the fix does not announce it.
 3. Is funds movement required (rescue)? → **Do not** unpause. Use `whenNotPaused`-exempt paths only; rescue logic must go through a diamond-cut.
 
 ### Unpause checklist
@@ -2096,6 +2096,84 @@ the timeline in the deployment log below. DNSSEC, CAA records and HSTS are on
 for the domain (checked 2026-11-07). The automatic served-build check is in
 place (see Detect), and the deploy approval is built and waits for mainnet
 (see Prevent).
+
+---
+
+## 10. Shipping a security fix without revealing the bug (added 2026-11-11; #3409)
+
+### Why this needs its own procedure
+
+The repository is public, every Diamond upgrade waits the Timelock's 48h delay
+(a permanent floor, see `GovernanceRunbook.md`), and new vault code must sit
+registered on the VaultBeacon for its minimum code delay before any vault can
+run it (`VaultBeacon.MIN_CODE_DELAY`: 3 days today, 7 days once #3421 lands,
+on every path including the guardian's). An ordinary fix PR, a queued
+diamond-cut or a newly registered vault version therefore tells anyone
+watching what changed, days before the fix is live. There is no faster
+path, and none should be added: the delays are what protect users from a
+compromised governance key.
+
+So the rule is: **stop the bug first, then let the fix be seen.** A fix that
+lands while the vulnerable path is already closed reveals nothing anyone can
+still use.
+
+### Steps
+
+1. **Keep it private from the first minute.** Work in the private channel and
+   the private security notes. No public issue, PR, commit message, release
+   note or chat message names the bug. Build the fix in a GitHub private
+   security advisory's temporary private fork (`SECURITY.md` names the
+   advisory channel), not in a branch of the public repository.
+2. **Close the path if it is exploitable now.** The Pauser Safe pauses the
+   Diamond (§3) and, where the path crosses chains, runs
+   `contracts/script/pause-all-chains.sh`. On chains with a public mempool
+   (Ethereum, Polygon, BNB) send the pause through the private route of #3408
+   so it cannot be raced, using the pre-signed pause transactions kept for
+   this. Then check that the pause actually stops the bug's path: #3235 lists
+   the vault value paths a system-wide pause does not stop. For those, use the
+   targeted levers in §3.5-§3.7, and for a vault-code bug the beacon's
+   `guardianRevokeVersion` (works only while the Diamond is paused, and moves
+   vaults only onto a version already registered; once #3421 lands, only
+   onto one registered for at least the code delay).
+3. **Build and review the fix outside the public repository.** Reproduce the
+   bug in a fork test, fix the root cause, run the targeted tests and the full
+   regression, and do the merge-time security review (`CLAUDE.md`, "Own
+   security review before EVERY merge") on the private fork. The review
+   tooling that comments on public PRs is not used until step 6.
+4. **Ship through the normal delays, with the path still closed.**
+   - Facet fix: deploy the new facet, then the Governance Safe schedules the
+     diamond-cut on the Timelock. `diamondCut` is callable while paused, so
+     the Diamond stays paused for the whole 48h. The new facet's bytecode is
+     public from the moment it is deployed; that is acceptable only because
+     step 2 closed the path.
+   - Vault-code fix: register the patch version on the VaultBeacon as the
+     pinned version's successor at once, since the code delay runs from
+     registration. Promote it after the delay; pinned vaults receive it as a
+     patch of their pinned version (#3421, #3202).
+   - During a long manual pause, vault owners can still leave on their own
+     once the escape period has passed (`VaultPayoutFacet.escapeWithdraw`:
+     3 days today, 7 days once #3441 lands). Say so in the pause notice.
+5. **Who decides.** The owner decides whether to pause, what ships and when
+   to disclose. The Pauser Safe signers execute the pause and may cancel a
+   queued operation; the Governance Safe proposes the cut. Record each
+   decision and its time in the private security notes.
+6. **Publish after the fix is live.** Once the cut has executed (and the
+   Diamond is unpaused per the §3 checklist), merge the fix into the public
+   repository with its source, verify the contracts on the explorers, and add
+   the release-note fragment and the Functional Spec update the change needs.
+7. **Disclose.** Follow §3's communication timeline: the unpause message, then
+   the post-mortem within 48h. Name the reporter only with their consent.
+   There is no bug bounty (`SECURITY.md`).
+
+### What this procedure cannot do
+
+- While a fix waits out its delay, anyone can read the deployed bytecode and
+  the queued call. If the pause does not close the bug's path (step 2), the
+  fix itself is a signal; prepare everything before scheduling so the window
+  is only the delay itself.
+- A bug in the pause, the Timelock or the beacon's own rules cannot be
+  closed this way; those contracts are kept small and are the formal
+  verification target (#3436).
 
 ---
 
