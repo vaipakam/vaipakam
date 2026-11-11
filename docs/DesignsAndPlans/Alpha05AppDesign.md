@@ -2112,12 +2112,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   tier rose must act, or their other networks keep the older copy. On VPFI's
   home network it states the tier recorded for sending, says when it differs
   from the tier applied now (the recorded figure capped at 50% before
-  comparing), and offers the update (`pokeMyTier`, gas only); the tier
-  table's version has no reader, so the update stays offered when the two
-  match and the copy says a version change cannot be seen here. It lists
+  comparing), and offers the update (`pokeMyTier`, gas only) only where
+  this Diamond routes it; the tier table's version has no reader, so the
+  update stays offered when the two match and the copy says a version
+  change cannot be seen here. The update and the send are gated on their
+  own routes: where the update is not routed and the record differs, the
+  section says only a VPFI deposit or withdrawal records the tier now and
+  that a send waits until the record matches. It lists
   each network the protocol sends to with what this network last sent it
   (whether it arrived and applies there is read on that network, and the
-  section says so) and whether it is current, owed a lower tier the
+  section says so; a copy there lapses at the end carried in the message
+  or earlier at that network's own maximum age, 60 days unless it set
+  another) and whether it is current, owed a lower tier the
   protocol sends at its own cost, or owed one that goes only with a paid
   send. Every discount shown is capped at 50%, as the fee path applies it.
   A review whose record moved, or that has nothing left to send, is closed
@@ -2127,7 +2133,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   network's quote plus 20%, because the protocol spends the value on owed
   networks in its own order, and the receipt states that each fee pays one
   message, is not refunded once sent, and that the unspent value comes back
-  in the same transaction. The send is re-read and dry-run first; the
+  in the same transaction. Because the networks share one value, a fee
+  that rises after review is met from the margin first by earlier
+  networks, so a later one can stay owed; the copy says so rather than
+  promising every network goes. The send is re-read and dry-run first; the
   outcome is measured per network from the status at the receipt's block,
   and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
   value funded. The status lists no network alike when no messenger is

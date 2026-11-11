@@ -26,6 +26,7 @@ import {
   laneStanding,
   paidByCaller,
   paidSend,
+  POKE_SIGNATURE,
   readTierPush,
   recordStanding,
   tierPushSupport,
@@ -293,12 +294,14 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
   const updateOpen = reviewed?.kind === 'update' || (reviewed === null && holdsFlow(update.phase));
   const sendOpen = reviewed?.kind === 'send' || (reviewed === null && !updateOpen && holdsFlow(deliver.phase));
 
-  const routedSteps = caps?.routedSelectors?.has(selectorOf('pokeMyTier()')) === true;
+  // The paid send is routed whenever the section is shown (`tierPushSupport`);
+  // the record update is gated on its own route, and its absence is said.
+  const updateRouted = caps?.routedSelectors?.has(selectorOf(POKE_SIGNATURE)) === true;
   const postureKnown = posture.state === 'ready' && posture.error === null && posture.data !== null;
   let actions: ReactNode = null;
   // With no other network set up there is nothing to send to, and an update
   // records nothing (the protocol records only where it can send).
-  if (!routedSteps || data.lanes.length === 0) actions = null;
+  if (data.lanes.length === 0) actions = null;
   else if (!postureKnown) {
     actions =
       posture.state === 'reading' ? (
@@ -316,11 +319,17 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
     );
   } else {
     const sendBlock =
-      plan === 'nothing-owed' ? null : standing !== 'same' ? (
-        <p className="tier-b" data-testid="rewards-elsewhere-send-after-update">
-          {text('rewardsElsewhere.sendAfterUpdate')}
-        </p>
-      ) : plan === 'unquoted' ? (
+      plan === 'nothing-owed' && standing === 'same' ? null : standing !== 'same' ? (
+        updateRouted ? (
+          <p className="tier-b" data-testid="rewards-elsewhere-send-after-update">
+            {text('rewardsElsewhere.sendAfterUpdate')}
+          </p>
+        ) : (
+          <p className="tier-a" data-testid="rewards-elsewhere-update-unrouted">
+            {text('rewardsElsewhere.updateUnrouted')}
+          </p>
+        )
+      ) : plan === 'nothing-owed' ? null : plan === 'unquoted' ? (
         <p className="tier-a" data-testid="rewards-elsewhere-unquoted">
           {text('rewardsElsewhere.sendUnquoted')}
         </p>
@@ -337,15 +346,17 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
               {text('rewardsElsewhere.send')}
             </button>
           )}
-          <button
-            type="button"
-            className={standing === 'behind' ? 'btn btn-primary' : 'btn'}
-            onClick={startUpdate}
-            disabled={flowOpen}
-            data-testid="rewards-elsewhere-update"
-          >
-            {text('rewardsElsewhere.update')}
-          </button>
+          {updateRouted && (
+            <button
+              type="button"
+              className={standing === 'behind' ? 'btn btn-primary' : 'btn'}
+              onClick={startUpdate}
+              disabled={flowOpen}
+              data-testid="rewards-elsewhere-update"
+            >
+              {text('rewardsElsewhere.update')}
+            </button>
+          )}
         </div>
       </>
     );
