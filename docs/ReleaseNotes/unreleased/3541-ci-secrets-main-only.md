@@ -1,4 +1,4 @@
-## Thread — CI secrets move to a main-only environment (PR #<n>)
+## Thread — CI secrets move to a main-only environment (PR #3558)
 
 Every secret the CI workflows use, other than the built-in GitHub token, now
 lives in a GitHub environment that only the main branch may use, instead of
