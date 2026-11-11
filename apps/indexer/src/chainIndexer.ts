@@ -148,7 +148,7 @@ import {
   type TickBudget,
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
-import { adoptDeployment, describeAdoption, isAdoptedEpoch, requestChainRebuild } from './deploymentEpoch';
+import { adoptDeployment, describeAdoption, isAdoptedEpoch, releaseReplayedRows, requestChainRebuild } from './deploymentEpoch';
 import {
   anchorUpsert,
   bootstrapChainAnchor,
@@ -2964,11 +2964,15 @@ async function runChainPass(
          updated_at = excluded.updated_at
        WHERE excluded.last_block > indexer_cursor.last_block`,
     ).bind(chainId, CURSOR_KIND, blockToNumber(scanTo), now);
-    await env.DB.batch(
-      nextAnchor && scanTo >= scanFrom
-        ? [cursorWrite, anchorUpsert(env.DB, { chainId, block: nextAnchor.block, hash: nextAnchor.hash, nowSec: now })]
-        : [cursorWrite],
-    );
+    // A rebuild's kept signed orders are listed again once the cursor reaches
+    // the height they were stamped with (Codex #3528 r2), in this same write.
+    await env.DB.batch([
+      cursorWrite,
+      ...(nextAnchor && scanTo >= scanFrom
+        ? [anchorUpsert(env.DB, { chainId, block: nextAnchor.block, hash: nextAnchor.hash, nowSec: now })]
+        : []),
+      ...(scanTo >= scanFrom ? releaseReplayedRows(env.DB, { chainId, through: scanTo, nowSec: now }) : []),
+    ]);
   }
 
   // #1270 — market_summary sweep: recompute discovery rows for every

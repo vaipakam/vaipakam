@@ -197,7 +197,13 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // restore projection by check-table-classification) and every value
     // bound. Executed against the REAL migrated schema by
     // `test/reorgGuard.test.ts` (the rebuild keeps the signed order).
-    expect(skipped.length).toBeLessThanOrEqual(28);
+    // Raised 28 → 30 for #3411 (Codex #3528 r2): the release that lists a
+    // rebuilt order again once the cursor reaches its stamp (column names
+    // from the same JSON, identifier-checked, values bound; executed in
+    // `test/reorgGuard.test.ts`), and the signed book's `awaitingReplay`
+    // count, which carries the same optional signer clause as the side
+    // queries beside it (executed in `test/signedOfferRoutes.test.ts`).
+    expect(skipped.length).toBeLessThanOrEqual(30);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

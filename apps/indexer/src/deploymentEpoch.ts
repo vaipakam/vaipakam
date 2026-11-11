@@ -100,8 +100,42 @@ export const KEEP_ON_REBUILD: Readonly<Record<string, string>> = rebuildKeep.kee
  * holds the two equal). The replay then re-applies every fill and cancel from
  * the chain as it now is.
  */
-export const PROJECT_ON_REBUILD: Readonly<Record<string, { reason: string; set: Record<string, string> }>> =
-  rebuildKeep.project;
+export const PROJECT_ON_REBUILD: Readonly<
+  Record<string, { reason: string; set: Record<string, string>; pendingThrough: string; touch: string }>
+> = rebuildKeep.project;
+
+/**
+ * The height the chain had been indexed to: the higher of its scan cursor and
+ * its reorg-guard anchor. A rebuild stamps it on each projected row
+ * (`pendingThrough`), before the same batch clears the cursor and the anchor.
+ */
+const INDEXED_HEIGHT_SQL = `(SELECT MAX(b) FROM (
+     SELECT last_block AS b FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'
+     UNION ALL SELECT block_number FROM indexer_chain_anchor WHERE chain_id = ?))`;
+
+/**
+ * The statements that list a rebuild's projected rows again once the scan has
+ * re-read their lifecycle: the stamp is cleared, and the row's `touch` column
+ * bumped so the market summary recomputes its market, wherever the cursor the
+ * same batch writes has reached the stamped height. For the caller to run IN
+ * the cursor write's batch, so the two land together.
+ */
+export function releaseReplayedRows<S>(
+  db: { prepare(sql: string): { bind(...args: unknown[]): S } },
+  args: { chainId: number; through: bigint; nowSec: number },
+): S[] {
+  return Object.entries(PROJECT_ON_REBUILD).map(([t, p]) => {
+    if (!IDENTIFIER.test(t) || !IDENTIFIER.test(p.pendingThrough) || !IDENTIFIER.test(p.touch)) {
+      throw new Error(`reorgRebuildKeep.json: malformed projection for ${t}`);
+    }
+    return db
+      .prepare(
+        `UPDATE "${t}" SET "${p.pendingThrough}" = NULL, "${p.touch}" = ?
+          WHERE chain_id = ? AND "${p.pendingThrough}" IS NOT NULL AND "${p.pendingThrough}" <= ?`,
+      )
+      .bind(args.nowSec, args.chainId, Number(args.through));
+  });
+}
 
 /** `reset_pending` values: which reset a set flag asks for. */
 export const RESET_DIAMOND_CHANGE = 1;
@@ -240,25 +274,40 @@ export async function resetChainAs(
   const owns =
     `EXISTS (SELECT 1 FROM indexer_deployment d
               WHERE d.chain_id = ? AND lower(d.diamond) = lower(?) AND d.deploy_block = ? AND d.reset_pending = ?)`;
-  const statements: unknown[] = tables.map((t) =>
-    db.prepare(`DELETE FROM "${t}" WHERE chain_id = ? AND ${owns}`).bind(chainId, chainId, diamond, deployBlock, flag),
-  );
   // A rebuild hands each kept hybrid table's replay-maintained columns back to
-  // the replay, under the same ownership guard as the deletes.
+  // the replay, under the same ownership guard as the deletes, and stamps each
+  // row with the height the chain had been indexed to, so no reader lists it
+  // as live before the replay has re-read its lifecycle (Codex #3528 r2).
+  // These run FIRST: the stamp reads the cursor and the anchor the deletes
+  // below remove.
+  const statements: unknown[] = [];
   const projected: string[] = [];
   if (kind === 'rebuild') {
     for (const [t, p] of Object.entries(PROJECT_ON_REBUILD)) {
       const cols = Object.keys(p.set);
-      if (!IDENTIFIER.test(t) || cols.length === 0 || !cols.every((c) => IDENTIFIER.test(c))) {
+      if (
+        !IDENTIFIER.test(t) ||
+        cols.length === 0 ||
+        !cols.every((c) => IDENTIFIER.test(c)) ||
+        !IDENTIFIER.test(p.pendingThrough)
+      ) {
         throw new Error(`reorgRebuildKeep.json: malformed projection for ${t}`);
       }
       statements.push(
         db
-          .prepare(`UPDATE "${t}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')} WHERE chain_id = ? AND ${owns}`)
-          .bind(...cols.map((c) => p.set[c]), chainId, chainId, diamond, deployBlock, flag),
+          .prepare(
+            `UPDATE "${t}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')}, "${p.pendingThrough}" = ${INDEXED_HEIGHT_SQL}
+              WHERE chain_id = ? AND ${owns}`,
+          )
+          .bind(...cols.map((c) => p.set[c]), chainId, chainId, chainId, chainId, diamond, deployBlock, flag),
       );
       projected.push(t);
     }
+  }
+  for (const t of tables) {
+    statements.push(
+      db.prepare(`DELETE FROM "${t}" WHERE chain_id = ? AND ${owns}`).bind(chainId, chainId, diamond, deployBlock, flag),
+    );
   }
   statements.push(
     db

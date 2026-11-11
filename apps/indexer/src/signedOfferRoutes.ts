@@ -947,6 +947,7 @@ export async function handleSignedOffersGet(
                 filled_amount, expires_at, deadline
            FROM signed_offers
           WHERE chain_id = ? AND status = 'active'
+            AND replay_pending_through IS NULL
             AND lending_asset = ? AND collateral_asset = ? AND duration_days = ?
             AND offer_type = ?
             ${signer !== null ? 'AND signer = ?' : ''}
@@ -972,11 +973,38 @@ export async function handleSignedOffersGet(
           ],
         )
         .all<SignedOfferRow>();
-    const [asks, bids] = await Promise.all([
+    // #3411 (Codex #3528 r2) — orders a reorg rebuild kept but whose fills
+    // and cancels the replay has not re-read yet are left out of the book
+    // above, and COUNTED here, so a reader is told the book is incomplete
+    // rather than shown it as whole.
+    const awaitingQuery = env.DB.prepare(
+      `SELECT COUNT(*) AS n
+         FROM signed_offers
+        WHERE chain_id = ? AND status = 'active'
+          AND replay_pending_through IS NOT NULL
+          AND lending_asset = ? AND collateral_asset = ? AND duration_days = ?
+          ${signer !== null ? 'AND signer = ?' : ''}
+          AND (expires_at = 0 OR expires_at > ?)
+          AND (deadline = 0 OR deadline > ?)`,
+    )
+      .bind(
+        ...[
+          chainId,
+          lendingAsset,
+          collateralAsset,
+          durationDays,
+          ...(signer !== null ? [signer] : []),
+          now,
+          now,
+        ],
+      )
+      .first<{ n: number }>();
+    const [asks, bids, awaiting] = await Promise.all([
       // Lender side — ASK at interest_rate_bps: lowest first.
       sideQuery(0, 'interest_rate_bps ASC'),
       // Borrower side — BID at interest_rate_bps_max: highest first.
       sideQuery(1, 'interest_rate_bps_max DESC'),
+      awaitingQuery,
     ]);
     const askRows = asks.results ?? [];
     const bidRows = bids.results ?? [];
@@ -995,7 +1023,9 @@ export async function handleSignedOffersGet(
       expiresAt: r.expires_at,
       deadline: r.deadline,
     }));
-    return jsonResponse({ chainId, offers, truncated });
+    // `awaitingReplay`: orders in this market left out because a reorg rebuild
+    // is re-reading their state from the chain; they return once it has.
+    return jsonResponse({ chainId, offers, truncated, awaitingReplay: awaiting?.n ?? 0 });
   } catch (err) {
     console.error('[signedOfferRoutes] book read failed', redactedError(err));
     return jsonResponse({ error: 'book-failed' }, 500);

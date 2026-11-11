@@ -1,13 +1,18 @@
 {
-  "_doc": "What a reorg REBUILD (#3411, src/reorgGuard.ts) keeps on top of src/diamondEpochKeep.json. A rebuild replays the SAME Diamond from its deploy block, so every row born off chain stays valid for it; this is the restore runbook's clear-and-replay treatment (docs/ops/OffChainRestore.md) applied to one chain. `keep`: chain-scoped born-off-chain tables the Diamond keep list does not already name (those are Diamond-keyed dedupe rows a Diamond change must clear, but a rebuild of the same Diamond must not). `project`: chain-scoped hybrid tables, kept with the replay-maintained columns set back to where the scan starts, the same values as the restore converter's RESTORE_PROJECTIONS. scripts/check-table-classification.mjs holds both lists equal to the classification.",
+  "_doc": "What a reorg REBUILD (#3411, src/reorgGuard.ts) keeps on top of src/diamondEpochKeep.json. A rebuild replays the SAME Diamond from its deploy block, so every row born off chain stays valid for it; this is the restore runbook's clear-and-replay treatment (docs/ops/OffChainRestore.md) applied to one chain. `keep`: chain-scoped born-off-chain tables the Diamond keep list does not already name (those are Diamond-keyed dedupe rows a Diamond change must clear, but a rebuild of the same Diamond must not). `project`: chain-scoped hybrid tables, kept with the replay-maintained columns set back to where the scan starts, the same values as the restore converter's RESTORE_PROJECTIONS; `pendingThrough` names the column stamped with the chain's pre-rebuild indexed height, which hides the row from the live book until the scan's cursor reaches it, and `touch` the timestamp bumped when the scan clears the stamp. scripts/check-table-classification.mjs holds both lists equal to the classification.",
   "keep": {
     "notify_state": "HF-band alert dedupe for the same Diamond's loans; clearing it would send every open loan's alert again",
     "pre_grace_notify_state": "pre-grace warning dedupe for the same Diamond's loans; clearing it would send every warning again"
   },
   "project": {
     "signed_offers": {
-      "reason": "the user's signed orders: the order and signature were posted by the user and no replay can recreate them; their fill and cancel state is the chain's, so it restarts as unfilled and the replay re-applies every fill, cancel and nonce burn",
-      "set": { "status": "active", "filled_amount": "0" }
+      "reason": "the user's signed orders: the order and signature were posted by the user and no replay can recreate them; their fill and cancel state is the chain's, so it restarts as unfilled and the replay re-applies every fill, cancel and nonce burn. Until the replay passes the height the chain was indexed to before the rebuild (`pendingThrough`), the order is not listed, so an order already filled or cancelled is never shown as live; the scan clears the mark and bumps `touch` when it gets there",
+      "set": {
+        "status": "active",
+        "filled_amount": "0"
+      },
+      "pendingThrough": "replay_pending_through",
+      "touch": "updated_at"
     }
   }
 }

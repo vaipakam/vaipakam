@@ -167,6 +167,9 @@ const resetPending = (h: ReturnType<typeof chainDb>) =>
   (h.db.prepare('SELECT reset_pending FROM indexer_deployment WHERE chain_id = ?').get(BASE) as { reset_pending: number })
     .reset_pending;
 
+const pendingThrough = (h: ReturnType<typeof chainDb>) =>
+  (h.db.prepare('SELECT replay_pending_through AS p FROM signed_offers WHERE chain_id = ?').get(BASE) as { p: number | null }).p;
+
 /** Rows the user posted, which a rebuild must keep. */
 function seedOffChainRows(h: ReturnType<typeof chainDb>) {
   h.db
@@ -259,16 +262,26 @@ describe('a replaced indexed block is rolled back by a rebuild', () => {
     // Codex #3528 r1 P1 — what the user posted survives the rebuild: the signed
     // order is kept with its fill state handed back to the replay, and the
     // alert settings and dedupe are kept.
-    expect(h.db.prepare('SELECT status, filled_amount, signature FROM signed_offers WHERE chain_id = ?').all(BASE)).toEqual([
-      { status: 'active', filled_amount: '0', signature: '0xsig' },
-    ]);
+    // Codex #3528 r2 — it is stamped with the height the chain had been
+    // indexed to (the anchor, HEAD), so the book does not list it yet.
+    expect(
+      h.db.prepare('SELECT status, filled_amount, signature, replay_pending_through FROM signed_offers WHERE chain_id = ?').all(BASE),
+    ).toEqual([{ status: 'active', filled_amount: '0', signature: '0xsig', replay_pending_through: HEAD }]);
     expect((h.db.prepare('SELECT COUNT(*) AS n FROM user_thresholds WHERE chain_id = ?').get(BASE) as { n: number }).n).toBe(1);
     expect((h.db.prepare('SELECT COUNT(*) AS n FROM notify_state WHERE chain_id = ?').get(BASE) as { n: number }).n).toBe(1);
 
+    // While the replay is short of that height the order stays unlisted.
+    h.db.prepare('UPDATE signed_offers SET replay_pending_through = ? WHERE chain_id = ?').run(HEAD + 1, BASE);
     await pass(h);
     expect(cursorOf(h)).toBe(HEAD);
     expect(anchorOf(h)).toEqual({ block_number: HEAD, block_hash: hashOf(HEAD) });
     expect(activityCount(h)).toBe(2);
+    expect(pendingThrough(h)).toBe(HEAD + 1);
+    // Once the cursor reaches it, the same write lists the order again.
+    h.db.prepare('UPDATE signed_offers SET replay_pending_through = ? WHERE chain_id = ?').run(HEAD, BASE);
+    h.db.prepare(`UPDATE indexer_cursor SET last_block = ? WHERE chain_id = ? AND kind = 'diamond'`).run(HEAD - 10, BASE);
+    await pass(h);
+    expect(pendingThrough(h)).toBeNull();
   });
 
   it('a reorganisation entirely above the anchor changes nothing', { timeout: 60_000 }, async () => {

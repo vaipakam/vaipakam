@@ -39,7 +39,7 @@ const API_INDEX = {
     { method: 'GET', path: '/offers/by-creator/{address}', description: 'Offers created by a wallet.' },
     { method: 'GET', path: '/offers/by-current-holder/{address}', description: 'Open offers whose position NFT a wallet currently holds.' },
     { method: 'GET', path: '/offers/{id}', description: 'One offer by id.' },
-    { method: 'GET', path: '/signed-offers', description: "One (pair, tenor) market's active gasless signed-offer book." },
+    { method: 'GET', path: '/signed-offers', description: "One (pair, tenor) market's active gasless signed-offer book. `awaitingReplay` counts the market's orders left out while a reorg rebuild re-reads their fills and cancels from the chain; they are listed again once it has." },
     { method: 'GET', path: '/loans/stats', description: 'Loan counts by status.' },
     { method: 'GET', path: '/loans/active', description: 'Active loans (paginated).' },
     { method: 'GET', path: '/loans/recent', description: 'Recently initiated loans.' },
