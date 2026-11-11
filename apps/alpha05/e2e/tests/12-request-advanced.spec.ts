@@ -58,11 +58,14 @@ test('a ranged request posts both ends, the floor and the fill mode, with the ri
   await page.getByTestId('request-amount').fill('0.25');
   await page.getByTestId('request-collateral').fill('2000');
   await page.getByTestId('request-rate').fill('6');
+  // One size fills whole (#3520): all or none is the one mode, and the
+  // modes that fill in parts wait for a range.
+  const fill = page.getByTestId('request-fill');
+  await expect(fill.getByRole('radio', { name: /All or none/ })).toBeChecked();
+  await expect(fill.getByRole('radio', { name: /Partial/ })).toBeDisabled();
+  await expect(fill.getByRole('radio', { name: /Immediate or cancel/ })).toBeDisabled();
+  await expect(page.getByTestId('request-fill-shape')).toHaveText('One size fills whole, in one match. To fill it in parts, turn on the option above.');
   // All or none takes one amount: a range turns it off and greys it out.
-  await page
-    .getByTestId('request-fill')
-    .getByRole('radio', { name: /All or none/ })
-    .check();
   await page.getByTestId('request-range').check();
   await expect(page.getByTestId('request-fill').getByRole('radio', { name: /All or none/ })).toBeDisabled();
   await expect(page.getByTestId('request-fill').getByRole('radio', { name: /Partial/ })).toBeChecked();

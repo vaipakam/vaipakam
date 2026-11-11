@@ -142,13 +142,32 @@ export const DEFAULT_INPUT: PostInput = {
 
 /** Why a fill mode cannot go with the rest of the request: all-or-none
  *  takes one amount, never a range, and immediate-or-cancel needs an
- *  expiry (the protocol refuses both shapes). */
-export type FillModeBlock = 'aon-range' | 'ioc-open';
+ *  expiry (the protocol refuses both shapes). A mode that fills in parts
+ *  (partial, immediate-or-cancel) needs a range (#3520): `LibOfferMatch`
+ *  keeps each match between the offer's smallest amount and what is left
+ *  of its largest, so an offer of one size only ever fills whole. */
+export type FillModeBlock = 'aon-range' | 'parts-one-size' | 'ioc-open';
 
 export function fillModeBlock(mode: FillMode, ranged: boolean, expiry: ExpiryChoice): FillModeBlock | null {
   if (mode === 'aon' && ranged) return 'aon-range';
+  if (mode !== 'aon' && !ranged) return 'parts-one-size';
   if (mode === 'ioc' && expiry === 'never') return 'ioc-open';
   return null;
+}
+
+/** #3520: the fill mode a post sends. An offer of one size (smallest
+ *  amount equal to the largest) fills whole whatever mode it carries, so
+ *  it posts all-or-none, the mode that says so; only a range carries the
+ *  mode chosen for it. */
+export function postedFillMode(chosen: FillMode, amount: bigint, amountMax: bigint): FillMode {
+  return amount < amountMax ? chosen : 'aon';
+}
+
+/** #3520: the mode the guided forms show as chosen: all-or-none for one
+ *  size, else the mode chosen for the range (partial when none was). */
+export function shownFillMode(chosen: FillMode, ranged: boolean): FillMode {
+  if (!ranged) return 'aon';
+  return chosen === 'aon' ? 'partial' : chosen;
 }
 
 /** Why a range is not well formed: the largest amount below the smallest,
@@ -185,7 +204,7 @@ export type AdvancedOption = 'range' | 'fill' | 'cadence' | 'tariff' | 'guard';
 export function advancedSet(input: PostInput): AdvancedOption[] {
   const out: AdvancedOption[] = [];
   if (input.ranged) out.push('range');
-  if (input.fillMode !== 'partial') out.push('fill');
+  if (shownFillMode(input.fillMode, input.ranged) === 'ioc') out.push('fill');
   if (input.cadence !== 0) out.push('cadence');
   if (input.tariff) out.push('tariff');
   if (input.guard) out.push('guard');

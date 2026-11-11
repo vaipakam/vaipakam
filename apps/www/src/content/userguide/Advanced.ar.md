@@ -2001,7 +2001,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Borrow: شروط الطلب
 
-ينشر Basic طلبًا بقيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax`، و`fillMode` 0، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` true. تُحوَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. يُحدّ `durationDays` بالحد الأقصى المضبوط المقروء من `getProtocolConfigBundle`. وقيمة `expiresAt` إما 0 (مفتوح حتى الإلغاء) وإما وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، لا يتجاوز `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا). القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+ينشر Basic طلبًا بقيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax`، و`fillMode` 1 (AON)، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` true. تُحوَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. يُحدّ `durationDays` بالحد الأقصى المضبوط المقروء من `getProtocolConfigBundle`. وقيمة `expiresAt` إما 0 (مفتوح حتى الإلغاء) وإما وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، لا يتجاوز `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا). القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
 
 <a id="borrow-request-review"></a>
 
@@ -2025,7 +2025,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Borrow: وضع ملء الطلب
 
-قيمة `fillMode` هي 0 (Partial) أو 1 (AON) أو 2 (IOC) ولا تتغير بعد النشر. يتطلب AON أن يكون `amount` = `amountMax` (`AonRequiresSingleValueAmount`)، ويتطلب IOC أن يكون `expiresAt` ≠ 0 (`IocRequiresExpiry`)؛ ولا يعرض النموذج أيًّا من الصيغ المرفوضة. أما المبالغ والسعر والضمان فيمكن تغييرها على طلب مفتوح عبر `setOfferAmount` و`setOfferRate` و`setOfferCollateral` و`modifyOffer`، دون النزول أبدًا عن `amountFilled` أو `collateralAmountFilled`؛ ولا يستدعيها هذا التطبيق بعد.
+قيمة `fillMode` هي 0 (Partial) أو 1 (AON) أو 2 (IOC) ولا تتغير بعد النشر. يتطلب AON أن يكون `amount` = `amountMax` (`AonRequiresSingleValueAmount`)، ويتطلب IOC أن يكون `expiresAt` ≠ 0 (`IocRequiresExpiry`)؛ ولا يعرض النموذج أيًّا من الصيغ المرفوضة. النشر بحجم واحد يرسل AON (#3520): يُبقي `LibOfferMatch` كل مطابقة بين `amount` وما تبقّى من `amountMax`، فلا يُنفَّذ الحجم الواحد إلا كاملًا، ولا يُعرض Partial وIOC إلا مع نطاق. أما المبالغ والسعر والضمان فيمكن تغييرها على طلب مفتوح عبر `setOfferAmount` و`setOfferRate` و`setOfferCollateral` و`modifyOffer`، دون النزول أبدًا عن `amountFilled` أو `collateralAmountFilled`؛ ولا يستدعيها هذا التطبيق بعد.
 
 <a id="borrow-request-cadence"></a>
 
@@ -2079,7 +2079,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Lend: شروط العرض
 
-من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 0 ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0 ما لم يحدد الوضع المتقدم جدولًا، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full ما لم يخترها الوضع المتقدم. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 1 (AON) ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0 ما لم يحدد الوضع المتقدم جدولًا، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full ما لم يخترها الوضع المتقدم. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
 
 <a id="rate-check"></a>
 

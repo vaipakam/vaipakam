@@ -82,9 +82,9 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
           textRow('request.rowWhole', text('request.rangeFill'), true),
         ]
       : [{ label: text('request.rowAmount'), value: amount(pair.lending, parsed.amount), binding: true }, textRow('request.rowWhole', text('request.whole'), true)]),
-    // With one amount the default mode is one lender for all of it, which
-    // the row above already says; only a mode that changes that is stated.
-    ...(ranged || parsed.fillMode !== 'partial' ? [textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true)] : []),
+    // One size posts all-or-none (#3520): one lender for all of it, which
+    // the row above already says; only a range carries a chosen mode.
+    ...(ranged ? [textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true)] : []),
     ...(ranged
       ? [textRow('request.rowMatching', text(r.risk.partialFill === null ? 'request.matchingUnread' : r.risk.partialFill ? 'request.matchingOn' : 'request.matchingOff'), false)]
       : []),
@@ -220,6 +220,6 @@ export function rangeConsequences(r: PostReview, meta: TokenMetaMap | null, copy
     if (risk.partialFill === false) out.push(copy.text('request.loseMatchingOff'));
     else if (risk.partialFill === null) out.push(copy.text('request.loseMatchingUnread'));
   }
-  if (isRanged(parsed) || parsed.fillMode !== 'partial') out.push(copy.text('request.loseFillFixed'));
+  if (isRanged(parsed)) out.push(copy.text('request.loseFillFixed'));
   return out;
 }

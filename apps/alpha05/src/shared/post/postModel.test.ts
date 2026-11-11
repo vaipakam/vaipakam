@@ -7,6 +7,8 @@ import {
   durationOk,
   expiresAt,
   fillModeBlock,
+  postedFillMode,
+  shownFillMode,
   isRanged,
   parseAmount,
   parseDays,
@@ -226,13 +228,28 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
   it('refuses all-or-none with a range and immediate-or-cancel without an expiry, as the protocol does', () => {
     expect(fillModeBlock('aon', true, '7d')).toBe('aon-range');
     expect(fillModeBlock('aon', false, 'never')).toBeNull();
-    expect(fillModeBlock('ioc', false, 'never')).toBe('ioc-open');
+    expect(fillModeBlock('ioc', true, 'never')).toBe('ioc-open');
     expect(fillModeBlock('ioc', true, '1d')).toBeNull();
     expect(fillModeBlock('partial', true, 'never')).toBeNull();
   });
+  it('lets only a range carry a mode that fills in parts (#3520)', () => {
+    // One size only ever fills whole, so partial and immediate-or-cancel
+    // need a range, and a post of one size sends all-or-none.
+    expect(fillModeBlock('partial', false, '7d')).toBe('parts-one-size');
+    expect(fillModeBlock('ioc', false, 'never')).toBe('parts-one-size');
+    expect(postedFillMode('partial', 10n, 10n)).toBe('aon');
+    expect(postedFillMode('ioc', 10n, 10n)).toBe('aon');
+    expect(postedFillMode('ioc', 10n, 40n)).toBe('ioc');
+    expect(postedFillMode('partial', 10n, 40n)).toBe('partial');
+    expect(shownFillMode('ioc', false)).toBe('aon');
+    expect(shownFillMode('aon', true)).toBe('partial');
+    expect(shownFillMode('ioc', true)).toBe('ioc');
+  });
   it('names the Advanced options a request carries, so Basic can say they still apply', () => {
     expect(advancedSet(DEFAULT_INPUT)).toEqual([]);
-    expect(advancedSet({ ...DEFAULT_INPUT, ranged: true, fillMode: 'aon' })).toEqual(['range', 'fill']);
+    expect(advancedSet({ ...DEFAULT_INPUT, ranged: true, fillMode: 'ioc' })).toEqual(['range', 'fill']);
+    // A mode chosen for a range that is now off sends nothing of its own.
+    expect(advancedSet({ ...DEFAULT_INPUT, ranged: false, fillMode: 'ioc' })).toEqual([]);
     expect(advancedSet({ ...DEFAULT_INPUT, cadence: 1 })).toEqual(['cadence']);
   });
 });

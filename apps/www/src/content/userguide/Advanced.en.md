@@ -2482,7 +2482,7 @@ A request is `createOffer` with `offerType` 1, ERC-20 on both legs, sent from th
 
 ### Borrow: The Request's Terms
 
-Basic posts a single-value request: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+Basic posts a single-value request: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
 
 <a id="borrow-request-review"></a>
 
@@ -2506,7 +2506,7 @@ A range sends `amount` (the smallest) below `amountMax` (the largest), `interest
 
 ### Borrow: A Request's Fill Mode
 
-`fillMode` is 0 (Partial), 1 (AON) or 2 (IOC) and cannot change after posting. AON requires `amount` = `amountMax` (`AonRequiresSingleValueAmount`), and IOC requires `expiresAt` ≠ 0 (`IocRequiresExpiry`); the form does not offer either refused shape. The amounts, the rate and the collateral can change on an open request through `setOfferAmount`, `setOfferRate`, `setOfferCollateral` and `modifyOffer`, never below `amountFilled` or `collateralAmountFilled`; this app does not call them yet.
+`fillMode` is 0 (Partial), 1 (AON) or 2 (IOC) and cannot change after posting. AON requires `amount` = `amountMax` (`AonRequiresSingleValueAmount`), and IOC requires `expiresAt` ≠ 0 (`IocRequiresExpiry`); the form does not offer either refused shape. A post of one size sends AON (#3520): `LibOfferMatch` keeps each match between `amount` and what is left of `amountMax`, so one size only ever fills whole, and partial and IOC are offered only with a range. The amounts, the rate and the collateral can change on an open request through `setOfferAmount`, `setOfferRate`, `setOfferCollateral` and `modifyOffer`, never below `amountFilled` or `collateralAmountFilled`; this app does not call them yet.
 
 <a id="borrow-request-cadence"></a>
 
@@ -2560,7 +2560,7 @@ A lending offer is `createOffer` with `offerType` 0, ERC-20 on both legs, sent f
 
 ### Lend: The Offer's Terms
 
-Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0 unless Advanced sets another (next section), `periodicInterestCadence` 0 unless Advanced sets a schedule, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff unless Advanced chooses it. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 1 (AON) unless Advanced sets another (next section), `periodicInterestCadence` 0 unless Advanced sets a schedule, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff unless Advanced chooses it. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
 
 <a id="rate-check"></a>
 
