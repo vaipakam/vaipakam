@@ -2057,12 +2057,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   VPFI held, the delivered allowance it charges (`getDeliveredFreshBound`)
   and the pool's available headroom (`poolAvailable`), so VPFI held beyond
   any of them is never counted as payable, and the card says how much is
-  held beside it). A mirror whose home network cannot be read keeps its
+  held beside it). These are standing funds only: a mirror's claim can also
+  draw on VPFI its home network sent with a particular day's rewards
+  (transport epochs), which is held per day and has no programme-wide
+  figure, so on a mirror the card says so beside the figure and an empty
+  standing figure never reads as nothing to pay; the wallet's own claim
+  figure (the claim run in a reverting frame) is what shows what a claim
+  pays now. A mirror whose home network cannot be read keeps its
   role and states the missing reading. Every amount is formatted in the VPFI
   token read in the same snapshot. Basic shows one sentence: running only when the
   launch has passed by the read block's own clock, the role pays here (an unconfigured network behaves as
   a home network) and something is held to pay; otherwise running with
-  nothing held, no start date, a stated start, or left the reward network
+  nothing held (a home network or one with no role set), running on a
+  mirror with no standing VPFI while VPFI sent for a day can still pay, no start date, a stated start, or left the reward network
   (detached: nothing new becomes claimable). A deciding fact that is unread
   makes the sentence unknown, never running, never zero. A global pause is
   stated by name with what stays open (RB-SWITCH class 2), and an unread

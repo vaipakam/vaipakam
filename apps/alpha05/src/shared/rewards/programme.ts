@@ -7,7 +7,9 @@
  * answer, so an unreadable fact is never shown as zero or off. The headline
  * calls the programme live only when the launch has passed, the network
  * holds a reward role that pays here, and VPFI is held to pay rewards now;
- * any of those unread makes the headline unknown. Rewards are usage rebates
+ * any of those unread makes the headline unknown. On a mirror, VPFI sent for
+ * a particular day has no programme-wide figure, so empty standing funds
+ * there never read as nothing to pay. Rewards are usage rebates
  * paid from fees already received, never yield (RL-6).
  */
 import type { Abi, Hex, PublicClient } from 'viem';
@@ -73,7 +75,10 @@ export interface ProgrammeRead {
   /** This network's VPFI token at the read block; null when none is set or
    *  it could not be read. Every amount here is in this token. */
   token: Hex | null;
-  /** VPFI a reward settlement may draw now, net of what is reserved.
+  /** The standing VPFI a reward settlement may draw now, net of what is
+   *  reserved. On a mirror this leaves out VPFI sent with a particular day's
+   *  rewards (transport epochs), which is held per day and read only by the
+   *  claim itself.
    *  `fresh` is what a claim can pay from VPFI delivered for rewards: the
    *  lowest of every programme-wide limit a claim checks before it pays
    *  fresh VPFI, so VPFI held beyond any of them is not counted as payable:
@@ -146,8 +151,16 @@ export type ProgrammeHeadline =
   | { kind: 'left' }
   | { kind: 'not-started' }
   | { kind: 'starts'; at: number }
-  /** Launched, but nothing is held to pay rewards right now. */
-  | { kind: 'unfunded'; mirror: boolean }
+  /** Launched on a home network (or one with no role set), and nothing is
+   *  held to pay rewards right now: there the standing funds are the whole
+   *  picture. */
+  | { kind: 'unfunded' }
+  /** Launched on a mirror with no standing VPFI to pay from. A mirror's
+   *  claim can also be paid from VPFI its home network sent with a
+   *  particular day's rewards (transport epochs). That is held per day and
+   *  has no programme-wide figure, so the page never concludes that nothing
+   *  can pay: the wallet's own claim figure shows what a claim pays now. */
+  | { kind: 'per-day' }
   | { kind: 'live' };
 
 export function programmeHeadline(r: ProgrammeRead): ProgrammeHeadline {
@@ -157,6 +170,6 @@ export function programmeHeadline(r: ProgrammeRead): ProgrammeHeadline {
   if (r.launch === 0n) return { kind: 'not-started' };
   if (r.launch > BigInt(r.chainTime)) return { kind: 'starts', at: Number(r.launch) };
   if (r.funding === null) return { kind: 'unknown' };
-  if (r.funding.fresh + r.funding.recycled === 0n) return { kind: 'unfunded', mirror: r.role === 'mirror' };
+  if (r.funding.fresh + r.funding.recycled === 0n) return r.role === 'mirror' ? { kind: 'per-day' } : { kind: 'unfunded' };
   return { kind: 'live' };
 }

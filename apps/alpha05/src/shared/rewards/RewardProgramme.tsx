@@ -20,7 +20,9 @@ import { PROGRAMME_SIGNATURES, programmeHeadline, readProgramme, type ProgrammeF
  * at the top of the Rewards page.
  *
  * Basic leads with one sentence: running and funded, running with nothing
- * held to pay rewards, not started, starting at a stated time, left the
+ * held to pay rewards, running on a mirror with no standing VPFI (VPFI sent
+ * for a particular day has no programme-wide figure, so that sentence never
+ * says nothing can pay), not started, starting at a stated time, left the
  * reward network, or unknown when a deciding fact could not be read (never
  * shown as running). A global pause is stated by name with what stays open,
  * and an unreadable pause is stated too. Advanced lists every fact behind
@@ -62,9 +64,9 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
       case 'live':
         return format('rewardsProgramme.live', { chain: name });
       case 'unfunded':
-        return headline!.mirror && base !== null
-          ? format('rewardsProgramme.unfundedMirror', { chain: name, base })
-          : format('rewardsProgramme.unfunded', { chain: name });
+        return format('rewardsProgramme.unfunded', { chain: name });
+      case 'per-day':
+        return base !== null ? format('rewardsProgramme.perDay', { chain: name, base }) : format('rewardsProgramme.perDayHomeUnknown', { chain: name });
       case 'not-started':
         return format('rewardsProgramme.notStarted', { chain: name });
       case 'starts':
@@ -157,6 +159,12 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
                 <span className="tier-b" data-testid="rewards-programme-capped">
                   {' '}
                   {format('rewardsProgramme.capped', { held: vpfi(r.funding.held) })}
+                </span>
+              )}
+              {r.role === 'mirror' && (
+                <span className="tier-b" data-testid="rewards-programme-per-day">
+                  {' '}
+                  {text('rewardsProgramme.perDayNote')}
                 </span>
               )}
             </dd>

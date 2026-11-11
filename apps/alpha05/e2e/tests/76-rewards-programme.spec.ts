@@ -11,8 +11,10 @@
  *   4. with a VPFI token and VPFI in the Diamond, the programme runs and
  *      the delivered VPFI ready to pay is stated;
  *   5. a global pause is stated by name with what stays open;
- *   6. reporting to another network names that network as the home network,
- *      and the VPFI held there is not payable until it is delivered;
+ *   6. reporting to another network names that network as the home network;
+ *      the VPFI held there is not payable until it is delivered, and with no
+ *      standing VPFI the sentence never says nothing can pay, because VPFI
+ *      sent for a particular day can still pay that day's rewards;
  *   7. detached, the network has left the reward network and nothing new
  *      becomes claimable.
  *
@@ -106,9 +108,14 @@ test('the Rewards page says whether the reward programme runs here, never callin
   await expect(role).toHaveAttribute('data-role', 'mirror', { timeout: 60_000 });
   await expect(role).toHaveText('Reports its activity to Arbitrum Sepolia, which counts the rewards and funds them here.');
   // The 50 VPFI is held, but nothing was delivered for rewards: a mirror's
-  // claim charges the delivered allowance first, so nothing is payable.
-  await expect(now).toHaveAttribute('data-programme', 'unfunded');
-  await expect(now).toContainText('but no VPFI from Arbitrum Sepolia is held here to pay rewards right now.');
+  // claim charges the delivered allowance first, so none of it is standing
+  // funds. VPFI sent for a particular day is held per day and has no
+  // programme-wide figure, so the sentence never says nothing can pay.
+  await expect(now).toHaveAttribute('data-programme', 'per-day');
+  await expect(now).toContainText('No standing VPFI from Arbitrum Sepolia is held here now; VPFI sent for a particular day can still pay that day’s rewards.');
+  await expect(page.getByTestId('rewards-programme-per-day')).toHaveText(
+    'VPFI sent for a particular day’s rewards is not counted here; your claim figure includes it.',
+  );
   await expect(page.getByTestId('rewards-programme-capped')).toContainText(
     'is held, but a claim pays only within what was delivered and the programme’s remaining pool.',
   );

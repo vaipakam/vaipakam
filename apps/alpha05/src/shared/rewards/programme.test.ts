@@ -33,17 +33,17 @@ describe('programmeHeadline', () => {
     expect(programmeHeadline(read({ role: 'unconfigured' }))).toEqual({ kind: 'live' });
   });
 
-  it('says nothing is held to pay when both sources are empty', () => {
-    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: true } }))).toEqual({ kind: 'unfunded', mirror: false });
-    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: false } }))).toEqual({
-      kind: 'unfunded',
-      mirror: true,
-    });
+  it('says nothing is held to pay when both sources are empty on a network whose standing funds are the whole picture', () => {
+    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: true } }))).toEqual({ kind: 'unfunded' });
+    expect(programmeHeadline(read({ role: 'unconfigured', funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: false } }))).toEqual({ kind: 'unfunded' });
     // VPFI held beyond the delivered allowance or the pool cannot pay a claim.
-    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 50n, noToken: false } }))).toEqual({
-      kind: 'unfunded',
-      mirror: true,
-    });
+    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, held: 50n, noToken: false } }))).toEqual({ kind: 'unfunded' });
+  });
+
+  it('never says nothing can pay on a mirror, whose claims can draw on VPFI sent for a particular day', () => {
+    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: false } }))).toEqual({ kind: 'per-day' });
+    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 50n, noToken: false } }))).toEqual({ kind: 'per-day' });
+    expect(programmeHeadline(read({ role: 'mirror' }))).toEqual({ kind: 'live' });
   });
 
   it('states a missing or future start before funding', () => {
