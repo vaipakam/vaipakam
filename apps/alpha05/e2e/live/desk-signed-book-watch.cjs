@@ -1,13 +1,15 @@
 // Watch-only live review of a market's signed orders on the rate desk
-// (OFF-60 first slice, RB-DESK-BOOK-SIGNED) (live tier, run after each
+// (OFF-60, RB-DESK-BOOK-SIGNED, RB-DESK-FILL) (live tier, run after each
 // deploy), through the shared watch-only wallet (watch-wallet.cjs): nothing
 // can be signed or sent. As <address> in Advanced mode it opens the desk's
 // markets in turn (up to three) and, for each, prints the completeness note
-// and the signed orders section: the not-yet note, each side's orders with
-// their maker, lapse, standing on the chain and the maker's vault against a
-// fill, or the section's empty or failed state. It counts the section's
-// buttons (only the explanation's) and the offer-book reads. Checks that
-// nothing scrolls sideways and saves full-page screenshots per device.
+// and the signed orders section: each side's orders with their maker,
+// lapse, standing on the chain and the maker's vault against a fill, or the
+// section's empty or failed state. It counts the fill buttons and the
+// offer-book reads, and opens the first enabled fill's review (or the Terms
+// prompt before it) to print what it states; it never ticks consent or
+// presses Confirm. Checks that nothing scrolls sideways and saves full-page
+// screenshots per device.
 // Usage: node e2e/live/desk-signed-book-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
 const { chromium, devices } = require('playwright');
@@ -29,7 +31,8 @@ async function section(p, label, step) {
     .catch(() => {});
   await p.waitForTimeout(3000);
   const rows = s.getByTestId('desk-signed-book-order');
-  console.log(`----- ${step} (${await s.getAttribute('data-market')}): orders = ${await rows.count()}, buttons = ${await s.getByRole('button').count()}`);
+  const fills = s.getByTestId('desk-signed-book-fill');
+  console.log(`----- ${step} (${await s.getAttribute('data-market')}): orders = ${await rows.count()}, fill buttons = ${await fills.count()}`);
   for (let i = 0; i < (await rows.count()); i++) {
     const r = rows.nth(i);
     console.log(`  [standing ${await r.getAttribute('data-standing')}, cover ${await r.getAttribute('data-cover')}]`);
@@ -37,6 +40,21 @@ async function section(p, label, step) {
   console.log(await text(s));
   console.log('scrollWidth/innerWidth', await width(p));
   await p.screenshot({ path: `${OUT}/live-desk-signed-book-${step}-${label}.png`, fullPage: true });
+  for (let i = 0; i < (await fills.count()); i++) {
+    if (!(await fills.nth(i).isEnabled())) continue;
+    await fills.nth(i).click();
+    await p.waitForTimeout(8000);
+    const review = s.locator('.accept-offer');
+    const terms = p.locator('.terms-prompt');
+    if (await review.count()) console.log(`  fill review:\n${await text(review.first())}`);
+    else if (await terms.count()) console.log(`  Terms prompt before the review:\n${await text(terms.first())}`);
+    else console.log('  the fill opened neither a review nor a Terms prompt');
+    console.log('scrollWidth/innerWidth (review)', await width(p));
+    await p.screenshot({ path: `${OUT}/live-desk-signed-fill-${step}-${label}.png`, fullPage: true });
+    const close = (await review.count()) ? review.first().getByRole('button', { name: 'Close' }).first() : p.getByRole('button', { name: 'Close' }).first();
+    if (await close.count()) await close.click().catch(() => {});
+    break;
+  }
 }
 
 async function session(b, opts, label) {

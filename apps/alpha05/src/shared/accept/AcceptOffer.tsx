@@ -30,7 +30,9 @@ import type { LegOutcome } from '../tx/outcome';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
-import { needFromAcceptCode, type RiskNeed } from '../risk/riskAccess';
+import { erc20Pair, needFromAcceptCode, needFromRefusal, type PairSource, type RiskNeed } from '../risk/riskAccess';
+import { signedFillCall, signedFillFrom } from '../desk/signedFill';
+import { sourceKey, type AcceptSource } from './acceptSource';
 import { RiskGate, RiskStepFlow } from '../risk/RiskAccessStep';
 import { changedBetween, paid, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
 import { indexerPositionFlowReader } from '../offers/positionFlow';
@@ -52,7 +54,8 @@ export const LEND_ACCEPT_KEY = 'lend.accept';
 interface AcceptOfferProps {
   /** The page's store key (ACCEPT_KEY or LEND_ACCEPT_KEY). */
   flowKey: string;
-  offerId: bigint;
+  /** What is taken: a stored offer by its id, or a maker's signed order. */
+  source: AcceptSource;
   chain: SupportedChain;
   own: OwnStateClient;
   meta: TokenMetaMap | null;
@@ -75,7 +78,7 @@ interface AcceptOfferProps {
  * arrived in the wallet and what moved into the vault, for a lender what
  * left the wallet and the fee share that came back.
  */
-export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose }: AcceptOfferProps) {
+export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose }: AcceptOfferProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -85,6 +88,9 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
   // #3205 — the indexer's moved verdict for a position-bound offer.
   const flows = indexerPositionFlowReader(useWorldRail().indexer, chain.chainId);
   const identity = reviewIdentity(own);
+  /** The subject's key: a review read for one offer or order never lands
+   *  on another's. */
+  const subject = sourceKey(source);
   const [review, setReview] = useStoredValue<AcceptReview>(`${flowKey}:review`);
   /** The review read the consent was given against (its `readAt`): a new
    *  read is a new set of figures, so the consent does not carry over. */
@@ -95,6 +101,9 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
   const [credited, setCredited] = useStoredValue<boolean>(`${flowKey}:credited`);
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
   const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${flowKey}:risk`);
+  /** OFF-60 — a signed order has no risk-access preview yet (#3577): the
+   *  step a dry run's refusal named, offered when the review shows again. */
+  const [dryRisk, setDryRisk] = useStoredValue<RiskNeed>(`${flowKey}:dryRisk`);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** The wallet step open now, kept with the tracker (it outlives the page). */
   const setStep = useTxNote(flowKey);
@@ -152,6 +161,8 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
         deadline: block.value.timestamp + BigInt(ACCEPT_DEADLINE_SECONDS),
         illiquidLending: r.lendingClass === 'illiquid',
         illiquidCollateral: r.collateralClass === 'illiquid',
+        // A signed order's fill binds the terms to the order's hash.
+        ...(r.source.kind === 'signed' ? { offerKey: r.source.order.orderHash } : {}),
       });
       say(text('accept.stepSign'));
       const signature = await signTypedData(config, {
@@ -196,22 +207,30 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
         });
       };
 
+      // The call: `acceptOffer` for a stored offer, `acceptSignedOffer` for
+      // a signed order (the order, its maker's signature and these terms).
+      const call =
+        r.source.kind === 'stored'
+          ? { abi: ACCEPT_ABI, functionName: 'acceptOffer' as const, args: [r.source.offerId, message, signature] as const }
+          : signedFillCall(r.source.order, message, signature);
+
       // 3. The dry run with the real signature: the protocol's own verdict.
       const dry = await askThrough(own, (c) =>
         c.simulateContract({
           address: diamond,
-          abi: ACCEPT_ABI,
-          functionName: 'acceptOffer',
-          args: [offerId, message, signature],
+          abi: call.abi,
+          functionName: call.functionName,
+          args: call.args,
           account,
         }),
       );
-      if (dry.kind === 'reverted')
-        return stop(
-          format('accept.dryRunRefused', {
-            reason: refusalFromError(dry.error).reason,
-          }),
-        );
+      if (dry.kind === 'reverted') {
+        const refusal = refusalFromError(dry.error);
+        // With no risk-access preview for a signed order, its refusal is the
+        // first word on it: the step it names is offered on the review.
+        if (!r.riskPreviewed) setDryRisk(needFromRefusal(refusal.code));
+        return stop(format('accept.dryRunRefused', { reason: refusal.reason }));
+      }
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 
       // 4. The acceptance.
@@ -219,9 +238,9 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       try {
         return await sendWrite(config, {
           address: diamond,
-          abi: ACCEPT_ABI,
-          functionName: 'acceptOffer',
-          args: [offerId, message, signature],
+          abi: call.abi,
+          functionName: call.functionName,
+          args: call.args,
           chainId: chain.chainId,
           account,
         });
@@ -246,17 +265,20 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     },
     measure: async (receipt, at) => {
       if (!review) return [];
-      return review.role === 'borrower' ? measureBorrower(review, receipt.logs, at) : measureLender(review, receipt.logs);
+      // The offer the acceptance took: a stored offer's own id, or the one a
+      // signed order's fill wrote, from the fill's own log (null if none).
+      const offerId = review.source.kind === 'stored' ? review.source.offerId : (signedFillFrom(receipt.logs, diamond, review.source.order.orderHash)?.offerId ?? null);
+      return review.role === 'borrower' ? measureBorrower(review, offerId, receipt.logs, at) : measureLender(review, offerId, receipt.logs);
     },
   });
 
   /** A borrower's acceptance: the loan, the net principal credited to the
    *  vault, the fee share paid back, and the collateral locked in the vault. */
-  const measureBorrower = async (r: AcceptReview, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
+  const measureBorrower = async (r: AcceptReview, offerId: bigint | null, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
     const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
     const legs: LegOutcome[] = [];
-    const opened = openedLoan(logs, diamond, offerId, account);
-    legs.push(loanLeg(opened, 'accept.legLoan'));
+    const opened = offerId === null ? null : openedLoan(logs, diamond, offerId, account);
+    legs.push(loanLeg(r, opened, 'accept.legLoan'));
     let vault: Hex | null = null;
     try {
       vault = await at.read((c, b) => readVault(c, diamond, account, b));
@@ -270,7 +292,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     // named beside it.
     const lending = r.offer.lendingAsset;
     const shownLabel = format('accept.legReceived', { amount: amt(lending, f.toVault) });
-    const split = vault === null ? null : deliverySplit(logs, diamond, lending, account, vault, offerId);
+    const split = vault === null || offerId === null ? null : deliverySplit(logs, diamond, lending, account, vault, offerId);
     if (vault === null) {
       legs.push({ status: 'unknown', label: shownLabel, reason: text('accept.vaultUnknown') });
     } else if (split === null || split.credited === 0n) {
@@ -336,10 +358,10 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
    *  borrower), what left the wallet, and the fee share that came back. A
    *  fee share other than the preview's (the borrower's discount or Full
    *  tariff is settled as the loan opens) is named, never assumed. */
-  const measureLender = (r: AcceptReview, logs: readonly Log[]): LegOutcome[] => {
+  const measureLender = (r: AcceptReview, offerId: bigint | null, logs: readonly Log[]): LegOutcome[] => {
     const f = lenderFigures(r.preview, r.offer.durationDays, r.matcherBps, 0n);
     const lending = r.offer.lendingAsset;
-    const legs: LegOutcome[] = [loanLeg(openedLoan(logs, diamond, offerId, r.offer.creator), 'lendAccept.legLoan')];
+    const legs: LegOutcome[] = [loanLeg(r, offerId === null ? null : openedLoan(logs, diamond, offerId, r.offer.creator), 'lendAccept.legLoan')];
     const lent = moved(logs, lending, account, null);
     const lentLabel = format('lendAccept.legLent', { amount: amt(lending, f.principal) });
     const lv = legVerdict(lent, f.principal);
@@ -368,18 +390,19 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     return legs;
   };
 
-  const loanLeg = (opened: ReturnType<typeof openedLoan>, key: 'accept.legLoan' | 'lendAccept.legLoan'): LegOutcome => {
+  const loanLeg = (r: AcceptReview, opened: ReturnType<typeof openedLoan>, key: 'accept.legLoan' | 'lendAccept.legLoan'): LegOutcome => {
     if (opened) {
       setLoanId(opened.loanId);
       return { status: 'done', label: format(key, { id: opened.loanId.toString() }) };
     }
-    return { status: 'not-done', label: format('accept.legNoLoan', { id: offerId.toString() }), reason: text('accept.noLoan') };
+    if (r.source.kind === 'signed') return { status: 'not-done', label: text('signedFill.legNoLoan'), reason: text('signedFill.noLoan') };
+    return { status: 'not-done', label: format('accept.legNoLoan', { id: r.source.offerId.toString() }), reason: text('accept.noLoan') };
   };
 
   const mounted = useMounted();
   const load = async () => {
     try {
-      const next = await readAcceptReview(own, diamond, offerId, identity, flows);
+      const next = await readAcceptReview(own, diamond, source, identity, flows);
       if (!mounted.current) return;
       setLoadError(null);
       setReview(next);
@@ -388,17 +411,17 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     }
   };
 
-  const reviewOpened = useRef<bigint | null>(null);
+  const reviewOpened = useRef<string | null>(null);
 
   // RB-RAILS: read again each block while the review is on screen; a late
   // answer never lands on another offer's review (useReviewRefresh).
-  const onReview = tx.phase.kind === 'review' && review !== null && review.offerId === offerId;
+  const onReview = tx.phase.kind === 'review' && review !== null && sourceKey(review.source) === subject;
   useReviewRefresh<AcceptReview>({
     chainId: chain.chainId,
     active: onReview,
     review,
-    read: (before) => readAcceptReview(own, diamond, before.offerId, before.identity, flows),
-    sameSubject: (a, b) => a.offerId === b.offerId,
+    read: (before) => readAcceptReview(own, diamond, before.source, before.identity, flows),
+    sameSubject: (a, b) => sourceKey(a.source) === sourceKey(b.source),
     changed: (before, next) => changedBetween(before, next, copy) !== null,
     setReview,
     onChanged: () => setConsentFor(null),
@@ -411,17 +434,18 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     if (!open) return;
     // Once per offer: a development double-run of this effect sees the
     // same (stale) idle phase and must not ask for the review twice.
-    if (tx.phase.kind === 'idle' && reviewOpened.current !== offerId) {
-      reviewOpened.current = offerId;
+    if (tx.phase.kind === 'idle' && reviewOpened.current !== subject) {
+      reviewOpened.current = subject;
       tx.review();
     }
-    if (review === null || review.offerId !== offerId) {
+    if (review === null || sourceKey(review.source) !== subject) {
       setReview(null);
       setConsentFor(null);
       setLoanId(null);
       setRiskOpen(null);
+      setDryRisk(null);
       let live = true;
-      readAcceptReview(own, diamond, offerId, identity, flows).then(
+      readAcceptReview(own, diamond, source, identity, flows).then(
         (next) => {
           if (!live) return;
           setLoadError(null);
@@ -435,9 +459,9 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
         live = false;
       };
     }
-    // Opened once per offer; the tracker and the stored review carry the rest.
+    // Opened once per offer or order; the tracker and the stored review carry the rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offerId]);
+  }, [subject]);
 
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
@@ -446,7 +470,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     try {
       // OFF-35 holds at the moment the wallet opens, not only when the flow
       // did: a Terms version published since the review is accepted first.
-      [next, nowTerms] = await Promise.all([readAcceptReview(own, diamond, offerId, review.identity, flows), own.read((c) => readTerms(c, diamond, account)).then((r) => r.value)]);
+      [next, nowTerms] = await Promise.all([readAcceptReview(own, diamond, review.source, review.identity, flows), own.read((c) => readTerms(c, diamond, account)).then((r) => r.value)]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
@@ -481,7 +505,13 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
   // A risk-access block this wallet can clear itself: never the lender's own
   // (the protocol answers the creator's block first), and the step is the one
   // the protocol's answer names.
-  const riskNeed = review !== null && review.creatorGate === 0 ? needFromAcceptCode(review.gate) : null;
+  // For a signed order, which has no preview of the gate yet (#3577), it is
+  // the step the last dry run's refusal named.
+  const riskNeed = review === null ? null : !review.riskPreviewed ? dryRisk : review.creatorGate === 0 ? needFromAcceptCode(review.gate) : null;
+  // The pair the step stands on: the protocol resolves a stored offer's; a
+  // signed order's is its two ERC-20 legs, the only shape a fill takes.
+  const riskSource: PairSource =
+    source.kind === 'stored' ? { kind: 'offer', offerId: source.offerId } : { kind: 'pair', pair: erc20Pair(source.order.order.lendingAsset as Hex, source.order.order.collateralAsset as Hex) };
   const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   const pairLabel = review ? format('risk.pairName', { lend: symbol(review.offer.lendingAsset), coll: symbol(review.offer.collateralAsset) }) : '';
 
@@ -496,7 +526,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
               </Notice>
             ))}
             {riskNeed !== null && (
-              <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'offer', offerId }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
+              <RiskGate chain={chain} own={own} need={riskNeed} source={riskSource} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
             {review.consent === false && <p className="tier-b">{text(lender ? 'lendAccept.shareOff' : 'accept.feeOff')}</p>}
             <WhyLink summaryKey={lender ? 'lendAccept.feeSummary' : 'accept.feeSummary'} detailKey={lender ? 'lendAccept.feeWhy' : 'accept.feeWhy'} />
@@ -536,11 +566,16 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     setLoanId(null);
     setStep(null);
     setRiskOpen(null);
+    setDryRisk(null);
     onClose();
   };
 
   return (
-    <div className="accept-offer" data-offer-id={offerId.toString()}>
+    <div
+      className="accept-offer"
+      data-offer-id={source.kind === 'stored' ? source.offerId.toString() : undefined}
+      data-order-hash={source.kind === 'signed' ? source.order.orderHash : undefined}
+    >
       {loadError !== null && (
         <Notice tone="warn" tier="A">
           {format('flow.unreadable', { reason: loadError })}{' '}
@@ -554,11 +589,12 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
           chain={chain}
           own={own}
           need={riskOpen}
-          source={{ kind: 'offer', offerId }}
+          source={riskSource}
           pairLabel={pairLabel}
           flowKey={flowKey}
           onBack={() => {
             setRiskOpen(null);
+            setDryRisk(null);
             void load();
           }}
         />

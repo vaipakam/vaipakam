@@ -4,6 +4,7 @@ import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { PAGES, currentAppHref } from '../../routes/pageMap';
 import { AcceptOffer } from '../../shared/accept/AcceptOffer';
+import { storedSource } from '../../shared/accept/acceptSource';
 import { RentAccept } from '../../shared/rent/RentAccept';
 import { TakeRequest } from '../../shared/rent/TakeRequest';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
@@ -384,7 +385,7 @@ function TakeAction({
           }}
         />
       )}
-      {open && rental === null && <AcceptOffer flowKey={OFFERS_ACCEPT_KEY} offerId={id} chain={chain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />}
+      {open && rental === null && <AcceptOffer flowKey={OFFERS_ACCEPT_KEY} source={storedSource(id)} chain={chain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />}
     </>
   );
 }

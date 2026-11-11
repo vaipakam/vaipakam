@@ -3,6 +3,7 @@ import { useAccount } from 'wagmi';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { AcceptOffer, LEND_ACCEPT_KEY } from '../../shared/accept/AcceptOffer';
+import { storedSource } from '../../shared/accept/acceptSource';
 import { useCopy } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { loadLastPair, saveLastPair, suggestedAssets } from '../../shared/offers/assets';
@@ -221,7 +222,7 @@ export function LendPage() {
           <h2 id="lend-review" className="sr-only">
             {text('lend.stepSign')}
           </h2>
-          <AcceptOffer flowKey={LEND_ACCEPT_KEY} offerId={taking} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+          <AcceptOffer flowKey={LEND_ACCEPT_KEY} source={storedSource(taking)} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
         </section>
       )}
       {draft !== null && walletChain && own && (

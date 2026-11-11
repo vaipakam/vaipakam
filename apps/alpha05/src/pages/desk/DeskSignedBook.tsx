@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { SupportedChain } from '../../chain/chains';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -14,6 +15,15 @@ import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { shortAddress } from '../../shared/ui/format';
+import { AcceptOffer } from '../../shared/accept/AcceptOffer';
+import { TermsPrompt } from '../../shared/terms/TermsPrompt';
+import { useTerms } from '../../shared/terms/useTerms';
+import { useTermsGate } from '../../shared/terms/useTermsGate';
+import { useStoredValue } from '../../shared/tx/txStore';
+
+/** The store key a signed order's fill keeps its state under (its review,
+ *  consent and transaction), so a navigation never drops one in flight. */
+export const SIGNED_FILL_KEY = 'desk.signedFill';
 
 type Hex = `0x${string}`;
 
@@ -28,13 +38,13 @@ const STANDING_KEY: Readonly<
 };
 
 /**
- * OFF-60 (slice 1) — every maker's signed orders on the market the desk
- * shows, as the offer book lists them, each with where the chain stands on
- * it, what is left of it to fill, and whether its maker's vault holds free
- * what a fill would draw now. Filling one is not offered yet, and the
- * section says why rather than offering a button: the protocol has no
- * preview of a signed fill, so the taker could not see the fill's figures
- * before paying (#3552).
+ * OFF-60 — every maker's signed orders on the market the desk shows, as the
+ * offer book lists them, each with where the chain stands on it, what is
+ * left of it to fill, and whether its maker's vault holds free what a fill
+ * would draw now (slice 1). An open order someone else signed can be filled
+ * whole (slice 2): the fill opens the same acceptance review as a stored
+ * offer, read from the protocol's preview of the signed fill, and Terms not
+ * yet accepted are accepted first (OFF-35).
  */
 export function DeskSignedBook({
   market,
@@ -51,6 +61,32 @@ export function DeskSignedBook({
 }) {
   const { text, format } = copy;
   const world = useWorldRail();
+  const terms = useTerms();
+  const termsGate = useTermsGate(`${SIGNED_FILL_KEY}.terms`, chain, own);
+  /** The order whose fill is under review; kept in the store with the flow. */
+  const [filling, setFilling] = useStoredValue<BookSignedOrder>(`${SIGNED_FILL_KEY}:order`);
+  /** An order waiting on a Terms acceptance before its review opens. */
+  const [pendingFill, setPendingFill] = useState<BookSignedOrder | null>(null);
+  const termsOpen = termsGate.session !== null;
+  // A fill under review on another market is not this section's to show.
+  const fillHere =
+    filling !== null &&
+    marketKey({
+      lending: filling.order.lendingAsset as Hex,
+      collateral: filling.order.collateralAsset as Hex,
+      durationDays: Number(filling.order.durationDays),
+    }) === marketKey(market)
+      ? filling
+      : null;
+  const fill = (o: BookSignedOrder) => {
+    if (terms.data?.kind === 'needed') {
+      setPendingFill(o);
+      termsGate.start(terms.data);
+      return;
+    }
+    setFilling(o);
+  };
+  const fillDisabled = terms.state !== 'ready' || termsOpen || fillHere !== null;
   const noIndex = world.indexer.origin === null;
   const key = marketKey(market);
   const book = useQuery({
@@ -83,7 +119,15 @@ export function DeskSignedBook({
       ) : (
         <ul className="offer-rows">
           {list.map((o) => (
-            <SignedRow key={o.orderHash} o={o} chainRead={chainRead.data ?? null} viewer={own.account} amount={amount} copy={copy} />
+            <SignedRow
+              key={o.orderHash}
+              o={o}
+              chainRead={chainRead.data ?? null}
+              viewer={own.account}
+              amount={amount}
+              copy={copy}
+              onFill={fillDisabled ? null : () => fill(o)}
+            />
           ))}
         </ul>
       )}
@@ -94,9 +138,37 @@ export function DeskSignedBook({
     <section className="home-section" aria-labelledby="desk-signed-book-title" data-testid="desk-signed-book" data-market={key}>
       <h2 id="desk-signed-book-title">{text('signedBook.title')}</h2>
       <p className="tier-b">{text('signedBook.lead')}</p>
-      <p className="tier-a" data-testid="desk-signed-book-not-yet">
-        {text('signedBook.notYet')}
-      </p>
+      {termsOpen && termsGate.session && (
+        <TermsPrompt
+          asker={text('signedFill.asker')}
+          gate={termsGate}
+          session={termsGate.session}
+          chain={chain}
+          own={own}
+          onAccepted={() => {
+            termsGate.end();
+            if (pendingFill !== null) setFilling(pendingFill);
+            setPendingFill(null);
+          }}
+          onClose={() => {
+            setPendingFill(null);
+            termsGate.end();
+          }}
+        />
+      )}
+      {fillHere !== null && (
+        <div data-testid="desk-signed-fill">
+          <AcceptOffer
+            flowKey={SIGNED_FILL_KEY}
+            source={{ kind: 'signed', order: fillHere }}
+            chain={chain}
+            own={own}
+            meta={meta}
+            terms={terms.data}
+            onClose={() => setFilling(null)}
+          />
+        </div>
+      )}
       {failed && (
         <p className="tier-a" data-testid="desk-signed-book-failed">
           {format(book.data ? 'signedBook.failedCached' : 'signedBook.failed', { reason: noIndex ? text('offerBook.noIndex') : indexReason(book.error, text) })}
@@ -140,12 +212,16 @@ function SignedRow({
   viewer,
   amount,
   copy,
+  onFill,
 }: {
   o: BookSignedOrder;
   chainRead: SignedBookChain | null;
   viewer: Hex;
   amount: (asset: Hex, v: bigint) => string;
   copy: CopyAccess;
+  /** Opens this order's fill review; null while another review or the
+   *  Terms prompt is open, or the Terms state is not read yet. */
+  onFill: (() => void) | null;
 }) {
   const { text, format } = copy;
   const s: SignedStanding = chainRead?.standings.get(o.orderHash) ?? 'unread';
@@ -176,6 +252,17 @@ function SignedRow({
         </p>
       )}
       {cover.kind === 'unread' && <p className="tier-a">{text('signedBook.coverUnread')}</p>}
+      {/* Only an open order someone else signed is filled here: a fill takes
+          the whole order, so a partly matched one cannot be, and the
+          protocol refuses a fill of one's own order. */}
+      {!mine && s === 'open' && (
+        <p className="actions">
+          <button type="button" className="btn" disabled={onFill === null} onClick={() => onFill?.()} data-testid="desk-signed-book-fill">
+            {text('signedBook.fill')}
+          </button>
+        </p>
+      )}
+      {!mine && s === 'partly-filled' && <p className="tier-b">{text('signedBook.fillNotOpen')}</p>}
     </li>
   );
 }
