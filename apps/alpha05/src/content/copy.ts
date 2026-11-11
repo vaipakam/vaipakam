@@ -1899,6 +1899,7 @@ export const copy = {
     reading: B('Reading your tier on other networks…'),
     failed: A('Your tier on other networks could not be read ({{reason}}). That is not the same as no tier there.'),
     predates: B('This network’s contracts predate the current rule for sending tiers, so this section waits for its next deploy.'),
+    unrouted: B('This network’s contracts cannot send your tier to other networks, so nothing here can read or send it.'),
     absent: B('This network does not send your tier to other networks.'),
     checking: B('Checking whether this network sends your tier to other networks…'),
     away: B('This network applies the tier sent from VPFI’s home network. A higher tier is sent from there.'),

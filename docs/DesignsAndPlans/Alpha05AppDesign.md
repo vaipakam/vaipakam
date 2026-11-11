@@ -2146,7 +2146,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   set, when the messenger's list refuses and when it is empty, so the
   section reads the messenger and its list directly and says which; a list
   that could not be read is stated as unknown, never as no network. With
-  no network listed, nothing is recorded or sent, so no action is offered. Away from the home network the
+  no network listed, nothing is recorded or sent, so no action is offered. A
+  home network whose Diamond does not route the status says the section
+  cannot read or send the tier there, rather than hiding it, since the
+  vault card points to it. Away from the home network the
   section says a higher tier is sent from there. Copy follows RL-6.
 - **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
   The deposit review offers "Sign instead of approve" only when the asset

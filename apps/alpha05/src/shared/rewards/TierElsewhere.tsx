@@ -140,8 +140,7 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
     },
   });
 
-  if (support === 'absent' || home.data === false) {
-    if (home.data !== false) return null;
+  if (home.data === false) {
     return (
       <section className="home-section" aria-labelledby="rewards-elsewhere-title" data-testid="rewards-elsewhere" data-elsewhere="away">
         <h2 id="rewards-elsewhere-title">{text('rewardsElsewhere.title')}</h2>
@@ -164,6 +163,14 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
   );
   if (support === 'unknown') return shell('checking', <p className="tier-b">{text('rewardsElsewhere.checking')}</p>);
   if (support === 'predates') return shell('predates', <p className="tier-b">{text('rewardsElsewhere.predates')}</p>);
+  if (support === 'absent') {
+    return shell(
+      'unrouted',
+      <p className="tier-b" data-testid="rewards-elsewhere-unrouted">
+        {text('rewardsElsewhere.unrouted')}
+      </p>,
+    );
+  }
   if (home.data === null) {
     return home.state === 'failed'
       ? shell('home-unread', <p className="tier-a">{text('rewardsElsewhere.homeUnread')}</p>)
