@@ -451,9 +451,13 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     ///         callback tries to cancel the very order being filled: refused, and the fill settles.
     ///         Straddle: a second order cancels at the same instant outside a fill.
     function test_I4_cancelTheFillingOrderAtItsDeadline_isRefused() public {
-        uint256 loanId = _commitWeth();
-        uint256 sibling = _commitWeth();
-        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        // Open both loans before committing either: each open waits out the
+        // offer's minimum terms age (#3443), which would move the second
+        // order's deadline.
+        uint256 loanId = _openWeth(++_seed);
+        uint256 sibling = _openWeth(++_seed);
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _commitOn(loanId);
+        _commitOn(sibling);
         assertEq(_read(sibling).deadline, r.deadline, "fixture-live: one deadline");
         vm.warp(r.deadline);
         address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
@@ -970,7 +974,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     ///      teardown has nothing to lower, and each fill spends its own lot
     ///      inside its own just-in-time grant.
     function test_I19_theVaultsAllowance_isTheSumOfItsLiveLots() public {
-        uint256 a = _commitWeth();
+        // Both loans open before either commits, so the two orders share one
+        // deadline (each open waits out the minimum terms age, #3443).
+        uint256 a = _openWeth(++_seed);
         address vault = _vaultOf(a);
         uint256 b;
         for (uint256 i; i < 8 && b == 0; ++i) {
@@ -978,7 +984,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
             if (_vaultOf(id) == vault) b = id;
         }
         assertGt(b, 0, "fixture-live: a second loan on the same vault");
-        SwapToRepayIntentFacet.FusionOrderRead memory ra = _read(a);
+        SwapToRepayIntentFacet.FusionOrderRead memory ra = _commitOn(a);
         SwapToRepayIntentFacet.FusionOrderRead memory rb = _commitOn(b);
         assertGt(ra.makerAmount, 0, "fixture-live: a non-empty first lot");
         assertGt(rb.makerAmount, 0, "fixture-live: a non-empty second lot");
