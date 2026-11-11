@@ -330,21 +330,44 @@ contract LibPeerLTVTest is Test {
     }
 
     /// @dev Two reference assets, each peer agrees within tolerance ⇒
-    ///      tier median = average of the two asset-medians.
+    ///      each asset contributes its LOWEST peer reading (#3547), and
+    ///      the tier value is the average of the two.
     function testAggregate_TwoAssetsTierMedianIsAverage() public {
         address[] memory refs = new address[](2);
         refs[0] = makeAddr("ref0");
         refs[1] = makeAddr("ref1");
-        _mockPeers(refs[0], 7_000, 7_400);   // asset 0: median (7000+7400)/2 = 7200
-        _mockPeers(refs[1], 6_800, 7_200);   // asset 1: median 7000
+        _mockPeers(refs[0], 7_000, 7_400);   // asset 0: lowest agreeing reading 7000
+        _mockPeers(refs[1], 6_800, 7_200);   // asset 1: lowest agreeing reading 6800
 
         (bool ok, uint16 median, uint8 n) = harness.aggregateTierLtv(
             aaveProvider, comet, refs, 1_500, 2, 2
         );
         assertTrue(ok);
-        // Tier median of [7200, 7000] = (7200+7000)/2 = 7100.
-        assertEq(median, 7_100);
+        // Tier median of [7000, 6800] = (7000+6800)/2 = 6900.
+        assertEq(median, 6_900);
         assertEq(n, 2);
+    }
+
+    /// @dev #3547: one peer more permissive than the other never lifts the
+    ///      asset's value. The tier follows the stricter reading, so a peer
+    ///      that loosens alone moves nothing.
+    function testAggregate_OptimisticPeerIsIgnored() public {
+        address[] memory refs = new address[](2);
+        refs[0] = makeAddr("ref0");
+        refs[1] = makeAddr("ref1");
+        _mockPeers(refs[0], 7_000, 7_000);
+        _mockPeers(refs[1], 7_000, 7_000);
+        (, uint16 before, ) = harness.aggregateTierLtv(aaveProvider, comet, refs, 1_500, 2, 2);
+
+        // One peer raises both assets by the whole tolerance; the other holds.
+        _mockPeers(refs[0], 8_500, 7_000);
+        _mockPeers(refs[1], 8_500, 7_000);
+        (bool ok, uint16 afterRaise, uint8 n) =
+            harness.aggregateTierLtv(aaveProvider, comet, refs, 1_500, 2, 2);
+        assertTrue(ok);
+        assertEq(n, 2);
+        assertEq(afterRaise, before, "a single loosening peer moves nothing");
+        assertEq(afterRaise, 7_000);
     }
 
     /// @dev Per-asset peer divergence above tolerance ⇒ that asset
@@ -363,8 +386,8 @@ contract LibPeerLTVTest is Test {
         );
         assertTrue(ok);
         assertEq(n, 2, "asset[1] must be excluded as divergent");
-        // Tier median of [7150, 7550] = 7350.
-        assertEq(median, 7_350);
+        // Lowest agreeing readings [7000, 7500]; tier median = 7250.
+        assertEq(median, 7_250);
     }
 
     /// @dev Below `minAssetReadings` ⇒ tier rejected.
