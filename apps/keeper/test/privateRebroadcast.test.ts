@@ -62,6 +62,25 @@ describe('rebroadcastStalePrivateSends', () => {
     expect(sent).toEqual([RAW1]);
   });
 
+  it('journals each public copy and lapse with its hashes, whatever becomes of the alert', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const t = 10 * PRIVATE_ROUTE_FLOOR_TTL_MS;
+    const { d, records } = deps({ t, alert: async () => {} });
+    await seed(records, [
+      { hash: H1, raw: RAW1, nonce: 5, atMs: t - 60_000 },
+      { hash: H2, raw: RAW2, nonce: 6, atMs: t - PUBLIC_COPY_CUTOFF_MS },
+    ]);
+    await rebroadcastStalePrivateSends(fallbackRoutes, ETH, d, FAR);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`Ethereum\\(1\\) 1 keeper transaction was still unmined.*${H1}`)),
+        expect.stringMatching(new RegExp(`Ethereum\\(1\\) 1 keeper transaction sent privately.*${H2}`)),
+      ]),
+    );
+    vi.restoreAllMocks();
+  });
+
   it('leaves a send that has not yet waited the stated time', async () => {
     const { d, records, sent, alerts } = deps({ t: 100_000 });
     await seed(records, [{ hash: H1, raw: RAW1, nonce: 5, atMs: 100_000 - 59_999 }]);

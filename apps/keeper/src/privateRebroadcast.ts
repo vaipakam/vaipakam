@@ -257,16 +257,20 @@ export async function rebroadcastStalePrivateSends(
     });
     if (due.length === 0) continue;
     const secs = route.publicAfterMs / 1000;
+    // Every event is journaled with its hashes before the alert, which its
+    // per-chain interval may suppress: the log is the full record.
+    const report = async (kind: 'public' | 'lapsed', line: string): Promise<void> => {
+      console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) ${line}`);
+      await deps.alert(chain.id, kind, line);
+    };
     if (sent.length > 0) {
-      await deps.alert(
-        chain.id,
+      await report(
         'public',
         `${sent.length} keeper transaction${sent.length === 1 ? ' was' : 's were'} still unmined at least ${secs} s after the private route accepted ${sent.length === 1 ? 'it' : 'them'}, so the same signed bytes went to the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows: ${sent.join(', ')}. ${sent.length === 1 ? 'It is' : 'They are'} now visible in the public mempool.`,
       );
     }
     if (lapsed.length > 0) {
-      await deps.alert(
-        chain.id,
+      await report(
         'lapsed',
         `${lapsed.length} keeper transaction${lapsed.length === 1 ? '' : 's'} sent privately ${lapsed.length === 1 ? 'was' : 'were'} neither mined nor sent publicly by the last minute of the private nonce window, so no public copy was sent and later sends may reuse the nonce: ${lapsed.join(', ')}. Whether ${lapsed.length === 1 ? 'it' : 'they'} will still land is unknown.`,
       );
