@@ -1365,7 +1365,7 @@ contract SetupTest is Test {
         // Init vault factory with impl
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
 
         // Unpause the diamond. The Diamond is born paused (see
         // `VaipakamDiamond.constructor` — `LibPausable.pause()` is the

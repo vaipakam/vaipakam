@@ -44,6 +44,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MeshBusMessenger} from "./mocks/MeshBusMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  MeshThreeChainE2ETest
@@ -306,7 +307,7 @@ contract MeshThreeChainE2ETest is Test {
 
         AccessControlFacet(d).initializeAccessControl();
         AdminFacet(d).unpause();
-        AdminFacet(d).setTreasury(d);
+        LibTestVaultBeacon.setTreasury(d, d);
 
         VPFIToken impl = new VPFIToken();
         VPFIToken token = VPFIToken(

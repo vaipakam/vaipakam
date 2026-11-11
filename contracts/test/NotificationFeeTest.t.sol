@@ -24,6 +24,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibNotificationFee} from "../src/libraries/LibNotificationFee.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title NotificationFeeTest
@@ -63,7 +64,7 @@ contract NotificationFeeTest is SetupTest {
         // Treasury — a real address so we can assert it is NOT credited
         // (M1 routes the tariff into the recycle bucket, not treasury).
         treasuryRecipient = makeAddr("treasury");
-        AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryRecipient);
 
         // Off-chain biller bot — granted NOTIF_BILLER_ROLE explicitly.
         billerBot = makeAddr("bot.notif");

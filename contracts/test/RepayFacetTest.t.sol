@@ -339,7 +339,7 @@ contract RepayFacetTest is Test {
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         // vm.prank(address(diamond));
         // LibVaipakam.setTreasury(owner);
 
