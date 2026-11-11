@@ -1640,6 +1640,7 @@ DELETE FROM keeper_sanctions_watch; \
 DELETE FROM keeper_ops_alert; \
 DELETE FROM keeper_private_nonce; \
 DELETE FROM keeper_private_send; \
+DELETE FROM keeper_runner_lease; \
 DELETE FROM keeper_deployment" )
 ```
 
@@ -1676,7 +1677,6 @@ DELETE FROM keeper_commitment_reconciled; \
 DELETE FROM market_summary; \
 DELETE FROM protocol_config; \
 DELETE FROM webhook_deliveries; \
-DELETE FROM keeper_runner_lease; \
 DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM signed_request_use; \
@@ -1792,9 +1792,12 @@ What the #1481 audit added to the shared command, and what each costs:
   row could feed the reminder sweep an old grace schedule or pause log.
 - **`webhook_deliveries`** only de-duplicates webhook hints; an empty table
   costs a duplicate forward.
-- **`keeper_runner_lease`** expires by itself within ten minutes; it is
-  cleared while the keeper is stopped so a forged lease cannot hold the
-  restored keeper off.
+- **`keeper_runner_lease`** lives in the keeper's private database since
+  #1722, so the keeper command above clears it, not this one. It expires by
+  itself within ten minutes; it is cleared while the keeper is stopped so a
+  stale lease cannot hold the restored keeper off. The old copy in the shared
+  database is no longer read by any keeper and is left alone until its drop
+  migration.
 
 Clearing the tables is not optional, and resetting only the cursor
 is NOT equivalent: the replay handlers upsert by key and **never

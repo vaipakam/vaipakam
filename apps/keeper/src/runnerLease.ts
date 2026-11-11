@@ -5,14 +5,25 @@
  * (`host/`), and every copy signs with the same key. Two copies running at
  * once would race each other's sends (the per-network send ordering, #2486,
  * holds only within one process) and each other's per-tick state. So every
- * tick first claims a lease row in the shared database
- * (`apps/indexer/migrations/0059_keeper_runner_lease.sql`) and declines, by
+ * tick first claims a lease row in the keeper's PRIVATE database
+ * (`apps/keeper/migrations/0009_keeper_runner_lease.sql`) and declines, by
  * name, while another runner holds it.
+ *
+ * #1722 — the row lived in the shared database until then, where the indexer
+ * and the agent can write any table: either could hold the lease with an
+ * expiry years out and stop every keeper pass, liquidations included. Only
+ * the keeper binds `KEEPER_DB`, and a lease running past
+ * {@link LEASE_MAX_TERM_MS} is not honoured even there.
  *
  * The rules, all in one statement so two claimants cannot both win:
  *
  *   - a claim succeeds when there is no row, when the claimant already holds
- *     it (a renewal), or when it has expired;
+ *     it (a renewal), when it has expired, or when its expiry lies further out
+ *     than the longest term a keeper ever writes ({@link LEASE_MAX_TERM_MS}).
+ *     No claim this code makes produces such a row, so one can only come from
+ *     a writer that is not a keeper runner, or from a database clock that
+ *     jumped backwards; either way, honouring it would idle the keeper for
+ *     however long the row says;
  *   - a successful claim moves the expiry to `now + LEASE_TTL_MS`, and keeps
  *     `acquired_at` unless the holder changed;
  *   - "now" is the DATABASE's clock, read inside the statement, never the
@@ -47,6 +58,15 @@ import { redactedError } from '@vaipakam/lib/errorDescription';
 /** How long a claim lasts without renewal. Ticks renew every minute. */
 export const LEASE_TTL_MS = 10 * 60_000;
 
+/**
+ * The furthest out a lease's expiry may lie and still be honoured (#1722).
+ * Equal to the TTL: every claim sets the expiry to exactly `now + TTL`, so a
+ * live row written by a runner of this code is never further out than this.
+ * A future build that lengthens the TTL must lengthen this with it, or a
+ * runner on this build would read the newer runner's lease as one to take.
+ */
+export const LEASE_MAX_TERM_MS = LEASE_TTL_MS;
+
 /** The single lease row's key. */
 export const LEASE_NAME = 'keeper';
 
@@ -62,6 +82,7 @@ export async function claimRunnerLease(
   db: D1Database,
   holder: string | undefined,
   ttlMs: number = LEASE_TTL_MS,
+  maxTermMs: number = LEASE_MAX_TERM_MS,
 ): Promise<LeaseClaim> {
   if (holder === undefined || holder.trim() === '') {
     return {
@@ -74,8 +95,9 @@ export async function claimRunnerLease(
     // statement (julianday works on every SQLite D1 runs). SET assignments
     // read the OLD row, so `acquired_at` compares against the previous
     // holder. The upsert WHERE makes it a no-op (no RETURNING row) while
-    // someone else holds an unexpired lease; `WHERE true` is the SELECT's own
-    // clause, which SQLite requires before ON CONFLICT.
+    // someone else holds an unexpired lease whose expiry is within the
+    // maximum term; `WHERE true` is the SELECT's own clause, which SQLite
+    // requires before ON CONFLICT.
     const row = await db
       .prepare(
         `INSERT INTO keeper_runner_lease (lease, holder, acquired_at, renewed_at, expires_at)
@@ -91,9 +113,10 @@ export async function claimRunnerLease(
            expires_at = excluded.expires_at
          WHERE keeper_runner_lease.holder = excluded.holder
             OR keeper_runner_lease.expires_at <= excluded.renewed_at
+            OR keeper_runner_lease.expires_at > excluded.renewed_at + ?4
          RETURNING acquired_at, renewed_at`,
       )
-      .bind(LEASE_NAME, holder, ttlMs)
+      .bind(LEASE_NAME, holder, ttlMs, maxTermMs)
       .first<{ acquired_at: number; renewed_at: number }>();
     if (row !== null) {
       return { held: true, acquired: Number(row.acquired_at) === Number(row.renewed_at) };
