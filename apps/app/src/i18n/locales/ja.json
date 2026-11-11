@@ -2852,6 +2852,7 @@
         "StagingClaimantForfeited": "このウォレットがフラグ付きの間、報酬が失効",
         "RewardEntryRepointRefused": "ポジション移転後も報酬エントリーは獲得者に残留",
         "RewardEntrySplitAtTransfer": "ポジション移転時に報酬エントリーを分割",
+        "LenderEntryStamped": "ポジション取得時に貸し手の割引を記録",
         "Transfer": "転送",
         "Approval": "承認"
       },

@@ -2852,6 +2852,7 @@
         "StagingClaimantForfeited": "此钱包被标记期间，奖励已失效",
         "RewardEntryRepointRefused": "仓位转让后奖励条目保留给原获得者",
         "RewardEntrySplitAtTransfer": "仓位转让时奖励条目已拆分",
+        "LenderEntryStamped": "接手仓位时已记录出借人折扣",
         "Transfer": "转账",
         "Approval": "授权"
       },

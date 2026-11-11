@@ -2852,6 +2852,7 @@
         "StagingClaimantForfeited": "Belohnungen verfallen, während diese Wallet markiert ist",
         "RewardEntryRepointRefused": "Belohnungseintrag bleibt nach einer Positionsübertragung beim Verdiener",
         "RewardEntrySplitAtTransfer": "Belohnungseintrag bei einer Positionsübertragung aufgeteilt",
+        "LenderEntryStamped": "Rabatt des Kreditgebers bei Übernahme der Position erfasst",
         "Transfer": "Übertragung",
         "Approval": "Genehmigung"
       },

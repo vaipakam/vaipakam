@@ -339,6 +339,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // represents the row (#2708 r2).
   RewardEntryRepointRefused: { label: 'Reward entry kept with its earner after a position transfer', category: 'other', priority: 12 },
   RewardEntrySplitAtTransfer: { label: 'Reward entry split at a position transfer', category: 'other', priority: 12 },
+  // #3562 — emitted inside the accept, sale or transfer that gave the lender
+  // position a holder: low, so that action represents the row.
+  LenderEntryStamped: { label: "Lender's discount recorded on taking the position", category: 'other', priority: 12 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },

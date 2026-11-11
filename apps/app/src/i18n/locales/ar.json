@@ -2852,6 +2852,7 @@
         "StagingClaimantForfeited": "أُسقطت المكافآت بينما هذه المحفظة مُعلَّمة",
         "RewardEntryRepointRefused": "بقي قيد المكافأة لدى من كسبه بعد نقل المركز",
         "RewardEntrySplitAtTransfer": "قُسِّم قيد المكافأة عند نقل المركز",
+        "LenderEntryStamped": "سُجِّل خصم المُقرض عند تولّي المركز",
         "Transfer": "تحويل",
         "Approval": "موافقة"
       },
