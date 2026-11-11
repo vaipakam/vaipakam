@@ -34,9 +34,9 @@
 //    list: the open token-against-token offers above, unexpired and without
 //    the sale and early-close vehicles, grouped by both tokens and the term,
 //    with each side's count and best rate (a lender's lowest rate, a
-//    borrower's highest ceiling), deepest market first. The fixture posts
-//    no signed orders, so the stand-in has none to count. Refused while the
-//    posture is `down`;
+//    borrower's highest ceiling), deepest market first. Signed orders are
+//    not counted here: the stand-in's markets are the on-chain book's only.
+//    Refused while the posture is `down`;
 //  - the indexer's `GET /loans/recent?chainId&limit&lendingAsset&
 //    collateralAsset&durationDays&excludeSaleVehicles`, the recent loans the
 //    rate warning compares against: every loan the chain's `LoanInitiated`
@@ -67,6 +67,18 @@
 //    unreadable row), stamped after every chain row. Newest first, paged by
 //    the indexer's `block:log:id` cursor, with the `newerThan` count of rows
 //    written after an id; refused while the posture is `down`.
+//  - the indexer's signed-order book: `POST /signed-offers` takes a gasless
+//    order as the indexer does (the 31 fields in wire form, a live expiry,
+//    the signature recovered over the protocol's domain for this chain and
+//    Diamond, then the chain's own fill and nonce marks), answering 201 on
+//    first post, 200 on a re-post and 400 or 409 by the indexer's codes; and
+//    `GET /signed-offers?chainId&lendingAsset&collateralAsset&durationDays
+//    &signer` serves the stored orders of one market, lenders' then
+//    borrowers', best rate first. A row leaves the book once the chain logs
+//    its cancel or its nonce's burn, as the indexer's lifecycle handlers
+//    retire it, unless a spec holds the book behind the chain
+//    (`POST /__stub/signed-offers { lag: true }`) to show what a lagging
+//    book looks like. Both refused while the posture is `down`;
 //  - the alert service (the agent Worker, which alpha05 is pointed at here
 //    too): `GET /push/status`, `POST /link/telegram`, `POST /telegram/test`,
 //    `POST /unlink/telegram` and `PUT /thresholds`, answering as the agent
@@ -84,7 +96,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createPublicClient, decodeEventLog, http as viemHttp, toEventSelector } from 'viem';
+import { createPublicClient, decodeEventLog, hashStruct, http as viemHttp, recoverTypedDataAddress, toEventSelector } from 'viem';
+import { canonicalOrderJson, parseStoredOrderJson, SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
 
 /** How long a slowed agent answer waits (see the agent's `slow` control). */
 const SLOW_ANSWER_MS = 6_000;
@@ -472,6 +485,133 @@ let posture = 'live';
 let rankings = new Map();
 let rankingsDown = false;
 
+/** Signed orders posted to the book, by order hash: the canonical text,
+ *  the signature and the post's order (asks and bids keep it as a tie). */
+let signedBook = new Map();
+/** While true, the book keeps serving a row the chain has retired. */
+let signedBookLags = false;
+
+const SIGNED_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
+const SIGNED_CANCELLED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled'));
+const SIGNED_NONCE_BURNED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferNonceBurned'));
+
+/** The wire order as viem's typed-data encoder takes it. */
+function signedMessage(order) {
+  const m = {};
+  for (const { name, type } of SIGNED_OFFER_FIELDS) {
+    const v = order[name];
+    m[name] = type === 'address' || type === 'bool' ? v : /^uint(8|16|32)$/.test(type) ? Number(v) : BigInt(v);
+  }
+  return m;
+}
+
+const signedHashOf = (order) => hashStruct({ data: signedMessage(order), primaryType: 'SignedOffer', types: SIGNED_TYPES });
+
+/** `POST /signed-offers`: the indexer's checks in the indexer's order, with
+ *  its answers. */
+async function postSignedOrder(raw) {
+  let b;
+  try {
+    b = JSON.parse(raw);
+  } catch {
+    return { status: 400, body: { error: 'invalid-body' } };
+  }
+  if (b === null || typeof b !== 'object') return { status: 400, body: { error: 'invalid-body' } };
+  if (b.chainId !== CHAIN_ID) return { status: 503, body: { error: 'chain-not-configured' } };
+  if (typeof b.signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(b.signature) || (b.signature.length !== 132 && b.signature.length !== 130)) {
+    return { status: 400, body: { error: 'invalid-signature-shape' } };
+  }
+  if (b.order === null || typeof b.order !== 'object' || Array.isArray(b.order)) return { status: 400, body: { error: 'invalid-order' } };
+  if (Object.keys(b.order).length !== SIGNED_OFFER_FIELDS.length) return { status: 400, body: { error: 'invalid-order' } };
+  const parsed = parseStoredOrderJson(canonicalOrderJson(b.order));
+  if ('error' in parsed) return { status: 400, body: { error: 'invalid-order', detail: parsed.error } };
+  const order = parsed.order;
+  const now = Math.floor(Date.now() / 1000);
+  if (order.expiresAt !== '0' && Number(order.expiresAt) <= now) return { status: 400, body: { error: 'expired' } };
+  if (order.deadline !== '0' && Number(order.deadline) <= now) return { status: 400, body: { error: 'deadline-passed' } };
+  const orderHash = signedHashOf(order);
+  let signer;
+  try {
+    signer = await recoverTypedDataAddress({
+      domain: { name: 'Vaipakam SignedOffer', version: '1', chainId: CHAIN_ID, verifyingContract: DEPLOYMENT.diamond },
+      types: SIGNED_TYPES,
+      primaryType: 'SignedOffer',
+      message: signedMessage(order),
+      signature: b.signature,
+    });
+  } catch {
+    signer = null;
+  }
+  if (signer === null || signer.toLowerCase() !== order.signer) return { status: 400, body: { error: 'bad-signature' } };
+  if (signedBook.has(orderHash)) return { status: 200, body: { chainId: CHAIN_ID, orderHash } };
+  const read = (functionName, args) => chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName, args });
+  const [filled, nonceUsed] = await Promise.all([
+    read('signedOfferFilledAmount', [orderHash]),
+    read('isSignedOfferNonceUsed', [order.signer, BigInt(order.nonce)]),
+  ]);
+  if (nonceUsed) return { status: 409, body: { error: 'nonce-used' } };
+  const ceiling = BigInt(order.amountMax) === 0n ? BigInt(order.amount) : BigInt(order.amountMax);
+  if (filled >= ceiling) return { status: 409, body: { error: 'order-consumed' } };
+  signedBook.set(orderHash, { json: canonicalOrderJson(order), signature: b.signature, seq: signedBook.size, filled });
+  return { status: 201, body: { chainId: CHAIN_ID, orderHash } };
+}
+
+/** The book's retirements, from the chain's logs: cancelled hashes and
+ *  burned (signer, nonce) pairs, as the indexer's lifecycle handlers read
+ *  them. */
+async function signedRetirements() {
+  const logs = await anvil('eth_getLogs', [
+    { address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[SIGNED_CANCELLED, SIGNED_NONCE_BURNED]] },
+  ]);
+  const cancelled = new Set();
+  const burned = new Set();
+  for (const l of logs) {
+    if (l.topics[0] === SIGNED_CANCELLED) cancelled.add(l.topics[1].toLowerCase());
+    else burned.add(`0x${l.topics[1].slice(26).toLowerCase()}:${BigInt(l.data).toString()}`);
+  }
+  return { cancelled, burned };
+}
+
+/** `GET /signed-offers`: one market's stored orders, as the indexer serves
+ *  them. */
+async function signedOffers(url) {
+  const lending = (url.searchParams.get('lendingAsset') ?? '').toLowerCase();
+  const collateral = (url.searchParams.get('collateralAsset') ?? '').toLowerCase();
+  const days = Number(url.searchParams.get('durationDays'));
+  const signerRaw = url.searchParams.get('signer');
+  if (!/^0x[0-9a-f]{40}$/.test(lending)) return { status: 400, body: { error: 'bad-lending-asset' } };
+  if (!/^0x[0-9a-f]{40}$/.test(collateral)) return { status: 400, body: { error: 'bad-collateral-asset' } };
+  if (!Number.isInteger(days) || days < 1 || days > 4385) return { status: 400, body: { error: 'bad-duration-days' } };
+  if (signerRaw !== null && !/^0x[0-9a-fA-F]{40}$/.test(signerRaw)) return { status: 400, body: { error: 'bad-signer' } };
+  const signer = signerRaw?.toLowerCase() ?? null;
+  const { cancelled, burned } = signedBookLags ? { cancelled: new Set(), burned: new Set() } : await signedRetirements();
+  const now = Math.floor(Date.now() / 1000);
+  const rows = [];
+  for (const [hash, row] of signedBook) {
+    const o = JSON.parse(row.json);
+    if (o.lendingAsset !== lending || o.collateralAsset !== collateral || o.durationDays !== String(days)) continue;
+    if (signer !== null && o.signer !== signer) continue;
+    if ((o.expiresAt !== '0' && Number(o.expiresAt) <= now) || (o.deadline !== '0' && Number(o.deadline) <= now)) continue;
+    if (cancelled.has(hash) || burned.has(`${o.signer}:${o.nonce}`)) continue;
+    rows.push({ hash, row, o });
+  }
+  const side = (t, rate) => rows.filter((r) => r.o.offerType === t).sort((a, b) => rate(a.o, b.o) || a.row.seq - b.row.seq);
+  const offers = [
+    ...side('0', (a, b) => Number(a.interestRateBps) - Number(b.interestRateBps)),
+    ...side('1', (a, b) => Number(b.interestRateBpsMax) - Number(a.interestRateBpsMax)),
+  ].map(({ hash, row, o }) => ({
+    orderHash: hash,
+    signer: o.signer,
+    order: o,
+    signature: row.signature,
+    status: 'active',
+    filledAmount: row.filled.toString(),
+    expiresAt: Number(o.expiresAt),
+    deadline: Number(o.deadline),
+  }));
+  return { status: 200, body: { chainId: CHAIN_ID, offers, truncated: false } };
+}
+
 async function anvil(method, params = []) {
   const res = await fetch(ANVIL_URL, {
     method: 'POST',
@@ -608,6 +748,7 @@ const server = http.createServer(async (req, res) => {
           '/__stub/unplaced',
           '/__stub/notifications',
           '/assets/rankings, /__stub/rankings',
+          '/signed-offers, /__stub/signed-offers',
           '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
           '/__stub/agent',
         ],
@@ -623,6 +764,8 @@ const server = http.createServer(async (req, res) => {
       agent = freshAgent();
       rankings = new Map();
       rankingsDown = false;
+      signedBook = new Map();
+      signedBookLags = false;
       json(res, 200, { reset: true });
       return;
     }
@@ -830,6 +973,27 @@ const server = http.createServer(async (req, res) => {
       agent.thresholds.set(w, next);
       const push = body.push_channel !== 'subscribed' ? 'not-requested' : agent.push === 'available' || agent.push === 'agent-only' ? 'stored' : 'kept';
       json(res, 200, { ok: true, push });
+      return;
+    }
+    if (url.pathname === '/__stub/signed-offers' && req.method === 'POST') {
+      // { lag: true } keeps serving rows the chain has retired; { lag: false }
+      // follows the chain again.
+      const next = JSON.parse(await readBody(req));
+      if (typeof next.lag !== 'boolean') {
+        json(res, 400, { error: 'signed-offers needs { lag }' });
+        return;
+      }
+      signedBookLags = next.lag;
+      json(res, 200, { lag: signedBookLags, stored: signedBook.size });
+      return;
+    }
+    if (url.pathname === '/signed-offers' && (req.method === 'GET' || req.method === 'POST')) {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const out = req.method === 'GET' ? await signedOffers(url) : await postSignedOrder(await readBody(req));
+      json(res, out.status, out.body);
       return;
     }
     if (url.pathname === '/health/ingest') {

@@ -3,7 +3,8 @@ export const STUB_PORT = Number(process.env.ALPHA05_E2E_STUB_PORT ?? 8789);
 export const STUB_ORIGIN = `http://127.0.0.1:${STUB_PORT}`;
 
 /** Put every stand-in setting back as it started: the index live, no
- *  unplaced loans, no added inbox rows, a fresh alert service. The suite
+ *  unplaced loans, no added inbox rows, a fresh alert service, an empty
+ *  signed-order book that follows the chain. The suite
  *  calls it after every test (`lib/wallet.ts`); a spec need not. */
 export async function resetStandIns(): Promise<void> {
   const res = await fetch(`${STUB_ORIGIN}/__stub/reset`, { method: 'POST' });
@@ -90,4 +91,31 @@ export async function setRankings(
 ): Promise<void> {
   const res = await fetch(`${STUB_ORIGIN}/__stub/rankings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
   if (!res.ok) throw new Error(`stub refused rankings: ${res.status} ${await res.text()}`);
+}
+
+/** Post a signed order to the stand-in offer book, as the app or a taker
+ *  posts it to the indexer: `{ chainId, order, signature }`. Returns the
+ *  book's status and answer. */
+export async function postSignedOrder(body: {
+  chainId: number;
+  order: Record<string, unknown>;
+  signature: string;
+}): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await fetch(`${STUB_ORIGIN}/signed-offers`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+/** Hold the stand-in book behind the chain (`true`: it keeps serving orders
+ *  the chain has cancelled) or let it follow the chain again (`false`). */
+export async function setSignedBookLag(lag: boolean): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/signed-offers`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ lag }),
+  });
+  if (!res.ok) throw new Error(`stub refused signed-book lag ${lag}: ${res.status}`);
 }
