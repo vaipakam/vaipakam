@@ -356,8 +356,9 @@ a commit. The template documents each line. In short:
   send then gets no public copy. On a private chain a dropped transaction can
   hold later sends on that chain for up to seven minutes from its own
   broadcast; the sends behind it keep their own seven. No public copy is sent
-  past those seven minutes, because a later send may hold the nonce by then;
-  such a send is named in an alert. Which mainnet chains get a private route,
+  in the last of those seven minutes (counted from when the nonce was
+  recorded, not from when an endpoint accepted the send), because just after
+  them a later send may hold the nonce; such a send is named in an alert. Which mainnet chains get a private route,
   and which endpoints, is an owner decision recorded in the mainnet checklist
   (#3408: Ethereum and BNB Chain, Polygon PoS before mainnet).
 - **Knobs:** copy the live values from the keeper Worker's dashboard.

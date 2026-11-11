@@ -12,7 +12,7 @@ import { getTransactionCount, sendRawTransaction } from 'viem/actions';
 import type { Env } from './env';
 import { sendOpsAlert } from './opsAlert';
 import { rebroadcastStalePrivateSends, type PrivateSendRecords } from './privateRebroadcast';
-import type { SubmissionRouteEvents, SubmissionRoutes } from './submissionRoute';
+import { PRIVATE_ENDPOINT_ANSWER_TIMEOUT_MS, type SubmissionRouteEvents, type SubmissionRoutes } from './submissionRoute';
 
 /** One alert key per chain: a burst of fallbacks is one line on the ops
  *  channel, and every fallback is still logged. */
@@ -79,7 +79,10 @@ export async function runPrivateRebroadcast(
     let c = clients.get(chainId);
     if (!c) {
       const rpc = served.find((x) => x.id === chainId)!.rpc;
-      c = createPublicClient({ transport: http(rpc) }) as PublicClient;
+      // No transport retries and a bounded answer: a copy must reach the node
+      // well inside its cutoff, and a read or send that fails is tried again
+      // next tick (`PUBLIC_COPY_CUTOFF_MS`).
+      c = createPublicClient({ transport: http(rpc, { retryCount: 0, timeout: PRIVATE_ENDPOINT_ANSWER_TIMEOUT_MS }) }) as PublicClient;
       clients.set(chainId, c);
     }
     return c;

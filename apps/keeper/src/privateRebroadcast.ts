@@ -16,10 +16,13 @@
 // "Unmined" is read from the account's mined nonce count: once it passes the
 // send's nonce, either this transaction or another at its nonce has landed,
 // and a copy would only be refused. A copy goes out only while the send is
-// inside the private nonce window (`PRIVATE_ROUTE_FLOOR_TTL_MS`), because past
-// it the keeper may already have given the nonce to a later send. A send that
-// leaves the window unmined and never sent publicly (no tick ran in time) is
-// stated in the log and the alert, not dropped silently.
+// inside the private nonce window (`PRIVATE_ROUTE_FLOOR_TTL_MS`), measured
+// from when its nonce was RESERVED (the reservation expires on that clock, not
+// on the acceptance), and never in the window's last minute
+// (`PUBLIC_COPY_CUTOFF_MS`), because past the window the keeper may give the
+// nonce to a later send. A send that reaches the cutoff unmined and uncopied
+// is stated in the log and the alert, never dropped silently: a row leaves
+// the record only once it is mined, reported, or copied and past its window.
 //
 // The records live in the keeper's private database (migration 0008), keyed
 // by network like the nonce record, so a fresh Diamond's epoch reset leaves
@@ -36,6 +39,12 @@ import {
   type SubmissionRoutes,
 } from './submissionRoute';
 
+/** The latest a public copy may go out, measured from the nonce's
+ *  reservation: one minute inside the private nonce window, so a copy that is
+ *  slow to reach the node (an 8 s answer timeout, the tick's own run) still
+ *  lands while no later send can hold its nonce. */
+export const PUBLIC_COPY_CUTOFF_MS = PRIVATE_ROUTE_FLOOR_TTL_MS - 60_000;
+
 /** One recorded private send. `publicAtMs` is when a copy went public. */
 export interface PrivateSendRow extends AcceptedPrivateSend {
   publicAtMs: number | null;
@@ -51,10 +60,12 @@ export interface PrivateSendRecords {
   due(networkId: number, acceptedBy: number): Promise<PrivateSendRow[]>;
   /** Note that a copy of `hash` went public at `atMs`. */
   markPublic(networkId: number, hash: Hex, atMs: number): Promise<void>;
-  /** Forget `hash` (it is mined, or its nonce is). */
+  /** Forget `hash` (it is mined, its nonce is, or it is reported lapsed). */
   remove(networkId: number, hash: Hex): Promise<void>;
-  /** Drop the network's rows accepted before `beforeMs` (housekeeping). */
-  prune(networkId: number, beforeMs: number): Promise<void>;
+  /** Drop the network's rows ALREADY COPIED publicly whose nonce was reserved
+   *  before `beforeMs` (housekeeping). A row with no copy is never pruned: it
+   *  leaves only through the sweep, which reports its outcome. */
+  pruneCopied(networkId: number, beforeMs: number): Promise<void>;
 }
 
 interface D1Row {
@@ -64,6 +75,7 @@ interface D1Row {
   tx_hash: string;
   raw_tx: string;
   sent_at_ms: number;
+  reserved_at_ms: number;
   public_at_ms: number | null;
 }
 
@@ -73,17 +85,17 @@ export function d1PrivateSendRecords(db: KeeperD1): PrivateSendRecords {
     async write(s) {
       await db
         .prepare(
-          `INSERT INTO keeper_private_send (network_id, address, nonce, tx_hash, raw_tx, sent_at_ms, public_at_ms)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)
+          `INSERT INTO keeper_private_send (network_id, address, nonce, tx_hash, raw_tx, sent_at_ms, reserved_at_ms, public_at_ms)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
            ON CONFLICT(network_id, tx_hash) DO NOTHING`,
         )
-        .bind(s.chainId, s.address.toLowerCase(), s.nonce, s.hash.toLowerCase(), s.serialized, s.atMs)
+        .bind(s.chainId, s.address.toLowerCase(), s.nonce, s.hash.toLowerCase(), s.serialized, s.atMs, s.reservedAtMs)
         .run();
     },
     async due(networkId, acceptedBy) {
       const { results } = await db
         .prepare(
-          `SELECT network_id, address, nonce, tx_hash, raw_tx, sent_at_ms, public_at_ms FROM keeper_private_send
+          `SELECT network_id, address, nonce, tx_hash, raw_tx, sent_at_ms, reserved_at_ms, public_at_ms FROM keeper_private_send
            WHERE network_id = ?1 AND public_at_ms IS NULL AND sent_at_ms <= ?2
            ORDER BY sent_at_ms`,
         )
@@ -96,6 +108,7 @@ export function d1PrivateSendRecords(db: KeeperD1): PrivateSendRecords {
         hash: r.tx_hash as Hex,
         serialized: r.raw_tx as Hex,
         atMs: Number(r.sent_at_ms),
+        reservedAtMs: Number(r.reserved_at_ms),
         publicAtMs: r.public_at_ms === null ? null : Number(r.public_at_ms),
       }));
     },
@@ -111,9 +124,9 @@ export function d1PrivateSendRecords(db: KeeperD1): PrivateSendRecords {
         .bind(networkId, hash.toLowerCase())
         .run();
     },
-    async prune(networkId, beforeMs) {
+    async pruneCopied(networkId, beforeMs) {
       await db
-        .prepare('DELETE FROM keeper_private_send WHERE network_id = ?1 AND sent_at_ms < ?2')
+        .prepare('DELETE FROM keeper_private_send WHERE network_id = ?1 AND public_at_ms IS NOT NULL AND reserved_at_ms < ?2')
         .bind(networkId, beforeMs)
         .run();
     },
@@ -139,8 +152,8 @@ export function memoryPrivateSendRecords(): PrivateSendRecords & { rows: Map<str
     async remove(n, h) {
       rows.delete(key(n, h));
     },
-    async prune(n, before) {
-      for (const [k, r] of rows) if (r.chainId === n && r.atMs < before) rows.delete(k);
+    async pruneCopied(n, before) {
+      for (const [k, r] of rows) if (r.chainId === n && r.publicAtMs !== null && r.reservedAtMs < before) rows.delete(k);
     },
   };
 }
@@ -202,13 +215,17 @@ export async function rebroadcastStalePrivateSends(
           mined += 1;
           continue;
         }
-        if (deps.now() - row.atMs >= PRIVATE_ROUTE_FLOOR_TTL_MS) {
-          // Past the nonce window: a later send may hold this nonce now, so a
-          // copy could replace it. Stated below, and forgotten.
+        if (deps.now() - row.reservedAtMs >= PUBLIC_COPY_CUTOFF_MS) {
+          // At the cutoff: past the window a later send may hold this nonce,
+          // so a copy could replace it. Stated below, then forgotten.
           lapsed.push(row.hash);
           await deps.records.remove(chain.id, row.hash);
           continue;
         }
+        // The mined-count read can be slow, so the run's deadline is checked
+        // again here, with nothing awaited between it, the cutoff above and
+        // the send. A row left now is seen again next tick.
+        if (deps.now() >= notAfterMs) break;
         try {
           await deps.sendPublic(chain.id, row.serialized);
         } catch (err) {
@@ -220,14 +237,22 @@ export async function rebroadcastStalePrivateSends(
           if (!ALREADY_KNOWN.test((err as Error).message ?? '')) throw err;
           // The public node already holds these bytes: the copy is out.
         }
-        await deps.records.markPublic(chain.id, row.hash, deps.now());
+        // The bytes are public now, whatever the record says next: reported
+        // as sent before the record is touched.
         sent.push(row.hash);
+        try {
+          await deps.records.markPublic(chain.id, row.hash, deps.now());
+        } catch (err) {
+          console.warn(
+            `[privateRebroadcast] ${chain.name}(${chain.id}) sent a public copy of ${row.hash} but could not record it (${describeFailure(err)}); the next tick may send the same bytes again, which the node answers as already known`,
+          );
+        }
       } catch (err) {
         failed += 1;
-        console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not send a public copy of ${row.hash} (${summarizeFailure(err)}); retried next tick while its nonce window lasts`);
+        console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not send a public copy of ${row.hash} (${summarizeFailure(err)}); retried next tick until the cutoff`);
       }
     }
-    await deps.records.prune(chain.id, t - PRIVATE_ROUTE_FLOOR_TTL_MS).catch((err: unknown) => {
+    await deps.records.pruneCopied(chain.id, t - PRIVATE_ROUTE_FLOOR_TTL_MS).catch((err: unknown) => {
       console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not prune old records (${describeFailure(err)})`);
     });
     if (due.length === 0) continue;
@@ -243,7 +268,7 @@ export async function rebroadcastStalePrivateSends(
       await deps.alert(
         chain.id,
         'lapsed',
-        `${lapsed.length} keeper transaction${lapsed.length === 1 ? '' : 's'} sent privately ${lapsed.length === 1 ? 'was' : 'were'} neither mined nor sent publicly within the private nonce window, so no public copy was sent and later sends may reuse the nonce: ${lapsed.join(', ')}. Whether ${lapsed.length === 1 ? 'it' : 'they'} will still land is unknown.`,
+        `${lapsed.length} keeper transaction${lapsed.length === 1 ? '' : 's'} sent privately ${lapsed.length === 1 ? 'was' : 'were'} neither mined nor sent publicly by the last minute of the private nonce window, so no public copy was sent and later sends may reuse the nonce: ${lapsed.join(', ')}. Whether ${lapsed.length === 1 ? 'it' : 'they'} will still land is unknown.`,
       );
     }
     lines.push(

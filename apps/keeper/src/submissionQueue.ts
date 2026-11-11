@@ -431,6 +431,9 @@ export async function broadcastSigned(
     throw new SubmissionRouteUnread('send refused: the private send could not be recorded (no nonce record, account or nonce)');
   }
   let release = async (_err: unknown): Promise<void> => {};
+  // When this send's nonce row was written: the nonce window an inclusion
+  // fallback must stay inside runs from here, not from the acceptance.
+  let reservedAtMs: number | undefined;
   if (reservations && address && nonce !== undefined) {
     let rows: NonceReservation[];
     try {
@@ -444,6 +447,7 @@ export async function broadcastSigned(
       const prior = rows.find((r) => r.nonce === nonce)?.atMs ?? null;
       try {
         await reservations.write(chainId, address, nonce, t);
+        reservedAtMs = t;
       } catch (err) {
         throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
       }
@@ -495,8 +499,8 @@ export async function broadcastSigned(
     }
     try {
       const hash = await sendPrivately(wallet, endpoint, serialized);
-      if (route.fallback && address && nonce !== undefined) {
-        await recordAccepted({ chainId, address, nonce, hash, serialized, atMs: now() });
+      if (route.fallback && address && nonce !== undefined && reservedAtMs !== undefined) {
+        await recordAccepted({ chainId, address, nonce, hash, serialized, atMs: now(), reservedAtMs });
       }
       return hash;
     } catch (err) {

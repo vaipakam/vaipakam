@@ -636,6 +636,21 @@ describe('#3408 — the private broadcast over several endpoints', () => {
     expect(without.accepted).toEqual([]);
   });
 
+  it('records when the nonce was reserved apart from when the send was accepted, so the fallback keeps to the reservation', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let t = 1_000_000;
+    const s = setupTwo({
+      fallback: true,
+      a: async () => {
+        t += 8_000;
+        throw rpcRefusal();
+      },
+      b: async () => keccak256(RAW),
+    });
+    await broadcastSigned(s.wallet, 1, RAW, FAR, () => t);
+    expect(s.accepted).toEqual([expect.objectContaining({ reservedAtMs: 1_000_000, atMs: 1_008_000 })]);
+  });
+
   it('a record that cannot be written never fails a send that went out, and says what it costs', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const routes = readSubmissionRoutes(`1=${URL_A}`, '1');

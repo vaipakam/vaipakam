@@ -185,10 +185,15 @@ evidence that the migration has completed.
   nonce reserved) is sent through the ordinary RPC as the same signed
   transaction, once. A fallback for either reason (every endpoint failed, or
   the accepted send did not land) tells the operator, naming the transaction,
-  because the transaction is then public. No public copy is sent once the
-  keeper may have given the nonce to a later send; a send that reaches that
-  point unmined and never copied is reported as such, with its outcome stated
-  as unknown, never dropped silently. These rules cover every transaction the
+  because the transaction is then public, and does so even when the keeper
+  cannot update its own record of the copy. No public copy is sent once the
+  keeper may have given the nonce to a later send, nor so close to that point
+  that the copy could arrive after it; that point is measured from when the
+  nonce was reserved, not from when an endpoint accepted the send. A send that
+  reaches it unmined and never copied is reported as such, with its outcome
+  stated as unknown, and its record is kept until that report is made, never
+  dropped silently. A public copy, like any send, is not made once the run's
+  deadline has passed. These rules cover every transaction the
   keeper sends on that chain, including the Telegram LOCK and forced sales.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal

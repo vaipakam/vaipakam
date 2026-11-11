@@ -234,7 +234,13 @@ export interface AcceptedPrivateSend {
   nonce: number;
   hash: `0x${string}`;
   serialized: `0x${string}`;
+  /** When a private endpoint accepted the send: the inclusion timeout
+   *  ({@link PRIVATE_TX_PUBLIC_AFTER_VAR}) runs from here. */
   atMs: number;
+  /** When the send's nonce was reserved, before the first endpoint was
+   *  tried: the private nonce window ({@link PRIVATE_ROUTE_FLOOR_TTL_MS})
+   *  runs from here, as the reservation itself does. */
+  reservedAtMs: number;
 }
 
 /** What a private broadcast reports to the rest of the keeper (#3408). Both
