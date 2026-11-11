@@ -1,4 +1,4 @@
-## Thread — Positive flows broadcast again, in stages (PR #<n>)
+## Thread — Positive flows broadcast again, in stages (PR #3575)
 
 Since the offer-age rule (#3412), an offer or a lender intent can be filled
 only once its terms have stood a minimum age (5 seconds by default). Since the
