@@ -11,6 +11,8 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import {LibVaultProtectionStorage} from "./vault/LibVaultProtectionStorage.sol";
 
 /// @dev The one Diamond read a vault makes: whether an address is a Vaipakam
 ///      vault (`VaultDepositoryFacet.getVaultOwner`, zero if not).
@@ -35,6 +37,12 @@ interface IPositionHolderView {
 /// @dev The one read a vault makes of another vault: its recorded owner.
 interface IVaultOwnerView {
     function vaultOwner() external view returns (address);
+    function vaultCreationOwner() external view returns (address);
+}
+
+/// @dev #3393 — the init-code hash every vault proxy of a beacon shares.
+interface IVaultBeaconInitHash {
+    function PROXY_INIT_CODE_HASH() external view returns (bytes32);
 }
 
 /**
@@ -94,6 +102,8 @@ contract VaipakamVaultImplementation is
     address public immutable CONDUIT;
     bytes32 public immutable CONDUIT_KEY;
     address public immutable PRICE_GUARD;
+    /// @notice #3379 B2 — the protected-mode code this vault delegatecalls.
+    address public immutable PROTECTION;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -230,6 +240,7 @@ contract VaipakamVaultImplementation is
         CONDUIT = e.conduit;
         CONDUIT_KEY = e.conduitKey;
         PRICE_GUARD = e.priceGuard;
+        PROTECTION = e.protection;
     }
 
     /// @notice #3431 — the endpoints fixed in this vault code, as one record.
@@ -241,7 +252,8 @@ contract VaipakamVaultImplementation is
             orderProtocol: ORDER_PROTOCOL,
             conduit: CONDUIT,
             conduitKey: CONDUIT_KEY,
-            priceGuard: PRICE_GUARD
+            priceGuard: PRICE_GUARD,
+            protection: PROTECTION
         });
     }
 
@@ -259,6 +271,7 @@ contract VaipakamVaultImplementation is
         __ERC165_init();
         diamond = diamondAddress;
         ownerWallet = vaultOwnerWallet;
+        creationOwner = vaultOwnerWallet;
     }
 
     /// @notice The storage-layout identity of the vault family. The
@@ -503,6 +516,10 @@ contract VaipakamVaultImplementation is
     ///      (Seaport or the 1inch order protocol). 0 = not one of its orders.
     mapping(bytes32 => address) private _orderVerifier;
 
+    /// @dev #3393 — the wallet this vault was created for; its CREATE2 salt.
+    ///      Written once, at initialize.
+    address private creationOwner;
+
     event ListingEscrowOpened(bytes32 indexed key, address indexed escrow, address asset, address conduit);
     event ListingEscrowClosed(bytes32 indexed key, address indexed escrow, uint256 returned);
 
@@ -676,7 +693,7 @@ contract VaipakamVaultImplementation is
                 || adapter == diamond || adapter == w.assetIn || adapter == w.assetOut
         ) revert SwapOutcomeRefused();
         address to = w.to;
-        if (to != address(this) && to != ownerWallet && !_isHolderVault(to, w.positionToken)) {
+        if (to != address(this) && (to != ownerWallet || _protectedLocked()) && !_isHolderVault(to, w.positionToken)) {
             revert OutflowDestinationRefused(VaultOutflowTypes.OutflowClass.SwapAdapter, to);
         }
         IERC20 tokenIn = IERC20(w.assetIn);
@@ -710,7 +727,20 @@ contract VaipakamVaultImplementation is
     ///      reach, on what this vault can establish without the Diamond.
     function _destinationAllowed(VaultOutflowTypes.Outflow calldata o) private view returns (bool) {
         VaultOutflowTypes.OutflowClass c = o.class_;
-        if (c == VaultOutflowTypes.OutflowClass.Owner) return o.to == ownerWallet;
+        if (c == VaultOutflowTypes.OutflowClass.Owner) return o.to == ownerWallet && !_protectedLocked();
+        // #3379 B2 — an allowlisted destination is one on this vault's OWN
+        // protected record, finalized after its delay, while not locked.
+        if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
+            LibVaultProtectionStorage.Layout storage pl = LibVaultProtectionStorage.layout();
+            if (!pl.enabled || pl.locked) return false;
+            if (pl.allow[o.to].active) return true;
+            // Codex #3489 r1 — a destination that has protected mode on is
+            // paid into ITS vault (the outflow policy redirects it there): the
+            // vault created for an allowlisted wallet, which this vault proves
+            // from the address its creation owner derives.
+            if (!_isGenuineVault(o.to) || o.to == address(this)) return false;
+            return pl.allow[IVaultOwnerView(o.to).vaultCreationOwner()].active;
+        }
         if (
             c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
                 || c == VaultOutflowTypes.OutflowClass.Consolidation
@@ -720,7 +750,7 @@ contract VaipakamVaultImplementation is
         if (c == VaultOutflowTypes.OutflowClass.Treasury) return TREASURY != address(0) && o.to == TREASURY;
         if (c == VaultOutflowTypes.OutflowClass.Backstop) {
             address backstop = BACKSTOP;
-            return backstop != address(0) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultOwner() == backstop;
+            return backstop != address(0) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultCreationOwner() == backstop;
         }
         // #3431 — a swap leaves only through {swapOut}, judged by its result;
         // a plain transfer to an adapter is never a destination.
@@ -737,9 +767,8 @@ contract VaipakamVaultImplementation is
         ) {
             return _isGenuineVault(o.to);
         }
-        // Stage A residuals, checked by the Diamond only until Stage B
-        // (#3379): an allowlisted address (the allowlist moves into the
-        // vault), the incentive and liquidation-buyer actors (bounded by the
+        // Stage A residuals, checked by the Diamond only until Stage B3
+        // (#3379): the incentive and liquidation-buyer actors (bounded by the
         // lien's budgets) and a recorded seller (the signed sale terms). None
         // may name this vault or the Diamond.
         return o.to != address(this) && o.to != diamond;
@@ -754,15 +783,204 @@ contract VaipakamVaultImplementation is
         if (POSITION_NFT == address(0)) return false;
         address holder = IPositionHolderView(POSITION_NFT).holderOf(positionToken);
         if (holder == address(0)) return false;
-        if (to == address(this)) return ownerWallet == holder;
+        // #3379 B2 — a holder's vault is the one created for them: its
+        // creation owner is the holder. A verified primary replacement moves
+        // the owner record, not the vault, so positions held by the replaced
+        // wallet keep paying the vault its new owner now controls.
+        if (to == address(this)) return creationOwner == holder;
         if (!_isGenuineVault(to)) return false;
-        return IVaultOwnerView(to).vaultOwner() == holder;
+        return IVaultOwnerView(to).vaultCreationOwner() == holder;
     }
 
     /// @dev Whether `to` runs the same BeaconProxy code as this vault (§3.4):
     ///      every genuine vault has one code hash, set by the immutable beacon.
     function _isGenuineVault(address to) private view returns (bool) {
-        return to == address(this) || (to.code.length != 0 && to.codehash == address(this).codehash);
+        if (to == address(this)) return true;
+        if (to.code.length == 0 || to.codehash != address(this).codehash) return false;
+        // #3393 — and its address is the one its own creation owner derives
+        // (CREATE2 by the Diamond, salted by that owner, under this vault's
+        // beacon): a BeaconProxy anyone else deployed, whatever owner record
+        // it carries, sits at another address.
+        try IVaultOwnerView(to).vaultCreationOwner() returns (address creator) {
+            return creator != address(0) && to == vaultAddressOf(creator);
+        } catch {
+            return false;
+        }
+    }
+
+    // ─── #3379 B2 — protected mode, held by the vault ─────────────────
+
+    /// @dev The protection code is not set in this vault code.
+    error ProtectionUnset();
+    /// @dev Only the protection code, running in this vault, may write the owner.
+    error NotProtection();
+
+    /// @notice The owner record moved to `newOwner` on a verified primary
+    ///         replacement.
+    event VaultOwnerReplaced(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @notice Run one protected-mode write: this vault delegatecalls its
+     *         fixed `VaultProtection` code with `data`. Open to anyone: the
+     *         protection code authorizes every write itself (a direct call
+     *         from the key, or the key's signature), and it writes only this
+     *         vault's protected record and, on a replacement, its owner.
+     */
+    function protect(bytes calldata data) external returns (bytes memory result) {
+        address code = PROTECTION;
+        if (code == address(0)) revert ProtectionUnset();
+        bool ok;
+        (ok, result) = code.delegatecall(data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 0x20), mload(result))
+            }
+        }
+    }
+
+    /// @notice The owner record follows a replacement the protection code
+    ///         verified. Callable only by this vault itself (the protection
+    ///         code, running here, calls it).
+    function setOwnerFromProtection(address newOwner) external {
+        if (msg.sender != address(this)) revert NotProtection();
+        address previous = ownerWallet;
+        ownerWallet = newOwner;
+        emit VaultOwnerReplaced(previous, newOwner);
+    }
+
+    /// @notice The protected record's state, as the Diamond and the app read it.
+    function protectionState()
+        external
+        view
+        returns (
+            bool enabled,
+            bool locked,
+            uint32 delay,
+            uint64 cooldownUntil,
+            address lockedBy,
+            address[] memory signers,
+            address[] memory allowlist
+        )
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.enabled, l.locked, l.delay, l.cooldownUntil, l.lockedBy, l.signers, l.allowlist);
+    }
+
+    /// @notice The Diamond this vault serves.
+    function vaultDiamond() external view returns (address) {
+        return diamond;
+    }
+
+    /// @notice The four facts every Diamond read of protected mode needs, in
+    ///         one call: on, locked, the delay, and the owner record.
+    ///      `retired` is the one-way latch the first replacement sets (Codex
+    ///      #3489 r4), never derived from the owner record.
+    function protectionCore()
+        external
+        view
+        returns (bool enabled, bool locked, uint32 delay, address owner, bool retired)
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.enabled, l.locked, l.delay, ownerWallet, l.retired);
+    }
+
+    /// @notice One allowlist entry (#3415 `verified` included).
+    ///         A pending addition voided by a lock, a replacement or a
+    ///         switch-off (an earlier epoch) reads as not pending (Codex #3489
+    ///         r3), so every reader sees what the vault would act on.
+    function allowEntry(address destination) external view returns (LibVaultProtectionStorage.Entry memory e) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        e = l.allow[destination];
+        if (!e.active && e.epoch != l.epoch) e.readyAt = 0;
+    }
+
+    /// @notice One signer's record. A pending addition or removal voided by
+    ///         a lock, a replacement or a switch-off (an earlier epoch) reads
+    ///         as not pending (Codex #3489 r3): the vault refuses to cancel or
+    ///         finalize it, and a fresh request may be made.
+    function signerEntry(address who) external view returns (LibVaultProtectionStorage.Signer memory s) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        s = l.signer[who];
+        if (s.epoch != l.epoch) {
+            s.addAt = 0;
+            s.removeAt = 0;
+            if (!s.active) s.accepted = false;
+        }
+    }
+
+    /// @notice The open replacement proposal.
+    function replacementProposal()
+        external
+        view
+        returns (address nominee, address proposedBy, uint64 readyAt, uint32 round)
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.nominee, l.proposedBy, l.readyAt, l.round);
+    }
+
+    /// @notice The allowlist and signer additions pending now (the current
+    ///         epoch; one voided by a lock, a replacement or a switch-off is
+    ///         not listed). Each entry's timing is in {allowEntry} /
+    ///         {signerEntry}.
+    function pendingAdditions() external view returns (address[] memory allowlist, address[] memory signers) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.pendingAllow[l.epoch], l.pendingSigners[l.epoch]);
+    }
+
+    /// @notice The pending setting changes and when the lock began (0 = none).
+    function protectionPending()
+        external
+        view
+        returns (uint32 pendingDelay, uint64 pendingDelayAt, uint64 pendingUnlockAt, uint64 pendingDisableAt, uint64 lockedAt)
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (l.pendingDelay, l.pendingDelayAt, l.pendingUnlockAt, l.pendingDisableAt, l.lockedAt);
+    }
+
+    /// @notice The open replacement's approvals by active signers now, and
+    ///         the majority it needs.
+    function replacementTally() external view returns (uint256 approvals, uint256 threshold) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        uint256 n = l.signers.length;
+        for (uint256 i; i < n; ++i) {
+            if (l.approved[l.round][l.signers[i]]) ++approvals;
+        }
+        threshold = n / 2 + 1;
+    }
+
+    /// @notice `key`'s next signature nonce for `purpose`.
+    function protectionNonce(address key, uint8 purpose) external view returns (uint256) {
+        return LibVaultProtectionStorage.layout().nonces[key][purpose];
+    }
+
+    /// @dev Whether the protected record locks owner-class outflows now.
+    function _protectedLocked() private view returns (bool) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return l.enabled && l.locked;
+    }
+
+    /// @notice #3393 — the address of `owner`'s vault: CREATE2 by the
+    ///         Diamond, salted by `owner`, of a BeaconProxy for this vault's
+    ///         own beacon. Every genuine vault sits at the address its
+    ///         creation owner derives.
+    function vaultAddressOf(address owner) public view returns (address) {
+        address beacon = ERC1967Utils.getBeacon();
+        bytes32 initCodeHash = IVaultBeaconInitHash(beacon).PROXY_INIT_CODE_HASH();
+        return address(
+            uint160(
+                uint256(
+                    keccak256(abi.encodePacked(bytes1(0xff), diamond, bytes32(uint256(uint160(owner))), initCodeHash))
+                )
+            )
+        );
+    }
+
+    /// @notice #3393 — the wallet this vault was created for. Fixed: it is
+    ///         what the vault's address is derived from. The owner record
+    ///         ({vaultOwner}) follows a verified primary replacement; this
+    ///         does not.
+    function vaultCreationOwner() external view returns (address) {
+        return creationOwner;
     }
 
     /// @dev THE rule for every spender right this vault grants or causes (a
@@ -1105,5 +1323,5 @@ contract VaipakamVaultImplementation is
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[42] private __gap;
+    uint256[41] private __gap;
 }

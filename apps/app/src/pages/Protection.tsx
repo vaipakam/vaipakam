@@ -19,10 +19,19 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ShieldCheck, LoaderCircle, Lock } from 'lucide-react';
-import { isAddress } from 'viem';
+import { isAddress, type Abi } from 'viem';
+import { usePublicClient } from 'wagmi';
+import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
+import {
+  directAuth,
+  protectionCall,
+  replacementArgs,
+  VAULT_SETTING,
+  VAULT_SIGNER,
+} from '@vaipakam/lib/protectedAccountView';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { LEGACY_DIAMOND_NFT_ABI, POSITION_NFT_ABI } from '../contracts/positionNft';
 import { DepositoryCard } from '../components/DepositoryCard';
 import { useTokenMeta } from '../contracts/erc20';
@@ -39,6 +48,7 @@ import {
   isDue,
   isManager,
   payoutStatus,
+  needsCosign,
   replacementStage,
   useProtectedAccount,
   useRetiredAccountOf,
@@ -49,6 +59,28 @@ import {
 } from '../data/protectedAccount';
 
 const DAY = 86_400;
+
+/**
+ * #3379 B2 — protected mode's writes. The record lives in the account's vault:
+ * each write is the vault's `protect(bytes)` carrying one VaultProtection call,
+ * authorized directly by the connected wallet (`directAuth`), and sent to the
+ * ACCOUNT's vault whoever sends it (the owner, a signer, a nominee). A write
+ * that changes the posture (a lock, a switch-on, a completed move) is followed
+ * by the Diamond's `applyProtection(account)`, which applies the platform side.
+ */
+function useProtectionWrites(account: `0x${string}` | undefined, vault: `0x${string}` | null) {
+  const { address } = useActiveChain();
+  const { write } = useDiamondWrite();
+  /** `fn` with `args` (the Auth is appended unless `auth` is false). */
+  const protect = (fn: string, args: readonly unknown[] = [], auth = true) => {
+    if (!vault || !address) throw new Error(copy.protection.unavailable);
+    return write('protect', [protectionCall(fn, auth ? [...args, directAuth(address)] : args)], {
+      target: { address: vault, abi: VaipakamVaultImplementationABI as Abi },
+    });
+  };
+  const apply = () => write('applyProtection', [account]);
+  return { protect, apply, write };
+}
 
 const when = (at: bigint): string => (at > 0n ? formatDateTime(Number(at)) : copy.protection.unknownWhen);
 // The configured delay exactly (the contract accepts any second count in
@@ -287,7 +319,7 @@ function AccountView({
   asSigner: boolean;
 }) {
   const { address, walletChain } = useActiveChain();
-  const { write } = useDiamondWrite();
+  const { protect, apply, write } = useProtectionWrites(account, snap.vault);
   const { busy, error, done, run } = useRunner();
   const nowSec = useNowSec();
   const p = copy.protection;
@@ -326,6 +358,29 @@ function AccountView({
   for (let d = Math.ceil(bounds.min / DAY); d <= Math.floor(bounds.max / DAY); d++) dayOptions.push(d);
 
   const tx = (fn: string, args: readonly unknown[]) => run(() => write(fn, args));
+  /** A vault protected-mode write, then the platform side when `applyAfter`. */
+  const ptx = (fn: string, args: readonly unknown[] = [], applyAfter = false, auth = true) =>
+    run(async () => {
+      await protect(fn, args, auth);
+      if (applyAfter) await apply();
+    });
+  // The old Diamond CHANGE_* kinds, routed to where each change now waits:
+  // the vault (delay, switch-off, unlock) or the Diamond (co-sign, pin).
+  const vaultKind: Readonly<Record<number, number>> = {
+    1: VAULT_SETTING.disable,
+    2: VAULT_SETTING.delay,
+    5: VAULT_SETTING.unlock,
+  };
+  const cancelChange = (kind: number) =>
+    vaultKind[kind] !== undefined ? ptx('cancelSetting', [vaultKind[kind]]) : tx('cancelSettingChange', [account, kind]);
+  const applyDueChanges = () =>
+    run(async () => {
+      const due = pending.filter((c) => isDue(c.at, now) && !disableWaits(c));
+      if (due.some((c) => vaultKind[c.kind] !== undefined)) await protect('finalizeSettings', [], false);
+      if (due.some((c) => c.kind === 4)) await write('finalizeSettingChanges', [account]);
+      // An unlock or a switch-off changes the posture the platform applies.
+      if (due.some((c) => c.kind === 1 || c.kind === 5)) await apply();
+    });
   // TODO(#3321 positionNft-legacy-removal): the legacy queue writes, sent
   // through the frozen pre-#3205 fragment.
   const txLegacyNft = (fn: string, args: readonly unknown[]) =>
@@ -423,7 +478,7 @@ function AccountView({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy}
-                  onClick={() => tx('cancelSettingChange', [account, c.kind])}
+                  onClick={() => cancelChange(c.kind)}
                 >
                   {p.cancel}
                 </button>
@@ -435,7 +490,7 @@ function AccountView({
               type="button"
               className="btn btn-primary"
               disabled={busy}
-              onClick={() => tx('finalizeSettingChanges', [account])}
+              onClick={applyDueChanges}
             >
               {p.applyChanges}
             </button>
@@ -453,7 +508,7 @@ function AccountView({
         <section className="card">
           <h2 className="card-title">{p.lockTitle}</h2>
           <p>{signerMayLockOver ? p.lockOverBody : p.lockBody}</p>
-          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => tx('lockVault', [account])}>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => ptx('lock', [], true)}>
             {asSigner ? p.lockAccount : p.lockNow}
           </button>
         </section>
@@ -464,7 +519,7 @@ function AccountView({
             type="button"
             className="btn btn-secondary"
             disabled={busy || cooling}
-            onClick={() => tx('requestUnlock', [account])}
+            onClick={() => ptx('requestUnlock')}
           >
             {p.requestUnlock}
           </button>
@@ -509,7 +564,7 @@ function AccountView({
                       {p.release}
                     </button>
                   ) : null}
-                  {signer && record.requireCosign && !row.cosigned ? (
+                  {signer && needsCosign(row, record) && !row.cosigned ? (
                     <button
                       type="button"
                       className="btn btn-secondary"
@@ -635,7 +690,11 @@ function AccountView({
               type="button"
               className="btn btn-secondary"
               disabled={busy || delayChoice * DAY === record.delaySeconds || (loosenBlocked && delayChoice * DAY < record.delaySeconds)}
-              onClick={() => tx('setProtectedDelay', [account, delayChoice * DAY])}
+              onClick={() =>
+                // A raise applies at once, and the platform carries it
+                // (applyProtection); a lowering waits the delay at the vault.
+                ptx('setDelay', [delayChoice * DAY], delayChoice * DAY > record.delaySeconds)
+              }
             >
               {p.setDelay}
             </button>
@@ -648,7 +707,11 @@ function AccountView({
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy || (loosenBlocked && record.protectNfts)}
-                onClick={() => txLegacyNft('setProtectNfts', [account, !record.protectNfts])}
+                onClick={() =>
+                  // #3379 B2: the Diamond's NFT setting is retired; switching
+                  // on is `lockPositionNfts`. There is no Diamond switch-off.
+                  record.protectNfts ? undefined : tx('lockPositionNfts', [account])
+                }
               >
                 {record.protectNfts ? p.nftsOff : p.nftsOn}
               </button>
@@ -680,7 +743,7 @@ function AccountView({
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy || loosenBlocked}
-                onClick={() => tx('requestDisableProtectedMode', [])}
+                onClick={() => ptx('requestDisable')}
               >
                 {p.disable}
               </button>
@@ -706,7 +769,7 @@ function AccountView({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy}
-                  onClick={() => tx('removeAllowlisted', [account, a])}
+                  onClick={() => ptx('removeAllowlisted', [a])}
                 >
                   {p.remove}
                 </button>
@@ -720,8 +783,8 @@ function AccountView({
           now={now}
           busy={busy}
           canCancel={() => canGuard}
-          onCancel={(a) => tx('cancelAddAllowlisted', [account, a])}
-          onActivate={(a) => tx('finalizeAddAllowlisted', [account, a])}
+          onCancel={(a) => ptx('cancelAllowlisted', [a])}
+          onActivate={(a) => ptx('finalizeAllowlisted', [a], false, false)}
         />
         {manager && !record.retired ? (
           // A replaced account's payouts go only to its controller: the
@@ -730,7 +793,7 @@ function AccountView({
             placeholder={p.addressPlaceholder}
             label={p.addAddress}
             disabled={busy || loosenBlocked}
-            onSubmit={(a) => tx('addAllowlisted', [account, a])}
+            onSubmit={(a) => ptx('addAllowlisted', [a])}
           />
         ) : null}
       </section>
@@ -759,7 +822,7 @@ function AccountView({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy || loosenBlocked}
-                  onClick={() => tx('requestRemoveSigner', [account, s.signer])}
+                  onClick={() => ptx('signerChange', [VAULT_SIGNER.remove, s.signer])}
                 >
                   {p.removeSigner}
                 </button>
@@ -772,7 +835,7 @@ function AccountView({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy}
-                  onClick={() => tx('cancelRemoveSigner', [account, s.signer])}
+                  onClick={() => ptx('signerChange', [VAULT_SIGNER.cancel, s.signer])}
                 >
                   {p.cancel}
                 </button>
@@ -782,7 +845,7 @@ function AccountView({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy}
-                  onClick={() => tx('finalizeRemoveSigner', [account, s.signer])}
+                  onClick={() => ptx('finalizeSigner', [s.signer], false, false)}
                 >
                   {p.applyChanges}
                 </button>
@@ -797,8 +860,8 @@ function AccountView({
           busy={busy}
           // The nominee may withdraw its own nomination too.
           canCancel={(a) => canGuard || address?.toLowerCase() === a.toLowerCase()}
-          onCancel={(a) => tx('cancelAddSigner', [account, a])}
-          onActivate={(a) => tx('finalizeAddSigner', [account, a])}
+          onCancel={(a) => ptx('signerChange', [VAULT_SIGNER.cancel, a])}
+          onActivate={(a) => ptx('finalizeSigner', [a], false, false)}
         />
         {manager ? (
           <>
@@ -806,7 +869,7 @@ function AccountView({
               placeholder={p.addressPlaceholder}
               label={p.inviteSigner}
               disabled={busy || loosenBlocked}
-              onSubmit={(a) => tx('addSigner', [account, a])}
+              onSubmit={(a) => ptx('signerChange', [VAULT_SIGNER.add, a])}
             />
             <p className="muted">{p.signersMinNote}</p>
           </>
@@ -834,7 +897,7 @@ function AccountView({
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy}
-                onClick={() => tx('approveReplacement', [account])}
+                onClick={() => ptx('replacement', replacementArgs('approve', repl!.nominee))}
               >
                 {p.approveReplacement}
               </button>
@@ -847,7 +910,7 @@ function AccountView({
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy}
-                onClick={() => tx('cancelReplacement', [account])}
+                onClick={() => ptx('replacement', replacementArgs('cancel', repl!.nominee))}
               >
                 {p.cancel}
               </button>
@@ -857,7 +920,7 @@ function AccountView({
                 type="button"
                 className="btn btn-primary"
                 disabled={busy}
-                onClick={() => tx('finalizeReplacement', [account])}
+                onClick={() => ptx('finalizeReplacement', [], true, false)}
               >
                 {p.finalizeReplacement}
               </button>
@@ -872,7 +935,7 @@ function AccountView({
             placeholder={p.nomineePlaceholder}
             label={p.proposeReplacement}
             disabled={busy}
-            onSubmit={(a) => tx('proposeReplacement', [account, a])}
+            onSubmit={(a) => ptx('replacement', replacementArgs('propose', a))}
           />
         ) : null}
       </section>
@@ -965,8 +1028,32 @@ function HolderLockCard({
 
 /** Enable form for an account with protection off. */
 function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
+  const { address, walletChain } = useActiveChain();
   const { write } = useDiamondWrite();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { busy, error, done, run } = useRunner();
+  /** #3379 B2: the switch-on is the vault's. Like the retired Diamond entry,
+   *  it first makes sure the wallet has a vault; then turns protection on at
+   *  the vault, holds the position NFTs when asked, and applies the platform
+   *  side. */
+  async function enable(delaySeconds: number, nfts: boolean) {
+    if (!address || !walletChain || !publicClient) throw new Error(copy.errors.walletConnectFirst);
+    let vault = snap.vault;
+    if (!vault) {
+      await write('getOrCreateUserVault', [address]);
+      vault = (await publicClient.readContract({
+        address: walletChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getUserVaultAddress',
+        args: [address],
+      })) as `0x${string}`;
+    }
+    await write('protect', [protectionCall('enable', [delaySeconds, directAuth(address)])], {
+      target: { address: vault, abi: VaipakamVaultImplementationABI as Abi },
+    });
+    if (nfts) await write('lockPositionNfts', [address]);
+    await write('applyProtection', [address]);
+  }
   const p = copy.protection;
   const bounds = snap.delayBounds ?? { min: 2 * DAY, max: 5 * DAY };
   const dayOptions: number[] = [];
@@ -996,7 +1083,7 @@ function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
         type="button"
         className="btn btn-primary"
         disabled={busy}
-        onClick={() => run(() => write('enableProtectedMode', [delay * DAY, nfts]))}
+        onClick={() => run(() => enable(delay * DAY, nfts))}
       >
         {busy ? p.working : p.enable}
       </button>
@@ -1011,7 +1098,7 @@ function SignerEntryCard() {
   const [account, setAccount] = useState<`0x${string}` | undefined>();
   const snap = useProtectedAccount(account);
   const { address, walletChain } = useActiveChain();
-  const { write } = useDiamondWrite();
+  const { protect } = useProtectionWrites(account, snap.data?.vault ?? null);
   const { busy, error, done, run } = useRunner();
   const data = snap.data;
   const nowSec = useNowSec();
@@ -1057,15 +1144,15 @@ function SignerEntryCard() {
                 now={chainNowOf(data, nowSec)}
                 busy={busy}
                 canCancel={() => true}
-                onCancel={(a) => run(() => write('cancelAddSigner', [account, a]))}
-                onActivate={(a) => run(() => write('finalizeAddSigner', [account, a]))}
+                onCancel={(a) => run(() => protect('signerChange', [VAULT_SIGNER.cancel, a]))}
+                onActivate={(a) => run(() => protect('finalizeSigner', [a], false))}
               />
               {nomination.accepted === false ? (
                 <button
                   type="button"
                   className="btn btn-primary"
                   disabled={busy}
-                  onClick={() => run(() => write('acceptSignerRole', [account]))}
+                  onClick={() => run(() => protect('signerChange', [VAULT_SIGNER.accept, address]))}
                 >
                   {p.acceptRole}
                 </button>

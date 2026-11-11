@@ -38,6 +38,12 @@ export function loadDiamondAbi(): Abi {
   return out as Abi;
 }
 
+/** One exported contract ABI by name (a standalone contract the Diamond
+ *  surface above does not cover, e.g. `VaipakamVaultImplementation`). */
+export function loadContractAbi(name: string): Abi {
+  return JSON.parse(fs.readFileSync(path.join(CONTRACTS_SRC, 'abis', `${name}.json`), 'utf8')) as Abi;
+}
+
 /**
  * The deployments bundle every e2e consumer reads — the committed one with
  * its 84532 entry replaced by the deployment global setup just made from

@@ -1,29 +1,29 @@
 /**
  * ACC-41 / #3415 — the protected account's payout destinations: the
  * addresses besides the wallet itself that a protected payout may go to.
- * Each change is its own call on `ProtectedAccountFacet`:
+ * #3379 B2: the allowlist is the account's VAULT record. Each change is a
+ * `VaultProtection` write the wallet sends to its own vault (`protect`, with
+ * the direct authorization of the sending key):
  *
- * - `add`: `addAllowlisted(account, destination)`, by the manager. Refused
- *   during a pause, a new primary's cool-down and while the account is
- *   locked. It only ASKS: the destination becomes usable after the
- *   account's delay, through `apply`, unless someone cancels it first.
- *   Asking again for an address already waiting restarts its wait.
- * - `cancel`: `cancelAddAllowlisted(account, destination)`, by the manager
- *   or a secondary signer. Open during a pause.
- * - `apply`: `finalizeAddAllowlisted(account, destination)`, by anyone,
- *   once the wait is over and within one further delay (after that the
- *   request has expired and must be asked again). Refused during a pause
- *   and while the account is locked.
- * - `remove`: `removeAllowlisted(account, destination)`, by the manager or
- *   a secondary signer, at once and open during a pause. Every payout
- *   queued to that destination is cancelled; its assets stay in the vault.
+ * - `add`: `addAllowlisted(destination)`, by the owner. Refused while the
+ *   account is locked or in a new owner's cool-down. It only ASKS: the
+ *   destination becomes usable after the account's delay, through `apply`,
+ *   unless someone cancels it first.
+ * - `cancel`: `cancelAllowlisted(destination)`, by the owner or a secondary
+ *   signer.
+ * - `apply`: `finalizeAllowlisted(destination)`, by anyone (no
+ *   authorization), once the wait is over and within one further delay.
+ * - `remove`: `removeAllowlisted(destination)`, by the owner or a secondary
+ *   signer, at once. A payout queued to that destination is cancelled by its
+ *   release; its assets stay in the vault.
  *
  * The page offers `add` only for an address from the reader's saved book
  * (`shared/address/book.ts`), so a payout destination is always one the
  * reader proved they control or saved, labelled, as an exchange's.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -33,19 +33,21 @@ import { frozenState, readSanctionsPosture, type FrozenState } from '../sanction
 import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
 import { formatSpan, formatUtc } from '../ui/format';
+import { readProtectedRecord, VAULT } from './payout';
 import { PAYOUT, ROW_QUEUED, readQueueRow } from './queue';
-import { PROTECTED } from './safety';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 const ADMIN = AdminFacetABI as Abi;
+const VAULT_PROTECTION = VaultProtectionABI as Abi;
 
 export type DestinationAction = 'add' | 'cancel' | 'apply' | 'remove';
 
+/** The `VaultProtection` function each action runs in the vault. */
 export const DESTINATION_FUNCTION = {
   add: 'addAllowlisted',
-  cancel: 'cancelAddAllowlisted',
-  apply: 'finalizeAddAllowlisted',
+  cancel: 'cancelAllowlisted',
+  apply: 'finalizeAllowlisted',
   remove: 'removeAllowlisted',
 } as const satisfies Record<DestinationAction, string>;
 
@@ -72,6 +74,9 @@ export interface PendingDestination {
 /** Everything the Protection page and a review read, at one block. */
 export interface DestinationFacts {
   account: Hex;
+  /** The account's vault, where its allowlist lives; null when it has none
+   *  or it was unread. */
+  vault: Hex | null;
   /** The mode; 'absent' when this Diamond has no protected-account feature;
    *  null when unread. */
   mode: DestinationMode | 'absent' | null;
@@ -86,21 +91,33 @@ export interface DestinationFacts {
   readAt: number;
 }
 
-type RawMode = { enabled: boolean; locked: boolean; retired: boolean; delaySeconds: number | bigint; cooldownUntil: number | bigint; controller: Hex };
-
 export async function readDestinationFacts(c: PublicClient, diamond: Hex, account: Hex): Promise<DestinationFacts> {
   const block = await c.getBlock({ blockTag: 'latest' });
   const at = { blockNumber: block.number };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
     answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
-  const [mode, destinations, pending, signers, paused, ids] = await Promise.all([
-    readModeOrAbsent(c, diamond, account, block.number),
-    read<readonly Hex[]>(PROTECTED, 'getAllowlist', [account]),
-    read<readonly [readonly Hex[], readonly bigint[]]>(PROTECTED, 'getPendingAllowlistAdditions', [account]),
-    read<readonly Hex[]>(PROTECTED, 'getProtectedSigners', [account]),
+  const [rec, paused, ids] = await Promise.all([
+    readRecordOrAbsent(c, diamond, account, block.number),
     read<boolean>(ADMIN, 'paused'),
     read<readonly bigint[]>(PAYOUT, 'getPendingPayoutIds', [account]),
   ]);
+  const record = rec === 'absent' || rec === null ? null : rec;
+  const vault = record?.vault ?? null;
+  // The vault's own reading of what is pending: its current-epoch list, and
+  // each entry's time (a voided one reads as not pending).
+  let pending: PendingDestination[] | null = record === null ? null : [];
+  if (vault !== null) {
+    const p = await answerOrNull(c.readContract({ address: vault, abi: VAULT, functionName: 'pendingAdditions', ...at }) as Promise<readonly [readonly Hex[], readonly Hex[]]>);
+    if (p === null) pending = null;
+    else {
+      const entries = await Promise.all(
+        p[0].map((d) => answerOrNull(c.readContract({ address: vault, abi: VAULT, functionName: 'allowEntry', args: [d], ...at }) as Promise<{ readyAt: bigint | number; active: boolean }>)),
+      );
+      pending = entries.some((x) => x === null)
+        ? null
+        : p[0].flatMap((d, i) => (entries[i]!.active || Number(entries[i]!.readyAt) === 0 ? [] : [{ destination: d, maturesAt: Number(entries[i]!.readyAt) }]));
+    }
+  }
   let queuedTo: Record<string, number> | null = null;
   if (ids !== null) {
     const rows = await Promise.all(ids.map((id) => readQueueRow(c, diamond, id, block.number)));
@@ -113,12 +130,26 @@ export async function readDestinationFacts(c: PublicClient, diamond: Hex, accoun
       }
     }
   }
+  const m = record?.record ?? null;
   return {
     account,
-    mode,
-    destinations,
-    pending: pending === null ? null : pending[0].map((d, i) => ({ destination: d, maturesAt: Number(pending[1][i] ?? 0n) })),
-    signers,
+    vault,
+    mode:
+      rec === 'absent'
+        ? 'absent'
+        : m === null
+          ? null
+          : {
+              enabled: m.enabled,
+              locked: m.locked,
+              retired: m.retired,
+              delaySeconds: m.delaySeconds,
+              cooldownUntil: Number(m.cooldownUntil),
+              controller: m.controller,
+            },
+    destinations: record === null ? null : record.allowlist,
+    pending,
+    signers: record === null ? null : record.signers,
     paused,
     queuedTo,
     chainNow: Number(block.timestamp),
@@ -126,21 +157,15 @@ export async function readDestinationFacts(c: PublicClient, diamond: Hex, accoun
   };
 }
 
-async function readModeOrAbsent(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<DestinationMode | 'absent' | null> {
+/** The account's vault record, 'absent' on a Diamond without the feature,
+ *  null when unread. */
+async function readRecordOrAbsent(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint) {
   try {
-    const m = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], blockNumber })) as RawMode;
-    return {
-      enabled: m.enabled,
-      locked: m.locked,
-      retired: m.retired,
-      delaySeconds: Number(m.delaySeconds),
-      cooldownUntil: Number(m.cooldownUntil),
-      controller: m.controller,
-    };
+    return await readProtectedRecord(c, diamond, account, blockNumber);
   } catch (e) {
     // A failed source is thrown, so the own rail tries the next one.
     if (!isContractAnswer(e)) throw e;
-    return refusalFromError(e).code === 'FunctionDoesNotExist' ? 'absent' : null;
+    return refusalFromError(e).code === 'FunctionDoesNotExist' ? ('absent' as const) : null;
   }
 }
 
@@ -170,8 +195,14 @@ export interface DestinationReview {
   readAt: number;
 }
 
-export function destinationCall(action: DestinationAction, account: Hex, destination: Hex) {
-  return { abi: PROTECTED, functionName: DESTINATION_FUNCTION[action], args: [account, destination] as const };
+/** The vault call that runs `action`: `protect` with the encoded
+ *  `VaultProtection` write, authorized directly by the sending wallet
+ *  (`apply` takes no authorization). Null when the vault is unknown. */
+export function destinationCall(action: DestinationAction, account: Hex, destination: Hex, vault: Hex | null) {
+  if (vault === null) return null;
+  const fn = DESTINATION_FUNCTION[action];
+  const data = protectionCall(fn, action === 'apply' ? [destination] : [destination, directAuth(account)]);
+  return { address: vault, abi: VAULT, functionName: 'protect', args: [data] as const };
 }
 
 export async function readDestinationReview(
@@ -192,8 +223,9 @@ export async function readDestinationReview(
     .then((x) => x.value);
   const base: DestinationReview = { identity, action, destination, facts, screen, dryRun: null, readAt: Date.now() };
   if (destinationBlockers(base, copy).length > 0) return base;
-  const call = destinationCall(action, account, destination);
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
+  const call = destinationCall(action, account, destination, facts.vault);
+  if (call === null) return { ...base, dryRun: 'unread', readAt: Date.now() };
+  const dry = await askThrough(own, (c) => c.simulateContract({ ...call, account }));
   return { ...base, dryRun: dry.kind === 'answered' ? null : dry.kind === 'reverted' ? refusalFromError(dry.error) : 'unread', readAt: Date.now() };
 }
 
@@ -254,20 +286,26 @@ export function destinationChanged(a: DestinationReview, b: DestinationReview, c
 
 type Args = Record<string, unknown>;
 
-/** The action's outcome, from the Diamond's own logs for this account. */
+/** The action's outcome, from the vault's own logs (the allowlist is its
+ *  record) and the Diamond's for any payout a removal cancelled. */
 export function measureDestination(r: DestinationReview, logs: readonly Log[], diamond: Hex, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const account = r.facts.account.toLowerCase();
-  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
-  const events = (parseEventLogs({ abi: [...PROTECTED, ...PAYOUT] as Abi, logs: [...own], strict: false }) as unknown as { eventName: string; args: Args }[]).filter(
-    (e) => String(e.args.account ?? '').toLowerCase() === account,
-  );
-  const forDest = (name: string) => events.filter((e) => e.eventName === name && String(e.args.destination ?? '').toLowerCase() === r.destination.toLowerCase());
+  const vault = r.facts.vault?.toLowerCase() ?? null;
+  const fromVault =
+    vault === null
+      ? []
+      : (parseEventLogs({ abi: VAULT_PROTECTION, logs: logs.filter((l) => l.address.toLowerCase() === vault), strict: false }) as unknown as { eventName: string; args: Args }[]);
+  const fromDiamond = (parseEventLogs({ abi: PAYOUT, logs: logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase()), strict: false }) as unknown as {
+    eventName: string;
+    args: Args;
+  }[]).filter((e) => String(e.args.account ?? '').toLowerCase() === account);
+  const forDest = (name: string) => fromVault.filter((e) => e.eventName === name && String(e.args.destination ?? '').toLowerCase() === r.destination.toLowerCase());
   const address = r.destination;
   if (r.action === 'add') {
     const asked = forDest('AllowlistAddRequested')[0];
     if (!asked) return [{ status: 'not-done', label: text('dest.titleAdd'), reason: text('dest.notRecorded') }];
-    return [{ status: 'done', label: format('dest.legAsked', { address, at: formatUtc(BigInt(asked.args.effectiveAt as bigint)) }) }];
+    return [{ status: 'done', label: format('dest.legAsked', { address, at: formatUtc(BigInt(asked.args.readyAt as bigint)) }) }];
   }
   if (r.action === 'cancel') {
     if (forDest('AllowlistAddCancelled').length === 0) return [{ status: 'not-done', label: text('dest.titleCancel'), reason: text('dest.notRecorded') }];
@@ -279,7 +317,7 @@ export function measureDestination(r: DestinationReview, logs: readonly Log[], d
   }
   if (forDest('AllowlistRemoved').length === 0) return [{ status: 'not-done', label: text('dest.titleRemove'), reason: text('dest.notRecorded') }];
   const legs: LegOutcome[] = [{ status: 'done', label: format('dest.legRemoved', { address }) }];
-  const cancelled = events.filter((e) => e.eventName === 'PayoutCancelled').length;
+  const cancelled = fromDiamond.filter((e) => e.eventName === 'PayoutCancelled').length;
   if (cancelled > 0) legs.push({ status: 'done', label: format('safety.legCancelled', { count: String(cancelled) }) });
   return legs;
 }

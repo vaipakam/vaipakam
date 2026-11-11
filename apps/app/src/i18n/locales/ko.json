@@ -2809,6 +2809,7 @@
         "ProtectedDelaySet": "지급 지연 변경됨",
         "ProtectNftsSet": "포지션 NFT 보호 변경됨",
         "CosignRequirementSet": "공동 서명 요건 변경됨",
+        "ProtectionApplied": "보호 모드 설정이 적용됨",
         "AllowlistAddRequested": "지급 주소 추가 요청됨",
         "AllowlistAddCancelled": "지급 주소 추가 취소됨",
         "AllowlistAdded": "지급 주소 추가됨",

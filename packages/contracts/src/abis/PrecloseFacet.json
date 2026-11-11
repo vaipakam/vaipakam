@@ -172,17 +172,6 @@
   },
   {
     "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
   },
@@ -2211,17 +2200,6 @@
   {
     "type": "error",
     "name": "PositionNftsLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
     "inputs": [
       {
         "name": "account",

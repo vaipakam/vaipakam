@@ -2809,6 +2809,7 @@
         "ProtectedDelaySet": "付款延迟已更改",
         "ProtectNftsSet": "持仓 NFT 保护已更改",
         "CosignRequirementSet": "联署要求已更改",
+        "ProtectionApplied": "已应用保护模式设置",
         "AllowlistAddRequested": "已申请添加收款地址",
         "AllowlistAddCancelled": "添加收款地址已取消",
         "AllowlistAdded": "收款地址已添加",

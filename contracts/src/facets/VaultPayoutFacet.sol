@@ -115,7 +115,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     function releasePayout(uint256 id) external nonReentrant returns (uint256 delivered) {
         _requireLiveOrEscape();
         LibVaipakam.PendingPayout storage row = LibVaipakam.storageSlot().pendingPayouts[id];
-        if (row.state == LibProtectedAccount.ROW_QUEUED && !LibProtectedAccount.isAllowed(row.user, row.recipient)) {
+        if (LibProtectedAccount.releaseCancels(row)) {
             LibProtectedAccount.cancelPayout(id, address(this));
             return 0;
         }
@@ -125,16 +125,21 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         LibProtectedAccount.recordReleased(id, delivered);
     }
 
-    /// @dev #3205 part 2 — through the one policy: the owner's own wallet is
-    ///      the Owner class; an allowlisted address or the controller of a
-    ///      retired account is OwnerAllowlisted (the policy re-checks the
-    ///      allowlist). The release this call pays is bound beforehand, so the
+    /// @dev #3205 part 2 — through the one policy: the owner's wallet (the
+    ///      vault's owner record, so a retired account's controller) is the
+    ///      Owner class; an allowlisted address is OwnerAllowlisted (the policy
+    ///      re-checks the allowlist). The release this call pays is bound beforehand, so the
     ///      payout gate lets exactly it through.
     function _pay(uint8 kind, address user, address asset, uint256 tokenId, uint256 amount, address recipient, uint8 reason)
         private
         returns (uint256 delivered)
     {
-        if (recipient == user) return LibVaultOutflow.toOwner(user, kind, asset, tokenId, amount, reason);
+        // #3379 B2 — the owner class pays the vault's owner record (the
+        // controller once a replacement moved it); anyone else on the
+        // allowlist is OwnerAllowlisted.
+        if (recipient == LibProtectedAccount.manager(user)) {
+            return LibVaultOutflow.toOwner(user, kind, asset, tokenId, amount, reason);
+        }
         return LibVaultOutflow.toAllowlisted(user, kind, asset, tokenId, amount, recipient, reason);
     }
 
@@ -182,7 +187,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
      */
     function escapeWithdraw(uint8 kind, address asset, uint256 tokenId, uint256 amount) external nonReentrant {
         if (!_escapeOpen()) revert LibProtectedAccount.EscapeClosed();
-        if (LibProtectedAccount.isEnabled(msg.sender)) revert EscapeNotForProtected(msg.sender);
+        if (LibProtectedAccount.isProtected(msg.sender)) revert EscapeNotForProtected(msg.sender);
         // Funds out: a barred wallet does not escape with them either.
         LibVaipakam.assertRecipientNotBarred(msg.sender);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
@@ -214,6 +219,24 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     /// @notice Payout row `id`, in whatever state it is.
     function getPendingPayout(uint256 id) external view returns (LibVaipakam.PendingPayout memory) {
         return LibVaipakam.storageSlot().pendingPayouts[id];
+    }
+
+    /// @notice Whether queued payout `id` needs a secondary signer's
+    ///         co-signature to be released, by the same rule the release
+    ///         enforces ({LibProtectedAccount.cosignNeeded}): the account's
+    ///         co-sign setting while it has a signer, or an unverified
+    ///         allowlisted destination (#3415). False for a row that is not
+    ///         queued, and for one the release would cancel because its
+    ///         destination is no longer allowed
+    ///         ({LibProtectedAccount.releaseCancels}). Whether the
+    ///         co-signature was already given is the row's own `cosigned`.
+    function payoutNeedsCosign(uint256 id) external view returns (bool) {
+        LibVaipakam.PendingPayout storage p = LibVaipakam.storageSlot().pendingPayouts[id];
+        if (p.state != LibProtectedAccount.ROW_QUEUED) return false;
+        // The release cancels such a row before it reads the co-signature, so
+        // anyone's release settles it (Codex #3489 r3).
+        if (LibProtectedAccount.releaseCancels(p)) return false;
+        return LibProtectedAccount.cosignNeeded(p.user, p.recipient);
     }
 
     /// @notice Ids of `account`'s queued payouts.

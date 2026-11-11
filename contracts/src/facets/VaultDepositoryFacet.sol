@@ -8,7 +8,7 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibProtectedAccount, IVaultProtectionRead} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
@@ -205,7 +205,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     ) external nonReentrant returns (uint256 queuedId) {
         if (
             LibPausable.paused()
-                && !(LibProtectedAccount.isEnabled(account)
+                && !(LibProtectedAccount.isProtected(account)
                     && LibProtectedAccount.escapeOpen())
         ) revert LibPausable.EnforcedPause();
         LibProtectedAccount.requireManager(account);
@@ -225,7 +225,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         // Debited when asked for, paid or queued: a queued payout that is
         // later cancelled is credited back (`LibProtectedAccount.cancelPayout`).
         LibDepositoryLedger.debit(account, asset, tokenId, amount);
-        if (LibProtectedAccount.isEnabled(account)) {
+        if (LibProtectedAccount.isProtected(account)) {
             queuedId = LibProtectedAccount.queuePayout(account, kind, asset, tokenId, amount, recipient);
             emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, true);
             return queuedId;
@@ -367,10 +367,13 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      a new controller's cool-down. A faulty facet could skip this
     ///      refusal, but never the beacon's delay or a direct cancel there.
     function _requirePinnable(address account) private view {
-        LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[account];
-        if (!a.enabled) return;
-        if (block.timestamp < a.cooldownUntil) revert LibProtectedAccount.PrimaryInCooldown(a.cooldownUntil);
-        if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
+        // #3379 B2 — read from the vault's own record.
+        address vault = LibVaipakam.storageSlot().userVaipakamVaults[account];
+        if (vault == address(0)) return;
+        (bool enabled, bool locked,, uint64 cooldownUntil,,,) = IVaultProtectionRead(vault).protectionState();
+        if (!enabled) return;
+        if (block.timestamp < cooldownUntil) revert LibProtectedAccount.PrimaryInCooldown(cooldownUntil);
+        if (locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
     }
 
     // ─── Views ───────────────────────────────────────────────────────────

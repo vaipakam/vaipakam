@@ -25,9 +25,31 @@ import { formatRequestCode } from '@vaipakam/lib/requestCode';
 import { test, expect } from '../lib/wallet-fixture';
 import { TLIQ } from '../lib/desk';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI } from '../lib/chain';
+import { loadContractAbi } from '../lib/artifacts';
+
+/** Read from the exported file (the ABI barrel's JSON imports are refused by
+ *  Node's native ESM loader; see `../lib/artifacts`). */
+const VaipakamVaultImplementationABI = loadContractAbi('VaipakamVaultImplementation');
 
 const read = <T,>(functionName: string, args: readonly unknown[]) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, args: args as unknown[] }) as Promise<T>;
+
+// #3379 B2 — protected mode's record lives in the account's vault, which the
+// Diamond names (`getProtection(account).vault`).
+const vaultOf = async (who: `0x${string}`) =>
+  (await read<readonly [`0x${string}`, boolean, bigint]>('getProtection', [who]))[0];
+const readVault = async <T,>(who: `0x${string}`, functionName: string, args: readonly unknown[] = []) =>
+  pub.readContract({
+    address: await vaultOf(who),
+    abi: VaipakamVaultImplementationABI,
+    functionName,
+    args: args as unknown[],
+  }) as Promise<T>;
+/** `protectionCore()`: (enabled, locked, delay, owner). */
+const coreOf = (who: `0x${string}`) =>
+  readVault<readonly [boolean, boolean, number | bigint, `0x${string}`]>(who, 'protectionCore');
+const pendingAllowOf = async (who: `0x${string}`) =>
+  (await readVault<readonly [readonly string[], readonly string[]]>(who, 'pendingAdditions'))[0].length;
 
 // What the card offers: the depository holding, bounded by liens and queued
 // payouts — the same figure the contract's withdraw is bounded by.
@@ -58,10 +80,10 @@ test('deposit, protect, queue, cancel, list a pending address and lock — all f
   await page.getByLabel(/payout delay/i).selectOption({ label: '3 days' });
   await page.getByRole('button', { name: /turn on protection/i }).click();
   await expect
-    .poll(async () => (await read<{ enabled: boolean }>('getProtectedAccount', [me])).enabled, { timeout: 120_000 })
+    .poll(async () => (await coreOf(me))[0], { timeout: 120_000 })
     .toBe(true);
-  const record = await read<{ delaySeconds: number | bigint }>('getProtectedAccount', [me]);
-  expect(Number(record.delaySeconds), 'the chosen delay is the one enabled').toBe(3 * 86_400);
+  const core = await coreOf(me);
+  expect(Number(core[2]), 'the chosen delay is the one enabled').toBe(3 * 86_400);
 
   // ── 3. A withdrawal is queued, not paid ──────────────────────────────
   const walletBefore = (await pub.readContract({
@@ -108,23 +130,19 @@ test('deposit, protect, queue, cancel, list a pending address and lock — all f
   await allowlist.getByLabel(/0x… address/i).fill(destination);
   await allowlist.getByRole('button', { name: /^add address$/i }).click();
   await expect
-    .poll(async () => (await read<readonly [readonly string[], readonly bigint[]]>('getPendingAllowlistAdditions', [me]))[0].length, {
-      timeout: 120_000,
-    })
+    .poll(() => pendingAllowOf(me), { timeout: 120_000 })
     .toBe(1);
   const pendingRow = allowlist.getByTestId('pending-addition');
   await expect(pendingRow).toContainText(/waiting until/i, { timeout: 60_000 });
   await pendingRow.getByRole('button', { name: /^cancel$/i }).click();
   await expect
-    .poll(async () => (await read<readonly [readonly string[], readonly bigint[]]>('getPendingAllowlistAdditions', [me]))[0].length, {
-      timeout: 120_000,
-    })
+    .poll(() => pendingAllowOf(me), { timeout: 120_000 })
     .toBe(0);
 
   // ── 5. Emergency lock ────────────────────────────────────────────────
   await page.getByRole('button', { name: /lock my vault now/i }).click();
   await expect
-    .poll(async () => (await read<{ locked: boolean }>('getProtectedAccount', [me])).locked, { timeout: 120_000 })
+    .poll(async () => (await coreOf(me))[1], { timeout: 120_000 })
     .toBe(true);
   await expect(page.getByText(/your vault is locked/i)).toBeVisible({ timeout: 60_000 });
 });

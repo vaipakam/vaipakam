@@ -150,6 +150,10 @@
       "types": "./src/protectedAccountView.ts",
       "default": "./src/protectedAccountView.ts"
     },
+    "./vaultProtectionAuth": {
+      "types": "./src/vaultProtectionAuth.ts",
+      "default": "./src/vaultProtectionAuth.ts"
+    },
     "./protocolKnobs": {
       "types": "./src/protocolKnobs.ts",
       "default": "./src/protocolKnobs.ts"

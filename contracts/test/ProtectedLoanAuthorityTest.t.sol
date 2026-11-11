@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
@@ -99,12 +100,10 @@ contract ProtectedLoanAuthorityTest is SetupTest {
 
     /// @dev The holder hands its own account to `nominee` after the delay.
     function _retire(address holder, address nominee) internal {
-        vm.startPrank(holder);
-        _pa().enableProtectedMode(DELAY, false);
-        _pa().proposeReplacement(holder, nominee);
-        vm.stopPrank();
+        LibTestProtection.enable(address(diamond), holder, DELAY);
+        LibTestProtection.propose(address(diamond), holder, holder, nominee);
         vm.warp(block.timestamp + DELAY);
-        _pa().finalizeReplacement(holder);
+        LibTestProtection.finalizeReplacement(address(diamond), holder);
     }
 
     /// A replacement moves the authority over a held position to the
@@ -154,8 +153,7 @@ contract ProtectedLoanAuthorityTest is SetupTest {
     /// lender is credited to the lender's vault, never paid to its wallet.
     function testPartialRepaymentToAProtectedLenderLandsInItsVault() public {
         uint256 loanId = _openLoan(true);
-        vm.prank(lender);
-        _pa().enableProtectedMode(DELAY, false);
+        LibTestProtection.enable(address(diamond), lender, DELAY);
         vm.warp(block.timestamp + 10 days);
 
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);

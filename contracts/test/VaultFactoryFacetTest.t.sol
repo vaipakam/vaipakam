@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -158,7 +159,7 @@ contract VaultFactoryFacetTest is Test {
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
         });
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
 
@@ -208,7 +209,7 @@ contract VaultFactoryFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
-        IDiamondCut(address(d2)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(d2)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         AccessControlFacet(address(d2)).initializeAccessControl();
     }
 
@@ -227,7 +228,7 @@ contract VaultFactoryFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
-        IDiamondCut(address(d2)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(d2)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         AccessControlFacet(address(d2)).initializeAccessControl();
 
         vm.prank(user1);

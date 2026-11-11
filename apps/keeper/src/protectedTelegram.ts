@@ -48,6 +48,7 @@ import { shortErr } from './callErrors';
 import { decodePos, encodePos, type EventLedger, type LedgerPos } from './eventLedger';
 import { boundedCall, type PassReader } from './passReader';
 import { protectedCopy, shortAddress } from './protectedCopy';
+import { readProtectedAccount } from './protectedVault';
 import { RUN_DEADLINE_MARGIN_MS } from './runWindow';
 import type { ScanCursors } from './scanCursors';
 import type { StepSender } from './stepSender';
@@ -322,7 +323,7 @@ async function lockOne(d: TelegramStepDeps, q: LockRequest, sendCutoff: number):
   if (age > LOCK_REQUEST_TTL_SEC) return end('expired', copy.lockExpired(w, d.chainId));
   let a: AccountLock;
   try {
-    a = await d.r.one<AccountLock>('getProtectedAccount', [q.wallet]);
+    a = (await readProtectedAccount(d.r, q.wallet)) satisfies AccountLock;
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     d.sender.noteUnread(`lock:${q.wallet}`, `its account's settings (${shortErr(err)})`);
@@ -511,7 +512,7 @@ async function managerOf(d: TelegramStepDeps, seen: Map<Address, Address>, accou
   if (seen.has(account)) return seen.get(account)!;
   let manager: Address | null;
   try {
-    const a = await d.r.one<{ retired: boolean; controller: Address }>('getProtectedAccount', [account]);
+    const a = await readProtectedAccount(d.r, account);
     manager = a.retired ? lower(a.controller) : account;
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;

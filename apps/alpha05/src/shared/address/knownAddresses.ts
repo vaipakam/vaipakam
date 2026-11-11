@@ -17,6 +17,7 @@ import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { keeperName } from '../keepers/keeperReceipt';
 import { networkKeeper, PROFILE_ABI } from '../keepers/keepers';
+import { VAULT } from '../protection/payout';
 import { PROTECTED } from '../protection/safety';
 import { isContractAnswer } from '../reads/answer';
 import { useOwnRead } from '../reads/useOwnRead';
@@ -45,31 +46,52 @@ export function bookKnown(book: AddressBook): KnownAddress[] {
 }
 
 /**
- * Read the account's on-chain addresses at one block. A Diamond without
- * the protected-account feature routes none of its reads, so it answers
- * that no address is there (an empty list); any other refusal leaves that
- * list unread. A source that fails is thrown, so the own rail tries the
+ * Read the account's on-chain addresses at one block. #3379 B2: the payout
+ * destinations and the secondary signers (active and waiting) are the
+ * account's VAULT record, which the Diamond names (`getProtection`). A
+ * Diamond without the protected-account feature, or an account without a
+ * vault, has no address there (empty lists); any other refusal leaves those
+ * lists unread. A source that fails is thrown, so the own rail tries the
  * next one.
  */
 export async function readUsedAddresses(c: PublicClient, diamond: Hex, account: Hex): Promise<UsedAddresses> {
   const blockNumber = await c.getBlockNumber({ cacheTime: 0 });
-  const list = async <T>(abi: Abi, functionName: string, pick: (raw: T) => readonly Hex[]): Promise<readonly Hex[] | null> => {
+  const answer = async <T, N = T>(read: () => Promise<T>, onNoRoute: N | null): Promise<T | N | null> => {
     try {
-      const raw = (await c.readContract({ address: diamond, abi, functionName, args: [account], blockNumber })) as T;
-      return pick(raw).map((a) => getAddress(a));
+      return await read();
     } catch (e) {
       if (!isContractAnswer(e)) throw e;
-      return refusalFromError(e).code === 'FunctionDoesNotExist' ? [] : null;
+      return refusalFromError(e).code === 'FunctionDoesNotExist' ? onNoRoute : null;
     }
   };
-  const [destinations, pending, signers, nominees, keepers] = await Promise.all([
-    list<readonly Hex[]>(PROTECTED, 'getAllowlist', (r) => r),
-    list<readonly [readonly Hex[], readonly bigint[]]>(PROTECTED, 'getPendingAllowlistAdditions', (r) => r[0]),
-    list<readonly Hex[]>(PROTECTED, 'getProtectedSigners', (r) => r),
-    list<readonly [readonly Hex[], readonly bigint[], readonly boolean[]]>(PROTECTED, 'getPendingSignerAdditions', (r) => r[0]),
-    list<readonly Hex[]>(PROFILE_ABI, 'getApprovedKeepers', (r) => r),
+  const norm = (xs: readonly Hex[]) => xs.map((a) => getAddress(a));
+  const protectedLists = async (): Promise<Pick<UsedAddresses, 'destinations' | 'pending' | 'signers' | 'nominees'>> => {
+    const none = { destinations: [], pending: [], signers: [], nominees: [] };
+    const unread = { destinations: null, pending: null, signers: null, nominees: null };
+    const protection = await answer(
+      () => c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtection', args: [account], blockNumber }) as Promise<readonly [Hex, boolean, bigint]>,
+      'absent' as const,
+    );
+    if (protection === 'absent') return none;
+    if (protection === null) return unread;
+    const vault = protection[0];
+    if (/^0x0{40}$/i.test(vault)) return none;
+    const [state, pend] = await Promise.all([
+      answer(() => c.readContract({ address: vault, abi: VAULT, functionName: 'protectionState', blockNumber }) as Promise<readonly unknown[]>, null),
+      answer(() => c.readContract({ address: vault, abi: VAULT, functionName: 'pendingAdditions', blockNumber }) as Promise<readonly [readonly Hex[], readonly Hex[]]>, null),
+    ]);
+    return {
+      destinations: state === null ? null : norm(state[6] as readonly Hex[]),
+      signers: state === null ? null : norm(state[5] as readonly Hex[]),
+      pending: pend === null ? null : norm(pend[0]),
+      nominees: pend === null ? null : norm(pend[1]),
+    };
+  };
+  const [lists, keepers] = await Promise.all([
+    protectedLists(),
+    answer(() => c.readContract({ address: diamond, abi: PROFILE_ABI as Abi, functionName: 'getApprovedKeepers', args: [account], blockNumber }) as Promise<readonly Hex[]>, []),
   ]);
-  return { destinations, pending, signers, nominees, keepers };
+  return { ...lists, keepers: keepers === null ? null : norm(keepers) };
 }
 
 /** Merge every source into one list, the most specific first: the wallet

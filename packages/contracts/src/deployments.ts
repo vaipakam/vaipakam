@@ -277,6 +277,9 @@ export interface Deployment {
   /** #3431 — the backstop vault, provisioned by the deploy before the vault
    *  code, which fixes its address as the only backstop-class owner. */
   backstopVault?: HexAddress;
+  /** #3379 B2 — the protected-mode code every vault delegatecalls; fixed in
+   *  the vault code. */
+  vaultProtection?: HexAddress;
   /** #3272 — the PriceGuard: the one price source the Diamond and every
    *  vault read, through the registry's `PRICE_GUARD` pointer (read the
    *  pointer, not this key, to find the guard in force). Optional until each

@@ -306,6 +306,10 @@
       "class": "gated",
       "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender); the vault then refuses a conduit outside the registry's CONDUITS set"
     },
+    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
+      "class": "user",
+      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
+    },
     "ProfileFacet.approveKeeper(address,uint16)": {
       "class": "user",
       "why": "the user's own keeper settings"
@@ -333,61 +337,7 @@
       "class": "user",
       "why": "the user's own profile"
     },
-    "ProtectedAccountFacet.acceptSignerRole(address)": {
-      "class": "user",
-      "why": "the nominee accepts its own nomination"
-    },
-    "ProtectedAccountFacet.addAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.addSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelAddAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelAddSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager cancels its own nomination"
-    },
-    "ProtectedAccountFacet.cancelRemoveSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelReplacement(address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelSettingChange(address,uint8)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.enableProtectedMode(uint32,bool)": {
-      "class": "user",
-      "why": "the account owner's own setting"
-    },
-    "ProtectedAccountFacet.finalizeAddAllowlisted(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeAddSigner(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeRemoveSigner(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeReplacement(address)": {
+    "ProtectedAccountFacet.applyProtection(address)": {
       "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
@@ -399,38 +349,6 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
-    "ProtectedAccountFacet.lockPositionNfts(address)": {
-      "class": "user",
-      "why": "the account manager locks its own account's position NFTs at the PositionNFT core (called with its own account; a caller naming another account is refused unless it manages it); it can only tighten"
-    },
-    "ProtectedAccountFacet.lockVault(address)": {
-      "class": "user",
-      "why": "the account manager or one of its signers locks its own account"
-    },
-    "ProtectedAccountFacet.proposeReplacement(address,address)": {
-      "class": "user",
-      "why": "a signer or the manager proposes; approvals and the delay follow"
-    },
-    "ProtectedAccountFacet.removeAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.requestRemoveSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.requestUnlock(address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.setProtectedDelay(address,uint32)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.setRequireCosign(address,bool)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
     "ProtocolBroadcastFacet.deliverTierPush(address)": {
       "class": "keeper",
       "pass": "protocolUpkeep",
@@ -440,10 +358,6 @@
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
-    },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
-      "class": "user",
-      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
     "ProtocolRegistry.executeAdd(bytes32,address)": {
       "class": "user",
@@ -889,6 +803,18 @@
       "class": "user",
       "why": "a holder gives up its own role; the confirmation argument must be the caller"
     },
+    "VaipakamVaultImplementation.closeGrant()": {
+      "class": "gated",
+      "gate": "within the transaction that opened the grant only the Diamond may close it (a transient flag); afterwards anyone may, and closing can only bring a leftover allowance to zero and report it: it moves nothing"
+    },
+    "VaipakamVaultImplementation.initialize(address,address)": {
+      "class": "init",
+      "why": "the Diamond's factory creates each vault (CREATE2) and initializes it in the same transaction"
+    },
+    "VaipakamVaultImplementation.protect(bytes)": {
+      "class": "gated",
+      "gate": "runs only the vault's fixed VaultProtection code, whose every write is authorized by its key (a direct call from the key, or the key's EIP-712 / ERC-1271 signature bound to the chain, the vault, a per-purpose nonce and an expiry); its four finalizers are the permissionless steps recorded under VaultProtection"
+    },
     "VaultBeacon.cancelPin(address,bytes)": {
       "class": "gated",
       "gate": "the Diamond (its protected-mode cancel path), or the vault owner's EIP-712 CancelPin signature over (vault, nonce) verified at the beacon against the owner wallet the vault recorded; cancelling only ever refuses a change"
@@ -938,6 +864,82 @@
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.addAllowlisted(address,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.burnNonce(uint8)": {
+      "class": "user",
+      "why": "a key voids its own next signature nonce for a purpose, through the vault (a direct call to this code is refused)"
+    },
+    "VaultProtection.cancelAllowlisted(address,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.cancelSetting(uint8,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.enable(uint32,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.finalizeAllowlisted(address)": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.finalizeReplacement()": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.finalizeSettings()": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.finalizeSigner(address)": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.lock(struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.removeAllowlisted(address,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.replacement(uint8,address,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.requestDisable(struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.requestUnlock(struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.setDelay(uint32,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.signerChange(uint8,address,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.verifyDestination(address,address,struct:VaultProtection.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
     },
     "VpfiReturnReceiver.initialize(address,address,address)": {
       "class": "init",

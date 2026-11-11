@@ -45,8 +45,9 @@ export function finalizedBy(cutoff: number, finalized: () => Promise<FinalBlock 
   return () => boundedCall(cutoff, 'the finalized block', finalized).catch(() => null);
 }
 
-/** One read of the pass's contract: a function and its arguments. */
-export type ReadCall = { functionName: string; args: readonly unknown[] };
+/** One read of the pass's contract: a function and its arguments, and the
+ *  contract it is made on when not the Diamond (a user's vault, #3379 B2). */
+export type ReadCall = { functionName: string; args: readonly unknown[]; address?: Address };
 
 /** The clients a pass reads through. */
 export interface PassReadClients {
@@ -125,7 +126,7 @@ export class PassReader {
       this.readClient,
       at,
       PASS_READ_CHUNK,
-      (i) => groups[i].map((c) => ({ address: this.diamond, abi: this.abi, functionName: c.functionName, args: c.args })),
+      (i) => groups[i].map((c) => ({ address: c.address ?? this.diamond, abi: this.abi, functionName: c.functionName, args: c.args })),
       `${this.pass} ${label}`,
       this.cutoff,
       this.visit,

@@ -2809,6 +2809,7 @@
         "ProtectedDelaySet": "भुगतान विलंब बदला गया",
         "ProtectNftsSet": "पोज़िशन NFT सुरक्षा बदली गई",
         "CosignRequirementSet": "सह-हस्ताक्षर की आवश्यकता बदली गई",
+        "ProtectionApplied": "सुरक्षित मोड की सेटिंग लागू की गईं",
         "AllowlistAddRequested": "भुगतान पता जोड़ने का अनुरोध किया गया",
         "AllowlistAddCancelled": "भुगतान पता जोड़ना रद्द किया गया",
         "AllowlistAdded": "भुगतान पता जोड़ा गया",

@@ -2,6 +2,9 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -61,12 +64,7 @@ contract ProtectedVaultVpfiTest is SetupTest {
     }
 
     function _addSigner(address signer) internal {
-        vm.prank(alice);
-        _prot().addSigner(alice, signer);
-        vm.prank(signer);
-        _prot().acceptSignerRole(alice);
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeAddSigner(alice, signer);
+        LibTestProtection.addSigner(address(diamond), alice, alice, signer, DELAY);
     }
 
     function testStakedVpfiJoinsTheDepositoryHoldingAndUnstakeDrawsItDown() public {
@@ -89,20 +87,20 @@ contract ProtectedVaultVpfiTest is SetupTest {
     function testReplacementControllerRecoversStakedVpfi() public {
         vm.prank(alice);
         _f().depositVPFIToVault(100 ether);
-        vm.prank(alice);
-        _prot().enableProtectedMode(DELAY, true);
+        LibTestProtection.enableWithNfts(address(diamond), alice, DELAY);
         _addSigner(s1);
         _addSigner(s2);
         _addSigner(s3);
+        VaipakamVaultImplementation aliceVault = LibTestProtection.vaultOf(address(diamond), alice);
         vm.prank(s1);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.InvalidNominee.selector, s2));
-        _prot().proposeReplacement(alice, s2);
-        vm.prank(s1);
-        _prot().proposeReplacement(alice, nominee);
-        vm.prank(s2);
-        _prot().approveReplacement(alice);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadNominee.selector, s2));
+        aliceVault.protect(
+            abi.encodeCall(VaultProtection.replacement, (uint8(1), s2, LibTestProtection.direct(s1)))
+        );
+        LibTestProtection.propose(address(diamond), alice, s1, nominee);
+        LibTestProtection.approve(address(diamond), alice, s2, nominee);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeReplacement(alice);
+        LibTestProtection.finalizeReplacement(address(diamond), alice);
 
         // The retired wallet cannot unstake (it lost every right over the
         // account), and a signer cannot be the nominee (no wallet both
@@ -126,8 +124,7 @@ contract ProtectedVaultVpfiTest is SetupTest {
     function testOwnVpfiWithdrawalIsRefusedWhenTheQueueIsFull() public {
         vm.prank(alice);
         _f().depositVPFIToVault(100 ether);
-        vm.prank(alice);
-        _prot().enableProtectedMode(DELAY, false);
+        LibTestProtection.enable(address(diamond), alice, DELAY);
         uint256 first;
         for (uint256 i; i < 16; ++i) {
             vm.prank(alice);

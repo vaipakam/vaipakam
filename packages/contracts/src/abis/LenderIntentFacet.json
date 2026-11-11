@@ -835,17 +835,6 @@
   },
   {
     "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -1088,17 +1077,6 @@
     "type": "error",
     "name": "PositionNFTNotSet",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

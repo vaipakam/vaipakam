@@ -171,35 +171,17 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['PayoutCosigned', ['account', 'signer']],
   ['PositionTransferCosigned', ['account', 'signer']],
   // Protected account mode: the account's own settings and its lock.
-  ['ProtectedModeEnabled', ['account']],
-  ['ProtectedModeDisabled', ['account']],
+  // #3379 B2 — protected mode is held by each vault. The Diamond keeps only
+  // the platform's side (the applied posture, co-sign, NFT protection); the
+  // vault's own events (allowlist, signers, lock, replacement) are emitted by
+  // the vault, whose ABI is not in the Diamond union. Their parties are
+  // classified with the vault events when the indexer reads vault logs (B4).
+  ['ProtectionApplied', ['account']],
   ['SettingChangeRequested', ['account']],
   ['SettingChangeCancelled', ['account']],
   ['SettingChangeApplied', ['account']],
-  ['ProtectedDelaySet', ['account']],
   ['ProtectNftsSet', ['account']],
   ['CosignRequirementSet', ['account']],
-  ['AllowlistAddRequested', ['account']],
-  ['AllowlistAddCancelled', ['account']],
-  ['AllowlistAdded', ['account']],
-  ['AllowlistRemoved', ['account']],
-  ['VaultLocked', ['account']],
-  ['VaultUnlocked', ['account']],
-  // A recovery signer's own membership concerns that signer too.
-  ['SignerAddRequested', ['account', 'signer']],
-  ['SignerAccepted', ['account', 'signer']],
-  ['SignerAddCancelled', ['account', 'signer']],
-  ['SignerAdded', ['account', 'signer']],
-  ['SignerRemoveRequested', ['account', 'signer']],
-  ['SignerRemoveCancelled', ['account', 'signer']],
-  ['SignerRemoved', ['account', 'signer']],
-  // A replacement concerns the nominated wallet; an approval also names the
-  // approving signer, and the completed replacement the new controller.
-  ['ReplacementProposed', ['account', 'nominee']],
-  ['ReplacementApproved', ['account', 'nominee', 'signer']],
-  ['ReplacementScheduled', ['account', 'nominee']],
-  ['ReplacementCancelled', ['account', 'nominee']],
-  ['PrimaryReplaced', ['account', 'controller']],
   ['NFTMinted', ['owner']],
   // Position-NFT ERC-721 events (the legacy Diamond's, or the standalone
   // PositionNFT's, both decoded through `POSITION_NFT_INDEXED_EVENTS`).
@@ -273,17 +255,6 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['PositionTransferReleased', { to: "the owner's wallet or an allowlisted address" }],
   ['PositionTransferCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   ['SettingChangeCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
-  ['AllowlistAddRequested', { destination: 'an address the owner is adding as a payout destination' }],
-  ['AllowlistAddCancelled', { destination: 'the payout destination withdrawn', by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
-  ['AllowlistAdded', { destination: 'a payout destination the owner configured' }],
-  ['AllowlistRemoved', { destination: 'the payout destination removed', by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
-  ['SignerAddCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
-  ['SignerRemoveCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
-  // A lock is taken by the owner, a signer, or the keeper relaying the
-  // owner's own lock message: whoever it is acts for the account.
-  ['VaultLocked', { by: 'the owner, a signer, or the keeper relaying the owner\'s lock' }],
-  ['ReplacementProposed', { by: 'the signer who proposed the replacement' }],
-  ['ReplacementCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   // A keeper being permitted or refused is configured, not acting.
   ['KeeperActionsUpdated', { keeper: 'the keeper being permitted' }],
   ['KeeperRevoked', { keeper: 'the keeper being refused' }],

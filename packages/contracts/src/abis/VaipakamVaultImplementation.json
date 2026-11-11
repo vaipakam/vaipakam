@@ -1,0 +1,2101 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "positionNft",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "e",
+        "type": "tuple",
+        "internalType": "struct VaultOutflowTypes.VaultEndpoints",
+        "components": [
+          {
+            "name": "treasury",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "backstop",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "seaport",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "orderProtocol",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "conduit",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "conduitKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "priceGuard",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "protection",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "BACKSTOP",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "CONDUIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "CONDUIT_KEY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_CONCURRENT_RENTALS_1155",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ORDER_PROTOCOL",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "POSITION_NFT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRICE_GUARD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PROTECTION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SEAPORT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "TREASURY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "allowEntry",
+    "inputs": [
+      {
+        "name": "destination",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "e",
+        "type": "tuple",
+        "internalType": "struct LibVaultProtectionStorage.Entry",
+        "components": [
+          {
+            "name": "readyAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "epoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "verified",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "closeGrant",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "consumed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "closeListingEscrow",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "returned",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "depositERC1155",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "depositERC20",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "depositERC721",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getOfferAmountFromDiamond",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "grantAllowance",
+    "inputs": [
+      {
+        "name": "g",
+        "type": "tuple",
+        "internalType": "struct VaultOutflowTypes.Grant",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VaultOutflowTypes.AssetKind"
+          },
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "spender",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "class_",
+            "type": "uint8",
+            "internalType": "enum VaultOutflowTypes.GrantClass"
+          },
+          {
+            "name": "ref",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "initialize",
+    "inputs": [
+      {
+        "name": "diamondAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "vaultOwnerWallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "isValidSignature",
+    "inputs": [
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "listingEscrowAddress",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "onERC1155BatchReceived",
+    "inputs": [
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "onERC1155Received",
+    "inputs": [
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "onERC721Received",
+    "inputs": [
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "openGrant",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "spender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "openListingEscrow",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "escrow",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "orderVerifier",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingAdditions",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "allowlist",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "signers",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "protect",
+    "inputs": [
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "protectionCore",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "locked",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "delay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "retired",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "protectionNonce",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "purpose",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "protectionPending",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "pendingDelay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pendingDelayAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "pendingUnlockAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "pendingDisableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lockedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "protectionState",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "locked",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "delay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "cooldownUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lockedBy",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signers",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "allowlist",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registerLimitOrder",
+    "inputs": [
+      {
+        "name": "o",
+        "type": "tuple",
+        "internalType": "struct IOrderMixin.Order",
+        "components": [
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maker",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "receiver",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "makerAsset",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "takerAsset",
+            "type": "uint256",
+            "internalType": "Address"
+          },
+          {
+            "name": "makingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takingAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "makerTraits",
+            "type": "uint256",
+            "internalType": "MakerTraits"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "registerSeaportOrder",
+    "inputs": [
+      {
+        "name": "c",
+        "type": "tuple",
+        "internalType": "struct OrderComponents",
+        "components": [
+          {
+            "name": "offerer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "zone",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offer",
+            "type": "tuple[]",
+            "internalType": "struct OfferItem[]",
+            "components": [
+              {
+                "name": "itemType",
+                "type": "uint8",
+                "internalType": "enum ItemType"
+              },
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "identifierOrCriteria",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "startAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "endAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          },
+          {
+            "name": "consideration",
+            "type": "tuple[]",
+            "internalType": "struct ConsiderationItem[]",
+            "components": [
+              {
+                "name": "itemType",
+                "type": "uint8",
+                "internalType": "enum ItemType"
+              },
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "identifierOrCriteria",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "startAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "endAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "recipient",
+                "type": "address",
+                "internalType": "address payable"
+              }
+            ]
+          },
+          {
+            "name": "orderType",
+            "type": "uint8",
+            "internalType": "enum OrderType"
+          },
+          {
+            "name": "startTime",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "endTime",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "zoneHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "salt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "conduitKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "counter",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "escrowKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "renounceOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "replacementProposal",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "nominee",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "proposedBy",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "round",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "replacementTally",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "approvals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revokeListingOrderHash",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setOwnerFromProtection",
+    "inputs": [
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRental1155",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rentalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expires",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "quantity",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setUser",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expires",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "signerEntry",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "s",
+        "type": "tuple",
+        "internalType": "struct LibVaultProtectionStorage.Signer",
+        "components": [
+          {
+            "name": "addAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "removeAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "epoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "accepted",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "interfaceId",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "swapOut",
+    "inputs": [
+      {
+        "name": "w",
+        "type": "tuple",
+        "internalType": "struct VaultOutflowTypes.SwapOut",
+        "components": [
+          {
+            "name": "assetIn",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maxIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "adapter",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "assetOut",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "minOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "positionToken",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "ref",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "adapterData",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "spent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "transferOut",
+    "inputs": [
+      {
+        "name": "o",
+        "type": "tuple",
+        "internalType": "struct VaultOutflowTypes.Outflow",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VaultOutflowTypes.AssetKind"
+          },
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "class_",
+            "type": "uint8",
+            "internalType": "enum VaultOutflowTypes.OutflowClass"
+          },
+          {
+            "name": "ref",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "positionToken",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reason",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "counterRef",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "transferOwnership",
+    "inputs": [
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "userExpires",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "userOf",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "userQuantity",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultAddressOf",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultCreationOwner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultDiamond",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultEndpoints",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct VaultOutflowTypes.VaultEndpoints",
+        "components": [
+          {
+            "name": "treasury",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "backstop",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "seaport",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "orderProtocol",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "conduit",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "conduitKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "priceGuard",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "protection",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultLayoutId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "vaultOwner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "Initialized",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ListingEscrowClosed",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "escrow",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "returned",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ListingEscrowOpened",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "escrow",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "conduit",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ListingOrderHashRevoked",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderHashRegistered",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "verifier",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultGrantClosed",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "spender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "consumed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultGrantOpened",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "spender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultOwnerReplaced",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultSwapOut",
+    "inputs": [
+      {
+        "name": "assetIn",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "assetOut",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "spent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultTransferOut",
+    "inputs": [
+      {
+        "name": "class_",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "enum VaultOutflowTypes.OutflowClass"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DiamondCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GrantOpen",
+    "inputs": [
+      {
+        "name": "ref",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantRefused",
+    "inputs": [
+      {
+        "name": "class_",
+        "type": "uint8",
+        "internalType": "enum VaultOutflowTypes.GrantClass"
+      },
+      {
+        "name": "spender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidInitialization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotInitializing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotProtection",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OrderConduitRefused",
+    "inputs": [
+      {
+        "name": "conduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OrderNotThisVaults",
+    "inputs": [
+      {
+        "name": "maker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OrderProtocolUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OutflowDestinationRefused",
+    "inputs": [
+      {
+        "name": "class_",
+        "type": "uint8",
+        "internalType": "enum VaultOutflowTypes.OutflowClass"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableInvalidOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProtectionUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "QuantityOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SwapOutcomeRefused",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyConcurrentRentals",
+    "inputs": [
+      {
+        "name": "nftContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedNFTSender",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroOrderHash",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroOutflow",
+    "inputs": []
+  }
+]

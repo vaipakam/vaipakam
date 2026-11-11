@@ -7,9 +7,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ContractFunctionRevertedError,
+  decodeFunctionData,
   encodeAbiParameters,
   encodeErrorResult,
   encodeEventTopics,
+  type Abi,
   type AbiEvent,
   type Address,
   type Hex,
@@ -29,6 +31,7 @@ import {
   TRANSFER_FLOOR_ITEM,
   type ProtectedAccount,
 } from '../src/protectedAccount';
+import { VaultProtectionABI } from '@vaipakam/contracts/abis';
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
 import { SEND_RESERVE_MS } from '../src/runWindow';
 import { memoryScanCursors } from '../src/scanCursors';
@@ -81,6 +84,7 @@ function account(over: Partial<ProtectedAccount> = {}): ProtectedAccount {
     lockedBy: ZERO,
     controller: ZERO,
     retiredPendingUnpinAt: 0n,
+    vault: ZERO,
     ...over,
   };
 }
@@ -102,6 +106,10 @@ interface Transfer {
   tokenId: bigint;
 }
 
+/** #3379 B2 — each account's vault, where its protected record lives. */
+const vaultOf = (a: Address): Address => `0x9${a.slice(3)}` as Address;
+const PROTECTION_ABI = VaultProtectionABI as Abi;
+
 class FakeDiamond {
   chainServed = CHAIN;
   now = NOW;
@@ -109,6 +117,18 @@ class FakeDiamond {
   accounts = new Map<Address, ProtectedAccount>();
   payouts = new Map<bigint, Payout>();
   transfers = new Map<bigint, Transfer>();
+  /** The release's co-sign rule (Codex #3489 r2): accounts whose co-sign
+   *  setting does not bind (no signer left), and unverified destinations. */
+  signerless = new Set<Address>();
+  unverified = new Set<Address>();
+  needsCosign(p: Payout): boolean {
+    // The release cancels a row whose destination is no longer allowed
+    // before it reads the co-signature (Codex #3489 r3).
+    const allowed = p.recipient === p.user || (this.allowlist.get(p.user)?.has(p.recipient) ?? false);
+    if (!allowed) return false;
+    const acct = this.acct(p.user);
+    return (acct.requireCosign && !this.signerless.has(p.user)) || this.unverified.has(p.recipient);
+  }
   allowlist = new Map<string, Set<Address>>();
   allowPending = new Map<string, bigint>();
   signerChanges = new Map<string, { addAt: bigint; accepted: boolean; removeAt: bigint }>();
@@ -117,39 +137,84 @@ class FakeDiamond {
   openRows = new Set<Address>();
   /** The finalized block's view of the payouts, when it lags the head. */
   finalPayouts: Map<bigint, Payout> | null = null;
+  /** Each send: the function (a vault write as `protect:<fn>`) and its
+   *  arguments (a vault write's own). */
   sent: { fn: string; args: readonly unknown[] }[] = [];
   /** Accounts that granted the keeper the lock bit. */
   lockGranted = new Set<Address>();
   codeFails = false;
+  /** The co-sign switch-off call lands but applies nothing (a cancel between
+   *  the read and the send). */
+  settingsApplyNothing = false;
   lastLogs: ReturnType<typeof logOf>[] = [];
 
   acct(a: Address): ProtectedAccount {
     return this.accounts.get(a) ?? account({ enabled: false });
   }
 
-  readContract = async ({ functionName, args = [], blockNumber }: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
+  /** The account a vault address belongs to. */
+  ownerOfVault(v: Address): Address {
+    for (const a of [...this.accounts.keys(), ALICE, BOB, CAROL, DEST, SIGNER]) if (vaultOf(a) === v) return a;
+    throw new Error(`unknown vault ${v}`);
+  }
+
+  private keyed(prefix: Address, m: Map<string, unknown>): Address[] {
+    return [...m.keys()].filter((k) => k.startsWith(`${prefix}:`)).map((k) => k.slice(prefix.length + 1) as Address);
+  }
+
+  readContract = async ({ address, functionName, args = [], blockNumber }: { address?: Address; functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
     const a = args as readonly any[];
+    // The vault's own views.
+    if (address !== undefined && address !== DIAMOND && !['decimals', 'symbol'].includes(functionName)) {
+      const owner = this.ownerOfVault(address);
+      const r = this.acct(owner);
+      switch (functionName) {
+        case 'protectionState':
+          return [r.enabled, r.locked, r.delaySeconds, r.cooldownUntil, r.lockedBy, [], [...(this.allowlist.get(owner) ?? [])]];
+        case 'vaultOwner':
+          return r.retired ? r.controller : owner;
+        case 'allowEntry':
+          return { readyAt: this.allowPending.get(`${owner}:${a[0]}`) ?? 0n, epoch: 0n, active: this.allowlist.get(owner)?.has(a[0]) ?? false, verified: false };
+        case 'signerEntry': {
+          const c = this.signerChanges.get(`${owner}:${a[0]}`);
+          return { addAt: c?.addAt ?? 0n, removeAt: c?.removeAt ?? 0n, epoch: 0n, accepted: c?.accepted ?? false, active: (c?.removeAt ?? 0n) !== 0n };
+        }
+        case 'pendingAdditions':
+          return [
+            this.keyed(owner, this.allowPending),
+            this.keyed(owner, this.signerChanges).filter((w) => this.signerChanges.get(`${owner}:${w}`)!.addAt !== 0n),
+          ];
+        case 'protectionPending':
+          return [r.pendingDelay, r.pendingDelayAt, r.pendingUnlockAt, r.pendingDisableAt, r.lockedAt];
+        case 'replacementTally': {
+          const p = this.replacements.get(owner);
+          return [p?.approvals ?? 0n, p?.threshold ?? 0n];
+        }
+        case 'replacementProposal': {
+          const p = this.replacements.get(owner);
+          return [p?.nominee ?? ZERO, p?.proposedBy ?? ZERO, p?.readyAt ?? 0n, 1];
+        }
+        default:
+          throw new Error(`unexpected vault read ${functionName}`);
+      }
+    }
     switch (functionName) {
       case 'getPendingPayout': {
         const p = ((blockNumber !== undefined ? this.finalPayouts : null) ?? this.payouts).get(a[0]);
         return { user: p?.user ?? ZERO, kind: 0, state: p?.state ?? 0, cosigned: p?.cosigned ?? false, releaseAt: p?.releaseAt ?? 0n, asset: ASSET, recipient: p?.recipient ?? ZERO, tokenId: 0n, amount: p?.amount ?? 0n, delivered: 0n };
       }
+      case 'payoutNeedsCosign': {
+        const p = this.payouts.get(a[0]);
+        return p !== undefined && p.state === 1 && this.needsCosign(p);
+      }
       case 'getPendingPositionTransfer': {
         const t = this.transfers.get(a[0]);
         return { from: t?.from ?? ZERO, state: t?.state ?? 0, releaseAt: t?.releaseAt ?? 0n, to: t?.to ?? ZERO, tokenId: t?.tokenId ?? 0n };
       }
-      case 'getProtectedAccount': {
-        // A copy, as a chain read is: a later send must not change it. Named
-        // as the GENERATED ABI decodes it since #3205 (the two NFT-queue
-        // fields are `retired*`), so the keeper's normaliser is exercised
-        // (#3318 Codex r2: the old names hid a `BigInt(undefined)`).
-        const { protectNfts, pendingNftOffAt, ...rest } = this.acct(a[0]);
-        return { ...rest, retiredProtectNfts: protectNfts, retiredPendingNftOffAt: pendingNftOffAt };
+      case 'getProtection': {
+        const r = this.acct(a[0]);
+        return [vaultOf(a[0]), r.requireCosign, r.pendingCosignOffAt];
       }
-      case 'getAllowlistPendingAt':
-        return this.allowPending.get(`${a[0]}:${a[1]}`) ?? 0n;
-      case 'getSignerChange':
-        return this.signerChanges.get(`${a[0]}:${a[1]}`) ?? { addAt: 0n, accepted: false, removeAt: 0n };
       case 'requestCode':
         if (this.codeFails) throw new Error('rpc down');
         return 123456;
@@ -157,10 +222,6 @@ class FakeDiamond {
         return 6;
       case 'symbol':
         return 'USDC';
-      case 'getReplacement': {
-        const p = this.replacements.get(a[0]);
-        return [{ nominee: p?.nominee ?? ZERO, proposedBy: p?.proposedBy ?? ZERO, readyAt: p?.readyAt ?? 0n, round: 1, approvals: 0 }, p?.approvals ?? 0n, p?.threshold ?? 0n];
-      }
       default:
         throw new Error(`unexpected read ${functionName}`);
     }
@@ -170,7 +231,7 @@ class FakeDiamond {
   batches: string[][] = [];
   /** Each batched read in full, in order. */
   calls: { functionName: string; args?: readonly unknown[] }[][] = [];
-  multicall = async ({ contracts, blockNumber }: { contracts: { functionName: string; args?: readonly unknown[] }[]; blockNumber?: bigint }) =>
+  multicall = async ({ contracts, blockNumber }: { contracts: { address?: Address; functionName: string; args?: readonly unknown[] }[]; blockNumber?: bigint }) =>
     (this.batches.push([...new Set(contracts.map((c) => c.functionName))]),
     this.calls.push(contracts.map((c) => ({ functionName: c.functionName, args: c.args }))),
     Promise.all(
@@ -183,7 +244,77 @@ class FakeDiamond {
       }),
     ));
 
-  private admit(functionName: string, a: readonly any[]): () => void {
+  /** A vault write (`protect(data)` on `vault`): its own function and args. */
+  private inner(data: Hex): { fn: string; args: readonly unknown[] } {
+    const d = decodeFunctionData({ abi: PROTECTION_ABI, data });
+    // Addresses decode checksummed; the fake keys them lower-case.
+    return { fn: d.functionName, args: ((d.args ?? []) as readonly unknown[]).map((x) => (typeof x === 'string' ? x.toLowerCase() : x)) };
+  }
+
+  private admitVault(vault: Address, fn: string, a: readonly any[]): () => void {
+    const owner = this.ownerOfVault(vault);
+    const acct = this.acct(owner);
+    const vlog = (eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, args), address: vault });
+    if (!acct.enabled) throw revert('NotEnabled');
+    switch (fn) {
+      case 'finalizeSettings': {
+        const due = (at: bigint) => at !== 0n && this.now >= at;
+        const others = due(acct.pendingUnlockAt) || due(acct.pendingDelayAt);
+        const off = due(acct.pendingDisableAt) && !this.openRows.has(owner);
+        if (due(acct.pendingDisableAt) && !off && !others) throw revert('PendingRowsExist');
+        return () => {
+          const logs = [];
+          if (due(acct.pendingDelayAt)) (Object.assign(acct, { pendingDelayAt: 0n }), logs.push(vlog('ProtectionSettingApplied', { action: 2, value: 0n })));
+          if (due(acct.pendingUnlockAt)) (Object.assign(acct, { locked: false, pendingUnlockAt: 0n }), logs.push(vlog('ProtectionSettingApplied', { action: 4, value: 0n })));
+          if (off) (this.accounts.set(owner, account({ enabled: false })), logs.push(vlog('ProtectionDisabled', {})));
+          this.lastLogs = logs;
+        };
+      }
+      case 'finalizeAllowlisted': {
+        if (acct.locked) throw revert('Locked');
+        const k = `${owner}:${a[0]}`;
+        const at = this.allowPending.get(k) ?? 0n;
+        if (at === 0n) throw revert('NotRequested');
+        if (this.now < at) throw revert('NotReady', [at]);
+        if (this.now > at + BigInt(acct.delaySeconds)) throw revert('Expired', [at + BigInt(acct.delaySeconds)]);
+        return () => {
+          this.allowPending.delete(k);
+          this.lastLogs = [vlog('AllowlistAdded', { destination: a[0] })];
+        };
+      }
+      case 'finalizeSigner': {
+        const k = `${owner}:${a[0]}`;
+        const c = this.signerChanges.get(k);
+        const add = (c?.addAt ?? 0n) !== 0n;
+        const at = add ? c!.addAt : c?.removeAt ?? 0n;
+        if (at === 0n) throw revert('NotRequested');
+        if (this.now < at) throw revert('NotReady', [at]);
+        return () => {
+          this.signerChanges.delete(k);
+          this.lastLogs = [vlog(add ? 'SignerAdded' : 'SignerRemoved', { signer: a[0] })];
+        };
+      }
+      case 'finalizeReplacement': {
+        const p = this.replacements.get(owner);
+        if (!p) throw revert('NoProposal');
+        if (this.now < p.readyAt) throw revert('NotReady', [p.readyAt]);
+        if (p.proposedBy !== owner && p.approvals < p.threshold) throw revert('NotReady', [p.readyAt]);
+        return () => {
+          this.replacements.delete(owner);
+          Object.assign(acct, { retired: true, controller: p.nominee });
+          this.lastLogs = [vlog('PrimaryReplaced', { previousOwner: owner, newOwner: p.nominee, cooldownUntil: 0n })];
+        };
+      }
+      default:
+        throw new Error(`unexpected vault call ${fn}`);
+    }
+  }
+
+  private admit(functionName: string, a: readonly any[], address?: Address): () => void {
+    if (functionName === 'protect') {
+      const { fn, args } = this.inner(a[0]);
+      return this.admitVault(address!, fn, args);
+    }
     switch (functionName) {
       case 'releasePayout': {
         if (this.paused) throw revert('EnforcedPause');
@@ -199,7 +330,7 @@ class FakeDiamond {
         if (this.now < p.releaseAt) throw revert('PayoutNotDue', [a[0], p.releaseAt]);
         const acct = this.acct(p.user);
         if (acct.locked) throw revert('ProtectedVaultLocked', [p.user]);
-        if (acct.requireCosign && !p.cosigned) throw revert('CosignRequired', [a[0]]);
+        if (this.needsCosign(p) && !p.cosigned) throw revert('CosignRequired', [a[0]]);
         if (p.recipient === FLAGGED) throw revert('SanctionedAddress', [FLAGGED]);
         return () => {
           p.state = 2;
@@ -225,7 +356,7 @@ class FakeDiamond {
           // A repeat lock keeps its time and still drops every pending
           // loosening change.
           if (!acct.locked) acct.lockedAt = this.now;
-          Object.assign(acct, { locked: true, pendingUnlockAt: 0n, pendingDisableAt: 0n, pendingDelayAt: 0n, pendingNftOffAt: 0n, pendingCosignOffAt: 0n });
+          Object.assign(acct, { locked: true, pendingUnlockAt: 0n, pendingDisableAt: 0n, pendingDelayAt: 0n, pendingCosignOffAt: 0n });
           for (const p of this.payouts.values()) if (p.user === a[0] && p.state === 1) p.state = 3;
           this.lastLogs = [];
         };
@@ -233,62 +364,29 @@ class FakeDiamond {
       case 'finalizeSettingChanges': {
         if (this.paused) throw revert('EnforcedPause');
         const acct = this.acct(a[0]);
-        const due = (at: bigint) => at !== 0n && this.now >= at;
-        const others = due(acct.pendingUnlockAt) || due(acct.pendingDelayAt) || due(acct.pendingNftOffAt);
-        const off = due(acct.pendingDisableAt) && !this.openRows.has(a[0]);
-        if (due(acct.pendingDisableAt) && !off && !others) throw revert('PendingRowsExist');
-        return () => {
-          const logs = [];
-          const applied = (kind: number) => logs.push(logOf('SettingChangeApplied', { account: a[0], kind }));
-          if (due(acct.pendingUnlockAt)) (Object.assign(acct, { locked: false, pendingUnlockAt: 0n }), applied(5));
-          if (due(acct.pendingDelayAt)) (Object.assign(acct, { pendingDelayAt: 0n }), applied(2));
-          if (due(acct.pendingNftOffAt)) (Object.assign(acct, { protectNfts: false, pendingNftOffAt: 0n }), applied(3));
-          if (off) (this.accounts.set(a[0], account({ enabled: false })), logs.push(logOf('ProtectedModeDisabled', { account: a[0] })));
-          this.lastLogs = logs;
-        };
-      }
-      case 'finalizeAddAllowlisted': {
-        const acct = this.acct(a[0]);
-        if (!acct.enabled) throw revert('ProtectedModeOff', [a[0]]);
+        if (acct.pendingCosignOffAt === 0n) throw revert('ChangeNotRequested');
+        if (this.now < acct.pendingCosignOffAt) throw revert('ChangeNotMatured', [acct.pendingCosignOffAt]);
         if (acct.locked) throw revert('ProtectedVaultLocked', [a[0]]);
-        const k = `${a[0]}:${a[1]}`;
-        const at = this.allowPending.get(k) ?? 0n;
-        if (at === 0n) throw revert('ChangeNotRequested');
-        if (this.now < at) throw revert('ChangeNotMatured', [at]);
-        if (this.now > at + BigInt(acct.delaySeconds)) throw revert('ChangeExpired', [at + BigInt(acct.delaySeconds)]);
         return () => {
-          this.allowPending.delete(k);
-          this.lastLogs = [logOf('AllowlistAdded', { account: a[0], destination: a[1] })];
+          if (this.settingsApplyNothing) {
+            this.lastLogs = [];
+            return;
+          }
+          Object.assign(acct, { requireCosign: false, pendingCosignOffAt: 0n });
+          this.lastLogs = [logOf('SettingChangeApplied', { account: a[0], kind: 4 })];
         };
       }
-      case 'finalizeAddSigner':
-      case 'finalizeRemoveSigner': {
-        const k = `${a[0]}:${a[1]}`;
-        const c = this.signerChanges.get(k);
-        const at = functionName === 'finalizeAddSigner' ? c?.addAt ?? 0n : c?.removeAt ?? 0n;
-        if (at === 0n) throw revert('ChangeNotRequested');
-        if (this.now < at) throw revert('ChangeNotMatured', [at]);
+      case 'applyProtection':
         return () => {
-          this.signerChanges.delete(k);
-          this.lastLogs = [logOf(functionName === 'finalizeAddSigner' ? 'SignerAdded' : 'SignerRemoved', { account: a[0], signer: a[1] })];
+          this.lastLogs = [];
         };
-      }
-      case 'finalizeReplacement': {
-        const p = this.replacements.get(a[0]);
-        if (!p) throw revert('NoReplacementProposed');
-        if (this.now < p.readyAt) throw revert('ReplacementNotReady');
-        return () => {
-          this.replacements.delete(a[0]);
-          this.lastLogs = [logOf('PrimaryReplaced', { account: a[0], controller: p.nominee, cooldownUntil: 0n })];
-        };
-      }
       default:
         throw new Error(`unexpected call ${functionName}`);
     }
   }
 
-  simulateContract = async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
-    this.admit(functionName, args);
+  simulateContract = async ({ address, functionName, args }: { address?: Address; functionName: string; args: readonly unknown[] }) => {
+    this.admit(functionName, args, address);
     return { result: undefined };
   };
 
@@ -319,9 +417,14 @@ class FakeDiamond {
       notAfterMs: Number.POSITIVE_INFINITY,
       wallet: {
         account: { address: KEEPER },
-        writeContract: async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
-          this.admit(functionName, args)();
-          this.sent.push({ fn: functionName, args });
+        writeContract: async ({ address, functionName, args }: { address?: Address; functionName: string; args: readonly unknown[] }) => {
+          this.admit(functionName, args, address)();
+          if (functionName === 'protect') {
+            const { fn, args: inner } = this.inner(args[0] as Hex);
+            this.sent.push({ fn: `protect:${fn}`, args: inner });
+          } else {
+            this.sent.push({ fn: functionName, args });
+          }
           return `0x${'1'.repeat(64)}`;
         },
       },
@@ -416,10 +519,10 @@ describe('a run', () => {
       d.transfers.set(3n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
       ledger.add(TRANSFER_EVENT, { account: ALICE, id: '3', tokenId: '7' });
       await run();
-      expect(d.batches.find((b) => b.includes('getPendingPayout'))).toEqual(['getPendingPayout', 'getProtectedAccount']);
+      expect(d.batches.find((b) => b.includes('getPendingPayout'))).toEqual(['getPendingPayout', 'getProtection']);
       // The transfer's account was read with the payouts: its batch adds none.
       expect(d.batches.find((b) => b.includes('getPendingPositionTransfer'))).toEqual(['getPendingPositionTransfer']);
-      expect(d.batches.filter((b) => b.length === 1 && b[0] === 'getProtectedAccount'), 'no follow-up account read').toEqual([]);
+      expect(d.batches.filter((b) => b.length === 1 && b[0] === 'getProtection'), 'no follow-up account read').toEqual([]);
     });
 
     it('reads each record with its own account read beside it, so a part-read batch still yields whole pairs (Codex #3090)', async () => {
@@ -430,11 +533,11 @@ describe('a run', () => {
       const batch = d.calls.find((b) => b.some((c) => c.functionName === 'getPendingPayout'))!;
       expect(batch.map((c) => [c.functionName, String(c.args?.[0])])).toEqual([
         ['getPendingPayout', '1'],
-        ['getProtectedAccount', ALICE],
+        ['getProtection', ALICE],
         ['getPendingPayout', '2'],
-        ['getProtectedAccount', BOB],
+        ['getProtection', BOB],
         ['getPendingPayout', '3'],
-        ['getProtectedAccount', ALICE],
+        ['getProtection', ALICE],
       ]);
     });
 
@@ -453,18 +556,45 @@ describe('a run', () => {
         }
       }
       const full = d.multicall;
+      // #3379 B2: the account's record is then completed from its vault, a
+      // read made after the chunk; it comes back here.
+      const vaultRead = (q: Parameters<typeof full>[0]) => q.contracts.every((c) => ['protectionState', 'vaultOwner', 'protectionPending'].includes(c.functionName));
       d.multicall = async (q) =>
-        q.contracts.some((c) => c.functionName === 'getPendingPayout' && c.args?.[0] === 101n)
+        q.contracts.some((c) => c.functionName === 'getPendingPayout' && c.args?.[0] === 101n) || vaultRead(q)
           ? full(q)
           : q.contracts.map(() => ({ status: 'failure' as const, error: new Error('still in flight') }));
       await run();
       expect(d.sent.map((s) => [s.fn, s.args[0]])).toEqual([['releasePayout', 101n]]);
       for (const batch of d.calls.filter((b) => b.some((c) => c.functionName === 'getPendingPayout'))) {
-        const users = new Set(batch.filter((c) => c.functionName === 'getProtectedAccount').map((c) => c.args?.[0]));
+        const users = new Set(batch.filter((c) => c.functionName === 'getProtection').map((c) => c.args?.[0]));
         for (const c of batch.filter((x) => x.functionName === 'getPendingPayout')) {
           expect(users.has(d.payouts.get(c.args?.[0] as bigint)!.user), `payout ${c.args?.[0]} without its account`).toBe(true);
         }
       }
+    });
+
+    it('reads the co-sign rule per row: an unverified destination waits, a signerless account releases (Codex #3489 r2)', async () => {
+      const DEST = '0x00000000000000000000000000000000000000d5' as Address;
+      d.accounts.set(ALICE, account({ requireCosign: false }));
+      d.accounts.set(BOB, account({ requireCosign: true }));
+      d.unverified.add(DEST);
+      d.allowlist.set(ALICE, new Set([DEST]));
+      d.signerless.add(BOB);
+      queuePayout(1n, { recipient: DEST });
+      queuePayout(2n, { user: BOB, recipient: BOB });
+      const r = await run();
+      expect(d.sent.map((s) => s.args[0])).toEqual([2n]);
+      expect(r.waiting.get('payout-needs-cosign')).toBe(1);
+    });
+
+    it('releases a row whose destination was removed, so the release cancels it (Codex #3489 r3)', async () => {
+      const GONE = '0x00000000000000000000000000000000000000e6' as Address;
+      d.accounts.set(ALICE, account({ requireCosign: true }));
+      d.unverified.add(GONE);
+      queuePayout(1n, { recipient: GONE });
+      const r = await run();
+      expect(d.sent.map((s) => [s.fn, s.args[0]])).toEqual([['releasePayout', 1n]]);
+      expect(r.cancelled).toEqual([1n]);
     });
 
     it('starts each run at a different row of the page, so slow refusals at its top cannot starve a row below them', async () => {
@@ -520,12 +650,13 @@ describe('a run', () => {
       for (let i = 1n; i <= 6n; i++) queuePayout(i);
       d.transfers.set(1n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
       ledger.add(TRANSFER_EVENT, { account: ALICE, id: '1', tokenId: '7' });
-      d.accounts.set(BOB, account({ locked: true, pendingUnlockAt: NOW - 5n }));
-      ledger.add('SettingChangeRequested', { account: BOB, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
+      // #3379 B2: the co-sign switch-off is the setting whose time is readable.
+      d.accounts.set(BOB, account({ pendingCosignOffAt: NOW - 5n }));
+      ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 5n) });
       const r = await run();
       expect(r.released.map((x) => x.id), 'the payout step stops at its share').toEqual([1n, 2n, 3n, 4n]);
       expect(r.transferred).toEqual([1n]);
-      expect(r.finalized).toEqual([`unlock:${BOB.slice(0, 10)}`]);
+      expect(r.finalized).toEqual([`cosign-off:${BOB.slice(0, 10)}`]);
       expect([...r.budgetReached]).toEqual(['release']);
       expect(r.stopped, 'reaching one step\'s share does not stop the run').toBeNull();
       expect(describeReport(r)).toMatch(/step-budget-reached=release \(the rest waits for the next run\)/);
@@ -544,8 +675,8 @@ describe('a run', () => {
       queuePayout(1n);
       d.transfers.set(1n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
       ledger.add(TRANSFER_EVENT, { account: ALICE, id: '1', tokenId: '7' });
-      d.accounts.set(BOB, account({ locked: true, pendingUnlockAt: NOW - 5n }));
-      ledger.add('SettingChangeRequested', { account: BOB, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
+      d.accounts.set(BOB, account({ pendingCosignOffAt: NOW - 5n }));
+      ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 5n) });
       await protectedOnce(CHAIN, DIAMOND, {
         client: d.client(),
         readClient: d.client(),
@@ -583,45 +714,53 @@ describe('a run', () => {
   });
 
   describe('pending changes', () => {
-    it('applies an account\'s due settings in one call, an unlock included', async () => {
+    it("applies an account's due vault settings in one call, an unlock included, then applies the platform side (#3379 B2)", async () => {
       d.accounts.set(ALICE, account({ locked: true, pendingUnlockAt: NOW - 5n }));
-      d.accounts.set(BOB, account({ pendingDelayAt: NOW - 5n, pendingNftOffAt: NOW - 1n }));
+      d.accounts.set(BOB, account({ pendingDelayAt: NOW - 5n, pendingCosignOffAt: NOW - 1n }));
       ledger.add('SettingChangeRequested', { account: ALICE, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
       ledger.add('SettingChangeRequested', { account: BOB, kind: 2, value: '7200', effectiveAt: String(NOW - 5n) });
+      ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 1n) });
       ledger.add('SettingChangeRequested', { account: BOB, kind: 3, value: '0', effectiveAt: String(NOW - 1n) });
       const r = await run();
+      // The vault's settings go to the vault (the unlock then to the
+      // Diamond's applyProtection; a lowered delay needs none); the co-sign
+      // switch-off stays the
+      // Diamond's. The retired NFT switch-off has nothing pending.
       expect(d.sent.map((s) => [s.fn, s.args])).toEqual([
-        ['finalizeSettingChanges', [ALICE]],
+        ['protect:finalizeSettings', []],
+        ['applyProtection', [ALICE]],
+        ['protect:finalizeSettings', []],
         ['finalizeSettingChanges', [BOB]],
       ]);
-      // Bob's one call applied both of his settings, and its receipt says so.
-      expect(r.finalized).toEqual([`unlock:${ALICE.slice(0, 10)}`, `lower-delay:${BOB.slice(0, 10)}`, `nft-protection-off:${BOB.slice(0, 10)}`]);
+      expect(r.finalized).toEqual([`unlock:${ALICE.slice(0, 10)}`, `lower-delay:${BOB.slice(0, 10)}`, `cosign-off:${BOB.slice(0, 10)}`]);
       expect(d.accounts.get(ALICE)!.locked).toBe(false);
+      expect(cursors.rows.get(CHANGE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[3]));
     });
 
     it('counts a switch-off held back by open rows as waiting, and does not claim one applied with other settings', async () => {
       d.accounts.set(ALICE, account({ pendingDisableAt: NOW - 5n }));
-      d.accounts.set(BOB, account({ pendingDisableAt: NOW - 5n, pendingNftOffAt: NOW - 5n }));
+      d.accounts.set(BOB, account({ pendingDisableAt: NOW - 5n, pendingDelayAt: NOW - 5n }));
       d.openRows.add(ALICE);
       d.openRows.add(BOB);
       ledger.add('SettingChangeRequested', { account: ALICE, kind: 1, value: '0', effectiveAt: String(NOW - 5n) });
       ledger.add('SettingChangeRequested', { account: BOB, kind: 1, value: '0', effectiveAt: String(NOW - 5n) });
-      ledger.add('SettingChangeRequested', { account: BOB, kind: 3, value: '0', effectiveAt: String(NOW - 5n) });
+      ledger.add('SettingChangeRequested', { account: BOB, kind: 2, value: '7200', effectiveAt: String(NOW - 5n) });
       const r = await run();
-      // Bob's call lands and applies only the NFT switch-off, which its
+      // Bob's call lands and applies only the lowered delay, which its
       // receipt reports; Alice's is refused. Both switch-offs wait.
-      expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['finalizeSettingChanges', [BOB]]]);
+      expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['protect:finalizeSettings', []]]);
       expect(r.refused.size).toBe(0);
       expect(r.waiting.get('switch-off-waits-for-open-rows')).toBe(2);
-      expect(r.finalized).toEqual([`nft-protection-off:${BOB.slice(0, 10)}`]);
+      expect(r.finalized).toEqual([`lower-delay:${BOB.slice(0, 10)}`]);
       expect(d.accounts.get(BOB)!.enabled).toBe(true);
-      expect(d.accounts.get(BOB)!.pendingNftOffAt).toBe(0n);
+      expect(d.accounts.get(BOB)!.pendingDelayAt).toBe(0n);
     });
 
     it('reports a setting only from its receipt: a landed call that applied nothing reports nothing (Codex #3090)', async () => {
       // A replacement finalized first, or a cancel between read and send,
       // leaves the setting's call landing with no SettingChangeApplied.
       d.accounts.set(ALICE, account({ pendingCosignOffAt: NOW - 5n }));
+      d.settingsApplyNothing = true;
       ledger.add('SettingChangeRequested', { account: ALICE, kind: 4, value: '0', effectiveAt: String(NOW - 5n) });
       const r = await run();
       expect(fns()).toEqual(['finalizeSettingChanges']);
@@ -673,11 +812,14 @@ describe('a run', () => {
       d.replacements.set(BOB, { nominee: DEST, proposedBy: BOB, readyAt: NOW - 1n, approvals: 0n, threshold: 2n });
       ledger.add('ReplacementScheduled', { account: BOB, nominee: DEST, readyAt: String(NOW - 1n) });
       const r = await run();
+      // #3379 B2: each goes to its account's vault, through `protect`; the
+      // replacement is followed by the Diamond's `applyProtection`.
       expect(d.sent.map((s) => [s.fn, s.args])).toEqual([
-        ['finalizeAddAllowlisted', [ALICE, DEST]],
-        ['finalizeAddSigner', [ALICE, SIGNER]],
-        ['finalizeRemoveSigner', [BOB, SIGNER]],
-        ['finalizeReplacement', [BOB]],
+        ['protect:finalizeAllowlisted', [DEST]],
+        ['protect:finalizeSigner', [SIGNER]],
+        ['protect:finalizeSigner', [SIGNER]],
+        ['protect:finalizeReplacement', []],
+        ['applyProtection', [BOB]],
       ]);
       expect(r.finalized).toHaveLength(4);
       expect(cursors.rows.get(CHANGE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[3]));

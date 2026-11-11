@@ -1,5 +1,6 @@
-import { encodeEventTopics, encodeAbiParameters, type Log } from 'viem';
+import { decodeFunctionData, encodeEventTopics, encodeAbiParameters, getAddress, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
+import { VaultProtectionABI } from '@vaipakam/contracts/abis';
 import { PROTECTED } from './safety';
 import { measureSigner, nomineeState, signerBlockers, signerCall, type SignerFacts, type SignerMode, type SignerReview } from './signers';
 
@@ -8,6 +9,7 @@ const ME = '0x00000000000000000000000000000000000000e1' as Hex;
 const SIGNER = '0x00000000000000000000000000000000000000a5' as Hex;
 const OTHER = '0x00000000000000000000000000000000000000a6' as Hex;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
+const VAULT = '0x00000000000000000000000000000000000000f1' as Hex;
 const DAY = 86_400;
 const NOW = 1_800_000_000;
 
@@ -28,7 +30,7 @@ const ON: SignerMode = {
 };
 
 function facts(over: Partial<SignerFacts> = {}): SignerFacts {
-  return { account: ME, mode: ON, signers: [], pending: [], paused: false, chainNow: NOW, readAt: Date.now(), ...over };
+  return { account: ME, vault: VAULT, mode: ON, signers: [], pending: [], paused: false, chainNow: NOW, readAt: Date.now(), ...over };
 }
 
 function review(action: SignerReview['action'], over: Partial<SignerFacts> = {}, signer: Hex = SIGNER): SignerReview {
@@ -47,14 +49,27 @@ describe('nomineeState', () => {
 });
 
 describe('signerCall', () => {
-  it('names the facet entry and its arguments for each action', () => {
-    expect(signerCall('add', ME, SIGNER)).toMatchObject({ functionName: 'addSigner', args: [ME, SIGNER] });
-    expect(signerCall('accept', ME, SIGNER)).toMatchObject({ functionName: 'acceptSignerRole', args: [ME] });
-    expect(signerCall('applyAdd', ME, SIGNER).functionName).toBe('finalizeAddSigner');
-    expect(signerCall('remove', ME, SIGNER).functionName).toBe('requestRemoveSigner');
-    expect(signerCall('applyRemove', ME, SIGNER).functionName).toBe('finalizeRemoveSigner');
-    expect(signerCall('cosignOn', ME, ME)).toMatchObject({ functionName: 'setRequireCosign', args: [ME, true] });
-    expect(signerCall('cosignOff', ME, ME)).toMatchObject({ functionName: 'setRequireCosign', args: [ME, false] });
+  // #3379 B2: a signer change is a VaultProtection write sent to the vault,
+  // authorized by the wallet that sends it; the co-sign switch is the Diamond's.
+  const inner = (action: Parameters<typeof signerCall>[0], sender: Hex = ME) => {
+    const call = signerCall(action, ME, SIGNER, sender, VAULT, DIAMOND)!;
+    expect(call).toMatchObject({ address: VAULT, functionName: 'protect' });
+    return decodeFunctionData({ abi: VaultProtectionABI as Abi, data: call.args[0] as Hex });
+  };
+  const s = getAddress(SIGNER);
+  it('names the vault write and its action code for each signer change', () => {
+    expect(inner('add')).toMatchObject({ functionName: 'signerChange', args: [1, s, { key: getAddress(ME) }] });
+    expect(inner('accept', SIGNER)).toMatchObject({ functionName: 'signerChange', args: [2, s, { key: s }] });
+    expect(inner('remove')).toMatchObject({ functionName: 'signerChange', args: [3, s, { key: getAddress(ME) }] });
+    expect(inner('cancelAdd')).toMatchObject({ functionName: 'signerChange', args: [4, s, { key: getAddress(ME) }] });
+    expect(inner('cancelRemove')).toMatchObject({ functionName: 'signerChange', args: [4, s, { key: getAddress(ME) }] });
+    expect(inner('applyAdd')).toMatchObject({ functionName: 'finalizeSigner', args: [s] });
+    expect(inner('applyRemove')).toMatchObject({ functionName: 'finalizeSigner', args: [s] });
+  });
+  it('keeps the co-sign switch on the Diamond, and has no vault write without a vault', () => {
+    expect(signerCall('cosignOn', ME, ME, ME, VAULT, DIAMOND)).toMatchObject({ address: DIAMOND, functionName: 'setRequireCosign', args: [ME, true] });
+    expect(signerCall('cosignOff', ME, ME, ME, null, DIAMOND)).toMatchObject({ functionName: 'setRequireCosign', args: [ME, false] });
+    expect(signerCall('add', ME, SIGNER, ME, null, DIAMOND)).toBeNull();
   });
 });
 
@@ -123,20 +138,30 @@ describe('signerBlockers', () => {
 });
 
 describe('measureSigner', () => {
-  const log = (eventName: string, args: Record<string, unknown>, data: Hex = '0x'): Log =>
+  const diamondLog = (eventName: string, args: Record<string, unknown>, data: Hex = '0x'): Log =>
     ({ address: DIAMOND, topics: encodeEventTopics({ abi: PROTECTED, eventName, args } as never), data }) as unknown as Log;
+  const vaultLog = (eventName: string, args: Record<string, unknown>, data: Hex = '0x'): Log =>
+    ({ address: VAULT, topics: encodeEventTopics({ abi: VaultProtectionABI as Abi, eventName, args } as never), data }) as unknown as Log;
 
-  it('reads what the transaction recorded for this account and signer', () => {
+  it('reads what the vault recorded for this signer', () => {
     const at = BigInt(NOW + DAY);
-    const asked = log('SignerAddRequested', { account: ME, signer: SIGNER }, encodeAbiParameters([{ type: 'uint256' }], [at]));
+    const asked = vaultLog('SignerAddRequested', { signer: SIGNER }, encodeAbiParameters([{ type: 'uint64' }, { type: 'address' }], [at, ME]));
     expect(measureSigner(review('add'), [asked], DIAMOND, copy)[0]).toMatchObject({ status: 'done' });
-    const elsewhere = log('SignerAddRequested', { account: ME, signer: OTHER }, encodeAbiParameters([{ type: 'uint256' }], [at]));
+    const elsewhere = vaultLog('SignerAddRequested', { signer: OTHER }, encodeAbiParameters([{ type: 'uint64' }, { type: 'address' }], [at, ME]));
     expect(measureSigner(review('add'), [elsewhere], DIAMOND, copy)[0]).toMatchObject({ status: 'not-done' });
   });
 
+  it('states the co-sign ended when the last signer leaves, from the rule, before the platform clears its flag', () => {
+    const removed = vaultLog('SignerRemoved', { signer: SIGNER });
+    const last = review('applyRemove', { mode: { ...ON, requireCosign: true }, signers: [{ signer: SIGNER, removeAt: NOW }] });
+    expect(measureSigner(last, [removed], DIAMOND, copy).map((l) => l.label)).toContain('signer.legCosignOff');
+    const notLast = review('applyRemove', { mode: { ...ON, requireCosign: true }, signers: [{ signer: SIGNER, removeAt: NOW }, { signer: OTHER, removeAt: 0 }] });
+    expect(measureSigner(notLast, [removed], DIAMOND, copy).map((l) => l.label)).not.toContain('signer.legCosignOff');
+  });
+
   it('states that removing the last signer also stopped the co-sign', () => {
-    const removed = log('SignerRemoved', { account: ME, signer: SIGNER });
-    const off = log('CosignRequirementSet', { account: ME }, encodeAbiParameters([{ type: 'bool' }], [false]));
+    const removed = vaultLog('SignerRemoved', { signer: SIGNER });
+    const off = diamondLog('CosignRequirementSet', { account: ME }, encodeAbiParameters([{ type: 'bool' }], [false]));
     expect(measureSigner(review('applyRemove'), [removed, off], DIAMOND, copy).map((l) => l.label)).toEqual([
       `signer.legRemoved:${JSON.stringify({ signer: SIGNER })}`,
       'signer.legCosignOff',

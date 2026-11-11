@@ -437,6 +437,13 @@ FACETS=(
   # source the Diamond and every vault read; the governance page reads its
   # pending config changes and the indexer decodes its events.
   "PriceGuard"
+  # #3379 B2 — the vault code (standalone; NOT a diamond facet). Every user
+  # vault runs it; the app reads its protected record and its owner from it
+  # and sends protected-mode writes to it (`protect`).
+  "VaipakamVaultImplementation"
+  # #3379 B2 — the protected-mode rules every vault delegatecalls; the app
+  # encodes its calls for `protect` and the indexer decodes its events.
+  "VaultProtection"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

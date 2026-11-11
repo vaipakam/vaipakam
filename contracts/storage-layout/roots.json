@@ -3,6 +3,7 @@
   "namespaces": [
     { "id": "vaipakam", "probe": "StorageLayoutProbeVaipakam", "positionFile": "src/libraries/LibVaipakam.sol", "positionConstant": "VANGKI_STORAGE_POSITION" },
     { "id": "erc721", "probe": "StorageLayoutProbeERC721", "positionFile": "src/libraries/LibPositionNFT.sol", "positionConstant": "ERC721_STORAGE_POSITION" },
+    { "id": "vault-protection", "probe": "StorageLayoutProbeVaultProtection", "positionFile": "src/vault/LibVaultProtectionStorage.sol", "positionConstant": "SLOT" },
     { "id": "access-control", "probe": "StorageLayoutProbeAccessControl", "positionFile": "src/libraries/LibAccessControl.sol", "positionConstant": "ACCESS_CONTROL_STORAGE_POSITION" },
     { "id": "pausable", "probe": "StorageLayoutProbePausable", "positionFile": "src/libraries/LibPausable.sol", "positionConstant": "PAUSABLE_STORAGE_POSITION" },
     { "id": "reentrancy-guard", "probe": "StorageLayoutProbeReentrancyGuard", "positionFile": "src/libraries/LibReentrancyGuard.sol", "positionConstant": "REENTRANCY_GUARD_STORAGE_POSITION" },

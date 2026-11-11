@@ -98,6 +98,7 @@ interface ILaunchVaultCode {
     function CONDUIT() external view returns (address);
     function CONDUIT_KEY() external view returns (bytes32);
     function PRICE_GUARD() external view returns (address);
+    function PROTECTION() external view returns (address);
 }
 
 /// @dev Seaport's conduit controller, reached through the vault's Seaport.
@@ -374,6 +375,12 @@ library LibLaunchReadiness {
                 return c;
             }
         } catch {}
+        // #3379 B2 — the protected-mode code every vault delegatecalls.
+        address protection = v.PROTECTION();
+        if (protection == address(0) || protection.code.length == 0) {
+            c.detail = "the vault code fixes no VaultProtection code: protected mode would refuse every write";
+            return c;
+        }
         if (!_conduitKeyResolves(v)) {
             c.detail = "the vault code's CONDUIT_KEY does not resolve to its CONDUIT: every listing would be refused";
             return c;

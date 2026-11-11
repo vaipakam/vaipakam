@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { decodeFunctionData, getAddress, type Abi } from 'viem';
+import { VaultProtectionABI } from '@vaipakam/contracts/abis';
 import {
   destinationBlockers,
   destinationCall,
@@ -13,6 +15,7 @@ type Hex = `0x${string}`;
 const ME = '0x00000000000000000000000000000000000000e1' as Hex;
 const DEST = '0x00000000000000000000000000000000000000d5' as Hex;
 const OTHER = '0x00000000000000000000000000000000000000e2' as Hex;
+const VAULT = '0x00000000000000000000000000000000000000f1' as Hex;
 const DAY = 86_400;
 const NOW = 1_800_000_000;
 
@@ -24,7 +27,7 @@ const copy = {
 const ON: DestinationMode = { enabled: true, locked: false, retired: false, delaySeconds: 2 * DAY, cooldownUntil: 0, controller: ME };
 
 function facts(over: Partial<DestinationFacts> = {}): DestinationFacts {
-  return { account: ME, mode: ON, destinations: [], pending: [], signers: [], paused: false, queuedTo: {}, chainNow: NOW, readAt: Date.now(), ...over };
+  return { account: ME, vault: VAULT, mode: ON, destinations: [], pending: [], signers: [], paused: false, queuedTo: {}, chainNow: NOW, readAt: Date.now(), ...over };
 }
 
 function review(action: DestinationReview['action'], over: Partial<DestinationFacts> = {}, extra: Partial<DestinationReview> = {}): DestinationReview {
@@ -50,11 +53,20 @@ describe('destinationClock', () => {
 });
 
 describe('destinationCall', () => {
-  it('names the facet entry for each action, with the account and the destination', () => {
-    expect(destinationCall('add', ME, DEST)).toMatchObject({ functionName: 'addAllowlisted', args: [ME, DEST] });
-    expect(destinationCall('cancel', ME, DEST).functionName).toBe('cancelAddAllowlisted');
-    expect(destinationCall('apply', ME, DEST).functionName).toBe('finalizeAddAllowlisted');
-    expect(destinationCall('remove', ME, DEST).functionName).toBe('removeAllowlisted');
+  // #3379 B2: each action is a VaultProtection write sent to the account's vault.
+  const inner = (action: Parameters<typeof destinationCall>[0]) => {
+    const call = destinationCall(action, ME, DEST, VAULT)!;
+    expect(call).toMatchObject({ address: VAULT, functionName: 'protect' });
+    return decodeFunctionData({ abi: VaultProtectionABI as Abi, data: call.args[0] });
+  };
+  it('names the vault write for each action, authorized by the account itself', () => {
+    expect(inner('add')).toMatchObject({ functionName: 'addAllowlisted', args: [getAddress(DEST), { key: getAddress(ME) }] });
+    expect(inner('cancel')).toMatchObject({ functionName: 'cancelAllowlisted', args: [getAddress(DEST), { key: getAddress(ME) }] });
+    expect(inner('apply')).toMatchObject({ functionName: 'finalizeAllowlisted', args: [getAddress(DEST)] });
+    expect(inner('remove')).toMatchObject({ functionName: 'removeAllowlisted', args: [getAddress(DEST), { key: getAddress(ME) }] });
+  });
+  it('has no call without a vault', () => {
+    expect(destinationCall('add', ME, DEST, null)).toBeNull();
   });
 });
 

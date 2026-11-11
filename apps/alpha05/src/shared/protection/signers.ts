@@ -2,29 +2,23 @@
  * ACC-41 / #3415 — the protected account's secondary signers: other wallets
  * that can cancel a waiting change, lock the account, cancel or co-sign a
  * queued payout, remove a destination and, together, approve replacing the
- * main wallet. They cannot move anything themselves. Each change is its own
- * call on `ProtectedAccountFacet`:
+ * main wallet. They cannot move anything themselves.
  *
- * - `add`: `addSigner(account, signer)`, by the manager. Refused during a
- *   pause, a new primary's cool-down and while the account is locked, and
- *   while any request for that wallet is still on record (a lapsed one must
- *   be cancelled first). It only ASKS: the wallet becomes a signer only once
- *   it has accepted from its own key (`accept`) AND the delay has passed,
- *   through `applyAdd`, within one further delay.
- * - `accept`: `acceptSignerRole(account)`, by the nominee, from its own key.
- * - `cancelAdd`: `cancelAddSigner(account, signer)`, by the manager, an
- *   active signer or the nominee. Open during a pause.
- * - `applyAdd`: `finalizeAddSigner(account, signer)`, by anyone, once the
- *   wait is over, the nominee has accepted, and within one further delay.
- * - `remove`: `requestRemoveSigner(account, signer)`, by the manager. It
- *   only asks: the signer leaves after the delay unless the manager or
- *   another signer cancels it (`cancelRemove`, open during a pause), and
- *   `applyRemove` (anyone, any time after) carries it out. The last
- *   signer's removal turns the co-sign requirement off.
- * - `cosignOn` / `cosignOff`: `setRequireCosign(account, on)`, by the
- *   manager. On is immediate and needs a signer; off waits the delay and is
- *   applied with the account's other matured setting changes (the Vault
- *   page's safety card).
+ * #3379 B2: the signers are the account's VAULT record. Each change is a
+ * `VaultProtection.signerChange(action, signer, auth)` the sending wallet
+ * writes to the account's vault with its own direct authorization, or the
+ * permissionless `finalizeSigner(signer)`:
+ *
+ * - `add` (owner), `accept` (the nominee, from its own key), `remove`
+ *   (owner), and `cancelAdd` / `cancelRemove` (owner, an active signer, or
+ *   the nominee for its own nomination). An addition applies once the nominee
+ *   has accepted and the delay has passed, within one further delay; a
+ *   removal applies after the delay. `applyAdd` / `applyRemove` run
+ *   `finalizeSigner`, by anyone. A loosening change (add, remove) is refused
+ *   while the account is locked or in a new owner's cool-down.
+ * - `cosignOn` / `cosignOff`: the Diamond's `setRequireCosign(account, on)`,
+ *   by the manager. On is immediate and needs a signer; off waits the delay.
+ *   With no signer left the requirement no longer binds.
  *
  * The page offers `add` only for a wallet from the reader's saved book that
  * proved control by signing, so a signer is always a key the reader showed
@@ -32,7 +26,8 @@
  * reads as none, as the contract reports it.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { directAuth, protectionCall, VAULT_SIGNER } from '@vaipakam/lib/protectedAccountView';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -41,25 +36,37 @@ import { answerOrNull, isContractAnswer } from '../reads/answer';
 import type { LegOutcome } from '../tx/outcome';
 import { askThrough } from '../tx/simulate';
 import { formatUtc } from '../ui/format';
+import { readProtectedRecord, VAULT } from './payout';
 import { CHANGE_KIND, PROTECTED } from './safety';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 const ADMIN = AdminFacetABI as Abi;
+const VAULT_PROTECTION = VaultProtectionABI as Abi;
 
 export type SignerAction = 'add' | 'accept' | 'cancelAdd' | 'applyAdd' | 'remove' | 'cancelRemove' | 'applyRemove' | 'cosignOn' | 'cosignOff';
 
+/** The write each action makes: the vault's `signerChange` action code, its
+ *  permissionless `finalizeSigner`, or the Diamond's co-sign switch. */
 export const SIGNER_FUNCTION = {
-  add: 'addSigner',
-  accept: 'acceptSignerRole',
-  cancelAdd: 'cancelAddSigner',
-  applyAdd: 'finalizeAddSigner',
-  remove: 'requestRemoveSigner',
-  cancelRemove: 'cancelRemoveSigner',
-  applyRemove: 'finalizeRemoveSigner',
+  add: 'signerChange',
+  accept: 'signerChange',
+  cancelAdd: 'signerChange',
+  applyAdd: 'finalizeSigner',
+  remove: 'signerChange',
+  cancelRemove: 'signerChange',
+  applyRemove: 'finalizeSigner',
   cosignOn: 'setRequireCosign',
   cosignOff: 'setRequireCosign',
 } as const satisfies Record<SignerAction, string>;
+
+const SIGNER_CODE = {
+  add: VAULT_SIGNER.add,
+  accept: VAULT_SIGNER.accept,
+  cancelAdd: VAULT_SIGNER.cancel,
+  remove: VAULT_SIGNER.remove,
+  cancelRemove: VAULT_SIGNER.cancel,
+} as const;
 
 /** `LibProtectedAccount.MAX_SIGNERS`: at most this many signers, and at
  *  most this many waiting. */
@@ -96,6 +103,8 @@ export interface PendingSigner {
 export interface SignerFacts {
   /** The protected account the signers belong to. */
   account: Hex;
+  /** Its vault, which holds the signer record; null when none or unread. */
+  vault: Hex | null;
   /** The mode; 'absent' when this Diamond has no protected-account feature;
    *  null when unread. */
   mode: SignerMode | 'absent' | null;
@@ -108,62 +117,71 @@ export interface SignerFacts {
   readAt: number;
 }
 
-type RawMode = {
-  enabled: boolean;
-  locked: boolean;
-  retired: boolean;
-  requireCosign: boolean;
-  pendingCosignOffAt: number | bigint;
-  delaySeconds: number | bigint;
-  cooldownUntil: number | bigint;
-  controller: Hex;
-};
-type RawChange = { addAt: number | bigint; accepted: boolean; removeAt: number | bigint; epoch: number | bigint };
+type RawEntry = { addAt: number | bigint; removeAt: number | bigint; accepted: boolean; active: boolean };
 
 export async function readSignerFacts(c: PublicClient, diamond: Hex, account: Hex): Promise<SignerFacts> {
   const block = await c.getBlock({ blockTag: 'latest' });
   const at = { blockNumber: block.number };
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
-    answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
-  const [mode, list, pending, paused] = await Promise.all([
-    readSignerMode(c, diamond, account, block.number),
-    read<readonly Hex[]>(PROTECTED, 'getProtectedSigners', [account]),
-    read<readonly [readonly Hex[], readonly bigint[], readonly boolean[]]>(PROTECTED, 'getPendingSignerAdditions', [account]),
-    read<boolean>(ADMIN, 'paused'),
+  const [rec, paused] = await Promise.all([
+    readRecordOrAbsent(c, diamond, account, block.number),
+    answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', ...at }) as Promise<boolean>),
   ]);
-  let signers: ActiveSigner[] | null = null;
-  if (list !== null) {
-    const changes = await Promise.all(list.map((s) => read<RawChange>(PROTECTED, 'getSignerChange', [account, s])));
-    if (changes.every((x) => x !== null)) signers = list.map((s, i) => ({ signer: s, removeAt: Number(changes[i]!.removeAt) }));
+  const record = rec === 'absent' || rec === null ? null : rec;
+  const vault = record?.vault ?? null;
+  // The vault's own entries; a change voided by a lock, a replacement or a
+  // switch-off reads as none there.
+  const entry = (s: Hex) =>
+    vault === null ? Promise.resolve(null) : answerOrNull(c.readContract({ address: vault, abi: VAULT, functionName: 'signerEntry', args: [s], ...at }) as Promise<RawEntry>);
+  let signers: ActiveSigner[] | null = record === null ? null : [];
+  let pending: PendingSigner[] | null = record === null ? null : [];
+  if (record !== null && vault !== null) {
+    const entries = await Promise.all(record.signers.map(entry));
+    signers = entries.some((x) => x === null) ? null : record.signers.map((s, i) => ({ signer: s, removeAt: Number(entries[i]!.removeAt) }));
+    const p = await answerOrNull(c.readContract({ address: vault, abi: VAULT, functionName: 'pendingAdditions', ...at }) as Promise<readonly [readonly Hex[], readonly Hex[]]>);
+    if (p === null) pending = null;
+    else {
+      const pe = await Promise.all(p[1].map(entry));
+      pending = pe.some((x) => x === null)
+        ? null
+        : p[1].flatMap((s, i) => (pe[i]!.active || Number(pe[i]!.addAt) === 0 ? [] : [{ signer: s, maturesAt: Number(pe[i]!.addAt), accepted: pe[i]!.accepted }]));
+    }
   }
+  const m = record?.record ?? null;
   return {
     account,
-    mode,
+    vault,
+    mode:
+      rec === 'absent'
+        ? 'absent'
+        : m === null
+          ? null
+          : {
+              enabled: m.enabled,
+              locked: m.locked,
+              retired: m.retired,
+              requireCosign: m.requireCosign,
+              pendingCosignOffAt: Number(m.pendingCosignOffAt),
+              delaySeconds: m.delaySeconds,
+              cooldownUntil: Number(m.cooldownUntil),
+              controller: m.controller,
+            },
     signers,
-    pending: pending === null ? null : pending[0].map((s, i) => ({ signer: s, maturesAt: Number(pending[1][i] ?? 0n), accepted: pending[2][i] === true })),
+    pending,
     paused,
     chainNow: Number(block.timestamp),
     readAt: Date.now(),
   };
 }
 
-async function readSignerMode(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<SignerMode | 'absent' | null> {
+/** The account's vault record, 'absent' on a Diamond without the feature,
+ *  null when unread. */
+async function readRecordOrAbsent(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint) {
   try {
-    const m = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], blockNumber })) as RawMode;
-    return {
-      enabled: m.enabled,
-      locked: m.locked,
-      retired: m.retired,
-      requireCosign: m.requireCosign,
-      pendingCosignOffAt: Number(m.pendingCosignOffAt),
-      delaySeconds: Number(m.delaySeconds),
-      cooldownUntil: Number(m.cooldownUntil),
-      controller: m.controller,
-    };
+    return await readProtectedRecord(c, diamond, account, blockNumber);
   } catch (e) {
     // A failed source is thrown, so the own rail tries the next one.
     if (!isContractAnswer(e)) throw e;
-    return refusalFromError(e).code === 'FunctionDoesNotExist' ? 'absent' : null;
+    return refusalFromError(e).code === 'FunctionDoesNotExist' ? ('absent' as const) : null;
   }
 }
 
@@ -194,15 +212,21 @@ export interface SignerReview {
   readAt: number;
 }
 
-export function signerCall(action: SignerAction, account: Hex, signer: Hex) {
-  const fn = SIGNER_FUNCTION[action];
-  const args =
-    action === 'accept'
-      ? ([account] as const)
-      : action === 'cosignOn' || action === 'cosignOff'
-        ? ([account, action === 'cosignOn'] as const)
-        : ([account, signer] as const);
-  return { abi: PROTECTED, functionName: fn, args };
+/** The call that runs `action`. A signer change is a write to the
+ *  account's vault (`protect`), authorized directly by `sender`, the wallet
+ *  that sends it; applying one is the vault's permissionless
+ *  `finalizeSigner`; the co-sign switch is the Diamond's. Null when the
+ *  vault a vault write needs is unknown. */
+export function signerCall(action: SignerAction, account: Hex, signer: Hex, sender: Hex, vault: Hex | null, diamond: Hex) {
+  if (action === 'cosignOn' || action === 'cosignOff') {
+    return { address: diamond, abi: PROTECTED, functionName: 'setRequireCosign', args: [account, action === 'cosignOn'] as readonly unknown[] };
+  }
+  if (vault === null) return null;
+  const data =
+    action === 'applyAdd' || action === 'applyRemove'
+      ? protectionCall('finalizeSigner', [signer])
+      : protectionCall('signerChange', [SIGNER_CODE[action], signer, directAuth(sender)]);
+  return { address: vault, abi: VAULT, functionName: 'protect', args: [data] as readonly unknown[] };
 }
 
 /**
@@ -222,8 +246,9 @@ export async function readSignerReview(
   const facts = await own.read((c: PublicClient) => readSignerFacts(c, diamond, account)).then((x) => x.value);
   const base: SignerReview = { identity, action, signer, facts, dryRun: null, readAt: Date.now() };
   if (signerBlockers(base, copy).length > 0) return base;
-  const call = signerCall(action, account, signer);
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account: own.account }));
+  const call = signerCall(action, account, signer, own.account, facts.vault, diamond);
+  if (call === null) return { ...base, dryRun: 'unread', readAt: Date.now() };
+  const dry = await askThrough(own, (c) => c.simulateContract({ ...call, account: own.account }));
   return { ...base, dryRun: dry.kind === 'answered' ? null : dry.kind === 'reverted' ? refusalFromError(dry.error) : 'unread', readAt: Date.now() };
 }
 
@@ -337,40 +362,53 @@ export function signerTitle(action: SignerAction): (typeof TITLE)[SignerAction] 
   return TITLE[action];
 }
 
-/** The action's outcome, from the Diamond's own logs for this account. */
+/** The action's outcome: a signer change from the vault's own logs (the
+ *  signers are its record), the co-sign switch from the Diamond's. */
 export function measureSigner(r: SignerReview, logs: readonly Log[], diamond: Hex, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const account = r.facts.account.toLowerCase();
-  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
-  const events = (parseEventLogs({ abi: PROTECTED, logs: [...own], strict: false }) as unknown as { eventName: string; args: Args }[]).filter(
-    (e) => String(e.args.account ?? '').toLowerCase() === account,
-  );
-  const forSigner = (name: string) => events.filter((e) => e.eventName === name && String(e.args.signer ?? '').toLowerCase() === r.signer.toLowerCase());
+  const vault = r.facts.vault?.toLowerCase() ?? null;
+  const events = (parseEventLogs({ abi: PROTECTED, logs: logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase()), strict: false }) as unknown as {
+    eventName: string;
+    args: Args;
+  }[]).filter((e) => String(e.args.account ?? '').toLowerCase() === account);
+  const fromVault =
+    vault === null
+      ? []
+      : (parseEventLogs({ abi: VAULT_PROTECTION, logs: logs.filter((l) => l.address.toLowerCase() === vault), strict: false }) as unknown as { eventName: string; args: Args }[]);
+  const forSigner = (name: string) => fromVault.filter((e) => e.eventName === name && String(e.args.signer ?? '').toLowerCase() === r.signer.toLowerCase());
   const missing = (): LegOutcome[] => [{ status: 'not-done', label: text(TITLE[r.action]), reason: text('signer.notRecorded') }];
   const signer = r.signer;
   switch (r.action) {
     case 'add': {
       const asked = forSigner('SignerAddRequested')[0];
-      return asked ? [{ status: 'done', label: format('signer.legAsked', { signer, at: formatUtc(BigInt(asked.args.effectiveAt as bigint)) }) }] : missing();
+      return asked ? [{ status: 'done', label: format('signer.legAsked', { signer, at: formatUtc(BigInt(asked.args.readyAt as bigint)) }) }] : missing();
     }
     case 'accept':
       return forSigner('SignerAccepted').length > 0 ? [{ status: 'done', label: format('signer.legAccepted', { account: r.facts.account }) }] : missing();
     case 'cancelAdd':
-      return forSigner('SignerAddCancelled').length > 0 ? [{ status: 'done', label: format('signer.legCancelled', { signer }) }] : missing();
+      return forSigner('SignerChangeCancelled').length > 0 ? [{ status: 'done', label: format('signer.legCancelled', { signer }) }] : missing();
     case 'applyAdd':
       return forSigner('SignerAdded').length > 0 ? [{ status: 'done', label: format('signer.legAdded', { signer }) }] : missing();
     case 'remove': {
       const asked = forSigner('SignerRemoveRequested')[0];
       return asked
-        ? [{ status: 'done', label: format('signer.legRemoveAsked', { signer, at: formatUtc(BigInt(asked.args.effectiveAt as bigint)) }) }]
+        ? [{ status: 'done', label: format('signer.legRemoveAsked', { signer, at: formatUtc(BigInt(asked.args.readyAt as bigint)) }) }]
         : missing();
     }
     case 'cancelRemove':
-      return forSigner('SignerRemoveCancelled').length > 0 ? [{ status: 'done', label: format('signer.legRemoveCancelled', { signer }) }] : missing();
+      return forSigner('SignerChangeCancelled').length > 0 ? [{ status: 'done', label: format('signer.legRemoveCancelled', { signer }) }] : missing();
     case 'applyRemove': {
       if (forSigner('SignerRemoved').length === 0) return missing();
       const legs: LegOutcome[] = [{ status: 'done', label: format('signer.legRemoved', { signer }) }];
-      if (events.some((e) => e.eventName === 'CosignRequirementSet' && e.args.on === false)) legs.push({ status: 'done', label: text('signer.legCosignOff') });
+      // The co-sign requirement never binds an account with no signer left
+      // (the Diamond's own rule, #3489 r2), so removing the last one ends it
+      // in this transaction even before the platform clears the stored flag.
+      const m = r.facts.mode;
+      const wasLast = r.facts.signers !== null && r.facts.signers.length === 1 && r.facts.signers[0].signer.toLowerCase() === signer.toLowerCase();
+      const cosignEnded =
+        events.some((e) => e.eventName === 'CosignRequirementSet' && e.args.on === false) || (wasLast && m !== null && m !== 'absent' && m.requireCosign);
+      if (cosignEnded) legs.push({ status: 'done', label: text('signer.legCosignOff') });
       return legs;
     }
     case 'cosignOn':
