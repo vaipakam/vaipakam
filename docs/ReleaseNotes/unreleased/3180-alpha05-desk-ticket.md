@@ -1,6 +1,6 @@
 ## Thread — alpha05 rate desk order ticket
 
-The new app's rate desk now has an order ticket below each market's ladder. A lender or a borrower can post a limit-rate offer or request on the market the desk shows, in one compact form, without going through the guided steps.
+The new app's rate desk now has an order ticket below each market's ladder. A lender or a borrower can post an offer or request at one exact rate on the market the desk shows, in one compact form, without going through the guided steps.
 
 The market fixes the two tokens and the term. The ticket adds the side, one amount, the collateral, the rate, how long the offer stays open and how matches may fill it. A partial or immediate-or-cancel ticket also asks for the smallest single fill. The protocol fills a match only between an offer's smallest and largest amount, so an offer of one size always fills whole, whatever its fill mode says. Every other term is the guided flows' default, and the ticket says each one in words: interest for the full term, no partial repayment, interest paid at repayment, no rate range, no collateral range, no fee tariff and no price guard.
 

@@ -1,5 +1,5 @@
 /**
- * The desk's order ticket (OFF-74): a limit-rate offer or request on the
+ * The desk's order ticket (OFF-74): an exact-rate offer or request on the
  * market the desk shows, typed in one compact form and handed to the same
  * posting review the guided flows use (RB-REVIEW), so consent, the dry run
  * and the risk warning are the guided flows' own.

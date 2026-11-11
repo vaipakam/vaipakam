@@ -2476,7 +2476,7 @@ export const copy = {
   },
   ticket: {
     title: B('Order ticket'),
-    lead: B('Post a limit-rate offer or request on {{market}}.'),
+    lead: B('Post an offer or request at one exact rate on {{market}}.'),
     asker: B('Posting from the order ticket'),
     sideLabel: B('Your side'),
     sideLend: B('Lend at a rate'),
@@ -2485,8 +2485,9 @@ export const copy = {
     amountBorrow: B('Amount to borrow ({{symbol}})'),
     collateralLend: B('Collateral a borrower must lock ({{symbol}})'),
     collateralBorrow: B('Collateral you lock ({{symbol}})'),
-    rateLend: B('Lowest rate you accept, % a year'),
-    rateBorrow: B('Highest rate you pay, % a year'),
+    rateLend: B('Rate you lend at, % a year'),
+    rateBorrow: B('Rate you borrow at, % a year'),
+    rateHint: B('One exact rate, up to 100%: a match needs the other side’s range to include it.'),
     balanceLend: B('Your wallet holds {{have}} to lend.'),
     balanceBorrow: B('Your wallet holds {{have}} to lock.'),
     fillBalance: B('Fill to balance'),
@@ -2505,7 +2506,7 @@ export const copy = {
     modePostBorrow: B('Posted on the chain: you pay gas, and the collateral waits in your own vault.'),
     modeSign: B('Signed without gas: not available in this app yet'),
     fixed: A(
-      'Set by this market and the ticket: a {{days}}-day term, interest for the full term even if repaid early, interest paid at repayment, no partial repayments, no collateral range, no fee tariff and no price guard. Borrow and Lend offer the other choices.',
+      'Set by this market and the ticket: a {{days}}-day term, one exact rate with no rate range, interest for the full term even if repaid early, interest paid at repayment, no partial repayments, no collateral range, no fee tariff and no price guard. Borrow and Lend offer the other choices.',
     ),
     feesLend: A(
       'Fees at today’s list rates: the borrower pays {{lif}}% of the amount when a loan opens, out of what they receive, and the protocol keeps {{share}}% of your interest. If taken now and repaid at the due date, you get back {{back}}. A fee discount can only lower these.',

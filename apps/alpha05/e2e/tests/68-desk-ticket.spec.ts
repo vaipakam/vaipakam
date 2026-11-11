@@ -55,8 +55,10 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
   await connectWallet(page);
   const ticket = page.getByTestId('desk-ticket');
   await expect(ticket).toHaveAttribute('data-market', market);
-  await expect(ticket).toContainText('Post a limit-rate offer or request on WETH against');
+  await expect(ticket).toContainText('Post an offer or request at one exact rate on WETH against');
   await expect(ticket).toContainText('30-day term');
+  await expect(ticket).toContainText('Rate you lend at, % a year');
+  await expect(ticket).toContainText('One exact rate, up to 100%: a match needs the other side’s range to include it.');
 
   // Nothing typed: the first thing in the way, beneath the action.
   const blocker = ticket.getByTestId('desk-ticket-blocker');
@@ -64,7 +66,9 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
   await expect(ticket.getByTestId('desk-ticket-review')).toBeDisabled();
 
   // The terms the ticket fixes, and the mode it posts in.
-  await expect(ticket.getByTestId('desk-ticket-fixed')).toContainText('a 30-day term, interest for the full term even if repaid early');
+  await expect(ticket.getByTestId('desk-ticket-fixed')).toContainText(
+    'a 30-day term, one exact rate with no rate range, interest for the full term even if repaid early',
+  );
   await expect(ticket.getByTestId('desk-ticket-mode')).toContainText('Posted on the chain: you pay gas, and the amount waits in your own vault.');
   await expect(ticket.getByTestId('desk-ticket-mode').getByRole('radio', { name: /Signed without gas/ })).toBeDisabled();
 
@@ -150,7 +154,7 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
   // The borrower side relabels the ticket and opens the request review.
   await ticket.getByTestId('desk-ticket-side').getByRole('radio', { name: 'Borrow at a rate' }).check();
   await expect(ticket).toContainText('Collateral you lock');
-  await expect(ticket).toContainText('Highest rate you pay, % a year');
+  await expect(ticket).toContainText('Rate you borrow at, % a year');
   await expect(ticket.getByTestId('desk-ticket-mode')).toContainText('the collateral waits in your own vault');
   await ticket.getByTestId('desk-ticket-amount').fill('0.01');
   await ticket.getByTestId('desk-ticket-collateral').fill('100');

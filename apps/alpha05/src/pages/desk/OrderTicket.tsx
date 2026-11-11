@@ -53,7 +53,7 @@ export function ticketKey(m: TicketMarket): string {
 }
 
 /**
- * OFF-74 — the desk's order ticket: a limit-rate offer (lender) or request
+ * OFF-74 — the desk's order ticket: an exact-rate offer (lender) or request
  * (borrower) on the market the desk shows, posted through the guided flows'
  * own review (`PostOffer`), so the Risk and Terms consent, the dry run, the
  * risk warning and the measured outcome are theirs. The ticket states the
@@ -269,7 +269,7 @@ export function OrderTicket({
                 </div>
               )}
             </FormField>
-            <FormField label={text(lender ? 'ticket.rateLend' : 'ticket.rateBorrow')} hint={text('request.rateHint')} error={null}>
+            <FormField label={text(lender ? 'ticket.rateLend' : 'ticket.rateBorrow')} hint={text('ticket.rateHint')} error={null}>
               {({ id, describedBy }) => (
                 <input
                   id={id}

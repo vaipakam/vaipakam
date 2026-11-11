@@ -2173,10 +2173,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   silently. A failed read is a degraded-source warning, never an empty
   history.
 - **RB-DESK-TICKET** — Below a market's ladder (OFF-74) the desk offers an
-  order ticket: a limit-rate offer or request on that market, typed in one
+  order ticket: an exact-rate offer or request on that market, typed in one
   compact form. The market fixes the lending token, the collateral token
   and the term; the ticket adds the side, the amount, the collateral, the
-  rate, how long it stays open and how matches may fill it. A partial or
+  rate, how long it stays open and how matches may fill it. The rate is
+  one exact rate and is labelled so, never as a lowest or highest: a match
+  needs the other side's rate range to include it. A partial or
   immediate-or-cancel ticket also takes the smallest single fill, below the
   whole amount: a match fills only between an offer's smallest and largest
   amount, so a fill mode that promises parts must post a range, never one
