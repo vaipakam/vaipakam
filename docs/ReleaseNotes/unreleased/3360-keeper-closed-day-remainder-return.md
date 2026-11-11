@@ -1,4 +1,4 @@
-## Thread — The keeper returns a closed day's reward leftover from a mirror to Base (PR #TBD)
+## Thread — The keeper returns a closed day's reward leftover from a mirror to Base (PR #3560)
 
 A reward mirror pays each day's claims from the batch of VPFI Base delivered
 for that day, and a claim takes only what it pays. What the loan-side reward
