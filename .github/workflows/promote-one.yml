@@ -13,8 +13,11 @@ on:
         type: string
         required: true
     secrets:
+      # Since #3541 a secret of the `main-only` environment (the candidate job)
+      # and of site-production (the promote job), not of the repository, so
+      # the caller's scope has no value for it and it cannot be required.
       CLOUDFLARE_DEPLOY_READ_TOKEN:
-        required: true
+        required: false
       # An environment secret of site-production. A reusable workflow sees it
       # only when the caller passes it by name (otherwise it reads as empty,
       # with no error). It still resolves only in the job that names that
@@ -29,6 +32,10 @@ permissions:
 
 jobs:
   candidate:
+    # #3541: only main's copy of this file reads the read token, from the
+    # `main-only` environment, whose deployment-branch rule admits only main.
+    if: github.ref == 'refs/heads/main'
+    environment: main-only
     runs-on: ubuntu-latest
     # Up to 30 minutes waiting for the Workers Build (they run one at a time
     # on this account), then one install and one build of the commit.
@@ -64,7 +71,7 @@ jobs:
 
   promote:
     needs: candidate
-    if: needs.candidate.outputs.state == 'pending'
+    if: needs.candidate.outputs.state == 'pending' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The approval. Its required reviewer is a person, and its secret

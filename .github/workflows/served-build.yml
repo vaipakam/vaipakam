@@ -61,7 +61,12 @@ jobs:
       - run: node .github/scripts/promote-site.mjs --selftest
 
   probe:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # #3541: this job reads secrets. They live in the `main-only` environment,
+    # whose deployment-branch rule admits only main, so a run of a pushed
+    # branch's copy of this file receives none of them; the ref check says the
+    # same thing in the file, for a reader.
+    environment: main-only
     runs-on: ubuntu-latest
     # One install per deployed commit and one build per site (a few minutes
     # each), then about a thousand small fetches.
