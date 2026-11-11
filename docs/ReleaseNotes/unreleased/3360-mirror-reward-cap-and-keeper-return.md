@@ -1,4 +1,4 @@
-## Thread — Mirror loans carry the fee-linked reward cap, and a keeper returns a settled day's leftover to Base (PR #<n>)
+## Thread — Mirror loans carry the fee-linked reward cap, and a keeper returns a settled day's leftover to Base (PR #3555)
 
 Every token loan opened on a reward mirror chain now records its lifetime
 reward ceiling when it opens, exactly as Base loans have since the first half
