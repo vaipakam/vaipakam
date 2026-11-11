@@ -172,9 +172,11 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
     );
   }
   if (home.data === null) {
-    return home.state === 'failed'
-      ? shell('home-unread', <p className="tier-a">{text('rewardsElsewhere.homeUnread')}</p>)
-      : shell('checking', <p className="tier-b">{text('rewardsElsewhere.reading')}</p>);
+    // Only a pending read is "reading": a refused read completes with no
+    // answer (and is not retried), so it is as unknown as a failed one.
+    return home.state === 'reading'
+      ? shell('checking', <p className="tier-b">{text('rewardsElsewhere.reading')}</p>)
+      : shell('home-unread', <p className="tier-a">{text('rewardsElsewhere.homeUnread')}</p>);
   }
 
   const data = card.data;
