@@ -1909,6 +1909,8 @@ export const copy = {
     nowUnread: A('Your tier now could not be read, so whether the record for sending is current is not stated.'),
     consentOff: A('Your fee discount is off, so an updated record carries no discount, and other networks drop theirs.'),
     noLanes: B('No other network is set up to receive your tier from this one.'),
+    noMessenger: B('No messenger is set up here, so your tier is neither recorded for sending nor sent.'),
+    listUnreadable: A('The list of networks this one sends to could not be read, so whether any is owed your tier is not stated.'),
     laneHolds: B('Last sent tier {{tier}}, {{discount}}% off, at {{sent}}.'),
     lanesSentOnly: A('These are the copies this network sent. Whether each has arrived and applies there is read on that network, not here.'),
     laneNothing: B('Nothing has been sent to this network yet.'),

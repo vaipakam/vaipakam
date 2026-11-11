@@ -82,9 +82,23 @@ export interface Recorded {
   version: number;
 }
 
+/** Where the list of networks behind `lanes` stands. The protocol's status
+ *  returns no lanes alike when no messenger is set, when the messenger's
+ *  list refuses, and when the list is empty, so an empty `lanes` is told
+ *  apart by reading the messenger and its list directly:
+ *  - `listed`: the lanes are the messenger's networks;
+ *  - `none`: the messenger lists no network;
+ *  - `no-messenger`: no messenger is set, so nothing is recorded or sent;
+ *  - `unreadable`: the list refused (or disagreed with the status at the
+ *    same block), so whether any network is owed is unknown. */
+export type Destinations = 'listed' | 'none' | 'no-messenger' | 'unreadable';
+
+const ZERO = '0x0000000000000000000000000000000000000000';
+
 export interface TierPushCard {
   recorded: Recorded;
   lanes: readonly TierLane[];
+  destinations: Destinations;
   /** The tier and discount the protocol applies on this network now; null
    *  when it could not be read. */
   effective: { tier: number; bps: bigint } | null;
@@ -137,13 +151,25 @@ export async function readTierPush(c: PublicClient, diamond: Hex, account: Hex, 
   const recorded = recordedOf(status);
   const blockTime = Number(block.timestamp);
   const owed = status[5].some((l) => l.owed);
-  const messenger = owed
-    ? ((await c.readContract({ address: diamond, abi: REPORTER, functionName: 'getRewardReporterConfig', ...at })) as readonly [Hex, ...unknown[]])[0]
-    : null;
+  const empty = status[5].length === 0;
+  const messenger =
+    owed || empty
+      ? ((await c.readContract({ address: diamond, abi: REPORTER, functionName: 'getRewardReporterConfig', ...at })) as readonly [Hex, ...unknown[]])[0]
+      : null;
+  let destinations: Destinations = 'listed';
+  if (empty) {
+    if (messenger === null || messenger.toLowerCase() === ZERO) destinations = 'no-messenger';
+    else {
+      const list = await answerOrNull(
+        c.readContract({ address: messenger, abi: MESSENGER, functionName: 'getBroadcastDestinations', ...at }) as Promise<readonly bigint[]>,
+      );
+      destinations = list !== null && list.length === 0 ? 'none' : 'unreadable';
+    }
+  }
   const lanes = await Promise.all(
     status[5].map(async (l): Promise<TierLane> => {
       const fee =
-        l.owed && messenger
+        l.owed && messenger && messenger.toLowerCase() !== ZERO
           ? ((await answerOrNull(
               c.readContract({
                 address: messenger,
@@ -157,7 +183,7 @@ export async function readTierPush(c: PublicClient, diamond: Hex, account: Hex, 
       return { chainId: Number(l.destChainId), delivered: deliveredOf(l.delivered), owed: l.owed, budgetPays: l.budgetPays, fee };
     }),
   );
-  return { recorded, lanes, effective: eff === null ? null : { tier: Number(eff[0]), bps: BigInt(eff[1]) }, blockNumber, blockTime };
+  return { recorded, lanes, destinations, effective: eff === null ? null : { tier: Number(eff[0]), bps: BigInt(eff[1]) }, blockNumber, blockTime };
 }
 
 /** Whether the Diamond serves this page's rule (#1277): it routes the

@@ -379,8 +379,14 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
         )}
       </div>
       {data.lanes.length === 0 ? (
-        <p className="tier-b" data-testid="rewards-elsewhere-none">
-          {text('rewardsElsewhere.noLanes')}
+        <p className={data.destinations === 'unreadable' ? 'tier-a' : 'tier-b'} data-testid="rewards-elsewhere-none" data-destinations={data.destinations}>
+          {text(
+            data.destinations === 'unreadable'
+              ? 'rewardsElsewhere.listUnreadable'
+              : data.destinations === 'no-messenger'
+                ? 'rewardsElsewhere.noMessenger'
+                : 'rewardsElsewhere.noLanes',
+          )}
         </p>
       ) : (
         <>

@@ -2130,8 +2130,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   in the same transaction. The send is re-read and dry-run first; the
   outcome is measured per network from the status at the receipt's block,
   and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
-  value funded. With no messenger or no network to send to, nothing is
-  recorded or sent, so no action is offered. Away from the home network the
+  value funded. The status lists no network alike when no messenger is
+  set, when the messenger's list refuses and when it is empty, so the
+  section reads the messenger and its list directly and says which; a list
+  that could not be read is stated as unknown, never as no network. With
+  no network listed, nothing is recorded or sent, so no action is offered. Away from the home network the
   section says a higher tier is sent from there. Copy follows RL-6.
 - **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
   The deposit review offers "Sign instead of approve" only when the asset

@@ -115,6 +115,17 @@ describe('readTierPush', () => {
     expect(calls.map((c) => c.functionName)).not.toContain('getRewardReporterConfig');
   });
 
+  it('tells an empty lane list apart: no messenger, an empty list, or a list that refused', async () => {
+    const none = [STATUS[0], STATUS[1], STATUS[2], STATUS[3], STATUS[4], []] as const;
+    const base = { ...ANSWERS, getTierPushStatus: none };
+    expect((await readTierPush(client({ ...base, getBroadcastDestinations: [] }), DIAMOND, ME)).destinations).toBe('none');
+    expect((await readTierPush(client({ ...base, getBroadcastDestinations: refused }), DIAMOND, ME)).destinations).toBe('unreadable');
+    expect((await readTierPush(client({ ...base, getBroadcastDestinations: [97n] }), DIAMOND, ME)).destinations).toBe('unreadable');
+    const zero = { ...base, getRewardReporterConfig: ['0x0000000000000000000000000000000000000000', 84532n, 84532n, true, 43200] };
+    expect((await readTierPush(client(zero), DIAMOND, ME)).destinations).toBe('no-messenger');
+    expect((await readTierPush(client(ANSWERS), DIAMOND, ME)).destinations).toBe('listed');
+  });
+
   it('leaves a refused quote unknown, and the tier now unread when it refuses', async () => {
     const card = await readTierPush(client({ ...ANSWERS, quoteSendTierUpdateTo: refused, getEffectiveDiscount: refused }), DIAMOND, ME);
     expect(card.lanes[1]!.fee).toBeNull();
