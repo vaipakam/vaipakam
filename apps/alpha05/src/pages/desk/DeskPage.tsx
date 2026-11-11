@@ -26,6 +26,7 @@ import { useNow } from '../../shared/ui/useNow';
 import { DeskActivity } from './DeskActivity';
 import { DeskHistory, MarketLoans } from './DeskPositions';
 import { MySignedOrders } from './MySignedOrders';
+import { DeskSignedBook } from './DeskSignedBook';
 import { OrderTicket } from './OrderTicket';
 
 type Hex = `0x${string}`;
@@ -44,24 +45,26 @@ function marketName(m: MarketTerms, meta: TokenMetaMap | null, format: CopyAcces
 }
 
 /**
- * The rate desk (OFF-61, OFF-73, OFF-74, OFF-75, OFF-76): the network's token
- * markets (one lending token against one collateral token for one term), the
- * chosen market's rate ladder, the order ticket that posts on it through the
- * guided flows' own review, the viewer's own gasless signed orders on it with
- * the on-chain cancel that stops one, and below them the viewer's own offers on it, the
- * market's recent loans and the rates they were agreed at over time, all
- * from the index (the world rail, RB-RAILS), read only once a wallet is
- * connected on a served network, as the offer book is. Then the viewer's
- * live loans in the market, from its own chain read of its positions, and
- * its desk history from the index, a page at a time.
+ * The rate desk (OFF-60, OFF-61, OFF-73, OFF-74, OFF-75, OFF-76): the
+ * network's token markets (one lending token against one collateral token
+ * for one term), the chosen market's rate ladder, every maker's gasless
+ * signed orders on it with where the chain stands on each, the order ticket
+ * that posts or signs on it through the guided flows' own review, the
+ * viewer's own signed orders on it with the on-chain cancel that stops one,
+ * and below them the viewer's own offers on it, the market's recent loans
+ * and the rates they were agreed at over time, all from the index (the
+ * world rail, RB-RAILS), read only once a wallet is connected on a served
+ * network, as the offer book is. Then the viewer's live loans in the
+ * market, from its own chain read of its positions, and its desk history
+ * from the index, a page at a time.
  *
  * One completeness note stands above every view: the index lags the chain,
- * and it counts gasless signed orders that the ladder does not list yet. The
- * ladder states, rather than implies, what it leaves out and why, that a
- * rate's total is depth and not one take, and that the middle rate is
- * worked out here. Each offer on it opens its own page, which reads it
- * from the chain before anything is offered. A failed read is a
- * degraded-source warning, never an empty desk.
+ * and it counts gasless signed orders, which the signed orders section
+ * lists apart from the ladder. The ladder states, rather than implies, what
+ * it leaves out and why, that a rate's total is depth and not one take, and
+ * that the middle rate is worked out here. Each offer on it opens its own
+ * page, which reads it from the chain before anything is offered. A failed
+ * read is a degraded-source warning, never an empty desk.
  */
 export function DeskPage() {
   const copy = useCopy();
@@ -208,6 +211,9 @@ export function DeskPage() {
                 </>
               )}
             </section>
+          )}
+          {selected !== null && own !== null && ownChain !== null && own.chainId === world.chainId && (
+            <DeskSignedBook key={`signed-book-${selectedKey}`} market={selected} chain={ownChain} own={own} meta={meta} copy={copy} />
           )}
           {selected !== null && (
             <OrderTicket
