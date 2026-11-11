@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetRpcIdentityCache } from '@vaipakam/lib/rpcIdentity';
-import { RPC_PROXY_MAX_BATCH } from '@vaipakam/lib/rpcProxyPolicy';
+import { RPC_PROXY_MAX_BATCH, RPC_PROXY_MAX_UPSTREAM_BYTES } from '@vaipakam/lib/rpcProxyPolicy';
 import type { Env } from '../src/env';
 import { handle } from '../src/proxy';
 
@@ -30,6 +30,7 @@ function env(over: Partial<Env> = {}): Env {
   return {
     FRONTEND_ORIGIN: `${APP},https://other.example`,
     RPC_CALLER_RATELIMIT: { limit: async () => ({ success: true }) },
+    RPC_CALL_RATELIMIT: { limit: async () => ({ success: true }) },
     RPC_PROXY_BASE_SEPOLIA: { get: async () => UPSTREAM },
     ...over,
   };
@@ -100,7 +101,90 @@ describe('rpc-proxy: budgets and body', () => {
   });
 });
 
+describe('rpc-proxy: the per-call budget, charged by weight (#1283)', () => {
+  const logScan = (id: number) =>
+    call(id, 'eth_getLogs', [{ address: DIAMOND, fromBlock: '0x1', toBlock: '0x10' }]);
+
+  it('charges the widest batch twenty slots and a block poll one', async () => {
+    const u = upstream();
+    const limit = vi.fn(async () => ({ success: true }));
+    const wide = await handle(
+      post(Array.from({ length: RPC_PROXY_MAX_BATCH }, (_, i) => logScan(i))),
+      env({ RPC_CALL_RATELIMIT: { limit } }),
+      u.fetchStub,
+    );
+    expect(wide.status).toBe(200);
+    expect(limit).toHaveBeenCalledTimes(20);
+    limit.mockClear();
+    await handle(post(call(1, 'eth_blockNumber')), env({ RPC_CALL_RATELIMIT: { limit } }), u.fetchStub);
+    expect(limit).toHaveBeenCalledTimes(1);
+  });
+
+  it('charges nothing for calls answered without the upstream', async () => {
+    const limit = vi.fn(async () => ({ success: true }));
+    const u = upstream();
+    await handle(
+      post([call(1, 'eth_chainId'), call(2, 'eth_sendRawTransaction', ['0x00'])]),
+      env({ RPC_CALL_RATELIMIT: { limit } }),
+      u.fetchStub,
+    );
+    expect(limit).not.toHaveBeenCalled();
+    expect(u.calls).not.toHaveBeenCalled();
+  });
+
+  it('refuses the whole request, before asking upstream, when any slot is refused', async () => {
+    const u = upstream();
+    let n = 0;
+    const limit = vi.fn(async () => ({ success: ++n < 3 }));
+    const res = await handle(
+      post(Array.from({ length: 10 }, (_, i) => logScan(i))),
+      env({ RPC_CALL_RATELIMIT: { limit } }),
+      u.fetchStub,
+    );
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: 'rate-limited' });
+    expect(u.calls).not.toHaveBeenCalled();
+  });
+
+  it('refuses with 503 when the call limiter is missing or failing', async () => {
+    const u = upstream();
+    const missing = await handle(post(call(1, 'eth_blockNumber')), env({ RPC_CALL_RATELIMIT: undefined }), u.fetchStub);
+    expect(missing.status).toBe(503);
+    expect(await missing.json()).toEqual({ error: 'rate-limit-binding-missing' });
+    const failing = await handle(
+      post(call(1, 'eth_blockNumber')),
+      env({
+        RPC_CALL_RATELIMIT: {
+          limit: async () => {
+            throw new Error('down');
+          },
+        },
+      }),
+      u.fetchStub,
+    );
+    expect(failing.status).toBe(503);
+    expect(await failing.json()).toEqual({ error: 'rate-limit-unavailable' });
+    expect(u.calls).not.toHaveBeenCalled();
+  });
+});
+
 describe('rpc-proxy: per-call policy', () => {
+  it('refuses a state override and malformed params in place, without forwarding them', async () => {
+    const u = upstream();
+    const res = await handle(
+      post([
+        call(1, 'eth_call', [{ to: DIAMOND, data: '0x' }, 'latest', { [DIAMOND]: { code: '0x00' } }]),
+        call(2, 'eth_getBalance', ['not-an-address', 'latest']),
+        call(3, 'eth_blockNumber', ['extra']),
+      ]),
+      env(),
+      u.fetchStub,
+    );
+    const body = (await res.json()) as { error: { code: number } }[];
+    expect(body.map((b) => b.error.code)).toEqual([-32602, -32602, -32602]);
+    expect(u.calls).not.toHaveBeenCalled();
+  });
+
   it('refuses a method outside the list in place and forwards the rest', async () => {
     const u = upstream();
     const res = await handle(
@@ -229,6 +313,43 @@ describe('rpc-proxy: upstream', () => {
     expect(body[0].error).toEqual({ code: 3, message: 'execution reverted', data: '0x08c379a0' });
     expect(body[1].error.code).toBe(-32000);
     expect(body[1].error.data).toBeUndefined();
+  });
+
+  it('refuses an upstream answer over the byte cap without reading past it', async () => {
+    const u = upstream();
+    let pulled = 0;
+    const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+    const f = (async (url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Call | Call[];
+      if (!Array.isArray(body)) return u.fetchStub(url as string, init);
+      // An endless answer: the proxy must stop at the cap, not buffer it all.
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const res = await handle(post(call(1, 'eth_blockNumber')), env(), f);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'upstream-answer-too-large' });
+    expect(pulled).toBeLessThanOrEqual(RPC_PROXY_MAX_UPSTREAM_BYTES + 2 * chunk.byteLength);
+  });
+
+  it('refuses a declared upstream length over the cap without reading the body', async () => {
+    const u = upstream();
+    const f = (async (url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Call | Call[];
+      if (!Array.isArray(body)) return u.fetchStub(url as string, init);
+      return new Response('[]', {
+        status: 200,
+        headers: { 'content-length': String(RPC_PROXY_MAX_UPSTREAM_BYTES + 1) },
+      });
+    }) as typeof fetch;
+    const res = await handle(post(call(1, 'eth_blockNumber')), env(), f);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'upstream-answer-too-large' });
   });
 
   it('answers a call the upstream left out with its own error', async () => {

@@ -20,6 +20,15 @@
 //      empty.
 //   3. A retired mirror's pending surplus (#917) goes home in chunks
 //      (`sendRetiredSurplusReturn`).
+//   4. Closed-day remainders (#3360 part B), a step with its own flag: on a
+//      mirror, what a transport batch still holds once its one reward day is
+//      proven closed goes home to the Base that sent its packet, in chunks
+//      (`returnClosedDayRemainder`, which parks the batch first when nobody
+//      has). Unlike steps 1 to 3 this entry is the KEEPER's, not anyone's
+//      (`LibAuth.requireActiveKeeper`), by owner decision 2026-11-11. A
+//      remainder the administrator has acknowledged is left alone: that
+//      releases it for classification on the mirror, which is the
+//      operator's disposition.
 //
 // Every return names the Base Diamond that credits it (the issuing Base, the
 // remitter of a quarantined receipt, the Diamond a retired mirror detached
@@ -47,12 +56,15 @@
 // recorded in its private database, so a send is never repeated in the
 // minutes before the indexer has recorded it.
 //
-// Ships disarmed: `REWARD_RETURN_TRANSPORT_ENABLED` plus `KEEPER_ENABLED`.
+// Ships disarmed: `REWARD_RETURN_TRANSPORT_ENABLED` plus `KEEPER_ENABLED`, and
+// step 4 also `REWARD_REMAINDER_RETURN_ENABLED`.
 
 import { createPublicClient, http, zeroAddress, type Abi, type Address, type PublicClient } from 'viem';
 import {
   RepatriationFacetABI,
+  RewardClosureFacetABI,
   RewardCustodyFacetABI,
+  RewardEpochFacetABI,
   RewardRemittanceLensFacetABI,
   RewardReporterFacetABI,
   VaipakamDiamondABI,
@@ -62,7 +74,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env, KeeperD1 } from '../env';
 import { getChainConfigs } from '../env';
-import { buildKeeperContext, passIsArmed, resolveKeeperAccount, type KeeperContext } from '../keeper';
+import { buildKeeperContext, passIsArmed, resolveKeeperAccount, subStepArmed, type KeeperContext } from '../keeper';
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
@@ -75,7 +87,19 @@ import { d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type ScanCursor
 import { StepSender, type CallResult, type SendFeeCeiling } from '../stepSender';
 import { PassReader } from '../passReader';
 import { runIndex } from '../runWindow';
-import { AUTH_PENDING, AUTH_RELEASED, AUTH_SETTLED, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
+import {
+  AUTH_PENDING,
+  AUTH_RELEASED,
+  AUTH_SETTLED,
+  executeBlocked,
+  remainderFinished,
+  remainderStep,
+  repatStep,
+  returnChunk,
+  type LaneBucket,
+  type RemainderState,
+  type RepatState,
+} from './plan';
 
 export * from './plan';
 
@@ -85,6 +109,8 @@ export const ABI = [
   ...(RewardRemittanceLensFacetABI as Abi),
   ...(RewardReporterFacetABI as Abi),
   ...(RewardCustodyFacetABI as Abi),
+  ...(RewardEpochFacetABI as Abi),
+  ...(RewardClosureFacetABI as Abi),
   ...errorsOf(VaipakamDiamondABI),
   // A refusal inside the messenger or the return sender bubbles through the
   // Diamond call; their errors decode from here.
@@ -122,6 +148,9 @@ export const AUTH_FLOOR_ITEM = 'auth-floor';
 export const AUTH_NEXT_ITEM = 'auth-next';
 export const STRANDED_FLOOR_ITEM = 'stranded-floor';
 export const STRANDED_NEXT_ITEM = 'stranded-next';
+/** Step 4's rotation over the transport batches the ledger names. */
+export const REMAINDER_FLOOR_ITEM = 'remainder-floor';
+export const REMAINDER_NEXT_ITEM = 'remainder-next';
 /** Every send event at or before this ledger position has been announced. */
 export const NOTICE_FLOOR_ITEM = 'notice-floor';
 export const DEFAULT_MIN_PART = 1000n * 10n ** 18n;
@@ -136,6 +165,9 @@ export const STRANDED_EVENTS = ['CompensationQuarantined', 'CompensationDemoted'
 /** The events of the sends that move VPFI off a chain toward Base, whoever
  *  sent them: an executed repatriation, a stranded return, a retired chain's
  *  surplus return. Each carries its amount and CCIP message id. */
+/** The event that opens a transport batch on a mirror, naming the batch, the
+ *  budget packet and its one day: step 4's nominations. */
+export const REMAINDER_EVENTS = ['TransportBatchAdmitted'] as const;
 export const SEND_EVENTS = ['RepatriationExecuted', 'StrandedReturnDispatched', 'RetiredSurplusReturnDispatched', 'UntypedRemainderReturnDispatched'] as const;
 
 /** Refusals that mean another caller got there first. */
@@ -145,6 +177,10 @@ export const RACES = new Set([
   'StrandedReturnNothingRecorded',
   'StrandedReturnBadAmount',
   'RetiredSurplusBadAmount',
+  // Step 4: the operator, or another keeper, took from the remainder or the
+  // packet since this run read them.
+  'TransportRemainderExceeded',
+  'ReconciliationExceedsPacketRemainder',
 ]);
 /** A refusal the step reports as a wait, in its own words. */
 const FUNDABLE_WAIT = 'RepatriationExceedsFundable';
@@ -183,6 +219,9 @@ export interface ReturnTransportDeps {
   /** Which run this is (`runIndex`): where the authorization and stranded
    *  steps start on their lists (`attemptOrder`). */
   visit?: number;
+  /** Step 4, the closed-day remainder return: on only when its own flag is
+   *  (`REWARD_REMAINDER_RETURN_ENABLED`). */
+  remainderReturn?: boolean;
 }
 
 export interface ReturnTransportReport {
@@ -194,6 +233,14 @@ export interface ReturnTransportReport {
   acked: string[];
   stranded: string[];
   retired: string[];
+  /** Step 4: each batch a part of its remainder was returned from, with the
+   *  amount (wei). */
+  remainders: string[];
+  /** Step 4: batches whose day is not proven closed yet. */
+  remaindersOpen: number;
+  /** Step 4: acknowledged remainders still holding value, which are the
+   *  operator's to dispose of. */
+  operatorHeld: string[];
   /** The send transactions announced to the ops channel this run. */
   announced: string[];
   waiting: string[];
@@ -237,6 +284,7 @@ export async function runRewardReturnTransport(env: Env, tick: PassTick): Promis
       minPart,
       now: () => Math.floor(Date.now() / 1000),
       visit: runIndex(tick, PASS_CADENCE_SEC * 1000),
+      remainderReturn: subStepArmed(env, 'rewardReturnTransport', 'closed-day remainder return', 'REWARD_REMAINDER_RETURN_ENABLED'),
     });
     for (const r of reports) console.log(describeReport(r));
   } catch (err) {
@@ -260,6 +308,9 @@ export function describeReport(r: ReturnTransportReport): string {
     `acks-sent=${list(r.acked)}`,
     `stranded-returned=${list(r.stranded)}`,
     `retired-surplus-returned=${list(r.retired)}`,
+    `remainders-returned=${list(r.remainders)}`,
+    ...(r.remaindersOpen > 0 ? [`remainders-day-open=${r.remaindersOpen}`] : []),
+    ...(r.operatorHeld.length > 0 ? [`remainders-operator-held=${r.operatorHeld.join(',')}`] : []),
     `sends-announced=${list(r.announced)}`,
     ...(r.waiting.length > 0 ? [`waiting=${r.waiting.join('; ')}`] : []),
     ...(r.stalled.length > 0 ? [`stalled=${r.stalled.join('; ')}`] : []),
@@ -316,6 +367,9 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
       acked: [],
       stranded: [],
       retired: [],
+      remainders: [],
+      remaindersOpen: 0,
+      operatorHeld: [],
       announced: [],
       waiting: [],
       stalled: [],
@@ -348,6 +402,7 @@ export async function returnTransportOnce(deps: ReturnTransportDeps): Promise<Re
       if (s.role === ROLE_CANONICAL && s.receiver !== zeroAddress) await repatriations(s, states, deps); // eslint-disable-line no-await-in-loop
       if (s.role === ROLE_MIRROR && s.returnSender !== zeroAddress && s.baseChainId !== 0) await strandedReturns(s, states, deps); // eslint-disable-line no-await-in-loop
       if (s.retirement.retired && s.returnSender !== zeroAddress) await retiredSurplus(s, states, deps); // eslint-disable-line no-await-in-loop
+      if (deps.remainderReturn === true && s.role !== ROLE_CANONICAL && s.returnSender !== zeroAddress) await closedDayRemainders(s, states, deps); // eslint-disable-line no-await-in-loop
     } catch (err) {
       if (!(err instanceof PastRunDeadline)) throw err;
       s.sender.noteUnread('run', 'the run deadline passed during its reads');
@@ -447,9 +502,11 @@ function sendText(row: LedgerRow): string {
     case 'StrandedReturnDispatched':
       return `returned ${v('amount')} VPFI (wei) quarantined for remit ${v('remitId')} (day ${v('dayId')}) to the Base Diamond ${v('remitter')}; ${v('remainingAfter')} stays recorded`;
     case 'UntypedRemainderReturnDispatched':
-      // The administrator's return of a released transport remainder (#2376);
+      // A transport remainder's untyped return: the administrator's, of a
+      // released remainder (#2376), or the keeper's, of a closed day's
+      // (#3360 part B, which also emits `ClosedDayRemainderReturnedByKeeper`).
       // Base books it recycled on arrival.
-      return `returned ${v('amount')} VPFI (wei) of budget packet ${v('packetHash')}'s released transport remainder to chain ${v('dstChainId')}, untyped; ${v('remainingAfter')} stays in the remainder`;
+      return `returned ${v('amount')} VPFI (wei) of budget packet ${v('packetHash')}'s transport remainder to chain ${v('dstChainId')}, untyped; ${v('remainingAfter')} stays in the remainder`;
     default:
       return `returned ${v('amount')} VPFI (wei) of this retired chain's pending surplus to chain ${v('dstChainId')}; ${v('remainingAfter')} stays pending`;
   }
@@ -894,6 +951,217 @@ async function retiredSurplus(s: ChainState, states: ReadonlyMap<number, ChainSt
   if (fee === undefined) return;
   const res = await s.sender.call('retired', 'pending surplus', 'sendRetiredSurplusReturn', [plan.amount, deps.keeper], fee);
   if (res === 'landed') s.report.retired.push(`${plan.amount}${plan.note ? ` (${plan.note})` : ''}`);
+}
+
+// ─── 4. Closed-day remainders ──────────────────────────────────────────────
+
+/** A transport batch the ledger names, and the budget packet that opened it
+ *  (the batch is keyed by the packet's stamp; both are read, never assumed). */
+interface RemainderNominee {
+  batchId: `0x${string}`;
+  packetHash: `0x${string}`;
+}
+
+/** One batch as read: what `remainderStep` decides on, and where a return of
+ *  it would go (the packet's issuer: its source chain and Base Diamond). */
+interface RemainderRead {
+  state: RemainderState;
+  dstChainId: number;
+  issuer: Address;
+}
+
+const ZERO32 = `0x${'0'.repeat(64)}`;
+const asHash = (v: unknown): `0x${string}` | null => {
+  const h = typeof v === 'string' ? v.toLowerCase() : '';
+  return /^0x[0-9a-f]{64}$/.test(h) ? (h as `0x${string}`) : null;
+};
+
+/** `getTransportBatch`: packet hash (zero when no batch exists), balance,
+ *  admitted, its one day, released. */
+type BatchView = readonly [string, bigint, bigint, bigint, boolean];
+/** `getTransportRemainder`: parked, amount, day, acknowledged, debited. */
+type RemainderView = readonly [boolean, bigint, bigint, boolean, bigint];
+/** The `IngressPacket` fields this step reads. */
+interface PacketView {
+  sourceChainId: number | bigint;
+  arrivedAt: number | bigint;
+  remitter: Address;
+  remitId: bigint;
+  unclassified: bigint;
+  batchId: string;
+}
+
+/**
+ * Reads each nominee's batch, remainder, staging references, packet, its
+ * day's closure and its receipt's stranded record, at `blockNumber` when
+ * given. A nominee missing from the map was not read whole; `stall` names
+ * one whose packet does not match its batch.
+ */
+async function readRemainders(
+  mirror: ChainState,
+  ks: readonly RemainderNominee[],
+  blockNumber?: bigint,
+): Promise<{ read: Map<string, RemainderRead>; stall: Map<string, string> }> {
+  const read = new Map<string, RemainderRead>();
+  const stallWhy = new Map<string, string>();
+  const first = await mirror.r.groups(
+    ks.map((k) => [
+      { functionName: 'getTransportBatch', args: [k.batchId] },
+      // Refuses an id no batch exists under; the batch read says which.
+      { functionName: 'getTransportRemainder', args: [k.batchId] },
+      { functionName: 'getTransportBatchStaged', args: [k.batchId] },
+      { functionName: 'getIngressPacket', args: [k.packetHash] },
+    ]),
+    'remainders',
+    blockNumber,
+  );
+  const second: { k: RemainderNominee; batch: BatchView; rem: RemainderView; staged: bigint; packet: PacketView }[] = [];
+  for (let i = 0; i < ks.length; i++) {
+    const k = ks[i];
+    const [batch, rem, staged, packet] = first[i] as [BatchView | undefined, RemainderView | undefined, readonly [bigint, bigint, bigint] | undefined, PacketView | undefined];
+    if (batch === undefined) continue;
+    if (batch[0].toLowerCase() === ZERO32) {
+      read.set(k.batchId, { state: { exists: false, balance: 0n, parked: false, parkedAmount: 0n, acknowledged: false, dayClosed: false, references: 0n, unclassified: 0n, reserved: false }, dstChainId: 0, issuer: zeroAddress });
+      continue;
+    }
+    if (rem === undefined || staged === undefined || packet === undefined) continue;
+    if (Number(packet.arrivedAt) === 0 || packet.batchId.toLowerCase() !== k.batchId) {
+      stallWhy.set(k.batchId, `its packet ${k.packetHash} does not record this batch, so where its remainder came from cannot be read`);
+      continue;
+    }
+    second.push({ k, batch, rem, staged: staged[2], packet });
+  }
+  const more = await mirror.r.groups(
+    second.map((x) => [
+      { functionName: 'isDayObligationsClosed', args: [x.batch[3]] },
+      { functionName: 'getStrandedRecovery', args: [x.packet.remitter, x.packet.remitId] },
+    ]),
+    'remainder-days',
+    blockNumber,
+  );
+  for (let i = 0; i < second.length; i++) {
+    const { k, batch, rem, staged, packet } = second[i];
+    const [closed, stranded] = more[i] as [boolean | undefined, { amount: bigint; held: bigint } | undefined];
+    if (closed === undefined || stranded === undefined) continue;
+    read.set(k.batchId, {
+      state: {
+        exists: true,
+        balance: batch[1],
+        parked: rem[0],
+        parkedAmount: rem[1],
+        acknowledged: rem[3],
+        dayClosed: closed,
+        references: staged,
+        unclassified: packet.unclassified,
+        reserved: stranded.amount !== 0n || stranded.held !== 0n,
+      },
+      dstChainId: Number(packet.sourceChainId),
+      issuer: packet.remitter,
+    });
+  }
+  return { read, stall: stallWhy };
+}
+
+async function closedDayRemainders(mirror: ChainState, states: ReadonlyMap<number, ChainState>, deps: ReturnTransportDeps): Promise<void> {
+  // No view lists a mirror's transport batches across days, so the ledger
+  // nominates them from the event that opens each one (REMAINDER_EVENTS),
+  // LEDGER_PAGE rows a run, rotating above a floor every row before which the
+  // keeper is finished with (`ledgerRotation.ts`): returned in full, absent,
+  // or acknowledged for the operator. A batch whose day is still open stays
+  // above the floor until it closes.
+  const page = await readLedgerRotation<RemainderNominee>({
+    ledger: deps.ledger,
+    cursors: deps.cursors(mirror.deps.chainId, mirror.deps.diamond),
+    chainId: mirror.deps.chainId,
+    kinds: REMAINDER_EVENTS,
+    floorItem: REMAINDER_FLOOR_ITEM,
+    nextItem: REMAINDER_NEXT_ITEM,
+    limit: LEDGER_PAGE,
+    cutoff: mirror.r.cutoff,
+    nominee: (row) => {
+      const batchId = asHash(row.args.batchId);
+      const packetHash = asHash(row.args.packetHash);
+      return batchId === null || packetHash === null ? null : { batchId, packetHash };
+    },
+    id: (k) => k.batchId,
+  });
+  if (page === null) {
+    mirror.sender.noteUnread('remainders', 'the event ledger');
+    return;
+  }
+  const finished = new Set<string>();
+  const liftFloor = () =>
+    page.liftFloor(mirror.r.finalized, (k) => finished.has(k.batchId), async (ks, block) => {
+      const at = await readRemainders(mirror, ks, block.number);
+      return (k) => {
+        const x = at.read.get(k.batchId);
+        return x !== undefined && remainderFinished(x.state);
+      };
+    });
+  if (page.nominees.length === 0) {
+    await liftFloor();
+    return;
+  }
+  const list = page.nominees;
+  const { read, stall: badPacket } = await readRemainders(mirror, list);
+  // Each run starts elsewhere on the page (`attemptOrder`, #3155): each
+  // batch's return stands alone.
+  for (const i of attemptOrder(list.length, deps.visit ?? 0)) {
+    const { batchId, packetHash } = list[i];
+    const subject = `remainder ${batchId}`;
+    const bad = badPacket.get(batchId);
+    if (bad !== undefined) {
+      // eslint-disable-next-line no-await-in-loop
+      await stall(mirror, `remainder:${batchId}`, `${subject}: ${bad}`);
+      continue;
+    }
+    const x = read.get(batchId);
+    if (x === undefined) {
+      mirror.sender.noteUnread(subject, 'its batch, remainder, packet and day records');
+      continue;
+    }
+    const step = remainderStep(x.state);
+    switch (step.kind) {
+      case 'done':
+        finished.add(batchId);
+        if (step.why === 'operator' && x.state.parkedAmount > 0n) mirror.report.operatorHeld.push(`${batchId}=${x.state.parkedAmount}`);
+        continue;
+      case 'open':
+        mirror.report.remaindersOpen += 1;
+        continue;
+      case 'wait':
+        mirror.report.waiting.push(`${subject}: ${step.why}`);
+        continue;
+      case 'stall':
+        // eslint-disable-next-line no-await-in-loop
+        await stall(mirror, `remainder:${batchId}`, `${subject}: ${step.why}`);
+        continue;
+      case 'return':
+        break;
+    }
+    const dst = x.dstChainId;
+    // The return goes to the packet's issuer, never the Base this mirror
+    // follows now (the #3015 rule), so that destination is checked.
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await returnMayGo(mirror, states.get(dst), dst, x.issuer, `remainder:${batchId}`, subject))) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const plan = await chunkFor(mirror, states.get(dst), dst, step.amount, deps.minPart);
+    if ('wait' in plan) {
+      mirror.report.waiting.push(`${subject}: ${plan.wait}`);
+      continue;
+    }
+    if (deps.keeper === null) {
+      mirror.sender.noteUnread(subject, 'the keeper key (no refund address)');
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const fee = await mirror.r.tryOne<bigint>(mirror.sender, subject, 'the return sender\'s fee', 'quoteUntypedRemainderReturn', [BigInt(dst), x.issuer, packetHash, plan.amount], mirror.returnSender, RETURN_SENDER_ABI);
+    if (fee === undefined) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const res = await mirror.sender.call('remainder', subject, 'returnClosedDayRemainder', [packetHash, plan.amount, deps.keeper], fee);
+    if (res === 'landed') mirror.report.remainders.push(`${batchId}=${plan.amount}${plan.note ? ` (${plan.note})` : ''}`);
+  }
+  await liftFloor();
 }
 
 // ─── Production seams ──────────────────────────────────────────────────────

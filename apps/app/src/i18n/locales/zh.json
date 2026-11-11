@@ -2649,6 +2649,10 @@
       },
       "repairStatusOther": "关闭",
       "repairUnknownNote": "此列表可能缺少某笔贷款的结束记录，该贷款的结束事件从未被记录：这部分历史暂时无法读取。",
+      "pendingHeading": "尚未最终确认",
+      "pendingBadge": "待定，尚未最终确认",
+      "pendingNote": "这些操作已记录在链上，但尚未最终确认。通常几分钟内即可确认。在此之前，链仍可能替换它们，届时它们会从此列表中消失。",
+      "pendingIncompleteNote": "一些非常新的操作可能尚未列出。它们最终确认后，几分钟内就会出现在这里。",
       "loadMore": "加载更早活动",
       "loadingMore": "加载中…",
       "labels": {

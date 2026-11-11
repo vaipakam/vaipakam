@@ -11940,10 +11940,18 @@ library LibVaipakam {
     /// @param offer Storage pointer to the offer being queried.
     /// @return expired `true` iff `expiresAt != 0 && block.timestamp >= expiresAt`.
     function isOfferExpired(Offer storage offer) internal view returns (bool expired) {
-        uint64 deadline = offer.expiresAt;
-        // GTC sentinel — never expires.
-        if (deadline == 0) return false;
-        return block.timestamp >= uint256(deadline);
+        return offerExpiryPassed(offer.expiresAt);
+    }
+
+    /// @notice The expiry rule of {isOfferExpired}, on the offer's
+    ///         `expiresAt`: 0 is good till cancelled and never expires. The
+    ///         reader for an offer held in memory (a match slice, a stored
+    ///         offer copied for a preview, or one a fill would create, #3552);
+    ///         a memory overload of {isOfferExpired} would be ambiguous for
+    ///         every storage caller.
+    function offerExpiryPassed(uint64 expiresAt) internal view returns (bool) {
+        if (expiresAt == 0) return false;
+        return block.timestamp >= uint256(expiresAt);
     }
 
     /// @notice Mirrors `ProfileFacet.SanctionedAddress` (same name +

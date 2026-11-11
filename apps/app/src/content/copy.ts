@@ -6715,6 +6715,16 @@ const copySource = {
     // The indexer could not say which loans it closed this way.
     repairUnknownNote:
       'This list may be missing the ending of a loan whose closing event was never recorded: that part of the history could not be read just now.',
+    // #3411 — actions in blocks the chain has not yet called safe. Shown at
+    // once so a fresh action is visible, and labelled because such a block
+    // can still be replaced, in which case the row disappears.
+    pendingHeading: 'Not final yet',
+    pendingBadge: 'Pending, not final yet',
+    pendingNote:
+      'These actions are recorded on the chain but not final yet. They usually become final within a few minutes. Until then the chain can still replace them, and then they leave this list.',
+    // The indexer's read of pending actions is incomplete or not known.
+    pendingIncompleteNote:
+      'Some very recent actions may not be listed yet. They appear here within a few minutes, once they are final.',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',
     // UX-008 — readable, translatable labels for each feed row, keyed by

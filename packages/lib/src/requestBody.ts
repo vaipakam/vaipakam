@@ -10,6 +10,10 @@
  * first byte over the cap. `publicEndpointRules.test.ts` pins, for every
  * Worker, that no source file reads a request body any other way.
  *
+ * The same reader caps an upstream RESPONSE a Worker passes on (the RPC
+ * proxy, #1283): a response has the same headers and body stream, and a
+ * provider answer read with `res.json()` is just as unbounded.
+ *
  * The answers are stated, never thrown: a body over the cap is 413
  * `body-too-large`, a body that is not JSON (for the JSON reader) is 400
  * `invalid-json`. A route maps them to its own response shape.
@@ -17,6 +21,10 @@
 
 /** Why a body was not read. */
 export type BodyRefusal = { ok: false; status: 413; error: 'body-too-large' } | { ok: false; status: 400; error: 'invalid-json' };
+
+/** Anything with headers and a body stream: a request, or an upstream
+ *  response a Worker must read under the same kind of cap (#1283). */
+export type BodySource = { readonly headers: Headers; readonly body: ReadableStream<Uint8Array> | null };
 
 const TOO_LARGE: BodyRefusal = { ok: false, status: 413, error: 'body-too-large' };
 const INVALID_JSON: BodyRefusal = { ok: false, status: 400, error: 'invalid-json' };
@@ -26,7 +34,7 @@ const INVALID_JSON: BodyRefusal = { ok: false, status: 400, error: 'invalid-json
  * Never reads past the first chunk that crosses the cap.
  */
 export async function readBodyBytes(
-  req: Request,
+  req: BodySource,
   maxBytes: number,
 ): Promise<{ ok: true; bytes: Uint8Array<ArrayBuffer> } | BodyRefusal> {
   const declared = req.headers.get('content-length');
@@ -56,7 +64,7 @@ export async function readBodyBytes(
 
 /** The body as UTF-8 text, or a refusal when it is larger than `maxBytes`. */
 export async function readBodyText(
-  req: Request,
+  req: BodySource,
   maxBytes: number,
 ): Promise<{ ok: true; text: string } | BodyRefusal> {
   const read = await readBodyBytes(req, maxBytes);
@@ -66,7 +74,7 @@ export async function readBodyText(
 /** The body parsed as JSON, or a refusal when it is larger than
  *  `maxBytes` or is not JSON. */
 export async function readJsonBody(
-  req: Request,
+  req: BodySource,
   maxBytes: number,
 ): Promise<{ ok: true; value: unknown } | BodyRefusal> {
   const read = await readBodyText(req, maxBytes);

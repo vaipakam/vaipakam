@@ -29,6 +29,14 @@ permissions:
 jobs:
   add-to-project:
     name: Add issue to @vaipakam-labs
+    # An `issues` event always runs main's copy of this file, so the ref
+    # check holds for every real run.
+    if: github.ref == 'refs/heads/main'
+    # #3541: this job reads secrets. They live in the `main-only` environment,
+    # whose deployment-branch rule admits only main, so a run of a pushed
+    # branch's copy of this file receives none of them; the ref check says the
+    # same thing in the file, for a reader.
+    environment: main-only
     runs-on: ubuntu-latest
     steps:
       - uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2

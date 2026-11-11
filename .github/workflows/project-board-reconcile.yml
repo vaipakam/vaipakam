@@ -65,6 +65,12 @@ concurrency:
 jobs:
   reconcile:
     name: Add un-boarded open issues
+    if: github.ref == 'refs/heads/main'
+    # #3541: this job reads secrets. They live in the `main-only` environment,
+    # whose deployment-branch rule admits only main, so a run of a pushed
+    # branch's copy of this file receives none of them; the ref check says the
+    # same thing in the file, for a reader.
+    environment: main-only
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}

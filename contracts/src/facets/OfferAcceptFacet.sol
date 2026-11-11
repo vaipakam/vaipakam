@@ -1958,7 +1958,31 @@ contract OfferAcceptFacet is
         // it, right after the expiry gate. Transient: the offer becomes
         // takeable on its own a few seconds later. APPENDED; prior values stay
         // stable.
-        TermsTooFresh
+        TermsTooFresh,
+        // #3552 — the signed-order blockers `OfferPreviewFacet.
+        // previewSignedOfferAccept` reports, in the order the vault-backed
+        // fill (`SignedOfferFacet.acceptSignedOffer`) checks them, after the
+        // protocol pause and before every check above. An order past its own
+        // expiry reports `OfferExpired`. APPENDED; prior values stay stable.
+        // A Full opt-in with no ceiling (`SignedOfferFullNeedsMaxCStar`).
+        SignedOfferMalformed,
+        // The signature's own deadline has passed (`LibTiming.DeadlinePassed`).
+        SignedOfferDeadlinePassed,
+        // The signer batch-cancelled the order's nonce.
+        SignedOfferNonceUsed,
+        // The order hash is already filled or cancelled.
+        SignedOfferConsumed,
+        // The signature does not recover to (or 1271-validate for) the signer.
+        SignedOfferBadSignature,
+        // A shape a signed order may not take: a leg that is not an ERC-20,
+        // or a refinance target (`SignedOfferUnsupportedShape`).
+        SignedOfferUnsupportedShape,
+        // The signer's vault holds less free balance of the stake than the
+        // fill draws (`SignedOfferInsufficientFreeBalance`).
+        SignedOfferMakerShort,
+        // The principal is worth less than the offer-book value floor
+        // (`LibOfferAdmission.OfferBelowMinimumValue`).
+        SignedOfferBelowMinimumValue
     }
 
     /// @notice Projection of the loan that would land if the supplied

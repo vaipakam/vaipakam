@@ -12,6 +12,10 @@ import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {LibOfferAdmission} from "../src/libraries/LibOfferAdmission.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -700,6 +704,156 @@ contract SignedOfferBookTest is SetupTest {
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
             o, sig, terms, acceptSig
         );
+    }
+
+    // ─── 15. #3552 signed-order accept preview ────────────────────────────
+
+    function _previewSigned(
+        LibSignedOffer.SignedOffer memory o,
+        bytes memory sig,
+        address acceptor
+    ) internal view returns (OfferPreviewFacet.SignedAcceptPreview memory) {
+        return OfferPreviewFacet(address(diamond)).previewSignedOfferAccept(o, sig, acceptor);
+    }
+
+    function _assertCode(
+        OfferPreviewFacet.SignedAcceptPreview memory p,
+        OfferAcceptFacet.AcceptError want,
+        string memory why
+    ) internal pure {
+        assertEq(uint8(p.accept.errorCode), uint8(want), why);
+    }
+
+    /// @dev A clear preview agrees with the fill it predicts: the same
+    ///      principal, rate and collateral land on the loan, and the stake the
+    ///      preview names is the stake the fill draws from the signer's vault.
+    function test_3552_previewClearMatchesTheFill() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1501, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+
+        OfferPreviewFacet.SignedAcceptPreview memory p = _previewSigned(o, sig, borrower);
+        _assertCode(p, OfferAcceptFacet.AcceptError.None, "clear");
+        assertEq(p.orderHash, SignedOfferFacet(address(diamond)).signedOfferOrderHash(o), "order hash");
+        assertEq(p.stakeAsset, mockERC20, "lender stakes the principal");
+        assertEq(p.stakeRequired, PRINCIPAL, "stake = amountMax");
+        assertEq(p.makerFreeHolding, PRINCIPAL, "free vault holding");
+
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.prank(borrower);
+        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.principal, p.accept.effectivePrincipal, "principal as previewed");
+        assertEq(loan.interestRateBps, p.accept.interestRateBps, "rate as previewed");
+        assertEq(loan.collateralAmount, p.accept.collateralAmount, "collateral as previewed");
+
+        // Consumed now: the same order previews as consumed, as the fill refuses.
+        _assertCode(
+            _previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferConsumed, "consumed after fill"
+        );
+    }
+
+    function test_3552_previewReportsABadSignature() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1502, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        o.amount = PRINCIPAL + 1 ether;
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferBadSignature, "bad sig");
+    }
+
+    function test_3552_previewReportsAnInvalidatedNonce() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1503, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        vm.prank(signer);
+        SignedOfferFacet(address(diamond)).invalidateSignedOfferNonce(o.nonce);
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferNonceUsed, "nonce");
+    }
+
+    function test_3552_previewReportsACancelledOrder() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1504, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        vm.prank(signer);
+        SignedOfferFacet(address(diamond)).cancelSignedOffer(o);
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferConsumed, "cancelled");
+    }
+
+    function test_3552_previewReportsAPassedDeadline() public {
+        uint256 deadline = block.timestamp + 100;
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1505, deadline);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.None, "clear at the deadline");
+        vm.warp(deadline + 1);
+        _assertCode(
+            _previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferDeadlinePassed, "deadline"
+        );
+    }
+
+    function test_3552_previewReportsAnExpiredOrder() public {
+        uint64 expiresAt = uint64(block.timestamp + 100);
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1506, 0);
+        o.expiresAt = expiresAt;
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        // Expired AT `expiresAt`, the rule every offer path reads: the fill
+        // refuses that exact second at its own check, and the preview agrees.
+        vm.warp(uint256(expiresAt));
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.OfferExpired, "expired");
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(SignedOfferFacet.SignedOfferExpired.selector, expiresAt));
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+    }
+
+    function test_3552_previewReportsAnUnsupportedShape() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1507, 0);
+        o.collateralAssetType = uint8(LibVaipakam.AssetType.ERC721);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        _assertCode(
+            _previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape, "NFT leg"
+        );
+    }
+
+    function test_3552_previewReportsAnUnfundedSigner() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1508, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL - 1);
+        OfferPreviewFacet.SignedAcceptPreview memory p = _previewSigned(o, sig, borrower);
+        _assertCode(p, OfferAcceptFacet.AcceptError.SignedOfferMakerShort, "short");
+        assertEq(p.makerFreeHolding, PRINCIPAL - 1, "names the free holding");
+        assertEq(p.stakeRequired, PRINCIPAL, "names the stake");
+    }
+
+    function test_3552_previewReportsTheValueFloor() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1509, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        NumeraireConfigFacet(address(diamond)).setMinOfferValueNumeraire(1e24);
+        _assertCode(
+            _previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SignedOfferBelowMinimumValue, "floor"
+        );
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.prank(borrower);
+        vm.expectPartialRevert(LibOfferAdmission.OfferBelowMinimumValue.selector);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+    }
+
+    function test_3552_previewReportsThePauseFirst() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1510, 0);
+        bytes memory sig = _sign(o);
+        // Unfunded too: the pause outranks the order's own refusal.
+        AdminFacet(address(diamond)).pause();
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.ProtocolPaused, "paused");
+    }
+
+    function test_3552_previewRunsTheSharedAcceptChecks() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1511, 0);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        _assertCode(_previewSigned(o, sig, signer), OfferAcceptFacet.AcceptError.SelfTrade, "signer cannot take");
     }
 }
 

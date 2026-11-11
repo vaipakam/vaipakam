@@ -25,8 +25,11 @@ describe('wrangler.jsonc carries what the handler reads (#1724)', () => {
     for (const id of TESTNET_CHAIN_IDS) expect(bound).toContain(RPC_PROXY_CHAINS[id]);
   });
 
-  it('declares the caller limiter the handler takes a slot from', () => {
+  it('declares both limiters the handler takes slots from, each its own namespace', () => {
     expect(wrangler).toMatch(/"name":\s*"RPC_CALLER_RATELIMIT",\s*"type":\s*"ratelimit"/);
+    expect(wrangler).toMatch(/"name":\s*"RPC_CALL_RATELIMIT",\s*"type":\s*"ratelimit"/);
+    const ids = [...wrangler.matchAll(/"namespace_id":\s*"(\d+)"/g)].map((m) => m[1]);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('keeps dashboard vars across a deploy and holds no D1 or other secret', () => {

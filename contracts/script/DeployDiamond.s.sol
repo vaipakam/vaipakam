@@ -2049,13 +2049,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      #3025 adds the origination check loan creation and the accept and
     ///      match previews call.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
         // #3358 — the match preview's origination checks (cadence, then guards).
         s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
+        // #3552 — the signed-order accept preview.
+        s[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer

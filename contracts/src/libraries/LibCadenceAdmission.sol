@@ -92,14 +92,54 @@ library LibCadenceAdmission {
         view
         returns (Terms memory t)
     {
-        t.lendingAsset = offer.lendingAsset;
+        return _originationTerms(
+            offer.lendingAsset,
+            offer.assetType,
+            offer.collateralAsset,
+            offer.collateralAssetType,
+            offer.durationDays,
+            offer.periodicInterestCadence,
+            principal
+        );
+    }
+
+    /// @notice {originationTerms} for an offer held in memory: a stored offer
+    ///         copied for a preview, or one a signed-offer fill would create
+    ///         (#3552). Same fields, same liquidity read. Named apart because a
+    ///         memory overload is ambiguous for every storage caller.
+    function originationTermsFromMemory(LibVaipakam.Offer memory offer, uint256 principal)
+        internal
+        view
+        returns (Terms memory t)
+    {
+        return _originationTerms(
+            offer.lendingAsset,
+            offer.assetType,
+            offer.collateralAsset,
+            offer.collateralAssetType,
+            offer.durationDays,
+            offer.periodicInterestCadence,
+            principal
+        );
+    }
+
+    function _originationTerms(
+        address lendingAsset,
+        LibVaipakam.AssetType assetType,
+        address collateralAsset,
+        LibVaipakam.AssetType collateralAssetType,
+        uint256 durationDays,
+        LibVaipakam.PeriodicInterestCadence cadence,
+        uint256 principal
+    ) private view returns (Terms memory t) {
+        t.lendingAsset = lendingAsset;
         t.amount = principal;
-        t.durationDays = uint256(offer.durationDays);
-        t.cadence = offer.periodicInterestCadence;
-        t.assetType = offer.assetType;
-        t.collateralAssetType = offer.collateralAssetType;
+        t.durationDays = durationDays;
+        t.cadence = cadence;
+        t.assetType = assetType;
+        t.collateralAssetType = collateralAssetType;
         (t.principalLiquidity, t.collateralLiquidity) =
-            legLiquidity(offer.lendingAsset, offer.assetType, offer.collateralAsset);
+            legLiquidity(lendingAsset, assetType, collateralAsset);
     }
 
     /// @notice Whether both legs qualify for periodic interest: liquid AND

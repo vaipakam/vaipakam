@@ -12,6 +12,10 @@ import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
+import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -109,6 +113,31 @@ contract OfferPreviewFacet {
             }
             revert InvalidOffer();
         }
+        return _previewAcceptCore(offer, offerId, acceptor, _paused, OfferAcceptFacet.AcceptError.None);
+    }
+
+    /**
+     * @notice The accept preview over an offer's VALUES: the projections and
+     *         the precondition chain {previewAccept} reports, shared with
+     *         {previewSignedOfferAccept} so the two cannot drift (#3552).
+     * @dev `offer` is a stored offer copied to memory, or the offer a
+     *      signed-offer fill would create. `offerId` is 0 for the latter: no
+     *      id exists until the fill, and every id-keyed record (a sale link, a
+     *      cancellation, a price guard) is empty at id 0, which is true of an
+     *      offer that does not exist yet. `preBlock`, when not `None`, is the
+     *      route's own first refusal; it is reported after the protocol pause
+     *      and before every shared check, which is where the signed fill runs
+     *      its own checks. An `Offer memory` argument is one pointer, not a
+     *      spill of its fields, so this adds no stack depth.
+     */
+    function _previewAcceptCore(
+        LibVaipakam.Offer memory offer,
+        uint256 offerId,
+        address acceptor,
+        bool _paused,
+        OfferAcceptFacet.AcceptError preBlock
+    ) private view returns (OfferAcceptFacet.AcceptPreview memory preview) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // ─── Happy-path projections (populated unconditionally) ─────
         bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
@@ -208,6 +237,10 @@ contract OfferPreviewFacet {
             preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
             return preview;
         }
+        if (preBlock != OfferAcceptFacet.AcceptError.None) {
+            preview.errorCode = preBlock;
+            return preview;
+        }
         if (offer.accepted) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferAlreadyAccepted;
             return preview;
@@ -224,7 +257,7 @@ contract OfferPreviewFacet {
             return preview;
         }
         // #195 — GTT lazy-expiry, before sanctions / pause / KYC.
-        if (LibVaipakam.isOfferExpired(offer)) {
+        if (LibVaipakam.offerExpiryPassed(offer.expiresAt)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferExpired;
             return preview;
         }
@@ -340,11 +373,12 @@ contract OfferPreviewFacet {
         // transaction value. Reads the numeraire via the PUBLIC cross-facet view
         // (the private impl stays on OfferAcceptFacet next to `_acceptOffer`).
         {
-            uint256 _valueNumeraire = OfferAcceptFacet(address(this))
-                .calculateTransactionValueNumeraire(
+            uint256 _valueNumeraire = offerId != 0
+                ? OfferAcceptFacet(address(this)).calculateTransactionValueNumeraire(
                     offerId,
                     preview.effectivePrincipal
-                );
+                )
+                : _unstoredTransactionValue(offer, preview.effectivePrincipal);
             if (
                 !ProfileFacet(address(this)).meetsKYCRequirement(
                     offer.creator,
@@ -460,8 +494,8 @@ contract OfferPreviewFacet {
         // reported here rather than discovered at signing. The lender-sale
         // vehicle is exempt there, so it is here.
         if (_saleLoanId == 0) {
-            try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(
-                offerId, preview.effectivePrincipal
+            try OfferPreviewFacet(address(this)).requireCadenceAdmitted(
+                LibCadenceAdmission.originationTermsFromMemory(offer, preview.effectivePrincipal)
             ) {} catch {
                 preview.errorCode = OfferAcceptFacet.AcceptError.CadenceNotAdmitted;
                 return preview;
@@ -496,6 +530,156 @@ contract OfferPreviewFacet {
         // folding it in is a possible follow-up.)
 
         // Happy path: errorCode stays `None`.
+    }
+
+    // ─── #3552 — signed-order accept preview ─────────────────────────────
+
+    /// @notice What {previewSignedOfferAccept} reports.
+    /// @param accept           The shared accept preview: the projections and
+    ///                         the first blocker, signed-order blockers
+    ///                         included (see `OfferAcceptFacet.AcceptError`).
+    /// @param orderHash        The order's hash, the key its fill and
+    ///                         cancellation records use.
+    /// @param stakeAsset       The asset the fill draws from the signer's
+    ///                         vault: the principal for a lender order, the
+    ///                         collateral for a borrower order.
+    /// @param stakeRequired    How much of it the fill draws (the order's
+    ///                         upper bound).
+    /// @param makerFreeHolding The signer's free vault balance of it now, the
+    ///                         figure the fill compares with `stakeRequired`.
+    struct SignedAcceptPreview {
+        OfferAcceptFacet.AcceptPreview accept;
+        bytes32 orderHash;
+        address stakeAsset;
+        uint256 stakeRequired;
+        uint256 makerFreeHolding;
+    }
+
+    /**
+     * @notice Read-only projection and first-failing blocker for filling the
+     *         vault-backed signed order `o` (signature `sig`) through
+     *         `SignedOfferFacet.acceptSignedOffer` by `acceptor`, the signed
+     *         counterpart of {previewAccept}. A signed order has no offer id
+     *         until its fill creates one, so {previewAccept} cannot be asked.
+     * @dev One rule, one place: the projections and every accept check come
+     *      from the same core {previewAccept} runs, over the offer the fill
+     *      would create; the order's own checks (Full ceiling, deadline,
+     *      expiry, nonce, consumed hash) come from
+     *      {LibSignedOffer.vetFailure}, the rule the fill enforces. They are
+     *      reported in the fill's order: the protocol pause, the order's own
+     *      checks, its signature, its shape, the signer's free vault balance
+     *      of the stake, the offer-book value floor, then the accept checks.
+     *
+     *      What this does NOT check, stated so a clear answer is not read as
+     *      more than it is: the creation checks the fill runs on the maker's
+     *      terms besides the shape and the value floor (duration and amount
+     *      bounds, the collateral floor, self-collateral, the maker's
+     *      risk-access standing and protected-account mode), which an order
+     *      signed through the app already meets; the acceptor's risk-access
+     *      gate, read separately as for any offer
+     *      (`RiskPreviewFacet.previewOfferAcceptBlock` is keyed on a stored
+     *      offer, so a signed order has no such answer yet); and the
+     *      wallet-backed fill (`acceptSignedOfferWithPermit`), whose stake is
+     *      a Permit2 pull from the signer's wallet that this view does not
+     *      read. The fill's own simulation remains the final word.
+     * @param o        The signed order, as the book lists it.
+     * @param sig      The signer's signature over it (EOA or ERC-1271).
+     * @param acceptor The prospective taker.
+     */
+    function previewSignedOfferAccept(
+        LibSignedOffer.SignedOffer calldata o,
+        bytes calldata sig,
+        address acceptor
+    ) external view returns (SignedAcceptPreview memory p) {
+        p.orderHash = LibSignedOffer.hashStruct(o);
+        LibVaipakam.CreateOfferParams memory params = LibSignedOffer.toCreateOfferParams(o);
+        bool lender = params.offerType == LibVaipakam.OfferType.Lender;
+        // The stake `OfferCreateFacet._creatorPullAmount` draws for the two
+        // ERC-20 shapes a signed order may take (the params already carry the
+        // `amountMax == 0` collapse).
+        p.stakeAsset = lender ? params.lendingAsset : params.collateralAsset;
+        p.stakeRequired = lender
+            ? params.amountMax
+            : (params.collateralAmountMax == 0 ? params.collateralAmount : params.collateralAmountMax);
+        p.makerFreeHolding = LibEncumbrance.freeBalance(
+            o.signer, p.stakeAsset, 0, LibVaipakam.trackedHolding(o.signer, p.stakeAsset, 0)
+        );
+        p.accept = _previewAcceptCore(
+            _asMaterialized(params, o.signer), 0, acceptor, LibPausable.paused(), _signedBlock(o, sig, p, params)
+        );
+    }
+
+    /// @dev The signed fill's own first refusal, in its order, or `None`.
+    function _signedBlock(
+        LibSignedOffer.SignedOffer calldata o,
+        bytes calldata sig,
+        SignedAcceptPreview memory p,
+        LibVaipakam.CreateOfferParams memory params
+    ) private view returns (OfferAcceptFacet.AcceptError) {
+        LibSignedOffer.VetFailure f = LibSignedOffer.vetFailure(o, p.orderHash);
+        if (f == LibSignedOffer.VetFailure.FullNeedsMaxCStar) return OfferAcceptFacet.AcceptError.SignedOfferMalformed;
+        if (f == LibSignedOffer.VetFailure.DeadlinePassed) return OfferAcceptFacet.AcceptError.SignedOfferDeadlinePassed;
+        if (f == LibSignedOffer.VetFailure.Expired) return OfferAcceptFacet.AcceptError.OfferExpired;
+        if (f == LibSignedOffer.VetFailure.NonceInvalidated) return OfferAcceptFacet.AcceptError.SignedOfferNonceUsed;
+        if (f == LibSignedOffer.VetFailure.Consumed) return OfferAcceptFacet.AcceptError.SignedOfferConsumed;
+        (bool ok, ) = LibSignedOffer.verify(o, sig);
+        if (!ok) return OfferAcceptFacet.AcceptError.SignedOfferBadSignature;
+        // `OfferCreateFacet._materializeSignedOffer`'s shape: both legs
+        // ERC-20, no refinance target.
+        if (
+            params.assetType != LibVaipakam.AssetType.ERC20
+                || params.collateralAssetType != LibVaipakam.AssetType.ERC20
+                || params.refinanceTargetLoanId != 0
+        ) return OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape;
+        if (p.makerFreeHolding < p.stakeRequired) return OfferAcceptFacet.AcceptError.SignedOfferMakerShort;
+        (bool below, , ) = LibOfferAdmission.valueBelowFloor(params.lendingAsset, params.assetType, params.amount);
+        if (below) return OfferAcceptFacet.AcceptError.SignedOfferBelowMinimumValue;
+        return OfferAcceptFacet.AcceptError.None;
+    }
+
+    /// @dev The term fields the fill would write on the offer it creates for
+    ///      `params` (`OfferCreateFacet._writeOfferFields` copies each one
+    ///      verbatim), with what a fresh signed materialization carries: not
+    ///      accepted, nothing filled, no terms age (#3443) and the signer's
+    ///      consent, which the signature is. Derived and bookkeeping fields the
+    ///      accept checks do not read stay zero.
+    function _asMaterialized(LibVaipakam.CreateOfferParams memory params, address signer)
+        private
+        pure
+        returns (LibVaipakam.Offer memory offer)
+    {
+        offer.creator = signer;
+        offer.offerType = params.offerType;
+        offer.lendingAsset = params.lendingAsset;
+        offer.amount = params.amount;
+        offer.amountMax = params.amountMax;
+        offer.interestRateBps = params.interestRateBps;
+        offer.interestRateBpsMax = params.interestRateBpsMax;
+        offer.collateralAsset = params.collateralAsset;
+        offer.collateralAmount = params.collateralAmount;
+        offer.collateralAmountMax = params.collateralAmountMax;
+        offer.durationDays = params.durationDays;
+        offer.assetType = params.assetType;
+        offer.collateralAssetType = params.collateralAssetType;
+        offer.expiresAt = params.expiresAt;
+        offer.periodicInterestCadence = params.periodicInterestCadence;
+        offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
+        offer.creatorRiskAndTermsConsent = true;
+    }
+
+    /// @dev The KYC transaction value of an offer that is not stored yet:
+    ///      the liquid value of the principal plus the liquid value of the
+    ///      collateral, the rule `OfferAcceptFacet._calculateTransactionValueNumeraire`
+    ///      applies, read through the same `NumeraireValueFacet` view. A
+    ///      signed order is never a lender-sale vehicle, so the collateral is
+    ///      the offer's own and the vehicle substitution there does not arise.
+    function _unstoredTransactionValue(LibVaipakam.Offer memory offer, uint256 principal)
+        private
+        view
+        returns (uint256)
+    {
+        return NumeraireValueFacet(address(this)).getLiquidNumeraireValue(offer.lendingAsset, principal)
+            + NumeraireValueFacet(address(this)).getLiquidNumeraireValue(offer.collateralAsset, offer.collateralAmount);
     }
 
     // ─── #3009 — periodic-interest cadence admission ─────────────────────
