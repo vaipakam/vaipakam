@@ -2411,7 +2411,7 @@ directions. Turning it on is gated by the Terms, turning it off is
 not, and neither broadcasts a tier to the mirrors. The borrower
 discount applies only when the lending asset is liquid at acceptance
 (an illiquid loan pays the full LIF), and every discount is capped
-at 50% of the fee.
+at 50% of the fee. Since #3562 a lender's hold-tier discount on a loan is never more than the one recorded for the holder when they took the lender position (`lenderEntryDiscount`, written whenever the lender token gets a holder; a plain transfer keeps the lower of the recorded figure and the receiver's).
 
 <a id="home-rewards"></a>
 
@@ -2622,6 +2622,8 @@ The page reads `getLoanDetails(loanId)` and the holder of the lender and borrowe
 For a priced loan it also reads `getInternalMatchConfigBundle`. While internal matching is on, a loan whose loan-to-value sits from its threshold up to the threshold plus `externalLiquidationPriorityWindowBps` is held for an internal match and every outside liquidation route refuses (`InternalMatchOnlyBand`), so the page states that band. A `loanInitiationFeeBpsAtInit` of 0 (a loan opened before the rate was kept) is shown as not recorded, and a `treasuryFeeBpsAtInit` of 0 as the 1% legacy rate settlement applies. The in-kind warning is for an ERC-20 loan only: an NFT rental has no collateral, and its default ends the renter's use, pays the prepaid rent to the lender less the treasury share and sends the buffer to the treasury, which the page states instead.
 
 Rates are the loan's snapshots: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (none on a sale vehicle) and `liquidationLtvBpsAtInit`. A loan with an Illiquid leg (`principalLiquidity` or `collateralLiquidity`) has no price-based reading: the protocol refuses `calculateHealthFactor` and `calculateLTV` for it, and the page says so instead of unknown. `principal` is what is still owed (a partial repayment lowers it), and `interestRateBps` and `collateralAmount` can change too, so the terms are shown as they stand now; an ended loan with no principal on its record says whether an internal match covered it, and otherwise only that none is recorded; an NFT rental shows its rent per day (`principal`, in `prepayAsset`) and whether returning early still charges every remaining day (`useFullTermInterest`). With `getPeriodicInterestEnabled` false, the page says no collateral is sold at a checkpoint. `collateralLiquidity` Illiquid on a live loan adds the in-kind warning: a default transfers the collateral to the lender without a sale. Its first transaction is the full repayment, below.
+
+For the holder of the lender side of a live ERC-20 loan, the page reads `lenderHoldDiscountView(loanId, wallet)`: the recorded entry (holder, tier, discount, time), the wallet's tier and discount now, and `holdBps`, the lower of the two when the entry names the wallet and 0 otherwise. A Diamond without the view reverts `FunctionDoesNotExist`, which the page states as not reported yet, never as zero. At the same block it reads `getVPFIDiscountConsent` (the hold slice counts only with it on), `getVPFIDiscountConfig` (how the discount is delivered) and `getFeeEntitlement(loanId).lenderMode` (Full adds 10 points within the 50% ceiling).
 
 <a id="repay"></a>
 

@@ -39,8 +39,8 @@ export function modeFrom(weiPerVpfi: bigint, ethPriceAsset: string): DeliveryMod
   return weiPerVpfi !== 0n && ethPriceAsset.toLowerCase() !== ZERO ? 'vpfi' : 'direct';
 }
 
-export async function readDeliveryMode(client: PublicClient, diamond: `0x${string}`): Promise<DeliveryMode> {
-  const [weiPerVpfi, ethPriceAsset] = (await client.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getVPFIDiscountConfig' })) as readonly [
+export async function readDeliveryMode(client: PublicClient, diamond: `0x${string}`, at?: { blockNumber: bigint }): Promise<DeliveryMode> {
+  const [weiPerVpfi, ethPriceAsset] = (await client.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getVPFIDiscountConfig', ...at })) as readonly [
     bigint,
     `0x${string}`,
   ];
