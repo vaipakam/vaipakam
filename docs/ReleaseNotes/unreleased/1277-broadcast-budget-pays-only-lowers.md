@@ -34,7 +34,7 @@ app does not offer the delivery call yet, so for now a raised tier reaches
 another chain only through a direct contract call; a "use my discount on
 other chains" action in the apps is a follow-up.
 
-Advances #1277.
+Closes #1277.
 
 > Caveat: until the apps offer the paid delivery call, a user's first or raised discount does not reach other chains through the app.
 > Caveat: a tier-table change leaves every other-chain discount reading as none until a paid push carries the new version.
