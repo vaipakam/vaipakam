@@ -27,7 +27,7 @@ const ZERO: Address = '0x0000000000000000000000000000000000000000';
 const NOW = 1_000_000n;
 const addr = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const hash = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as Hex;
-const REASON = { Spacing: 0, Budget: 1 } as const;
+const REASON = { RaiseUnpaid: 0, Budget: 1 } as const;
 
 function logOf(eventName: string, args: Record<string, unknown>): { address: Address; data: Hex; topics: Hex[] } {
   const ev = TIER_PUSH_ABI.find((x) => x.type === 'event' && x.name === eventName) as AbiEvent;
@@ -38,7 +38,8 @@ function logOf(eventName: string, args: Record<string, unknown>): { address: Add
 
 interface LaneState {
   owed: boolean;
-  eligibleAt: bigint;
+  /** The protocol budget pays the owed push (a lower, #1277). */
+  budgetPays: boolean;
 }
 
 interface UserPush {
@@ -48,9 +49,9 @@ interface UserPush {
 }
 
 const push = (nonce: bigint, lanes: [number, LaneState][]): UserPush => ({ nonce, tier: 2, lanes: new Map(lanes.map(([d, l]) => [BigInt(d), l])) });
-const owedNow = { owed: true, eligibleAt: 0n };
-const spaced = { owed: true, eligibleAt: NOW + 3600n };
-const settled = { owed: false, eligibleAt: 0n };
+const owedNow = { owed: true, budgetPays: true };
+const raise = { owed: true, budgetPays: false };
+const settled = { owed: false, budgetPays: false };
 
 class FakeDiamond {
   budget = 10_000n;
@@ -80,7 +81,7 @@ class FakeDiamond {
       destChainId: dst,
       delivered: { nonce: 0n, tier: 0, bps: 0, tierExpirySec: 0, tierTableVersion: 0, sentAt: 0 },
       owed: l.owed,
-      budgetEligibleAt: l.owed ? l.eligibleAt : 0n,
+      budgetPays: l.owed && l.budgetPays,
     }));
     return [u.nonce, u.tier, 500, 0, 1, lanes];
   }
@@ -128,8 +129,8 @@ class FakeDiamond {
       if (this.deliveredFirst) for (const l of u.lanes.values()) l.owed = false;
       for (const [dst, l] of u.lanes) {
         if (!l.owed) continue;
-        if (NOW < l.eligibleAt) {
-          this.lastLogs.push(logOf('TierPushDeferred', { user: a[0], destChainId: dst, nonce: u.nonce, reason: REASON.Spacing }));
+        if (!l.budgetPays) {
+          this.lastLogs.push(logOf('TierPushDeferred', { user: a[0], destChainId: dst, nonce: u.nonce, reason: REASON.RaiseUnpaid }));
           continue;
         }
         const fee = (this.sendFee ?? this.fee).get(dst) ?? 0n;
@@ -250,13 +251,13 @@ describe('the tier-push retry', () => {
     expect(d.reads).toEqual([]);
   });
 
-  it('delivers the lane the budget can pay now and reports the spaced one still owed', async () => {
-    d.users.set(U1, push(3n, [[10, { ...owedNow }], [42, { ...spaced }]]));
+  it('delivers the lane the budget pays and reports the owed raise still owed', async () => {
+    d.users.set(U1, push(3n, [[10, { ...owedNow }], [42, { ...raise }]]));
     ledger.add(U1, 10, 3n);
     ledger.add(U1, 42, 3n);
     const { report } = await run();
     expect(fns()).toEqual([`deliverTierPush(${U1})`]);
-    expect(report.delivered).toEqual([`${U1}: lanes 10; still owed 42 (spacing)`]);
+    expect(report.delivered).toEqual([`${U1}: lanes 10; still owed 42 (raise-unpaid)`]);
     expect(d.budget).toBe(10_000n - 300n);
     expect(describeTierPush(report).join(' ')).toContain('tier-push-delivered=');
   });
@@ -273,13 +274,13 @@ describe('the tier-push retry', () => {
     expect(String(sender.unread.get('tier-push'))).toMatch(/deadline|cutoff/);
   });
 
-  it('sends nothing for a user whose every owed lane is still spaced', async () => {
-    d.users.set(U1, push(3n, [[42, { ...spaced }]]));
+  it('sends nothing for a user whose every owed lane is a raise', async () => {
+    d.users.set(U1, push(3n, [[42, { ...raise }]]));
     ledger.add(U1, 42, 3n);
     const { report } = await run();
     expect(d.sent).toEqual([]);
     expect(report.owed).toEqual([U1]);
-    expect(report.waiting[0]).toMatch(/spaced until/);
+    expect(report.waiting[0]).toMatch(/is a raise/);
   });
 
   it('sends nothing when the budget cannot cover the fee, and spends the budget once across users', async () => {
@@ -433,7 +434,7 @@ describe('the tier-push retry', () => {
 
 describe('deferralDone', () => {
   const k = { user: addr(1), dst: 10n, nonce: 3n };
-  const st = (nonce: bigint, lanes: { dst: bigint; owed: boolean }[]) => ({ nonce, tier: 1, bps: 1, expiry: 0, version: 1, lanes: lanes.map((l) => ({ ...l, eligibleAt: 0n })) });
+  const st = (nonce: bigint, lanes: { dst: bigint; owed: boolean; budgetPays?: boolean }[]) => ({ nonce, tier: 1, bps: 1, expiry: 0, version: 1, lanes: lanes.map((l) => ({ budgetPays: true, ...l })) });
 
   it('finishes nothing on an empty lane list unless the push was superseded', () => {
     expect(deferralDone(k, st(3n, []))).toBe(false);
@@ -444,6 +445,13 @@ describe('deferralDone', () => {
     const none = { ...k, dst: 0n };
     expect(deferralDone(none, st(3n, [{ dst: 10n, owed: true }]))).toBe(false);
     expect(deferralDone(none, st(3n, [{ dst: 10n, owed: false }]))).toBe(true);
+  });
+
+  it('finishes a row whose lane is owed only a raise, which the keeper never delivers (#1277)', () => {
+    expect(deferralDone(k, st(3n, [{ dst: 10n, owed: true, budgetPays: false }]))).toBe(true);
+    expect(deferralDone(k, st(3n, [{ dst: 10n, owed: true, budgetPays: true }]))).toBe(false);
+    const none = { ...k, dst: 0n };
+    expect(deferralDone(none, st(3n, [{ dst: 10n, owed: true, budgetPays: false }]))).toBe(true);
   });
 
   it('finishes nothing it could not read', () => {

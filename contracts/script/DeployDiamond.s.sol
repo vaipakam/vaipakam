@@ -3317,7 +3317,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](10);
+        s = new bytes4[](8);
         s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -3325,9 +3325,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
         s[5] = ProtocolBroadcastFacet.deliverTierPush.selector;
         s[6] = ProtocolBroadcastFacet.getTierPushStatus.selector;
-        s[7] = ProtocolBroadcastFacet.getTierPushSpacingSec.selector;
-        s[8] = ProtocolBroadcastFacet.setTierPushSpacingSec.selector;
-        s[9] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
+        // the spacing window (the budget pays only lowers, never a raise).
+        s[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

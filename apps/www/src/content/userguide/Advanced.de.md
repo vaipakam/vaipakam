@@ -2005,24 +2005,27 @@ lässt deine eigene Aktion nie fehlschlagen**: Dein Tier auf Base ist
 sofort aktuell, und jeder anderen Chain wird das Update geschuldet, bis
 es ankommt.
 
-Das Protokoll bezahlt diese Zustellungen, mit einer Grenze:
+Wer eine Zustellung bezahlt, hängt davon ab, in welche Richtung sich
+dein Tier bewegt hat:
 
-- **Ein niedrigeres Tier** wird sofort geschickt, solange das Budget
-  es bezahlen kann. Bis es ankommt, wendet die Chain weiter dein
-  vorheriges, höheres Tier an.
-- **Ein höheres Tier** oder eine Änderung der Tier-Tabelle wird
-  höchstens einmal pro Tag und Chain bezahlt (eine
-  Governance-Einstellung zwischen 1 Stunde und 7 Tagen). Bis dahin
-  behält die Chain dein vorheriges Tier.
-- Ein Update, das durch diese Wartezeit zurückgehalten wird oder das
-  das Budget nicht bezahlen konnte, **wird nach Ablauf der Wartezeit nicht
-  von selbst erneut gesendet**. Es geht mit der nächsten Aktualisierung
-  Ihres Tier-Eintrags auf Base hinaus, oder wenn jemand den Zustellaufruf
-  für Sie ausführt.
-- Diesen Aufruf kann jeder ausführen. Ist die Wartezeit vorbei und kann
-  das Budget zahlen, zahlt das Protokoll; vorher zahlt der Aufrufer die
-  Cross-Chain-Gebühr, um früher zuzustellen. Die Contracts bieten diesen
-  Aufruf an; die App bietet ihn noch nicht an.
+- **Ein niedrigeres Tier** wird sofort geschickt und vom Protokoll
+  bezahlt, solange sein Budget es bezahlen kann. Bis es ankommt,
+  wendet die Chain weiter dein vorheriges, höheres Tier an.
+- **Ein höheres Tier**, auch dein erster Rabatt auf einer Chain, wird
+  nie vom Protokoll bezahlt. Es wird geschickt, wenn jemand mit dem
+  Zustellaufruf die Cross-Chain-Gebühr dafür bezahlt. Bis dahin behält
+  die Chain dein vorheriges Tier. Eine Änderung der Tier-Tabelle zählt
+  als höheres Tier.
+- Ein Update, das das Budget nicht bezahlen konnte, **wird nicht von
+  selbst erneut gesendet**. Es geht mit der nächsten Aktualisierung
+  Ihres Tier-Eintrags auf Base hinaus, oder wenn jemand den
+  Zustellaufruf für Sie ausführt. Ein höheres Tier wartet auf den
+  Zustellaufruf.
+- Diesen Aufruf kann jeder ausführen. Für ein niedrigeres Tier zahlt das
+  Protokoll; für ein höheres zahlt der Aufrufer die Cross-Chain-Gebühr.
+  Die Contracts bieten diesen Aufruf an; die App bietet ihn noch nicht
+  an, ein höheres Tier erreicht eine andere Chain also vorerst nur über
+  einen direkten Contract-Aufruf.
 
 Eine Kopie zählt nicht mehr, und die Chain gibt dann keinen Rabatt,
 wenn:
@@ -2067,8 +2070,6 @@ steht hier für alle, die ein eigenes Deployment betreiben.
   Grund, und `getTierPushStatus(user)` zeigt den Stand jeder Chain für
   einen Nutzer. Ein knappes Budget bedeutet, dass andere Chains länger
   alte Tiers anwenden; beobachte die Aufschübe und lade nach.
-- Das Abstandsfenster für bezahlte Erhöhungen:
-  `setTierPushSpacingSec` (Standard 1 Tag, 1 Stunde bis 7 Tage).
 
 **Auf jeder anderen Chain:**
 
@@ -2087,9 +2088,7 @@ steht hier für alle, die ein eigenes Deployment betreiben.
   erhöhen die Version der Tabelle. Eine andere Chain erfährt die neue
   Version durch das erste Tier-Update, das sie trägt, egal von welchem
   Nutzer. Ab dann gilt jede mit der alten Tabelle erstellte Kopie als
-  kein Rabatt, bis das eigene Update dieses Nutzers ankommt, und diese
-  Updates sind Erhöhungen, die höchstens einmal pro Abstandsfenster
-  bezahlt werden. Lade das Budget auf, bevor du die Tabelle änderst.
+  kein Rabatt, bis das eigene Update dieses Nutzers ankommt, und jedes dieser Updates ist ein höheres Tier, das nur ein zahlender Aufrufer zustellt.
 - `setTwaMinStakedDays` ändert die Mindesthaltedauer, ohne die Version
   zu erhöhen. Die Änderung wirkt beim nächsten Lesen.
 

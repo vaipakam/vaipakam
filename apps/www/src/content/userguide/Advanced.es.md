@@ -1998,22 +1998,25 @@ nunca hace fallar tu propia acción**: tu tier en Base queda al día de
 inmediato, y a cada una de las demás cadenas se le debe la
 actualización hasta que llega.
 
-El protocolo paga estas entregas, con un límite:
+Quién paga una entrega depende de hacia dónde se movió tu tier:
 
-- **Un tier más bajo** se envía de inmediato, siempre que el
-  presupuesto pueda pagarlo. Hasta que llega, esa cadena sigue
-  aplicando tu tier anterior, más alto.
-- **Un tier más alto**, o un cambio de la tabla de tiers, se paga como
-  mucho una vez al día por cadena (un parámetro de gobernanza entre 1
-  hora y 7 días). Hasta entonces esa cadena conserva tu tier anterior.
-- Una actualización retenida por esa espera, o que el presupuesto no
-  pudo pagar, **no se reenvía sola cuando termina la espera**. Sale con
-  la siguiente actualización de su registro de nivel en Base, o cuando
-  alguien hace la llamada de entrega por usted.
-- Cualquiera puede hacer esa llamada. Una vez pasada la espera y si el
-  presupuesto puede pagarla, la paga el protocolo; antes de eso, quien
-  llama paga la comisión cross-chain para entregarla antes. Los contratos
-  ofrecen esta llamada; la aplicación todavía no la ofrece.
+- **Un tier más bajo** se envía de inmediato y lo paga el protocolo,
+  siempre que su presupuesto pueda pagarlo. Hasta que llega, esa cadena
+  sigue aplicando tu tier anterior, más alto.
+- **Un tier más alto**, incluido tu primer descuento en una cadena,
+  nunca lo paga el protocolo. Se envía cuando alguien paga su comisión
+  cross-chain con la llamada de entrega. Hasta entonces esa cadena
+  conserva tu tier anterior. Un cambio de la tabla de tiers cuenta como
+  un tier más alto.
+- Una actualización que el presupuesto no pudo pagar **no se reenvía
+  sola**. Sale con la siguiente actualización de su registro de nivel en
+  Base, o cuando alguien hace la llamada de entrega por usted. Un tier
+  más alto espera a la llamada de entrega.
+- Cualquiera puede hacer esa llamada. El protocolo paga un tier más
+  bajo; para un tier más alto, quien llama paga la comisión cross-chain.
+  Los contratos ofrecen esta llamada; la aplicación todavía no la
+  ofrece, así que por ahora un tier más alto solo llega a otra cadena
+  mediante una llamada directa al contrato.
 
 Una copia deja de contar, y esa cadena no da descuento, cuando:
 
@@ -2058,8 +2061,6 @@ detalla aquí para quien opere su propio despliegue.
   usuario. Un presupuesto escaso hace que las demás cadenas apliquen
   tiers antiguos durante más tiempo: vigila los aplazamientos y
   recarga.
-- La ventana de espaciado de las subidas pagadas:
-  `setTierPushSpacingSec` (1 día por defecto, de 1 hora a 7 días).
 
 **En cada una de las demás cadenas:**
 
@@ -2079,9 +2080,7 @@ detalla aquí para quien opere su propio despliegue.
   por la primera actualización de tier que la lleve, de cualquier
   usuario. Desde entonces, toda copia hecha con la tabla antigua vale
   cero descuento hasta que llegue la actualización propia de ese
-  usuario, y esas actualizaciones son subidas pagadas como mucho una
-  vez por ventana de espaciado. Recarga el presupuesto antes de cambiar
-  la tabla.
+  usuario, y cada una de esas actualizaciones es un tier más alto, que solo entrega quien paga la llamada.
 - `setTwaMinStakedDays` cambia el periodo mínimo de tenencia sin hacer
   avanzar la versión. Surte efecto en la siguiente lectura.
 
