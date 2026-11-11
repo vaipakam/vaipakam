@@ -65,10 +65,14 @@ interface IVPFIDiscountAccumulatorInternal {
  *   - DELIVER. Each owed lane is quoted and sent on its own; a lane that
  *     cannot be quoted or sent stays owed and emits {TierPushDeferred} with
  *     the reason, without touching any other lane. A caller's `msg.value`
- *     (only through {deliverTierPush}) pays first, unrate-limited. The
- *     protocol budget pays a push that lowers the lane's tier or bps at
- *     once, and any other push at most once per spacing window per lane,
- *     which bounds what tier churn can drain.
+ *     (only through {deliverTierPush}) pays first. The protocol budget
+ *     pays only a push that LOWERS what the lane grants (#1277, see
+ *     {_budgetPays}): a lowered discount is the protocol's own interest, so
+ *     it goes out at once. A raise, a lane's first discount and a longer
+ *     expiry alone are never budget-paid: they go out when a caller pays
+ *     for them. Every budget-paid send lowers what a lane grants, and only
+ *     a caller-paid send can raise it again, so tier churn cannot spend the
+ *     budget faster than the churner spends their own value.
  *   - GAS. Each call to the messenger (the destination list, a lane's
  *     quote, a lane's send) is given exactly a fixed gas budget, well above
  *     what the call needs, and is made only when the facet holds enough for
@@ -89,7 +93,7 @@ interface IVPFIDiscountAccumulatorInternal {
 contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice Why an owed lane was left owed.
     enum TierPushDeferral {
-        Spacing, // the push does not lower the lane and its window has not elapsed
+        RaiseUnpaid, // the push does not lower what the lane grants, and no caller paid for it
         Budget, // the protocol budget cannot cover the lane's fee
         Quote, // the lane's quote reverted
         Send, // the lane's send reverted
@@ -102,10 +106,11 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 destChainId;
         LibVaipakam.TierLanePush delivered;
         bool owed;
-        /// @dev When the protocol budget may next pay this lane's owed push
-        ///      (0 when nothing is owed; the current time or earlier when it
-        ///      may pay now, budget permitting).
-        uint40 budgetEligibleAt;
+        /// @dev Whether the protocol budget pays this lane's owed push (it
+        ///      lowers what the lane grants), budget permitting. False when
+        ///      nothing is owed, and for a raise, which only a paying caller
+        ///      delivers ({deliverTierPush} with value).
+        bool budgetPays;
     }
 
     /// @dev The committed push one delivery pass carries.
@@ -146,8 +151,6 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     event BroadcastBudgetToppedUp(address indexed funder, uint256 amount, uint256 newBalance);
     /// @custom:event-category state-change/broadcast-budget
     event BroadcastBudgetWithdrawn(address indexed to, uint256 amount, uint256 newBalance);
-    /// @custom:event-category state-change/broadcast-budget
-    event TierPushSpacingSet(uint32 previous, uint32 current);
 
     /// @custom:event-category informational/tier-transport
     /// @notice A new push was committed for `user`; every broadcast lane is
@@ -198,8 +201,6 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     error TierPushNotConfigured();
     /// @notice The caller's unspent value could not be returned.
     error TierPushRefundFailed();
-    /// @notice {setTierPushSpacingSec} outside its bounds.
-    error TierPushSpacingOutOfRange(uint32 value, uint32 min, uint32 max);
     /// @notice `withdrawBudget` would underflow the live balance.
     error WithdrawExceedsBudget(uint256 requested, uint256 available);
     /// @notice The treasury / `to` transfer reverted on withdraw.
@@ -253,10 +254,10 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     /**
      * @notice Deliver every lane still owed `user`'s latest committed tier
      *         push. Open to anyone: `msg.value` pays owed lanes first, in
-     *         destination-list order and without the spacing limit; a lane
-     *         it does not cover is paid by the protocol budget under the
-     *         usual rule (a lowered tier at once, anything else once per
-     *         spacing window). The unspent value is returned to the caller.
+     *         destination-list order; a lane it does not cover is paid by
+     *         the protocol budget only when the push lowers what the lane
+     *         grants ({_budgetPays}). A raise therefore goes out only on a
+     *         caller's value. The unspent value is returned to the caller.
      * @dev    Sends the committed push only; it never re-resolves the tier
      *         (the user's own `pokeMyTier` does that). Each lane that stays
      *         owed emits {TierPushDeferred}.
@@ -391,11 +392,11 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             return callerFunds;
         }
 
-        // A spaced lane with no caller value cannot be paid this time:
-        // leave it owed without spending a quote on it.
-        uint256 eligibleAt = _budgetEligibleAt(lane, p);
-        if (callerFunds == 0 && block.timestamp < eligibleAt) {
-            emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Spacing);
+        // A raise with no caller value cannot be paid at all: leave it owed
+        // without spending a quote on it.
+        bool budgetPays = _budgetPays(lane, p);
+        if (callerFunds == 0 && !budgetPays) {
+            emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.RaiseUnpaid);
             return callerFunds;
         }
 
@@ -412,8 +413,8 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
 
         bool callerPays = callerFunds >= fee;
         if (!callerPays) {
-            if (block.timestamp < eligibleAt) {
-                emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Spacing);
+            if (!budgetPays) {
+                emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.RaiseUnpaid);
                 return callerFunds;
             }
             if (s.protocolBroadcastBudget < fee) {
@@ -454,17 +455,32 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             && lane.tierTableVersion == p.version;
     }
 
-    /// @dev When the protocol budget may pay `p` on `lane`: at once for a
-    ///      push that lowers the lane's tier or bps (and for a lane that has
-    ///      never carried a message, `sentAt == 0`), otherwise one spacing
-    ///      window after the lane's last send.
-    function _budgetEligibleAt(LibVaipakam.TierLanePush storage lane, Push memory p)
-        private
-        view
-        returns (uint256)
-    {
-        if (lane.sentAt == 0 || p.tier < lane.tier || p.bps < lane.bps) return 0;
-        return uint256(lane.sentAt) + LibVaipakam.cfgTierPushSpacingSecEffective();
+    /// @dev #1277 — whether the protocol budget pays `p` on `lane`: only
+    ///      when `p` grants the user no more than the lane already does on
+    ///      the mirror, so the send can only take a discount away.
+    ///      - A tier-0 push grants nothing, whatever its expiry or version,
+    ///        so it is always a lower (a lane already at tier 0 was settled
+    ///        without a message before this is asked).
+    ///      - Otherwise the push must carry the lane's table version (a
+    ///        mirror reads a cached tier from another version as no
+    ///        discount, so a push under a new version reinstates one), and
+    ///        lower the tier or the bps while raising neither.
+    ///      The expiry is deliberately not part of the test. A later expiry
+    ///      riding on a lowered tier or bps is paid with it, since only a
+    ///      caller-paid raise can lift either again; an earlier expiry
+    ///      alone is not budget-paid, because the expiry moves with every
+    ///      balance change and paying each shortening would let a run of
+    ///      small unstakes spend many budget sends per paid raise. The
+    ///      mirror's cached tier then lapses at the old expiry, and never
+    ///      later than the mirror's maximum age.
+    ///      Every budget-paid send therefore lowers the lane's tier or bps,
+    ///      and only a caller-paid send can raise either, so the budget-paid
+    ///      sends on a lane are bounded by the tier and bps steps that
+    ///      caller-paid sends put there.
+    function _budgetPays(LibVaipakam.TierLanePush storage lane, Push memory p) private view returns (bool) {
+        if (p.tier == 0 && p.bps == 0) return true;
+        if (p.version != lane.tierTableVersion) return false;
+        return p.tier <= lane.tier && p.bps <= lane.bps && (p.tier < lane.tier || p.bps < lane.bps);
     }
 
     /// @dev Revert unless the next call to the messenger, capped at
@@ -527,7 +543,8 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     /**
      * @notice `user`'s latest committed tier push and every broadcast
      *         lane's delivery state: what it last received, whether it is
-     *         still owed, and when the protocol budget may next pay it.
+     *         still owed, and whether the protocol budget pays it (a lower)
+     *         or only a paying caller can deliver it (a raise).
      *         `lanes` is empty when this chain does not originate pushes or
      *         the messenger's destination list cannot be read.
      */
@@ -564,27 +581,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             lanes[i].destChainId = dsts[i];
             lanes[i].delivered = lane;
             lanes[i].owed = lane.nonce < p.nonce && !_sameEffect(lane, p);
-            if (lanes[i].owed) lanes[i].budgetEligibleAt = uint40(_budgetEligibleAt(lane, p));
+            if (lanes[i].owed) lanes[i].budgetPays = _budgetPays(lane, p);
         }
-    }
-
-    /// @notice The protocol budget's per-lane spacing for a tier push that
-    ///         does not lower the lane's tier.
-    function getTierPushSpacingSec() external view returns (uint32) {
-        return LibVaipakam.cfgTierPushSpacingSecEffective();
-    }
-
-    /// @notice Set the per-lane spacing, within [1 hour, 7 days]. ADMIN_ROLE.
-    function setTierPushSpacingSec(uint32 value) external {
-        LibAccessControl.checkRole(LibAccessControl.ADMIN_ROLE, msg.sender);
-        if (value < LibVaipakam.MIN_TIER_PUSH_SPACING_SEC || value > LibVaipakam.MAX_TIER_PUSH_SPACING_SEC) {
-            revert TierPushSpacingOutOfRange(
-                value, LibVaipakam.MIN_TIER_PUSH_SPACING_SEC, LibVaipakam.MAX_TIER_PUSH_SPACING_SEC
-            );
-        }
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint32 previous = LibVaipakam.cfgTierPushSpacingSecEffective();
-        s.cfgTierPushSpacingSec = value;
-        emit TierPushSpacingSet(previous, value);
     }
 }

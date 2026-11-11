@@ -163,10 +163,16 @@ contract TierRecordSeamTest is SetupTest {
         vm.warp(block.timestamp + 3 days + 1);
         uint256 before = router.pendingCount();
         // Time alone lifted the tier; the poke refreshes with no balance write
-        // and the guard's release pushes the new tier once, on both lanes.
+        // and the guard's release commits the new tier once. It is a raise,
+        // which the budget never pays (#1277), so both lanes stay owed.
         vm.expectCall(address(diamond), abi.encodeCall(ProtocolBroadcastFacet.flushTierPushes, ()), 1);
         vm.prank(user);
         VPFIDiscountFacet(address(diamond)).pokeMyTier();
+        assertEq(router.pendingCount(), before, "a raise waits for a payer");
+        // One paid delivery sends the one committed push on both lanes.
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        ProtocolBroadcastFacet(payable(address(diamond))).deliverTierPush{value: 1 ether}(user);
         assertEq(router.pendingCount() - before, 2, "one push, both lanes");
     }
 

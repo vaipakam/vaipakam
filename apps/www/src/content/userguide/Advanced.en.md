@@ -2180,22 +2180,24 @@ does not hold back the others, and **a delivery that cannot go out
 never makes your own action fail**: your tier on Base is current at
 once, and each other chain is owed the update until it arrives.
 
-The protocol pays for these deliveries, with one limit:
+Who pays for a delivery depends on which way your tier moved:
 
-- **A lower tier** is sent straight away, as long as the budget
-  can pay for it. Until it arrives, that chain keeps applying your
-  previous, higher tier.
-- **A higher tier**, or a change to the tier table, is paid for at
-  most once a day per chain (a governance setting between 1 hour
-  and 7 days). Until then that chain keeps your previous tier.
-- An update held back by that wait, or one the budget could not pay,
-  **is not resent on its own when the wait ends**. It goes out with the
-  next update to your tier record on Base, or when someone makes the
-  delivery call for you.
-- Anyone can make that call. Once the wait has passed and the budget
-  can pay, the protocol pays for it; before then, the caller pays the
-  cross-chain fee to deliver sooner. The contracts offer this call; the
-  app does not offer it yet.
+- **A lower tier** is sent straight away, paid by the protocol, as long
+  as its budget can pay for it. Until it arrives, that chain keeps
+  applying your previous, higher tier.
+- **A higher tier**, including your first discount on a chain, is never
+  paid for by the protocol. It is sent when someone pays its
+  cross-chain fee with the delivery call. Until then that chain keeps
+  your previous tier. A change to the tier table counts as a higher
+  tier.
+- An update the budget could not pay **is not resent on its own**. It
+  goes out with the next update to your tier record on Base, or when
+  someone makes the delivery call for you. A higher tier waits for the
+  delivery call.
+- Anyone can make that call. The protocol pays for a lower tier; for a
+  higher tier the caller pays the cross-chain fee. The contracts offer
+  this call; the app does not offer it yet, so for now a higher tier
+  reaches another chain only through a direct contract call.
 
 A copy stops counting, and that chain gives no discount, when:
 
@@ -2237,8 +2239,6 @@ listed here for anyone running their own deployment.
   reason, and `getTierPushStatus(user)` shows every chain's state for
   a user. A short budget means other chains apply old tiers for
   longer, so watch for deferrals and top up.
-- The spacing window for paid raises:
-  `setTierPushSpacingSec` (default 1 day, 1 hour to 7 days).
 
 **On every other chain:**
 
@@ -2257,9 +2257,8 @@ listed here for anyone running their own deployment.
   the table's version. Another chain learns the new version from
   the first tier update that carries it, from any user. From then
   on, every copy made under the old table reads as no discount
-  until that user's own update arrives, and those updates are
-  raises paid at most once per spacing window. Fund the budget
-  before changing the table.
+  until that user's own update arrives, and each of those updates
+  is a higher tier, which only a paying caller delivers.
 - `setTwaMinStakedDays` changes the minimum holding period without
   moving the version. It takes effect on the next read.
 

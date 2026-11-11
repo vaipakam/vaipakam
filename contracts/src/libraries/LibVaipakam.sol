@@ -7884,14 +7884,13 @@ library LibVaipakam {
         ///      succeeds (or when the lane already holds the same effect, so
         ///      no message is needed). Appended — append-only.
         mapping(address => mapping(uint256 => TierLanePush)) tierLanePush;
-        /// @dev #898 / #1277 — the protocol budget pays a push that does not
-        ///      lower a lane's tier at most once per this many seconds per
-        ///      lane. Zero reads as {DEFAULT_TIER_PUSH_SPACING_SEC}; read
-        ///      through {cfgTierPushSpacingSecEffective}; written only by
-        ///      `ProtocolBroadcastFacet.setTierPushSpacingSec` within
-        ///      [{MIN_TIER_PUSH_SPACING_SEC}, {MAX_TIER_PUSH_SPACING_SEC}].
-        ///      Appended — append-only.
-        uint32 cfgTierPushSpacingSec;
+        /// @dev RETIRED (#1277). Was the per-lane spacing window under which
+        ///      the protocol budget paid a tier push that did not lower the
+        ///      lane. Since #1277 the budget pays only a push that lowers what
+        ///      a lane grants, and never a raise, so no window exists. The
+        ///      slot keeps its place and is no longer read or written. Do not
+        ///      reuse it. Appended — append-only.
+        uint32 retiredTierPushSpacingSec;
         /// @dev #2748 — the SHARE of the rate-model band: the most a model may
         ///      move a quote, as basis points of the reference rate itself
         ///      (5_000 = ± 50% of the market rate). The band's half-width is
@@ -12359,18 +12358,6 @@ library LibVaipakam {
     function cfgMirrorTierMaxAgeSecEffective() internal view returns (uint32) {
         uint32 v = storageSlot().cfgMirrorTierMaxAgeSec;
         return v == 0 ? DEFAULT_MIRROR_TIER_MAX_AGE_SEC : v;
-    }
-
-    /// @dev #898 / #1277 — the protocol budget's per-lane spacing for a tier
-    ///      push that does not lower the lane's tier. A lowered tier and a
-    ///      lane's first push are never spaced (`TierPushDeliveryDesign.md`).
-    uint32 internal constant DEFAULT_TIER_PUSH_SPACING_SEC = 1 days;
-    uint32 internal constant MIN_TIER_PUSH_SPACING_SEC = 1 hours;
-    uint32 internal constant MAX_TIER_PUSH_SPACING_SEC = 7 days;
-
-    function cfgTierPushSpacingSecEffective() internal view returns (uint32) {
-        uint32 v = storageSlot().cfgTierPushSpacingSec;
-        return v == 0 ? DEFAULT_TIER_PUSH_SPACING_SEC : v;
     }
 
     /**

@@ -102,8 +102,8 @@ current, and the user's next push carries it.
 - **More addresses get a record.** Any address whose tracked VPFI changes now
   gets a refresh, including a backstop vault that holds VPFI. That is the
   same rule applied without exceptions. Its pushes are paid by the budget
-  under the usual limits (a first push and a lowered tier at once, anything
-  else once per spacing window).
+  under the usual rule (since #1277, a lowered tier only; a raise waits for
+  a caller who pays).
 - **Close-outs now push.** A time-based default, a fallback-custody move and
   a reward credited to the vault used the broadcast-free variant, so their
   mirrors stayed stale until the user's next pushing action. They now push

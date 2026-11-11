@@ -1775,7 +1775,7 @@
     "L|vaipakam|633|0|bool|priorityRoutingPerkArmed",
     "L|vaipakam|639|0|uint256|feeLedgerTotal",
     "L|vaipakam|640|0|uint256|minIntentFillNumeraire",
-    "L|vaipakam|642|0|uint32|cfgTierPushSpacingSec",
+    "L|vaipakam|642|0|uint32|retiredTierPushSpacingSec",
     "L|vaipakam|642|4|uint16|rateModelRelativeDeviationBps",
     "L|vaipakam|642|6|uint16|rateModelMinDeviationBps",
     "L|vaipakam|645|0|uint256|remitDayFreshReserved",

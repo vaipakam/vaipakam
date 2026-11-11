@@ -1915,20 +1915,24 @@ Base Chainlink CCIP से भेजता है। Base आपका tier reco
 को कभी विफल नहीं करती**: Base पर आपका tier तुरंत अपडेट होता है, और हर
 दूसरी chain पर update पहुँचने तक बकाया रहता है।
 
-इन deliveries का ख़र्च protocol उठाता है, एक सीमा के साथ:
+Delivery का ख़र्च कौन उठाता है, यह इस पर निर्भर है कि आपका tier किस ओर
+बदला:
 
-- **कम हुआ tier** तुरंत भेजा जाता है, जब तक budget उसका ख़र्च उठा सके।
-  पहुँचने तक वह chain आपका पिछला, ऊँचा tier लागू करती रहती है।
-- **बढ़ा हुआ tier**, या tier table में बदलाव, हर chain पर दिन में
-  ज़्यादा से ज़्यादा एक बार भुगतान पाता है (1 घंटे से 7 दिन के बीच की
-  governance setting)। तब तक वह chain आपका पिछला tier रखती है।
-- इस प्रतीक्षा के कारण रुका update, या जिसे budget चुका नहीं सका,
-  **प्रतीक्षा ख़त्म होने पर अपने-आप दोबारा नहीं भेजा जाता**। वह Base पर
-  आपके tier record के अगले update के साथ जाता है, या तब जब कोई आपके लिए
-  delivery call करता है।
-- यह call कोई भी कर सकता है। प्रतीक्षा बीत जाने और budget के चुका सकने पर
-  protocol भुगतान करता है; उससे पहले जल्दी पहुँचाने के लिए call करने वाला
-  cross-chain fee चुकाता है। Contracts यह call देते हैं; app अभी नहीं देता।
+- **कम हुआ tier** तुरंत भेजा जाता है और उसका ख़र्च protocol उठाता है, जब
+  तक उसका budget चुका सके। पहुँचने तक वह chain आपका पिछला, ऊँचा tier
+  लागू करती रहती है।
+- **बढ़ा हुआ tier**, किसी chain पर आपकी पहली discount समेत, कभी protocol
+  के ख़र्च पर नहीं जाता। वह तब भेजा जाता है जब कोई delivery call से उसकी
+  cross-chain fee चुकाता है। तब तक वह chain आपका पिछला tier रखती है। Tier
+  table में बदलाव भी बढ़ा हुआ tier माना जाता है।
+- जिस update को budget चुका नहीं सका, वह **अपने-आप दोबारा नहीं भेजा
+  जाता**। वह Base पर आपके tier record के अगले update के साथ जाता है, या तब
+  जब कोई आपके लिए delivery call करता है। बढ़ा हुआ tier delivery call का
+  इंतज़ार करता है।
+- यह call कोई भी कर सकता है। कम हुए tier का भुगतान protocol करता है; बढ़े
+  हुए tier के लिए call करने वाला cross-chain fee चुकाता है। Contracts यह
+  call देते हैं; app अभी नहीं देता, इसलिए फ़िलहाल बढ़ा हुआ tier किसी दूसरी
+  chain तक सिर्फ़ सीधे contract call से पहुँचता है।
 
 कोई copy गिनी जाना बंद हो जाती है, और उस chain पर कोई discount नहीं
 मिलता, जब:
@@ -1970,8 +1974,6 @@ Discount के cross-chain हिस्से को यह configuration च�
   `getTierPushStatus(user)` किसी user के लिए हर chain की स्थिति दिखाता
   है। कम budget का मतलब है कि दूसरी chains पुराने tiers ज़्यादा देर तक
   लागू करेंगी, इसलिए deferrals पर नज़र रखें और top up करें।
-- Paid बढ़ोतरी की spacing window: `setTierPushSpacingSec` (default 1 दिन,
-  1 घंटे से 7 दिन)।
 
 **हर दूसरी chain पर:**
 
@@ -1990,9 +1992,7 @@ Discount के cross-chain हिस्से को यह configuration च�
   version आगे बढ़ाते हैं। दूसरी chain को नया version उस पहले tier update
   से पता चलता है जिसमें वह हो, चाहे वह किसी भी user का हो। तब से पुरानी
   table से बनी हर copy उस user का अपना update पहुँचने तक बिना discount
-  के मानी जाती है, और ये updates बढ़ोतरी हैं जिनका भुगतान हर spacing
-  window में ज़्यादा से ज़्यादा एक बार होता है। Table बदलने से पहले
-  budget भर दें।
+  के मानी जाती है, और इनमें से हर update बढ़ा हुआ tier है, जिसे सिर्फ़ भुगतान करने वाला caller पहुँचाता है।
 - `setTwaMinStakedDays` version आगे बढ़ाए बिना न्यूनतम holding अवधि बदलता
   है। यह अगली read से लागू होता है।
 

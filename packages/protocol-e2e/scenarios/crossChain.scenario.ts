@@ -10,8 +10,10 @@
  *     supply always equals what Base's pool holds locked;
  *   - the tier push (PF-257): a holder who deposits VPFI into their vault and
  *     keeps it there past the minimum staked duration pokes their tier on
- *     Base, Base pays the broadcast from its protocol budget, and the mirror's
- *     cache then holds the tier and discount Base resolved;
+ *     Base. The protocol budget never pays a raise (#1277), so the poke
+ *     leaves the push owed even with a funded budget; the holder then pays
+ *     its delivery, and the mirror's cache holds the tier and discount Base
+ *     resolved;
  *   - the guardian pause (PF-333): with the guardian a different address from
  *     the owner, as on a live deployment, the guardian pauses the mirror's
  *     reward-remittance receiver; a remittance Base sends then cannot land
@@ -22,7 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseEther, type Abi, type Address, type Hex } from 'viem';
 import { openMeshScenario, type MeshChain, type MeshScenario } from '@vaipakam/anvil-harness/meshScenario';
 import { TOKEN_ABI, type Party } from '@vaipakam/anvil-harness/scenarioChain';
-import { BASE_ID, MIRROR_ID } from '@vaipakam/anvil-harness/mesh';
+import { BASE_ID, LANE_NATIVE_FEE, MIRROR_ID } from '@vaipakam/anvil-harness/mesh';
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { protocolMesh } from '../src/fixture';
 import { broadcastDays, closeDays, finalizeDays, REMIT_LANE_CAP } from '../src/rewardMesh';
@@ -144,7 +146,8 @@ describe('cross-chain flows on a canonical chain and a mirror', () => {
     const stake = parseEther('1500'); // tier 2 (>= 1,000)
     const who: Party = 'lender';
     const user = m.base.address(who);
-    // The broadcast is protocol-funded and fails closed on an empty budget.
+    // A funded budget, so the deferral below is the raise rule (#1277), not
+    // an empty budget.
     await m.base.diamondWrite('admin', 'topUpBroadcastBudget', [], parseEther('1'));
     await fundVpfi(who, stake);
     await m.base.diamondWrite(who, 'setVPFIDiscountConsent', [true]);
@@ -161,9 +164,20 @@ describe('cross-chain flows on a canonical chain and a mirror', () => {
     await m.warp((minDays + 1) * DAY + HOUR);
     const [effTier, effBps] = await m.base.read<readonly [number, number]>('getEffectiveDiscount', [user]);
     expect(Number(effTier)).toBe(2);
+    const mine = (e: { args: Record<string, unknown> }) => String(e.args.user).toLowerCase() === user.toLowerCase();
     const from = await m.base.blockNumber();
     await m.base.diamondWrite(who, 'pokeMyTier');
-    const sent = (await m.base.diamondEvents('ProtocolTierBroadcastSent', from + 1n)).filter((e) => String(e.args.user).toLowerCase() === user.toLowerCase());
+    // The poke commits the raise but the budget does not pay it: the lane
+    // stays owed (RaiseUnpaid is reason 0) and nothing is sent.
+    expect((await m.base.diamondEvents('ProtocolTierBroadcastSent', from + 1n)).filter(mine)).toEqual([]);
+    const deferred = (await m.base.diamondEvents('TierPushDeferred', from + 1n)).filter(mine);
+    expect(deferred.map((e) => Number(e.args.reason))).toEqual([0]);
+    expect(await m.relay.deliver(BASE_ID, MIRROR_ID)).toEqual([]);
+
+    // The holder pays the delivery; the unspent value is returned.
+    const paidFrom = await m.base.blockNumber();
+    await m.base.diamondWrite(who, 'deliverTierPush', [user], LANE_NATIVE_FEE * 10n);
+    const sent = (await m.base.diamondEvents('ProtocolTierBroadcastSent', paidFrom + 1n)).filter(mine);
     expect(sent.length).toBe(1);
     expect(Number(sent[0].args.effectiveTier)).toBe(Number(effTier));
     expect(Number(sent[0].args.effectiveBps)).toBe(Number(effBps));

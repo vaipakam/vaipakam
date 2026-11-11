@@ -2011,23 +2011,26 @@ jamais échouer ta propre action** : ton tier sur Base est à jour tout
 de suite, et la mise à jour reste due à chaque autre chaîne jusqu'à ce
 qu'elle arrive.
 
-Le protocole paie ces livraisons, avec une limite :
+Qui paie une livraison dépend du sens dans lequel ton tier a bougé :
 
-- **Un tier plus bas** est envoyé immédiatement, tant que le budget
-  peut le payer. En attendant qu'il arrive, la chaîne continue
-  d'appliquer ton tier précédent, plus élevé.
-- **Un tier plus haut**, ou un changement de la table des tiers, est
-  payé au plus une fois par jour et par chaîne (un paramètre de
-  gouvernance entre 1 heure et 7 jours). D'ici là, la chaîne garde ton
-  tier précédent.
-- Une mise à jour retenue par cette attente, ou que le budget n'a pas
-  pu payer, **n'est pas renvoyée d'elle-même à la fin de l'attente**. Elle
-  part avec la prochaine mise à jour de votre enregistrement de palier sur
-  Base, ou lorsque quelqu'un effectue l'appel de livraison pour vous.
-- N'importe qui peut effectuer cet appel. Une fois l'attente passée, et
-  si le budget peut payer, le protocole paie ; avant cela, l'appelant paie
-  les frais cross-chain pour livrer plus tôt. Les contrats proposent cet
-  appel ; l'application ne le propose pas encore.
+- **Un tier plus bas** est envoyé immédiatement et payé par le
+  protocole, tant que son budget peut le payer. En attendant qu'il
+  arrive, la chaîne continue d'appliquer ton tier précédent, plus élevé.
+- **Un tier plus haut**, y compris ta première remise sur une chaîne,
+  n'est jamais payé par le protocole. Il est envoyé quand quelqu'un en
+  paie les frais cross-chain avec l'appel de livraison. D'ici là, la
+  chaîne garde ton tier précédent. Un changement de la table des tiers
+  compte comme un tier plus haut.
+- Une mise à jour que le budget n'a pas pu payer **n'est pas renvoyée
+  d'elle-même**. Elle part avec la prochaine mise à jour de votre
+  enregistrement de palier sur Base, ou lorsque quelqu'un effectue
+  l'appel de livraison pour vous. Un tier plus haut attend l'appel de
+  livraison.
+- N'importe qui peut effectuer cet appel. Le protocole paie un tier plus
+  bas ; pour un tier plus haut, l'appelant paie les frais cross-chain.
+  Les contrats proposent cet appel ; l'application ne le propose pas
+  encore, donc pour l'instant un tier plus haut n'atteint une autre
+  chaîne que par un appel direct au contrat.
 
 Une copie cesse de compter, et la chaîne ne donne alors aucune remise,
 quand :
@@ -2075,8 +2078,6 @@ déploiement.
   utilisateur. Un budget insuffisant signifie que les autres chaînes
   appliquent d'anciens tiers plus longtemps : surveille les reports et
   réalimente.
-- La fenêtre d'espacement des hausses payées : `setTierPushSpacingSec`
-  (1 jour par défaut, de 1 heure à 7 jours).
 
 **Sur chaque autre chaîne :**
 
@@ -2097,9 +2098,7 @@ déploiement.
   version par la première mise à jour de tier qui la porte, quel que
   soit l'utilisateur. À partir de là, toute copie faite avec l'ancienne
   table vaut zéro remise jusqu'à ce que la mise à jour propre à cet
-  utilisateur arrive, et ces mises à jour sont des hausses payées au
-  plus une fois par fenêtre d'espacement. Alimente le budget avant de
-  modifier la table.
+  utilisateur arrive, et chacune de ces mises à jour est un tier plus haut, que seul un appelant qui paie livre.
 - `setTwaMinStakedDays` modifie la période de détention minimale sans
   faire avancer la version. Le changement prend effet à la lecture
   suivante.
