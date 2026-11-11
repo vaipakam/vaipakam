@@ -30,7 +30,7 @@ import type { LegOutcome } from '../tx/outcome';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
-import { erc20Pair, needFromAcceptCode, needFromRefusal, type PairSource, type RiskNeed } from '../risk/riskAccess';
+import { erc20Pair, needFromAcceptCode, needFromRefusal, riskRefusalActor, type PairSource, type RiskNeed } from '../risk/riskAccess';
 import { signedFillCall, signedFillFrom } from '../desk/signedFill';
 import { sourceKey, type AcceptSource } from './acceptSource';
 import { RiskGate, RiskStepFlow } from '../risk/RiskAccessStep';
@@ -227,8 +227,15 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
       if (dry.kind === 'reverted') {
         const refusal = refusalFromError(dry.error);
         // With no risk-access preview for a signed order, its refusal is the
-        // first word on it: the step it names is offered on the review.
-        if (!r.riskPreviewed) setDryRisk(needFromRefusal(refusal.code));
+        // first word on it. The error names whose access refused: a step is
+        // offered only when it is this wallet's; the maker's own block is
+        // stated, since no step of the taker's clears it.
+        const need = r.riskPreviewed ? null : needFromRefusal(refusal.code);
+        if (need !== null) {
+          const actor = riskRefusalActor(dry.error);
+          if (actor !== null && actor.toLowerCase() === account.toLowerCase()) setDryRisk(need);
+          else return stop(`${format('accept.dryRunRefused', { reason: refusal.reason })} ${text(actor !== null ? 'signedFill.makerRiskBlocked' : 'signedFill.actorUnread')}`);
+        }
         return stop(format('accept.dryRunRefused', { reason: refusal.reason }));
       }
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));

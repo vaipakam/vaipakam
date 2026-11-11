@@ -189,12 +189,11 @@ test('a fill the risk level does not cover: the dry run refuses before anything 
   const head = await sc.pub.getBlock({ blockTag: 'latest' });
   const until = String(Math.max(Number(head.timestamp), Math.floor(Date.now() / 1000)) + 7 * 86_400);
 
-  // The maker covers the pair's level itself, so the only block is the taker's.
+  // Neither the maker's level nor the taker's covers the pair at first.
   const free = parseEther('0.05');
   await sc.write('lender', WETH, TOKEN_ABI, 'deposit', [], free);
   await sc.write('lender', WETH, TOKEN_ABI, 'approve', [sc.diamond, free]);
   await sc.diamondWrite('lender', 'depositToVault', [0, WETH, 0n, free]);
-  await sc.diamondWrite('lender', 'setVaultRiskTier', [1]);
   await sc.diamondWrite('admin', 'setRiskAccessGateEnabled', [true]);
   const order = await signedLenderOrder('lender', tliq, sc.diamond, until, { nonce: '3101' });
   const hash = orderHashOf(order);
@@ -210,6 +209,21 @@ test('a fill the risk level does not cover: the dry run refuses before anything 
   await expect(row).toHaveAttribute('data-standing', 'open', { timeout: 60_000 });
   await row.getByTestId('desk-signed-book-fill').click();
   const review = section.locator(`.accept-offer[data-order-hash="${hash}"]`);
+  await expect(review.locator('.receipt')).toContainText('so the dry run after you sign makes it', { timeout: 60_000 });
+  await review.getByTestId('accept-consent').check();
+
+  // The maker's own level refuses first: that is stated, and no step of the
+  // taker's is offered, since none could clear it.
+  await review.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const makerBlocked = review.locator('[data-phase="failed"]');
+  await expect(makerBlocked).toContainText('The maker’s own risk access no longer covers this pair', { timeout: 90_000 });
+  await expect(makerBlocked.getByTestId('risk-gate')).toHaveCount(0);
+  await makerBlocked.getByRole('button', { name: 'Close' }).click();
+  await expect(review).toHaveCount(0);
+
+  // The maker raises its own level; the taker's is now the only block.
+  await sc.diamondWrite('lender', 'setVaultRiskTier', [1]);
+  await row.getByTestId('desk-signed-book-fill').click();
   await expect(review.locator('.receipt')).toContainText('so the dry run after you sign makes it', { timeout: 60_000 });
   await review.getByTestId('accept-consent').check();
 

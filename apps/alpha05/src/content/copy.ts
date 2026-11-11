@@ -2625,6 +2625,10 @@ export const copy = {
     riskAtDryRun: A(
       'The protocol cannot yet show its risk-access check for a signed order before the fill, so the dry run after you sign makes it. If that check refuses, nothing is sent, any approval this flow made is put back, and the step that clears it is offered here.',
     ),
+    elsewhere: B('A fill review is open on another market. Finish or close it before reviewing another.'),
+    elsewhereOpen: B('Open that market'),
+    makerRiskBlocked: A('The maker’s own risk access no longer covers this pair, so the protocol will not fill this order. No step of yours can clear it.'),
+    actorUnread: A('Whose risk access refused could not be read, so no step is offered.'),
     legNoLoan: B('Loan opened from this signed order'),
     noLoan: B('This transaction recorded no fill of this order.'),
   },

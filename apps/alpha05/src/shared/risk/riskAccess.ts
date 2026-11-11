@@ -14,8 +14,9 @@
  * the wallet's connection, and the one rule that turns it into a plan: the
  * transaction to offer, or the time to wait for.
  */
-import type { Abi, PublicClient } from 'viem';
-import { ConfigFacetABI, RiskAccessFacetABI, RiskPreviewFacetABI } from '@vaipakam/contracts/abis';
+import { decodeErrorResult, type Abi, type AbiItem, type PublicClient } from 'viem';
+import { ConfigFacetABI, OfferCreateFacetABI, RiskAccessFacetABI, RiskPreviewFacetABI } from '@vaipakam/contracts/abis';
+import { extractRevertData } from '@vaipakam/lib/decodeContractError';
 
 type Hex = `0x${string}`;
 
@@ -82,6 +83,30 @@ export function needFromRefusal(code: string): RiskNeed | null {
   if (code === 'IlliquidPairNotConsented') return 'pair-consent';
   if (code === 'MidTierPairNotAcknowledged') return 'mid-tier-ack';
   return null;
+}
+
+/** The three refusals the risk gate raises, each naming the wallet it
+ *  refused first; taken from the compiled ABI, never hand-typed. */
+const RISK_REFUSAL_NAMES = new Set(['RiskTierTooLow', 'IlliquidPairNotConsented', 'MidTierPairNotAcknowledged']);
+const RISK_REFUSALS = (OfferCreateFacetABI as readonly AbiItem[]).filter((e) => e.type === 'error' && RISK_REFUSAL_NAMES.has(e.name)) as Abi;
+
+/**
+ * The wallet a risk refusal names, decoded from the revert's own bytes: one
+ * fill checks both the maker's and the taker's risk access, and only the
+ * wallet the refusal names can clear it. Null when the error is not one of
+ * the three risk refusals or its bytes cannot be read, so a caller never
+ * guesses whose step it is.
+ */
+export function riskRefusalActor(err: unknown): Hex | null {
+  const data = extractRevertData(err);
+  if (data === undefined || !/^0x[0-9a-fA-F]{8,}$/.test(data)) return null;
+  try {
+    const decoded = decodeErrorResult({ abi: RISK_REFUSALS, data: data as Hex });
+    const actor = decoded.args?.[0];
+    return typeof actor === 'string' && /^0x[0-9a-fA-F]{40}$/.test(actor) ? (actor as Hex) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** What the step stands on, read in one block. */

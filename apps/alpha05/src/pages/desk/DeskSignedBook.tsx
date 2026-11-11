@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import type { SupportedChain } from '../../chain/chains';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../../shared/copy/useCopy';
@@ -37,6 +37,18 @@ const STANDING_KEY: Readonly<
   unread: 'signedBook.unread',
 };
 
+/** The desk's one signed-fill slot (see `DeskSignedBook`). */
+interface FillSlot {
+  order: BookSignedOrder;
+  /** True while the Terms prompt is accepted first (OFF-35). */
+  awaitingTerms: boolean;
+}
+
+/** The market an order names, as the desk keys it. */
+function orderMarketKey(o: BookSignedOrder): string {
+  return marketKey({ lending: o.order.lendingAsset as Hex, collateral: o.order.collateralAsset as Hex, durationDays: Number(o.order.durationDays) });
+}
+
 /**
  * OFF-60 — every maker's signed orders on the market the desk shows, as the
  * offer book lists them, each with where the chain stands on it, what is
@@ -63,30 +75,28 @@ export function DeskSignedBook({
   const world = useWorldRail();
   const terms = useTerms();
   const termsGate = useTermsGate(`${SIGNED_FILL_KEY}.terms`, chain, own);
-  /** The order whose fill is under review; kept in the store with the flow. */
-  const [filling, setFilling] = useStoredValue<BookSignedOrder>(`${SIGNED_FILL_KEY}:order`);
-  /** An order waiting on a Terms acceptance before its review opens. */
-  const [pendingFill, setPendingFill] = useState<BookSignedOrder | null>(null);
   const termsOpen = termsGate.session !== null;
-  // A fill under review on another market is not this section's to show.
-  const fillHere =
-    filling !== null &&
-    marketKey({
-      lending: filling.order.lendingAsset as Hex,
-      collateral: filling.order.collateralAsset as Hex,
-      durationDays: Number(filling.order.durationDays),
-    }) === marketKey(market)
-      ? filling
-      : null;
+  /** The one fill slot, shared by every market (one flow key): the order
+   *  under review, or waiting on a Terms acceptance first. Kept in the store
+   *  with the flow and the Terms session, so a navigation drops neither. */
+  const [stored, setSlot] = useStoredValue<FillSlot>(`${SIGNED_FILL_KEY}:order`);
+  // An order left waiting on a Terms prompt that is no longer open holds
+  // nothing: the next fill may take the slot.
+  const slot = stored !== null && stored.awaitingTerms && !termsOpen ? null : stored;
+  const slotMarket = slot === null ? null : orderMarketKey(slot.order);
+  // A fill under review on another market is not this section's to show,
+  // and the slot stays taken until it is closed there.
+  const fillHere = slot !== null && !slot.awaitingTerms && slotMarket === marketKey(market) ? slot.order : null;
+  const fillElsewhere = slot !== null && !slot.awaitingTerms && slotMarket !== marketKey(market) ? slotMarket : null;
   const fill = (o: BookSignedOrder) => {
     if (terms.data?.kind === 'needed') {
-      setPendingFill(o);
+      setSlot({ order: o, awaitingTerms: true });
       termsGate.start(terms.data);
       return;
     }
-    setFilling(o);
+    setSlot({ order: o, awaitingTerms: false });
   };
-  const fillDisabled = terms.state !== 'ready' || termsOpen || fillHere !== null;
+  const fillDisabled = terms.state !== 'ready' || termsOpen || slot !== null;
   const noIndex = world.indexer.origin === null;
   const key = marketKey(market);
   const book = useQuery({
@@ -147,11 +157,10 @@ export function DeskSignedBook({
           own={own}
           onAccepted={() => {
             termsGate.end();
-            if (pendingFill !== null) setFilling(pendingFill);
-            setPendingFill(null);
+            setSlot((s) => (s === null ? null : { order: s.order, awaitingTerms: false }));
           }}
           onClose={() => {
-            setPendingFill(null);
+            setSlot((s) => (s !== null && s.awaitingTerms ? null : s));
             termsGate.end();
           }}
         />
@@ -165,9 +174,14 @@ export function DeskSignedBook({
             own={own}
             meta={meta}
             terms={terms.data}
-            onClose={() => setFilling(null)}
+            onClose={() => setSlot(null)}
           />
         </div>
+      )}
+      {fillElsewhere !== null && (
+        <p className="tier-a" data-testid="desk-signed-fill-elsewhere">
+          {text('signedFill.elsewhere')} <Link to={`/desk?market=${fillElsewhere}`}>{text('signedFill.elsewhereOpen')}</Link>
+        </p>
       )}
       {failed && (
         <p className="tier-a" data-testid="desk-signed-book-failed">
