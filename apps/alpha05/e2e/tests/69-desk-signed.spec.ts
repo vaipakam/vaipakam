@@ -137,7 +137,7 @@ test('your signed orders are listed with the chain’s standing, and each is can
   await finishOne.getByRole('button', { name: 'Close' }).click();
   // The book still lists it; the chain says it is done, and no cancel is offered.
   await expect(first).toHaveAttribute('data-standing', 'used', { timeout: 60_000 });
-  await expect(first).toContainText('Already filled or cancelled on the chain; the offer book has not caught up.');
+  await expect(first).toContainText('Fully filled or cancelled on the chain; the offer book has not caught up.');
   await expect(first.getByTestId('desk-signed-cancel')).toHaveCount(0);
 
   // The shared nonce, with the book following the chain again.
