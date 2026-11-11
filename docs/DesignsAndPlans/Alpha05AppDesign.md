@@ -2172,6 +2172,32 @@ above. Each resolves here, so a route reviewer needs no private file:
   full page alone; a row the reader refuses is counted, never dropped
   silently. A failed read is a degraded-source warning, never an empty
   history.
+- **RB-DESK-TICKET** — Below a market's ladder (OFF-74) the desk offers an
+  order ticket: an exact-rate offer or request on that market, typed in one
+  compact form. The market fixes the lending token, the collateral token
+  and the term; the ticket adds the side, the amount, the collateral, the
+  rate, how long it stays open and how matches may fill it. The rate is
+  one exact rate and is labelled so, never as a lowest or highest: a match
+  needs the other side's rate range to include it. A partial or
+  immediate-or-cancel ticket also takes the smallest single fill, below the
+  whole amount: a match fills only between an offer's smallest and largest
+  amount, so a fill mode that promises parts must post a range, never one
+  size that only ever fills whole. Everything else is the guided flows'
+  default and is stated on the ticket in words, never implied: full-term
+  interest, no partial repayment, interest paid at repayment, no rate
+  range, no collateral range, no fee tariff, no price guard. Only the FIRST
+  thing that stops the ticket is shown, beneath the action, in a fixed
+  order: the wallet, the network, the market, the reads the ticket needs,
+  the term, then each field in the order it is typed. "Fill to balance"
+  types the wallet's whole balance of the token posting locks, exactly,
+  every digit. Fees are stated at today's list rates, and a figure that
+  could not be read is said to be unread. The mode posted is the mode
+  shown: a ticket is always posted on the chain, and gasless signed orders
+  are named as not available yet. The review, consent, dry run and risk
+  warning are the guided flows' own (RB-REVIEW), never a second copy, and
+  the Terms are accepted before that review opens. A ticket's typed state
+  and consent are kept per market, so a market change never carries one
+  across.
 
 ## 3. Companion specifications
 

@@ -9,7 +9,8 @@
 // wallet's own offers, the market's recent loans and the agreed-rate chart
 // (its period count, the first period's figures on hover, and the table).
 // Then (OFF-76, RB-DESK-HISTORY) the wallet's live loans in that market and
-// its desk history from the index.
+// its desk history from the index, and (OFF-74, RB-DESK-TICKET) the order
+// ticket, with its first blocker before and after an amount is typed.
 // Checks that nothing scrolls sideways and saves full-page screenshots per
 // device.
 // Usage: node e2e/live/desk-watch.cjs <address>
@@ -85,6 +86,23 @@ async function activity(p) {
     }
     console.log(`----- ${id}\n${(await sec.count()) ? await text(sec) : 'not shown'}`);
   }
+  await ticket(p);
+}
+
+// The order ticket (OFF-74, RB-DESK-TICKET): its text, then the first
+// blocker before and after an amount is typed. Nothing is reviewed or sent.
+async function ticket(p) {
+  const t = p.getByTestId('desk-ticket');
+  if (!(await t.count())) return console.log('----- desk-ticket not shown');
+  const blocker = t.getByTestId('desk-ticket-blocker');
+  await blocker
+    .filter({ hasNotText: 'Reading' })
+    .waitFor({ timeout: 60000 })
+    .catch(() => {});
+  console.log(`----- desk-ticket (${await t.getAttribute('data-market')})\n${await text(t)}`);
+  await t.getByTestId('desk-ticket-amount').fill('0.001');
+  console.log(`----- blocker after an amount: ${(await blocker.count()) ? await blocker.innerText() : 'none'}`);
+  await t.getByTestId('desk-ticket-amount').fill('');
 }
 
 async function session(b, opts, label) {
