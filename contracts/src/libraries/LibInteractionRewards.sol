@@ -17,7 +17,7 @@ import {LibClaimWork} from "./LibClaimWork.sol";
 import {LibRewardStaging} from "./LibRewardStaging.sol";
 import {LibRewardSanctions} from "./LibRewardSanctions.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
@@ -7246,14 +7246,10 @@ library LibInteractionRewards {
 
         uint256 price;
         uint8 feedDec;
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (
-            uint256 p,
-            uint8 d
-        ) {
-            price = p;
-            feedDec = d;
-        } catch {
-            return 0;
+        {
+            bool priced;
+            (priced, price, feedDec) = LibPriceRead.tryAssetPrice(asset);
+            if (!priced) return 0;
         }
         if (price == 0) return 0;
 
@@ -7287,14 +7283,10 @@ library LibInteractionRewards {
 
         uint256 price;
         uint8 feedDec;
-        try OracleFacet(address(this)).getAssetPrice(feeAsset) returns (
-            uint256 p,
-            uint8 d
-        ) {
-            price = p;
-            feedDec = d;
-        } catch {
-            return 0;
+        {
+            bool priced;
+            (priced, price, feedDec) = LibPriceRead.tryAssetPrice(feeAsset);
+            if (!priced) return 0;
         }
         if (price == 0) return 0;
 

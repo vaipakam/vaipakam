@@ -7,7 +7,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -280,14 +280,10 @@ library LibFeeEntitlement {
 
         uint256 price;
         uint8 feedDec;
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (
-            uint256 p,
-            uint8 d
-        ) {
-            price = p;
-            feedDec = d;
-        } catch {
-            return (0, false);
+        {
+            bool priced;
+            (priced, price, feedDec) = LibPriceRead.tryAssetPrice(asset);
+            if (!priced) return (0, false);
         }
         if (price == 0) return (0, false);
 

@@ -220,6 +220,7 @@
 {"type":"error","name":"Permit2TokenMismatch","inputs":[{"name":"expected","type":"address","internalType":"address"},{"name":"signed","type":"address","internalType":"address"}]},
 {"type":"error","name":"PositionNFTNotSet","inputs":[]},
 {"type":"error","name":"PriceGuardNumeraireMismatch","inputs":[{"name":"guard","type":"address","internalType":"address"},{"name":"recorded","type":"bytes32","internalType":"bytes32"},{"name":"guardNumeraire","type":"bytes32","internalType":"bytes32"}]},
+{"type":"error","name":"PriceReadOutOfGas","inputs":[]},
 {"type":"error","name":"ProtectedVaultLocked","inputs":[{"name":"account","type":"address","internalType":"address"}]},
 {"type":"error","name":"ProtocolRegistryUnset","inputs":[]},
 {"type":"error","name":"RateShortfallTooHigh","inputs":[]},
