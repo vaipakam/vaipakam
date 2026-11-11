@@ -1685,8 +1685,14 @@ DELETE FROM alert_channel_changes; \
 DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
+DELETE FROM indexer_chain_anchor; \
 DELETE FROM indexer_cursor"
 ```
+
+`indexer_chain_anchor` (#3411) is the reorg guard's record of the block the
+scan cursor last advanced to and that block's hash. It goes with the cursor:
+left behind, it would name a block the replay has not reached, and the replay
+anchors again each time it advances.
 
 `indexer_deployment` (#1566, Codex #2545 r1) records, per chain, the Diamond
 the rows were indexed from; the replay's first pass re-adopts the bundle's

@@ -148,10 +148,17 @@ import {
   type TickBudget,
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
-import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentEpoch';
+import { adoptDeployment, describeAdoption, isAdoptedEpoch, requestChainRebuild } from './deploymentEpoch';
+import {
+  anchorUpsert,
+  bootstrapChainAnchor,
+  checkChainAnchor,
+  describeReplacedAnchor,
+  resolveAnchoredCursor,
+} from './reorgGuard';
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
-import { redactedError } from '@vaipakam/lib/errorDescription';
+import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -567,6 +574,11 @@ export interface ChainIndexerResult {
    *  were deleted before it scanned (deploymentEpoch.ts). The DO broadcasts
    *  the full recovery set on it, since the counters cannot say so. */
   epochReset?: boolean;
+  /** #3411 — the reorg guard found an indexed block replaced and asked for the
+   *  chain's rows to be rebuilt. Nothing was deleted yet: the NEXT pass's epoch
+   *  check does the reset with its own budget, so the DO rearms a fresh pass
+   *  on this, as it does on `epochReset`. */
+  reorgRebuildRequested?: boolean;
   /** #2221 — the block this pass stopped in, having begun it: the budget
    *  refused part-way through, and the cursor records the block below. What
    *  that block had already written is committed and is NOT in any counter
@@ -946,7 +958,14 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
   // #2636 r7 — a held tick (no settled head) is a provider not answering,
   // like an RPC error: retried in the alarm loop, and no heartbeat claims a
   // live rail. Without it a cron alarm (target 0) read the hold as success.
-  return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch' || skipped === 'settled-head-unavailable';
+  // #3411 — an anchor block that cannot be read consistently holds the pass
+  // the same way.
+  return (
+    skipped === 'rpc-error' ||
+    skipped === 'rpc-chain-mismatch' ||
+    skipped === 'settled-head-unavailable' ||
+    skipped === 'reorg-check-unavailable'
+  );
 }
 
 /** The schema gate (schemaGate.ts) declined the pass. Not retryable within
@@ -2291,12 +2310,21 @@ async function runChainPass(
   // SCAN_LOOKBACK_BLOCKS so a cold start doesn't blow the worker's
   // CPU budget. Subsequent ticks make progress on the backfill until
   // they catch up to `head`.
+  // #3411 — the reorg guard's anchor is read in the same query, so the guard
+  // costs no D1 query of its own on a steady pass.
   const cursorRow = await env.DB.prepare(
-    `SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`,
+    `SELECT c.last_block, a.block_number AS anchor_block, a.block_hash AS anchor_hash
+       FROM indexer_cursor c
+       LEFT JOIN indexer_chain_anchor a ON a.chain_id = c.chain_id
+      WHERE c.chain_id = ? AND c.kind = ?`,
   )
     .bind(chainId, CURSOR_KIND)
-    .first<{ last_block: number }>();
+    .first<{ last_block: number; anchor_block: number | null; anchor_hash: string | null }>();
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
+  const anchor =
+    cursorRow && cursorRow.anchor_block !== null && cursorRow.anchor_hash !== null
+      ? { block: BigInt(cursorRow.anchor_block), hash: cursorRow.anchor_hash }
+      : null;
   const scanFrom = lastBlock + 1n;
 
   // #2201 — no settled head: hold the scan (see above). Said every tick,
@@ -2334,6 +2362,57 @@ async function runChainPass(
       headBlock: undefined,
     };
   }
+
+  // #3411 — THE REORG GUARD, on every settled pass before anything is read or
+  // written against this head (see reorgGuard.ts). The anchor is the block the
+  // cursor last advanced to and its hash; a changed hash means the chain
+  // replaced a block this indexer already wrote rows from, which the cursor
+  // would never revisit. A replaced anchor requests a rebuild of the chain's
+  // rows (the epoch reset, finished by the next pass with its own budget) and
+  // this pass writes nothing more. An anchor that cannot be read consistently
+  // holds the pass like an unsettled head: rows are not built on a provider
+  // that cannot answer for a block at or below its own safe head.
+  const anchorCheck = await checkChainAnchor(client, anchor, head, describeFailure);
+  if (anchorCheck.state === 'replaced') {
+    console.error(describeReplacedAnchor(chainId, anchorCheck));
+    const requested = await requestChainRebuild(env.DB, { chainId, diamond: chain.diamond });
+    if (!requested) {
+      console.warn(
+        `[reorgGuard] chain ${chainId}: the rebuild was not newly requested (one is already pending, ` +
+          `or the adopted Diamond changed); the next pass's epoch check settles it`,
+      );
+    }
+    return {
+      ...emptyResult('reorg-rebuild-requested'),
+      chainId,
+      scannedFrom: scanFrom,
+      scannedTo: scanFrom - 1n,
+      headBlock: undefined,
+      reorgRebuildRequested: true,
+    };
+  }
+  if (anchorCheck.state === 'unreadable') {
+    console.warn(
+      `[reorgGuard] chain ${chainId}: anchor block ${anchorCheck.anchor.block} could not be read ` +
+        `consistently (${anchorCheck.reason}); holding the scan at cursor ${lastBlock} this pass`,
+    );
+    await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
+    return {
+      ...emptyResult('reorg-check-unavailable'),
+      chainId,
+      scannedFrom: scanFrom,
+      scannedTo: scanFrom - 1n,
+      headBlock: undefined,
+    };
+  }
+  // A cursor with no anchor (a chain scanned before the guard existed, or a
+  // quiet one that has not advanced since) is anchored where it stands, once,
+  // so the check covers it from here on. Fail-open: an unread hash leaves the
+  // chain unanchored and the next pass tries again.
+  if (anchorCheck.state === 'none' && cursorRow && lastBlock <= head) {
+    await bootstrapChainAnchor(env.DB, client, chainId, lastBlock, describeFailure);
+  }
+
   if (scanFrom > head) {
     // #1415 second guard: a head MATERIALLY below our own cursor is
     // never healthy on these chains (the safe-tag reorg horizon is far
@@ -2663,11 +2742,19 @@ async function runChainPass(
   // the cursor records the block below it, and the pass reports an RPC error
   // so the ingest loop retries. Every time a handler reads is chain time.
   const blockTimestamps = new Map<bigint, number>();
+  // #3411 — every block hash this pass learns without asking, for the anchor
+  // the cursor write records (reorgGuard.ts). The settled head's comes with
+  // the head; each processed block's comes with its time read, and so does
+  // its parent's.
+  const knownHashes = new Map<bigint, string>();
+  if (settledHead.hash) knownHashes.set(head, settledHead.hash);
 
   const scanBlock = async (blockNumber: bigint, logs: DecodedLog[]) => {
     try {
       const block = await client.getBlock({ blockNumber });
       blockTimestamps.set(blockNumber, Number(block.timestamp));
+      if (block.hash) knownHashes.set(blockNumber, block.hash);
+      if (block.parentHash && blockNumber > 0n) knownHashes.set(blockNumber - 1n, block.parentHash);
     } catch (err) {
       // A REFUSED read is the budget stop, handled as one below.
       if (isRefusing(budget)) throw err;
@@ -2819,7 +2906,27 @@ async function runChainPass(
   }
   // Every block below the one that stopped is finished, and so is every block
   // between the last finished one and it, since those carry no logs of ours.
-  const scanTo = stoppedAt === null ? windowTo : stoppedAt - 1n;
+  const scannedThrough = stoppedAt === null ? windowTo : stoppedAt - 1n;
+  // #3411 — the cursor and the reorg guard's anchor name the SAME block, so
+  // the cursor advances only to a block whose hash is known (reorgGuard.ts,
+  // `resolveAnchoredCursor`). Almost always that is `scannedThrough` itself;
+  // when its hash cannot be read, the cursor stops at the highest processed
+  // block instead, and the next pass re-reads only blocks with no event.
+  const anchored = await resolveAnchoredCursor({
+    client,
+    scanFrom,
+    target: scannedThrough,
+    known: knownHashes,
+    describe: describeFailure,
+  });
+  if (anchored?.reason !== undefined || (anchored === null && scannedThrough >= scanFrom)) {
+    console.warn(
+      `[reorgGuard] chain ${chainId}: block ${scannedThrough}'s hash could not be read ` +
+        `(${anchored?.reason ?? 'no processed block in the window either'}); the cursor records ` +
+        `${anchored ? anchored.block : lastBlock} instead and the next pass re-reads the blocks above it`,
+    );
+  }
+  const scanTo = anchored ? anchored.block : scanFrom - 1n;
   if (stoppedAt !== null && !stoppedForBlockTime) {
     const finished = blocks.findIndex((b) => b.blockNumber === stoppedAt);
     console.warn(
@@ -2839,17 +2946,23 @@ async function runChainPass(
   // moves forward legitimately, so a backward write is always spurious. This
   // hardens the DO's single-writer guarantee against a rollout / migration
   // overlap window (belt-and-suspenders with the in-memory `scanRunning` flag).
+  //
+  // #3411 — the reorg guard's anchor is written in the SAME batch (one D1
+  // transaction), so the cursor and the anchor never name different blocks.
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare(
-    `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT (chain_id, kind) DO UPDATE SET
-       last_block = excluded.last_block,
-       updated_at = excluded.updated_at
-     WHERE excluded.last_block > indexer_cursor.last_block`,
-  )
-    .bind(chainId, CURSOR_KIND, blockToNumber(scanTo), now)
-    .run();
+  if (anchored) {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (chain_id, kind) DO UPDATE SET
+           last_block = excluded.last_block,
+           updated_at = excluded.updated_at
+         WHERE excluded.last_block > indexer_cursor.last_block`,
+      ).bind(chainId, CURSOR_KIND, blockToNumber(anchored.block), now),
+      anchorUpsert(env.DB, { chainId, block: anchored.block, hash: anchored.hash, nowSec: now }),
+    ]);
+  }
 
   // #1270 — market_summary sweep: recompute discovery rows for every
   // market this window's writes or time-expiries touched (see

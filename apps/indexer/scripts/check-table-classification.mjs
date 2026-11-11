@@ -105,6 +105,10 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  indexer_chain_anchor: {
+    class: 'replay-derived',
+    reason: 'the reorg guard\'s anchor (#3411): the block the scan cursor last advanced to and its hash; cleared with the cursor, and the replay anchors again as it advances',
+  },
   indexer_deployment: {
     class: 'replay-derived',
     reason:

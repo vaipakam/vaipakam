@@ -207,6 +207,35 @@ export async function resetChainAs(db: EpochDb, claim: EpochClaim): Promise<{ ow
 }
 
 /**
+ * Ask for the adopted epoch's rows to be rebuilt, without a Diamond change
+ * (#3411, the reorg guard).
+ *
+ * Sets `reset_pending` on the adopted record, guarded on the Diamond the
+ * caller believes is adopted and on no reset already pending. It deletes
+ * nothing itself: the NEXT pass's {@link adoptDeployment} finds the same
+ * Diamond with the flag set and finishes the reset under the same claim, with
+ * a fresh invocation's whole D1 budget, exactly as it finishes one a dying
+ * pass left behind. So a rebuild and an interrupted Diamond change share one
+ * path, and nothing here can half-delete a chain.
+ *
+ * Returns whether this call set the flag (false when the record names a
+ * different Diamond, or a reset is already pending).
+ */
+export async function requestChainRebuild(
+  db: EpochDb,
+  args: { chainId: number; diamond: string },
+): Promise<boolean> {
+  const r = await db
+    .prepare(
+      `UPDATE indexer_deployment SET reset_pending = 1
+        WHERE chain_id = ? AND lower(diamond) = lower(?) AND reset_pending = 0`,
+    )
+    .bind(args.chainId, args.diamond)
+    .run();
+  return (r.meta?.changes ?? 0) === 1;
+}
+
+/**
  * Adopt the bundle's deployment for a chain, resetting the chain's rows when
  * the Diamond changed. Call at the top of every pass, before the cursor read
  * and before any write; scan only if {@link isAdoptedEpoch}. Cheap on the
@@ -306,7 +335,10 @@ export function describeAdoption(chainId: number, diamond: string, deployBlock: 
         `reset ${r.tables.length} chain-scoped table(s): ${r.tables.join(' ')}`
       );
     case 'reset-resumed':
-      return `[deploymentEpoch] chain ${chainId}: finished an interrupted reset for Diamond ${diamond} (${r.tables.length} table(s))`;
+      return (
+        `[deploymentEpoch] chain ${chainId}: finished a pending reset for Diamond ${diamond} (${r.tables.length} table(s)) — ` +
+        `an interrupted Diamond change, or a rebuild the reorg guard requested`
+      );
     case 'raced':
       return `[deploymentEpoch] chain ${chainId}: another pass adopted Diamond ${r.adopted} while this one (${diamond}) was claiming — not scanning`;
     case 'refused-older':
