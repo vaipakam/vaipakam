@@ -330,7 +330,8 @@ Diamond**:
 - **Users opt in.** A user moves by their own action: close or repay a loan
   on the governed core, then open the next one on the final core; move vault
   assets to a vault of the final family. Open loans finish where they opened.
-- **The governed core winds down to close-outs.** Once the final core is
+- **The governed core winds down to close-outs** (owner decision
+  2026-11-11). Once the final core is
   live, the governed one stops admitting new offers and loans (a stop-only
   change), and keeps repay, claim, default, liquidation and withdrawal open
   for as long as anything remains in it.
