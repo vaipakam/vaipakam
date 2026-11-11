@@ -47,6 +47,7 @@ const EXPECTED_PRIVATE = [
   'keeper_horizon_entry',
   'keeper_ops_alert',
   'keeper_private_nonce',
+  'keeper_private_send',
   'keeper_remit_ack',
   'keeper_remit_ack_frontier',
   'keeper_sanctions_screen',
