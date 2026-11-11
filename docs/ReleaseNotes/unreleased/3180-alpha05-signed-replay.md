@@ -1,4 +1,4 @@
-## alpha05 — signed orders held for a re-check after a reorganisation (PR #TBD)
+## alpha05 — signed orders held for a re-check after a reorganisation (PR #3583)
 
 When the chain replaces some recent blocks, the indexer re-reads the fills and cancels of the signed orders it holds (#3411). Until it has, it leaves those orders out of the shared book and counts them, and it still lists them to their maker, flagged. The new app now shows both.
 
