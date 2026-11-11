@@ -5,6 +5,7 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IProtocolRegistryReader} from "../interfaces/IProtocolRegistryReader.sol";
+import {RegistryKeys} from "./RegistryKeys.sol";
 
 /**
  * @title  ProtocolRegistry
@@ -31,7 +32,13 @@ import {IProtocolRegistryReader} from "../interfaces/IProtocolRegistryReader.sol
  *           Timelock) and an execution, by anyone, no sooner than the delay
  *           later. There is no instant path for any of them.
  *         - The delay is never below {MIN_DELAY} (the VaultBeacon's code
- *           delay) and never above {MAX_DELAY}. Raising it applies at once,
+ *           delay) and never above {MAX_DELAY}.
+ *         - An entry whose own contract promises a longer review window has
+ *           a fixed minimum of its own ({minDelayFor}), and a change to that
+ *           entry waits the longer of the delay and that minimum (#3540).
+ *           The price guard holds its sources and settings behind a delay of
+ *           at least {PRICE_GUARD_MIN_DELAY}; a swap of the whole guard must
+ *           not be the faster route to changing every price. Raising it applies at once,
  *           because a longer wait only tightens. Lowering it waits the
  *           current delay.
  *         - Every waiting time is fixed when it is proposed. A later change of
@@ -70,6 +77,16 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
     ///         waiting time, and keeps a raised delay from freezing every
     ///         future change.
     uint256 public constant MAX_DELAY = 30 days;
+
+    /// @notice The shortest wait for a change of the {RegistryKeys.PRICE_GUARD}
+    ///         pointer (#3540). Equal to `PriceGuard.MIN_DELAY`, the floor the
+    ///         guard puts on its own source and setting changes: replacing the
+    ///         guard changes every price at once, so it waits at least as long
+    ///         as changing one of the guard's sources. Held here as a constant
+    ///         rather than read from the outgoing guard, so the registry never
+    ///         trusts the contract being replaced for the wait of its
+    ///         replacement. A test keeps the two figures equal.
+    uint256 public constant PRICE_GUARD_MIN_DELAY = 7 days;
 
     // ─── Types ───────────────────────────────────────────────────────────
 
@@ -223,16 +240,33 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
         return (p.delay, p.executableAt);
     }
 
+    /// @notice The fixed minimum wait for a change of entry `key`:
+    ///         {PRICE_GUARD_MIN_DELAY} for the price guard, {MIN_DELAY} for
+    ///         every other entry. A change of `key` waits the longer of this
+    ///         and the current {delay} ({waitFor}).
+    function minDelayFor(bytes32 key) public pure returns (uint256) {
+        if (key == RegistryKeys.PRICE_GUARD) return PRICE_GUARD_MIN_DELAY;
+        return MIN_DELAY;
+    }
+
+    /// @notice How long a change of entry `key` proposed now would wait: the
+    ///         longer of the current {delay} and {minDelayFor}(`key`).
+    function waitFor(bytes32 key) public view returns (uint256) {
+        uint256 floor = minDelayFor(key);
+        return delay > floor ? delay : floor;
+    }
+
     // ─── Pointers ────────────────────────────────────────────────────────
 
     /// @notice Propose setting pointer `key` to `next`. The owner only. It may
-    ///         execute no sooner than the current delay from now.
+    ///         execute no sooner than {waitFor}(`key`) from now: the current
+    ///         delay, or the key's own minimum when that is longer.
     function proposePointer(bytes32 key, address next) external onlyOwner {
         if (next == address(0)) revert ZeroAddress();
         if (_pendingPointers[key].executableAt != 0) revert ChangePending();
         address current = _pointers[key];
         if (next == current) revert NoChange();
-        uint64 at = _at(delay);
+        uint64 at = _at(waitFor(key));
         _pendingPointers[key] = PendingPointer({next: next, executableAt: at});
         emit PointerProposed(key, current, next, at);
     }
@@ -259,12 +293,13 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
     // ─── Membership sets ─────────────────────────────────────────────────
 
     /// @notice Propose adding `member` to `set`. The owner only. It may
-    ///         execute no sooner than the current delay from now.
+    ///         execute no sooner than {waitFor}(`set`) from now, the same rule
+    ///         as a pointer (no set has a minimum above {MIN_DELAY} today).
     function proposeAdd(bytes32 set, address member) external onlyOwner {
         if (member == address(0)) revert ZeroAddress();
         if (_members[set].contains(member)) revert AlreadyMember(set, member);
         if (_pendingAdds[set][member] != 0) revert ChangePending();
-        uint64 at = _at(delay);
+        uint64 at = _at(waitFor(set));
         _pendingAdds[set][member] = at;
         emit MemberProposed(set, member, at);
     }

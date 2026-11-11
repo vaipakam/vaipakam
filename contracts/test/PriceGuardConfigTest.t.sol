@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
 import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 import {IFeedRegistryPairBase} from "../src/interfaces/IFeedRegistryPairBase.sol";
 import {ITellor} from "../src/interfaces/ITellor.sol";
@@ -143,6 +144,12 @@ contract PriceGuardConfigTest is Test {
         PriceGuard g = _new(owner, guardian, _identity(), 7 days, none);
         assertFalse(g.TESTNET());
         assertEq(g.MIN_DELAY(), 7 days);
+        // #3540: a swap of the whole guard through the registry waits at
+        // least as long as a change of one of the guard's own settings.
+        ProtocolRegistry reg = new ProtocolRegistry(
+            owner, guardian, 3 days, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
+        );
+        assertEq(uint256(g.MIN_DELAY()), reg.PRICE_GUARD_MIN_DELAY(), "registry price-guard minimum");
 
         // Lowering below the floor is refused at proposal.
         vm.prank(owner);
