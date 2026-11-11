@@ -10,7 +10,7 @@ import {
   type PublicClient,
 } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { FEE_MARGIN_BPS, laneStanding, paidByCaller, paidSend, readTierPush, recordStanding, tierPushSupport, type TierLane } from './tierPush';
+import { FEE_MARGIN_BPS, laneSent, laneStanding, paidByCaller, paidSend, readTierPush, recordStanding, tierPushSupport, type TierLane } from './tierPush';
 import { selectorOf } from '../capability/CapabilityContext';
 
 type Hex = `0x${string}`;
@@ -155,6 +155,14 @@ describe('laneStanding', () => {
     expect(laneStanding(lane({ owed: false }))).toBe('current');
     expect(laneStanding(lane({ owed: true, budgetPays: true }))).toBe('protocol-pays');
     expect(laneStanding(lane({ owed: true, budgetPays: false }))).toBe('needs-paid-send');
+  });
+});
+
+describe('laneSent', () => {
+  it('counts a send only from its time, never from a record number settled without a message', () => {
+    const d = { nonce: 3n, tier: 0, bps: 0n, expiresAt: null, version: 0, sentAt: 0 };
+    expect(laneSent({ delivered: d })).toBe(false);
+    expect(laneSent({ delivered: { ...d, tier: 1, bps: 1000n, sentAt: 1_700_000_000 } })).toBe(true);
   });
 });
 

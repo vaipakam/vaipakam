@@ -2125,7 +2125,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   or earlier at that network's own maximum age, 60 days unless it set
   another) and whether it is current, owed a lower tier the
   protocol sends at its own cost, or owed one that goes only with a paid
-  send. Every discount shown is capped at 50%, as the fee path applies it.
+  send. A lane counts as sent only from its send time: one settled without
+  a message (its record grants no discount, so its record number moves and
+  nothing goes) is shown as nothing sent and nothing owed, never as a sent
+  tier 0. Every discount shown is capped at 50%, as the fee path applies it.
   A review whose record moved, or that has nothing left to send, is closed
   to signing rather than refreshed in place. The paid send
   (`deliverTierPush`) is offered only once the record matches the tier now

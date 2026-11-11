@@ -213,6 +213,14 @@ export function laneStanding(l: TierLane): LaneStanding {
   return l.budgetPays ? 'protocol-pays' : 'needs-paid-send';
 }
 
+/** Whether a message was ever sent on this lane. Only the send time proves
+ *  one: a lane whose record grants no discount is settled without a message
+ *  (its record number moves, nothing is sent), so a non-zero record number
+ *  alone says nothing about a send. */
+export function laneSent(l: Pick<TierLane, 'delivered'>): boolean {
+  return l.delivered.sentAt !== 0;
+}
+
 /** Whether the record for sending is behind the tier the protocol applies
  *  now: `behind` when they differ (an update records the new one), `same`
  *  when they match, `unknown` when the tier now could not be read. The

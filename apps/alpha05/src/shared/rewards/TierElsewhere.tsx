@@ -23,6 +23,7 @@ import { OwnStamp } from '../ui/OwnStamp';
 import { cappedBps, discountPercent } from './tiers';
 import {
   BROADCAST_ABI,
+  laneSent,
   laneStanding,
   paidByCaller,
   paidSend,
@@ -408,20 +409,21 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
             {data.lanes.map((l) => {
               const s = laneStanding(l);
               const d = l.delivered;
+              const sent = laneSent(l);
               return (
                 <li key={l.chainId} className="card" data-testid="rewards-elsewhere-lane" data-chain={l.chainId} data-standing={s}>
                   <p className="row-head">{networkName(l.chainId)}</p>
                   <p className="tier-b">
-                    {d.nonce === 0n && d.sentAt === 0
+                    {!sent
                       ? text('rewardsElsewhere.laneNothing')
                       : format('rewardsElsewhere.laneHolds', { tier: String(d.tier), discount: discountPercent(cappedBps(d.bps)), sent: formatUtc(d.sentAt) })}
                   </p>
-                  {s === 'current' && <p className="tier-b">{text('rewardsElsewhere.laneCurrent')}</p>}
+                  {s === 'current' && <p className="tier-b">{text(sent ? 'rewardsElsewhere.laneCurrent' : 'rewardsElsewhere.laneUnsentSettled')}</p>}
                   {s === 'protocol-pays' && <p className="tier-a">{text('rewardsElsewhere.laneProtocol')}</p>}
                   {s === 'needs-paid-send' && <p className="tier-a">{format('rewardsElsewhere.lanePaid', { tier: String(rec.tier) })}</p>}
                   {l.owed && l.fee !== null && <p className="tier-b">{format('rewardsElsewhere.laneFee', { fee: native(l.fee), symbol })}</p>}
                   {l.owed && l.fee === null && <p className="tier-a">{text('rewardsElsewhere.laneFeeUnread')}</p>}
-                  {mode === 'advanced' && d.nonce !== 0n && (
+                  {mode === 'advanced' && sent && (
                     <dl className="facts">
                       <dt className="tier-b">{text('rewardsElsewhere.factRecordNo')}</dt>
                       <dd>{d.nonce.toString()}</dd>
