@@ -12,9 +12,13 @@
  * amount: without one, every fill would be the whole amount whatever the
  * mode said. Everything else is the guided flows' default, stated on the
  * ticket: full-term interest, no partial repayment, interest paid at
- * repayment, no collateral range, no fee tariff and no price guard. A ticket is always posted on the chain; gasless signed
- * orders are a later update, and the ticket says so (mode posted = mode
- * shown).
+ * repayment, no collateral range, no fee tariff and no price guard.
+ *
+ * OFF-59: a ticket is either posted on the chain or signed without gas and
+ * listed on the offer book. A signed order is one size, all or none, and
+ * lapses at its expiry (`signedOrderFrom`), so in sign mode the fill choice
+ * is all or none whatever was picked for posting, and "never lapses" stops
+ * the ticket. The posting choice is kept, so switching back restores it.
  *
  * Only the FIRST thing that stops the ticket is reported, beneath the
  * action, in a fixed order: the wallet, the network, the market, the reads
@@ -55,9 +59,23 @@ export interface TicketInput {
   /** The smallest single fill, as typed; read only for a partial or
    *  immediate-or-cancel ticket (all or none is one fill of the whole). */
   minFill: string;
+  /** How it is sent; absent (a ticket typed before OFF-59) is posting. */
+  mode?: TicketMode;
 }
 
-export const DEFAULT_TICKET: TicketInput = { side: 'lender', amount: '', collateral: '', rate: '', expiry: '7d', fillMode: 'aon', minFill: '' };
+/** Posted on the chain, or signed without gas and listed on the offer book. */
+export type TicketMode = 'post' | 'sign';
+
+export const DEFAULT_TICKET: TicketInput = { side: 'lender', amount: '', collateral: '', rate: '', expiry: '7d', fillMode: 'aon', minFill: '', mode: 'post' };
+
+export function ticketMode(input: Pick<TicketInput, 'mode'>): TicketMode {
+  return input.mode ?? 'post';
+}
+
+/** The fill mode the ticket sends: all or none for a signed order. */
+export function sentFillMode(input: Pick<TicketInput, 'mode' | 'fillMode'>): FillMode {
+  return ticketMode(input) === 'sign' ? 'aon' : input.fillMode;
+}
 
 /** The market a ticket posts on. */
 export interface TicketMarket {
@@ -95,6 +113,9 @@ export type TicketBlocker =
   | { code: 'rate'; error: ParseError | 'high' }
   | { code: 'min-fill' }
   | { code: 'fill'; block: FillModeBlock }
+  /** A signed order must lapse: only an on-chain cancel would stop one
+   *  that never does. */
+  | { code: 'sign-never' }
   | { code: 'terms-unread'; reason: string };
 
 /** `amount` is the whole amount; `minFill` the smallest single fill, equal
@@ -121,13 +142,15 @@ export function checkTicket(input: TicketInput, ctx: TicketContext): TicketCheck
   // of one size only ever fills whole (`LibOfferMatch` keeps each match
   // between the offer's smallest and largest amount).
   let minFill = amount.value;
-  if (input.fillMode !== 'aon') {
+  const fillMode = sentFillMode(input);
+  if (fillMode !== 'aon') {
     const part = parseAmount(input.minFill, ctx.decimals.lending);
     if (!part.ok) return stop({ code: 'field', field: 'minFill', error: part.error });
     if (part.value >= amount.value) return stop({ code: 'min-fill' });
     minFill = part.value;
   }
-  const fill = fillModeBlock(input.fillMode, minFill !== amount.value, input.expiry);
+  if (ticketMode(input) === 'sign' && input.expiry === 'never') return stop({ code: 'sign-never' });
+  const fill = fillModeBlock(fillMode, minFill !== amount.value, input.expiry);
   if (fill !== null) return stop({ code: 'fill', block: fill });
   if (ctx.terms !== 'ready') return stop({ code: 'terms-unread', reason: ctx.terms.failed });
   return { ok: true, amount: amount.value, minFill, collateral: collateral.value, rateBps: rate.value };
@@ -157,7 +180,7 @@ export function ticketDraft(input: TicketInput, checked: Extract<TicketCheck, { 
       amountMax: checked.amount,
       collateral: checked.collateral,
       collateralFloor: checked.collateral,
-      fillMode: input.fillMode,
+      fillMode: sentFillMode(input),
       cadence: 0,
       tariff: null,
       guardBps: null,

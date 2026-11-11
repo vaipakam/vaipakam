@@ -7,14 +7,18 @@ import {
   balanceText,
   checkTicket,
   DEFAULT_TICKET,
+  sentFillMode,
   stakeField,
   TICKET_EXPIRIES,
   ticketDraft,
+  ticketMode,
   type TicketBlocker,
   type TicketExpiry,
   type TicketInput,
   type TicketMarket,
+  type TicketMode,
 } from '../../shared/desk/ticket';
+import { signDraftFrom, type SignDraft } from '../../shared/desk/signNew';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { readTreasuryFeeBps } from '../../shared/offers/reads';
 import { PostOffer } from '../../shared/post/PostOffer';
@@ -29,6 +33,7 @@ import { useStoredValue } from '../../shared/tx/txStore';
 import { useMounted } from '../../shared/tx/useReviewRefresh';
 import { FormField } from '../../shared/ui/FormField';
 import { formatBps } from '../../shared/ui/format';
+import { SignOrder } from './SignOrder';
 
 type Hex = `0x${string}`;
 
@@ -60,8 +65,9 @@ export function ticketKey(m: TicketMarket): string {
  * terms it does not let the reader change, the fee at today's list rates,
  * and only the first thing in the way, beneath the action. "Fill to
  * balance" types the wallet's whole balance of what posting locks, exactly.
- * A ticket is posted on the chain; signed orders are named as not available
- * yet, so the mode posted is the mode shown.
+ * OFF-59: in sign mode the same ticket is signed without gas and listed on
+ * the offer book instead (`SignOrder`): one size, all or none, lapsing at
+ * its expiry, its stake drawn from the signer's own vault at a fill.
  */
 export function OrderTicket({
   market,
@@ -82,9 +88,12 @@ export function OrderTicket({
   const [stored, setStored] = useStoredValue<TicketInput>(`${key}:input`);
   const [draft, setDraft] = useStoredValue<PostDraft>(`${key}:draft`);
   const [pendingDraft, setPendingDraft] = useStoredValue<PostDraft>(`${key}:pending`);
+  const [signDraft, setSignDraft] = useStoredValue<SignDraft>(`${key}:sign`);
   const [opening, setOpening] = useState<string | null>(null);
   const input = stored ?? DEFAULT_TICKET;
   const set = (patch: Partial<TicketInput>) => setStored({ ...input, ...patch });
+  const mode = ticketMode(input);
+  const signing = mode === 'sign';
 
   const walletChain = getSupportedChain(own?.chainId);
   const sameNetwork = walletChain !== null && own !== null && own.chainId === worldChainId;
@@ -148,6 +157,9 @@ export function OrderTicket({
       const block = await own.read((c) => c.getBlock({ blockTag: 'latest' }));
       if (!current()) return;
       const next = ticketDraft(input, check, market, block.value.timestamp);
+      // The order a signed review shows is built now, so what is reviewed
+      // is what the wallet signs.
+      const signed = signing ? signDraftFrom(next, own.chainId, own.account) : null;
       // OFF-35: an offer is new exposure, so Terms not yet accepted are
       // accepted before its review opens.
       if (terms.data?.kind === 'needed') {
@@ -155,7 +167,8 @@ export function OrderTicket({
         termsGate.start(terms.data);
         return;
       }
-      setDraft(next);
+      if (signed !== null) setSignDraft(signed);
+      else setDraft(next);
     } catch (err) {
       if (current()) setOpening(refusalFromError(err).reason);
     }
@@ -167,7 +180,7 @@ export function OrderTicket({
     : blockerSentence(check.blocker, { lendingSymbol, collateralSymbol, lendingDecimals, collateralDecimals, term: market.durationDays }, copy);
   const blockedField = !check.ok && check.blocker.code === 'field' ? check.blocker.field : null;
   // A partial or immediate-or-cancel ticket takes a smallest single fill.
-  const parted = input.fillMode !== 'aon';
+  const parted = sentFillMode(input) !== 'aon';
   const figures =
     check.ok && inputs.data
       ? lender
@@ -191,7 +204,10 @@ export function OrderTicket({
           own={own}
           onAccepted={() => {
             termsGate.end();
-            if (pendingDraft !== null) setDraft(pendingDraft);
+            if (pendingDraft !== null) {
+              if (signing) setSignDraft(signDraftFrom(pendingDraft, own.chainId, own.account));
+              else setDraft(pendingDraft);
+            }
             setPendingDraft(null);
           }}
           onClose={() => {
@@ -211,11 +227,27 @@ export function OrderTicket({
           onEdit={() => setDraft(null)}
           onClose={(posted) => {
             setDraft(null);
-            if (posted) setStored({ ...DEFAULT_TICKET, side: input.side, expiry: input.expiry, fillMode: input.fillMode });
+            if (posted) setStored({ ...DEFAULT_TICKET, side: input.side, expiry: input.expiry, fillMode: input.fillMode, mode });
           }}
         />
       )}
-      {draft === null && !termsOpen && (
+      {signDraft !== null && walletChain && own && (
+        <SignOrder
+          flowKey={key}
+          sign={signDraft}
+          chain={walletChain}
+          own={own}
+          meta={meta}
+          terms={terms.data}
+          copy={copy}
+          onEdit={() => setSignDraft(null)}
+          onClose={(listed) => {
+            setSignDraft(null);
+            if (listed) setStored({ ...DEFAULT_TICKET, side: input.side, expiry: input.expiry, fillMode: input.fillMode, mode });
+          }}
+        />
+      )}
+      {draft === null && signDraft === null && !termsOpen && (
         <form className="request-form" onSubmit={review} noValidate data-testid="desk-ticket-form">
           <fieldset className="choice-group" data-testid="desk-ticket-side">
             <legend>{text('ticket.sideLabel')}</legend>
@@ -240,7 +272,7 @@ export function OrderTicket({
                     onChange={(e) => set({ amount: e.target.value })}
                     data-testid="desk-ticket-amount"
                   />
-                  {stakeField(input.side) === 'amount' && (
+                  {!signing && stakeField(input.side) === 'amount' && (
                     <FillToBalance balance={balance} decimals={stakeDecimals} onFill={(v) => set({ amount: v })} copy={copy} />
                   )}
                 </div>
@@ -263,7 +295,7 @@ export function OrderTicket({
                     onChange={(e) => set({ collateral: e.target.value })}
                     data-testid="desk-ticket-collateral"
                   />
-                  {stakeField(input.side) === 'collateral' && (
+                  {!signing && stakeField(input.side) === 'collateral' && (
                     <FillToBalance balance={balance} decimals={stakeDecimals} onFill={(v) => set({ collateral: v })} copy={copy} />
                   )}
                 </div>
@@ -284,7 +316,12 @@ export function OrderTicket({
               )}
             </FormField>
           </div>
-          {balance !== null && (
+          {signing && (
+            <p className="tier-b" data-testid="desk-ticket-sign-vault">
+              {text(lender ? 'ticket.signVaultLend' : 'ticket.signVaultBorrow')}
+            </p>
+          )}
+          {!signing && balance !== null && (
             <p className="tier-b" data-testid="desk-ticket-balance">
               {format(lender ? 'ticket.balanceLend' : 'ticket.balanceBorrow', { have: amountOf(balance, stakeAsset) })}
             </p>
@@ -298,15 +335,21 @@ export function OrderTicket({
               </label>
             ))}
           </fieldset>
-          <fieldset className="choice-group" data-testid="desk-ticket-fill">
-            <legend>{text('request.fillLabel')}</legend>
-            {FILL_MODES.map((m) => (
-              <label key={m} className="choice">
-                <input type="radio" name="desk-ticket-fill" value={m} checked={input.fillMode === m} onChange={() => set({ fillMode: m })} />
-                <span>{text(FILL_LABEL[m])}</span>
-              </label>
-            ))}
-          </fieldset>
+          {signing ? (
+            <p className="tier-b" data-testid="desk-ticket-sign-shape">
+              {text('ticket.signShape')}
+            </p>
+          ) : (
+            <fieldset className="choice-group" data-testid="desk-ticket-fill">
+              <legend>{text('request.fillLabel')}</legend>
+              {FILL_MODES.map((m) => (
+                <label key={m} className="choice">
+                  <input type="radio" name="desk-ticket-fill" value={m} checked={input.fillMode === m} onChange={() => set({ fillMode: m })} />
+                  <span>{text(FILL_LABEL[m])}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
           {parted && (
             <FormField
               label={format('ticket.minFillLabel', { symbol: lendingSymbol })}
@@ -329,14 +372,14 @@ export function OrderTicket({
           )}
           <fieldset className="choice-group" data-testid="desk-ticket-mode">
             <legend>{text('ticket.modeLabel')}</legend>
-            <label className="choice">
-              <input type="radio" name="desk-ticket-mode" value="post" checked readOnly />
-              <span>{text(lender ? 'ticket.modePostLend' : 'ticket.modePostBorrow')}</span>
-            </label>
-            <label className="choice">
-              <input type="radio" name="desk-ticket-mode" value="sign" disabled />
-              <span>{text('ticket.modeSign')}</span>
-            </label>
+            {(['post', 'sign'] as const satisfies readonly TicketMode[]).map((m) => (
+              <label key={m} className="choice">
+                <input type="radio" name="desk-ticket-mode" value={m} checked={mode === m} onChange={() => set({ mode: m })} />
+                <span>
+                  {text(m === 'sign' ? (lender ? 'ticket.modeSignLend' : 'ticket.modeSignBorrow') : lender ? 'ticket.modePostLend' : 'ticket.modePostBorrow')}
+                </span>
+              </label>
+            ))}
           </fieldset>
           <p className="tier-b" data-testid="desk-ticket-fixed">
             {format('ticket.fixed', { days: String(market.durationDays) })}
@@ -369,7 +412,7 @@ export function OrderTicket({
           <div className="thumb-action">
             <div className="thumb-buttons">
               <button type="submit" className="btn btn-primary" disabled={!check.ok} data-testid="desk-ticket-review">
-                {text(lender ? 'ticket.reviewLend' : 'ticket.reviewBorrow')}
+                {text(signing ? 'ticket.reviewSign' : lender ? 'ticket.reviewLend' : 'ticket.reviewBorrow')}
               </button>
             </div>
             {blockerText !== null && (
@@ -447,6 +490,8 @@ function blockerSentence(
       return text('ticket.errMinFill');
     case 'fill':
       return text('ticket.fillIocOpen');
+    case 'sign-never':
+      return text('ticket.signNever');
     case 'terms-unread':
       return format('ticket.blockTerms', { reason: b.reason });
   }

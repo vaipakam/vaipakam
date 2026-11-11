@@ -4,9 +4,9 @@
  * offer on the ticket: only the first thing in the way shows beneath the
  * action, "fill to balance" types the wallet's whole WETH balance exactly,
  * the terms the ticket does not let the reader change and the fees at
- * today's list rates are stated, and signed orders are named as not
- * available. The guided flows' own review then posts it, and the chain
- * holds it as typed at the market's term. Switching to the borrower side
+ * today's list rates are stated, and the ticket posts on the chain unless
+ * the reader chooses to sign (spec 70). The guided flows' own review then
+ * posts it, and the chain holds it as typed at the market's term. Switching to the borrower side
  * relabels the ticket and opens the request review. Runs on the desktop and
  * the phone project; the chain is reverted after each test.
  */
@@ -70,7 +70,10 @@ test('a lender posts from the order ticket: first blocker, fill to balance, stat
     'a 30-day term, one exact rate with no rate range, interest for the full term even if repaid early',
   );
   await expect(ticket.getByTestId('desk-ticket-mode')).toContainText('Posted on the chain: you pay gas, and the amount waits in your own vault.');
-  await expect(ticket.getByTestId('desk-ticket-mode').getByRole('radio', { name: /Signed without gas/ })).toBeDisabled();
+  await expect(ticket.getByTestId('desk-ticket-mode').getByRole('radio', { name: /Posted on the chain/ })).toBeChecked();
+  await expect(ticket.getByTestId('desk-ticket-mode')).toContainText(
+    'Signed without gas: listed on the offer book, the amount drawn from your own vault at a fill.',
+  );
 
   // Fill to balance types the wallet's whole balance, every digit.
   await expect(ticket.getByTestId('desk-ticket-balance')).toContainText('Your wallet holds');

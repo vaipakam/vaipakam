@@ -26,6 +26,19 @@ export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 /** `LibVaipakam.OfferType.Lender`. */
 export const SIGNED_LENDER = '0';
 
+/** The domain `LibSignedOffer.domainSeparator()` computes: bound to one
+ *  network and one deployment, so a signature never fills elsewhere. */
+export function signedOfferDomain(chainId: number, diamond: Hex) {
+  return { name: 'Vaipakam SignedOffer', version: '1', chainId, verifyingContract: diamond } as const;
+}
+
+/** A random batch-cancel nonce (128 bits), so cancelling a new order by its
+ *  nonce stops that order alone. */
+export function randomNonce(random: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array = (b) => crypto.getRandomValues(b)): bigint {
+  const bytes = random(new Uint8Array(16));
+  return bytes.reduce((n, b) => (n << 8n) | BigInt(b), 0n);
+}
+
 /** The message viem's typed-data encoder takes for a wire order; the same
  *  struct `cancelSignedOffer` takes. */
 export function typedMessage(o: SignedOrderWire) {
@@ -113,4 +126,29 @@ export function signedStakeLeft(o: SignedOrderWire, filled: bigint): { asset: He
   if (o.offerType === SIGNED_LENDER) return { asset: stake.asset, amount: left };
   if (ceiling === 0n) return { asset: stake.asset, amount: 0n };
   return { asset: stake.asset, amount: (stake.amount * left + ceiling - 1n) / ceiling };
+}
+
+/** What the offer book answered to a listing. */
+export type BookAnswer =
+  /** Listed now (`fresh`), or already listed and still open. */
+  | { kind: 'listed'; orderHash: Hex; fresh: boolean }
+  /** The book refused it and listed nothing; `code` is the book's own. */
+  | { kind: 'refused'; code: string }
+  /** No answer the app can read: whether it was listed is not known. */
+  | { kind: 'unknown'; reason: string };
+
+/** The book's answer to `POST /signed-offers`: 201 lists it, 200 says it
+ *  was already listed, a 4xx with the book's error code refused it; any
+ *  other answer (a 5xx, a body this app cannot read) leaves it unknown. A
+ *  listing must name the order this app signed. */
+export function bookAnswer(status: number, body: unknown, expected: Hex): BookAnswer {
+  const b = body !== null && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  if (status === 201 || status === 200) {
+    if (typeof b.orderHash === 'string' && b.orderHash.toLowerCase() === expected.toLowerCase()) {
+      return { kind: 'listed', orderHash: expected, fresh: status === 201 };
+    }
+    return { kind: 'unknown', reason: `the offer book answered ${status} without naming this order` };
+  }
+  if (status >= 400 && status < 500 && typeof b.error === 'string' && b.error !== '') return { kind: 'refused', code: b.error };
+  return { kind: 'unknown', reason: `the offer book answered ${status}` };
 }
