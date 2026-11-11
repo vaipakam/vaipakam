@@ -59,6 +59,8 @@ function harness(over: Partial<KeeperRouteDeps> = {}, outcome: TelegramOutcome =
 }
 
 const base = { chainId: CHAIN, diamond: DIAMOND };
+const DEP = { chainId: CHAIN, diamond: DIAMOND };
+const OURS = { [CHAIN]: DIAMOND };
 
 describe('keeper route authority', () => {
   it('is not a keeper route outside /keeper/', async () => {
@@ -105,9 +107,9 @@ describe('LOCK routes', () => {
     const { store, call, link } = harness();
     link(W, '42');
     // No keeper has polled: a LOCK is not recorded.
-    expect(store.recordLockRequests('42', 1, NOW, NOW - 300)[0]!.recorded).toBe(false);
+    expect(store.recordLockRequests('42', 1, NOW, NOW - 300, OURS)[0]!.recorded).toBe(false);
     expect((await call('/keeper/lock/poll', base)).body).toEqual({ requests: [] });
-    expect(store.recordLockRequests('42', 2, NOW, NOW - 300)[0]!.recorded).toBe(true);
+    expect(store.recordLockRequests('42', 2, NOW, NOW - 300, OURS)[0]!.recorded).toBe(true);
     const polled = await call('/keeper/lock/poll', { ...base, limit: 5 });
     expect(polled.body).toEqual({ requests: [{ id: 1, wallet: W, requestedAt: NOW }] });
     expect((await call('/keeper/lock/poll', { ...base, limit: 51 })).status).toBe(400);
@@ -118,8 +120,8 @@ describe('LOCK routes', () => {
   it('records an outcome once and tells the linked chat once', async () => {
     const { store, sent, call, link } = harness();
     link(W, '42');
-    store.keeperPoll(CHAIN, NOW, 1);
-    store.recordLockRequests('42', 1, NOW, NOW - 300);
+    store.keeperPoll(DEP, NOW, 1);
+    store.recordLockRequests('42', 1, NOW, NOW - 300, OURS);
     const report = { ...base, wallet: W.toUpperCase().replace('0X', '0x'), upToId: 1, outcome: 'locked' };
     expect((await call('/keeper/lock/handled', report)).body).toEqual({ recorded: true, telegram: 'sent' });
     expect(sent).toHaveLength(1);
@@ -133,8 +135,8 @@ describe('LOCK routes', () => {
   it('records a silent drop without a message, and refuses an unknown outcome or a bad reason', async () => {
     const { store, sent, call, link } = harness();
     link(W, '42');
-    store.keeperPoll(CHAIN, NOW, 1);
-    store.recordLockRequests('42', 1, NOW, NOW - 300);
+    store.keeperPoll(DEP, NOW, 1);
+    store.recordLockRequests('42', 1, NOW, NOW - 300, OURS);
     const report = { ...base, wallet: W, upToId: 1 };
     expect((await call('/keeper/lock/handled', { ...report, outcome: 'whatever' })).status).toBe(400);
     expect((await call('/keeper/lock/handled', { ...report, outcome: 'refused', reason: 'see x.io' })).status).toBe(400);
@@ -147,9 +149,9 @@ describe('LOCK routes', () => {
   it('names a refusal, and answers off when the wallet is unlinked or no bot can send', async () => {
     const { store, sent, call, link } = harness();
     link(W, '42');
-    store.keeperPoll(CHAIN, NOW, 1);
-    store.recordLockRequests('42', 1, NOW, NOW - 300);
-    store.recordLockRequests('42', 2, NOW, NOW - 300);
+    store.keeperPoll(DEP, NOW, 1);
+    store.recordLockRequests('42', 1, NOW, NOW - 300, OURS);
+    store.recordLockRequests('42', 2, NOW, NOW - 300, OURS);
     const refused = await call('/keeper/lock/handled', { ...base, wallet: W, upToId: 1, outcome: 'refused', reason: 'NotOwner' });
     expect(refused.body).toEqual({ recorded: true, telegram: 'sent' });
     expect(sent[0]!.text).toContain('(NotOwner)');
@@ -158,8 +160,8 @@ describe('LOCK routes', () => {
 
     const noBot = harness({ send: undefined });
     noBot.link(W, '42');
-    noBot.store.keeperPoll(CHAIN, NOW, 1);
-    noBot.store.recordLockRequests('42', 1, NOW, NOW - 300);
+    noBot.store.keeperPoll(DEP, NOW, 1);
+    noBot.store.recordLockRequests('42', 1, NOW, NOW - 300, OURS);
     expect((await noBot.call('/keeper/lock/handled', { ...base, wallet: W, upToId: 1, outcome: 'locked' })).body).toEqual({ recorded: true, telegram: 'off' });
   });
 });

@@ -98,6 +98,15 @@ export interface UnansweredLock {
   chatId: string;
 }
 
+/** One deployment of the protocol: a chain and the Diamond on it. LOCK
+ *  state is kept per deployment, never per chain alone, so a request made
+ *  against one Diamond is never handed to a keeper working another one on
+ *  the same chain (a fresh deploy keeps the chain id). */
+export interface ChainDeployment {
+  chainId: number;
+  diamond: string;
+}
+
 /** How a recorded LOCK went, as the agent tells the chat. */
 export interface LockLink {
   wallet: string;
@@ -154,6 +163,7 @@ const SCHEMA: readonly string[] = [
    CREATE TABLE IF NOT EXISTS lock_requests (
      id           INTEGER PRIMARY KEY AUTOINCREMENT,
      chain_id     INTEGER NOT NULL,
+     diamond      TEXT NOT NULL,
      wallet       TEXT NOT NULL,
      update_id    INTEGER NOT NULL,
      requested_at INTEGER NOT NULL,
@@ -162,10 +172,12 @@ const SCHEMA: readonly string[] = [
      warned_at    INTEGER,
      UNIQUE (update_id, chain_id, wallet)
    );
-   CREATE INDEX IF NOT EXISTS idx_lock_requests_open ON lock_requests(chain_id, handled_at, id);
+   CREATE INDEX IF NOT EXISTS idx_lock_requests_open ON lock_requests(chain_id, diamond, handled_at, id);
    CREATE TABLE IF NOT EXISTS lock_readiness (
-     chain_id INTEGER PRIMARY KEY,
-     seen_at  INTEGER NOT NULL
+     chain_id INTEGER NOT NULL,
+     diamond  TEXT NOT NULL,
+     seen_at  INTEGER NOT NULL,
+     PRIMARY KEY (chain_id, diamond)
    );`,
 ];
 
@@ -494,28 +506,40 @@ export class TelegramStateStore {
 
   /**
    * Record a LOCK from `chatId` for every (wallet, chain) the chat is linked
-   * to on which a keeper is working LOCK requests now (its last poll at or
-   * after `freshFrom`). Returns every link with whether it was recorded.
+   * to on which a keeper is working LOCK requests for the chain's CURRENT
+   * Diamond now (its last poll for that Diamond at or after `freshFrom`).
+   * `diamonds` is the agent's own deployment list, chain id to Diamond; a
+   * request is recorded against that Diamond, and a keeper still polling a
+   * retired one counts for nothing. Returns every link with whether it was
+   * recorded.
    * `requestedAt` null records nothing (a request too old, or with no send
    * time): the links come back unrecorded and the caller says why. A
    * redelivered update records nothing new: a row is unique on (update,
    * chain, wallet).
    */
-  recordLockRequests(chatId: string, updateId: number, requestedAt: number | null, freshFrom: number): LockLink[] {
+  recordLockRequests(
+    chatId: string,
+    updateId: number,
+    requestedAt: number | null,
+    freshFrom: number,
+    diamonds: Readonly<Record<number, string>>,
+  ): LockLink[] {
     return this.tx(() => {
       const links = this.linksOfChat(chatId);
       const running = new Set(
         this.sql
-          .exec<{ chain_id: number }>(`SELECT chain_id FROM lock_readiness WHERE seen_at >= ?`, freshFrom)
+          .exec<{ chain_id: number; diamond: string }>(`SELECT chain_id, diamond FROM lock_readiness WHERE seen_at >= ?`, freshFrom)
           .toArray()
+          .filter((r) => diamonds[Number(r.chain_id)]?.toLowerCase() === r.diamond)
           .map((r) => Number(r.chain_id)),
       );
       return links.map((l) => {
         const recordable = requestedAt !== null && running.has(l.chainId);
         if (recordable) {
           this.sql.exec(
-            `INSERT OR IGNORE INTO lock_requests (chain_id, wallet, update_id, requested_at) VALUES (?, ?, ?, ?)`,
+            `INSERT OR IGNORE INTO lock_requests (chain_id, diamond, wallet, update_id, requested_at) VALUES (?, ?, ?, ?, ?)`,
             l.chainId,
+            lower(diamonds[l.chainId]!),
             l.wallet,
             updateId,
             requestedAt,
@@ -527,25 +551,28 @@ export class TelegramStateStore {
   }
 
   /**
-   * The keeper's poll for `chainId`: it says a keeper able to sign is working
-   * LOCK requests there now (the agent records a LOCK only while that is
+   * The keeper's poll for deployment `dep`: it says a keeper able to sign is
+   * working LOCK requests for that Diamond now (the agent records a LOCK only while that is
    * fresh), and returns at most `limit` wallets with open requests, one entry
    * per wallet, in the order of each wallet's oldest open request.
    */
-  keeperPoll(chainId: number, now: number, limit: number): LockRequest[] {
+  keeperPoll(dep: ChainDeployment, now: number, limit: number): LockRequest[] {
+    const diamond = lower(dep.diamond);
     return this.tx(() => {
       this.sql.exec(
-        `INSERT INTO lock_readiness (chain_id, seen_at) VALUES (?, ?)
-         ON CONFLICT (chain_id) DO UPDATE SET seen_at = excluded.seen_at`,
-        chainId,
+        `INSERT INTO lock_readiness (chain_id, diamond, seen_at) VALUES (?, ?, ?)
+         ON CONFLICT (chain_id, diamond) DO UPDATE SET seen_at = excluded.seen_at`,
+        dep.chainId,
+        diamond,
         now,
       );
       return this.sql
         .exec<{ id: number; wallet: string; requested_at: number }>(
           `SELECT MAX(id) AS id, wallet, MAX(requested_at) AS requested_at, MIN(id) AS first_id
-             FROM lock_requests WHERE chain_id = ? AND handled_at IS NULL
+             FROM lock_requests WHERE chain_id = ? AND diamond = ? AND handled_at IS NULL
             GROUP BY wallet ORDER BY first_id ASC LIMIT ?`,
-          chainId,
+          dep.chainId,
+          diamond,
           limit,
         )
         .toArray()
@@ -553,32 +580,36 @@ export class TelegramStateStore {
     });
   }
 
-  /** The wallets with a LOCK request on `chainId` sent at or after `since`
-   *  and not handled yet (the keeper holds their releases). */
-  pendingLockWallets(chainId: number, since: number): string[] {
+  /** The wallets with a LOCK request on deployment `dep` sent at or after
+   *  `since` and not handled yet (the keeper holds their releases). */
+  pendingLockWallets(dep: ChainDeployment, since: number): string[] {
     return this.sql
       .exec<{ wallet: string }>(
-        `SELECT DISTINCT wallet FROM lock_requests WHERE chain_id = ? AND handled_at IS NULL AND requested_at >= ?`,
-        chainId,
+        `SELECT DISTINCT wallet FROM lock_requests
+          WHERE chain_id = ? AND diamond = ? AND handled_at IS NULL AND requested_at >= ?`,
+        dep.chainId,
+        lower(dep.diamond),
         since,
       )
       .toArray()
       .map((r) => r.wallet);
   }
 
-  /** Record that `wallet`'s open requests on `chainId` up to `upToId` are
+  /** Record that `wallet`'s open requests on deployment `dep` up to `upToId` are
    *  finished, and how. Returns the chat the wallet is linked to now (where
    *  the answer goes; null once unlinked), or undefined when no open request
    *  matched (already handled, or never made: nothing is answered). */
-  markLockHandled(chainId: number, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null } | undefined {
+  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null } | undefined {
     const w = lower(wallet);
+    const chainId = dep.chainId;
     return this.tx(() => {
       const changed = this.sql.exec(
         `UPDATE lock_requests SET handled_at = ?, outcome = ?
-          WHERE chain_id = ? AND wallet = ? AND id <= ? AND handled_at IS NULL`,
+          WHERE chain_id = ? AND diamond = ? AND wallet = ? AND id <= ? AND handled_at IS NULL`,
         at,
         outcome,
         chainId,
+        lower(dep.diamond),
         w,
         upToId,
       ).rowsWritten;

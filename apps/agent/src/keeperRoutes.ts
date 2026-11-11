@@ -39,6 +39,7 @@ import { readJsonBody } from '@vaipakam/lib/requestBody';
 import type { LocaleReader } from './alertChannelChange';
 import type { TelegramOutcome } from './telegram';
 import type { KeeperStatePort } from './telegramLinks';
+import type { ChainDeployment } from './telegramState/store';
 
 /** Largest request body read, in bytes. */
 export const KEEPER_BODY_MAX = 64 * 1024;
@@ -98,14 +99,17 @@ export async function handleKeeperRoute(req: Request, path: string, d: KeeperRou
   if (!isInt(chainId, 1, 2 ** 40)) return reply({ error: 'bad-chain' }, 400);
   const fence = fenceRefusal(chainId, body.diamond, d);
   if (fence) return fence;
+  // The fence passed, so the body's Diamond IS the agent's own for the chain.
+  // LOCK state is read and written for that deployment only.
+  const dep: ChainDeployment = { chainId, diamond: (body.diamond as string).toLowerCase() };
 
   switch (path) {
     case '/keeper/lock/poll':
-      return lockPoll(chainId, body, d);
+      return lockPoll(dep, body, d);
     case '/keeper/lock/pending':
-      return lockPending(chainId, body, d);
+      return lockPending(dep, body, d);
     case '/keeper/lock/handled':
-      return lockHandled(chainId, body, d);
+      return lockHandled(dep, body, d);
     case '/keeper/alerts':
       return alerts(chainId, body, d);
     default:
@@ -115,20 +119,21 @@ export async function handleKeeperRoute(req: Request, path: string, d: KeeperRou
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 
-async function lockPoll(chainId: number, body: Record<string, unknown>, d: KeeperRouteDeps): Promise<Response> {
+async function lockPoll(dep: ChainDeployment, body: Record<string, unknown>, d: KeeperRouteDeps): Promise<Response> {
   const limit = body.limit === undefined ? 20 : body.limit;
   if (!isInt(limit, 1, KEEPER_POLL_MAX)) return reply({ error: 'bad-limit' }, 400);
-  const requests = await d.state.keeperPoll(chainId, d.now(), limit);
+  const requests = await d.state.keeperPoll(dep, d.now(), limit);
   return reply({ requests }, 200);
 }
 
-async function lockPending(chainId: number, body: Record<string, unknown>, d: KeeperRouteDeps): Promise<Response> {
+async function lockPending(dep: ChainDeployment, body: Record<string, unknown>, d: KeeperRouteDeps): Promise<Response> {
   if (!isInt(body.since, 0, 2 ** 40)) return reply({ error: 'bad-since' }, 400);
-  const wallets = await d.state.pendingLockWallets(chainId, body.since);
+  const wallets = await d.state.pendingLockWallets(dep, body.since);
   return reply({ wallets }, 200);
 }
 
-async function lockHandled(chainId: number, body: Record<string, unknown>, d: KeeperRouteDeps): Promise<Response> {
+async function lockHandled(dep: ChainDeployment, body: Record<string, unknown>, d: KeeperRouteDeps): Promise<Response> {
+  const chainId = dep.chainId;
   const { wallet, upToId, outcome, reason } = body;
   if (typeof wallet !== 'string' || !ADDRESS.test(wallet)) return reply({ error: 'bad-wallet' }, 400);
   if (!isInt(upToId, 1, Number.MAX_SAFE_INTEGER)) return reply({ error: 'bad-id' }, 400);
@@ -138,7 +143,7 @@ async function lockHandled(chainId: number, body: Record<string, unknown>, d: Ke
 
   const recordAs = outcome === 'refused' ? `refused: ${reason as string}` : (outcome as string);
   const lower = wallet.toLowerCase();
-  const marked = await d.state.markLockHandled(chainId, lower, upToId, recordAs, d.now());
+  const marked = await d.state.markLockHandled(dep, lower, upToId, recordAs, d.now());
   // Already handled: a repeated report records nothing and sends nothing, so
   // a keeper retrying after a lost answer never messages the chat twice.
   if (!marked) return reply({ recorded: false, telegram: 'off' }, 200);
