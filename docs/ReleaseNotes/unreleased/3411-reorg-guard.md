@@ -1,4 +1,4 @@
-## Indexer — catching a reorganisation below the settled block (PR #<n>)
+## Indexer — catching a reorganisation below the settled block (PR #3528)
 
 The indexer already reads each chain only up to the block the chain itself reports as "safe", so it uses no fixed confirmation counts. What it lacked was any way to notice a chain replacing a block below that point afterwards. Its cursor only moves forward, so rows written from a replaced block would have stayed wrong for good.
 
