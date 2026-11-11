@@ -63,6 +63,7 @@ describe('httpAgentClient', () => {
     expect(reqs).toEqual([{ id: 3, wallet: WALLET, requestedAt: 100 }]);
     expect(seen[0]!.url).toBe(`${ORIGIN}/keeper/lock/poll`);
     expect(seen[0]!.init.method).toBe('POST');
+    expect(seen[0]!.init.redirect).toBe('error');
     expect((seen[0]!.init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
     expect(JSON.parse(String(seen[0]!.init.body))).toEqual({ limit: 20, chainId: 84532, diamond: DIAMOND });
   });

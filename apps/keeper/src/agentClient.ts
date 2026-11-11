@@ -150,6 +150,9 @@ export function httpAgentClient(origin: string, token: string, fetchFn: FetchFn)
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ ...body, chainId, diamond }),
         signal: AbortSignal.timeout(AGENT_REQUEST_TIMEOUT_MS),
+        // The agent never redirects. Refusing one keeps the bearer from
+        // following a misconfigured origin anywhere else.
+        redirect: 'error',
       });
     } catch (err) {
       // Never the token: the error names the path and the failure only.
