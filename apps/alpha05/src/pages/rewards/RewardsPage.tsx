@@ -8,12 +8,14 @@ import { TierElsewhere } from '../../shared/rewards/TierElsewhere';
 import { TierSection } from '../../shared/rewards/TierSection';
 import { VpfiVault } from '../../shared/rewards/VpfiVault';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
+import { RewardProgramme } from '../../shared/rewards/RewardProgramme';
 
 /**
  * Rewards (RW-01..RW-07, RW-24..RW-27, RW-33, RW-36): one page for the
  * wallet's rewards and its VPFI on the wallet's network (RB-PRECEDENCE: the
- * current app splits the VPFI vault from the vault page). First the
- * interaction rewards: what a claim made now pays, the claim, the soonest
+ * current app splits the VPFI vault from the vault page). It opens with
+ * whether the reward programme runs on the network and what it rests on
+ * (RW-43, RW-44). Then the interaction rewards: what a claim made now pays, the claim, the soonest
  * removal and any held balance (the shared widget Home and Claims show).
  * Then the VPFI in the wallet's own vault, with its deposit and withdrawal,
  * the fee-discount tier the protocol applies now with the table of tiers
@@ -43,6 +45,7 @@ export function RewardsPage() {
       {served && (
         <>
           <FrozenNotice state={frozen} />
+          <RewardProgramme chain={served.chain} />
           <RewardsWidget onRewards />
           <VpfiVault chain={served.chain} own={served.own} />
           <TierSection chain={served.chain} own={served.own} />
