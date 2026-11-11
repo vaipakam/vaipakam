@@ -20,6 +20,7 @@ import { LoanActions } from './LoanActions';
 import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
 import { InterestSchedule } from './InterestSchedule';
+import { LenderDiscount } from './LenderDiscount';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -42,7 +43,8 @@ function parseLoanId(raw: string | undefined): bigint | null {
  * LN-13): one loan, its status first, then the reader's role (the positions
  * their wallet holds now), any deadline that needs them, its dates with the
  * pause credit, its terms as the loan fixed them, its health, and where its
- * collateral is held. Every figure is read, and one that could not be read is
+ * collateral is held, and, for the lender side, the fee discount on this
+ * loan (LN-18). Every figure is read, and one that could not be read is
  * said to be unknown. A running loan's actions follow its status (LN-21:
  * repaying in full); the actions still to come are said to be coming.
  */
@@ -273,6 +275,10 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
           unknown={unknown}
         />
       </Facts>
+
+      {/* LN-18 — the holding discount on the protocol's share of this loan's
+          interest, for the wallet holding the lender side of a running loan. */}
+      {live && erc20 && role?.lender === true && <LenderDiscount loanId={loanId} diamond={chain.diamondAddress as Hex} lender={account} />}
 
       {live && erc20 && (
         <Facts title={text('position.healthTitle')} id="position-health" lead={<WhyLink summaryKey="position.healthSummary" detailKey="position.healthWhy" />}>
