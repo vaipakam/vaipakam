@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
-import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
+import {PositiveFlowsStaged} from "./PositiveFlowsStaged.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -24,9 +24,18 @@ import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
  *         same flow as {PositiveFlowsAdvancedCredit}'s PF-230 and is run there
  *         only. Its scenarios 5 and 6 (cancelling an unaccepted offer) are
  *         in {PositiveFlowsTimed}, which can step past the cancel cooldown.
- *         Fixture, runner and ids: {PositiveFlowsBase}.
+ *         Fixture and ids: {PositiveFlowsBase}.
+ *
+ *         Every scenario takes two steps (#3502): the first posts the offer;
+ *         the second, once its terms have stood the minimum age, fills it and
+ *         carries the position to its close and both claims. `run()` is the
+ *         simulation and `stage()` the broadcastable run
+ *         ({PositiveFlowsStaged}, `script/positive-flows/run-staged.sh`).
  */
-contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
+contract PositiveFlowsBasicLifecycle is PositiveFlowsStaged {
+    /// @dev The offer a scenario's first step posts and its second fills.
+    string private constant OFFER = "offer";
+
     function moduleName() public pure override returns (string memory) {
         return "PositiveFlowsBasicLifecycle";
     }
@@ -54,26 +63,32 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
             "PF-095, PF-110, PF-112, PF-113");
     }
 
-    function _runScenario(uint256 index) internal override {
-        if (index == 0) _lenderOfferRepayClaim();
-        else if (index == 1) _thirdPartyRepay();
-        else if (index == 2) _borrowerOfferRepayClaim();
-        else if (index == 3) _addCollateral();
-        else if (index == 4) _precloseDirect();
-        else if (index == 5) _illiquidCollateral();
-        else if (index == 6) _erc721Collateral();
-        else if (index == 7) _erc1155Collateral();
-        else if (index == 8) _erc721Rental();
-        else if (index == 9) _erc1155Rental();
-        else if (index == 10) _illiquidLendingIlliquidCollateral();
-        else if (index == 11) _illiquidLendingLiquidCollateral();
+    /// @dev Post; then fill, close and claim.
+    function _stepCount(uint256) internal pure override returns (uint256) {
+        return 2;
+    }
+
+    function _runStep(uint256 index, uint256 step) internal override {
+        if (index == 0) _lenderOfferRepayClaim(step);
+        else if (index == 1) _thirdPartyRepay(step);
+        else if (index == 2) _borrowerOfferRepayClaim(step);
+        else if (index == 3) _addCollateral(step);
+        else if (index == 4) _precloseDirect(step);
+        else if (index == 5) _illiquidCollateral(step);
+        else if (index == 6) _erc721Collateral(step);
+        else if (index == 7) _erc1155Collateral(step);
+        else if (index == 8) _erc721Rental(step);
+        else if (index == 9) _erc1155Rental(step);
+        else if (index == 10) _illiquidLendingIlliquidCollateral(step);
+        else if (index == 11) _illiquidLendingLiquidCollateral(step);
         else revert("PositiveFlowsBasicLifecycle: no scenario at index");
     }
 
     // ─── PF-090 ───────────────────────────────────────────────────────────
 
-    function _lenderOfferRepayClaim() internal {
-        uint256 offerId = _createLenderOffer(lenderKey);
+    function _lenderOfferRepayClaim(uint256 step) internal {
+        if (step == 0) return _keep(OFFER, _createLenderOffer(lenderKey));
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
         require(
@@ -88,8 +103,9 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     /// @dev Admin repays on the borrower's behalf; the claims still belong
     ///      to the two position holders.
-    function _thirdPartyRepay() internal {
-        uint256 offerId = _createLenderOffer(lenderKey);
+    function _thirdPartyRepay(uint256 step) internal {
+        if (step == 0) return _keep(OFFER, _createLenderOffer(lenderKey));
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
         _repayInFull(adminKey, loanId);
@@ -103,13 +119,16 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
     ///      pulls the principal from the lender's wallet into the lender's
     ///      vault inline (the `vaultDepositERC20` chokepoint), so an approve
     ///      is all the lender needs.
-    function _borrowerOfferRepayClaim() internal {
-        vm.startBroadcast(borrowerKey);
-        weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard(), type(uint64).max);
-        vm.stopBroadcast();
-        console.log("Borrower created offer:", offerId);
-
+    function _borrowerOfferRepayClaim(uint256 step) internal {
+        if (step == 0) {
+            vm.startBroadcast(borrowerKey);
+            weth.approve(diamond, COLLATERAL_AMOUNT);
+            uint256 posted = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard(), type(uint64).max);
+            vm.stopBroadcast();
+            console.log("Borrower created offer:", posted);
+            return _keep(OFFER, posted);
+        }
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(lenderKey, offerId, address(usdc), LOAN_AMOUNT);
         console.log("Lender accepted, loanId:", loanId);
         _repayInFull(borrowerKey, loanId);
@@ -118,8 +137,9 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     // ─── PF-160 ───────────────────────────────────────────────────────────
 
-    function _addCollateral() internal {
-        uint256 offerId = _createLenderOffer(lenderKey);
+    function _addCollateral(uint256 step) internal {
+        if (step == 0) return _keep(OFFER, _createLenderOffer(lenderKey));
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
 
@@ -140,8 +160,9 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     // ─── PF-210 ───────────────────────────────────────────────────────────
 
-    function _precloseDirect() internal {
-        uint256 offerId = _createLenderOffer(newLenderKey);
+    function _precloseDirect(uint256 step) internal {
+        if (step == 0) return _keep(OFFER, _createLenderOffer(newLenderKey));
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(newBorrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
 
@@ -161,17 +182,20 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     /// @dev LTV/HF checks do not apply to illiquid collateral; both sides
     ///      consent to the full-collateral default rule.
-    function _illiquidCollateral() internal {
-        LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
-        p.collateralAsset = address(illiquidToken);
-        p.collateralAmount = 200e18;
-        p.collateralAmountMax = 200e18;
-        vm.startBroadcast(lenderKey);
-        usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
-        vm.stopBroadcast();
-        console.log("Lender offer created:", offerId);
-
+    function _illiquidCollateral(uint256 step) internal {
+        if (step == 0) {
+            LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
+            p.collateralAsset = address(illiquidToken);
+            p.collateralAmount = 200e18;
+            p.collateralAmountMax = 200e18;
+            vm.startBroadcast(lenderKey);
+            usdc.approve(diamond, LOAN_AMOUNT);
+            uint256 posted = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
+            vm.stopBroadcast();
+            console.log("Lender offer created:", posted);
+            return _keep(OFFER, posted);
+        }
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(borrowerKey, offerId, address(illiquidToken), 200e18);
         console.log("Loan initiated, loanId:", loanId);
         _repayInFull(borrowerKey, loanId);
@@ -180,19 +204,22 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     // ─── PF-092 ───────────────────────────────────────────────────────────
 
-    function _erc721Collateral() internal {
-        LibVaipakam.CreateOfferParams memory p = _borrowerOfferStandard();
-        p.collateralAsset = address(nft721);
-        p.collateralAmount = 1;
-        p.collateralAmountMax = 1;
-        p.collateralAssetType = LibVaipakam.AssetType.ERC721;
-        p.collateralTokenId = 110; // the borrower's
-        vm.startBroadcast(borrowerKey);
-        nft721.approve(diamond, 110);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
-        vm.stopBroadcast();
-        console.log("Borrower offer with ERC-721 collateral:", offerId);
-
+    function _erc721Collateral(uint256 step) internal {
+        if (step == 0) {
+            LibVaipakam.CreateOfferParams memory p = _borrowerOfferStandard();
+            p.collateralAsset = address(nft721);
+            p.collateralAmount = 1;
+            p.collateralAmountMax = 1;
+            p.collateralAssetType = LibVaipakam.AssetType.ERC721;
+            p.collateralTokenId = 110; // the borrower's
+            vm.startBroadcast(borrowerKey);
+            nft721.approve(diamond, 110);
+            uint256 posted = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
+            vm.stopBroadcast();
+            console.log("Borrower offer with ERC-721 collateral:", posted);
+            return _keep(OFFER, posted);
+        }
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(lenderKey, offerId, address(usdc), LOAN_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
         _repayInFull(borrowerKey, loanId);
@@ -201,20 +228,23 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     // ─── PF-093 ───────────────────────────────────────────────────────────
 
-    function _erc1155Collateral() internal {
-        LibVaipakam.CreateOfferParams memory p = _borrowerOfferStandard();
-        p.collateralAsset = address(nft1155);
-        p.collateralAmount = 10;
-        p.collateralAmountMax = 10;
-        p.collateralAssetType = LibVaipakam.AssetType.ERC1155;
-        p.collateralTokenId = 1;
-        p.collateralQuantity = 10;
-        vm.startBroadcast(borrowerKey);
-        nft1155.setApprovalForAll(diamond, true);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
-        vm.stopBroadcast();
-        console.log("Borrower offer with ERC-1155 collateral:", offerId);
-
+    function _erc1155Collateral(uint256 step) internal {
+        if (step == 0) {
+            LibVaipakam.CreateOfferParams memory p = _borrowerOfferStandard();
+            p.collateralAsset = address(nft1155);
+            p.collateralAmount = 10;
+            p.collateralAmountMax = 10;
+            p.collateralAssetType = LibVaipakam.AssetType.ERC1155;
+            p.collateralTokenId = 1;
+            p.collateralQuantity = 10;
+            vm.startBroadcast(borrowerKey);
+            nft1155.setApprovalForAll(diamond, true);
+            uint256 posted = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
+            vm.stopBroadcast();
+            console.log("Borrower offer with ERC-1155 collateral:", posted);
+            return _keep(OFFER, posted);
+        }
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(lenderKey, offerId, address(usdc), LOAN_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
         _repayInFull(borrowerKey, loanId);
@@ -233,8 +263,11 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         LibVaipakam.AssetType assetType,
         uint256 tokenId,
         uint256 quantity,
-        uint256 dailyFee
+        uint256 dailyFee,
+        uint256 step
     ) internal {
+        uint256 totalPrepay = dailyFee * 7 + (dailyFee * 7 * 500) / 10000;
+        if (step != 0) return _closeRental(_kept(OFFER), totalPrepay);
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
         p.lendingAsset = nft;
         p.amount = dailyFee;
@@ -256,8 +289,12 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender rental offer:", offerId);
+        _keep(OFFER, offerId);
+    }
 
-        uint256 totalPrepay = dailyFee * 7 + (dailyFee * 7 * 500) / 10000;
+    /// @dev The renter prepays and takes the rental; it is closed and both
+    ///      sides claim.
+    function _closeRental(uint256 offerId, uint256 totalPrepay) internal {
         uint256 loanId = _acceptAs(newBorrowerKey, offerId, address(usdc), totalPrepay);
         console.log("Rental initiated, loanId:", loanId);
 
@@ -270,32 +307,35 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
     }
 
     /// @dev ERC-721 id 120 belongs to newLender.
-    function _erc721Rental() internal {
-        _rental(address(nft721), LibVaipakam.AssetType.ERC721, 120, 1, DAILY_FEE);
+    function _erc721Rental(uint256 step) internal {
+        _rental(address(nft721), LibVaipakam.AssetType.ERC721, 120, 1, DAILY_FEE, step);
     }
 
     /// @dev Five units of ERC-1155 id 1 at 5 USDC a day.
-    function _erc1155Rental() internal {
-        _rental(address(nft1155), LibVaipakam.AssetType.ERC1155, 1, 5, 5e6);
+    function _erc1155Rental(uint256 step) internal {
+        _rental(address(nft1155), LibVaipakam.AssetType.ERC1155, 1, 5, 5e6, step);
     }
 
     // ─── PF-096 ───────────────────────────────────────────────────────────
 
-    function _illiquidLendingIlliquidCollateral() internal {
-        LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
-        p.lendingAsset = address(illiquidLending);
-        p.amount = 500e18;
-        p.amountMax = 500e18;
-        p.prepayAsset = address(illiquidLending);
-        p.collateralAsset = address(illiquidToken);
-        p.collateralAmount = 1000e18;
-        p.collateralAmountMax = 1000e18;
-        vm.startBroadcast(lenderKey);
-        illiquidLending.approve(diamond, 500e18);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
-        vm.stopBroadcast();
-        console.log("Lender offer (both legs illiquid):", offerId);
-
+    function _illiquidLendingIlliquidCollateral(uint256 step) internal {
+        if (step == 0) {
+            LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
+            p.lendingAsset = address(illiquidLending);
+            p.amount = 500e18;
+            p.amountMax = 500e18;
+            p.prepayAsset = address(illiquidLending);
+            p.collateralAsset = address(illiquidToken);
+            p.collateralAmount = 1000e18;
+            p.collateralAmountMax = 1000e18;
+            vm.startBroadcast(lenderKey);
+            illiquidLending.approve(diamond, 500e18);
+            uint256 posted = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
+            vm.stopBroadcast();
+            console.log("Lender offer (both legs illiquid):", posted);
+            return _keep(OFFER, posted);
+        }
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(borrowerKey, offerId, address(illiquidToken), 1000e18);
         console.log("Loan initiated, loanId:", loanId);
 
@@ -308,18 +348,21 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
 
     // ─── PF-095 ───────────────────────────────────────────────────────────
 
-    function _illiquidLendingLiquidCollateral() internal {
-        LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
-        p.lendingAsset = address(illiquidToken);
-        p.amount = 200e18;
-        p.amountMax = 200e18;
-        p.prepayAsset = address(illiquidToken);
-        vm.startBroadcast(lenderKey);
-        illiquidToken.approve(diamond, 200e18);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
-        vm.stopBroadcast();
-        console.log("Lender offer (illiquid lending, liquid collateral):", offerId);
-
+    function _illiquidLendingLiquidCollateral(uint256 step) internal {
+        if (step == 0) {
+            LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
+            p.lendingAsset = address(illiquidToken);
+            p.amount = 200e18;
+            p.amountMax = 200e18;
+            p.prepayAsset = address(illiquidToken);
+            vm.startBroadcast(lenderKey);
+            illiquidToken.approve(diamond, 200e18);
+            uint256 posted = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
+            vm.stopBroadcast();
+            console.log("Lender offer (illiquid lending, liquid collateral):", posted);
+            return _keep(OFFER, posted);
+        }
+        uint256 offerId = _kept(OFFER);
         uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated, loanId:", loanId);
 
