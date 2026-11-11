@@ -15,6 +15,7 @@ import {
   guardBeforeSigning,
   resetSigningGuard,
   resolveGasCeiling,
+  signGuarded,
   signingRefusal,
   SigningRefused,
 } from '../src/signingGuard';
@@ -163,6 +164,26 @@ describe('guardBeforeSigning', () => {
     expect(held[0]![1]).toMatch(/^held selector 0xdeadbeef on 0x0+d1: max fee per gas 500 gwei is above the ceiling 20 gwei .*Nothing was signed\.$/);
   });
 
+  it('posts one alert per chain while one is still being posted', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const held: number[] = [];
+    armSigningGuard({}, { held: async (chainId) => { held.push(chainId); await gate; } });
+    const over = { ...PREPARED_FEES_84532, maxFeePerGas: 500n * GWEI, to: DIAMOND };
+    for (let i = 0; i < 3; i++) expect(() => guardBeforeSigning(84532, over)).toThrow(SigningRefused);
+    expect(() => guardBeforeSigning(97, { ...over, chainId: 97, maxFeePerGas: 500n * GWEI })).toThrow(SigningRefused);
+    expect(held).toEqual([84532, 97]);
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    // Posted: the next refusal may alert again; the hook's own interval decides.
+    expect(() => guardBeforeSigning(84532, over)).toThrow(SigningRefused);
+    expect(held).toEqual([84532, 97, 84532]);
+  });
+
+  it('refuses a signer that is not a local key, before any signature', async () => {
+    await expect(signGuarded(84532, { address: KEEPER, type: 'json-rpc' }, PREPARED_FEES_84532)).rejects.toThrow(/not a local key/);
+  });
+
   it('reads the armed variables', () => {
     armSigningGuard({ GAS_MAX_FEE_PER_GAS_WEI: `84532=${600n * GWEI}`, GAS_MAX_TX_FEE_WEI: '84532=10000000000000000000' }, null);
     expect(guardBeforeSigning(84532, { ...PREPARED_FEES_84532, maxFeePerGas: 500n * GWEI })).toHaveProperty('chainId', 84532);
@@ -174,7 +195,14 @@ describe('a held send through the submission slot', () => {
     const nonces: number[] = [];
     const signed: object[] = [];
     const w = {
-      account: { address: KEEPER, type: 'local' },
+      account: {
+        address: KEEPER,
+        type: 'local',
+        signTransaction: async (req: object) => {
+          signed.push(req);
+          return SIGNED;
+        },
+      },
       request: async ({ method }: { method: string }) => {
         if (method === 'eth_getTransactionCount') return '0x0';
         throw new Error(`unexpected request ${method}`);
@@ -182,10 +210,6 @@ describe('a held send through the submission slot', () => {
       prepareTransactionRequest: async (args: { nonce: number }) => {
         nonces.push(args.nonce);
         return { ...args, ...fees() };
-      },
-      signTransaction: async (req: object) => {
-        signed.push(req);
-        return SIGNED;
       },
       sendRawTransaction: async () => keccak256(SIGNED),
     } as unknown as WalletClient;

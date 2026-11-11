@@ -40,7 +40,7 @@
 // ceilings, parsed by the same function). A chain the variable does not name
 // uses the built-in figure for that chain.
 
-import { decodeFunctionData, type Hex } from 'viem';
+import { decodeFunctionData, type Hex, type LocalAccount } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { chainWeiEntry } from './feeCeiling';
 
@@ -226,6 +226,8 @@ export interface SigningGuardEvents {
 
 let armedVars: GasCeilingVars = {};
 let armedEvents: SigningGuardEvents | null = null;
+/** Chains whose held-send alert is being posted right now. */
+const alertsInFlight = new Set<number>();
 
 /**
  * Arm the guard for this tick: the variables to read ceilings from and where
@@ -241,10 +243,11 @@ export function armSigningGuard(vars: GasCeilingVars, events: SigningGuardEvents
 export function resetSigningGuard(): void {
   armedVars = {};
   armedEvents = null;
+  alertsInFlight.clear();
 }
 
 /**
- * The guard both signing sites call between preparation and signature.
+ * The check {@link signGuarded} runs between preparation and signature.
  * Returns the request with its chain id fixed to `chainId` (so the signed
  * bytes carry the configured chain, whatever a later field says); throws
  * {@link SigningRefused} otherwise, after logging and reporting the refusal.
@@ -256,10 +259,40 @@ export function guardBeforeSigning<R extends object>(chainId: number, request: R
   const line = `held ${describeAction(fees)}: ${reason}. Nothing was signed.`;
   console.warn(`[signing-guard] chain=${chainId} ${line}`);
   const events = armedEvents;
-  if (events) {
-    void events.held(chainId, line).catch((err: unknown) => {
-      console.warn(`[signing-guard] chain=${chainId} could not raise the held-send alert (${err instanceof Error ? err.name : 'error'})`);
-    });
+  // One alert in flight per chain. The alert hook's interval is recorded only
+  // once its post succeeds, so refusals landing while the first post is
+  // still out would each read the old record and post again; a chain-wide
+  // spike refuses every send on the chain at once.
+  if (events && !alertsInFlight.has(chainId)) {
+    alertsInFlight.add(chainId);
+    void events
+      .held(chainId, line)
+      .catch((err: unknown) => {
+        console.warn(`[signing-guard] chain=${chainId} could not raise the held-send alert (${err instanceof Error ? err.name : 'error'})`);
+      })
+      .finally(() => alertsInFlight.delete(chainId));
   }
   throw new SigningRefused(chainId, reason);
+}
+
+/**
+ * Check `request` ({@link guardBeforeSigning}) and sign it with the local
+ * key, over the configured chain id. Every place the keeper key signs goes
+ * through here.
+ *
+ * It calls the account's own signer rather than viem's `signTransaction`
+ * action: that action reads the chain id from the RPC (`eth_chainId`) and
+ * signs over the answer, whatever chain id the request carries, so an RPC
+ * that reported the configured chain during preparation and another one at
+ * signing would get a signature for the other chain. Here no RPC is asked.
+ * A signer that is not a local key is refused: the keeper only signs with
+ * its own.
+ */
+export async function signGuarded(chainId: number, account: unknown, request: object): Promise<Hex> {
+  const guarded = guardBeforeSigning(chainId, request);
+  const signer = account as { type?: unknown; signTransaction?: unknown } | null | undefined;
+  if (typeof signer !== 'object' || signer === null || signer.type !== 'local' || typeof signer.signTransaction !== 'function') {
+    throw new SigningRefused(chainId, 'the signer is not a local key');
+  }
+  return (signer as unknown as LocalAccount).signTransaction(guarded as never);
 }

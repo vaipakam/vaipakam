@@ -73,7 +73,7 @@ function harness(scene: Scene) {
     },
   } as unknown as PublicClient;
   const wallet = {
-    account: { address: KEEPER },
+    account: { address: KEEPER, type: 'local', signTransaction: async () => SIGNED },
     request: async ({ method }: { method: string }) => {
       if (method === 'eth_getTransactionCount') return '0x0';
       throw new Error(`unexpected request ${method}`);
@@ -83,7 +83,6 @@ function harness(scene: Scene) {
       writes.push(decodeFunctionData({ abi: RiskFacetABI as Abi, data: args.data }) as never);
       return { ...args, ...PREPARED_FEES_84532 };
     },
-    signTransaction: async () => SIGNED,
     sendRawTransaction: async () => {
       if (scene.broadcast === 'lost') throw new Error('request timed out');
       if (scene.broadcast === 'refused') {

@@ -77,7 +77,6 @@ import {
   prepareTransactionRequest,
   sendRawTransaction,
   sendTransaction,
-  signTransaction,
   writeContract,
 } from 'viem/actions';
 import { createPublicClient, http, HttpRequestError, keccak256, parseTransaction, TimeoutError, type Hex, type PublicClient } from 'viem';
@@ -85,7 +84,7 @@ import { describeFailure, summarizeFailure } from '@vaipakam/lib/errorDescriptio
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
-import { guardBeforeSigning } from './signingGuard';
+import { signGuarded } from './signingGuard';
 import {
   armedNonceReservations,
   armedRouteEvents,
@@ -704,11 +703,7 @@ export function queuedWallet(
           args,
           await prepareTransactionRequest(base, { ...(args as object), account } as never),
         );
-        const serialized = await signTransaction(base, {
-          ...guardBeforeSigning(chainId, request as object),
-          account,
-          chain: null,
-        } as never);
+        const serialized = await signGuarded(chainId, account, request as object);
         return sendRawTransaction(base, { serializedTransaction: serialized });
       }
       // viem's own sendTransaction, split at the signature so the slot
@@ -724,13 +719,10 @@ export function queuedWallet(
         );
         // The last check before the key signs (#3543): the chain id and the
         // fee fields came from the RPC, so they are held to figures it does
-        // not supply. A refusal throws here, before `signed()`, so the slot
-        // releases the nonce.
-        const serialized = await signTransaction(base, {
-          ...guardBeforeSigning(chainId, request as object),
-          account,
-          chain: null,
-        } as never);
+        // not supply, and the key signs over the configured chain id without
+        // asking the RPC again. A refusal throws here, before `signed()`, so
+        // the slot releases the nonce.
+        const serialized = await signGuarded(chainId, account, request as object);
         signed();
         try {
           return await broadcastSigned(base, chainId, serialized, notAfterMs);

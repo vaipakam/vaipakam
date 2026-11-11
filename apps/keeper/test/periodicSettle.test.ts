@@ -122,7 +122,7 @@ function harness(scene: Scene) {
     },
   } as unknown as PublicClient;
   const wallet = {
-    account: { address: KEEPER },
+    account: { address: KEEPER, type: 'local', signTransaction: async () => SIGNED },
     request: async ({ method }: { method: string }) => {
       if (method === 'eth_getTransactionCount') return '0x0';
       throw new Error(`unexpected request ${method}`);
@@ -132,7 +132,6 @@ function harness(scene: Scene) {
       writes.push({ functionName: d.functionName, args: d.args ?? [] });
       return { ...args, ...PREPARED_FEES_84532 };
     },
-    signTransaction: async () => SIGNED,
     sendRawTransaction: async () => keccak256(SIGNED),
   } as unknown as WalletClient;
   const deps: PeriodicSettleDeps = {

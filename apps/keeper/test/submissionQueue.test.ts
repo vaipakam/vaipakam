@@ -63,6 +63,13 @@ interface Node {
   serveFees?: boolean;
   /** The gas limit each accepted broadcast was signed with. */
   gas?: bigint[];
+  /** What `eth_chainId` answers after its first answer (#3543): an RPC that
+   *  reports the configured chain once and another one later. */
+  chainIdAfterFirst?: number;
+  /** How many times `eth_chainId` was asked. */
+  chainIdReads?: number;
+  /** The chain id each accepted broadcast was signed over. */
+  signedChainIds?: number[];
 }
 
 function nodeWallet(node: Node): WalletClient {
@@ -73,8 +80,11 @@ function nodeWallet(node: Node): WalletClient {
         // Every answer takes a moment, so concurrent sends genuinely overlap.
         await tick();
         switch (method) {
-          case 'eth_chainId':
-            return `0x${CHAIN_ID.toString(16)}`;
+          case 'eth_chainId': {
+            const reads = (node.chainIdReads = (node.chainIdReads ?? 0) + 1);
+            const id = reads > 1 && node.chainIdAfterFirst !== undefined ? node.chainIdAfterFirst : CHAIN_ID;
+            return `0x${id.toString(16)}`;
+          }
           case 'eth_getTransactionCount':
             return `0x${(node.reportedPending?.() ?? node.accepted.length).toString(16)}`;
           // Fee reads, for a sender that leaves the fees to viem — opt-in, so
@@ -107,6 +117,7 @@ function nodeWallet(node: Node): WalletClient {
             }
             node.accepted.push(tx.nonce);
             node.gas?.push(tx.gas!);
+            node.signedChainIds?.push(tx.chainId!);
             if (node.loseAnswer) {
               node.loseAnswer = false;
               throw new Error('request timed out');
@@ -451,4 +462,27 @@ describe('the signing ceilings on a send whose nonce the caller chose (#3543)', 
     ).rejects.toBeInstanceOf(SigningRefused);
     expect(node.accepted).toEqual([]);
   });
+});
+
+describe('the chain id the key signs over (#3543)', () => {
+  // An RPC that answers the configured chain to the preparation and chain 1
+  // to every later question. Each send gets its own, so the switch falls
+  // between that send's preparation and its signature.
+  const switching = (): Node => ({ accepted: [], rejected: [], gas: [], signedChainIds: [], chainIdAfterFirst: 1, serveFees: true });
+  const sends: [string, (node: Node) => Promise<unknown>][] = [
+    ['the slot path', (node) => queuedWallet(nodeWallet(node), CHAIN_ID, FAR).sendTransaction({ account, chain: null, to: TO, ...FEES } as never)],
+    [
+      'a send whose nonce the caller chose',
+      (node) => queuedWallet(nodeWallet(node), CHAIN_ID, FAR).sendTransaction({ account, chain: null, to: TO, nonce: 0, ...FEES } as never),
+    ],
+    ['the raw slot', (node) => sendInSubmissionSlot(nodeWallet(node), CHAIN_ID, FAR, TO, '0x')],
+  ];
+  for (const [name, send] of sends) {
+    it(`is the configured chain on ${name}, and the RPC is not asked again at signing`, async () => {
+      const node = switching();
+      await send(node);
+      expect(node.signedChainIds).toEqual([CHAIN_ID]);
+      expect(node.chainIdReads).toBe(1);
+    });
+  }
 });
