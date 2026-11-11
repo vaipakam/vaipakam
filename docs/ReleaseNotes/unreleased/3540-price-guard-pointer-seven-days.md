@@ -1,4 +1,4 @@
-## Contracts — the price-guard pointer waits at least the guard's own seven days (PR #<n>)
+## Contracts — the price-guard pointer waits at least the guard's own seven days (PR #3567)
 
 The price guard refuses any delay under seven days for changes to its own
 sources and settings. The protocol registry, which tells the Diamond which
