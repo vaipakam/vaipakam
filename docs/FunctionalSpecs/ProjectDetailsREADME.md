@@ -767,6 +767,35 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   health-factor safety checks — as an on-chain match, so an under-collateralized
   signed match reverts rather than creating a bad loan.
 
+  **Accept preview for a signed offer.** Before a counterparty signs anything,
+  an interface can ask the protocol, read-only, whether a direct fill of a
+  vault-backed signed offer would succeed and what it would produce — the same
+  answer an on-chain offer's accept preview gives (the principal, rate,
+  collateral and initiation fee the loan would carry, and the first reason it
+  would be refused), since a signed offer has no on-chain identity to ask that
+  preview with until its fill creates one. The answer must come from the same
+  rules the fill enforces, not a second copy of them, and must report the
+  refusal the fill itself would make first, in the fill's order: a platform-wide
+  pause; the signed offer's own state (a Full-tariff opt-in without its
+  ceiling, a passed signature deadline, an expired offer, a cancelled nonce, an
+  offer already filled or cancelled); a signature that does not verify; a shape
+  the gasless path does not support; the signer being flagged by the sanctions
+  screen, or either asset being paused (both can change after the offer was
+  signed, and the fill checks them before it looks at any balance); the
+  signer's vault not holding enough free balance to back it; the offer-book minimum value; then every check an
+  ordinary accept runs. It also names the stake the fill would draw from the
+  signer's vault and how much of it is free now, so an interface can show a
+  maker that has spent their backing as unfillable rather than letting a taker
+  discover it by a failed transaction. It states plainly what it does not
+  check: the creation bounds a signed offer authored through the app already
+  meets, the accepting party's risk-access standing (read through its own
+  preview), and the wallet-backed fill, whose stake is a token transfer the
+  read does not perform. The fill's own simulation stays the final word.
+
+  An offer counts as expired **at** its expiry time and after, on every path —
+  on-chain offers, the matcher, and the signed fill alike — so the last second
+  of an offer's life is never fillable on one path and refused on another.
+
 ### Standing lending intents (v1)
 
 - A lender may register a **standing lending intent** for an ERC-20 asset-pair:

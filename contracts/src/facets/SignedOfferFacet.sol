@@ -206,28 +206,23 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
 
     // ─── Internals ───────────────────────────────────────────────────────
 
-    /// @dev Shared pre-fill checks (deadline, GTT, nonce, replay). Returns the
-    ///      order hash. `deadline`/`expiresAt` of 0 mean GTC.
+    /// @dev Shared pre-fill checks (Full ceiling, deadline, GTT, nonce,
+    ///      replay), stated once in {LibSignedOffer.vetFailure} so the accept
+    ///      preview reports exactly what this refuses (#3552). Returns the
+    ///      order hash. `deadline`/`expiresAt` of 0 mean none set.
     function _vetSignedOffer(LibSignedOffer.SignedOffer calldata o)
         private
         view
         returns (bytes32 orderHash)
     {
-        LibSignedOffer.requireFullWellFormed(o); // #1949 — a Full opt-in needs a ceiling
-        // #3412 — the signature's own deadline, through the one timing rule
-        // (optional: 0 = the signer set none).
-        LibTiming.checkDeadline(o.deadline);
-        if (o.expiresAt != 0 && block.timestamp > o.expiresAt) {
-            revert SignedOfferExpired(o.expiresAt);
-        }
         orderHash = LibSignedOffer.hashStruct(o);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.signedOfferNonceUsed[o.signer][o.nonce]) {
-            revert SignedOfferNonceInvalidated(o.nonce);
-        }
-        if (s.signedOfferFilled[orderHash] != 0) {
-            revert SignedOfferConsumed(orderHash);
-        }
+        LibSignedOffer.VetFailure f = LibSignedOffer.vetFailure(o, orderHash);
+        if (f == LibSignedOffer.VetFailure.None) return orderHash;
+        if (f == LibSignedOffer.VetFailure.FullNeedsMaxCStar) revert LibSignedOffer.SignedOfferFullNeedsMaxCStar();
+        if (f == LibSignedOffer.VetFailure.DeadlinePassed) revert LibTiming.DeadlinePassed(o.deadline);
+        if (f == LibSignedOffer.VetFailure.Expired) revert SignedOfferExpired(o.expiresAt);
+        if (f == LibSignedOffer.VetFailure.NonceInvalidated) revert SignedOfferNonceInvalidated(o.nonce);
+        revert SignedOfferConsumed(orderHash);
     }
 
     /// @dev The offer's principal ceiling — the consume value (any non-zero

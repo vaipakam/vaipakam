@@ -36,6 +36,7 @@ import {
   type OfferState,
   type TermsAge,
   type WalletFunds,
+  statedAcceptError,
 } from '../offers/reads';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import { readNumeraireSymbol } from '../reads/numeraire';
@@ -254,9 +255,7 @@ const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
 
 /** The protocol's first refusal, as the page states it for the reader's role. */
 export function acceptErrorText(code: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, role: AcceptRole = 'borrower'): string {
-  // #3204 — the retired vault-version code is never produced; should an old
-  // Diamond send it, it reads as the code this build cannot name.
-  const error: AcceptPreview['error'] = code === 'RetiredVaultUpgradeRequired' ? 'Unrecognised' : code;
+  const error = statedAcceptError(code);
   if (error === 'ProtocolPaused')
     return copy.format('accept.err.ProtocolPaused', {
       staysOpen: SWITCH_EFFECTS['2'].staysOpen,

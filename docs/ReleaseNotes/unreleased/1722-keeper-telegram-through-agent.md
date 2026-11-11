@@ -1,4 +1,4 @@
-## Keeper — Telegram alerts and LOCK requests go through the agent (PR #<n>)
+## Keeper — Telegram alerts and LOCK requests go through the agent (PR #3576)
 
 The keeper no longer holds the user-facing bot token or any chat id. Every
 owner Telegram message it used to send itself (health-factor band warnings,
