@@ -252,7 +252,7 @@ const CLASSIFICATION = {
   reward_loop_day: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
   reward_day_user: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
   reward_retention: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
-  // Keeper state. Every table below except the lease is keeper-PRIVATE
+  // Keeper state. Every table below is keeper-PRIVATE
   // (vaipakam-keeper-db, #2450), which the nightly archive does not bind, so a
   // restore into a fresh account starts each one EMPTY (OffChainRestore.md
   // §1 step 3). #1481 checked each for that: none holds anything the keeper
@@ -336,9 +336,10 @@ const CLASSIFICATION = {
   keeper_runner_lease: {
     class: 'replay-derived',
     reason:
-      'one-runner keeper lease (#2503), in the SHARED database (migration 0059); it self-expires ' +
-      'within 10 minutes, and §6 clears it while the keeper is stopped, so a forged lease cannot ' +
-      'hold the restored keeper off',
+      'one-runner keeper lease (#2503), keeper-PRIVATE since #1722 (keeper migration 0009; the ' +
+      'shared copy from migration 0059 waits for its drop and nothing claims it); it self-expires ' +
+      'within 10 minutes, a lease past its maximum term is taken, and §6 clears it while the ' +
+      'keeper is stopped, so a forged lease cannot hold the restored keeper off',
   },
   asset_ranking: {
     class: 'replay-derived',

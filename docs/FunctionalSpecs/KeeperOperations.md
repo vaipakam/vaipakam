@@ -52,9 +52,14 @@ evidence that the migration has completed.
   works, rather than finding out from each action's log line. The alert names
   only the kind of problem, never the key. Nothing is said while the keeper is
   switched off.
-- Only one keeper runs for a signing key. A shared lease prevents another
+- Only one keeper runs for a signing key. A lease prevents another
   instance from starting ticks while the first owns the lease. A missing
   identity or unreadable lease holds the tick.
+- The lease is kept where only the keeper can write it, never in a store the
+  indexer, the agent or the app can write: a service that could write the
+  lease could stop every keeper action, liquidations included, by holding it.
+  A lease that claims to run longer than any keeper ever takes it for is not
+  honoured; the next claim takes it.
 - Lease time is judged by the database's clock. Renewal occurs every minute,
   including while a prior pass is running; an unrenewed lease expires after
   ten minutes. A renewal failure is logged and retried. The lease cannot

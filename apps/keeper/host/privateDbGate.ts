@@ -17,8 +17,8 @@
  * database, to catch a legacy keeper still writing those old copies after the
  * one-time cutover. That watch could not see a keeper that only DELETED rows,
  * and indexer migration 0064 drops the copies, so the gate reads only the
- * private database now. The one-runner lease (`src/runnerLease.ts`) is what
- * keeps a second keeper out.
+ * private database now. The one-runner lease (`src/runnerLease.ts`, in this
+ * same private database since #1722) is what keeps a second keeper out.
  */
 import REQUIRED from '../src/requiredKeeperMigrations.json';
 

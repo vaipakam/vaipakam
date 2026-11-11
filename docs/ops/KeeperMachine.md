@@ -201,7 +201,9 @@ liquidations, double `triggerDefault`s, and transaction-number collisions on
 the one key. Two machines would do the same.
 
 **The lease.** Every tick, on the Worker or a machine, first claims one row in
-the shared database (`keeper_runner_lease`) under its `KEEPER_RUNNER_ID`. The
+the keeper's private database (`keeper_runner_lease` in `vaipakam-keeper-db`,
+since #1722; the indexer and the agent have no binding to it, so neither can
+hold the lease to stop the keeper) under its `KEEPER_RUNNER_ID`. The
 Worker's is `cloudflare-worker` (set in `apps/keeper/wrangler.jsonc`); a
 machine's is `host:<host name>` unless its env file sets another. Which runner
 holds the lease, and until when, is decided by the database's clock, never a
@@ -211,7 +213,9 @@ runner holds an unexpired lease, the tick runs nothing and logs `tick
 declined: runner "<name>" holds the one-runner lease until <time>`. A tick
 that cannot claim it at all (no runner id, the database unreachable) declines
 too. A holder renews every minute, and a lease it stops renewing expires after
-10 minutes, so a dead machine hands over by itself.
+10 minutes, so a dead machine hands over by itself. A lease whose expiry lies
+further out than 10 minutes is one no keeper writes, so the next claim takes
+it instead of waiting.
 
 **The schema.** A machine has no deploy step: the update timer's pull and
 restart is the release. So before the lease, each tick checks that every

@@ -50,6 +50,7 @@ const EXPECTED_PRIVATE = [
   'keeper_private_send',
   'keeper_remit_ack',
   'keeper_remit_ack_frontier',
+  'keeper_runner_lease',
   'keeper_sanctions_screen',
   'keeper_sanctions_watch',
   'keeper_work_cursor',
@@ -65,10 +66,21 @@ const GRANDFATHERED_SHARED = new Map<string, string[]>([
   ['0041_hf_band_state.sql', ['hf_band_state']],
   ['0043_keeper_commitment_scan.sql', ['keeper_commitment_scan', 'keeper_commitment_day']],
   ['0044_keeper_remit_ack.sql', ['keeper_remit_ack_frontier', 'keeper_remit_ack']],
+  // #1722 — the one-runner lease began in the shared database and moved into
+  // the private one; the shared copy stays until a later drop-only migration.
+  ['0059_keeper_runner_lease.sql', ['keeper_runner_lease']],
 ]);
 
+/**
+ * Private tables whose pre-move shared copy is still in the shared schema,
+ * waiting for its drop-only migration. Each entry is a table nothing reads
+ * there any more; the drop is a separate release so a keeper still running
+ * the previous build (which claims there) is not stopped mid-update.
+ */
+const SHARED_COPY_AWAITING_DROP = new Set<string>(['keeper_runner_lease']);
+
 describe("the keeper's private database", () => {
-  it('its migrations create exactly the sixteen keeper-private tables', () => {
+  it('its migrations create exactly the eighteen keeper-private tables', () => {
     expect([...KEEPER_PRIVATE_TABLES].sort()).toEqual(EXPECTED_PRIVATE);
   });
 
@@ -117,7 +129,7 @@ describe("the keeper's private database", () => {
     const shared = tablesIn(createSharedD1());
     for (const t of EXPECTED_PRIVATE) {
       expect(keeper.has(t), `keeper has ${t}`).toBe(true);
-      expect(shared.has(t), `shared lacks ${t}`).toBe(false);
+      expect(shared.has(t), `shared lacks ${t}`).toBe(SHARED_COPY_AWAITING_DROP.has(t));
     }
     // Spot-check that the shared side is the real shared schema, not empty.
     for (const t of ['loans', 'notifications', 'indexer_cursor', 'keeper_commitment_reconciled']) {
@@ -166,7 +178,8 @@ import { INDEXER_DEPLOYMENTS_SQL, INDEXER_DEPLOYMENT_SQL, indexerAdopted } from 
 
 describe('the shared copies are retired (#2560)', () => {
   it('a later shared migration drops every table the grandfathered three created, so the real shared schema holds none of them', () => {
-    const moved = [...GRANDFATHERED_SHARED.values()].flat();
+    // A copy still awaiting its drop is the one exception, stated by name.
+    const moved = [...GRANDFATHERED_SHARED.values()].flat().filter((t) => !SHARED_COPY_AWAITING_DROP.has(t));
     const dropped = new Set<string>();
     for (const file of migrationFiles(INDEXER_MIGRATIONS_DIR)) {
       if (GRANDFATHERED_SHARED.has(file)) continue;
