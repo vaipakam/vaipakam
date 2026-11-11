@@ -5,7 +5,7 @@
  * lasts, and the operator is told.
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { Address, Hex } from 'viem';
+import { TimeoutError, type Address, type Hex } from 'viem';
 import { memoryPrivateSendRecords, PUBLIC_COPY_CUTOFF_MS, rebroadcastStalePrivateSends, type RebroadcastDeps } from '../src/privateRebroadcast';
 import { PRIVATE_ROUTE_FLOOR_TTL_MS, readSubmissionRoutes } from '../src/submissionRoute';
 import { lapsedSendAlertKey, publicFallbackAlertKey, publicFallbackAlertText } from '../src/privateRouteOps';
@@ -79,6 +79,65 @@ describe('rebroadcastStalePrivateSends', () => {
       ]),
     );
     vi.restoreAllMocks();
+  });
+
+  it('states a lapsed send as possibly public when an earlier copy got no answer', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const t = 10 * PRIVATE_ROUTE_FLOOR_TTL_MS;
+    let now = t;
+    const { d, records, alerts } = deps({
+      now: () => now,
+      sendPublic: async () => {
+        throw new TimeoutError({ body: {}, url: 'https://rpc.example.org/' });
+      },
+    });
+    await seed(records, [{ hash: H1, raw: RAW1, nonce: 5, atMs: t - 61_000, reservedAtMs: t - 70_000 }]);
+    const lines = await rebroadcastStalePrivateSends(fallbackRoutes, ETH, d, FAR);
+    expect(lines[0]).toContain('1 failed');
+    expect(records.rows.get(`1:${H1}`)?.publicTriedAtMs).toBe(t);
+    now = t - 70_000 + PUBLIC_COPY_CUTOFF_MS;
+    await rebroadcastStalePrivateSends(fallbackRoutes, ETH, d, FAR);
+    expect(alerts).toEqual([expect.stringMatching(/^lapsed: .*after a public copy got no answer, so it may be visible in the public mempool: 0x01/)]);
+    expect(alerts[0]).not.toContain('neither mined nor sent publicly');
+    vi.restoreAllMocks();
+  });
+
+  it('takes the note back when the public node refuses the copy outright', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { d, records } = deps({
+      t: 100_000,
+      sendPublic: async () => {
+        throw Object.assign(new Error('insufficient funds for gas'), { code: -32000 });
+      },
+    });
+    await seed(records, [{ hash: H1, raw: RAW1, nonce: 5, atMs: 0 }]);
+    await rebroadcastStalePrivateSends(fallbackRoutes, ETH, d, FAR);
+    expect(records.rows.get(`1:${H1}`)?.publicTriedAtMs).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it('sweeps each chain on its own, so a chain stuck on its RPC never holds up another', async () => {
+    const routes = readSubmissionRoutes('1=https://rpc.example.org/,56=https://bsc.example.org/', '1,56', '60');
+    let release!: () => void;
+    const bnbSent = new Promise<void>((r) => (release = r));
+    const sent: number[] = [];
+    const { d, records } = deps({
+      t: 100_000,
+      minedCount: async (chainId) => {
+        if (chainId === 1) await bnbSent;
+        return 0;
+      },
+      sendPublic: async (chainId) => {
+        sent.push(chainId);
+        if (chainId === 56) release();
+        return H1;
+      },
+    });
+    await seed(records, [{ hash: H1, raw: RAW1, nonce: 5, atMs: 0 }]);
+    await records.write({ chainId: 56, address: ADDR, nonce: 1, hash: H2, serialized: RAW2, atMs: 0, reservedAtMs: 0 });
+    const lines = await rebroadcastStalePrivateSends(routes, [{ id: 1, name: 'Ethereum' }, { id: 56, name: 'BNB' }], d, FAR);
+    expect(sent).toEqual([56, 1]);
+    expect(lines.map((l) => l.split(':')[0])).toEqual(['Ethereum(1)', 'BNB(56)']);
   });
 
   it('leaves a send that has not yet waited the stated time', async () => {
@@ -254,8 +313,12 @@ describe('d1PrivateSendRecords, against the keeper\'s real private schema', () =
     await r.write({ chainId: 1, address: MIXED, nonce: 6, hash: H2, serialized: RAW2, atMs: 300, reservedAtMs: 290 });
     await r.write({ chainId: 56, address: MIXED, nonce: 1, hash: H1, serialized: RAW1, atMs: 100, reservedAtMs: 90 });
     expect(await r.due(1, 200)).toEqual([
-      { chainId: 1, address: MIXED.toLowerCase(), nonce: 5, hash: H1, serialized: RAW1, atMs: 100, reservedAtMs: 90, publicAtMs: null },
+      { chainId: 1, address: MIXED.toLowerCase(), nonce: 5, hash: H1, serialized: RAW1, atMs: 100, reservedAtMs: 90, publicAtMs: null, publicTriedAtMs: null },
     ]);
+    await r.markTried(1, H1, 150);
+    expect(await r.due(1, 200)).toEqual([expect.objectContaining({ hash: H1, publicTriedAtMs: 150 })]);
+    await r.markTried(1, H1, null);
+    expect(await r.due(1, 200)).toEqual([expect.objectContaining({ hash: H1, publicTriedAtMs: null })]);
     await r.markPublic(1, H1, 250);
     expect(await r.due(1, 1_000)).toEqual([expect.objectContaining({ hash: H2 })]);
     await r.remove(1, H2);

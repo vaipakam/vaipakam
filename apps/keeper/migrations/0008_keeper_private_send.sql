@@ -9,7 +9,9 @@
 -- when it did (`public_at_ms`). `sent_at_ms` is when the private endpoint
 -- accepted the send (the timeout runs from it); `reserved_at_ms` is when its
 -- nonce was reserved (the private nonce window runs from it, as the
--- reservation in `keeper_private_nonce` does). A row is forgotten once its
+-- reservation in `keeper_private_nonce` does). `public_tried_at_ms` is set
+-- just before each public copy is handed to the RPC, so a copy whose answer
+-- was lost is reported as possibly public, never as never sent. A row is forgotten once its
 -- nonce is mined, once it is reported as having left the window uncopied, or,
 -- after a public copy, once its window has passed.
 --
@@ -27,5 +29,6 @@ CREATE TABLE IF NOT EXISTS keeper_private_send (
   sent_at_ms INTEGER NOT NULL,
   reserved_at_ms INTEGER NOT NULL,
   public_at_ms INTEGER,
+  public_tried_at_ms INTEGER,
   PRIMARY KEY (network_id, tx_hash)
 );

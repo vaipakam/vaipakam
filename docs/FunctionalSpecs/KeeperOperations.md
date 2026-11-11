@@ -192,7 +192,9 @@ evidence that the migration has completed.
   nonce was reserved, not from when an endpoint accepted the send. A send that
   reaches it unmined and never copied is reported as such, with its outcome
   stated as unknown, and its record is kept until that report is made, never
-  dropped silently. A public copy, like any send, is not made once the run's
+  dropped silently; where a public copy was attempted and its answer was
+  lost, the report says the transaction may be public. One chain's failing
+  RPC never uses up the time another chain's public copies need. A public copy, like any send, is not made once the run's
   deadline has passed. These rules cover every transaction the
   keeper sends on that chain, including the Telegram LOCK and forced sales.
 - Error reports, stored failure reasons, and operator alerts remove provider

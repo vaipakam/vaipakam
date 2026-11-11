@@ -38,7 +38,7 @@
 //    failed private send is a failed send, and an accepted one waits as long
 //    as the private route keeps it.
 //  - `PRIVATE_TX_PUBLIC_AFTER_SECONDS` (a plain var): that stated time, from
-//    the private route's acceptance, 24 to 300 seconds, default 60. It
+//    the private route's acceptance, 24 to 180 seconds, default 60. It
 //    stays below the private nonce window (seven minutes) with room for a
 //    tick, so the public copy goes out while the nonce is
 //    still held for it.
@@ -70,10 +70,15 @@ export const PRIVATE_TX_PUBLIC_AFTER_VAR = 'PRIVATE_TX_PUBLIC_AFTER_SECONDS';
 export const PRIVATE_ROUTE_FLOOR_TTL_MS = 7 * 60_000;
 
 /** The bounds and default of {@link PRIVATE_TX_PUBLIC_AFTER_VAR}. The floor is
- *  two Ethereum blocks; the ceiling leaves two minutes of the nonce window for
- *  the tick that sends the public copy. */
+ *  two Ethereum blocks. The ceiling keeps the first public copy well inside
+ *  the copy cutoff (six minutes from the nonce's reservation,
+ *  `PUBLIC_COPY_CUTOFF_MS`): the private endpoints may take up to 8 s each
+ *  before one accepts, the copy goes out on the first one-minute tick after
+ *  the delay, and its read and send take up to 8 s each, so at 180 s a send
+ *  that waited on three endpoints is still copied with two more ticks to
+ *  spare should the first copy fail. */
 export const PUBLIC_AFTER_MIN_SEC = 24;
-export const PUBLIC_AFTER_MAX_SEC = 300;
+export const PUBLIC_AFTER_MAX_SEC = 180;
 export const PUBLIC_AFTER_DEFAULT_SEC = 60;
 
 /** How long one private endpoint has to answer a broadcast before the next

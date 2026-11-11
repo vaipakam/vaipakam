@@ -535,12 +535,12 @@ describe('#3408 — several endpoints per chain, the provider method and the sta
   });
 
   it('reads the public time by its bounds and refuses anything else, sending nothing', () => {
-    for (const bad of ['23', '301', '1.5', '60s', '-60']) {
+    for (const bad of ['23', '181', '300', '1.5', '60s', '-60']) {
       const r = readSubmissionRoutes(`1=${URL_ETH}`, '1', bad);
       expect('unread' in r && r.unread, bad).toContain('PRIVATE_TX_PUBLIC_AFTER_SECONDS');
     }
     expect((submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, '1', '24'), 1) as PrivateRoute).publicAfterMs).toBe(24_000);
-    expect((submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, '1', ' 300 '), 1) as PrivateRoute).publicAfterMs).toBe(300_000);
+    expect((submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, '1', ' 180 '), 1) as PrivateRoute).publicAfterMs).toBe(180_000);
   });
 
   it('a chain with no fallback names no public time in its line', () => {

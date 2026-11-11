@@ -31,6 +31,7 @@
 
 import type { Address, Hex } from 'viem';
 import { describeFailure, summarizeFailure } from '@vaipakam/lib/errorDescription';
+import { isDefinitiveRejection } from './submissionQueue';
 import type { KeeperD1 } from './env';
 import {
   PRIVATE_ROUTE_FLOOR_TTL_MS,
@@ -45,9 +46,13 @@ import {
  *  lands while no later send can hold its nonce. */
 export const PUBLIC_COPY_CUTOFF_MS = PRIVATE_ROUTE_FLOOR_TTL_MS - 60_000;
 
-/** One recorded private send. `publicAtMs` is when a copy went public. */
+/** One recorded private send. `publicAtMs` is when a copy went public;
+ *  `publicTriedAtMs` is when a copy was last handed to the public RPC, set
+ *  before the send, so a copy whose answer was lost is still known to have
+ *  possibly gone out. */
 export interface PrivateSendRow extends AcceptedPrivateSend {
   publicAtMs: number | null;
+  publicTriedAtMs: number | null;
 }
 
 /** Where the records live. */
@@ -60,6 +65,9 @@ export interface PrivateSendRecords {
   due(networkId: number, acceptedBy: number): Promise<PrivateSendRow[]>;
   /** Note that a copy of `hash` went public at `atMs`. */
   markPublic(networkId: number, hash: Hex, atMs: number): Promise<void>;
+  /** Note that a copy of `hash` is being handed to the public RPC at `atMs`
+   *  (`null` takes the note back after the node refused it outright). */
+  markTried(networkId: number, hash: Hex, atMs: number | null): Promise<void>;
   /** Forget `hash` (it is mined, its nonce is, or it is reported lapsed). */
   remove(networkId: number, hash: Hex): Promise<void>;
   /** Drop the network's rows ALREADY COPIED publicly whose nonce was reserved
@@ -77,6 +85,7 @@ interface D1Row {
   sent_at_ms: number;
   reserved_at_ms: number;
   public_at_ms: number | null;
+  public_tried_at_ms: number | null;
 }
 
 /** The records in the keeper's private database. */
@@ -95,7 +104,7 @@ export function d1PrivateSendRecords(db: KeeperD1): PrivateSendRecords {
     async due(networkId, acceptedBy) {
       const { results } = await db
         .prepare(
-          `SELECT network_id, address, nonce, tx_hash, raw_tx, sent_at_ms, reserved_at_ms, public_at_ms FROM keeper_private_send
+          `SELECT network_id, address, nonce, tx_hash, raw_tx, sent_at_ms, reserved_at_ms, public_at_ms, public_tried_at_ms FROM keeper_private_send
            WHERE network_id = ?1 AND public_at_ms IS NULL AND sent_at_ms <= ?2
            ORDER BY sent_at_ms`,
         )
@@ -110,11 +119,18 @@ export function d1PrivateSendRecords(db: KeeperD1): PrivateSendRecords {
         atMs: Number(r.sent_at_ms),
         reservedAtMs: Number(r.reserved_at_ms),
         publicAtMs: r.public_at_ms === null ? null : Number(r.public_at_ms),
+        publicTriedAtMs: r.public_tried_at_ms === null ? null : Number(r.public_tried_at_ms),
       }));
     },
     async markPublic(networkId, hash, atMs) {
       await db
         .prepare('UPDATE keeper_private_send SET public_at_ms = ?3 WHERE network_id = ?1 AND tx_hash = ?2')
+        .bind(networkId, hash.toLowerCase(), atMs)
+        .run();
+    },
+    async markTried(networkId, hash, atMs) {
+      await db
+        .prepare('UPDATE keeper_private_send SET public_tried_at_ms = ?3 WHERE network_id = ?1 AND tx_hash = ?2')
         .bind(networkId, hash.toLowerCase(), atMs)
         .run();
     },
@@ -140,14 +156,23 @@ export function memoryPrivateSendRecords(): PrivateSendRecords & { rows: Map<str
   return {
     rows,
     async write(s) {
-      if (!rows.has(key(s.chainId, s.hash))) rows.set(key(s.chainId, s.hash), { ...s, publicAtMs: null });
+      if (!rows.has(key(s.chainId, s.hash))) rows.set(key(s.chainId, s.hash), { ...s, publicAtMs: null, publicTriedAtMs: null });
     },
     async due(n, by) {
-      return [...rows.values()].filter((r) => r.chainId === n && r.publicAtMs === null && r.atMs <= by).sort((a, b) => a.atMs - b.atMs);
+      // Copies, as a database read returns: a later write never reaches a row
+      // already handed out.
+      return [...rows.values()]
+        .filter((r) => r.chainId === n && r.publicAtMs === null && r.atMs <= by)
+        .sort((a, b) => a.atMs - b.atMs)
+        .map((r) => ({ ...r }));
     },
     async markPublic(n, h, at) {
       const r = rows.get(key(n, h));
       if (r) r.publicAtMs = at;
+    },
+    async markTried(n, h, at) {
+      const r = rows.get(key(n, h));
+      if (r) r.publicTriedAtMs = at;
     },
     async remove(n, h) {
       rows.delete(key(n, h));
@@ -180,8 +205,11 @@ const NONCE_MINED = /nonce too low/i;
 /**
  * Send a public copy of every recorded private send that has been unmined for
  * its chain's stated time, on every served chain whose route allows it.
- * Returns one log line per chain that had anything due. Never throws for one
- * row: a row that fails is retried next tick while its window lasts.
+ * Chains are swept side by side (`runWindow.ts` rule 1), so one chain's slow
+ * or failing RPC cannot spend the window another chain's copies need.
+ * Returns one log line per chain that had anything due, in the chains'
+ * order. Never throws for one row: a row that fails is retried next tick
+ * until the cutoff.
  */
 export async function rebroadcastStalePrivateSends(
   routes: SubmissionRoutes,
@@ -190,94 +218,148 @@ export async function rebroadcastStalePrivateSends(
   notAfterMs: number,
 ): Promise<string[]> {
   if ('unread' in routes) return [];
-  const lines: string[] = [];
-  for (const chain of chains) {
+  const served = chains.flatMap((chain) => {
     const route = routes.routes.get(chain.id);
-    if (!route || !route.fallback) continue;
-    const t = deps.now();
-    const due = await deps.records.due(chain.id, t - route.publicAfterMs);
-    const sent: Hex[] = [];
-    const lapsed: Hex[] = [];
-    let mined = 0;
-    let failed = 0;
-    const minedBy = new Map<string, number>();
-    for (const row of due) {
+    return route && route.kind === 'private' && route.fallback ? [{ chain, publicAfterMs: route.publicAfterMs }] : [];
+  });
+  const lines = await Promise.all(
+    served.map(({ chain, publicAfterMs }) =>
+      sweepChain(chain, publicAfterMs, deps, notAfterMs).catch((err: unknown) => {
+        console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not read its private sends (${describeFailure(err)}); next tick`);
+        return null;
+      }),
+    ),
+  );
+  return lines.filter((l): l is string => l !== null);
+}
+
+/** One chain's sweep. Rows are taken oldest first: the oldest is the nearest
+ *  to its cutoff. */
+async function sweepChain(
+  chain: { id: number; name: string },
+  publicAfterMs: number,
+  deps: RebroadcastDeps,
+  notAfterMs: number,
+): Promise<string | null> {
+  const t = deps.now();
+  const due = await deps.records.due(chain.id, t - publicAfterMs);
+  const sent: Hex[] = [];
+  const lapsed: Hex[] = [];
+  const lapsedTried: Hex[] = [];
+  let mined = 0;
+  let failed = 0;
+  const minedBy = new Map<string, number>();
+  for (const row of due) {
+    if (deps.now() >= notAfterMs) break;
+    try {
+      const who = row.address.toLowerCase();
+      let count = minedBy.get(who);
+      if (count === undefined) {
+        count = await deps.minedCount(chain.id, row.address);
+        minedBy.set(who, count);
+      }
+      if (count > row.nonce) {
+        await deps.records.remove(chain.id, row.hash);
+        mined += 1;
+        continue;
+      }
+      if (deps.now() - row.reservedAtMs >= PUBLIC_COPY_CUTOFF_MS) {
+        // At the cutoff: past the window a later send may hold this nonce,
+        // so a copy could replace it. Stated below, then forgotten. A row
+        // whose earlier copy got no answer is stated as possibly public.
+        (row.publicTriedAtMs === null ? lapsed : lapsedTried).push(row.hash);
+        await deps.records.remove(chain.id, row.hash);
+        continue;
+      }
+      // The mined-count read can be slow, so the run's deadline is checked
+      // again here. A row left now is seen again next tick.
       if (deps.now() >= notAfterMs) break;
+      // Recorded BEFORE the bytes leave, so a send whose answer is lost
+      // (here, or in a restart) is never later reported as never sent. A
+      // record that cannot be written does not hold the copy back: the
+      // failure line below states the unknown outcome in the log instead.
+      const triedBefore = row.publicTriedAtMs;
       try {
-        const who = row.address.toLowerCase();
-        let count = minedBy.get(who);
-        if (count === undefined) {
-          count = await deps.minedCount(chain.id, row.address);
-          minedBy.set(who, count);
-        }
-        if (count > row.nonce) {
+        await deps.records.markTried(chain.id, row.hash, deps.now());
+      } catch (err) {
+        console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not note the public copy of ${row.hash} before sending it (${describeFailure(err)})`);
+      }
+      // The note's write is awaited, so the cutoff and the deadline are
+      // checked once more, with nothing awaited between them and the send.
+      // A row left now had no copy sent, so an unanswered-copy note this
+      // run made is taken back.
+      if (deps.now() - row.reservedAtMs >= PUBLIC_COPY_CUTOFF_MS || deps.now() >= notAfterMs) {
+        if (triedBefore === null) await deps.records.markTried(chain.id, row.hash, null).catch(() => {});
+        break;
+      }
+      try {
+        await deps.sendPublic(chain.id, row.serialized);
+      } catch (err) {
+        if (NONCE_MINED.test((err as Error).message ?? '')) {
           await deps.records.remove(chain.id, row.hash);
           mined += 1;
           continue;
         }
-        if (deps.now() - row.reservedAtMs >= PUBLIC_COPY_CUTOFF_MS) {
-          // At the cutoff: past the window a later send may hold this nonce,
-          // so a copy could replace it. Stated below, then forgotten.
-          lapsed.push(row.hash);
-          await deps.records.remove(chain.id, row.hash);
-          continue;
-        }
-        // The mined-count read can be slow, so the run's deadline is checked
-        // again here, with nothing awaited between it, the cutoff above and
-        // the send. A row left now is seen again next tick.
-        if (deps.now() >= notAfterMs) break;
-        try {
-          await deps.sendPublic(chain.id, row.serialized);
-        } catch (err) {
-          if (NONCE_MINED.test((err as Error).message ?? '')) {
-            await deps.records.remove(chain.id, row.hash);
-            mined += 1;
-            continue;
+        if (!ALREADY_KNOWN.test((err as Error).message ?? '')) {
+          if (isDefinitiveRejection(err) && triedBefore === null) {
+            // The node refused it: nothing went public, so the note is taken
+            // back (an earlier copy with no answer keeps it).
+            await deps.records.markTried(chain.id, row.hash, null).catch(() => {});
           }
-          if (!ALREADY_KNOWN.test((err as Error).message ?? '')) throw err;
-          // The public node already holds these bytes: the copy is out.
+          throw err;
         }
-        // The bytes are public now, whatever the record says next: reported
-        // as sent before the record is touched.
-        sent.push(row.hash);
-        try {
-          await deps.records.markPublic(chain.id, row.hash, deps.now());
-        } catch (err) {
-          console.warn(
-            `[privateRebroadcast] ${chain.name}(${chain.id}) sent a public copy of ${row.hash} but could not record it (${describeFailure(err)}); the next tick may send the same bytes again, which the node answers as already known`,
-          );
-        }
-      } catch (err) {
-        failed += 1;
-        console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not send a public copy of ${row.hash} (${summarizeFailure(err)}); retried next tick until the cutoff`);
+        // The public node already holds these bytes: the copy is out.
       }
-    }
-    await deps.records.pruneCopied(chain.id, t - PRIVATE_ROUTE_FLOOR_TTL_MS).catch((err: unknown) => {
-      console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not prune old records (${describeFailure(err)})`);
-    });
-    if (due.length === 0) continue;
-    const secs = route.publicAfterMs / 1000;
-    // Every event is journaled with its hashes before the alert, which its
-    // per-chain interval may suppress: the log is the full record.
-    const report = async (kind: 'public' | 'lapsed', line: string): Promise<void> => {
-      console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) ${line}`);
-      await deps.alert(chain.id, kind, line);
-    };
-    if (sent.length > 0) {
-      await report(
-        'public',
-        `${sent.length} keeper transaction${sent.length === 1 ? ' was' : 's were'} still unmined at least ${secs} s after the private route accepted ${sent.length === 1 ? 'it' : 'them'}, so the same signed bytes went to the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows: ${sent.join(', ')}. ${sent.length === 1 ? 'It is' : 'They are'} now visible in the public mempool.`,
+      // The bytes are public now, whatever the record says next: reported
+      // as sent before the record is touched.
+      sent.push(row.hash);
+      try {
+        await deps.records.markPublic(chain.id, row.hash, deps.now());
+      } catch (err) {
+        console.warn(
+          `[privateRebroadcast] ${chain.name}(${chain.id}) sent a public copy of ${row.hash} but could not record it (${describeFailure(err)}); the next tick may send the same bytes again, which the node answers as already known`,
+        );
+      }
+    } catch (err) {
+      failed += 1;
+      console.warn(
+        `[privateRebroadcast] ${chain.name}(${chain.id}) could not send a public copy of ${row.hash} (${summarizeFailure(err)})${isDefinitiveRejection(err) ? '' : '; the node may still have taken it, so it may be in the public mempool'}; retried next tick until the cutoff`,
       );
     }
-    if (lapsed.length > 0) {
-      await report(
-        'lapsed',
-        `${lapsed.length} keeper transaction${lapsed.length === 1 ? '' : 's'} sent privately ${lapsed.length === 1 ? 'was' : 'were'} neither mined nor sent publicly by the last minute of the private nonce window, so no public copy was sent and later sends may reuse the nonce: ${lapsed.join(', ')}. Whether ${lapsed.length === 1 ? 'it' : 'they'} will still land is unknown.`,
-      );
-    }
-    lines.push(
-      `${chain.name}(${chain.id}): ${due.length} private send(s) unmined after ${secs} s; ${sent.length} sent publicly, ${mined} found mined, ${lapsed.length} past the nonce window, ${failed} failed (retried next tick)`,
+  }
+  await deps.records.pruneCopied(chain.id, t - PRIVATE_ROUTE_FLOOR_TTL_MS).catch((err: unknown) => {
+    console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) could not prune old records (${describeFailure(err)})`);
+  });
+  if (due.length === 0) return null;
+  const secs = publicAfterMs / 1000;
+  // Every event is journaled with its hashes before the alert, which its
+  // per-chain interval may suppress: the log is the full record.
+  const report = async (kind: 'public' | 'lapsed', line: string): Promise<void> => {
+    console.warn(`[privateRebroadcast] ${chain.name}(${chain.id}) ${line}`);
+    await deps.alert(chain.id, kind, line);
+  };
+  const n = (list: Hex[], one: string, many: string) => (list.length === 1 ? one : many);
+  if (sent.length > 0) {
+    await report(
+      'public',
+      `${sent.length} keeper transaction${n(sent, ' was', 's were')} still unmined at least ${secs} s after the private route accepted ${n(sent, 'it', 'them')}, so the same signed bytes went to the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows: ${sent.join(', ')}. ${n(sent, 'It is', 'They are')} now visible in the public mempool.`,
     );
   }
-  return lines;
+  if (lapsed.length > 0 || lapsedTried.length > 0) {
+    const parts: string[] = [];
+    if (lapsed.length > 0) {
+      parts.push(
+        `${lapsed.length} keeper transaction${n(lapsed, '', 's')} sent privately ${n(lapsed, 'was', 'were')} neither mined nor sent publicly by the last minute of the private nonce window, so no public copy was sent: ${lapsed.join(', ')}.`,
+      );
+    }
+    if (lapsedTried.length > 0) {
+      parts.push(
+        `${lapsedTried.length} keeper transaction${n(lapsedTried, '', 's')} sent privately reached the last minute of the private nonce window unmined after a public copy got no answer, so ${n(lapsedTried, 'it', 'they')} may be visible in the public mempool: ${lapsedTried.join(', ')}.`,
+      );
+    }
+    const all = lapsed.length + lapsedTried.length;
+    parts.push(`Later sends may reuse ${all === 1 ? 'the nonce' : 'their nonces'}, and whether ${all === 1 ? 'it' : 'they'} will still land is unknown.`);
+    await report('lapsed', parts.join(' '));
+  }
+  return `${chain.name}(${chain.id}): ${due.length} private send(s) unmined after ${secs} s; ${sent.length} sent publicly, ${mined} found mined, ${lapsed.length + lapsedTried.length} past the nonce window, ${failed} failed (retried next tick)`;
 }

@@ -429,7 +429,7 @@ interface BaseEnv {
   /** #3408 — how long, in seconds, a send a private route accepted may stay
    *  unmined before the same signed bytes go to the ordinary RPC, on the
    *  chains `PRIVATE_TX_FALLBACK_CHAIN_IDS` names (`privateRebroadcast.ts`).
-   *  24 to 300, default 60. A plain var; a value outside the bounds sends
+   *  24 to 180, default 60. A plain var; a value outside the bounds sends
    *  nothing, like every unreadable route setting. */
   PRIVATE_TX_PUBLIC_AFTER_SECONDS?: string;
 }

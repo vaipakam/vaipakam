@@ -335,7 +335,7 @@ a commit. The template documents each line. In short:
   `PRIVATE_TX_FALLBACK_CHAIN_IDS` lists the chains whose private sends may
   fall back to that RPC, in two cases: every private endpoint refused or did
   not answer, or a send a private endpoint accepted is still unmined
-  `PRIVATE_TX_PUBLIC_AFTER_SECONDS` after it was accepted (24 to 300, default
+  `PRIVATE_TX_PUBLIC_AFTER_SECONDS` after it was accepted (24 to 180, default
   60; the copy goes out on the first tick after that, so up to a minute
   later). Either way the fallback sends the same signed transaction, which
   then becomes public, and posts an ops alert (one per chain per ten minutes;
