@@ -17,6 +17,7 @@ import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  PerkSpendTest
@@ -55,7 +56,7 @@ contract PerkSpendTest is SetupTest {
 
     function setUp() public {
         setupHelper();
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
 
         VPFIToken impl = new VPFIToken();
         ERC1967Proxy proxy = new ERC1967Proxy(

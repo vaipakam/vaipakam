@@ -4316,6 +4316,12 @@ library LibVaipakam {
         ///      orders (Fusion treats them as duplicates). Tracking
         ///      used nonces here + rejecting reuse forces the dapp
         ///      to vary nonceOrEpoch across borrowers.
+        ///      RETIRED (2026-11-11 external review): keyed by nonce alone,
+        ///      while 1inch keys by (maker, nonce) and the maker is each
+        ///      borrower's own vault (#1566 S3e), so one borrower's nonce
+        ///      blocked every other borrower's. Nothing reads or writes it;
+        ///      the per-maker record is `intentNonceUsedByMaker`. Kept for
+        ///      the append-only layout; do not reuse.
         mapping(uint40 => bool) intentNonceUsed;
         // ─── T-087 Sub 1.A — Cross-chain reward + tier system ───────────
         //
@@ -8316,6 +8322,15 @@ library LibVaipakam {
         ///      Written only by `TreasuryFacet.setTreasuryConvertMaxTranche`.
         ///      Appended — append-only.
         mapping(address => uint256) cfgTreasuryConvertMaxTranche;
+        /// @dev Repayment-auction nonces already used, keyed the way 1inch
+        ///      LOP v4's bit invalidator keys them: (maker, nonceOrEpoch).
+        ///      The maker is the borrower's vault (#1566 S3e). Two live
+        ///      orders of ONE maker sharing a nonce would share a bit-slot,
+        ///      so the first fill would void both; orders of different
+        ///      makers never collide. Written only by
+        ///      `SwapToRepayIntentFacet.commitSwapToRepayIntent`; replaces
+        ///      the retired global `intentNonceUsed`. Appended — append-only.
+        mapping(address => mapping(uint40 => bool)) intentNonceUsedByMaker;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -11058,9 +11073,7 @@ library LibVaipakam {
     ///         `block.timestamp == gracePeriodEnd` (Codex round-1 P3
     ///         fix on PR #356).
     function isGraceWindow(Loan storage loan) internal view returns (bool) {
-        uint256 loanEnd = LibLoanClock.maturity(loan);
-        uint256 gracePeriodEnd = loanEnd + gracePeriod(loan.durationDays);
-        return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
+        return block.timestamp >= LibLoanClock.maturity(loan) && block.timestamp < LibLoanClock.graceEnd(loan);
     }
 
     /// @notice Pass-2 D1 (#1188) — a rental loan's REMAINING prepaid days.
@@ -11271,7 +11284,7 @@ library LibVaipakam {
         returns (uint256 fee)
     {
         Loan storage loan = storageSlot().loans[loanId];
-        return (loan.principal * lateFeeBpsAt(LibLoanClock.maturity(loan), asOfTimestamp)) / 10000; // Basis points
+        return (loan.principal * lateFeeBpsAt(LibLoanClock.lateFeeStart(loan, asOfTimestamp), asOfTimestamp)) / 10000; // Basis points
     }
 
     /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
@@ -11324,7 +11337,7 @@ library LibVaipakam {
     function calculateRentalLateFee(uint256 loanId) internal view returns (uint256 fee) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        uint256 endTime = LibLoanClock.maturity(loan);
+        uint256 endTime = LibLoanClock.lateFeeStart(loan, block.timestamp);
 
         if (block.timestamp <= endTime) return 0;
 

@@ -2191,9 +2191,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   the term, then each field in the order it is typed. "Fill to balance"
   types the wallet's whole balance of the token posting locks, exactly,
   every digit. Fees are stated at today's list rates, and a figure that
-  could not be read is said to be unread. The mode posted is the mode
-  shown: a ticket is always posted on the chain, and gasless signed orders
-  are named as not available yet. The review, consent, dry run and risk
+  could not be read is said to be unread. The mode sent is the mode
+  shown: a ticket is posted on the chain unless the reader chooses to sign
+  it instead (RB-DESK-SIGN), and each choice says in words where the stake
+  waits and who pays gas. A posted ticket's review, consent, dry run and risk
   warning are the guided flows' own (RB-REVIEW), never a second copy, and
   the Terms are accepted before that review opens. A ticket's typed state
   and consent are kept per market, so a market change never carries one
@@ -2225,6 +2226,38 @@ above. Each resolves here, so a route reviewer needs no private file:
   and the outcome is measured from the transaction's own cancel event,
   never assumed from its inclusion. One cancel is open at a time, and its
   finish card stays on screen when the book drops the order.
+- **RB-DESK-SIGN** — The ticket (OFF-59) may sign a new order instead of
+  posting it: no gas, nothing set aside, listed on the offer book, and the
+  stake drawn from the signer's own vault when someone fills it. The app
+  signs only an order a fill can draw in one piece: token legs on both
+  sides, one size, all or none (a ranged or partial order could be filled
+  in slices by a match), no fee tariff and no price guard. A signed order
+  must lapse: "until taken or cancelled" is refused, because only a cancel
+  on the chain would ever stop it, and its signature lapses with it. The
+  order and its nonce are built once, when the review opens, and the
+  receipt and the signature both read that one order: what the reader
+  reviews is what the wallet signs. The review states the order, when it
+  lapses, that it fills whole, that nothing is set aside now, what a fill
+  draws from the signer's own vault, and what the vault holds free of that
+  token now, read from the protocol; a shortfall is named with the amount
+  to add, never a block, since a fill draws on the vault as it stands
+  then. It also states that the protocol checks the order only at a fill,
+  that the cancel on the chain is the only way to stop it, and that the
+  signature binds this network and this deployment. One consent to the
+  Risk Disclosures and Terms, one wallet signature, then one send to the
+  offer book. The book's answer is stated as it came: listed (or already
+  listed), refused with the book's own reason, or unknown. A refusal of
+  the order drops the signature: it either fails checks an earlier send
+  would have failed too or says the order can no longer be filled. A
+  refusal of the request (rate limited, timed out) proves nothing about an
+  earlier send whose answer was lost, so it reads as unknown. An unknown
+  answer keeps the signed order on this device with a way to send it
+  again, because the book lists an order once. The signed order and the
+  flow's step (the wallet asked, its refusal, the book asked, its answer)
+  are kept above the router, so a reader who leaves the page mid-flow finds
+  the same step on return, with no second signature or edit offered while
+  the first may still complete. A listed order shows under the
+  viewer's signed orders (RB-DESK-SIGNED).
 
 ## 3. Companion specifications
 

@@ -415,8 +415,7 @@ contract SwapToRepayIntentFacet is
         if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         if (LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender)
             revert IVaipakamErrors.LenderCannotRepayOwnLoan();
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // ── §5.1 step 2: field + makerTraits binding checks ─────────
@@ -476,13 +475,19 @@ contract SwapToRepayIntentFacet is
         // Nonce uniqueness (Codex round-1 PR #420 P1 #2) —
         // makerTraits.nonceOrEpoch field (bits 120-159, uint40) is
         // the LOP bit-invalidator slot key for our no-partial /
-        // no-multi orders. Two live commits sharing the same nonce
-        // land in the same bit-slot and the first fill invalidates
-        // BOTH; refuse reuse.
-        uint40 nonce = uint40((params.makerTraits >> 120) & ((1 << 40) - 1));
-        if (s.intentNonceUsed[nonce])
-            revert IntentMakerTraitsMismatch(_FIELD_NONCE_REUSED);
-        s.intentNonceUsed[nonce] = true;
+        // no-multi orders, together with the maker. Two live commits
+        // of ONE maker sharing a nonce land in the same bit-slot and
+        // the first fill invalidates BOTH; refuse reuse. Scoped per
+        // maker (the borrower's vault, the order's maker below), as
+        // 1inch scopes it: a global record let one borrower's nonce
+        // refuse every other borrower's order (2026-11-11 review).
+        {
+            address nonceMaker = s.userVaipakamVaults[loan.borrower];
+            uint40 nonce = uint40((params.makerTraits >> 120) & ((1 << 40) - 1));
+            if (s.intentNonceUsedByMaker[nonceMaker][nonce])
+                revert IntentMakerTraitsMismatch(_FIELD_NONCE_REUSED);
+            s.intentNonceUsedByMaker[nonceMaker][nonce] = true;
+        }
 
         // ── §5.1 step 4: pre-commit HF gate (Codex round-10 P1 #1
         //    — HF_SCALE-scaled comparison) ────────────────────────────
@@ -1023,9 +1028,7 @@ contract SwapToRepayIntentFacet is
             loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
-        uint256 endTime = LibLoanClock.maturity(loan);
-        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
-            revert RepaymentPastGracePeriod();
+        if (block.timestamp > LibLoanClock.graceEnd(loan)) revert RepaymentPastGracePeriod();
         (lot, minTakerAmount) = _sizeCommitLot(loan, _commitMinOut(loanId));
     }
 

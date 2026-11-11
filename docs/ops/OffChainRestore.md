@@ -1639,6 +1639,8 @@ DELETE FROM keeper_sanctions_screen; \
 DELETE FROM keeper_sanctions_watch; \
 DELETE FROM keeper_ops_alert; \
 DELETE FROM keeper_private_nonce; \
+DELETE FROM keeper_private_send; \
+DELETE FROM keeper_runner_lease; \
 DELETE FROM keeper_deployment" )
 ```
 
@@ -1675,7 +1677,6 @@ DELETE FROM keeper_commitment_reconciled; \
 DELETE FROM market_summary; \
 DELETE FROM protocol_config; \
 DELETE FROM webhook_deliveries; \
-DELETE FROM keeper_runner_lease; \
 DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM signed_request_use; \
@@ -1685,8 +1686,14 @@ DELETE FROM alert_channel_changes; \
 DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
+DELETE FROM indexer_chain_anchor; \
 DELETE FROM indexer_cursor"
 ```
+
+`indexer_chain_anchor` (#3411) is the reorg guard's record of the block the
+scan cursor last advanced to and that block's hash. It goes with the cursor:
+left behind, it would name a block the replay has not reached, and the replay
+anchors again each time it advances.
 
 `indexer_deployment` (#1566, Codex #2545 r1) records, per chain, the Diamond
 the rows were indexed from; the replay's first pass re-adopts the bundle's
@@ -1791,9 +1798,12 @@ What the #1481 audit added to the shared command, and what each costs:
   row could feed the reminder sweep an old grace schedule or pause log.
 - **`webhook_deliveries`** only de-duplicates webhook hints; an empty table
   costs a duplicate forward.
-- **`keeper_runner_lease`** expires by itself within ten minutes; it is
-  cleared while the keeper is stopped so a forged lease cannot hold the
-  restored keeper off.
+- **`keeper_runner_lease`** lives in the keeper's private database since
+  #1722, so the keeper command above clears it, not this one. It expires by
+  itself within ten minutes; it is cleared while the keeper is stopped so a
+  stale lease cannot hold the restored keeper off. The old copy in the shared
+  database is no longer read by any keeper and is left alone until its drop
+  migration.
 
 Clearing the tables is not optional, and resetting only the cursor
 is NOT equivalent: the replay handlers upsert by key and **never

@@ -481,6 +481,11 @@
   },
   {
     "type": "error",
+    "name": "SequencerUnhealthy",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnsupportedCollateralForV1",
     "inputs": [
       {

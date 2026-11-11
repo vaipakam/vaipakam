@@ -107,7 +107,7 @@ library LibOwedAtDefault {
             loan,
             LibEntitlement.proRataInterestSeconds(principal, loan.interestRateBps, elapsed)
         );
-        lateFee = (principal * LibVaipakam.lateFeeBps(LibLoanClock.maturity(loan))) /
+        lateFee = (principal * LibVaipakam.lateFeeBps(LibLoanClock.lateFeeStart(loan, block.timestamp))) /
             LibVaipakam.BASIS_POINTS;
     }
 }

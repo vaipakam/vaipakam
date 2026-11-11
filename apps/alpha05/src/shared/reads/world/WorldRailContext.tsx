@@ -5,7 +5,7 @@ import { indexerOrigin } from '../../../chain/endpoints';
 import { DEFAULT_CHAIN, getSupportedChain } from '../../../chain/chains';
 import { announceOwnChange } from '../signals';
 import { worldKey } from '../identityKey';
-import { createIndexerClient, type IndexerClient } from './indexerClient';
+import { createIndexerClient, type IndexerClient, type IndexerPoster } from './indexerClient';
 import { freshnessOf, withCursor, type Freshness, type IngestHealth } from './ingestHealth';
 import { invalidationsFor, openPushRail, pushRailUrl, type PushState } from './pushRail';
 
@@ -14,7 +14,7 @@ import { invalidationsFor, openPushRail, pushRailUrl, type PushState } from './p
 export const HEALTH_POLL_MS = 60_000;
 
 export interface WorldRail {
-  indexer: IndexerClient;
+  indexer: IndexerClient & IndexerPoster;
   /** The chain the rail describes (the wallet's, else the default). */
   chainId: number;
   freshness: Freshness;

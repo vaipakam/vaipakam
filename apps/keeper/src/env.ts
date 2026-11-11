@@ -377,6 +377,17 @@ interface BaseEnv {
    *  (default 1000e18). A plain var. */
   REWARD_RETURN_MIN_PART?: string;
 
+  // #3543 — the ceilings every keeper send is held to before it is signed
+  // (`src/signingGuard.ts`). Each is a comma list of `<chainId>=<wei>`
+  // entries plus an optional `*=<wei>`; a chain neither names keeps the
+  // built-in figure for that chain. Plain vars.
+  /** Highest fee per gas (`maxFeePerGas`, or `gasPrice` on a legacy chain). */
+  GAS_MAX_FEE_PER_GAS_WEI?: string;
+  /** Highest tip per gas (`maxPriorityFeePerGas`). */
+  GAS_MAX_PRIORITY_FEE_PER_GAS_WEI?: string;
+  /** Highest gas limit × fee per gas: the most one send's fee can cost. */
+  GAS_MAX_TX_FEE_WEI?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -425,6 +436,13 @@ interface BaseEnv {
    *  which must have a private route. Unset allows no fallback. A plain var,
    *  never echoed when it cannot be read. */
   PRIVATE_TX_FALLBACK_CHAIN_IDS?: string;
+
+  /** #3408 — how long, in seconds, a send a private route accepted may stay
+   *  unmined before the same signed bytes go to the ordinary RPC, on the
+   *  chains `PRIVATE_TX_FALLBACK_CHAIN_IDS` names (`privateRebroadcast.ts`).
+   *  24 to 180, default 60. A plain var; a value outside the bounds sends
+   *  nothing, like every unreadable route setting. */
+  PRIVATE_TX_PUBLIC_AFTER_SECONDS?: string;
 }
 
 /**
@@ -581,6 +599,9 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_RETURN_TRANSPORT_ENABLED',
   'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI',
   'REWARD_RETURN_MIN_PART',
+  'GAS_MAX_FEE_PER_GAS_WEI',
+  'GAS_MAX_PRIORITY_FEE_PER_GAS_WEI',
+  'GAS_MAX_TX_FEE_WEI',
   'LIQ_CONFIDENCE_MIN_CHECKS',
   'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
   'LIQ_TIER3_MIN_TVL_USD',
@@ -591,6 +612,7 @@ export const PLAIN_VAR_KEYS = [
   'PARTIAL_LIQ_MIN_HF_BPS',
   'DISCOUNT_PATH_CHAIN_IDS',
   'PRIVATE_TX_FALLBACK_CHAIN_IDS',
+  'PRIVATE_TX_PUBLIC_AFTER_SECONDS',
 ] as const satisfies readonly (keyof BaseEnv)[];
 
 /** One plain-string knob's name. A reader that takes one of these, rather
@@ -781,6 +803,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_RETURN_TRANSPORT_ENABLED: raw.REWARD_RETURN_TRANSPORT_ENABLED,
     REWARD_RETURN_TRANSPORT_MAX_FEE_WEI: raw.REWARD_RETURN_TRANSPORT_MAX_FEE_WEI,
     REWARD_RETURN_MIN_PART: raw.REWARD_RETURN_MIN_PART,
+    GAS_MAX_FEE_PER_GAS_WEI: raw.GAS_MAX_FEE_PER_GAS_WEI,
+    GAS_MAX_PRIORITY_FEE_PER_GAS_WEI: raw.GAS_MAX_PRIORITY_FEE_PER_GAS_WEI,
+    GAS_MAX_TX_FEE_WEI: raw.GAS_MAX_TX_FEE_WEI,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,
@@ -791,6 +816,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PARTIAL_LIQ_MIN_HF_BPS: raw.PARTIAL_LIQ_MIN_HF_BPS,
     DISCOUNT_PATH_CHAIN_IDS: raw.DISCOUNT_PATH_CHAIN_IDS,
     PRIVATE_TX_FALLBACK_CHAIN_IDS: raw.PRIVATE_TX_FALLBACK_CHAIN_IDS,
+    PRIVATE_TX_PUBLIC_AFTER_SECONDS: raw.PRIVATE_TX_PUBLIC_AFTER_SECONDS,
     // Resolved secrets.
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,

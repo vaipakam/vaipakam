@@ -450,7 +450,7 @@ contract DefaultedFacetTest is Test {
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)
             // address(0xDef1C0ded9bec7F1a1670819833240f027b25EfF)
@@ -995,8 +995,7 @@ contract DefaultedFacetTest is Test {
     ///         which cannot be zeroed (a 0 falls back to the default).
     function test_1955_timeDefault_lenderFull_shiftsInterestFeeToLender() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Default");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
 
         uint256 loanId = createAndAcceptOffer(
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,

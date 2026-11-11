@@ -190,7 +190,20 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // Executed against the REAL migrated schema by
     // `test/positionFlowMoves.test.ts` (both sides, the replay guard and the
     // retired receipt).
-    expect(skipped.length).toBeLessThanOrEqual(27);
+    // Raised 27 → 28 for #3411 (Codex #3528 r1 P1): a reorg rebuild hands a
+    // kept hybrid table's replay-maintained columns back to the replay with
+    // one UPDATE per table, its column names from `reorgRebuildKeep.json`
+    // (refused unless each is a plain identifier, and held equal to the
+    // restore projection by check-table-classification) and every value
+    // bound. Executed against the REAL migrated schema by
+    // `test/reorgGuard.test.ts` (the rebuild keeps the signed order).
+    // Raised 28 → 30 for #3411 (Codex #3528 r2): the release that lists a
+    // rebuilt order again once the cursor reaches its stamp (column names
+    // from the same JSON, identifier-checked, values bound; executed in
+    // `test/reorgGuard.test.ts`), and the signed book's `awaitingReplay`
+    // count, which carries the same optional signer clause as the side
+    // queries beside it (executed in `test/signedOfferRoutes.test.ts`).
+    expect(skipped.length).toBeLessThanOrEqual(30);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

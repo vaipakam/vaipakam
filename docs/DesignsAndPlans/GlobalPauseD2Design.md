@@ -231,7 +231,8 @@ default, repay and late-fee views disagree. So the change reaches a chain
 only through `RefreshAllFacetsInPlace` or a fresh deploy. The two curated
 refresh scripts, `RedeployFacets` and `ReplaceStaleFacets`, refuse a
 Diamond from before it (`PredatesLoanClock`). The marker is the routing of
-`LoanFacet.getLoanDeadlines`. The log is new
+`getLoanDeadlines` (on `LoanFacet` then, on `LoanClockFacet` since
+#3410). The log is new
 storage appended to the pause namespace, so the storage-layout guard
 records it. A chain upgraded in place starts with an empty log, and a
 pause that ended before the upgrade is not credited. A pause the pause

@@ -122,7 +122,12 @@ abstract contract DiamondFacetNames {
     ///      price-move guard on an offer).
     ///      114 → 115 with `SignedOfferMatchFacet` (#3443 — the signed-offer
     ///      keeper-matcher, split off OfferMatchFacet).
-    function cutFacetNames() internal pure returns (string[117] memory) {
+    ///      115 → 117 with `AutoLifecycleSettingsFacet` and
+    ///      `PrecloseOffsetFacet` (#3410 prep — split off AutoLifecycleFacet
+    ///      and PrecloseFacet for EIP-170).
+    ///      117 → 118 with `LoanClockFacet` (#3410 — the loan clock's
+    ///      disclosure, split off LoanFacet).
+    function cutFacetNames() internal pure returns (string[118] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -285,6 +290,8 @@ abstract contract DiamondFacetNames {
             "AutoLifecycleSettingsFacet",
             // The borrower's offset route (#3410, split off PrecloseFacet).
             "PrecloseOffsetFacet",
+            // The loan clock's disclosure (#3410, split off LoanFacet).
+            "LoanClockFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

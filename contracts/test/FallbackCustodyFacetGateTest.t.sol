@@ -6,7 +6,6 @@ import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {LibFallbackCustody} from "../src/libraries/LibFallbackCustody.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -81,8 +80,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         // slice of the in-kind split then leaves the borrower's vault for an
         // address other than the Diamond, so it is an observable transfer like
         // the other two.
-        AdminFacet(address(diamond)).setTreasury(treasury);
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), treasury);
         loanId = _fcOpenLoanPastGrace();
     }
 

@@ -18,6 +18,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title RewardTransportEpochTest
@@ -56,7 +57,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         vpfi = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 5 days);
         uint256 have = vpfi.balanceOf(address(this));

@@ -5602,6 +5602,10 @@ const copySource = {
       // can expire before the next refresh while the next one is unfetched.
       depthPartial:
         'Not every signed offer may be loaded, so the rates and amounts shown — even at the best rate — and the running totals may leave some out.',
+      // #3411 — the offer-book service is re-checking some signed offers
+      // after the blockchain replaced blocks it had already read.
+      depthRebuilding:
+        'The offer-book service is re-checking some signed offers against the blockchain, because the blockchain replaced some recent blocks. Until it finishes, those offers are left out, so the rates, amounts and running totals shown may be missing some.',
       // #2398 r4 — a deployment fact, not an outage.
       depthUnconfigured:
         'Signed offers aren’t available on this deployment — its offer-book service isn’t set up — so this shows only offers posted on the blockchain.',
@@ -5930,6 +5934,9 @@ const copySource = {
       // per side; never let a clipped page read as the full set.
       signedTruncated:
         'You have more signed offers for this pair than we can list at once — this is not all of them.',
+      // #3411 — the maker's own order while the offer book re-checks it.
+      signedReplayPending:
+        'The offer-book service is re-checking this offer against the blockchain, so it is not shown to others for now and the amount above may already have been taken. It can still be taken by anyone holding its signature, so you can still cancel it.',
     },
     positions: {
       loading: 'Loading your positions…',

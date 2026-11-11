@@ -26,6 +26,9 @@ import {FeeLeg, PREPAY_MODE_FIXED_PRICE, PREPAY_MODE_DUTCH} from "../src/seaport
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol";
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
+import {MockSequencerUptimeFeed} from "./mocks/MockSequencerUptimeFeed.sol";
+import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 
 /**
  * @notice T-086 Round-7 (Issue #355) — facet-level integration tests
@@ -189,6 +192,33 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             )
         );
         NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+    }
+
+    /// @dev #3410 - while the L2 sequencer is down, or within its one-hour
+    ///      recovery window, the floor auto-list is refused: a listing posted
+    ///      then would be priced on a market users could not reach. The grace
+    ///      end itself moves past the window, so the borrower loses no time.
+    function test_autoList_revertsInsideSequencerOutageWindow() public {
+        _scaffoldActiveLoan();
+        _warpIntoGrace();
+        MockSequencerUptimeFeed feed = new MockSequencerUptimeFeed(1, block.timestamp);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(feed));
+
+        vm.prank(keeperCaller);
+        vm.expectRevert(NFTPrepayAutoListFacet.SequencerUnhealthy.selector);
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        // Back up: still refused for the hour of recovery, then it posts.
+        feed.setStatus(0, block.timestamp);
+        vm.warp(block.timestamp + 30 minutes);
+        vm.prank(keeperCaller);
+        vm.expectRevert(NFTPrepayAutoListFacet.SequencerUnhealthy.selector);
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        vm.warp(block.timestamp + 30 minutes);
+        vm.prank(keeperCaller);
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+        assertEq(mockExecutor.recordedCallAt(0).mode, PREPAY_MODE_FIXED_PRICE, "posts once the window ends");
     }
 
     function test_autoList_revertsForCurrentPositionHolder() public {

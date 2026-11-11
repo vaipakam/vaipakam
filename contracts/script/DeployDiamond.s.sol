@@ -62,6 +62,7 @@ import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -548,6 +549,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3443 — the signed-offer keeper-matcher, split off OfferMatchFacet.
         SignedOfferMatchFacet signedOfferMatchFacet =
             SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
+        // #3410 — the loan clock's disclosure, split off LoanFacet (EIP-170).
+        LoanClockFacet loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -596,7 +599,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](117);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -716,6 +719,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3410 — split out of AutoLifecycleFacet and PrecloseFacet.
         cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
         cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
+        cuts[117] = _buildCut(address(loanClockFacet), _getLoanClockSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1454,6 +1458,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("forcedSalePreviewFacet", address(forcedSalePreviewFacet));
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
+        Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2114,13 +2119,21 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = LoanFacet.initiateLoan.selector;
         s[1] = LoanFacet.getLoanDetails.selector;
         s[2] = LoanFacet.getLoanConsents.selector;
         // `markNotifBilled` moved to NotificationFeeFacet in #2769.
-        // #668 / #935 — a loan's deadlines with the global pause credit.
-        s[3] = LoanFacet.getLoanDeadlines.selector;
+        // `getLoanDeadlines` moved to LoanClockFacet in #3410.
+    }
+
+    /// @dev Selectors for `LoanClockFacet` (#3410) — the loan clock's
+    ///      disclosure: a loan's deadlines (#668 / #935, moved off LoanFacet)
+    ///      and the sequencer outage that moves them.
+    function _getLoanClockSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = LoanClockFacet.getLoanDeadlines.selector;
+        s[1] = LoanClockFacet.getSequencerOutageWindow.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

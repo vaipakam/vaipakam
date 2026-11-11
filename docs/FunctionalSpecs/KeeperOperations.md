@@ -52,9 +52,14 @@ evidence that the migration has completed.
   works, rather than finding out from each action's log line. The alert names
   only the kind of problem, never the key. Nothing is said while the keeper is
   switched off.
-- Only one keeper runs for a signing key. A shared lease prevents another
+- Only one keeper runs for a signing key. A lease prevents another
   instance from starting ticks while the first owns the lease. A missing
   identity or unreadable lease holds the tick.
+- The lease is kept where only the keeper can write it, never in a store the
+  indexer, the agent or the app can write: a service that could write the
+  lease could stop every keeper action, liquidations included, by holding it.
+  A lease that claims to run longer than any keeper ever takes it for is not
+  honoured; the next claim takes it.
 - Lease time is judged by the database's clock. Renewal occurs every minute,
   including while a prior pass is running; an unrenewed lease expires after
   ten minutes. A renewal failure is logged and retried. The lease cannot
@@ -101,6 +106,22 @@ evidence that the migration has completed.
   time would otherwise run out of gas at the bare estimate. Unused gas is
   not charged; the keeper's account must still hold the fee for the higher
   limit for a send to be accepted.
+- Before the keeper's key signs any transaction, the network it is signing
+  for and the fees the node proposed are checked against figures the node
+  does not supply. The transaction must be for the network the keeper was
+  configured to act on, and its fee per gas, its tip and the most its fee can
+  cost (gas limit times fee per gas) must each be at or under that network's
+  ceiling. Every network the keeper runs on has built-in ceilings well above
+  what it charges in a busy hour; an operator may set others per network. A
+  transaction outside them is not signed and not sent, its transaction
+  number is released for the next send, and operators are alerted with the
+  action and the figure that was over (at most once per network every ten
+  minutes), so a genuine fee spike above a ceiling is a decision to raise
+  it, never a silent stall. A ceiling that cannot be read holds every send on
+  that network and says why. The value a transaction carries is not part of
+  this bound: the keeper chooses it, and a paid cross-chain fee has its own
+  ceiling. A rollup's charge for posting data to its parent chain is levied
+  by the chain outside the transaction's fields and is not bounded here.
 - Every pass has a finite deadline. Ordinarily it is the scheduled minute
   plus the pass's cadence, less a thirty-second margin. A send whose queue
   slot or preparation reaches that deadline is deferred without broadcast.
@@ -171,7 +192,32 @@ evidence that the migration has completed.
   send the same action again behind it; if it cannot keep that record, it sends
   nothing on that chain. A fallback to the ordinary RPC is a new broadcast and
   is not made once the run's deadline has passed. Each run states every chain's route.
-  Which chains need a private route at mainnet is an owner decision.
+  Which chains need a private route at mainnet is an owner decision (#3408:
+  Ethereum and BNB Chain, with Polygon PoS chosen before mainnet; the
+  sequencer chains need none).
+- A chain's private route may name several endpoints, tried in the order the
+  operator wrote them, each with the same signed transaction and a bounded
+  time to answer, so one endpoint that refuses or does not answer is not the
+  end of a protective send. An endpoint may be a provider's dedicated
+  private-transaction method as well as an ordinary submission endpoint.
+- On a chain the operator allows a public fallback, a transaction the private
+  route accepted but that is still not mined after a stated time (the
+  operator's setting, bounded well inside the time the keeper keeps that
+  nonce reserved) is sent through the ordinary RPC as the same signed
+  transaction, once. A fallback for either reason (every endpoint failed, or
+  the accepted send did not land) tells the operator, naming the transaction,
+  because the transaction is then public, and does so even when the keeper
+  cannot update its own record of the copy. No public copy is sent once the
+  keeper may have given the nonce to a later send, nor so close to that point
+  that the copy could arrive after it; that point is measured from when the
+  nonce was reserved, not from when an endpoint accepted the send. A send that
+  reaches it unmined and never copied is reported as such, with its outcome
+  stated as unknown, and its record is kept until that report is made, never
+  dropped silently; where a public copy was attempted and its answer was
+  lost, the report says the transaction may be public. One chain's failing
+  RPC never uses up the time another chain's public copies need. A public copy, like any send, is not made once the run's
+  deadline has passed. These rules cover every transaction the
+  keeper sends on that chain, including the Telegram LOCK and forced sales.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal
   names and identifiers, so redaction does not hide why an action was skipped.

@@ -366,6 +366,34 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     }
 
     /// @inheritdoc IPriceGuard
+    function sequencerOutageWindow() external view returns (uint256 downAt, uint256 windowEnd) {
+        address feed = sequencerFeed;
+        if (feed == address(0)) return (0, 0);
+        uint80 roundId;
+        int256 answer;
+        uint256 startedAt;
+        try AggregatorV3Interface(feed).latestRoundData() returns (uint80 r, int256 a, uint256 st, uint256, uint80) {
+            (roundId, answer, startedAt) = (r, a, st);
+        } catch {
+            return (block.timestamp, block.timestamp + SEQUENCER_GRACE_PERIOD);
+        }
+        // A missing or future start is a broken feed: read as down from now.
+        if (startedAt == 0 || startedAt > block.timestamp) {
+            return (block.timestamp, block.timestamp + SEQUENCER_GRACE_PERIOD);
+        }
+        if (answer != 0) return (startedAt, block.timestamp + SEQUENCER_GRACE_PERIOD);
+        // Up since `startedAt`: the outage began at the previous round, when
+        // that round is readable and was a down round; otherwise unknown,
+        // and only the recovery grace counts.
+        downAt = startedAt;
+        windowEnd = startedAt + SEQUENCER_GRACE_PERIOD;
+        if (roundId == 0) return (downAt, windowEnd);
+        try AggregatorV3Interface(feed).getRoundData(roundId - 1) returns (uint80, int256 pa, uint256 pst, uint256, uint80) {
+            if (pa != 0 && pst != 0 && pst <= startedAt) downAt = pst;
+        } catch {}
+    }
+
+    /// @inheritdoc IPriceGuard
     function readFeed(address feed, bool allowStablePeg)
         external
         view

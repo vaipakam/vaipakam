@@ -65,6 +65,10 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
     error AutoListBorrowerOptedOut(uint256 loanId);
     error AutoListAlreadyAtOrBelowFloor(uint256 loanId);
     error AutoListExecutorMigrationStale(uint256 loanId, address recordedExecutor, address currentExecutor);
+    /// @notice #3410 — the L2 sequencer is down or inside its recovery
+    ///         window: a grace-period listing waits it out, as a time-based
+    ///         default does, so the borrower can act first.
+    error SequencerUnhealthy();
 
     // ─── Events ─────────────────────────────────────────────────────────
 
@@ -176,10 +180,11 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         if (block.timestamp < loanEnd) {
             revert GraceNotStarted(loanId, block.timestamp, loanEnd);
         }
-        uint256 gracePeriodEnd = loanEnd + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 gracePeriodEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp >= gracePeriodEnd) {
             revert GraceExpired(loanId, block.timestamp, gracePeriodEnd);
         }
+        if (LibLoanClock.inOutageWindow()) revert SequencerUnhealthy();
 
         // ── Caller is NOT the current position holder (§18.7) ─────────
         address currentHolder =

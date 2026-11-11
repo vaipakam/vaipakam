@@ -2045,6 +2045,7 @@
         "depthLoading": "Les offres signées sont encore en cours de chargement — pour l’instant, les taux affichés proviennent uniquement des offres publiées sur la blockchain, donc il peut manquer des offres signées aux meilleurs taux et au taux médian.",
         "depthUnavailable": "Nous n’avons pas pu charger les offres signées depuis le service du carnet d’offres, donc seules les offres publiées sur la blockchain sont affichées. Il peut manquer des offres signées aux meilleurs taux et au taux médian.",
         "depthPartial": "Toutes les offres signées ne sont peut-être pas chargées, donc les taux et montants affichés — même au meilleur taux — et les totaux cumulés peuvent en omettre certaines.",
+        "depthRebuilding": "Le service du carnet d’offres revérifie certaines offres signées auprès de la blockchain, car la blockchain a remplacé quelques blocs récents. Tant qu’il n’a pas fini, ces offres sont écartées, donc les taux, montants et totaux cumulés affichés peuvent en omettre certaines.",
         "depthUnconfigured": "Les offres signées ne sont pas disponibles sur ce déploiement — son service de carnet d’offres n’est pas configuré —, donc seules les offres publiées sur la blockchain sont affichées.",
         "rangedBadgeTooltip": "Une offre signée avec une fourchette de taille. Elle compte toujours, mais seul l’appariement automatique peut la prendre, par parties, et seulement tant qu’il est activé — elle ne peut pas être prise en entier d’un coup.",
         "fill": "Remplir",
@@ -2234,7 +2235,8 @@
         "signedCancelling": "Annulation…",
         "signedCancelNote": "La publication était gratuite, mais l’annulation nécessite une transaction avec des frais de réseau : c’est le seul moyen de retirer une signature que le carnet d’offres détient déjà.",
         "signedCancelled": "Offre signée annulée.",
-        "signedTruncated": "Vous avez plus d’offres signées pour cette paire que nous ne pouvons en lister à la fois — elles ne sont pas toutes affichées."
+        "signedTruncated": "Vous avez plus d’offres signées pour cette paire que nous ne pouvons en lister à la fois — elles ne sont pas toutes affichées.",
+        "signedReplayPending": "Le service du carnet d’offres revérifie cette offre auprès de la blockchain : elle n’est donc pas montrée aux autres pour l’instant, et le montant ci-dessus a peut-être déjà été pris. Quiconque détient sa signature peut encore la prendre, vous pouvez donc toujours l’annuler."
       },
       "positions": {
         "loading": "Chargement de vos positions…",

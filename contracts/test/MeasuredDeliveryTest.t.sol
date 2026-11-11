@@ -6,7 +6,6 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {SetupTest} from "./SetupTest.t.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
@@ -527,8 +526,7 @@ contract MeasuredDeliveryTest is SetupTest {
     ///         (drawn from `OTHER`), and a shortfall taken from the lender.
     function test_RentalDefault_ShortfallFromTreasuryFeeFirst() public {
         address treasury = makeAddr("externalTreasury");
-        AdminFacet(address(diamond)).setTreasury(treasury);
-        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
+        LibTestVaultBeacon.setTreasury(address(diamond), treasury);
         uint256 loanId = _openRental();
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         ERC20Mock(mockERC20).mint(address(diamond), OTHER);
@@ -751,8 +749,7 @@ contract MeasuredDeliveryTest is SetupTest {
     ///         pairs this replaced, which accrued the requested figure.
     function test_TreasuryFeeHost_DiamondShareAccruesWhatArrived() public {
         address treasury = makeAddr("externalTreasury");
-        AdminFacet(address(diamond)).setTreasury(treasury);
-        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
+        LibTestVaultBeacon.setTreasury(address(diamond), treasury);
         ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
         _chargesFee(mockERC20, address(diamond));
 
@@ -813,8 +810,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function test_OverDebit_RefusedOutOfTheDiamond() public {
         // An external treasury, so the share really leaves the Diamond (where
         // the Diamond is the treasury nothing moves, see the #2623 cell).
-        AdminFacet(address(diamond)).setTreasury(makeAddr("externalTreasury"));
-        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("externalTreasury"));
         ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
         _chargesFeeOnTop(mockERC20, address(diamond));
 

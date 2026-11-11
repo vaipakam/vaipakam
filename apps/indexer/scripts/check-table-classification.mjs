@@ -105,6 +105,10 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  indexer_chain_anchor: {
+    class: 'replay-derived',
+    reason: 'the reorg guard\'s anchor (#3411): the block the scan cursor last advanced to and its hash; cleared with the cursor, and the replay anchors again as it advances',
+  },
   indexer_deployment: {
     class: 'replay-derived',
     reason:
@@ -252,7 +256,7 @@ const CLASSIFICATION = {
   reward_loop_day: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
   reward_day_user: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
   reward_retention: { class: 'replay-derived', reason: 'RL-2 ledger, rebuilt by the replay with reward_loop_totals (see there)' },
-  // Keeper state. Every table below except the lease is keeper-PRIVATE
+  // Keeper state. Every table below is keeper-PRIVATE
   // (vaipakam-keeper-db, #2450), which the nightly archive does not bind, so a
   // restore into a fresh account starts each one EMPTY (OffChainRestore.md
   // §1 step 3). #1481 checked each for that: none holds anything the keeper
@@ -293,6 +297,11 @@ const CLASSIFICATION = {
     reason:
       'next nonce reserved by a private broadcast (#3240); an empty table only forgets a reservation, and a private transaction stays pending for minutes, far less than a restore takes, so the pending count is right again by then',
   },
+  keeper_private_send: {
+    class: 'replay-derived',
+    reason:
+      'accepted private sends awaiting a possible public copy (#3408); an empty table only forgets the public fallback for sends still pending, which lasts minutes, far less than a restore takes',
+  },
   keeper_ops_alert: {
     class: 'replay-derived',
     reason:
@@ -331,9 +340,10 @@ const CLASSIFICATION = {
   keeper_runner_lease: {
     class: 'replay-derived',
     reason:
-      'one-runner keeper lease (#2503), in the SHARED database (migration 0059); it self-expires ' +
-      'within 10 minutes, and §6 clears it while the keeper is stopped, so a forged lease cannot ' +
-      'hold the restored keeper off',
+      'one-runner keeper lease (#2503), keeper-PRIVATE since #1722 (keeper migration 0009; the ' +
+      'shared copy from migration 0059 waits for its drop and nothing claims it); it self-expires ' +
+      'within 10 minutes, a lease past its maximum term is taken, and §6 clears it while the ' +
+      'keeper is stopped, so a forged lease cannot hold the restored keeper off',
   },
   asset_ranking: {
     class: 'replay-derived',
@@ -394,6 +404,63 @@ if (badKeep.length > 0) {
       badKeep.map(([t]) => `  - ${t}`).join('\n'),
   );
   process.exit(1);
+}
+
+// ── Reorg-rebuild keep list (#3411, Codex #3528 r1) ──────────────────
+// A reorg rebuild replays the SAME Diamond, so it keeps every chain-scoped
+// row born off chain — the restore treatment, applied to one chain. The
+// runtime list (`src/reorgRebuildKeep.json`) is held EQUAL to the
+// classification here, so a born-off-chain or hybrid table added tomorrow
+// cannot be wiped by a rebuild without someone deciding it:
+//   - every chain-scoped born-off-chain table is in the Diamond keep list or
+//     in `keep`, and `keep` names nothing else;
+//   - every chain-scoped hybrid table is in `project`, `project` names
+//     nothing else, and its `set` equals the restore converter's projection.
+const REBUILD_KEEP_PATH = join(INDEXER_DIR, 'src', 'reorgRebuildKeep.json');
+const rebuildKeep = JSON.parse(readFileSync(REBUILD_KEEP_PATH, 'utf8'));
+{
+  const problems = [];
+  const keepEntries = rebuildKeep && typeof rebuildKeep.keep === 'object' && rebuildKeep.keep !== null ? rebuildKeep.keep : null;
+  const projEntries =
+    rebuildKeep && typeof rebuildKeep.project === 'object' && rebuildKeep.project !== null ? rebuildKeep.project : null;
+  if (!keepEntries || !projEntries) {
+    problems.push('expected { keep: { table: reason }, project: { table: { reason, set } } }');
+  } else {
+    const classOf = (t) => (Object.hasOwn(CLASSIFICATION, t) ? CLASSIFICATION[t].class : undefined);
+    for (const t of [...chainScopedFromDdl].sort()) {
+      const c = classOf(t);
+      if (c === 'born-off-chain' && !Object.hasOwn(epochKeep.keep, t) && !Object.hasOwn(keepEntries, t)) {
+        problems.push(`${t} is born off chain and chain-scoped: a rebuild would delete it; add it to keep`);
+      }
+      if (c === 'hybrid' && !Object.hasOwn(projEntries, t)) {
+        problems.push(`${t} is hybrid and chain-scoped: a rebuild would delete it; add it to project`);
+      }
+    }
+    for (const [t, reason] of Object.entries(keepEntries)) {
+      if (!chainScopedFromDdl.has(t)) problems.push(`keep.${t}: no such table with a chain_id column`);
+      else if (classOf(t) !== 'born-off-chain') problems.push(`keep.${t}: only born-off-chain tables belong here (class ${classOf(t)})`);
+      if (Object.hasOwn(epochKeep.keep, t)) problems.push(`keep.${t}: already kept on every Diamond change; remove it here`);
+      if (typeof reason !== 'string' || reason.trim() === '') problems.push(`keep.${t}: needs a reason`);
+    }
+    for (const [t, p] of Object.entries(projEntries)) {
+      if (!chainScopedFromDdl.has(t)) problems.push(`project.${t}: no such table with a chain_id column`);
+      else if (classOf(t) !== 'hybrid') problems.push(`project.${t}: only hybrid tables belong here (class ${classOf(t)})`);
+      if (!p || typeof p.reason !== 'string' || p.reason.trim() === '') problems.push(`project.${t}: needs a reason`);
+      const set = p && typeof p.set === 'object' && p.set !== null ? p.set : null;
+      const restore = Object.hasOwn(RESTORE_PROJECTIONS, t) ? RESTORE_PROJECTIONS[t]({}) : null;
+      if (!set || Object.keys(set).length === 0) problems.push(`project.${t}: needs a non-empty set`);
+      else if (!restore || JSON.stringify(Object.entries(set).sort()) !== JSON.stringify(Object.entries(restore).sort())) {
+        problems.push(`project.${t}: set must equal the restore converter's RESTORE_PROJECTIONS.${t}`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    console.error(
+      `✗ ${relative(REPO_ROOT, REBUILD_KEEP_PATH)} does not match the classification:\n` +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    );
+    process.exit(1);
+  }
 }
 
 // ── Extract written tables from Worker sources ────────────────────────

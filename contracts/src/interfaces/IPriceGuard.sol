@@ -63,6 +63,19 @@ interface IPriceGuard {
     ///         when no sequencer feed is configured (an L1).
     function sequencerHealthy() external view returns (bool);
 
+    /// @notice #3410 — the latest L2 sequencer outage and its recovery
+    ///         window, read from the uptime feed, for a caller that moves a
+    ///         deadline out of an outage. `windowEnd` is the end of the
+    ///         recovery grace ({sequencerHealthy} turns true there): the
+    ///         recovery time plus the grace while the sequencer is up, now
+    ///         plus the grace while it is down or the feed cannot be read.
+    ///         `downAt` is when that outage began: the feed's previous round
+    ///         while it is up, the current one while it is down. Where the
+    ///         start cannot be read (no earlier round, a broken feed) it is
+    ///         the recovery time, so only the recovery grace counts. Both are
+    ///         zero when no feed is configured (an L1).
+    function sequencerOutageWindow() external view returns (uint256 downAt, uint256 windowEnd);
+
     /// @notice One Chainlink answer judged by the guard's freshness rule,
     ///         never reverting: the rule the price read applies, for a caller
     ///         that reads a feed itself (the liquidity probe).

@@ -21,7 +21,7 @@
  */
 import { type Abi, type PublicClient } from 'viem';
 import {
-  LoanFacetABI,
+  LoanClockFacetABI,
   MetricsDashboardFacetABI,
   MetricsFacetABI,
   NumeraireConfigFacetABI,
@@ -34,7 +34,7 @@ import { ASSET_ERC20, LOAN_STATUS_ACTIVE, isLiveStatus, positionKey, type Deadli
 
 const DASHBOARD = MetricsDashboardFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
-const LOAN = LoanFacetABI as Abi;
+const LOAN_CLOCK = LoanClockFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const PERIODIC = RepayPeriodicFacetABI as Abi;
 const VALUE = NumeraireValueFacetABI as Abi;
@@ -175,7 +175,7 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
       // them unread leaves the deadline unknown rather than half-known.
       live.map(async (h) => {
         const [[, pauseCredit, maturity, graceEnd], [cadence, periodEndAt, graceEndsAt, , , shortfall]] = (await Promise.all([
-          client.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDeadlines', args: [h.loan.id] }),
+          client.readContract({ address: diamond, abi: LOAN_CLOCK, functionName: 'getLoanDeadlines', args: [h.loan.id] }),
           client.readContract({ address: diamond, abi: PERIODIC, functionName: 'previewPeriodicSettle', args: [h.loan.id] }),
         ])) as [[bigint, bigint, bigint, bigint], [number, bigint, bigint, bigint, bigint, bigint, boolean]];
         const periodic = cadence === 0 ? null : { periodEndAt, graceEndsAt, shortfall, enforced: await periodicOn };

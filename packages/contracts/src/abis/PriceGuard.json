@@ -977,6 +977,24 @@
   },
   {
     "type": "function",
+    "name": "sequencerOutageWindow",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "downAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "windowEnd",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setGuardian",
     "inputs": [
       {

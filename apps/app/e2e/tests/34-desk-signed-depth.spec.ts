@@ -8,7 +8,7 @@
  *  state the offer-book service can actually produce, and that an empty
  *  on-chain book stops calling the market empty while signed offers are
  *  unknown. The stub
- *  serves `/signed-offers` normally, so this drives three states on one
+ *  serves `/signed-offers` normally, so this drives four states on one
  *  market by intercepting only that route's GET:
  *
  *   1. untouched — the stub answers with `truncated: false` like the
@@ -16,7 +16,10 @@
  *   2. 503       — the "couldn’t load signed offers" note, and the empty
  *                  state names only on-chain offers;
  *   3. a body flagged `truncated` — the "not every signed offer may be
- *      loaded" note, which claims no level complete, the best included.
+ *      loaded" note, which claims no level complete, the best included;
+ *   4. a body with `awaitingReplay` (#3411) — the offer book is re-checking
+ *      some signed offers after the chain replaced recent blocks, and the
+ *      note says so; the empty state still names only what was checked.
  *
  *  State 1 is the control that keeps 2 and 3 honest: a note that showed
  *  on every load would pass both of them.
@@ -76,6 +79,23 @@ test('the ladder discloses an unavailable or truncated signed book', async ({ la
   await expect(note).toContainText(/even at the best rate/i);
   // r3 — a possibly cut-short book is not a complete one, so an empty
   // list still says only what could be checked.
+  await expect(emptyUnknown).toBeVisible();
+  await expect(empty).toHaveCount(0);
+
+  // 4 — #3411: complete otherwise, but some orders are being re-checked.
+  await page.unroute(signedBook);
+  await page.route(signedBook, (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({
+          status: 200,
+          headers: cors,
+          contentType: 'application/json',
+          body: JSON.stringify({ chainId: CHAIN_ID, offers: [], truncated: false, awaitingReplay: 2 }),
+        })
+      : route.continue(),
+  );
+  await openMarketViaCustomPair(page, tenor);
+  await expect(note).toContainText(/re-checking some signed offers/i, { timeout: 30_000 });
   await expect(emptyUnknown).toBeVisible();
   await expect(empty).toHaveCount(0);
 });

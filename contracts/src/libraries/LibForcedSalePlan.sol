@@ -42,8 +42,7 @@ library LibForcedSalePlan {
             // exactly when `triggerDefault` would sell, by the one rule both
             // read. The unpriced fallback, the in-kind move and a refused
             // default sell nothing, so they need no quote and no price here.
-            return block.timestamp >
-                LibLoanClock.maturity(loan) + LibVaipakam.gracePeriod(loan.durationDays) &&
+            return block.timestamp > LibLoanClock.graceEnd(loan) &&
                 loan.assetType == LibVaipakam.AssetType.ERC20 &&
                 LibDefaultRoute.erc20Route(loan) == LibDefaultRoute.Route.Sale;
         }

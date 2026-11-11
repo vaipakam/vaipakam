@@ -9,6 +9,7 @@ import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFac
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -863,7 +864,7 @@ contract RefinanceFacetTest is SetupTest {
     ///         that moment pays.
     function test_1558_figuresAtGraceEnd_areWhatARefinanceThenPays() public {
         (, uint256 payoffEnd, , uint256 shareEnd) = _payoff();
-        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(oldLoanId);
+        (, , , uint256 graceEnd) = LoanClockFacet(address(diamond)).getLoanDeadlines(oldLoanId);
         vm.warp(graceEnd);
         (uint256 payoffThen, , uint256 shareThen, ) = _payoff();
         assertEq(payoffThen, payoffEnd, "the payoff bound is the payoff at grace end");
@@ -875,7 +876,7 @@ contract RefinanceFacetTest is SetupTest {
     ///         already past reads today's, and a moment past the grace end
     ///         reads the grace end.
     function test_1558_by_isTheNamedMoment() public {
-        (, , , uint256 graceEnd) = LoanFacet(address(diamond)).getLoanDeadlines(oldLoanId);
+        (, , , uint256 graceEnd) = LoanClockFacet(address(diamond)).getLoanDeadlines(oldLoanId);
         uint256 mid = graceEnd - 1 days;
         (, , , uint256 shareNow_, uint256 shareMid, , , , , ) = RefinancePayoffFacet(address(diamond))
             .getRefinancePayoff(oldLoanId, taggedOfferId, mid);

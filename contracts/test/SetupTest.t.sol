@@ -48,6 +48,7 @@ import {IERC20 as IERC20Owned} from "@openzeppelin/contracts/token/ERC20/IERC20.
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -430,6 +431,7 @@ contract SetupTest is Test {
     ForcedSalePreviewFacet forcedSalePreviewFacet;
     OfferPriceGuardFacet offerPriceGuardFacet;
     SignedOfferMatchFacet signedOfferMatchFacet;
+    LoanClockFacet loanClockFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -609,6 +611,7 @@ contract SetupTest is Test {
         forcedSalePreviewFacet = ForcedSalePreviewFacet(ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name));
         offerPriceGuardFacet = OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
         signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
+        loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -646,7 +649,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](119);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1154,6 +1157,12 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getPrecloseOffsetFacetSelectors()
         });
+        // #3410 — the loan clock's disclosure, split off LoanFacet.
+        cuts[118] = IDiamondCut.FacetCut({
+            facetAddress: address(loanClockFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLoanClockFacetSelectors()
+        });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
         cuts[66] = IDiamondCut.FacetCut({
@@ -1382,7 +1391,7 @@ contract SetupTest is Test {
         // Init vault factory with impl
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
 
         // Unpause the diamond. The Diamond is born paused (see
         // `VaipakamDiamond.constructor` — `LibPausable.pause()` is the

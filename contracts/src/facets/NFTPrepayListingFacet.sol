@@ -1234,8 +1234,7 @@ contract NFTPrepayListingFacet is
     ///      into a `LibLoanTime.gracePeriodEnd(loan)` helper,
     ///      every facet should switch in lockstep.
     function _gracePeriodEnd(LibVaipakam.Loan storage loan) private view returns (uint256) {
-        uint256 endTime = LibLoanClock.maturity(loan);
-        return endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        return LibLoanClock.graceEnd(loan);
     }
 
     /// @dev Loads the executor address, reverting {ExecutorNotSet}

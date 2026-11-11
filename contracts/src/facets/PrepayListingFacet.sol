@@ -135,8 +135,7 @@ contract PrepayListingFacet is
         // Grace boundary = startTime + durationDays + gracePeriod(durationDays).
         // The duration-tiered grace bucket is governance-tunable via
         // `ConfigFacet.setGraceBuckets`; we honor the live config.
-        uint256 endTime = LibLoanClock.maturity(loan);
-        ctx.graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        ctx.graceEnd = LibLoanClock.graceEnd(loan);
 
         // Current borrower-position holder: the sale is that side's own
         // dealing, so the executor screens it at fill. The lender-position

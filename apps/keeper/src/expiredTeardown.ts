@@ -46,7 +46,7 @@
 //
 //   a. One window of the active-loan list at one pinned block
 //      (`activeLoanWindow.ts`), walked a window per run on a larger book. For
-//      each loan, at that block: its deadlines (`LoanFacet.getLoanDeadlines`,
+//      each loan, at that block: its deadlines (`LoanClockFacet.getLoanDeadlines`,
 //      pause credit included), its prepay listing's order hash, and its
 //      intent commit (`getIntentCommit`, which reverts when there is none).
 //      A listing is due once the block's time is past the loan's grace end;
@@ -98,6 +98,7 @@
 import { createPublicClient, decodeEventLog, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import {
   IntentConfigFacetABI,
+  LoanClockFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
   NFTPrepayListingFacetABI,
@@ -124,6 +125,7 @@ export const ABI = [
   ...(OfferCancelFacetABI as Abi),
   ...(MetricsFacetABI as Abi),
   ...(LoanFacetABI as Abi),
+  ...(LoanClockFacetABI as Abi),
   ...(VaipakamNFTFacetABI as Abi),
 ] as Abi;
 

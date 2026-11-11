@@ -267,8 +267,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             ) revert LenderCannotRepayOwnLoan();
         }
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         // #1000 (S2) — the grace gate blocks an ORDINARY (Active) repayment past
         // graceEnd (that loan must go through DefaultedFacet). But a
         // FallbackPending CURE only exists past graceEnd (a time-based default
@@ -722,15 +721,24 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             if (partialAmount < minPartial) revert InsufficientPartialAmount();
         }
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // Pass-2 A2 (#1190) — capture the PRE-partial health factor for the
         // monotonicity gate at the end. Only liquid-on-both-legs loans carry an
         // HF (illiquid/NFT-rental legs have none), matching the post-repay gate.
+        //
+        // #3410 — not inside a sequencer outage or its recovery window. The
+        // price read refuses there, and the grace end that fell inside the
+        // window has moved to the window's end so the borrower can still repay
+        // in full or in part. The gate is defensive only: a partial lowers the
+        // debt and leaves the collateral where it is, so it raises the HF at
+        // any price, and its verdict never depends on the price it cannot
+        // read. Skipping it while the read refuses keeps the repayment the
+        // window exists for open; everywhere else the gate runs as before.
         bool hfGated = loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            !LibLoanClock.inOutageWindow();
         uint256 hfBefore;
         if (hfGated) {
             hfBefore = abi.decode(

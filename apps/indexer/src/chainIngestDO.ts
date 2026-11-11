@@ -704,7 +704,11 @@ export class ChainIngestDO {
         headBlock = result.headBlock;
         // A pass that began a deployment epoch returned without scanning; the
         // fresh pass it promises is rearmed explicitly (Codex #2545 r6 P2).
-        epochReset = result.epochReset === true;
+        // #3411 — so does a pass whose reorg guard requested a rebuild: the
+        // reset is the next pass's to do, with its own budget. (Only the
+        // rearm; the full invalidation broadcast waits for the pass that
+        // actually deletes the rows, which reports `epochReset` itself.)
+        epochReset = result.epochReset === true || result.reorgRebuildRequested === true;
         // A budget-stopped pass keeps the loop going itself (#2221).
         unfinishedBlock = result.unfinishedBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with

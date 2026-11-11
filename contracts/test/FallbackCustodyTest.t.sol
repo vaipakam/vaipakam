@@ -25,7 +25,6 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -1035,8 +1034,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         _fcLiquidateToFallback(id);
         (, uint256 t,) = _fcSlices(id);
         assertGt(t, 0, "fixture-live: a treasury slice");
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
-        LibTestVaultBeacon.sync(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         uint256 diamond0 = _fcBal(weth, address(diamond));
         uint256 recorded0 = TreasuryFacet(address(diamond)).getTreasuryBalance(weth);
 

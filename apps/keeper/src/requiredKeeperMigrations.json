@@ -5,5 +5,7 @@
   "0004_keeper_sanctions.sql",
   "0005_keeper_horizon.sql",
   "0006_hf_band_orphan_seq.sql",
-  "0007_keeper_private_nonce.sql"
+  "0007_keeper_private_nonce.sql",
+  "0008_keeper_private_send.sql",
+  "0009_keeper_runner_lease.sql"
 ]

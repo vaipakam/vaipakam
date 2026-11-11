@@ -335,7 +335,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Initialize diamond services
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroEx"));
 
