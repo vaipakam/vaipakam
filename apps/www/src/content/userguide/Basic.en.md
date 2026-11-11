@@ -1051,7 +1051,7 @@ and the receipt says which before you confirm. Turning it on needs
 the current Terms accepted; turning it off never does. While the
 protocol is paused it cannot be changed either way. A loan in an
 illiquid lending asset still pays the full borrowing fee, and no
-discount is ever more than half the fee.
+discount is ever more than half the fee. On a loan you lend, it is never more than your discount when you took that lender position, so VPFI you add later does not raise it on that loan.
 
 <a id="home-rewards"></a>
 
@@ -1260,6 +1260,8 @@ With two or more live loans, a summary comes first. For each side it gives the p
 Each loan has its own page. It starts with the loan's status, then your role: the side your wallet holds now, since position tokens can be sold or transferred. If you hold neither side, you are viewing. A deadline that needs you is worded for your side. Once the grace period is over, the page says anyone may now start the default, and only when the protocol confirms it.
 
 Below that come the loan's dates (the due date of its current term before any pause credit, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. Where the network holds a band just above the liquidation threshold for an internal match with another loan, the page states it: inside that band no outside sale can close the loan. An NFT rental has no collateral: if it defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Repaying in full, paying part, adding collateral and taking it back are its first actions; the others come in later updates.
+
+If you hold the lender side of a running loan, the page also shows your fee discount on it: the discount on the protocol's share of your interest. It is the lower of your discount when you took the position and your discount at each settlement, and the page says when the first one caps it. It counts only while your fee-discount setting is on, and the page says when that is off. Advanced also shows both figures, how this network gives the discount and whether a Full fee tariff adds to it. Where this network's contracts do not report it yet, the page says so rather than showing no discount.
 
 <a id="repay"></a>
 

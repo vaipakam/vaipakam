@@ -1925,7 +1925,7 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 ### Home: 수수료 할인
 
-`setVPFIDiscountConsent`는 이 체인의 Diamond에 지갑별 플래그 하나를 설정합니다. 꺼져 있으면 보유 등급 할인은 0입니다. 켜져 있으면 차입자의 대출 개시 수수료가 수락 시 대출 자산으로 줄어들고(VPFI 가격 경로는 차입자 쪽에 절대 관여하지 않음), 대출자의 수익 수수료는 정산할 때마다 그 시점의 실효 등급으로 할인됩니다. 지급 방식은 `getVPFIDiscountConfig`를 따릅니다. VPFI 환율과 기준 자산이 모두 설정되어 있으면 할인된 수수료가 대출자의 볼트에서 VPFI로 차감되고 대출자는 이자를 모두 받습니다. 그렇지 않으면 재무 수수료 자체가 줄고 VPFI는 움직이지 않습니다. 정산 시 이 차감이 실행될 수 없으면(유효한 시세가 없거나, 볼트에 추적되는 자유 VPFI가 부족하거나, 그 VPFI가 담보로 잠겨 있는 경우) 그 정산의 수수료에는 보유 등급 할인이 적용되지 않습니다. 호출은 `whenNotPaused`이므로 전역 일시 중지는 양방향 모두를 막습니다. 켜기에는 약관이 필요하고 끄기에는 필요 없으며, 둘 다 미러에 등급을 전송하지 않습니다. 차입자 할인은 수락 시 대출 자산이 유동적일 때만 적용되며(비유동 대출은 LIF 전액을 냄), 모든 할인은 수수료의 50%로 제한됩니다.
+`setVPFIDiscountConsent`는 이 체인의 Diamond에 지갑별 플래그 하나를 설정합니다. 꺼져 있으면 보유 등급 할인은 0입니다. 켜져 있으면 차입자의 대출 개시 수수료가 수락 시 대출 자산으로 줄어들고(VPFI 가격 경로는 차입자 쪽에 절대 관여하지 않음), 대출자의 수익 수수료는 정산할 때마다 그 시점의 실효 등급으로 할인됩니다. 지급 방식은 `getVPFIDiscountConfig`를 따릅니다. VPFI 환율과 기준 자산이 모두 설정되어 있으면 할인된 수수료가 대출자의 볼트에서 VPFI로 차감되고 대출자는 이자를 모두 받습니다. 그렇지 않으면 재무 수수료 자체가 줄고 VPFI는 움직이지 않습니다. 정산 시 이 차감이 실행될 수 없으면(유효한 시세가 없거나, 볼트에 추적되는 자유 VPFI가 부족하거나, 그 VPFI가 담보로 잠겨 있는 경우) 그 정산의 수수료에는 보유 등급 할인이 적용되지 않습니다. 호출은 `whenNotPaused`이므로 전역 일시 중지는 양방향 모두를 막습니다. 켜기에는 약관이 필요하고 끄기에는 필요 없으며, 둘 다 미러에 등급을 전송하지 않습니다. 차입자 할인은 수락 시 대출 자산이 유동적일 때만 적용되며(비유동 대출은 LIF 전액을 냄), 모든 할인은 수수료의 50%로 제한됩니다. #3562부터 한 대출에 대한 대출자의 hold-tier 할인은, 보유자가 대출자 포지션을 받았을 때 기록된 할인을 절대 넘지 않습니다 (`lenderEntryDiscount`, 대출자 토큰에 보유자가 생길 때마다 기록되며, 단순 전송은 기록된 값과 받는 쪽의 값 중 낮은 쪽을 유지합니다).
 
 <a id="home-rewards"></a>
 
@@ -2136,6 +2136,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 가격이 있는 대출에는 `getInternalMatchConfigBundle`도 읽습니다. 내부 매칭이 켜져 있으면 LTV가 임계값부터 임계값 + `externalLiquidationPriorityWindowBps`까지인 대출은 내부 매칭용으로 보류되고 모든 외부 청산 경로가 거부합니다(`InternalMatchOnlyBand`). 페이지는 그 구간을 알립니다. `loanInitiationFeeBpsAtInit`가 0이면(요율이 기록되기 전에 개설된 대출) 기록 없음으로, `treasuryFeeBpsAtInit`가 0이면 정산이 적용하는 기존 1% 요율로 표시합니다. 현물 인도 경고는 ERC-20 대출에만 해당합니다. NFT 대여에는 담보가 없으며, 채무 불이행 시 임차인의 사용이 끝나고 선지급 대여료는 트레저리 몫을 뺀 뒤 대출자에게 지급되며 버퍼는 트레저리로 갑니다. 페이지는 대신 이를 알립니다.
 
 요율은 대출의 스냅샷입니다: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit`(판매용 대출에는 없음), `liquidationLtvBpsAtInit`. 한쪽이 Illiquid(`principalLiquidity` 또는 `collateralLiquidity`)인 대출에는 가격 기반 수치가 없습니다: 프로토콜이 그 대출의 `calculateHealthFactor`와 `calculateLTV`를 거부하며, 페이지는 알 수 없음 대신 그렇게 알립니다. `principal`은 아직 남은 원금이며(부분 상환이 이를 줄임), `interestRateBps`와 `collateralAmount`도 바뀔 수 있으므로 조건은 현재 값으로 표시됩니다. 기록상 원금이 없는 종료된 대출은 내부 매칭이 이를 충당했는지 표시하고, 아니면 기록된 원금이 없다는 것만 표시합니다. NFT 대여는 일일 대여료(`principal`, `prepayAsset` 기준)와 조기 반환 시에도 남은 모든 날이 청구되는지(`useFullTermInterest`)를 표시합니다. `getPeriodicInterestEnabled`가 false이면 페이지는 체크포인트에서 담보가 매각되지 않는다고 알립니다. 진행 중인 대출에서 `collateralLiquidity`가 Illiquid이면 현물 경고가 추가됩니다: 채무 불이행 시 판매 없이 담보가 대출자에게 이전됩니다. 첫 번째 트랜잭션은 전액 상환입니다(아래 참조).
+
+진행 중인 ERC-20 대출의 대출자 측 보유자에 대해, 페이지는 `lenderHoldDiscountView(loanId, wallet)`을 읽습니다: 기록된 항목(보유자, 등급, 할인, 시각), 지갑의 현재 등급과 할인, 그리고 항목이 그 지갑을 가리키면 둘 중 낮은 값, 아니면 0인 `holdBps`입니다. 이 view가 없는 Diamond는 `FunctionDoesNotExist`로 revert하며, 페이지는 이를 0이 아니라 아직 보고되지 않음으로 표시합니다. 같은 블록에서 `getVPFIDiscountConsent`(켜져 있을 때만 hold 몫이 적용됨), `getVPFIDiscountConfig`(할인 지급 방식), `getFeeEntitlement(loanId).lenderMode`(Full은 50% 상한 안에서 10포인트를 더함)를 읽습니다.
 
 <a id="repay"></a>
 

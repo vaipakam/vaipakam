@@ -973,6 +973,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   settleable belongs to a loan that is not running, stated as such and never
   as a sale. The card is read-only; paying a period and settling one come
   with their own actions.
+- **RB-POSITION-DISCOUNT** — the wallet holding the lender side of a
+  running ERC-20 loan (LN-18) sees its fee discount on that loan from the
+  protocol's own per-loan view (#3562) alone, never worked out in the app:
+  the holding discount that applies to the protocol's share of its
+  interest, which is the lower of the discount recorded when it took the
+  position and its discount now. Where the recorded figure is the lower,
+  the page says it caps the discount and that VPFI added since does not
+  raise it on this loan; where it is not, the page says a fall in the tier
+  lowers it at the next settlement. Where the protocol recorded nothing for
+  this wallet, the page says no holding discount applies, never a figure;
+  where the network's contracts do not report the view yet, it says so,
+  never a zero. The fee-discount setting gates the holding discount, so
+  the page states when it is off (with the way to it) or could not be read.
+  Advanced adds the two figures with their tiers and the time the first was
+  recorded, how the deployment delivers the discount, and whether a Full
+  fee tariff on the loan adds to it; each side figure that cannot be read
+  is stated as unknown. Every figure is read at one block. The card is
+  read-only and shown to no one else: the borrower and a viewer see none.
 - **RB-POSITION-PARTIAL** — paying part of a loan (LN-22, LN-64) is
   offered to the borrower position's holder alone, since the protocol takes
   a partial repayment from that holder only. Its one rule (RB-ELIG) reads

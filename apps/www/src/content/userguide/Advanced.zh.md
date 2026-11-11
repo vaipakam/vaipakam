@@ -1766,7 +1766,7 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 ### Home：手续费折扣
 
-`setVPFIDiscountConsent` 会在本链的 Diamond 上为每个钱包设置一个标志。关闭时，持有等级折扣为 0。开启时，借款人的贷款发起费在接受时以出借资产减少（VPFI 定价路径从不进入借款人路径），出借人的收益手续费在每次结算时按当时生效的实际等级打折。交付方式取决于 `getVPFIDiscountConfig`：若 VPFI 汇率及其参考资产都已设置，打折后的手续费以 VPFI 从出借人的金库扣除，出借人保留全部利息；否则直接减少国库手续费本身，不移动 VPFI。若某次结算时无法执行该扣除（没有有效报价、金库中已记录的可用 VPFI 不足，或该 VPFI 作为抵押被锁定），该次结算的手续费不享受持有等级折扣。该调用为 `whenNotPaused`，因此全局暂停会在两个方向上都将其关闭。开启受服务条款约束，关闭则不受约束，且两者都不会向镜像链广播等级。借款人折扣仅在接受时出借资产具备流动性时适用（非流动贷款支付全额 LIF），且任何折扣都以手续费的 50% 为上限。
+`setVPFIDiscountConsent` 会在本链的 Diamond 上为每个钱包设置一个标志。关闭时，持有等级折扣为 0。开启时，借款人的贷款发起费在接受时以出借资产减少（VPFI 定价路径从不进入借款人路径），出借人的收益手续费在每次结算时按当时生效的实际等级打折。交付方式取决于 `getVPFIDiscountConfig`：若 VPFI 汇率及其参考资产都已设置，打折后的手续费以 VPFI 从出借人的金库扣除，出借人保留全部利息；否则直接减少国库手续费本身，不移动 VPFI。若某次结算时无法执行该扣除（没有有效报价、金库中已记录的可用 VPFI 不足，或该 VPFI 作为抵押被锁定），该次结算的手续费不享受持有等级折扣。该调用为 `whenNotPaused`，因此全局暂停会在两个方向上都将其关闭。开启受服务条款约束，关闭则不受约束，且两者都不会向镜像链广播等级。借款人折扣仅在接受时出借资产具备流动性时适用（非流动贷款支付全额 LIF），且任何折扣都以手续费的 50% 为上限。自 #3562 起，出借人在一笔贷款上的持有等级折扣永远不会超过持有人接手出借人仓位时为其记录的折扣（`lenderEntryDiscount`，每当出借人代币有了持有人就会写入；普通转让保留已记录数值与接收方数值中较低的一个）。
 
 <a id="home-rewards"></a>
 
@@ -1977,6 +1977,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 对有价格的贷款，它还读取 `getInternalMatchConfigBundle`。内部撮合开启时，贷款价值比处于其阈值到阈值加 `externalLiquidationPriorityWindowBps` 之间的贷款会保留给内部撮合，所有外部清算途径都会拒绝（`InternalMatchOnlyBand`），页面会说明这个区间。`loanInitiationFeeBpsAtInit` 为 0（费率被记录之前开立的贷款）显示为未记录，`treasuryFeeBpsAtInit` 为 0 显示为结算采用的 1% 旧费率。实物交付警告仅适用于 ERC-20 贷款：NFT 租赁没有抵押品，违约时租用方的使用权终止，预付租金扣除金库份额后付给出借人，缓冲金转入金库，页面会改为说明这一点。
 
 费率均为贷款快照：`treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（出售载体贷款为无）和 `liquidationLtvBpsAtInit`。任一方为 Illiquid（`principalLiquidity` 或 `collateralLiquidity`）的贷款没有基于价格的读数：协议会拒绝该贷款的 `calculateHealthFactor` 和 `calculateLTV`，页面会说明这一点而不是显示未知。`principal` 是尚欠的本金（部分还款会减少它），`interestRateBps` 和 `collateralAmount` 也可能变化，因此条款按当前状态显示；记录中没有本金的已结束贷款会说明是否由内部撮合覆盖，否则只说明没有记录；NFT 租赁会显示每日租金（`principal`，以 `prepayAsset` 计）以及提前归还是否仍按每个剩余天数收费（`useFullTermInterest`）。`getPeriodicInterestEnabled` 为 false 时，页面会说明在检查点不会出售抵押品。进行中贷款的 `collateralLiquidity` 为 Illiquid 时，会加上实物交割警告：违约时抵押品不经出售直接转给出借人。它的第一笔交易是全额还款，见下文。
+
+对于进行中 ERC-20 贷款出借人一方的持有人，页面读取 `lenderHoldDiscountView(loanId, wallet)`：已记录的条目（持有人、等级、折扣、时间）、钱包当前的等级和折扣，以及 `holdBps`：条目指向该钱包时取两者中较低者，否则为 0。没有该 view 的 Diamond 会以 `FunctionDoesNotExist` revert，页面将其显示为尚未报告，绝不显示为零。在同一区块，它还读取 `getVPFIDiscountConsent`（只有开启时持有部分才计入）、`getVPFIDiscountConfig`（折扣如何给予）和 `getFeeEntitlement(loanId).lenderMode`（Full 在 50% 上限内增加 10 个点）。
 
 <a id="repay"></a>
 

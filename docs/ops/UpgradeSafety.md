@@ -86,7 +86,7 @@ A vault runs its owner's **pinned** version while that version is not revoked, o
 |---|---|
 | Storage layout change | Every registered version keeps the vault layout append-only; the storage-layout guard's `beacon:VaipakamVaultImplementation` root checks it, and `registerVersion` refuses a contract that does not report `vaultLayoutId()`. |
 | A registered implementation whose initializer can still be called | Deploy the implementation with its constructor disabling initializers (`DeployDiamond` checks the Initializable slot read-only before it registers version 1); check the same for every later version before registering it. |
-| A bad version reaches every vault at once | The change is two steps on the beacon, a proposal and an execution no sooner than `MIN_CODE_DELAY` (3 days, a constant) later; the Pauser Safe can cancel a pending proposal; owners can pin during the wait; the guardian can revoke while paused. |
+| A bad version reaches every vault at once | The change is two steps on the beacon, a proposal and an execution no sooner than `MIN_CODE_DELAY` (7 days, a constant, longer than any protected payout delay) later; the Pauser Safe can cancel a pending proposal; owners can pin during the wait; the guardian can revoke while paused. |
 
 ### Procedure (per version)
 1. Draft the new `VaipakamVaultImplementation` — only **append** state.
