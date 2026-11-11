@@ -20,7 +20,7 @@ import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
 import { orderHashOf, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from '../../src/shared/desk/signedOrder';
 import { scenario } from '../lib/chain';
-import { postSignedOrder, setSignedBookLag } from '../lib/stub';
+import { postSignedOrder, setSignedBookLag, setSignedBookReplay } from '../lib/stub';
 import { accountFor, type Role } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -166,5 +166,37 @@ test('a market’s signed orders are listed with the chain’s standing and each
   await expect(section.locator('.why-link')).toHaveCount(1);
   expect(flags.sentTransactions).toBe(0);
   await fitsWidth(page);
+
+  // The chain replaced some recent blocks, and the book holds the covered
+  // order and the viewer's own for a re-check (#3411). The market's list
+  // leaves both out and says how many are held back; the viewer's own list
+  // still shows theirs, flagged, with its standing read from the chain and
+  // its cancel still offered.
+  await setSignedBookReplay([hCovered, hMine]);
+  await page.reload();
+  await expect(section.getByTestId('desk-signed-book-replay')).toContainText(
+    'the offer book is re-checking 2 of this market’s signed orders against it and leaves them out until it has',
+    { timeout: 60_000 },
+  );
+  await expect(section.locator(`[data-order-hash="${hCovered}"]`)).toHaveCount(0);
+  await expect(section.locator(`[data-order-hash="${hMine}"]`)).toHaveCount(0);
+  await expect(section.locator(`[data-order-hash="${hLarge}"]`)).toHaveCount(1);
+  const own = page.getByTestId('desk-signed').locator(`[data-order-hash="${hMine}"]`);
+  await expect(own.getByTestId('desk-signed-replay')).toContainText('leaves it out of the shared book until then', { timeout: 60_000 });
+  await expect(own.getByTestId('desk-signed-replay')).toContainText('you can still cancel it');
+  await expect(own).toHaveAttribute('data-standing', 'open');
+  await expect(own.getByTestId('desk-signed-cancel')).toBeVisible();
+  expect(flags.sentTransactions).toBe(0);
+  await fitsWidth(page);
+
+  // The order is cancelled on the chain while the book still holds it: the
+  // hold is still said, but nothing claims it can be filled or cancelled.
+  await sc.diamondWrite('lender', 'cancelSignedOffer', [typedMessage(mine)]);
+  await page.reload();
+  await expect(own).toHaveAttribute('data-standing', 'used', { timeout: 60_000 });
+  await expect(own.getByTestId('desk-signed-replay')).toContainText('leaves it out of the shared book until then');
+  await expect(own.getByTestId('desk-signed-replay')).not.toContainText('still cancel');
+  await expect(own.getByTestId('desk-signed-cancel')).toHaveCount(0);
+  await setSignedBookReplay([]);
   await setSignedBookLag(false);
 });

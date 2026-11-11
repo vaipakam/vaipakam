@@ -2232,7 +2232,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   before the wallet opens, a pause or an unread standing blocks the send,
   and the outcome is measured from the transaction's own cancel event,
   never assumed from its inclusion. One cancel is open at a time, and its
-  finish card stays on screen when the book drops the order.
+  finish card stays on screen when the book drops the order. An order the
+  book holds out of the shared book while it re-checks it after the chain
+  replaced recent blocks is marked so on its row. Its standing still comes
+  from the chain, and only a fresh standing that can still be filled adds
+  that anyone holding the signature can fill it and that its cancel stays
+  offered.
 - **RB-DESK-BOOK-SIGNED** — On a market's desk (OFF-60) every maker's
   gasless signed orders are listed from the offer book's market read, apart
   from the ladder of posted offers, which says where they are. Lenders'
@@ -2249,7 +2254,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   states what its maker's vault holds free of the stake, read from the
   protocol at that block, against what a fill of the rest would draw:
   enough, short (a fill now would fail), or unread. The section says that
-  one maker's orders share one vault and are each weighed alone.
+  one maker's orders share one vault and are each weighed alone. While the
+  book holds orders out for a re-check after the chain replaced recent
+  blocks, the section says how many, so a shorter list is never read as
+  the whole book; a count the app cannot read is said as unknown.
 - **RB-DESK-FILL** — An open signed order someone else signed is filled
   whole from its row on the desk (OFF-60). The fill opens the same
   acceptance review as a stored offer (RB-ACCEPT), but its figures come
@@ -2265,7 +2273,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   review says the dry run after signing makes it; a refusal there sends
   nothing, puts back any approval, and offers the step that clears it for
   the order's pair where the flow stopped, which returns to a fresh review
-  of the same order. The finish card reads the
+  of the same order. The step is offered only when the refusal, decoded
+  from its own bytes, names the taker's wallet; one naming the maker says
+  no step of the taker's can clear it, and an unreadable one offers none. The finish card reads the
   loan from the fill's own log; a transaction with no such log says no loan
   opened. A partly matched order is not offered (a fill takes the whole
   order), nor the viewer's own, and Terms not yet accepted are accepted

@@ -78,7 +78,12 @@
 //    its cancel or its nonce's burn, as the indexer's lifecycle handlers
 //    retire it, unless a spec holds the book behind the chain
 //    (`POST /__stub/signed-offers { lag: true }`) to show what a lagging
-//    book looks like. Both refused while the posture is `down`;
+//    book looks like. A spec may also mark orders as held for a re-check
+//    after a reorganisation (`{ replay: [orderHash…] }`), as the indexer's
+//    rebuild does (#3411): a shared read leaves them out and counts them in
+//    `awaitingReplay`; a signer-scoped read lists them with
+//    `replayPending: true` and counts them too. Both refused while the
+//    posture is `down`;
 //  - the alert service (the agent Worker, which alpha05 is pointed at here
 //    too): `GET /push/status`, `POST /link/telegram`, `POST /telegram/test`,
 //    `POST /unlink/telegram` and `PUT /thresholds`, answering as the agent
@@ -490,6 +495,8 @@ let rankingsDown = false;
 let signedBook = new Map();
 /** While true, the book keeps serving a row the chain has retired. */
 let signedBookLags = false;
+/** Order hashes held for a re-check after a reorganisation. */
+let signedReplay = new Set();
 
 const SIGNED_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 const SIGNED_CANCELLED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled'));
@@ -587,12 +594,17 @@ async function signedOffers(url) {
   const { cancelled, burned } = signedBookLags ? { cancelled: new Set(), burned: new Set() } : await signedRetirements();
   const now = Math.floor(Date.now() / 1000);
   const rows = [];
+  let awaitingReplay = 0;
   for (const [hash, row] of signedBook) {
     const o = JSON.parse(row.json);
     if (o.lendingAsset !== lending || o.collateralAsset !== collateral || o.durationDays !== String(days)) continue;
     if (signer !== null && o.signer !== signer) continue;
     if ((o.expiresAt !== '0' && Number(o.expiresAt) <= now) || (o.deadline !== '0' && Number(o.deadline) <= now)) continue;
     if (cancelled.has(hash) || burned.has(`${o.signer}:${o.nonce}`)) continue;
+    if (signedReplay.has(hash)) {
+      awaitingReplay += 1;
+      if (signer === null) continue;
+    }
     rows.push({ hash, row, o });
   }
   const side = (t, rate) => rows.filter((r) => r.o.offerType === t).sort((a, b) => rate(a.o, b.o) || a.row.seq - b.row.seq);
@@ -608,8 +620,9 @@ async function signedOffers(url) {
     filledAmount: row.filled.toString(),
     expiresAt: Number(o.expiresAt),
     deadline: Number(o.deadline),
+    ...(signedReplay.has(hash) ? { replayPending: true } : {}),
   }));
-  return { status: 200, body: { chainId: CHAIN_ID, offers, truncated: false } };
+  return { status: 200, body: { chainId: CHAIN_ID, offers, truncated: false, awaitingReplay } };
 }
 
 async function anvil(method, params = []) {
@@ -766,6 +779,7 @@ const server = http.createServer(async (req, res) => {
       rankingsDown = false;
       signedBook = new Map();
       signedBookLags = false;
+      signedReplay = new Set();
       json(res, 200, { reset: true });
       return;
     }
@@ -977,14 +991,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/__stub/signed-offers' && req.method === 'POST') {
       // { lag: true } keeps serving rows the chain has retired; { lag: false }
-      // follows the chain again.
+      // follows the chain again. { replay: [hash…] } holds those orders for
+      // a re-check after a reorganisation; [] releases them.
       const next = JSON.parse(await readBody(req));
-      if (typeof next.lag !== 'boolean') {
-        json(res, 400, { error: 'signed-offers needs { lag }' });
+      const replayOk = next.replay === undefined || (Array.isArray(next.replay) && next.replay.every((h) => typeof h === 'string' && /^0x[0-9a-f]{64}$/.test(h)));
+      if ((next.lag === undefined && next.replay === undefined) || (next.lag !== undefined && typeof next.lag !== 'boolean') || !replayOk) {
+        json(res, 400, { error: 'signed-offers needs { lag } or { replay: [orderHash] }' });
         return;
       }
-      signedBookLags = next.lag;
-      json(res, 200, { lag: signedBookLags, stored: signedBook.size });
+      if (next.lag !== undefined) signedBookLags = next.lag;
+      if (next.replay !== undefined) signedReplay = new Set(next.replay);
+      json(res, 200, { lag: signedBookLags, replay: signedReplay.size, stored: signedBook.size });
       return;
     }
     if (url.pathname === '/signed-offers' && (req.method === 'GET' || req.method === 'POST')) {

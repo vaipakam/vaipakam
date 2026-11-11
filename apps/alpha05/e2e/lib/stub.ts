@@ -119,3 +119,14 @@ export async function setSignedBookLag(lag: boolean): Promise<void> {
   });
   if (!res.ok) throw new Error(`stub refused signed-book lag ${lag}: ${res.status}`);
 }
+
+/** Hold these orders in the stand-in book for a re-check after a
+ *  reorganisation, as the indexer's rebuild does (`[]` releases them). */
+export async function setSignedBookReplay(orderHashes: readonly string[]): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/signed-offers`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ replay: orderHashes.map((h) => h.toLowerCase()) }),
+  });
+  if (!res.ok) throw new Error(`stub refused signed-book replay: ${res.status}`);
+}
