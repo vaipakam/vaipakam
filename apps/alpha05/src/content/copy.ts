@@ -2629,7 +2629,7 @@ export const copy = {
       'A fill takes the whole order in one transaction: the protocol writes it as an offer from the maker’s vault, takes your side and opens the loan. If someone fills it first or its maker cancels it, your fill fails, no loan opens, and any approval this flow made is put back.',
     ),
     riskAtDryRun: A(
-      'The protocol cannot yet show its risk-access check for a signed order before the fill, so the dry run after you sign makes it. If that check refuses, nothing is sent, any approval this flow made is put back, and the step that clears it is offered here.',
+      'The protocol’s risk-access check for this order could not be read before the fill, so the dry run after you sign makes it. If that check refuses, nothing is sent, any approval this flow made is put back, and the step that clears it is offered here.',
     ),
     elsewhere: B('A fill review is open on another market. Finish or close it before reviewing another.'),
     elsewhereOpen: B('Open that market'),

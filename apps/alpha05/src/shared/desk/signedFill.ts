@@ -14,14 +14,18 @@
  * hash, as the fill does (`verifyAndBindAccept(offerId, orderHash, …)`).
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
+import { RiskPreviewFacetABI } from '@vaipakam/contracts/abis';
 import type { AtBlock } from '../tx/anchored';
 import type { StoredOffer } from '../offers/acceptTerms';
 import { OFFER_PREVIEW, previewFrom, type AcceptPreview } from '../offers/reads';
+import { pairFrom, type RiskPair } from '../risk/riskAccess';
 import { SIGNED_OFFER } from './mySignedOrders';
 import type { BookSignedOrder } from './signedBook';
 import { typedMessage, type SignedOrderWire } from './signedOrder';
 
 type Hex = `0x${string}`;
+
+const RISK_PREVIEW = RiskPreviewFacetABI as Abi;
 
 const ZERO_HASH: Hex = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
@@ -101,6 +105,28 @@ export async function readSignedPreview(c: PublicClient, diamond: Hex, o: BookSi
     ...(b ? { blockNumber: b.blockNumber } : {}),
   })) as Raw;
   return signedPreviewFrom(raw);
+}
+
+/** #3577 — the risk-access gate a fill of `o` by `acceptor` faces, as the
+ *  protocol previews it before the order is stored: the maker's block and
+ *  the taker's, each with the codes of `previewOfferAcceptBlock` (0 = open
+ *  or gate off), and the pair both are gated against. A fill re-gates the
+ *  maker first, so the maker's block is the one the fill would raise. */
+export interface SignedRiskBlocks {
+  creator: number;
+  acceptor: number;
+  pair: RiskPair;
+}
+
+export async function readSignedRiskBlocks(c: PublicClient, diamond: Hex, o: BookSignedOrder, acceptor: Hex, b?: AtBlock): Promise<SignedRiskBlocks> {
+  const [creator, taker, pair] = (await c.readContract({
+    address: diamond,
+    abi: RISK_PREVIEW,
+    functionName: 'previewSignedOfferRiskBlocks',
+    args: [typedMessage(o.order), acceptor],
+    ...(b ? { blockNumber: b.blockNumber } : {}),
+  })) as readonly [number | bigint, number | bigint, Record<string, unknown>];
+  return { creator: Number(creator), acceptor: Number(taker), pair: pairFrom(pair) };
 }
 
 /** The fill call: the order, the maker's signature, the taker's signed

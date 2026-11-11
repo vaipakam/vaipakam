@@ -226,8 +226,8 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
       );
       if (dry.kind === 'reverted') {
         const refusal = refusalFromError(dry.error);
-        // With no risk-access preview for a signed order, its refusal is the
-        // first word on it. The error names whose access refused: a step is
+        // Where a signed order's risk access could not be previewed, its
+        // refusal is the first word on it. The error names whose access refused: a step is
         // offered only when it is this wallet's; the maker's own block is
         // stated, since no step of the taker's clears it.
         const need = r.riskPreviewed ? null : needFromRefusal(refusal.code);
@@ -512,13 +512,17 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
   // A risk-access block this wallet can clear itself: never the lender's own
   // (the protocol answers the creator's block first), and the step is the one
   // the protocol's answer names.
-  // For a signed order, which has no preview of the gate yet (#3577), it is
-  // the step the last dry run's refusal named.
+  // For a signed order whose gate could not be previewed (#3577), it is the
+  // step the last dry run's refusal named.
   const riskNeed = review === null ? null : !review.riskPreviewed ? dryRisk : review.creatorGate === 0 ? needFromAcceptCode(review.gate) : null;
-  // The pair the step stands on: the protocol resolves a stored offer's; a
-  // signed order's is its two ERC-20 legs, the only shape a fill takes.
+  // The pair the step stands on: the protocol resolves a stored offer's,
+  // and its preview of a signed fill names that fill's; without that
+  // preview, a signed order's is its two ERC-20 legs, the only shape a fill
+  // takes.
   const riskSource: PairSource =
-    source.kind === 'stored' ? { kind: 'offer', offerId: source.offerId } : { kind: 'pair', pair: erc20Pair(source.order.order.lendingAsset as Hex, source.order.order.collateralAsset as Hex) };
+    source.kind === 'stored'
+      ? { kind: 'offer', offerId: source.offerId }
+      : { kind: 'pair', pair: review?.riskPair ?? erc20Pair(source.order.order.lendingAsset as Hex, source.order.order.collateralAsset as Hex) };
   const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   const pairLabel = review ? format('risk.pairName', { lend: symbol(review.offer.lendingAsset), coll: symbol(review.offer.collateralAsset) }) : '';
 
