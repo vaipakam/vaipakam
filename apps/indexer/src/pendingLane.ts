@@ -23,8 +23,9 @@
  *
  * Between those two steps a row can sit in both places for a moment (the scan
  * wrote it, the lane has not been replaced yet). The read below therefore
- * serves only pending rows ABOVE the scan cursor, so no event is ever listed
- * twice.
+ * serves only pending rows ABOVE the scan cursor that the final feed does not
+ * already hold (the scan writes a block's events before it moves the cursor),
+ * so no event is ever listed twice.
  *
  * WHAT A READER IS TOLD. `pending_activity_window` records what the last read
  * covered. The API serves the lane only while that read is recent
@@ -232,10 +233,18 @@ export async function readPendingLane(
       .bind(chainId),
     db
       .prepare(
-        `SELECT * FROM pending_activity_events
-          WHERE chain_id = ?
-            AND block_number > COALESCE(
+        `SELECT * FROM pending_activity_events p
+          WHERE p.chain_id = ?
+            AND p.block_number > COALESCE(
                   (SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?), -1)
+            -- The scan writes a block's events before it moves the cursor past
+            -- it (Codex #3557 r2), so the cursor alone leaves a window in which
+            -- an event is in both tables. The final row wins.
+            AND NOT EXISTS (
+                  SELECT 1 FROM activity_events a
+                   WHERE a.chain_id = p.chain_id
+                     AND a.block_number = p.block_number
+                     AND a.log_index = p.log_index)
             ${filter.where.map((w) => `AND ${w}`).join(' ')}
           ORDER BY block_number DESC, log_index DESC
           LIMIT ?`,

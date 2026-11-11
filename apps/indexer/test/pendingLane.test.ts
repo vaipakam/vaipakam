@@ -57,6 +57,8 @@ const chainState = {
   fork: 0,
   forkFrom: Infinity,
   failLatest: false,
+  /** An `OfferConsumedBySale` of this offer, at this block. */
+  sale: null as { block: number; offerId: number } | null,
 };
 
 function hashOf(n: number): string {
@@ -83,6 +85,18 @@ function keeperLog(block: number) {
   };
 }
 
+const EXECUTOR = '0x00000000000000000000000000000000000000e1';
+const CREATOR = '0x00000000000000000000000000000000000000a1';
+function saleLog(block: number, offerId: number) {
+  const topics = encodeEventTopics({
+    // Events only: the ABI also has an error of this name.
+    abi: (DIAMOND_ABI_VIEM as Abi).filter((e) => e.type === 'event'),
+    eventName: 'OfferConsumedBySale',
+    args: { offerId: BigInt(offerId), executor: EXECUTOR },
+  } as never);
+  return { ...keeperLog(block), topics, data: '0x', logIndex: '0x1' };
+}
+
 function fixtureFetch() {
   return vi.fn(async (_url: unknown, init?: RequestInit) => {
     const req = JSON.parse(String(init?.body)) as { id: number; method: string; params?: unknown[] };
@@ -98,9 +112,10 @@ function fixtureFetch() {
     if (req.method === 'eth_blockNumber') return chainState.failLatest ? fail() : ok(hex(chainState.latest));
     if (req.method === 'eth_getLogs') {
       const { fromBlock, toBlock } = (req.params?.[0] ?? {}) as { fromBlock: string; toBlock: string };
-      return ok(
-        chainState.eventBlocks.filter((b) => b >= Number(fromBlock) && b <= Number(toBlock)).map((b) => keeperLog(b)),
-      );
+      const inRange = (b: number) => b >= Number(fromBlock) && b <= Number(toBlock);
+      const logs: unknown[] = chainState.eventBlocks.filter(inRange).map((b) => keeperLog(b));
+      if (chainState.sale && inRange(chainState.sale.block)) logs.push(saleLog(chainState.sale.block, chainState.sale.offerId));
+      return ok(logs);
     }
     if (req.method === 'eth_getBlockByNumber') {
       const tag = req.params?.[0] as string;
@@ -196,6 +211,7 @@ afterEach(() => {
   chainState.fork = 0;
   chainState.forkFrom = Infinity;
   chainState.failLatest = false;
+  chainState.sale = null;
 });
 
 describe('a caught-up pass fills the pending lane above the safe block', () => {
@@ -276,6 +292,41 @@ describe('a caught-up pass fills the pending lane above the safe block', () => {
     expect(windowOf(h)).toEqual(before);
   });
 
+  it('leaves the lane alone when the latest block reads below the recorded one', { timeout: 60_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = chainDb();
+    await pass(h);
+    const before = windowOf(h);
+    const rows = pendingRows(h);
+    // A provider behind the one the scan read (Codex #3557 r2).
+    chainState.latest = CURSOR + 90;
+    const r = await pass(h);
+    expect(r.pendingChanged).toBe(false);
+    expect(windowOf(h)).toEqual(before);
+    expect(pendingRows(h)).toEqual(rows);
+  });
+
+  it('files a pending collateral-sale row under the offer\'s creator, like the final feed', { timeout: 60_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = chainDb();
+    h.db
+      .prepare(
+        `INSERT INTO offers (chain_id, offer_id, creator, offer_type, lending_asset, collateral_asset, asset_type,
+           collateral_asset_type, amount, interest_rate_bps, collateral_amount, duration_days, first_seen_block,
+           first_seen_at, updated_at)
+         VALUES (?, 77, ?, 1, '0xa', '0xb', 0, 0, '1', 500, '1', 30, 1, 1, 1)`,
+      )
+      .run(BASE, CREATOR);
+    chainState.sale = { block: CURSOR + 112, offerId: 77 };
+    await pass(h);
+    const row = h.db
+      .prepare(`SELECT actor, offer_id AS offerId, args_json AS args FROM pending_activity_events WHERE chain_id = ? AND kind = 'OfferConsumedBySale'`)
+      .get(BASE) as { actor: string; offerId: number; args: string };
+    expect(row.actor).toBe(CREATOR);
+    expect(row.offerId).toBe(77);
+    expect(JSON.parse(row.args).creator).toBe(CREATOR);
+  });
+
   it('does not fill the lane on a pass that is still behind the safe block', { timeout: 60_000 }, async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const h = chainDb();
@@ -335,6 +386,22 @@ describe('/activity?pending=1 serves the lane apart from the final events', () =
     // The scan moved past +105 but the lane has not been replaced yet.
     h.db.prepare(`UPDATE indexer_cursor SET last_block = ? WHERE chain_id = ?`).run(CURSOR + 110, BASE);
     const p = await activity(h, 'pending=1');
+    expect(p.pending?.events.map((e) => e.blockNumber)).toEqual([CURSOR + 115]);
+  });
+
+  it('never lists an event the scan wrote before moving the cursor', { timeout: 60_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = chainDb();
+    await pass(h);
+    // The scan has written +105's event; the cursor has not moved yet (Codex #3557 r2).
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (?, ?, 0, '0x1', 'LoanKeeperEnabled', '{}', 1)`,
+      )
+      .run(BASE, CURSOR + 105);
+    const p = await activity(h, 'pending=1');
+    expect(p.events.map((e) => e.blockNumber)).toContain(CURSOR + 105);
     expect(p.pending?.events.map((e) => e.blockNumber)).toEqual([CURSOR + 115]);
   });
 
