@@ -137,6 +137,16 @@ rounding dust. A fresh deploy has an empty list ⇒ `convertTreasuryAsset`
 reverts `TreasuryConvertNoTargets` until governance configures it.
 Recommended first list: `[(WETH, 4000), (wBTC, 3000), (VPFI, 3000)]`.
 
+**Since #3414 every swapped leg needs an oracle price on both sides**, so
+a target the protocol cannot price (VPFI, which has no protocol price
+source by design) is reachable only by its own input — a VPFI balance is
+credited straight back to the VPFI target with no swap. Converting any
+OTHER input against a list that names VPFI reverts
+`TreasuryConvertUnpriced(tokenIn, VPFI)`: buying VPFI goes through the
+buyback auction path (`commitBuybackIntentValidated`), never through a
+floorless swap. A list meant for non-VPFI inputs therefore names priced
+assets only, for example `[(WETH, 5000), (wBTC, 5000)]`.
+
 ### 4.2 Eligibility thresholds — `setTreasuryConvertThresholds`
 
 `setTreasuryConvertThresholds(uint256 usdThreshold, uint32 maxIntervalDays)`
