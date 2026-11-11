@@ -2553,6 +2553,8 @@ export const copy = {
     none: B('The offer book lists no signed orders of yours on this market.'),
     unreadRows: A('The offer book returned {{count}} rows this app could not read as your orders on this market; they are not shown.'),
     truncated: A('The offer book returned only part of your signed orders on this market; some are not shown here.'),
+    replayPending: A('The chain replaced some recent blocks, so the offer book is re-checking this order against it and leaves it out of the shared book until then.'),
+    replayOpen: A('Its standing above is read from the chain: anyone already holding the signature can still fill it, and you can still cancel it.'),
     standingFailed: A('Where the chain stands on these orders could not be read ({{reason}}), so no cancel is offered yet.'),
     standingStale: A(
       'The latest read of where the chain stands on these orders failed ({{reason}}). The standings below are from the last read that worked and may be out of date, so no cancel is offered until a read succeeds.',
@@ -2586,6 +2588,10 @@ export const copy = {
     none: B('The offer book lists no signed orders on this market.'),
     unreadRows: A('The offer book returned {{count}} rows this app could not read as signed orders on this market; they are not shown.'),
     truncated: A('The offer book returned only its best-priced signed orders on this market; others stand behind them and are not shown.'),
+    replayHeld: A(
+      'The chain replaced some recent blocks, so the offer book is re-checking {{count}} of this market’s signed orders against it and leaves them out until it has. Until then this list may be incomplete.',
+    ),
+    replayUnread: A('The offer book’s answer did not say in a readable form whether it is holding orders back for a re-check, so this list may be incomplete.'),
     standingFailed: A('Where the chain stands on these orders could not be read ({{reason}}), so none is shown as open.'),
     standingStale: A('The latest read from the chain failed ({{reason}}); the standings below are from the last read that worked and may be out of date.'),
     asksTitle: B('Lenders’ signed orders, lowest rate first'),

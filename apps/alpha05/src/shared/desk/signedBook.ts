@@ -26,7 +26,15 @@ import { VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
 import { ASSET_TYPE } from '../nft/nft';
 import { answerOrNull } from '../reads/answer';
 import type { IndexerClient } from '../reads/world/indexerClient';
-import { fillable, readSignedStandings, signedOrderRowFrom, type MySignedOrder, type SignedMarket, type SignedStanding } from './mySignedOrders';
+import {
+  fillable,
+  readSignedStandings,
+  replayCountFrom,
+  signedOrderRowFrom,
+  type MySignedOrder,
+  type SignedMarket,
+  type SignedStanding,
+} from './mySignedOrders';
 import { SIGNED_LENDER, signedStakeLeft, type SignedOrderWire } from './signedOrder';
 
 type Hex = `0x${string}`;
@@ -51,6 +59,10 @@ export interface MarketSignedBook {
   unread: number;
   /** The book returned only its best-priced rows on at least one side. */
   truncated: boolean;
+  /** Orders on this market the book holds back while it re-checks them
+   *  against the chain after a replacement of recent blocks; null when its
+   *  answer on that could not be read. */
+  awaitingReplay: number | null;
 }
 
 /** One book row as a signed order on `market`, any maker's, or null. */
@@ -94,7 +106,7 @@ export async function readMarketSignedBook(indexer: IndexerClient, chainId: numb
     collateralAsset: market.collateral.toLowerCase(),
     durationDays: String(market.durationDays),
   });
-  const res = await indexer.getJson<{ offers?: unknown; truncated?: unknown }>(`/signed-offers?${q.toString()}`);
+  const res = await indexer.getJson<{ offers?: unknown; truncated?: unknown; awaitingReplay?: unknown }>(`/signed-offers?${q.toString()}`);
   if (!Array.isArray(res.offers)) throw new Error('The offer book answered without an order list.');
   const orders: BookSignedOrder[] = [];
   let unread = 0;
@@ -103,7 +115,7 @@ export async function readMarketSignedBook(indexer: IndexerClient, chainId: numb
     if (o === null) unread += 1;
     else if (!orders.some((x) => x.orderHash === o.orderHash)) orders.push(o);
   }
-  return { ...sortSides(orders), unread, truncated: res.truncated === true };
+  return { ...sortSides(orders), unread, truncated: res.truncated === true, awaitingReplay: replayCountFrom(res.awaitingReplay) };
 }
 
 /** Where the chain stands on each order, and what each maker's vault holds

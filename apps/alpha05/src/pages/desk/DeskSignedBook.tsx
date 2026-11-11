@@ -191,13 +191,19 @@ export function DeskSignedBook({
       {!failed && book.data === undefined && <p className="tier-b">{text('signedBook.reading')}</p>}
       {book.data !== undefined && (
         <>
-          {orders.length === 0 && book.data.unread === 0 && (
+          {orders.length === 0 && book.data.unread === 0 && (book.data.awaitingReplay ?? 0) === 0 && (
             <p className="tier-b home-empty" data-testid="desk-signed-book-none">
               {text('signedBook.none')}
             </p>
           )}
           {book.data.unread > 0 && <p className="tier-a">{format('signedBook.unreadRows', { count: String(book.data.unread) })}</p>}
           {book.data.truncated && <p className="tier-a">{text('signedBook.truncated')}</p>}
+          {book.data.awaitingReplay !== null && book.data.awaitingReplay > 0 && (
+            <p className="tier-a" data-testid="desk-signed-book-replay">
+              {format('signedBook.replayHeld', { count: String(book.data.awaitingReplay) })}
+            </p>
+          )}
+          {book.data.awaitingReplay === null && <p className="tier-a">{text('signedBook.replayUnread')}</p>}
           {chainRead.state === 'failed' && <p className="tier-a">{format('signedBook.standingFailed', { reason: chainRead.error ?? '' })}</p>}
           {stale && (
             <p className="tier-a" data-testid="desk-signed-book-stale">
