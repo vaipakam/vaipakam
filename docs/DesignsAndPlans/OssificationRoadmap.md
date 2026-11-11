@@ -81,7 +81,7 @@ the gaps is part of the commitment; each has an issue.
 | Test | Met today | Not yet met | Closed by |
 | --- | --- | --- | --- |
 | Never moves user funds | The pause, the guardian cancels and the emergency revoker stop things only. The notification biller moves a fixed, consented fee once per loan side (see §5's carve-out). | A Diamond code change (a diamond cut) can change how funds move once its delay ends, and the Diamond still decides some vault outflows by itself. | The vault checks outcomes, not the Diamond's say-so (#3431, #3205 Stage B); the vault-side exit (#3424). |
-| Slower than the user's exit | Vault code waits the beacon's code delay, and a pinned vault never takes new code. | The Diamond's 48h Timelock delay is shorter than the 14-day vault exit (#3424); the vault code delay is 3 days today against a 3-day escape period. | Vault code delay 7 days (#3421); escape 7 days (#3441); the vault-side exit (#3424) works without the Diamond. |
+| Slower than the user's exit | Vault code waits the beacon's code delay, and a pinned vault never takes new code. | The test needs each change's delay to be **strictly longer** than the exit it races, plus a stated margin for the user to act. Neither path meets that. The vault code delay and the escape period are both 3 days today (so new code can land the moment escape opens), and the planned 7 and 7 days would still leave no margin. The Diamond's 48h Timelock delay is far shorter than the 14-day vault-side exit (#3424), so making that exit independent of the Diamond does not make it finish first. | **Vault code:** #3421 and #3441 must set the code delay longer than the escape period plus a published margin; equal figures do not close this. **Diamond:** a faster exit cannot win against 48h, so this closes only when a Diamond change can no longer reach vault assets at all (#3431, #3205 Stage B), with the vault-side exit (#3424) as the route out. Until both hold, this test stays an open gap. |
 | Visible in advance | Every delayed change emits an event when it is queued. | No app surface yet shows queued Timelock or vault-code changes to users. | #3237, #3422. |
 | Avoidable | Vault pins (#3204). | A loan's price sources and routes follow live settings. | #3437. |
 
@@ -106,7 +106,7 @@ emergency revoke. *Bot keys*: the keeper, watcher and notification biller.
 | --- | --- | --- | --- | --- |
 | ERC-173 owner (diamond cut, ownership) | Timelock | Add, replace or remove any facet code; a few owner-only setters (the sanctions list pointer, the liquidity-classification factory, tier reference assets, peer-protocol addresses) | Be renounced or moved to the zero address (#906) | Timelock |
 | `DEFAULT_ADMIN_ROLE` (role root) | Timelock (D1, #934) | Grant and revoke every other role; `transferAdmin` | Act without the delay | Timelock |
-| `ADMIN_ROLE` (about 190 setters) | Timelock | Protocol settings: fees within `MAX_FEE_BPS`, risk and liquidation settings within their ranges, keeper and reward settings, the rate model pointer, the collateral-sale executor pointer | Change an open loan's fee rate (fees are stamped per loan); exceed a setter's range | Timelock |
+| `ADMIN_ROLE` (about 190 setters) | Timelock | Protocol settings: fees within `MAX_FEE_BPS`, risk and liquidation settings within their ranges, keeper and reward settings, the rate model pointer, the collateral-sale executor pointer | Change an open loan's treasury fee on interest or liquidation discount (both stamped per loan; the initiation fee is charged once, at acceptance); exceed a setter's range. It **can** change, within range, two settings read live when an open loan is liquidated or force-sold: the liquidation handling fee (taken from proceeds that would otherwise return to the borrower) and the liquidator incentive cap. Stamping both per loan is an open gap (#3534) | Timelock |
 | `VAULT_ADMIN_ROLE` (about 26 functions) | Timelock | Backstop vault settings and its upgrade; aggregator adapter template; sweep tokens sent to the backstop vault by mistake (never protocol position NFTs); set the vault beacon once | Change the vault beacon after it is set; move code into user vaults (that is the beacon's job) | Timelock |
 | `RISK_ADMIN_ROLE`, `KYC_ADMIN_ROLE`, `ORACLE_ADMIN_ROLE` | Timelock | Minimum health factor; KYC tiers (dormant on retail); nothing (`ORACLE_ADMIN_ROLE` gates no function) | — | Timelock |
 | `UNPAUSER_ROLE` | Timelock | Lift a pause | — | Timelock |
@@ -131,7 +131,7 @@ owner-signed, bounded mandates).
 | `VaipakamFeedRegistry` | No | Name proposers; set the delay within range | Veto a proposed feed | 7 to 14 days |
 | `SanctionsList` | No | Name the adder and remover keys, the adder's daily cap | — | Listing is immediate (adder, capped per day); delisting by the remover Safe, or a bot proposal through `SanctionsDelistingTimelock` (1 to 30 days, default 2) |
 | `VPFIToken` (canonical chain) | Yes (UUPS) | Upgrade; set the minter; unpause | Pause | Timelock |
-| Cross-chain contracts (messenger, token pools, rate governor, reward messenger, receivers, mirror token) and the CCIP token-admin role | Some UUPS | Upgrade; lane and rate-limit settings within the governor's bounds | Pause | Timelock |
+| Cross-chain contracts (messenger, token pools, rate governor, reward messenger, receivers, mirror token) and the CCIP token-admin role | Some UUPS | Upgrade; lane and rate-limit settings within the governor's bounds. As each token pool's owner it can also set any lane limit **directly** through the pool's own setter, outside the governor's bounds and including switching a limit off (the governor documents this as break-glass authority) | Pause | Timelock |
 | `CollateralListingExecutor` | Yes (UUPS, own owner) | Upgrade; approve or remove conduits; sweep stray tokens | — | Timelock once its owner is rotated |
 | Backstop vault, aggregator adapter proxies | Yes (UUPS, Diamond-owned) | Through `VAULT_ADMIN_ROLE` | — | Timelock |
 | `KeeperBackupUpkeep`, `RiskPremiumRateModel` | No | Step mask and timing; tier premiums | — | Whatever their owner's is: the handover moves every owned contract its walk finds to the Timelock, and #651 confirms none is missed |
@@ -253,7 +253,7 @@ step's revision of this document names the dates:
 | C | Price sources (`PriceGuard`, `VaipakamFeedRegistry`) | Changes wait 7 to 14 days; a guardian can switch off a secondary source | Stays governed for new loans (§7); open loans keep the sources they opened with (#3437) | #3437 is what takes open loans out of reach; the guard itself stays bounded and delayed |
 | D | Protocol pointers (`ProtocolRegistry`) | Pointer changes wait 3 to 30 days; set removal is immediate | Treasury and backstop pointers fixed in code; swap adapter and conduit sets add-only behind the delay, remove-only fast | The registry's rules are fixed in its code, and they keep the owner's power to propose a pointer change and to lower the delay again after waiting the current one. So **fixed** pointers need a new registry without that power, which comes with the final lending core (§6). Until then the delay is raised to its maximum and the owner commits, here, to propose no treasury or backstop change. That is a **revocable pledge, not a code guarantee**: breaking it is visible (every proposal emits an event and waits the delay), but nothing prevents it |
 | E | Lending core (the Diamond's facets) | Every facet replaceable after the Timelock delay | A final non-upgradeable lending core, deployed beside the governed one, that users opt into | §6 |
-| F | Cross-chain contracts, `VPFIToken` | UUPS behind the Timelock; guardian pause | Upgrade paths frozen in code; lane limits stay bounded settings | Upgrade each proxy, through the Timelock, to an implementation whose upgrade authorisation always refuses, or replace it with a final deployment, on the same criteria; an owner merely choosing not to upgrade is a pledge, not this state. #651 enumerates the full set |
+| F | Cross-chain contracts, `VPFIToken` | UUPS behind the Timelock; guardian pause | Upgrade paths frozen in code; lane limits stay bounded settings, with no unbounded owner route | Upgrade each proxy, through the Timelock, to an implementation whose upgrade authorisation always refuses, or replace it with a final deployment, on the same criteria; an owner merely choosing not to upgrade is a pledge, not this state. For the lane limits, move each pool's ownership to a contract that can only forward bounded limit changes (or reach the same through a final deployment), so the pool owner's direct setter no longer bypasses the governor. #651 enumerates the full set |
 | G | Collateral-sale executor, backstop vault, aggregator adapters | UUPS, behind the Timelock (the executor through its own owner) | Frozen or replaced by final versions with the lending core | With Stage E: these serve the lending core, so they move with it |
 
 **Freeze candidates must cover the whole surface.** For any component that
@@ -354,7 +354,7 @@ Some levers stay governed even after Stage E, each for a stated reason:
 | Sanctions screening | A legal requirement for the retail deploy | Listing is immediate and capped per day; delisting is by the remover Safe or a timelocked proposal; screening blocks new positions, while repayment, default and liquidation stay open so a flagged counterparty cannot trap a clean one. It does **keep power over existing funds**: a flagged wallet's own claims and withdrawals stay blocked, its proceeds held, until it is cleared (`SanctionsAndTermsGateMatrix.md`) |
 | Price sources offered to new loans | Markets and feeds change; a feed can be retired by its provider | Delayed (7 to 14 days), quorum-checked, range-bound; open loans keep the sources they opened with (#3437) |
 | The pause | The fastest way to stop an exploit in progress | Stop-only; unpause waits the Timelock delay; the watcher's automatic pause lasts at most 2 hours |
-| Parameters for new markets | New assets and chains need settings | Every setter has fixed bounds in code; open loans keep the terms stamped at origination |
+| Parameters for new markets | New assets and chains need settings | Every setter has fixed bounds in code; open loans keep the terms stamped at origination (the liquidation handling fee and liquidator incentive cap are still read live until #3534) |
 
 Anything not in this table is a candidate to freeze under §5.
 
@@ -375,7 +375,8 @@ not.
 ## 9. Sequencing (what is pre- vs post-audit)
 
 - **Before mainnet:** the gaps named in §1 (#3205 Stage B, #3421, #3424,
-  #3431, #3437, #3441), the user-facing notices (#3237, #3422), and #651's
+  #3431, #3437, #3441, with the delay ordering §1 states), the per-loan
+  close-out fee stamps (#3534), the user-facing notices (#3237, #3422), and #651's
   census.
 - **After the audit and the first bake period:** Stages A, B and D, each on
   its own criteria.
