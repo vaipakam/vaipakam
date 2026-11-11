@@ -14,6 +14,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sendInSubmissionSlot } from '../src/keeperSend';
+import { SigningRefused } from '../src/signingGuard';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import {
   FLOOR_TTL_MS,
@@ -436,5 +437,18 @@ describe('every send carries the one gas-limit rule (#2997)', () => {
     const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
     await wallet.sendTransaction({ account, chain: null, to: TO, nonce: 1, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n } as never);
     expect(node.gas).toEqual([MARGINED, MARGINED]);
+  });
+});
+
+describe('the signing ceilings on a send whose nonce the caller chose (#3543)', () => {
+  it('holds it to the same ceilings before the key signs, so it is never broadcast', async () => {
+    const node: Node = { accepted: [], rejected: [], gas: [] };
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
+    // 1000 gwei, far above Base Sepolia's built-in 20 gwei ceiling.
+    const fees = { gas: 21_000n, maxFeePerGas: 1_000n * 10n ** 9n, maxPriorityFeePerGas: 1n };
+    await expect(
+      wallet.sendTransaction({ account, chain: null, to: TO, nonce: 0, ...fees } as never),
+    ).rejects.toBeInstanceOf(SigningRefused);
+    expect(node.accepted).toEqual([]);
   });
 });

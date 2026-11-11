@@ -21,6 +21,7 @@
 
 import { keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { guardBeforeSigning } from './signingGuard';
 import { broadcastSigned, heldUnminedNonces, isDefinitiveRejection, isSendPastDeadline, withGasLimitRule, withSubmissionSlot } from './submissionQueue';
 
 /** Null when the keeper has no unmined transaction; otherwise the reason
@@ -90,9 +91,11 @@ export async function sendInSubmissionSlot(
           chain: undefined,
         } as never),
       );
-      // `chain: null`: the client is chainless, and the chain id the request
-      // was prepared with (read from the RPC) is the one signed over.
-      const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
+      // `chain: null`: the client is chainless. The chain id signed over is
+      // the configured `chainId`, not the one the RPC reported, and the fee
+      // fields are held to the chain's ceilings first (#3543); a refusal
+      // throws before `signed()`, so the slot releases the nonce.
+      const serialized = await wallet.signTransaction({ ...guardBeforeSigning(chainId, request as object), chain: null } as never);
       // `signed()` first: it may refuse past the run's deadline (#2572), and
       // a hash recorded before that refusal would read as a broadcast.
       signed();

@@ -21,6 +21,7 @@ import { RiskFacetABI } from '@vaipakam/contracts/abis';
 import { INTERNAL_MATCH_EXECUTED_TOPIC } from '@vaipakam/lib/routeBuilder';
 import { attemptMatchLiquidation, tryMatchLiquidation } from '../src/matchLiquidation';
 import { resetSubmissionQueues } from '../src/submissionQueue';
+import { PREPARED_FEES_84532 } from './helpers/preparedFees';
 
 // Every send asserts the epoch fence (#2569 r4): armed here as the tick arms it.
 beforeEach(() => armHeldFence());
@@ -80,7 +81,7 @@ function harness(scene: Scene) {
     prepareTransactionRequest: async (args: { data: Hex; to: Address }) => {
       expect(args.to).toBe(DIAMOND);
       writes.push(decodeFunctionData({ abi: RiskFacetABI as Abi, data: args.data }) as never);
-      return args;
+      return { ...args, ...PREPARED_FEES_84532 };
     },
     signTransaction: async () => SIGNED,
     sendRawTransaction: async () => {

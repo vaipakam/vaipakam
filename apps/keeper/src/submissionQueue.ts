@@ -85,6 +85,7 @@ import { describeFailure, summarizeFailure } from '@vaipakam/lib/errorDescriptio
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
+import { guardBeforeSigning } from './signingGuard';
 import {
   armedNonceReservations,
   armedRouteEvents,
@@ -686,14 +687,29 @@ export function queuedWallet(
     // restated by a wrapper; the arguments pass through unchanged.
     const queuedSend = async (args: Parameters<typeof sendTransaction>[1]) => {
       const account = (args.account ?? base.account) as Account | Address | undefined;
-      // Not a local signer, or a nonce the caller chose: viem handles the
-      // first (and reports a missing account), and the second is the
-      // caller's to coordinate.
-      if (typeof account !== 'object' || account.type !== 'local' || args.nonce !== undefined) {
-        // The same gas-limit rule on this path too (#2997): viem would
-        // otherwise prepare it at the bare estimate.
+      // Not a local signer: the key is not held here, so viem hands the
+      // send to the node (and reports a missing account). The same gas-limit
+      // rule on this path too (#2997): viem would otherwise prepare it at the
+      // bare estimate.
+      if (typeof account !== 'object' || account.type !== 'local') {
         const gas = args.gas ?? gasLimitFromEstimate(await estimateGas(base, args as never));
         return sendTransaction(base, { ...args, gas } as never);
+      }
+      // A nonce the caller chose is the caller's to coordinate, so it takes
+      // no submission slot. It is still signed by the local key, so it is held
+      // to the same ceilings before signing (#3543): every signature this
+      // wallet makes passes the guard, whichever path reaches it.
+      if (args.nonce !== undefined) {
+        const request = withGasLimitRule(
+          args,
+          await prepareTransactionRequest(base, { ...(args as object), account } as never),
+        );
+        const serialized = await signTransaction(base, {
+          ...guardBeforeSigning(chainId, request as object),
+          account,
+          chain: null,
+        } as never);
+        return sendRawTransaction(base, { serializedTransaction: serialized });
       }
       // viem's own sendTransaction, split at the signature so the slot
       // knows whether a failure could have reached the network.
@@ -706,8 +722,12 @@ export function queuedWallet(
             nonce,
           } as never),
         );
+        // The last check before the key signs (#3543): the chain id and the
+        // fee fields came from the RPC, so they are held to figures it does
+        // not supply. A refusal throws here, before `signed()`, so the slot
+        // releases the nonce.
         const serialized = await signTransaction(base, {
-          ...(request as object),
+          ...guardBeforeSigning(chainId, request as object),
           account,
           chain: null,
         } as never);

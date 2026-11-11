@@ -30,6 +30,7 @@ import {
   type PeriodicSettleDeps,
 } from '../src/periodicSettle';
 import type { ServerOrchestrationResult } from '../src/serverQuotes';
+import { PREPARED_FEES_84532 } from './helpers/preparedFees';
 
 beforeEach(() => armHeldFence());
 
@@ -129,7 +130,7 @@ function harness(scene: Scene) {
     prepareTransactionRequest: async (args: { data: Hex }) => {
       const d = decodeFunctionData({ abi: RepayPeriodicFacetABI as Abi, data: args.data });
       writes.push({ functionName: d.functionName, args: d.args ?? [] });
-      return args;
+      return { ...args, ...PREPARED_FEES_84532 };
     },
     signTransaction: async () => SIGNED,
     sendRawTransaction: async () => keccak256(SIGNED),
