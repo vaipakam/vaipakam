@@ -8,6 +8,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -200,6 +201,44 @@ contract SequencerOutageLoanClockTest is SetupTest {
         RepayFacet(address(diamond)).repayLoan(loanId);
         vm.stopPrank();
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "repaid after the scheduled grace end");
+    }
+
+    /// @notice A partial repayment stays open inside the recovery window too,
+    ///         read through the price guard as deployed. Its health-factor gate
+    ///         is defensive only (a partial can only raise the health factor)
+    ///         and needs a price the window refuses, so it is skipped there.
+    function test_graceEnd_partialRepayOpenInTheRecoveryWindow_realGuard() public {
+        uint256 loanId = _openLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertTrue(
+            loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid
+                && loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid,
+            "fixture-live: both legs liquid, so the health-factor gate applies"
+        );
+        assertTrue(loan.allowsPartialRepay, "fixture-live: partial repayment allowed");
+        _wireFeed();
+        (, uint256 scheduledGraceEnd) = _deadlines(loanId);
+        uint256 upAt = scheduledGraceEnd + 2 hours;
+        _outage(scheduledGraceEnd - 1 hours, upAt);
+        vm.warp(upAt + 10 minutes);
+
+        // The suite's price mocks answer the guard's price read directly and so
+        // skip its sequencer check; cleared, the read goes through the guard as
+        // deployed and refuses inside the recovery window.
+        vm.clearMockedCalls();
+        vm.expectRevert(IPriceGuard.SequencerGracePeriod.selector);
+        RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
+        vm.stopPrank();
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).principal,
+            PRINCIPAL - PRINCIPAL / 2,
+            "the partial went through past the scheduled grace end, inside the window"
+        );
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Active), "and the loan stays active");
     }
 
     function test_graceEnd_defaultableOnceTheWindowCloses() public {

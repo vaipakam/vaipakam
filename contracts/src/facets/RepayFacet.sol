@@ -727,8 +727,18 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // Pass-2 A2 (#1190) — capture the PRE-partial health factor for the
         // monotonicity gate at the end. Only liquid-on-both-legs loans carry an
         // HF (illiquid/NFT-rental legs have none), matching the post-repay gate.
+        //
+        // #3410 — not inside a sequencer outage or its recovery window. The
+        // price read refuses there, and the grace end that fell inside the
+        // window has moved to the window's end so the borrower can still repay
+        // in full or in part. The gate is defensive only: a partial lowers the
+        // debt and leaves the collateral where it is, so it raises the HF at
+        // any price, and its verdict never depends on the price it cannot
+        // read. Skipping it while the read refuses keeps the repayment the
+        // window exists for open; everywhere else the gate runs as before.
         bool hfGated = loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            !LibLoanClock.inOutageWindow();
         uint256 hfBefore;
         if (hfGated) {
             hfBefore = abi.decode(
