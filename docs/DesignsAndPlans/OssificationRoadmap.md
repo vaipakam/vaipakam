@@ -80,7 +80,7 @@ the gaps is part of the commitment; each has an issue.
 
 | Test | Met today | Not yet met | Closed by |
 | --- | --- | --- | --- |
-| Never moves user funds | The pause, the guardian cancels and the emergency revoker stop things only. The notification biller moves a fixed, consented fee once per loan side (see §5's carve-out). | A Diamond code change (a diamond cut) can change how funds move once its delay ends, and the Diamond still decides some vault outflows by itself. A fast key can also loosen, not only tighten: the keeper can promote an asset's liquidity tier at once (§2.1). | The vault checks outcomes, not the Diamond's say-so (#3431, #3205 Stage B); the vault-side exit (#3424); keeper promotions wait a cancellable delay (#3535). |
+| Never moves user funds | The pause, the guardian cancels and the emergency revoker stop things only. The notification biller moves a fixed, consented fee once per loan side (see §5's carve-out). | A Diamond code change (a diamond cut) can change how funds move once its delay ends, and the Diamond still decides some vault outflows by itself. A fast key can also loosen, not only tighten: the keeper can promote an asset's liquidity tier at once (§2.1), and the guardian can switch every vault onto any registered vault code while the Diamond is paused (§2.2). | The vault checks outcomes, not the Diamond's say-so (#3431, #3205 Stage B); the vault-side exit (#3424); keeper promotions wait a cancellable delay (#3535); the guardian's vault-code switch is limited to declared, alerted security versions (#3536). |
 | Slower than the user's exit | Vault code waits the beacon's code delay, and a pinned vault never takes new code. | The test needs each change's delay to be **strictly longer** than the exit it races, plus a stated margin for the user to act. Neither path meets that. The vault code delay and the escape period are both 3 days today (so new code can land the moment escape opens), and the planned 7 and 7 days would still leave no margin. The Diamond's 48h Timelock delay is far shorter than the 14-day vault-side exit (#3424), so making that exit independent of the Diamond does not make it finish first. | **Vault code:** #3421 and #3441 must set the code delay longer than the escape period plus a published margin; equal figures do not close this. **Diamond:** a faster exit cannot win against 48h, so this closes only when a Diamond change can no longer reach vault assets at all (#3431, #3205 Stage B), with the vault-side exit (#3424) as the route out. Until both hold, this test stays an open gap. |
 | Visible in advance | Every delayed change emits an event when it is queued. | No app surface yet shows queued Timelock or vault-code changes to users. | #3237, #3422. |
 | Avoidable | Vault pins (#3204). | A loan's price sources and routes follow live settings. | #3437. |
@@ -124,7 +124,7 @@ owner-signed, bounded mandates).
 
 | Contract | Upgradeable? | Owner can | Guardian (Pauser Safe) can | Delay |
 | --- | --- | --- | --- | --- |
-| `VaultBeacon` (code for every user vault, #3204) | No; ownership cannot be renounced | Register a version; propose a current version; propose a revocation naming a successor | Cancel a proposal; while the Diamond is paused, revoke a version onto code already registered | 3 days (`MIN_CODE_DELAY`), 7 days after #3421 |
+| `VaultBeacon` (code for every user vault, #3204) | No; ownership cannot be renounced | Register a version; propose a current version; propose a revocation naming a successor | Cancel a proposal; while the Diamond is paused, revoke a version onto code already registered. That last power is **not stop-only**: registration starts no clock, so the guardian can make any registered version current at once, including one never proposed and never waited, and revoking a pinned version moves its vaults onto current code. On this path the only wait is the Timelock delay on registering the version (48h), and vault owners get no alert for it. Bounding it is an open gap (#3536) | 3 days (`MIN_CODE_DELAY`), 7 days after #3421; the guardian path skips it |
 | `PositionNFT` (#3318) | No; ownership cannot be renounced | Propose a new renderer or transfer check | Cancel the proposal | 3 days (`MIN_COMPONENT_DELAY`) |
 | `ProtocolRegistry` (treasury, backstop, price guard, swap adapters, conduits; #3272) | No | Propose a pointer or a set addition; propose a longer delay | Cancel a proposal; remove a set member at once (removal only stops) | 3 to 30 days |
 | `PriceGuard` (every price read, #3272) | No | Propose a source or setting change within fixed ranges; raise the delay | Cancel a change; switch off a secondary source at once | 7 to 14 days |
@@ -377,7 +377,8 @@ not.
 
 - **Before mainnet:** the gaps named in §1 (#3205 Stage B, #3421, #3424,
   #3431, #3437, #3441, with the delay ordering §1 states), the per-loan
-  close-out fee stamps (#3534), delayed keeper tier promotions (#3535), the user-facing notices (#3237, #3422), and #651's
+  close-out fee stamps (#3534), delayed keeper tier promotions (#3535), the bounded
+  guardian vault-code switch (#3536), the user-facing notices (#3237, #3422), and #651's
   census.
 - **After the audit and the first bake period:** Stages A, B and D, each on
   its own criteria.
