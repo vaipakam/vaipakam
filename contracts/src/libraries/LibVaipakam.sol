@@ -4316,6 +4316,12 @@ library LibVaipakam {
         ///      orders (Fusion treats them as duplicates). Tracking
         ///      used nonces here + rejecting reuse forces the dapp
         ///      to vary nonceOrEpoch across borrowers.
+        ///      RETIRED (2026-11-11 external review): keyed by nonce alone,
+        ///      while 1inch keys by (maker, nonce) and the maker is each
+        ///      borrower's own vault (#1566 S3e), so one borrower's nonce
+        ///      blocked every other borrower's. Nothing reads or writes it;
+        ///      the per-maker record is `intentNonceUsedByMaker`. Kept for
+        ///      the append-only layout; do not reuse.
         mapping(uint40 => bool) intentNonceUsed;
         // ─── T-087 Sub 1.A — Cross-chain reward + tier system ───────────
         //
@@ -8316,6 +8322,15 @@ library LibVaipakam {
         ///      Written only by `TreasuryFacet.setTreasuryConvertMaxTranche`.
         ///      Appended — append-only.
         mapping(address => uint256) cfgTreasuryConvertMaxTranche;
+        /// @dev Repayment-auction nonces already used, keyed the way 1inch
+        ///      LOP v4's bit invalidator keys them: (maker, nonceOrEpoch).
+        ///      The maker is the borrower's vault (#1566 S3e). Two live
+        ///      orders of ONE maker sharing a nonce would share a bit-slot,
+        ///      so the first fill would void both; orders of different
+        ///      makers never collide. Written only by
+        ///      `SwapToRepayIntentFacet.commitSwapToRepayIntent`; replaces
+        ///      the retired global `intentNonceUsed`. Appended — append-only.
+        mapping(address => mapping(uint40 => bool)) intentNonceUsedByMaker;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

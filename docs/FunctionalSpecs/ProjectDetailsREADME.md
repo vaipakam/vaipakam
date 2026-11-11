@@ -2001,7 +2001,11 @@ operator incident.
   seller can fill, and the lot goes from the vault straight to the
   resolver. The vault signs only for its own live auctions, by asking the
   protocol, and stops signing once an auction settles or is cancelled;
-  the protocol itself signs no swap-to-repay order. Any
+  the protocol itself signs no swap-to-repay order. Each order's nonce
+  is unique per seller, the way the order protocol tracks it: a vault
+  can never reuse a nonce for a second auction (its two orders would
+  void each other on the first fill), while different borrowers' vaults
+  may use the same nonce. Any
   collateral the lot does not include — there is none when the debt
   needs all of it — stays in the borrower's vault, pledged, for the whole
   auction; the
