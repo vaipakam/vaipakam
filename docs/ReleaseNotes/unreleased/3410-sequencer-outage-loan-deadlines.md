@@ -1,4 +1,4 @@
-## Thread — Loan deadlines wait out an L2 sequencer outage (PR #<n>)
+## Thread — Loan deadlines wait out an L2 sequencer outage (PR #3551)
 
 On an L2, the sequencer can stop for a while. Nobody can send a transaction during that time, so a borrower whose grace period ended inside the outage could not repay and was defaultable the moment the chain came back. Liquidations already waited for one hour after the sequencer recovered; time-based deadlines did not.
 
