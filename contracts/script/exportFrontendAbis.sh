@@ -308,6 +308,8 @@ FACETS=(
   # The maker's price-move guard on an offer (#3358).
   "OfferPriceGuardFacet"
   "SignedOfferMatchFacet"
+  # The loan clock's disclosure, split off LoanFacet (#3410).
+  "LoanClockFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

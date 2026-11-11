@@ -230,8 +230,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
             revert InvalidAmount();
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // #658 PR-B — swap-to-repay-full is a both-side close-out: it pays the
@@ -252,7 +251,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         );
 
         // ── Build the settlement plan + required-principal target ────
-        LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan, endTime);
+        LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan);
         uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
         // #1832 — terminal seam of the lifetime interest counter.
         LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
@@ -586,10 +585,8 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         ) revert UnsupportedLoanShape();
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
             revert InvalidAmount();
-        uint256 endTime = LibLoanClock.maturity(loan);
-        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
-            revert RepaymentPastGracePeriod();
-        LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan, endTime);
+        if (block.timestamp > LibLoanClock.graceEnd(loan)) revert RepaymentPastGracePeriod();
+        LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan);
         requiredPrincipal = plan.lenderDue + plan.treasuryShare;
         (collateralToSell, minPrincipalOut) = _sizeFullSale(
             loan.collateralAsset,
@@ -604,8 +601,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      debt from, so the preview cannot drift from the close-out.
     function _fullSettlementPlan(
         uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        uint256 endTime
+        LibVaipakam.Loan storage loan
     ) private view returns (LibSettlement.ERC20Settlement memory) {
         return LibSettlement.computeRepayment(
             loan,

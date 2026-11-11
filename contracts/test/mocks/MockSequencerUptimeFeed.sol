@@ -20,17 +20,29 @@ contract MockSequencerUptimeFeed is AggregatorV3Interface {
     // forge-lint: disable-next-line(screaming-snake-case-const)
     uint8 public constant override decimals = 0;
 
+    /// @dev #3410 — every round's status, so `getRoundData` answers for an
+    ///      earlier round the way the real feed does (the outage start is the
+    ///      previous round's `startedAt`).
+    mapping(uint80 => int256) public roundAnswer;
+    mapping(uint80 => uint256) public roundStartedAt;
+
+    error NoDataPresent();
+
     /// @param initialAnswer 0 = up, 1 = down at construction.
     /// @param initialStartedAt Unix seconds when the current status began.
     constructor(int256 initialAnswer, uint256 initialStartedAt) {
         answer_ = initialAnswer;
         startedAt_ = initialStartedAt;
+        roundAnswer[1] = initialAnswer;
+        roundStartedAt[1] = initialStartedAt;
     }
 
     function setStatus(int256 newAnswer, uint256 newStartedAt) external {
         answer_ = newAnswer;
         startedAt_ = newStartedAt;
         roundId_ += 1;
+        roundAnswer[roundId_] = newAnswer;
+        roundStartedAt[roundId_] = newStartedAt;
     }
 
     function description() external pure override returns (string memory) {
@@ -47,7 +59,8 @@ contract MockSequencerUptimeFeed is AggregatorV3Interface {
         override
         returns (uint80, int256, uint256, uint256, uint80)
     {
-        return (_roundId, answer_, startedAt_, startedAt_, _roundId);
+        if (_roundId == 0 || _roundId > roundId_) revert NoDataPresent();
+        return (_roundId, roundAnswer[_roundId], roundStartedAt[_roundId], roundStartedAt[_roundId], _roundId);
     }
 
     function latestRoundData()

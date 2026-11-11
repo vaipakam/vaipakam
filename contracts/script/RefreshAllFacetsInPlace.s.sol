@@ -88,6 +88,7 @@ import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -317,7 +318,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // the auto-lifecycle consent and caps surface and the borrower's offset
     // route, split off AutoLifecycleFacet and PrecloseFacet for EIP-170. Their
     // selectors move hosts, so the Replace cut repoints them.
-    uint256 public constant EXPECTED_FACETS = 117;
+    // 117 -> 118: LoanClockFacet (#3410) - the loan clock's disclosure,
+    // split off LoanFacet for EIP-170. `getLoanDeadlines` moves hosts (the
+    // Replace cut repoints it); `getSequencerOutageWindow` is new (an Add).
+    uint256 public constant EXPECTED_FACETS = 118;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1366,6 +1370,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[116] = Item(
             "precloseOffsetFacet", ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name), _getPrecloseOffsetSelectors()
         );
+        items[117] = Item("loanClockFacet", ArtifactDeploy.deploy(type(LoanClockFacet).name), _getLoanClockSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

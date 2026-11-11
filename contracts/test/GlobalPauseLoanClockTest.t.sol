@@ -9,6 +9,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -112,7 +113,7 @@ contract GlobalPauseLoanClockTest is SetupTest {
         view
         returns (uint256 original, uint256 credit, uint256 maturity, uint256 graceEnd)
     {
-        return LoanFacet(address(diamond)).getLoanDeadlines(loanId);
+        return LoanClockFacet(address(diamond)).getLoanDeadlines(loanId);
     }
 
     function _intervals() internal view returns (LibPausable.PauseInterval[] memory iv) {
@@ -666,7 +667,7 @@ contract GlobalPauseLoanClockTest is SetupTest {
 
     function test_getLoanDeadlines_refusesALoanThatIsNotActive() public {
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
-        LoanFacet(address(diamond)).getLoanDeadlines(999);
+        LoanClockFacet(address(diamond)).getLoanDeadlines(999);
 
         uint256 loanId = _openLoan();
         vm.startPrank(borrower);
@@ -674,7 +675,7 @@ contract GlobalPauseLoanClockTest is SetupTest {
         RepayFacet(address(diamond)).repayLoan(loanId);
         vm.stopPrank();
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
-        LoanFacet(address(diamond)).getLoanDeadlines(loanId);
+        LoanClockFacet(address(diamond)).getLoanDeadlines(loanId);
     }
 
     function test_pauseRolesStillGateTheLog() public {

@@ -130,7 +130,7 @@ export function graceSecondsFromBuckets(
 }
 
 /** The deadlines an Active loan is held to at a given moment — the shape of
- *  `LoanFacet.getLoanDeadlines`. */
+ *  `LoanClockFacet.getLoanDeadlines`. */
 export interface LoanDeadlines {
   /** `startTime + durationDays` days, before any credit. The due date the
    *  loan was originated with, and the one `LoanInitiatedDetails` announced. */

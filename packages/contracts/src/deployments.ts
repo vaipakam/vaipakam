@@ -238,6 +238,8 @@ export interface DeploymentFacets {
   /** #3358 — the maker's price-move guard on an offer. */
   offerPriceGuardFacet?: HexAddress;
   signedOfferMatchFacet?: HexAddress;
+  /** #3410 — the loan clock's disclosure, split off LoanFacet. */
+  loanClockFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

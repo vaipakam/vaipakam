@@ -38,6 +38,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -271,7 +272,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](41);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -433,6 +434,13 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        // #3410 - the loan clock's disclosure (`getLoanDeadlines`) moved off
+        // LoanFacet; the listing-duration-cap verdict test reads it.
+        cuts[41] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LoanClockFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLoanClockFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -8035,7 +8043,7 @@ contract EarlyWithdrawalFacetTest is Test {
         ) = _verdict(activeLoanId, lender);
         assertEq(direct.length, 0, "the direct sale is not capped");
         assertEq(listing.length, 1);
-        (, , uint256 maturity, ) = LoanFacet(address(diamond)).getLoanDeadlines(activeLoanId);
+        (, , uint256 maturity, ) = LoanClockFacet(address(diamond)).getLoanDeadlines(activeLoanId);
         assertEq(
             listing[0].reopensAt,
             maturity - uint256(LibVaipakam.MIN_OFFER_DURATION_DAYS_FLOOR) * 1 days

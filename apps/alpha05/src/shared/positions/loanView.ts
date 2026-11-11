@@ -16,6 +16,7 @@ import {
   AdminFacetABI,
   ConfigFacetABI,
   DefaultedFacetABI,
+  LoanClockFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
   NumeraireConfigFacetABI,
@@ -34,6 +35,7 @@ import { answerOrNull } from '../reads/answer';
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
+const LOAN_CLOCK = LoanClockFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const DEFAULTED = DefaultedFacetABI as Abi;
@@ -317,7 +319,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   ] = await Promise.all([
     holder(loan.lenderTokenId),
     holder(loan.borrowerTokenId),
-    live ? answerOrNull(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
+    live ? answerOrNull(read<readonly [bigint, bigint, bigint, bigint]>(LOAN_CLOCK, 'getLoanDeadlines', [loanId])) : null,
     scheduled ? answerOrNull(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
     scheduled ? answerOrNull(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
     live ? answerOrNull(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,

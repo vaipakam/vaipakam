@@ -249,9 +249,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // {defaultKycAdmission} also reports (#2083).
         if (!_lenderKycAdmitted(loan)) revert KYCRequired();
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
-        if (block.timestamp <= graceEnd) revert NotDefaultedYet();
+        if (block.timestamp <= LibLoanClock.graceEnd(loan)) revert NotDefaultedYet();
 
         // l2 circuit breaker: block the default trigger entirely while the
         // sequencer is down or in its 1h recovery grace window. Chainlink
@@ -637,9 +635,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) return false;
 
-        uint256 endTime = LibLoanClock.maturity(loan);
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
-        return block.timestamp > graceEnd;
+        return block.timestamp > LibLoanClock.graceEnd(loan);
     }
 
     /**
