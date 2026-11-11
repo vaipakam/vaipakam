@@ -1455,6 +1455,12 @@ backup, not a second keeper:
   again, refused, or with no chat to send to, and the keeper counts it
   exactly as it counts a Push send. An alert whose owner has no linked chat
   and no Push subscription is counted as having nobody to tell.
+- A health-factor or pre-grace warning that no channel accepted, while one
+  could on another try (the alert service or the Push rail was unreachable),
+  is not recorded as sent: the next run sends it again.
+- A payout alert names the asset in full where it fits. An amount or NFT id
+  too long to show whole keeps its first and last digits around an ellipsis,
+  so a shortened identifier never reads as complete.
 - Only the alert service knows whether an owner linked a chat, so the
   suggestion to send LOCK goes in the Telegram message alone, which reaches
   only a linked chat. The Push copy of the same alert always gives the

@@ -7,7 +7,10 @@ keeper routes as typed data, and the agent writes it in the owner's language
 and sends it to the chat linked to the wallet then, or answers that no chat
 is linked. Push is unchanged: the keeper still sends it, with the same
 wording the agent renders. The keeper's own band memory remains the only
-guard against a repeated warning, as the agent does not filter alerts.
+guard against a repeated warning, as the agent does not filter alerts. A
+health-factor or pre-grace warning that no channel took, because the agent
+or the Push rail could not be reached, is not recorded as sent, so the next
+run sends it again rather than losing it.
 
 The Telegram LOCK step works the agent's requests instead of the shared
 table: it asks the agent for a chain's open requests (which is also how the
@@ -26,7 +29,9 @@ the two disagree on.
 The Push text of a payout alert no longer suggests sending LOCK: only the
 agent knows whether the owner linked a chat, so the suggestion travels in
 the Telegram message alone. A token symbol is reduced to plain characters
-before it is put in an alert, so an odd symbol cannot get the alert refused.
+before it is put in an alert, so an odd symbol cannot get the alert refused,
+and an amount or NFT id too long to show whole keeps its first and last
+digits around an ellipsis rather than being cut short unmarked.
 
 Configuration: the keeper needs `AGENT_ORIGIN` (a plain var) and
 `KEEPER_AGENT_TOKEN` (the same value the agent holds, written to both

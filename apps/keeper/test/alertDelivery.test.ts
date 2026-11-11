@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generatePrivateKey } from 'viem/accounts';
 import { readPublishedRail, type PublishedRailRow } from '@vaipakam/push';
-import { AlertDelivery, publishRailStatus, pushRailConfigOf, type Alert } from '../src/alertDelivery';
+import { AlertDelivery, publishRailStatus, pushRailConfigOf, worthRetrying, type Alert } from '../src/alertDelivery';
 import { AgentDiamondMismatch, AgentRequestFailed, type AgentClient } from '../src/agentClient';
 import type { AddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
 import type { ChainConfig, Env } from '../src/env';
@@ -125,6 +125,17 @@ describe('AlertDelivery — Telegram through the agent (#1722)', () => {
     expect((await limited.deliver(tgAlert)).telegram).toBe('retry');
     permanent.disclose('watcher');
     expect(String(warn.mock.calls[0][0])).toMatch(/^\[watcher\] 1 Telegram alert\(s\) not taken by the agent this pass \(last: .*answered 401/);
+  });
+
+  it('reads an alert no channel took, and one may on another try, as worth retrying', () => {
+    // The HF watcher keeps the old band and the pre-grace watcher leaves its
+    // throttle unstamped on exactly this answer, so an agent outage does not
+    // use up the warning (Codex #3576 r2).
+    expect(worthRetrying({ telegram: 'retry', push: 'off' })).toBe(true);
+    expect(worthRetrying({ telegram: 'off', push: 'retry' })).toBe(true);
+    expect(worthRetrying({ telegram: 'retry', push: 'sent' })).toBe(false);
+    expect(worthRetrying({ telegram: 'refused', push: 'off' })).toBe(false);
+    expect(worthRetrying({ telegram: 'off', push: 'off' })).toBe(false);
   });
 
   it('throws when the agent serves another Diamond, like the epoch fence', async () => {

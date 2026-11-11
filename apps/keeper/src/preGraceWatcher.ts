@@ -82,7 +82,7 @@ import {
   putPreGraceNotifyState,
 } from './db';
 import { batchedRead } from './batchRead';
-import { AlertDelivery } from './alertDelivery';
+import { AlertDelivery, worthRetrying } from './alertDelivery';
 // #1722 — the warning's wording lives once, in the catalogue the agent
 // renders Telegram from, so the Push body and the chat message match.
 import { formatPreGraceWarning } from '@vaipakam/lib/telegramAlerts/message';
@@ -423,7 +423,7 @@ async function notifyLoan(
     frontendOrigin,
   );
 
-  await alerts.deliver({
+  const outcome = await alerts.deliver({
     // #1722 — as data, for the chat the owner linked through the agent.
     telegram: {
       diamond: chain.diamond,
@@ -438,6 +438,9 @@ async function notifyLoan(
     pushTitle: 'Auto-refinance: no match found yet',
     deepLinkUrl: `${frontendOrigin}/loans/${loanIdBig}`,
   });
+  // No channel took it and one may next run (the agent or the Push rail was
+  // unreachable): leave the throttle unstamped so the warning goes again.
+  if (worthRetrying(outcome)) return;
 
   await putPreGraceNotifyState(
     env.DB!,

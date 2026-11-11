@@ -35,7 +35,7 @@ import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 import type { Alert, ChannelResult, DeliveryOutcome } from '../src/alertDelivery';
 import { AgentDiamondMismatch } from '../src/agentClient';
-import { ALERT_NEXT_ITEM, type LockOutcome, type LockRequest, type ProtectedStore, type Subscriber } from '../src/protectedTelegram';
+import { ALERT_NEXT_ITEM, shortDigits, type LockOutcome, type LockRequest, type ProtectedStore, type Subscriber } from '../src/protectedTelegram';
 import { renderTelegramAlert } from '@vaipakam/lib/telegramAlerts/message';
 
 const CHAIN = 84532;
@@ -1018,6 +1018,21 @@ describe('the Telegram steps', () => {
     // vault, so the payout alert does not offer it (Codex #3092 r10).
     expect(tgText(sent[2])).not.toContain('send LOCK');
     expect(tgText(sent[2])).toContain('lock the vault in the app');
+  });
+
+  it('shows a token id too long for the alert with its ends around an ellipsis, never cut short silently', async () => {
+    store.subs.set(`${CHAIN}:${ALICE}`, { push: true, locale: 'en' });
+    const max = (2n ** 256n - 1n).toString();
+    ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '2', tokenId: max, amount: '1', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
+    await run(false, true);
+    const alert = sent[0].telegram!.message.alert as { what: string };
+    expect(alert.what).toBe(`1 × ${ASSET.slice(0, 8)}…${ASSET.slice(-6)} #1157920892…3129639935`);
+    expect(sent[0].text).toContain('#1157920892…3129639935');
+  });
+
+  it('shortens only a number too long to show whole', () => {
+    expect(shortDigits('123456789012345678901234')).toBe('123456789012345678901234');
+    expect(shortDigits('1234567890123456789012345')).toBe('1234567890…6789012345');
   });
 
   it("waits for a payout alert's request code rather than alerting without it", async () => {

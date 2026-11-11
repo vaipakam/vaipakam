@@ -558,28 +558,44 @@ async function lockWouldWork(d: TelegramStepDeps, account: Address, manager: Add
 }
 
 /** The asset and amount, from the token's own decimals and symbol; the raw
- *  amount and the token address when those cannot be read. Reduced to what a
- *  message's free field accepts (`plainField`): a symbol is the deployer's
- *  choice, and may hold anything. */
+ *  amount and the token address when those cannot be read. At most 96 plain
+ *  characters (the agent's limit for a free field). Every part is bounded on
+ *  its own, so nothing is ever cut off the end: a number too long to show
+ *  whole keeps its first and last digits around an ellipsis, and a token
+ *  symbol is reduced to plain characters and shortened the same visible way. */
 async function describeAsset(d: TelegramStepDeps, kind: number, asset: Address | null, tokenId: bigint, amount: bigint): Promise<string> {
   return plainField(await assetWords(d, kind, asset, tokenId, amount)) ?? '?';
 }
 
 async function assetWords(d: TelegramStepDeps, kind: number, asset: Address | null, tokenId: bigint, amount: bigint): Promise<string> {
   const token = asset === null ? '?' : shortAddress(asset);
-  if (kind === 1) return `NFT ${token} #${tokenId}`;
-  if (kind === 2) return `${amount} × ${token} #${tokenId}`;
-  if (asset === null) return `${amount} (raw) ?`;
+  if (kind === 1) return `NFT ${token} #${shortDigits(String(tokenId))}`;
+  if (kind === 2) return `${shortDigits(String(amount))} × ${token} #${shortDigits(String(tokenId))}`;
+  if (asset === null) return `${shortDigits(String(amount))} (raw) ?`;
   try {
     const [decimals, symbol] = await Promise.all([
       d.r.one<number>('decimals', [], asset, erc20Abi),
       d.r.one<string>('symbol', [], asset, erc20Abi),
     ]);
-    return `${formatUnits(amount, Number(decimals))} ${symbol} (${token})`;
+    return `${shortDigits(formatUnits(amount, Number(decimals)))} ${shortLabel(String(symbol))} (${token})`;
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
-    return `${amount} (raw units) ${token}`;
+    return `${shortDigits(String(amount))} (raw units) ${token}`;
   }
+}
+
+/** Longest number shown whole; a longer one keeps 10 digits at each end. */
+const DIGITS_SHOWN = 24;
+export function shortDigits(s: string): string {
+  return s.length <= DIGITS_SHOWN ? s : `${s.slice(0, 10)}…${s.slice(-10)}`;
+}
+
+/** A token's own symbol, which its deployer chose: plain characters only and
+ *  at most 24 of them, a longer one ending in an ellipsis. */
+const LABEL_SHOWN = 24;
+function shortLabel(s: string): string {
+  const plain = plainField(s) ?? '?';
+  return [...plain].length <= LABEL_SHOWN ? plain : `${[...plain].slice(0, LABEL_SHOWN - 1).join('').trimEnd()}…`;
 }
 
 const lower = (a: unknown): Address | null => {
