@@ -1,4 +1,4 @@
-## Price guard — the guardian's instant price-source lever is stop-only (PR #<n>)
+## Price guard — the guardian's instant price-source lever is stop-only (PR #3584)
 
 The guardian (the Pauser Safe) could switch off a secondary price source at
 once. The price guard accepts the primary price alone once no secondary
