@@ -172,6 +172,11 @@ export interface AcceptContext {
    *  refused by the contract, never consented to silently. */
   illiquidLending: boolean;
   illiquidCollateral: boolean;
+  /** OFF-60 — the key a signed order's fill binds the terms to: the order's
+   *  hash (`SignedOfferFacet` passes it to `verifyAndBindAccept`, as no offer
+   *  id exists when the taker signs). Absent for a stored offer, whose key
+   *  is `directOfferKey(id)`. */
+  offerKey?: Hex;
 }
 
 /** The message, from the offer as stored and the review's context. The Full
@@ -181,7 +186,7 @@ export function buildAcceptTerms(o: StoredOffer, ctx: AcceptContext): AcceptTerm
   return {
     acceptor: ctx.acceptor,
     offerCreator: o.creator,
-    offerKey: directOfferKey(o.id),
+    offerKey: ctx.offerKey ?? directOfferKey(o.id),
     offerType: o.offerType,
     lendingAsset: o.lendingAsset,
     collateralAsset: o.collateralAsset,

@@ -9,8 +9,9 @@
  * borrowers' highest first, each with its maker, its lapse and where the
  * chain stands on it, and for each fillable order what the maker's vault
  * holds free against what a fill would draw: enough, short (a fill now
- * would fail), and for the cancelled one nothing weighed. The section says
- * a fill is not offered yet and why, and offers no button. Runs on the
+ * would fail), and for the cancelled one nothing weighed. A fill is offered
+ * on each open order another wallet signed, never on the viewer's own or a
+ * used one; filling is spec 73. Runs on the
  * desktop and the phone project; the chain is reverted after each test.
  */
 import { parseEther, type Hex } from 'viem';
@@ -30,7 +31,7 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('a market’s signed orders are listed with the chain’s standing and each maker’s vault against a fill, with no fill offered yet', async ({
+test('a market’s signed orders are listed with the chain’s standing and each maker’s vault against a fill, and a fill offered on open ones', async ({
   launchWallet,
 }) => {
   test.setTimeout(300_000);
@@ -118,7 +119,6 @@ test('a market’s signed orders are listed with the chain’s standing and each
   await connectWallet(page);
   const section = page.getByTestId('desk-signed-book');
   await expect(section).toContainText('Signed orders on this market');
-  await expect(section.getByTestId('desk-signed-book-not-yet')).toContainText('This page does not fill signed orders yet');
   await expect(page.getByTestId('desk-completeness')).toContainText('signed orders are listed below it');
 
   // Lenders' orders, lowest rate first; the borrower order on its own side.
@@ -157,8 +157,12 @@ test('a market’s signed orders are listed with the chain’s standing and each
   await expect(rowMine).toContainText('Borrow 0.05 WETH at 4 to 4.5% a year');
   await expect(rowMine).toContainText('Signed by you');
 
-  // Nothing here sends anything: its one button opens the explanation.
-  await expect(section.getByRole('button')).toHaveCount(1);
+  // A fill is offered on the open orders another wallet signed, never on a
+  // used one or the viewer's own; listing them sends nothing.
+  await expect(rowCovered.getByTestId('desk-signed-book-fill')).toHaveText('Review a fill');
+  await expect(rowLarge.getByTestId('desk-signed-book-fill')).toBeVisible();
+  await expect(rowCancelled.getByTestId('desk-signed-book-fill')).toHaveCount(0);
+  await expect(rowMine.getByTestId('desk-signed-book-fill')).toHaveCount(0);
   await expect(section.locator('.why-link')).toHaveCount(1);
   expect(flags.sentTransactions).toBe(0);
   await fitsWidth(page);

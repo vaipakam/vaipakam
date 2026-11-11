@@ -2249,10 +2249,27 @@ above. Each resolves here, so a route reviewer needs no private file:
   states what its maker's vault holds free of the stake, read from the
   protocol at that block, against what a fill of the rest would draw:
   enough, short (a fill now would fail), or unread. The section says that
-  one maker's orders share one vault and are each weighed alone. Until the
-  protocol can preview a signed fill (#3552), the section says the page does
-  not fill signed orders and why, and offers no fill: a taker is never asked
-  to pay without the fill's figures.
+  one maker's orders share one vault and are each weighed alone.
+- **RB-DESK-FILL** — An open signed order someone else signed is filled
+  whole from its row on the desk (OFF-60). The fill opens the same
+  acceptance review as a stored offer (RB-ACCEPT), but its figures come
+  from the protocol's preview of the signed fill, never from the order as
+  the book lists it: the review names the maker and the order's hash, what
+  the fill takes from the maker's vault against what that vault holds free,
+  and that a fill takes the whole order in one transaction, so a fill that
+  loses a race opens no loan and puts back any approval it made. Any
+  refusal the preview reports, the maker's vault short among them, is
+  stated by name and blocks consent and the send. The Terms the taker
+  signs are keyed to the order's hash. Where the protocol cannot yet show
+  the risk-access check for a signed order before the fill (#3577), the
+  review says the dry run after signing makes it; a refusal there sends
+  nothing, puts back any approval, and offers the step that clears it for
+  the order's pair where the flow stopped, which returns to a fresh review
+  of the same order. The finish card reads the
+  loan from the fill's own log; a transaction with no such log says no loan
+  opened. A partly matched order is not offered (a fill takes the whole
+  order), nor the viewer's own, and Terms not yet accepted are accepted
+  first (OFF-35).
 - **RB-DESK-MATCH** — Under a market's ladder (OFF-63) the desk shows a
   match band. While the two sides overlap (the highest borrower rate at or
   above the lowest lender rate), the best-priced pairs whose rate ranges
