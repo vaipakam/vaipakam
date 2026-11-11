@@ -80,7 +80,12 @@ jobs:
         run: node --experimental-strip-types --test scripts/backup-ledger.test.mjs scripts/archive-format.test.mjs
 
   watch:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # #3541: this job reads secrets. They live in the `main-only` environment,
+    # whose deployment-branch rule admits only main, so a run of a pushed
+    # branch's copy of this file receives none of them; the ref check says the
+    # same thing in the file, for a reader.
+    environment: main-only
     runs-on: ubuntu-latest
     # Downloads each new archive once to digest it; a first run reads every
     # archive in the bucket. Well past that, a run is hung, and the alert job
