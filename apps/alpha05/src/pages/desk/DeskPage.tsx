@@ -24,6 +24,7 @@ import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { formatBps } from '../../shared/ui/format';
 import { useNow } from '../../shared/ui/useNow';
 import { DeskActivity } from './DeskActivity';
+import { DeskMatchBand } from './DeskMatchBand';
 import { DeskHistory, MarketLoans } from './DeskPositions';
 import { MySignedOrders } from './MySignedOrders';
 import { DeskSignedBook } from './DeskSignedBook';
@@ -45,9 +46,10 @@ function marketName(m: MarketTerms, meta: TokenMetaMap | null, format: CopyAcces
 }
 
 /**
- * The rate desk (OFF-60, OFF-61, OFF-73, OFF-74, OFF-75, OFF-76): the
+ * The rate desk (OFF-60, OFF-61, OFF-63, OFF-73, OFF-74, OFF-75, OFF-76): the
  * network's token markets (one lending token against one collateral token
- * for one term), the chosen market's rate ladder, every maker's gasless
+ * for one term), the chosen market's rate ladder, the match band that
+ * matches an overlapping pair the protocol confirms, every maker's gasless
  * signed orders on it with where the chain stands on each, the order ticket
  * that posts or signs on it through the guided flows' own review, the
  * viewer's own signed orders on it with the on-chain cancel that stops one,
@@ -211,6 +213,9 @@ export function DeskPage() {
                 </>
               )}
             </section>
+          )}
+          {selected !== null && ladder !== null && own !== null && ownChain !== null && own.chainId === world.chainId && (
+            <DeskMatchBand key={`match-${selectedKey}`} ladder={ladder} market={selected} chain={ownChain} own={own} meta={meta} copy={copy} />
           )}
           {selected !== null && own !== null && ownChain !== null && own.chainId === world.chainId && (
             <DeskSignedBook key={`signed-book-${selectedKey}`} market={selected} chain={ownChain} own={own} meta={meta} copy={copy} />

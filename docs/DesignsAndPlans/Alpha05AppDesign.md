@@ -2253,6 +2253,40 @@ above. Each resolves here, so a route reviewer needs no private file:
   protocol can preview a signed fill (#3552), the section says the page does
   not fill signed orders and why, and offers no fill: a taker is never asked
   to pay without the fill's figures.
+- **RB-DESK-MATCH** — Under a market's ladder (OFF-63) the desk shows a
+  match band. While the two sides overlap (the highest borrower rate at or
+  above the lowest lender rate), the best-priced pairs whose rate ranges
+  meet by the protocol's own rule (the higher floor at or below the lower
+  ceiling), at most twelve, never a pair from one wallet and never a pair
+  holding an offer the viewer posted, are asked of
+  the protocol's own match preview as the viewer would send the match, at
+  one block; where the sides overlap but no ranges meet, the band says
+  nothing can be matched. Matching one's own offer would make the viewer
+  the lender or the borrower with its own funds in the loan, which the
+  gas-only receipt below does not describe, so such a pair is never offered:
+  the band says when it left one out, and a review left open for a pair the
+  connected wallet now holds an offer in is closed with that reason. The band offers only a pair the preview
+  confirms, the first in price order, and names it, the loan amount, the
+  middle of the rates both accept, the collateral the borrower
+  locks and the term. When the best-priced pair is not the one offered, its
+  refusal is stated; when no pair checked can be matched, the best-priced
+  pair's refusal is the band. The matching switch is read on its own: with
+  it off (or unread) the band says so instead of disappearing. The
+  sender's share is stated as an upper bound, the matcher's part of the
+  full initiation fee, because the borrower's fee discount is settled only
+  at the match; the band also says whose matching capacity a match counts
+  against (the sender's own) or that no limit is in force. The review says
+  the loan belongs to the two who posted the offers, the sender pays only
+  the gas and takes no side, the share is paid only if the match lands,
+  and someone else may match or take either offer first: if that uses an
+  offer up the match fails and moves nothing, and if part is left the
+  match can open a smaller loan and pay a smaller share. It is re-read
+  each block and dry-run before the wallet opens. The outcome is measured
+  from the transaction's logs: the match of this pair by this sender, and
+  the share as the vault's own outflow record of the incentive kind, from
+  the lender's vault in the lending token, to the sender's wallet or its
+  vault under protected mode. Refunds and the loan amount are other kinds
+  of outflow, so they are never counted as the share.
 - **RB-DESK-SIGN** — The ticket (OFF-59) may sign a new order instead of
   posting it: no gas, nothing set aside, listed on the offer book, and the
   stake drawn from the signer's own vault when someone fills it. The app
