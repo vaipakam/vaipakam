@@ -15,6 +15,9 @@ import { ContractFunctionRevertedError, encodeErrorResult, type Address, type Pu
 import {
   ABI,
   AUTH_PENDING,
+  REMAINDER_FLOOR_ITEM,
+  remainderStep,
+  type RemainderState,
   INSTR_EXECUTED,
   INSTR_NONE,
   INSTR_PENDING,
@@ -162,10 +165,66 @@ describe('parseMinPart', () => {
   });
 });
 
+describe('remainderStep (#3360 part B)', () => {
+  const st = (o: Partial<RemainderState> = {}): RemainderState => ({
+    exists: true,
+    balance: 0n,
+    parked: true,
+    parkedAmount: 500n,
+    acknowledged: false,
+    dayClosed: true,
+    references: 0n,
+    unclassified: 900n,
+    reserved: false,
+    ...o,
+  });
+
+  it('returns a closed day\'s parked remainder, or an unparked batch\'s balance, bounded by the packet\'s untyped figure', () => {
+    expect(remainderStep(st())).toEqual({ kind: 'return', amount: 500n });
+    expect(remainderStep(st({ parked: false, parkedAmount: 0n, balance: 700n }))).toEqual({ kind: 'return', amount: 700n });
+    expect(remainderStep(st({ unclassified: 200n }))).toEqual({ kind: 'return', amount: 200n });
+  });
+
+  it('is finished with an absent batch, an acknowledged one (the operator\'s), and an empty closed one', () => {
+    expect(remainderStep(st({ exists: false }))).toEqual({ kind: 'done', why: 'absent' });
+    expect(remainderStep(st({ acknowledged: true }))).toEqual({ kind: 'done', why: 'operator' });
+    expect(remainderStep(st({ parkedAmount: 0n }))).toEqual({ kind: 'done', why: 'empty' });
+    expect(remainderStep(st({ parked: false, parkedAmount: 0n, balance: 0n }))).toEqual({ kind: 'done', why: 'empty' });
+  });
+
+  it('leaves a batch whose day is open, even when it holds nothing yet', () => {
+    expect(remainderStep(st({ dayClosed: false }))).toEqual({ kind: 'open' });
+    expect(remainderStep(st({ dayClosed: false, parkedAmount: 0n }))).toEqual({ kind: 'open' });
+  });
+
+  it('waits on staging references (unparked only) and on a reserved receipt; stalls when the packet holds nothing untyped', () => {
+    expect(remainderStep(st({ parked: false, balance: 700n, references: 2n }))).toMatchObject({ kind: 'wait', why: /2 staging record/ });
+    expect(remainderStep(st({ references: 2n }))).toEqual({ kind: 'return', amount: 500n });
+    expect(remainderStep(st({ reserved: true }))).toMatchObject({ kind: 'wait', why: /stranded-recovery/ });
+    expect(remainderStep(st({ unclassified: 0n }))).toMatchObject({ kind: 'stall', why: /holds nothing untyped/ });
+  });
+});
+
 // ─── The fake chains ────────────────────────────────────────────────────────
 
 function revert(errorName: string, args: readonly unknown[] = []): ContractFunctionRevertedError {
   return new ContractFunctionRevertedError({ abi: ABI, data: encodeErrorResult({ abi: ABI, errorName, args } as never), functionName: 'x' });
+}
+
+const ZERO32 = `0x${'0'.repeat(64)}`;
+
+interface FakeBatch {
+  day: bigint;
+  balance: bigint;
+  parked: boolean;
+  parkedAmount: bigint;
+  acknowledged: boolean;
+  references: bigint;
+  unclassified: bigint;
+  /** The packet's issuer: its source chain and Base Diamond. */
+  source: number;
+  issuer: Address;
+  remitId: bigint;
 }
 
 interface Auth {
@@ -189,6 +248,12 @@ class FakeChain {
   readonly auths = new Map<bigint, Auth>();
   readonly instr = new Map<string, { state: number; amount: bigint }>();
   readonly stranded = new Map<string, { amount: bigint; dayId: bigint }>();
+  /** Transport batches, keyed by the packet stamp that opened them (the
+   *  batch id is that stamp), and the days proven closed. */
+  readonly batches = new Map<string, FakeBatch>();
+  readonly closedDays = new Set<bigint>();
+  /** The batches as the finalized block shows them, when it lags the head. */
+  finalBatches: Map<string, FakeBatch> | null = null;
   readonly outbound = new Map<number, LaneBucket>();
   readonly inbound = new Map<number, LaneBucket>();
   sent: { fn: string; args: readonly unknown[]; value: bigint }[] = [];
@@ -226,7 +291,7 @@ class FakeChain {
       return this.deliversTo ?? this.diamond;
     }
     if (address === RETURN_SENDER) {
-      if (!['quoteRepatriationReturn', 'quoteRepatriationCancelAck', 'quoteStrandedReturn', 'quoteRetiredSurplusReturn'].includes(functionName)) throw new Error(`unexpected return-sender read ${functionName}`);
+      if (!['quoteRepatriationReturn', 'quoteRepatriationCancelAck', 'quoteStrandedReturn', 'quoteRetiredSurplusReturn', 'quoteUntypedRemainderReturn'].includes(functionName)) throw new Error(`unexpected return-sender read ${functionName}`);
       return this.fee;
     }
     switch (functionName) {
@@ -249,8 +314,30 @@ class FakeChain {
       }
       case 'getStrandedRecovery': {
         const x = stranded.get(`${(a[0] as string).toLowerCase()}:${a[1]}`) ?? { amount: 0n, dayId: 0n };
-        return { amount: x.amount, dayId: x.dayId, reservedAt: 0n, reason: 0, held: true };
+        return { amount: x.amount, dayId: x.dayId, reservedAt: 0n, reason: 0, held: 0n };
       }
+      case 'getTransportBatch': {
+        const x = (blockNumber !== undefined && this.finalBatches !== null ? this.finalBatches : this.batches).get(a[0] as string);
+        return x === undefined ? [ZERO32, 0n, 0n, 0n, false] : [a[0], x.balance, x.balance + x.parkedAmount, x.day, x.acknowledged];
+      }
+      case 'getTransportRemainder': {
+        const x = (blockNumber !== undefined && this.finalBatches !== null ? this.finalBatches : this.batches).get(a[0] as string);
+        if (x === undefined) throw revert('TransportBatchUnknown', [a[0]]);
+        return x.parked ? [true, x.parkedAmount, x.day, x.acknowledged, 0n] : [false, 0n, 0n, false, 0n];
+      }
+      case 'getTransportBatchStaged': {
+        const x = this.batches.get(a[0] as string);
+        if (x === undefined) throw revert('TransportBatchUnknown', [a[0]]);
+        return [0n, 0n, x.references];
+      }
+      case 'getIngressPacket': {
+        const x = this.batches.get(a[0] as string);
+        return x === undefined
+          ? { sourceChainId: 0, arrivedAt: 0n, remitter: ZERO, remitId: 0n, unclassified: 0n, batchId: ZERO32 }
+          : { sourceChainId: x.source, arrivedAt: 1n, remitter: x.issuer, remitId: x.remitId, unclassified: x.unclassified, batchId: a[0] };
+      }
+      case 'isDayObligationsClosed':
+        return this.closedDays.has(a[0] as bigint);
       case 'getRemitLaneBucket':
       case 'getRemitInboundLaneBucket': {
         const b = (functionName === 'getRemitLaneBucket' ? this.outbound : this.inbound).get(Number(a[0]));
@@ -324,6 +411,29 @@ class FakeChain {
           x.amount -= amount;
           this.drawOutbound(amount);
           return { kind: 'StrandedReturnDispatched', args: { remitter: String(a[0]).toLowerCase(), remitId: String(a[1]), dayId: String(x.dayId), amount: String(amount), remainingAfter: String(x.amount), messageId: '0xm2' } };
+        };
+      }
+      case 'returnClosedDayRemainder': {
+        const h = a[0] as string;
+        const x = this.batches.get(h);
+        if (x === undefined) throw revert('UntypedReturnNoRemainder', [h]);
+        const amount = a[1] as bigint;
+        if (amount === 0n) throw revert('UntypedReturnBadAmount');
+        const st = this.stranded.get(`${x.issuer.toLowerCase()}:${x.remitId}`);
+        if (st !== undefined && st.amount !== 0n) throw revert('UntypedReturnPacketReserved', [h]);
+        if (!this.closedDays.has(x.day)) throw revert('TransportDayNotClosed', [h, x.day]);
+        if (!x.parked && x.references !== 0n) throw revert('TransportBatchReferenced', [h, x.references]);
+        const held = x.parked ? x.parkedAmount : x.balance;
+        if (amount > held) throw revert('TransportRemainderExceeded', [h, amount, held]);
+        if (amount > x.unclassified) throw revert('ReconciliationExceedsPacketRemainder', [h, amount, x.unclassified]);
+        const b = this.outbound.get(x.source);
+        if (b && b.limited && amount > b.capacity) throw revert('RepatriationExceedsLaneCapacity', [amount, b.capacity]);
+        return () => {
+          if (!x.parked) [x.parked, x.parkedAmount, x.balance] = [true, x.balance, 0n];
+          x.parkedAmount -= amount;
+          x.unclassified -= amount;
+          if (b !== undefined && b.limited) b.tokens -= amount;
+          return { kind: 'UntypedRemainderReturnDispatched', args: { packetHash: h, dstChainId: String(x.source), amount: String(amount), remainingAfter: String(x.parkedAmount), messageId: '0xm4' } };
         };
       }
       case 'sendRetiredSurplusReturn': {
@@ -464,7 +574,7 @@ describe('a run', () => {
       return alertOutcome;
     },
   });
-  const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling; chains?: FakeChain[]; visit?: number } = {}) =>
+  const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling; chains?: FakeChain[]; visit?: number; remainderReturn?: boolean } = {}) =>
     returnTransportOnce({
       chains: (o.chains ?? [base, mirror]).map((c) => deps(c, o.cap ?? CAP)),
       ledger,
@@ -479,6 +589,7 @@ describe('a run', () => {
       minPart: MIN_PART,
       now: () => now,
       visit: o.visit,
+      remainderReturn: o.remainderReturn,
     });
   const fns = (c: FakeChain) => c.sent.map((s) => s.fn);
   /** The indexer records what a chain's sends emitted. */
@@ -497,7 +608,7 @@ describe('a run', () => {
     expect([fns(base), fns(mirror)]).toEqual([[], []]);
     expect(r.map((x) => x.skipped)).toEqual([undefined, undefined]);
     expect(describeReport(r[0])).toBe(
-      `[keeper] rewardReturnTransport chain=${BASE_ID} role=0 instructions-sent=none executed=none acks-sent=none stranded-returned=none retired-surplus-returned=none sends-announced=none`,
+      `[keeper] rewardReturnTransport chain=${BASE_ID} role=0 instructions-sent=none executed=none acks-sent=none stranded-returned=none retired-surplus-returned=none remainders-returned=none sends-announced=none`,
     );
   });
 
@@ -619,12 +730,12 @@ describe('a run', () => {
     expect(describeReport(r[1])).toMatch(/sends-announced=0xab/);
   });
 
-  it('announces the administrator\'s untyped return of a released transport remainder (#2376)', async () => {
+  it('announces an untyped return of a transport remainder, the administrator\'s or the keeper\'s (#2376, #3360)', async () => {
     const packet = `0x${'ab'.repeat(32)}`;
     ledger.add(MIRROR_ID, 'UntypedRemainderReturnDispatched', { packetHash: packet, dstChainId: String(BASE_ID), amount: '7', remainingAfter: '2', messageId: '0xm' }, NOW - 60, 3, '0xcd');
     await run();
     expect(sentNotices()).toEqual([
-      { key: `return-transport-sent:${MIRROR_ID}:0xcd:0`, text: `ℹ️ Return transport on chain ${MIRROR_ID}: returned 7 VPFI (wei) of budget packet ${packet}'s released transport remainder to chain ${BASE_ID}, untyped; 2 stays in the remainder (tx 0xcd, CCIP message 0xm).` },
+      { key: `return-transport-sent:${MIRROR_ID}:0xcd:0`, text: `ℹ️ Return transport on chain ${MIRROR_ID}: returned 7 VPFI (wei) of budget packet ${packet}'s transport remainder to chain ${BASE_ID}, untyped; 2 stays in the remainder (tx 0xcd, CCIP message 0xm).` },
     ]);
   });
 
@@ -975,6 +1086,108 @@ describe('a run', () => {
     const r = await run();
     expect(r[0].skipped).toMatch(/not configured/);
     expect(r[1].skipped).toMatch(/names itself chain 1/);
+  });
+
+  describe('the closed-day remainder return (#3360 part B)', () => {
+    const H1 = `0x${'1'.repeat(64)}`;
+    const H2 = `0x${'2'.repeat(64)}`;
+    const batch = (h: string, o: Partial<FakeBatch> = {}, at = 1) => {
+      mirror.batches.set(h, { day: 5n, balance: 300n * E18, parked: false, parkedAmount: 0n, acknowledged: false, references: 0n, unclassified: 300n * E18, source: BASE_ID, issuer: BASE, remitId: 9n, ...o });
+      ledger.add(MIRROR_ID, 'TransportBatchAdmitted', { batchId: h, packetHash: h, amount: '1', dayId: '5' }, NOW - 600, at);
+    };
+    const floor = async () => (await cursors.get(`${MIRROR_ID}:${MIRROR}`)?.get([REMAINDER_FLOOR_ITEM]))?.get(REMAINDER_FLOOR_ITEM);
+
+    it('does nothing unless its own flag is on', async () => {
+      batch(H1);
+      mirror.closedDays.add(5n);
+      await run();
+      expect(fns(mirror)).toEqual([]);
+    });
+
+    it('returns a closed day\'s remainder to the packet\'s issuer, paying the quote, then lifts its floor past it', async () => {
+      batch(H1);
+      mirror.closedDays.add(5n);
+      const r = await run({ remainderReturn: true });
+      expect(mirror.sent).toEqual([{ fn: 'returnClosedDayRemainder', args: [H1, 300n * E18, KEEPER], value: FEE }]);
+      expect(r[1].remainders).toEqual([`${H1}=${300n * E18}`]);
+      expect(describeReport(r[1])).toMatch(new RegExp(`remainders-returned=${H1}=${300n * E18}`));
+      expect(await floor(), 'not finished on the run that sent it').toBeUndefined();
+      mirror.sent = [];
+      indexed(mirror);
+      await run({ remainderReturn: true });
+      expect(mirror.sent).toEqual([]);
+      expect(await floor()).toBe('1:0');
+      expect(sentNotices().map((a) => a.text).join(' ')).toMatch(/budget packet .* transport remainder to chain 84532/);
+    });
+
+    it('leaves a batch whose day is not proven closed, and holds the floor below it', async () => {
+      batch(H1);
+      const r = await run({ remainderReturn: true });
+      expect(fns(mirror)).toEqual([]);
+      expect(r[1].remaindersOpen).toBe(1);
+      expect(describeReport(r[1])).toMatch(/remainders-day-open=1/);
+      expect(await floor()).toBeUndefined();
+    });
+
+    it('sends a part the lanes can carry, and the rest on a later run', async () => {
+      batch(H1, { balance: 7_000n * E18, unclassified: 7_000n * E18 });
+      mirror.closedDays.add(5n);
+      mirror.outbound.set(BASE_ID, bucket({ tokens: 5_000n * E18 }));
+      const r = await run({ remainderReturn: true });
+      expect(r[1].remainders).toEqual([`${H1}=${5_000n * E18}`]);
+      mirror.outbound.set(BASE_ID, bucket());
+      const r2 = await run({ remainderReturn: true });
+      expect(r2[1].remainders).toEqual([`${H1}=${2_000n * E18}`]);
+      expect(mirror.batches.get(H1)!.parkedAmount).toBe(0n);
+    });
+
+    it('leaves an acknowledged remainder to the operator, and says it holds value', async () => {
+      batch(H1, { parked: true, parkedAmount: 40n, balance: 0n, acknowledged: true });
+      mirror.closedDays.add(5n);
+      const r = await run({ remainderReturn: true });
+      expect(fns(mirror)).toEqual([]);
+      expect(r[1].operatorHeld).toEqual([`${H1}=40`]);
+      expect(await floor()).toBe('1:0');
+    });
+
+    it('waits on a referenced unparked batch and on a reserved receipt', async () => {
+      batch(H1, { references: 1n }, 1);
+      batch(H2, { remitId: 12n }, 2);
+      mirror.stranded.set(`${BASE}:12`, { amount: 5n, dayId: 5n });
+      mirror.closedDays.add(5n);
+      const r = await run({ remainderReturn: true });
+      expect(mirror.sent.filter((x) => x.fn === 'returnClosedDayRemainder')).toEqual([]);
+      expect(r[1].waiting.join('; ')).toMatch(/1 staging record/);
+      expect(r[1].waiting.join('; ')).toMatch(/stranded-recovery record/);
+    });
+
+    it('holds a remainder whose issuer is not the Base Diamond this keeper serves, and alerts', async () => {
+      batch(H1, { issuer: OTHER_BASE });
+      mirror.closedDays.add(5n);
+      const r = await run({ remainderReturn: true });
+      expect(fns(mirror)).toEqual([]);
+      expect(r[1].stalled[0]).toMatch(new RegExp(`remainder ${H1}: the return names the Base Diamond ${OTHER_BASE}`));
+      expect(alerts.map((a) => a.key)).toContain(`return-transport-stalled:${MIRROR_ID}:remainder:${H1}`);
+    });
+
+    it('moves its floor only on what the finalized block shows (Codex #2993 r4)', async () => {
+      batch(H1, { parked: true, parkedAmount: 0n, balance: 0n });
+      mirror.closedDays.add(5n);
+      mirror.finalBatches = new Map([[H1, { ...mirror.batches.get(H1)!, parkedAmount: 5n }]]);
+      await run({ remainderReturn: true });
+      expect(await floor()).toBeUndefined();
+      mirror.finalBatches = null;
+      await run({ remainderReturn: true });
+      expect(await floor()).toBe('1:0');
+    });
+
+    it('is not run on Base, whose entry refuses a Canonical chain', async () => {
+      base.batches.set(H1, { day: 5n, balance: 1n, parked: false, parkedAmount: 0n, acknowledged: false, references: 0n, unclassified: 1n, source: MIRROR_ID, issuer: MIRROR, remitId: 1n });
+      base.closedDays.add(5n);
+      ledger.add(BASE_ID, 'TransportBatchAdmitted', { batchId: H1, packetHash: H1, amount: '1', dayId: '5' }, NOW - 600);
+      await run({ remainderReturn: true });
+      expect(fns(base)).toEqual([]);
+    });
   });
 
   it('names an unreadable ledger and sends nothing', async () => {

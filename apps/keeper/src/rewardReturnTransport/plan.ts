@@ -142,3 +142,79 @@ export function returnChunk(remaining: bigint, outbound: LaneBucket | null, inbo
   }
   return { amount, note };
 }
+
+// ─── The closed-day remainder return (#3360 part B) ────────────────────────
+
+/**
+ * What a run read about one transport batch on a mirror, and the budget packet
+ * that opened it. A batch funds one reward day; once that day is proven closed
+ * every obligation it could pay has terminated, and what the batch still holds
+ * is the remainder this step sends home.
+ */
+export interface RemainderState {
+  /** Whether a batch exists under the id (`getTransportBatch`). */
+  exists: boolean;
+  /** Untyped value the batch still holds, while its remainder is not parked. */
+  balance: bigint;
+  /** Whether its remainder is parked, and what the parked remainder holds. */
+  parked: boolean;
+  parkedAmount: bigint;
+  /** The administrator's acknowledgment: it releases the remainder for
+   *  classification on this chain, which is the operator's disposition. */
+  acknowledged: boolean;
+  /** Whether the batch's one day is proven closed. */
+  dayClosed: boolean;
+  /** Staging records referencing the batch; a referenced batch cannot be
+   *  parked, so its remainder cannot leave until they settle. */
+  references: bigint;
+  /** What the packet still holds untyped (`IngressPacket.unclassified`): a
+   *  return is bounded by it as well as by the remainder. */
+  unclassified: bigint;
+  /** Whether the packet's receipt has a live stranded-recovery record, which
+   *  the contract refuses a return beside (`UntypedReturnPacketReserved`). */
+  reserved: boolean;
+}
+
+export type RemainderStep =
+  /** Nothing more for the keeper: `absent` (no batch under the id),
+   *  `operator` (acknowledged, so the operator disposes of it), or `empty`
+   *  (its day is closed and nothing is left). */
+  | { kind: 'done'; why: 'absent' | 'operator' | 'empty' }
+  /** Its day is not proven closed yet. */
+  | { kind: 'open' }
+  /** It cannot leave now; it may later, with no operator step. */
+  | { kind: 'wait'; why: string }
+  /** It cannot leave until an operator looks. */
+  | { kind: 'stall'; why: string }
+  /** Return up to `amount` (the lanes size the part sent). */
+  | { kind: 'return'; amount: bigint };
+
+/**
+ * The step one batch calls for. The order follows the contract
+ * (`RepatriationFacet.returnClosedDayRemainder`): the day must be proven
+ * closed, an unparked batch is parked in the same call (refused while a
+ * staging record references it), a packet whose receipt is reserved by a
+ * stranded recovery is refused, and the amount is bounded by both the
+ * remainder and the packet's untyped figure.
+ */
+export function remainderStep(s: RemainderState): RemainderStep {
+  if (!s.exists) return { kind: 'done', why: 'absent' };
+  if (s.acknowledged) return { kind: 'done', why: 'operator' };
+  if (!s.dayClosed) return { kind: 'open' };
+  const remaining = s.parked ? s.parkedAmount : s.balance;
+  if (remaining === 0n) return { kind: 'done', why: 'empty' };
+  if (!s.parked && s.references !== 0n) {
+    return { kind: 'wait', why: `${s.references} staging record(s) reference it, so it cannot be parked until they settle` };
+  }
+  if (s.reserved) {
+    return { kind: 'wait', why: 'its packet\'s receipt holds a live stranded-recovery record, which the stranded return empties first' };
+  }
+  if (s.unclassified === 0n) {
+    return { kind: 'stall', why: `it holds ${remaining} but its packet holds nothing untyped, so no return can be bounded by both; the custody ledger needs an operator's look` };
+  }
+  return { kind: 'return', amount: remaining < s.unclassified ? remaining : s.unclassified };
+}
+
+/** Whether the keeper is finished with a batch for good, so its ledger row may
+ *  fall below the rotation's floor (read at the finalized block too). */
+export const remainderFinished = (s: RemainderState): boolean => remainderStep(s).kind === 'done';
