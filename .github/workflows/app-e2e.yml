@@ -74,8 +74,11 @@ jobs:
     runs-on: ubuntu-latest
     # A cold fixture compile (viaIR, every facet) adds several minutes to
     # what the fork-based run took; the forge cache below makes most runs
-    # incremental.
-    timeout-minutes: 60
+    # incremental. Warm runs took 46-59 minutes by 2026-11-11, so 60 left no
+    # room for a cold one: a change to foundry.toml or remappings.txt changes
+    # the cache key, and #3575's run was cancelled at 60 minutes with 117 of
+    # 132 specs passed (about 20 minutes of cold compile and fixture setup).
+    timeout-minutes: 90
     steps:
       - name: Checkout (with submodules — the fixture compiles the contracts)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
