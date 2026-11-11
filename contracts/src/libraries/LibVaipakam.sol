@@ -2821,6 +2821,19 @@ library LibVaipakam {
         uint40 sentAt;
     }
 
+    /// @notice #3562 — a lender-position holder's fee-discount standing at
+    ///         the moment they took the position. See
+    ///         `Storage.lenderEntryDiscount`.
+    /// @dev    `holder` is the holder it was taken for; `tier` / `bps` are
+    ///         their effective tier and its discount (after the uniform
+    ///         ceiling) at that moment; `at` is when. One slot.
+    struct LenderEntryDiscount {
+        address holder;
+        uint8 tier;
+        uint16 bps;
+        uint40 at;
+    }
+
     struct CachedTier {
         uint8 effectiveTier;
         uint40 lastUpdateSec;
@@ -8330,6 +8343,17 @@ library LibVaipakam {
         ///      `SwapToRepayIntentFacet.commitSwapToRepayIntent`; replaces
         ///      the retired global `intentNonceUsed`. Appended — append-only.
         mapping(address => mapping(uint40 => bool)) intentNonceUsedByMaker;
+        /// @dev #3562 — per loan, the lender-position holder's fee-discount
+        ///      standing when they took the position (origination or a sale's
+        ///      migration; a plain transfer of the lender token records the
+        ///      lower of the existing figure and the receiver's standing). The
+        ///      yield-fee hold discount is the lower of this and the holder's
+        ///      standing at settlement; a holder this does not name gets no
+        ///      hold discount. Written only by
+        ///      `VPFIDiscountAccumulatorFacet.stampLenderEntry`, read only by
+        ///      its `lenderHoldDiscountBps` / `lenderHoldDiscountView`.
+        ///      Appended — append-only.
+        mapping(uint256 => LenderEntryDiscount) lenderEntryDiscount;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

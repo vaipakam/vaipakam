@@ -74,6 +74,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 
 contract OfferFacetTest is Test {
@@ -145,7 +146,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(OfferCreateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
@@ -260,6 +261,13 @@ contract OfferFacetTest is Test {
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
         });
 
+        // #3562 — every lender token's holder is recorded by the accumulator
+        // facet, so a Diamond that mints position NFTs must route it.
+        cuts[17] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));

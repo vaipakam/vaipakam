@@ -2852,6 +2852,7 @@
         "StagingClaimantForfeited": "इस वॉलेट के फ़्लैग रहते रिवॉर्ड ज़ब्त हुए",
         "RewardEntryRepointRefused": "पोज़िशन ट्रांसफ़र के बाद रिवॉर्ड प्रविष्टि अर्जित करने वाले के पास रही",
         "RewardEntrySplitAtTransfer": "पोज़िशन ट्रांसफ़र पर रिवॉर्ड प्रविष्टि विभाजित हुई",
+        "LenderEntryStamped": "पोज़िशन लेते समय ऋणदाता की छूट दर्ज हुई",
         "Transfer": "Transfer",
         "Approval": "Approval"
       },

@@ -6933,6 +6933,7 @@ const copySource = {
       StagingClaimantForfeited: 'Rewards forfeited while this wallet is flagged',
       RewardEntryRepointRefused: 'Reward entry kept with its earner after a position transfer',
       RewardEntrySplitAtTransfer: 'Reward entry split at a position transfer',
+      LenderEntryStamped: "Lender's discount recorded on taking the position",
       Transfer: 'Transfer',
       Approval: 'Approval',
     } as Record<string, string>,

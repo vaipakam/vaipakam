@@ -3283,7 +3283,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         s[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view (off-chain
@@ -3291,6 +3291,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
         // #3459 — the rule-by-rule tier explanation (public read).
         s[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
+        // #3562 — the lender entry standing: its one writer (internal), the
+        // fee path's read (internal) and the app's view (public).
+        s[4] = VPFIDiscountAccumulatorFacet.stampLenderEntry.selector;
+        s[5] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountBps.selector;
+        s[6] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountView.selector;
     }
 
     /// T-087 Sub 2.C — mirror-side tier-push receiver facet. Both

@@ -1966,13 +1966,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](7);
         selectors[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view.
         selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
         // #3459 — the rule-by-rule tier explanation (public read).
         selectors[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
+        // #3562 — the lender entry standing.
+        selectors[4] = VPFIDiscountAccumulatorFacet.stampLenderEntry.selector;
+        selectors[5] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountBps.selector;
+        selectors[6] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountView.selector;
         return selectors;
     }
 

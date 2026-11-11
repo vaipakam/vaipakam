@@ -2852,6 +2852,7 @@
         "StagingClaimantForfeited": "이 지갑이 플래그된 동안 리워드 몰수됨",
         "RewardEntryRepointRefused": "포지션 이전 후 리워드 항목이 획득자에게 유지됨",
         "RewardEntrySplitAtTransfer": "포지션 이전 시 리워드 항목이 분할됨",
+        "LenderEntryStamped": "포지션 인수 시 대출자 할인이 기록됨",
         "Transfer": "전송",
         "Approval": "승인"
       },

@@ -1703,6 +1703,35 @@ for the whole term. On a 100-day loan with 70 low-tier days then 30
 high-tier days, the current rule can resolve the high tier and the
 removed one could not. Stronger defence, shorter memory.
 
+**The lender's discount is the LOWER of entry and settlement** (#3562,
+owner decision 2026-11-11, replacing the settlement-only rule of #1981).
+The three gates above give the tier at one moment, and the minimum holding
+period is only 3 days by default, so reading only the settlement moment let
+a lender stake shortly before a long loan settled and take the discount on
+all of its interest. Now every way a loan's lender token gets a holder
+(minted for a loan, an offer's token becoming a loan's, a sale's migration,
+a plain transfer) records that holder's standing in
+`Storage.lenderEntryDiscount`, and the fee path takes the lower of that and
+the standing at settlement. A plain transfer splits no interest, so it records
+the LOWER of the existing figure and the receiver's standing (`carryLower`):
+without that, a self-transfer re-anchored a late stake and defeated the rule.
+A token a sale has retired stamps nothing. Three things to keep:
+
+- **One writer, one path to it.** `VPFIDiscountAccumulatorFacet.stampLenderEntry`
+  is the only writer, and `VaipakamNFTFacet._stampLenderEntry` is the only
+  caller (from `mintNFT`, `updateNFTStatus` and `checkPositionTransfer`). A
+  new way for a lender position to change hands must pass through one of
+  those, or its holder gets no hold discount at all (an entry that names
+  someone else reads as none).
+- **The read lives beside the writer.** `LibVPFIDiscount.lenderHoldTierDiscountBps`
+  staticcalls `lenderHoldDiscountBps`; it does not inline the tier read.
+  Settlement facets near EIP-170 inline that library, so the rule stays in
+  the accumulator facet, and `lenderHoldDiscountView` serves the app.
+- **VaipakamNFTFacet and VPFIDiscountAccumulatorFacet refresh together.**
+  Every lender-token mint and transfer self-calls `stampLenderEntry` and
+  bubbles a failure, so an NFT facet refreshed without the accumulator's
+  selector reverts every loan origination and lender-token move.
+
 **`rollupUserDiscount` is NOT vestigial — its consumer moved.** The
 rollup writes `dayBalances` (`dayClose` + `dayMin`), `lastUpdateDayId`
 and `currentStakeStartSec`, which is exactly what the three gates

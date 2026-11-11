@@ -1408,3 +1408,30 @@ Frontend Warning, Smart Contract Actions and the listing floor) and
 WebsiteReadme's lender-exit disclosure line now state the claim model. The
 superseded design is kept, marked, in
 `docs/DesignsAndPlans/LenderSaleAccruedInterestPricingDesign.md`.
+
+## The lender's discount takes the lower of entry and settlement: a spec change made on a recorded owner decision (#3562, 2026-11-11)
+
+**The decision.** The owner decided on 2026-11-11 (issue #3562) that a
+lender's yield-fee hold discount is the lower of two figures: the holder's
+discount when they took the lender position, and their discount at
+settlement. A holder takes the position when the loan opens, when a sale of
+it completes, and when the position NFT is transferred to them. A plain
+transfer splits no interest, so it records the lower of the existing figure
+and the receiver's standing; otherwise moving the position to oneself would
+re-anchor a late stake and undo the rule.
+
+**What the spec said before.** §6a and the lender rules said the discount is
+the holder's effective discount at the settlement moment, the rule recorded
+on 2026-08-31 (#1981). The code matched that spec. The minimum holding period
+is 3 days by default and the look-back only covers the current holding, so a
+lender who staked a few days before a long loan settled got the discount on
+all of its interest. This is not a divergence resolved toward the code: the
+intent itself changed, by a recorded owner decision, and the spec and the code
+changed together in the same pull request.
+
+**Status:** resolved. TokenomicsTechSpec's lender rules and §6a's discount
+application state the entry-and-settlement rule, and the VPFI fee-discount
+section of CLAUDE.md records it. One part of the new intent is not built yet:
+the spec says the app shows a lender both figures and the one that applies.
+The contract exposes them (`lenderHoldDiscountView`), and neither app reads
+it yet; #3586 tracks that presentation.
