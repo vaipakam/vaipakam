@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { encodeAbiParameters, encodeEventTopics, type Log } from 'viem';
+import { encodeAbiParameters, encodeEventTopics, type Log, type PublicClient } from 'viem';
 import { directOfferKey, buildAcceptTerms } from '../offers/acceptTerms';
 import { SIGNED_OFFER } from './mySignedOrders';
-import { signedFillFrom, storedOfferFromSigned } from './signedFill';
+import { readSignedRiskBlocks, signedFillFrom, storedOfferFromSigned } from './signedFill';
 import type { SignedOrderWire } from './signedOrder';
 
 type Hex = `0x${string}`;
@@ -97,5 +97,23 @@ describe('what a fill did, from its own log', () => {
   it('ignores another order’s fill and a log from another contract', () => {
     expect(signedFillFrom([filled(`0x${'ef'.repeat(32)}`)], DIAMOND, HASH)).toBeNull();
     expect(signedFillFrom([filled(HASH, '0x00000000000000000000000000000000000000ee')], DIAMOND, HASH)).toBeNull();
+  });
+});
+
+describe('the risk-access gate a fill faces, before the order is stored', () => {
+  it('asks the protocol for the maker’s and the taker’s blocks on this order, and the pair both are gated against', async () => {
+    const calls: { functionName: string; args: readonly unknown[] }[] = [];
+    const pair = { lendAsset: WETH, lendType: 0, lendTokenId: 0n, collAsset: LIQ, collType: 0, collTokenId: 0n, prepayAsset: ZERO };
+    const client = {
+      readContract: async (q: { functionName: string; args: readonly unknown[] }) => {
+        calls.push(q);
+        return [0, 2, pair];
+      },
+    } as unknown as PublicClient;
+    const blocks = await readSignedRiskBlocks(client, DIAMOND, { order: order(), orderHash: HASH, signature: '0x' } as never, TAKER);
+    expect(calls[0].functionName).toBe('previewSignedOfferRiskBlocks');
+    expect((calls[0].args[0] as { signer: string }).signer).toBe(MAKER);
+    expect(calls[0].args[1]).toBe(TAKER);
+    expect(blocks).toEqual({ creator: 0, acceptor: 2, pair });
   });
 });

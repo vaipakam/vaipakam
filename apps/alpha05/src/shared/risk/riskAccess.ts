@@ -213,7 +213,8 @@ export const STRICT_SIGNATURE = 'setRiskStrictMode(bool)';
  *  builds itself (a new request). */
 export type PairSource = { kind: 'offer'; offerId: bigint } | { kind: 'pair'; pair: RiskPair };
 
-function pairFrom(raw: Record<string, unknown>): RiskPair {
+/** A `LibRiskAccess.PairId` as a view returns it. */
+export function pairFrom(raw: Record<string, unknown>): RiskPair {
   return {
     lendAsset: raw.lendAsset as Hex,
     lendType: Number(raw.lendType),

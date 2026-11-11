@@ -5,16 +5,21 @@
  * to the offer book. The viewer opens the order's fill review from the
  * desk's signed-order list: the review is read from the protocol's preview
  * of the signed fill, names the maker, the order's hash, what the fill takes
- * from the maker's vault against what it holds free, that a fill takes the
- * whole order and that the risk-access check is made at the dry run. The
+ * from the maker's vault against what it holds free and that a fill takes
+ * the whole order; the protocol's own preview of the fill's risk-access
+ * check is read with it, so the review does not leave that check to the dry
+ * run. The
  * viewer signs the terms keyed to the order's hash, approves exactly the
  * collateral and sends the fill; the finish card reads the loan from the
  * fill's own log, and the chain agrees: the order is used, the maker's vault
  * gave the amount, the viewer's vault holds it less the fee and the
  * collateral. A second order larger than the maker's vault holds free is
  * refused in the review by the protocol's own preview, and nothing is
- * signed or sent. Runs on the desktop and the phone project; the chain is
- * reverted after each test.
+ * signed or sent. With the risk-access gate on, the preview names whose
+ * access blocks the fill: the maker's is stated and offers no step, and the
+ * taker's opens the step that clears it in the review, before anything is
+ * signed. Runs on the desktop and the phone project; the chain is reverted
+ * after each test.
  */
 import { erc20Abi, parseEther, type Hex } from 'viem';
 import { WETH } from '@vaipakam/anvil-harness/lending';
@@ -143,7 +148,7 @@ test('a signed order is filled whole from the desk: the protocol’s preview, te
   await expect(receipt).toContainText('Taken from the lender’s vault by this fill');
   await expect(receipt).toContainText('Free in the maker’s vault now');
   await expect(receipt).toContainText('A fill takes the whole order in one transaction');
-  await expect(receipt).toContainText('so the dry run after you sign makes it');
+  await expect(receipt).not.toContainText('so the dry run after you sign makes it');
   await expect(receipt).toContainText('Exactly 250');
   await expect(receipt).toContainText('Wallet prompts: 3.');
   await fitsWidth(page);
@@ -180,7 +185,7 @@ test('a signed order is filled whole from the desk: the protocol’s preview, te
   await fitsWidth(page);
 });
 
-test('a fill the risk level does not cover: the dry run refuses before anything is sent, the step is offered there, then the fill lands', async ({
+test('a fill the risk level does not cover: the protocol’s preview names whose access blocks it, the step is offered in the review, then the fill lands', async ({
   launchWallet,
 }) => {
   test.setTimeout(300_000);
@@ -209,50 +214,43 @@ test('a fill the risk level does not cover: the dry run refuses before anything 
   await expect(row).toHaveAttribute('data-standing', 'open', { timeout: 60_000 });
   await row.getByTestId('desk-signed-book-fill').click();
   const review = section.locator(`.accept-offer[data-order-hash="${hash}"]`);
-  await expect(review.locator('.receipt')).toContainText('so the dry run after you sign makes it', { timeout: 60_000 });
-  await review.getByTestId('accept-consent').check();
 
-  // The maker's own level refuses first: that is stated, and no step of the
-  // taker's is offered, since none could clear it.
-  await review.getByRole('button', { name: 'Confirm in wallet' }).click();
-  const makerBlocked = review.locator('[data-phase="failed"]');
-  await expect(makerBlocked).toContainText('The maker’s own risk access no longer covers this pair', { timeout: 90_000 });
-  await expect(makerBlocked.getByTestId('risk-gate')).toHaveCount(0);
-  await makerBlocked.getByRole('button', { name: 'Close' }).click();
+  // The maker's own level refuses first: the review states it before
+  // anything is signed, and offers no step of the taker's, since none could
+  // clear it.
+  await expect(review).toContainText("The lender's own risk setting no longer covers this pair", { timeout: 60_000 });
+  await expect(review.locator('.receipt')).not.toContainText('so the dry run after you sign makes it');
+  await expect(review.getByTestId('risk-gate')).toHaveCount(0);
+  await expect(review.getByTestId('accept-consent')).toHaveCount(0);
+  await expect(review.getByRole('button', { name: 'Confirm in wallet' })).toBeDisabled();
+  await fitsWidth(page);
+  await review.getByRole('button', { name: 'Cancel' }).click();
   await expect(review).toHaveCount(0);
 
-  // The maker raises its own level; the taker's is now the only block.
+  // The maker raises its own level; the taker's is now the only block, and
+  // the review offers the step that clears it, in place.
   await sc.diamondWrite('lender', 'setVaultRiskTier', [1]);
   await row.getByTestId('desk-signed-book-fill').click();
-  await expect(review.locator('.receipt')).toContainText('so the dry run after you sign makes it', { timeout: 60_000 });
-  await review.getByTestId('accept-consent').check();
-
-  // The dry run refuses: no fill is sent, the approval made is put back, and
-  // the step that clears the refusal is offered where the flow stopped.
-  const sent = flags.sentTransactions;
-  await review.getByRole('button', { name: 'Confirm in wallet' }).click();
-  const failed = review.locator('[data-phase="failed"]');
-  await expect(failed).toBeVisible({ timeout: 90_000 });
-  const gate = failed.getByTestId('risk-gate');
+  const gate = review.getByTestId('risk-gate');
   await expect(gate).toHaveAttribute('data-risk-plan', 'raise', { timeout: 60_000 });
+  await expect(review.getByTestId('accept-consent')).toHaveCount(0);
   await fitsWidth(page);
-  expect(await sc.read<bigint>('signedOfferFilledAmount', [hash])).toBe(0n);
-  expect(await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(0n);
-  // The approval and its put-back; no fill.
-  expect(flags.sentTransactions).toBe(sent + 2);
-
+  const sent = flags.sentTransactions;
   await gate.getByTestId('risk-open').click();
   const step = review.getByTestId('risk-step');
   await step.getByRole('button', { name: 'Confirm in wallet' }).click();
   const stepDone = step.locator('[data-phase="measured"]');
   await expect(stepDone).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(Number(await sc.read('getEffectiveRiskTier', [borrower]))).toBe(1);
   await stepDone.getByTestId('risk-back').click();
 
-  // Back on a fresh review of the same order: the fill now lands.
-  await expect(review.getByTestId('accept-consent')).toBeVisible({ timeout: 60_000 });
+  // Back on a fresh review of the same order: the block is gone and the
+  // fill lands. The raise, the approval and the fill: nothing refused.
+  await expect(review.getByTestId('risk-gate')).toHaveCount(0, { timeout: 60_000 });
   await review.getByTestId('accept-consent').check();
   await review.getByRole('button', { name: 'Confirm in wallet' }).click();
   const finish = review.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(flags.sentTransactions).toBe(sent + 3);
   expect(await sc.read<bigint>('signedOfferFilledAmount', [hash])).toBe(parseEther('0.05'));
 });
