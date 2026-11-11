@@ -2104,14 +2104,14 @@ place (see Detect), and the deploy approval is built and waits for mainnet
 ### Why this needs its own procedure
 
 The repository is public, every Diamond upgrade waits the Timelock's 48h delay
-(a permanent floor, see `GovernanceRunbook.md`), and new vault code must sit
-registered on the VaultBeacon for its minimum code delay before any vault can
-run it (`VaultBeacon.MIN_CODE_DELAY`: 3 days today, 7 days once #3421 lands,
-on every path including the guardian's). An ordinary fix PR, a queued
-diamond-cut or a newly registered vault version therefore tells anyone
-watching what changed, days before the fix is live. There is no faster
-path, and none should be added: the delays are what protect users from a
-compromised governance key.
+(a permanent floor, see `GovernanceRunbook.md`), and new vault code reaches
+vaults only through a VaultBeacon proposal that waits the beacon's minimum
+code delay from the moment it is proposed (`VaultBeacon.MIN_CODE_DELAY`:
+3 days today, 7 days once #3421 lands). An ordinary fix PR, a queued
+diamond-cut, a newly registered vault version or a beacon proposal
+therefore tells anyone watching what changed, days before the fix is live.
+There is no faster path, and none should be added: the delays are what
+protect users from a compromised governance key.
 
 So the rule is: **stop the bug first, then let the fix be seen.** A fix that
 lands while the vulnerable path is already closed reveals nothing anyone can
@@ -2124,17 +2124,22 @@ still use.
    note or chat message names the bug. Build the fix in a GitHub private
    security advisory's temporary private fork (`SECURITY.md` names the
    advisory channel), not in a branch of the public repository.
-2. **Close the path if it is exploitable now.** The Pauser Safe pauses the
-   Diamond (§3) and, where the path crosses chains, runs
-   `contracts/script/pause-all-chains.sh`. On chains with a public mempool
-   (Ethereum, Polygon, BNB) send the pause through the private route of #3408
-   so it cannot be raced, using the pre-signed pause transactions kept for
-   this. Then check that the pause actually stops the bug's path: #3235 lists
+2. **Close the path if it is exploitable now, on every deployment that runs
+   the affected code.** First list every chain whose Diamond, vault code or
+   standalone contract runs the vulnerable code, whether or not the bug
+   involves cross-chain messages: the code is the same on every chain, so the
+   fix becomes public for all of them at once. The Pauser Safe pauses each
+   listed Diamond (§3); `contracts/script/pause-all-chains.sh` does all of
+   them in one run. Do not deploy, register or queue anything for the fix
+   until containment is confirmed on every listed chain. On chains with a
+   public mempool (Ethereum, Polygon, BNB) send the pause through the
+   private route of #3408 so it cannot be raced, using the pre-signed pause
+   transactions kept for this. Then check that the pause actually stops the bug's path: #3235 lists
    the vault value paths a system-wide pause does not stop. For those, use the
    targeted levers in §3.5-§3.7, and for a vault-code bug the beacon's
-   `guardianRevokeVersion` (works only while the Diamond is paused, and moves
-   vaults only onto a version already registered; once #3421 lands, only
-   onto one registered for at least the code delay).
+   `guardianRevokeVersion` (works only while the Diamond is paused, takes
+   effect at once, and moves vaults only onto a version already registered).
+   Record, per chain, what closed the path and when it was checked.
 3. **Build and review the fix outside the public repository.** Reproduce the
    bug in a fork test, fix the root cause, run the targeted tests and the full
    regression, and do the merge-time security review (`CLAUDE.md`, "Own
@@ -2146,10 +2151,32 @@ still use.
      the Diamond stays paused for the whole 48h. The new facet's bytecode is
      public from the moment it is deployed; that is acceptable only because
      step 2 closed the path.
-   - Vault-code fix: register the patch version on the VaultBeacon as the
-     pinned version's successor at once, since the code delay runs from
-     registration. Promote it after the delay; pinned vaults receive it as a
-     patch of their pinned version (#3421, #3202).
+   - Vault-code fix, as the beacon works today: `registerVersion(patch)`
+     (no clock starts). The beacon holds one pending proposal at a time, and
+     every proposal waits `MIN_CODE_DELAY` from the moment it is made.
+     - If the affected version is the current one, one
+       `proposeRevoke(affected, patch)` does it: after the delay,
+       `executeRevoke()` revokes the affected version and makes the patch
+       current.
+     - If the affected version is an older one that some vaults pin,
+       `proposeRevoke(affected, 0)` and, after the delay, `executeRevoke()`:
+       revoking a pinned version moves its vaults onto the current version.
+       If the current version carries the bug too, first make the patch
+       current (`proposeCurrentVersion(patch)`, then
+       `executeCurrentVersion()` after the delay) and only then propose the
+       revocation, so pinned vaults leave the bug only after two delays.
+     - While the Diamond is paused, the guardian can instead revoke at once:
+       `guardianRevokeVersion(affected, patch)` when the affected version is
+       the current one (the registered patch becomes current), or
+       `guardianRevokeVersion(affected, 0)` when it is an older pinned
+       version (its vaults move to the current version, so this helps only
+       if the current version does not carry the bug). The patch's code is
+       public from registration, so register it only once step 2's
+       containment holds.
+     - The patch-successor flow (a patch registered against the version it
+       fixes, delivered to vaults pinned to that version, with the delay
+       counted from registration) exists only once #3421 and #3202 land.
+       Until then, do not rely on it.
    - During a long manual pause, vault owners can still leave on their own
      once the escape period has passed (`VaultPayoutFacet.escapeWithdraw`:
      3 days today, 7 days once #3441 lands). Say so in the pause notice.
