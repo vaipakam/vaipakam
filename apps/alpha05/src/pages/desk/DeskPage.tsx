@@ -25,6 +25,7 @@ import { formatBps } from '../../shared/ui/format';
 import { useNow } from '../../shared/ui/useNow';
 import { DeskActivity } from './DeskActivity';
 import { DeskHistory, MarketLoans } from './DeskPositions';
+import { OrderTicket } from './OrderTicket';
 
 type Hex = `0x${string}`;
 type MarketTerms = Pick<Market, 'lending' | 'collateral' | 'durationDays'>;
@@ -42,9 +43,10 @@ function marketName(m: MarketTerms, meta: TokenMetaMap | null, format: CopyAcces
 }
 
 /**
- * The rate desk (OFF-73, OFF-75, OFF-76): the network's token markets (one
- * lending token against one collateral token for one term), the chosen
- * market's rate ladder, and below it the viewer's own offers on it, the
+ * The rate desk (OFF-73, OFF-74, OFF-75, OFF-76): the network's token
+ * markets (one lending token against one collateral token for one term), the
+ * chosen market's rate ladder, the order ticket that posts on it through the
+ * guided flows' own review, and below them the viewer's own offers on it, the
  * market's recent loans and the rates they were agreed at over time, all
  * from the index (the world rail, RB-RAILS), read only once a wallet is
  * connected on a served network, as the offer book is. Then the viewer's
@@ -203,6 +205,16 @@ export function DeskPage() {
                 </>
               )}
             </section>
+          )}
+          {selected !== null && (
+            <OrderTicket
+              key={`ticket-${selectedKey}`}
+              market={selected}
+              marketLabel={marketName(selected, meta, format)}
+              own={own}
+              worldChainId={world.chainId}
+              copy={copy}
+            />
           )}
           {selected !== null && (
             <DeskActivity

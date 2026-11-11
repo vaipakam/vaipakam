@@ -2172,6 +2172,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   full page alone; a row the reader refuses is counted, never dropped
   silently. A failed read is a degraded-source warning, never an empty
   history.
+- **RB-DESK-TICKET** — Below a market's ladder (OFF-74) the desk offers an
+  order ticket: a limit-rate offer or request on that market, typed in one
+  compact form. The market fixes the lending token, the collateral token
+  and the term; the ticket adds the side, one amount, the collateral, the
+  rate, how long it stays open and how matches may fill it. Everything else
+  is the guided flows' default and is stated on the ticket in words, never
+  implied: full-term interest, no partial repayment, interest paid at
+  repayment, no rate range, no fee tariff, no price guard. Only the FIRST
+  thing that stops the ticket is shown, beneath the action, in a fixed
+  order: the wallet, the network, the market, the reads the ticket needs,
+  the term, then each field in the order it is typed. "Fill to balance"
+  types the wallet's whole balance of the token posting locks, exactly,
+  every digit. Fees are stated at today's list rates, and a figure that
+  could not be read is said to be unread. The mode posted is the mode
+  shown: a ticket is always posted on the chain, and gasless signed orders
+  are named as not available yet. The review, consent, dry run and risk
+  warning are the guided flows' own (RB-REVIEW), never a second copy, and
+  the Terms are accepted before that review opens. A ticket's typed state
+  and consent are kept per market, so a market change never carries one
+  across.
 
 ## 3. Companion specifications
 

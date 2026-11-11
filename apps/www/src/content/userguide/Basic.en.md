@@ -1560,3 +1560,9 @@ Below a market's ladder, the Rate desk shows three more things. First, your own 
 ### Rate Desk: Your Live Loans and Desk History
 
 Below a market's activity, the Rate desk lists your live loans in that market. They come from the app's own reading of your positions on the chain, the same one Positions uses. Each shows the side you hold, the amount and rate, and its health factor, or says there is no health reading, and opens the loan's page, where you manage it. Below that is your desk history: every token loan against token collateral you have held a side of, at any status, newest first, twenty at a time. The status shown is the index's record, which can lag the chain, so the loan's own page is the one to trust. "Show older loans" appears only when there really are older loans, and if the history cannot be read the desk says so instead of showing an empty list.
+
+<a id="desk-ticket"></a>
+
+### Rate Desk: The Order Ticket
+
+Below a market's ladder, the Rate desk has an order ticket. Use it to post an offer to lend, or a request to borrow, on that market without going through the guided steps. The market already fixes the two tokens and the loan term. You choose your side, the amount, the collateral, the rate, how long it stays open and how it may be filled. The ticket shows only the first thing in the way, under the button, so you fix one thing at a time. "Fill to balance" types your whole wallet balance of the token you would lock, exactly. The ticket also states the terms it sets for you and the fees at today's rates. It is always posted on the chain, so you pay gas, and what you lock waits in your own vault until a match. Signing an order without gas is not available in this app yet, and the ticket says so. "Review" opens the same review the Borrow and Lend pages use, where you agree and confirm.
