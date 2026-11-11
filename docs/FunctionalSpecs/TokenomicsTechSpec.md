@@ -1724,7 +1724,7 @@ Deployment flow:
 3. deploy connected mirror-token and cross-chain messenger contracts on the additional supported chains
 4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
-6. configure the VPFI TokenPool per-lane CCIP rate limits via `VpfiPoolRateGovernor` to finite caps before verification; lanes left at unlimited deployment defaults must be treated as not production-ready, and the governor refuses to disable a lane's limit
+6. configure the VPFI TokenPool per-lane CCIP rate limits via `VpfiPoolRateGovernor` to finite caps before verification; lanes left at unlimited deployment defaults must be treated as not production-ready, and the governor refuses to disable a lane's limit. A lane is added with both limits already enabled at in-bounds figures, so it is never observable unlimited, even between the step that adds it and the governor's own call (#3539)
 7. mark Base as the canonical VPFI tier chain before opening fee-discount flows
 8. configure mirror chains with the approved reward messenger, Base chain id, mirror-tier max age, and any required broadcast destinations
 9. top up the protocol broadcast budget before expecting automatic tier pushes or version-bump broadcasts to reach mirrors

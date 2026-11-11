@@ -47,6 +47,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -4482,6 +4483,129 @@ contract OfferFacetTest is Test {
 
         LibVaipakam.Offer memory offer = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(offer.creator, address(0), "Offer should be deleted after cancel");
+        vm.clearMockedCalls();
+    }
+
+    // ── #3539: an NFT pull is checked for delivery ──────────────────────────
+
+    function _nftLenderParams(address asset, LibVaipakam.AssetType kind, uint256 tokenId, uint256 quantity)
+        internal
+        view
+        returns (LibVaipakam.CreateOfferParams memory)
+    {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: asset,
+            amount: 10,
+            interestRateBps: 0,
+            collateralAsset: address(0),
+            collateralAmount: 0,
+            durationDays: 30,
+            assetType: kind,
+            tokenId: tokenId,
+            quantity: quantity,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: 10,
+            interestRateBpsMax: 0,
+            collateralAmountMax: 0,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+    }
+
+    /// @dev A token whose transfer returns without the vault owning the NFT
+    ///      afterwards must not open an offer backed by nothing.
+    function test_3539_createRefusesAnErc721ThatDoesNotArrive() public {
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        // The token reports the NFT still with its old owner after the transfer.
+        vm.mockCall(mockNft721, abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(1)), abi.encode(user1));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaultFactoryFacet.NftNotDelivered.selector, mockNft721, uint256(1), vault)
+        );
+        vm.prank(user1);
+        OfferCreateFacet(address(diamond)).createOffer(
+            _nftLenderParams(mockNft721, LibVaipakam.AssetType.ERC721, 1, 0), type(uint64).max
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev An ERC-1155 transfer that lands fewer units than asked is refused,
+    ///      so the offer never records a quantity the vault does not hold.
+    function test_3539_createRefusesAShortErc1155Delivery() public {
+        ERC1155Mock nft1155 = new ERC1155Mock();
+        nft1155.mint(user1, 1, 5);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, address(nft1155)),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        vm.startPrank(user1);
+        nft1155.setApprovalForAll(address(diamond), true);
+        nft1155.setApprovalForAll(vault, true);
+        vm.stopPrank();
+        // The vault's balance reads the same before and after the transfer.
+        vm.mockCall(
+            address(nft1155),
+            abi.encodeWithSelector(IERC1155.balanceOf.selector, vault, uint256(1)),
+            abi.encode(uint256(0))
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.NftShortDelivery.selector, address(nft1155), uint256(1), uint256(5), uint256(0)
+            )
+        );
+        vm.prank(user1);
+        OfferCreateFacet(address(diamond)).createOffer(
+            _nftLenderParams(address(nft1155), LibVaipakam.AssetType.ERC1155, 1, 5), type(uint64).max
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev The accept side uses the same checked pull: a lender accepting a
+    ///      borrower's rental request cannot open the loan with an NFT that
+    ///      never reached their vault.
+    function test_3539_acceptRefusesAnErc721ThatDoesNotArrive() public {
+        MockRentableNFT721(mockNft721).mint(user1, 78);
+        mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
+        deal(mockERC20, user2, 100000);
+        vm.prank(user2);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+
+        LibVaipakam.CreateOfferParams memory p = _nftLenderParams(mockNft721, LibVaipakam.AssetType.ERC721, 78, 1);
+        p.offerType = LibVaipakam.OfferType.Borrower;
+        p.amount = 100;
+        p.amountMax = 100;
+        p.interestRateBps = 500;
+        p.interestRateBpsMax = 500;
+        p.durationDays = 10;
+        vm.prank(user2);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+
+        vm.prank(user1);
+        MockRentableNFT721(mockNft721).approve(address(diamond), 78);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        // Let the request's terms stand their minimum age (#3443).
+        vm.warp(block.timestamp + LibTiming.DEFAULT_MIN_TERMS_AGE_SEC);
+        vm.mockCall(mockNft721, abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(78)), abi.encode(user1));
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(address(diamond), user1, offerId, true, 0);
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, user1Pk);
+        vm.expectRevert(
+            abi.encodeWithSelector(VaultFactoryFacet.NftNotDelivered.selector, mockNft721, uint256(78), vault)
+        );
+        vm.prank(user1);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
         vm.clearMockedCalls();
     }
 }

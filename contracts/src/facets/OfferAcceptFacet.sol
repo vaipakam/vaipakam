@@ -19,8 +19,6 @@ import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -1366,8 +1364,8 @@ contract OfferAcceptFacet is
                 // The lender (msg.sender/acceptor) must custody the NFT in their vault
                 // for the rental duration, matching the Lender-offer model.
                 if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-                    _pullNftIntoVault(
-                        offer.assetType, offer.lendingAsset, lender, lenderVault, offer.tokenId, offer.quantity
+                    LibFacet.depositNftToVault(
+                        offer.assetType, offer.lendingAsset, lender, offer.tokenId, offer.quantity
                     );
                 }
             }
@@ -1415,11 +1413,10 @@ contract OfferAcceptFacet is
                         );
                     }
                 } else {
-                    _pullNftIntoVault(
+                    LibFacet.depositNftToVault(
                         offer.collateralAssetType,
                         offer.collateralAsset,
                         borrower,
-                        borrowerVault,
                         offer.collateralTokenId,
                         offer.collateralQuantity
                     );
@@ -2008,26 +2005,5 @@ contract OfferAcceptFacet is
         uint256 lifEstimate;
         uint256 collateralResidualRefund;
         AcceptError errorCode;
-    }
-
-
-    /// @dev Pull a rental or collateral NFT from `owner`'s wallet into
-    ///      `owner`'s vault (the Diamond as approved operator) and record it
-    ///      in the tracked ledger, which bounds every vault withdrawal.
-    function _pullNftIntoVault(
-        LibVaipakam.AssetType kind,
-        address asset,
-        address owner,
-        address vault,
-        uint256 tokenId,
-        uint256 quantity
-    ) private {
-        if (kind == LibVaipakam.AssetType.ERC721) {
-            IERC721(asset).safeTransferFrom(owner, vault, tokenId);
-            quantity = 1;
-        } else {
-            IERC1155(asset).safeTransferFrom(owner, vault, tokenId, quantity, "");
-        }
-        LibVaipakam.recordVaultDeposit(owner, asset, tokenId, quantity);
     }
 }

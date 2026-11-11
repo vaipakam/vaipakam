@@ -1010,6 +1010,7 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   - Specify the NFT (e.g., Axie #1234), daily rental fee (e.g., 10 USDC/day), the ERC-20 token for rental payment and collateral (e.g., USDC), and rental duration (e.g., 7 days).
   - For ERC-721 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer so Vaipakam has vault-controlled owner/custody access for user-right assignment.
   - For ERC-1155 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer.
+  - A deposit counts only when it actually arrives (#3539). After the transfer the platform checks that the vault now owns the ERC-721 token, or that the vault's ERC-1155 balance rose by exactly the offered quantity, and refuses the offer otherwise. The same check applies wherever an NFT is pulled into a vault to back an offer or a loan, including NFT collateral at offer creation and the NFT a lender supplies when accepting a borrower's rental request, so no offer or loan ever records an NFT its vault does not hold. A token that reports a successful transfer without moving the NFT, or moves fewer units than asked, is refused rather than trusted.
 
 ### Borrowers:
 
@@ -3193,7 +3194,7 @@ The VPFI governance token will be distributed to align incentives and encourage 
   1. Deploy the canonical VPFI token on `Base`.
   2. Mint the initial `23,000,000` VPFI to the secure multi-sig and timelock-controlled treasury setup.
   3. Deploy connected mirror-token, token-pool, adapter, and messenger contracts on the additional supported chains.
-  4. Configure CCIP lanes, remote messengers, channel peers, token pools, and rate limits so cross-chain transfers preserve a single global supply model.
+  4. Configure CCIP lanes, remote messengers, channel peers, token pools, and rate limits so cross-chain transfers preserve a single global supply model. A token-pool lane is created with its inbound and outbound rate limits already enabled, at figures inside the rate governor's bounds, so no lane is ever open without a cap, not even between the transaction that adds it and the one that limits it (#3539). The deploy refuses, before broadcasting anything, figures the governor would not accept.
   5. Keep token symbol and metadata consistent as `VPFI` across supported chains.
 - **Architecture Clarification:** `VPFI` is cross-chain, and the interaction-reward denominator / reward-funding path also uses cross-chain messaging so each chain can claim against one protocol-wide daily interest total. The Vaipakam lending / borrowing / rental core protocol itself still remains single-chain per deployment, with a separate Diamond deployment on each supported network. Loans, offers, collateral, repayment, liquidation, preclose, refinance, and keeper actions always remain local to the network of that specific Diamond instance.
 - **Canonical Address Rule:** The Base deployment is the documented source of truth and should be published in `docs/` and surfaced through Vaipakam transparency / dashboard tooling.
