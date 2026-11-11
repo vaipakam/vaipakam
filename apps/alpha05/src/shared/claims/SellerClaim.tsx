@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -90,7 +90,7 @@ export function SellerClaim({ loanId, chain, own, meta, onClose }: SellerClaimPr
       if (dry.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('sellerClaim.stepSend') }));
-      return writeContract(config, { address: diamond, abi: SELLER, functionName: 'claimAsSeller', args: [loanId], chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, abi: SELLER, functionName: 'claimAsSeller', args: [loanId], chainId: chain.chainId, account });
     },
     measure: async (receipt) => (review ? measureSellerClaim(review, receipt.logs, diamond, account, words, copy) : []),
     release: async () => null,

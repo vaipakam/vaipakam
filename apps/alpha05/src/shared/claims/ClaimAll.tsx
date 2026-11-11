@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -268,7 +268,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
       if (est.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(est.error).reason }));
       if (est.kind === 'unreadable') return stop(format('flow.unreadable', { reason: est.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('claimAll.stepSend') }));
-      return writeContract(config, {
+      return sendWrite(config, {
         address: diamond,
         abi: MULTICALL,
         functionName: 'multicall',

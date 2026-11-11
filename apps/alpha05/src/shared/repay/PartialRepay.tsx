@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { RepayFacetABI, RepayPeriodicFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -232,7 +232,7 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
 
       say(text('partial.stepSend'));
       try {
-        return await writeContract(config, { address: diamond, abi: REPAY_ABI, functionName: 'repayPartial', args, chainId: chain.chainId, account });
+        return await sendWrite(config, { address: diamond, abi: REPAY_ABI, functionName: 'repayPartial', args, chainId: chain.chainId, account });
       } catch (e) {
         return stop(format('repay.stoppedAfterApproval', { reason: refusalFromError(e).reason }));
       }

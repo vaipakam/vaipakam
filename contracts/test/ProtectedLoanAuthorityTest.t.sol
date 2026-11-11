@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -39,6 +40,11 @@ contract ProtectedLoanAuthorityTest is SetupTest {
 
     function _f() internal view returns (AutoLifecycleFacet) {
         return AutoLifecycleFacet(address(diamond));
+    }
+
+    /// @dev The consent and caps surface (#3410: AutoLifecycleSettingsFacet).
+    function _s() internal view returns (AutoLifecycleSettingsFacet) {
+        return AutoLifecycleSettingsFacet(address(diamond));
     }
 
     function _pa() internal view returns (ProtectedAccountFacet) {
@@ -109,9 +115,9 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         uint256 loanId = _openLoan(false);
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
         vm.prank(lender);
-        _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
         ERC20Mock(mockERC20).mint(borrower, 10 ether);
         vm.startPrank(borrower);
         ERC20(mockERC20).approve(address(diamond), 10 ether);
@@ -124,20 +130,20 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         vm.warp(opensAt);
 
         // The retired wallet's consent no longer counts.
-        assertFalse(_f().getAutoExtendBorrowerCaps(loanId).enabled, "old consent voided");
+        assertFalse(_s().getAutoExtendBorrowerCaps(loanId).enabled, "old consent voided");
         // The old wallet can neither extend nor consent again.
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
         _f().extendLoanInPlace(loanId, 500, 30);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
-        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
 
         // The controller consents and extends; the charge comes from the
         // account's reserve.
         vm.prank(nominee);
-        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
-        assertTrue(_f().getAutoExtendBorrowerCaps(loanId).enabled, "controller consent counts");
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        assertTrue(_s().getAutoExtendBorrowerCaps(loanId).enabled, "controller consent counts");
         uint256 startBefore = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
         vm.prank(nominee);
         _f().extendLoanInPlace(loanId, 500, 30);

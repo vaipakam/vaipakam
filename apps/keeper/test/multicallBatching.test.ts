@@ -39,7 +39,7 @@ import {
 } from 'viem';
 import {
   AdminFacetABI,
-  AutoLifecycleFacetABI,
+  AutoLifecycleSettingsFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
   OfferCancelFacetABI,
@@ -589,7 +589,7 @@ const PG_FNS = {
   offerCount: fn(MetricsFacetABI, 'getActiveOffersCount'),
   offerPage: fn(MetricsFacetABI, 'getActiveOffersPaginated'),
   getOffer: fn(OfferCancelFacetABI, 'getOffer'),
-  caps: fn(AutoLifecycleFacetABI, 'getAutoRefinanceCaps'),
+  caps: fn(AutoLifecycleSettingsFacetABI, 'getAutoRefinanceCaps'),
   details: fn(LoanFacetABI, 'getLoanDetails'),
   ownerOf: fn(erc721Abi, 'ownerOf'),
   // #2808 — the one pause-log read per chain that dates every loan.

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { signTypedData, writeContract } from 'wagmi/actions';
+import { signTypedData } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -152,7 +153,7 @@ export function RentAccept({ offerId, chain, own, meta, terms, onClose }: RentAc
       // 4. The rental.
       say(text('rent.stepSend'));
       try {
-        return await writeContract(config, { address: diamond, abi: ACCEPT_ABI, functionName: 'acceptOffer', args: [offerId, message, signature], chainId: chain.chainId, account });
+        return await sendWrite(config, { address: diamond, abi: ACCEPT_ABI, functionName: 'acceptOffer', args: [offerId, message, signature], chainId: chain.chainId, account });
       } catch (e) {
         return stop(format('accept.stoppedAfterApproval', { reason: refusalFromError(e).reason }));
       }

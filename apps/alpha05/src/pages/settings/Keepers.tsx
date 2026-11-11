@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../../shared/tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
@@ -95,7 +95,7 @@ export function Keepers({ chain, own }: { chain: SupportedChain; own: OwnStateCl
     send: async () => {
       if (!reviewed) throw new Error('no keeper change under review');
       const call = changeCall(reviewed.change);
-      return writeContract(config, { address: diamond, abi: PROFILE_ABI, functionName: call.functionName, args: call.args, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, abi: PROFILE_ABI, functionName: call.functionName, args: call.args, chainId: chain.chainId, account });
     },
     measure: async (_receipt, at) => {
       if (!reviewed) return [];

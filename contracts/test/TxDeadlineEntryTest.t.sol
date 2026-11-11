@@ -10,6 +10,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
@@ -54,7 +55,7 @@ contract TxDeadlineEntryTest is SetupTest {
         } else if (i == 10) {
             EarlyWithdrawalDirectFacet(d).sellLoanViaBuyOffer(1, 2, 0, type(uint256).max, validUntil);
         } else if (i == 11) {
-            PrecloseFacet(d).offsetWithNewOffer(1, 1, 1, address(1), 1, true, address(0), validUntil);
+            PrecloseOffsetFacet(d).offsetWithNewOffer(1, 1, 1, address(1), 1, true, address(0), validUntil);
         } else {
             PrecloseFacet(d).transferObligationViaOffer(1, 2, validUntil);
         }

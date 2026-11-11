@@ -6,12 +6,13 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -114,7 +115,7 @@ contract RefinanceRequestGuardTest is SetupTest {
     /// A refinance request for `loanId`, posted by the borrower.
     function _request(uint256 loanId, uint64 expiresAt) internal returns (uint256 offerId) {
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);
@@ -152,7 +153,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         calls[1] = abi.encodeCall(PrecloseFacet.precloseDirect, (loanId));
         calls[2] = abi.encodeCall(PrecloseFacet.transferObligationViaOffer, (loanId, 0, type(uint64).max));
         calls[3] = abi.encodeCall(
-            PrecloseFacet.offsetWithNewOffer,
+            PrecloseOffsetFacet.offsetWithNewOffer,
             (loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20, type(uint64).max)
         );
         calls[4] = abi.encodeCall(PartialWithdrawalFacet.partialWithdrawCollateral, (loanId, 1));
@@ -323,7 +324,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.startPrank(holderB);
         ERC20(mockCollateralERC20).approve(vaultB, type(uint256).max);
         ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 600, uint64(block.timestamp + 365 days)
         );
         uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
@@ -338,7 +339,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         LibTestPositionNFT.core(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 600, uint64(block.timestamp + 365 days)
         );
 
@@ -404,11 +405,11 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.startPrank(borrower);
         ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        uint256 offsetOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
             type(uint64).max
         );
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.expectRevert(
@@ -487,7 +488,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, false, 600, uint64(block.timestamp + 365 days)
         );
         assertEq(_live(loanId), r1, "an unfillable request still stands");
@@ -516,7 +517,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0); // rate 400
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 300, uint64(block.timestamp + 365 days)
         );
         assertEq(_live(loanId), r1);
@@ -531,7 +532,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1); // passes
 
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, false, 600, uint64(block.timestamp + 365 days)
         );
         vm.expectRevert(LibAutoRefinanceCheck.RefinanceCapsRequired.selector);
@@ -582,7 +583,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockERC20).approve(vaultB, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
-        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        uint256 offsetOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
             type(uint64).max
         );
@@ -621,7 +622,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockERC20).approve(creatorVault, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
-        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+        uint256 offsetOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
             type(uint64).max
         );

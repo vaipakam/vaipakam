@@ -7,7 +7,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../../src/libraries/LibRiskAccess.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
-import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {RiskAccessFacet} from "../../src/facets/RiskAccessFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
@@ -101,7 +101,7 @@ contract RefinanceIlliquidLiveForkTest is Test {
         //    the deployed Diamond takes one (#1558), otherwise the wallet
         //    approval `_fundWallet` grants.
         vm.prank(borrower);
-        AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(diamond).setAutoRefinanceCaps(
             oldLoanId, true, uint16(RATE_BPS), uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);

@@ -39,7 +39,7 @@ export async function run() {
   {
     const { loanId } = await openLoan({ lender, borrower });
 
-    const impostor = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
+    const impostor = await simulate(DIAMOND, ABIS.precloseOffset, 'offsetWithNewOffer',
       [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], outsider.address);
     expectRefusal('A7.1', 'only the borrower can offset their own loan', impostor, 'KeeperAccessRequired');
 
@@ -49,18 +49,18 @@ export async function run() {
     // originated, and is refused a block later — which is exactly the shape
     // that makes a simulate-then-send pair disagree.
     await warpDays(1 / 1440); // one minute, so the comparison is not same-second
-    const sameTerm = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
+    const sameTerm = await simulate(DIAMOND, ABIS.precloseOffset, 'offsetWithNewOffer',
       [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], borrower.address);
     expectRefusal('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise', sameTerm, 'InvalidOfferTerms');
 
     const OFFSET_DAYS = 6n;
-    const sim = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
+    const sim = await simulate(DIAMOND, ABIS.precloseOffset, 'offsetWithNewOffer',
       [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], borrower.address);
     if (!sim.ok) cannotContinue('A7.2 offset offer', sim.name);
     const prePostPos = await positionOf(loanId);
     const beforeOffsetPost = await snapshot(tokens, holders);
     const posted = await tx(borrower, {
-      address: DIAMOND, abi: ABIS.preclose, functionName: 'offsetWithNewOffer',
+      address: DIAMOND, abi: ABIS.precloseOffset, functionName: 'offsetWithNewOffer',
       args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()],
     }, 'offsetWithNewOffer');
     const offsetOfferId = BigInt(sim.result);
@@ -175,7 +175,7 @@ export async function run() {
         });
     }
 
-    const late = await simulate(DIAMOND, ABIS.preclose, 'completeOffset', [loanId], borrower.address);
+    const late = await simulate(DIAMOND, ABIS.precloseOffset, 'completeOffset', [loanId], borrower.address);
     expectRefusal('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran', late, 'LoanNotActive');
 
     // The original collateral stayed put through the offset, released to the

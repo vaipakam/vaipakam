@@ -11,6 +11,7 @@ import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquid
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -233,6 +234,12 @@ contract RedeployFacets is Script {
         DefaultedFacet defaultedFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
         LoanFacet loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
         PrecloseFacet precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
+        // #3410 - the offset route now lives in its own facet, refreshed WITH
+        // PrecloseFacet: the early-close routes were one contract, and a
+        // refresh that carried only PrecloseFacet would leave the offset
+        // selectors on the pre-split bytecode.
+        PrecloseOffsetFacet precloseOffsetFacet =
+            PrecloseOffsetFacet(ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name));
         EarlyWithdrawalFacet earlyWithdrawalFacet = EarlyWithdrawalFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name));
         // #1780 — the direct lender-exit route now lives in its own facet. It
         // must be refreshed WITH the listed route, not instead of it: the two
@@ -352,6 +359,7 @@ contract RedeployFacets is Script {
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
+        console.log("PrecloseOffsetFacet:  ", address(precloseOffsetFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("EarlyWithdrawalDirect:", address(earlyWithdrawalDirectFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
@@ -580,7 +588,7 @@ contract RedeployFacets is Script {
             (rdToAdd.length > 0 ? 1 : 0) + (rdToReplace.length > 0 ? 1 : 0) +
             (dfToAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](9 + nExtra);
+            new IDiamondCut.FacetCut[](10 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), dfToReplace);
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -609,9 +617,14 @@ contract RedeployFacets is Script {
         // Replace; an unrouted selector (`ewdToAdd`, empty on any Diamond this
         // script accepts since #3412) would be issued as an Add below.
         cuts[8] = _replace(address(earlyWithdrawalDirectFacet), ewdToReplace);
+        // #3410 - the offset selectors are routed on every Diamond this script
+        // accepts ({_requireValidUntilEntries} reads `offsetWithNewOffer`, and
+        // the deploy has always cut `completeOffsetInternal` beside it), so a
+        // plain Replace moves them to the split-out facet.
+        cuts[9] = _replace(address(precloseOffsetFacet), _precloseOffsetSelectors());
         // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
         // because each gained new-and-possibly-unrouted selectors.
-        uint256 idx = 9;
+        uint256 idx = 10;
         for (uint256 i = 0; i < sellCuts.length; i++) {
             cuts[idx++] = sellCuts[i];
         }
@@ -922,7 +935,7 @@ contract RedeployFacets is Script {
     ///      `offsetWithNewOffer`, read from the compiled facet. Called before
     ///      the broadcast starts, so a refused run sends nothing.
     function _requireValidUntilEntries(address diamond) internal view {
-        if (IDiamondLoupe(diamond).facetAddress(PrecloseFacet.offsetWithNewOffer.selector) == address(0)) {
+        if (IDiamondLoupe(diamond).facetAddress(PrecloseOffsetFacet.offsetWithNewOffer.selector) == address(0)) {
             revert PredatesValidUntilEntries(diamond);
         }
     }
@@ -1370,11 +1383,19 @@ contract RedeployFacets is Script {
     }
 
     function _precloseSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](2);
         s[0] = PrecloseFacet.precloseDirect.selector;
-        s[1] = PrecloseFacet.offsetWithNewOffer.selector;
-        s[2] = PrecloseFacet.completeOffset.selector;
-        s[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        s[1] = PrecloseFacet.transferObligationViaOffer.selector;
+    }
+
+    /// @dev #3410 - the offset route, split out of PrecloseFacet. Carries the
+    ///      `address(this)`-gated `completeOffsetInternal` the accept path
+    ///      reaches, so no offset selector stays on the pre-split bytecode.
+    function _precloseOffsetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = PrecloseOffsetFacet.offsetWithNewOffer.selector;
+        s[1] = PrecloseOffsetFacet.completeOffset.selector;
+        s[2] = PrecloseOffsetFacet.completeOffsetInternal.selector;
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {

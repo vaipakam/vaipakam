@@ -378,7 +378,7 @@ contract EarlyWithdrawalFacet is
         // guard, and the external `createOffer` re-enters that same guard via the
         // `address(this).call` hop → `ReentrancyGuardReentrantCall` every time.
         // `createOfferInternal` is `msg.sender == address(this)`-gated and takes
-        // no reentrancy modifier (same pattern as `PrecloseFacet._submitOffsetOffer`).
+        // no reentrancy modifier (same pattern as `PrecloseOffsetFacet._submitOffsetOffer`).
         // The explicit `creator` is required because under `address(this).call`
         // `msg.sender` is the diamond — without it `offer.creator` would be
         // corrupted to the diamond instead of the exiting lender.
@@ -540,7 +540,7 @@ contract EarlyWithdrawalFacet is
     ///         modifier because `acceptOffer` already holds the diamond guard (a
     ///         second `_enter()` would revert `ReentrancyGuardReentrantCall` and
     ///         break the atomic accept-then-complete entirely). Same
-    ///         `address(this)`-only gate as `PrecloseFacet.completeOffsetInternal`
+    ///         `address(this)`-only gate as `PrecloseOffsetFacet.completeOffsetInternal`
     ///         / `createOfferInternal`.
     function completeLoanSaleInternal(
         uint256 loanId

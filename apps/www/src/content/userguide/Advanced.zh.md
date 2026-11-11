@@ -2273,3 +2273,9 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 利率台：进行中贷款与历史记录
 
 进行中贷款是你自己的仓位读取（“仓位”页面背后的 `LoanSummary` 行，含每笔贷款的健康因子以及你的仓位 NFT 所持一方）中，两端均为 ERC-20 代币且与市场的代币和期限一致的行。它们从不从索引读取；读取未完成时会提示可能缺少某笔贷款。历史通过 `scope=desk` 读取索引的 `/loans/by-participant`：出借资产与抵押品均为 ERC-20 的贷款，不含出借人出售时开出的记账贷款，数据来自记录谁持有过哪一方的只追加记录（在发起时及每次仓位转移时写入，从不删除）。行按最近参与排序；读取方请求 21 行，只有第 21 行返回时，才从第 20 行的参与时间和贷款 ID 提供更早的一页，因此恰好止于边界的一页不会提供任何内容。每行都会再次按利率台范围校验，被拒绝的行会计数而不是丢弃。状态为索引的记录（`active`、`repaid`、`defaulted`、`liquidated`、`settled`、`internal_matched`、`fallback_pending` 或未知），贷款页面读取链上数据。
+
+<a id="desk-ticket"></a>
+
+### 利率台：下单票
+
+下单票通过 `createOffer` 在当前市场发布：出借资产、抵押资产和 `durationDays` 来自市场，下单票提供方向（`offerType`）、以全额作为 `amountMax`，部分成交或立即成交或取消时 `amount` 为单笔最小成交额，全部或不成交时为全额（`LibOfferMatch` 将每笔撮合限定在 `amount` 与剩余额之间，因此单一金额总是整笔成交）、`collateralAmount`、单一利率（`interestRateBpsMax` 等于 `interestRateBps`）（确切利率：`LibOfferMatch` 要求两个利率区间重叠，因此票据只与区间包含该利率的一方撮合）、到期时间和 `fillMode`（部分成交、全部或不成交、立即成交或取消；最后一种需要有限的到期时间）。其余为引导流程的默认值，并写在下单票上：`useFullTermInterest` true、`allowsPartialRepay` false、`periodicInterestCadence` 0、无抵押品区间（`collateralFloor` 等于抵押品）、无费用费率表、无价格保护。打开审核时，`expiresAt` 由最新区块的时间戳确定；永不过期的报价为 0。金额按代币精度读取，绝不四舍五入；小数位多于代币精度会阻止下单票。第一个阻碍按固定顺序报告：钱包、网络、市场、读取（`readPostFormInputs`、两种代币的精度与现行条款）、期限对照 `maxDurationDays`，然后是金额、抵押品、利率（年化最高 100%）和成交方式。费用使用列示的贷款发起费和金库分成；费用折扣只会降低它们。审核即引导流程自己的发布审核，并先接受条款。

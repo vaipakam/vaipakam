@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
-import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../../src/facets/AutoLifecycleSettingsFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
@@ -106,7 +106,7 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
         //    single-use permit where the deployed Diamond takes one (#1558),
         //    otherwise the wallet approval `_fundWallet` grants.
         vm.prank(borrower);
-        AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(diamond).setAutoRefinanceCaps(
             oldLoanId, true, uint16(RATE_BPS), uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);

@@ -82,6 +82,8 @@ export interface DeploymentFacets {
   ownershipFacet?: HexAddress;
   partialWithdrawalFacet?: HexAddress;
   precloseFacet?: HexAddress;
+  /** #3410 — split out of `precloseFacet`. */
+  precloseOffsetFacet?: HexAddress;
   profileFacet?: HexAddress;
   refinanceFacet?: HexAddress;
   repayFacet?: HexAddress;
@@ -175,6 +177,8 @@ export interface DeploymentFacets {
   // type-safely (explorer links, admin tooling) instead of via casts.
   aggregatorAdapterFactoryFacet?: HexAddress;
   autoLifecycleFacet?: HexAddress;
+  /** #3410 — split out of `autoLifecycleFacet`. */
+  autoLifecycleSettingsFacet?: HexAddress;
   backstopFacet?: HexAddress;
   consolidationFacet?: HexAddress;
   encumbranceMutateFacet?: HexAddress;

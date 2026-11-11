@@ -103,12 +103,12 @@ export async function run() {
     // refuses 0 even though the checker reads 0 as "no expiry cap", so the
     // consent always carries a real deadline.
     const capsExpiry = BigInt((await chainNow()) + 365 * 86_400);
-    const zeroExpiry = await simulate(DIAMOND, ABIS.autoLifecycle, 'setAutoRefinanceCaps',
+    const zeroExpiry = await simulate(DIAMOND, ABIS.autoLifecycleSettings, 'setAutoRefinanceCaps',
       [oldLoanId, true, 400, 0n], borrower.address);
     expectRefusal('A6.6b', 'enabling caps with no expiry is refused — the consent always carries a deadline', zeroExpiry, 'InvalidCaps');
 
     const capsReceipt = await tx(borrower, {
-      address: DIAMOND, abi: ABIS.autoLifecycle, functionName: 'setAutoRefinanceCaps',
+      address: DIAMOND, abi: ABIS.autoLifecycleSettings, functionName: 'setAutoRefinanceCaps',
       args: [oldLoanId, true, 400, capsExpiry],
     }, 'setAutoRefinanceCaps');
     const capsNow = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',

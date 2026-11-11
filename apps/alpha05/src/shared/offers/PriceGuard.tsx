@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -203,7 +203,7 @@ function GuardActionFlow({ id, chain, own, bps, onClose }: FlowProps) {
       if (dry.kind === 'reverted') return stop(format('safety.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text(bps === 0 ? 'priceGuard.stepClear' : 'priceGuard.stepSet') }));
-      return writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account: own.account });
+      return sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account: own.account });
     },
     measure: async (receipt) => (review ? measureGuard(review, receipt.logs, diamond, copy) : []),
     release: async () => null,

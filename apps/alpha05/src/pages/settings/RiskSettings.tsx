@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../../shared/tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
@@ -66,7 +66,7 @@ export function RiskSettings({ chain, own }: { chain: SupportedChain; own: OwnSt
     send: async () => {
       if (!reviewed) throw new Error('no risk-access change under review');
       const call = changeCall(reviewed.change, reviewed.settings);
-      return writeContract(config, { address: diamond, abi: RISK_ACCESS_ABI, functionName: call.functionName, args: call.args, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, abi: RISK_ACCESS_ABI, functionName: call.functionName, args: call.args, chainId: chain.chainId, account });
     },
     measure: async (_receipt, at) => {
       if (!reviewed) return [];

@@ -29,7 +29,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
-import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -57,7 +57,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
-import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -3655,7 +3655,7 @@ contract OfferFacetTest is Test {
         // Mock completeOffset to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(PrecloseFacet.completeOffsetInternal.selector, uint256(99)),
+            abi.encodeWithSelector(PrecloseOffsetFacet.completeOffsetInternal.selector, uint256(99)),
             ""
         );
         vm.mockCall(
@@ -3719,7 +3719,7 @@ contract OfferFacetTest is Test {
         // Mock completeOffset to revert
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(PrecloseFacet.completeOffsetInternal.selector, uint256(99)),
+            abi.encodeWithSelector(PrecloseOffsetFacet.completeOffsetInternal.selector, uint256(99)),
             "offset fail"
         );
         vm.mockCall(

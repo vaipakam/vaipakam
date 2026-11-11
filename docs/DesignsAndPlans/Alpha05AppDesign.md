@@ -175,6 +175,21 @@ holds signing until the new context has its own. Once a transaction has
 been handed to the wallet there is no silent retry that could leave it
 ambiguous whether the action may still confirm.
 
+### RB-GAS — every write carries the shared gas margin
+
+Every contract write is sent with a gas limit of a fresh estimate plus the
+margin every sender in the repository uses (30%, rounded up), never at the
+node's bare estimate. An estimate is the least gas the call needs in the
+latest block, and the write mines in a later one; a call whose cost grows
+with time (an oracle read, accrual, a limiter that refills) can then run
+short and revert with no reason. Unused gas is not charged. The estimate is
+asked of the wallet's own provider first, then the app's endpoints. When the
+call reverts on estimation, or nothing can estimate it, no limit is set and
+the wallet estimates and reports the refusal itself, as it always did. A
+batch whose estimate must be taken on a stricter form (claim everything)
+sets its limit from that estimate with the same margin. There is one sender
+for this, and a lint rule refuses any write that bypasses it.
+
 ### RB-CONFIDENCE — predictable confidence
 
 The same four things on every write, so the app is learned once: a review
@@ -2157,6 +2172,32 @@ above. Each resolves here, so a route reviewer needs no private file:
   full page alone; a row the reader refuses is counted, never dropped
   silently. A failed read is a degraded-source warning, never an empty
   history.
+- **RB-DESK-TICKET** — Below a market's ladder (OFF-74) the desk offers an
+  order ticket: an exact-rate offer or request on that market, typed in one
+  compact form. The market fixes the lending token, the collateral token
+  and the term; the ticket adds the side, the amount, the collateral, the
+  rate, how long it stays open and how matches may fill it. The rate is
+  one exact rate and is labelled so, never as a lowest or highest: a match
+  needs the other side's rate range to include it. A partial or
+  immediate-or-cancel ticket also takes the smallest single fill, below the
+  whole amount: a match fills only between an offer's smallest and largest
+  amount, so a fill mode that promises parts must post a range, never one
+  size that only ever fills whole. Everything else is the guided flows'
+  default and is stated on the ticket in words, never implied: full-term
+  interest, no partial repayment, interest paid at repayment, no rate
+  range, no collateral range, no fee tariff, no price guard. Only the FIRST
+  thing that stops the ticket is shown, beneath the action, in a fixed
+  order: the wallet, the network, the market, the reads the ticket needs,
+  the term, then each field in the order it is typed. "Fill to balance"
+  types the wallet's whole balance of the token posting locks, exactly,
+  every digit. Fees are stated at today's list rates, and a figure that
+  could not be read is said to be unread. The mode posted is the mode
+  shown: a ticket is always posted on the chain, and gasless signed orders
+  are named as not available yet. The review, consent, dry run and risk
+  warning are the guided flows' own (RB-REVIEW), never a second copy, and
+  the Terms are accepted before that review opens. A ticket's typed state
+  and consent are kept per market, so a market change never carries one
+  across.
 
 ## 3. Companion specifications
 

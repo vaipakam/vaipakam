@@ -86,4 +86,32 @@ export default defineConfig([
       ...BLOCKING_HOOKS,
     },
   },
+  {
+    // RB-GAS — every contract write goes through `sendWrite`
+    // (src/shared/tx/send.ts), which sends it with the shared gas margin
+    // (@vaipakam/lib/gasLimit), never at the node's bare estimate. The two
+    // protection files are held by another change (#3489) and move onto
+    // sendWrite once it lands; they are the only exceptions.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/shared/tx/send.ts', 'src/shared/protection/SignerAction.tsx', 'src/shared/protection/DestinationAction.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'wagmi/actions',
+              importNames: ['writeContract'],
+              message: 'Send a contract write through sendWrite (src/shared/tx/send.ts): it applies the shared gas margin (RB-GAS).',
+            },
+            {
+              name: '@wagmi/core',
+              importNames: ['writeContract'],
+              message: 'Send a contract write through sendWrite (src/shared/tx/send.ts): it applies the shared gas margin (RB-GAS).',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ])
