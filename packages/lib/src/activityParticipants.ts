@@ -396,6 +396,8 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'RewardPoolFunded',
       'SalaryWithdrawn',
       'TreasuryConverted',
+      // One leg of a treasury conversion and the floor it was held to (#3414).
+      'TreasuryConvertLeg',
       'TreasuryFeesClaimed',
       'VPFIMinted',
     ] as const
