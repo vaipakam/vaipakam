@@ -212,13 +212,12 @@ export async function rebroadcastStalePrivateSends(
         try {
           await deps.sendPublic(chain.id, row.serialized);
         } catch (err) {
-          const msg = String((err as { message?: unknown }).message ?? '');
-          if (NONCE_MINED.test(msg)) {
+          if (NONCE_MINED.test((err as Error).message ?? '')) {
             await deps.records.remove(chain.id, row.hash);
             mined += 1;
             continue;
           }
-          if (!ALREADY_KNOWN.test(msg)) throw err;
+          if (!ALREADY_KNOWN.test((err as Error).message ?? '')) throw err;
           // The public node already holds these bytes: the copy is out.
         }
         await deps.records.markPublic(chain.id, row.hash, deps.now());
