@@ -1,37 +1,46 @@
-# Vaipakam ossification roadmap + guardian-pause commitment (#404)
+# Vaipakam governance-minimisation roadmap (#404, #3438)
 
-> Status: **published commitment, pre-audit draft.** Decision artifact for
-> #404 (research verdict: ADOPT a *staged* ossification roadmap, not immediate
-> immutability). The research itself is in
-> [`Research-404-OssificationRoadmap.md`](Research-404-OssificationRoadmap.md);
-> this doc is the honest, dated *commitment* derived from it. Authored
-> 2026-06-19.
+> Status: **published commitment, pre-audit draft.** First written
+> 2026-06-19 for #404 (research verdict: ADOPT a *staged* ossification
+> roadmap, not immediate immutability; the research is in
+> [`Research-404-OssificationRoadmap.md`](Research-404-OssificationRoadmap.md)).
+> Revised 2026-11-11 for #3438 (owner decision 2026-11-09): it now states
+> the rule every trusted piece follows today, an inventory of every trusted
+> piece, per-component exit criteria, what stays governed for good, how users
+> are told, and how a final non-upgradeable version fits the one-fresh-deploy
+> rule. It keeps its #404 file name so existing links still resolve; #3438
+> asked for `GovernanceMinimisationRoadmap.md`, and one document is cleaner
+> than two that would drift apart.
 
 ## 0. TL;DR
 
-Vaipakam is a fully-upgradeable EIP-2535 Diamond today, on purpose — pre-audit
-we need to be able to patch and evolve. We do **not** ship an immutable core
-yet. Instead we commit to:
+Vaipakam is upgradeable today, on purpose: before an audit and real-world
+use we must be able to fix bugs. Trust in governance shrinks over time on a
+published path:
 
-1. A **guardian fast-pause** on the core lending Diamond — *which already
-   exists* (the asymmetric `PAUSER`/`UNPAUSER` split) and is wired to survive
-   handover. §1. (The slow-unpause half of that split is now code-enforced:
-   since owner decision D1 (#934, 2026-10-16) the root `DEFAULT_ADMIN_ROLE`
-   lands on the timelock at handover, so re-granting `UNPAUSER_ROLE` also
-   waits out the delay. The §1 caveat records what changed.)
-2. A **staged ossification** of the trusted surface over time, with the rules
-   that move custody freezing first and curation staying bounded-upgradeable.
-   §2.
-3. **Separated guardian / upgrade authorities behind a 48–72h timelock**
-   throughout. §3.
+1. **Today, every trusted piece follows one rule** (§1): it can only
+   tighten or delay, never move user funds; it is slower than the user's own
+   way out; it is visible before it takes effect; and the user can avoid it
+   where that is possible. §1 also lists, by name, where the code does not
+   yet meet the rule.
+2. **An inventory** (§2) lists every role, pointer and upgrade path, who
+   holds it after handover, what it can and cannot do, and its delay.
+3. **Hardening is per component, not one big switch** (§5): each component
+   has its own exit criteria. Pieces that are already non-upgradeable (the
+   vault beacon, the position NFT, the registry, the price guard) narrow what
+   their owner may still change; the lending core and the vault code finally
+   move to a **non-upgradeable version that users opt into** (§6).
+4. **Some things stay governed for good** (§7): sanctions screening, the
+   price sources offered to new loans, the stop-only pause, and parameters
+   for new markets inside fixed bounds.
+5. **Users are told** at each step, before it happens (§8).
 
-We deliberately do **not** over-promise immutability we don't have. Anything
-that can move user funds — directly or via price/risk inputs — stays behind a
-**timelock** until it is frozen on the published schedule. Two honesty notes on
-that delay and the cancel lever:
+We deliberately do **not** over-promise immutability we don't have. The
+guardian fast-pause (§3) and the timelock shape (§4) are unchanged from the
+#404 commitment. Two honesty notes on the delay and the cancel lever:
 
-- The **48–72h** figure is a deploy commitment with a code-enforced floor
-  under it. `DeployTimelock.s.sol` reads `TIMELOCK_MIN_DELAY` from env
+- The **48–72h** Timelock figure is a deploy commitment with a code-enforced
+  floor under it. `DeployTimelock.s.sol` reads `TIMELOCK_MIN_DELAY` from env
   (default `172800` = 48h) and refuses less than 48h on any chain that is not
   a known testnet. Once deployed, the Timelock's delay can never be lowered
   below that deploy-time value (`MIN_DELAY_FLOOR`, #938), even through the
@@ -48,7 +57,87 @@ that delay and the cancel lever:
   public delay, during which the Pauser Safe can still cancel everything
   else the proposer has queued.
 
-## 1. Guardian fast-pause — already in place
+## 1. The rule every trusted piece follows today
+
+Owner decision 2026-11-09 (#3438). Every trusted piece (a role, an owner, a
+guardian, a pointer, an upgrade path) is held to four tests:
+
+1. **It can only tighten or delay, never move user funds.** A fast lever
+   stops, refuses or postpones; nothing a trusted key does alone sends a
+   user's assets anywhere.
+2. **It is slower than the user's own way out.** A change that could affect
+   what a user holds waits longer than the user needs to leave first.
+3. **It is visible in advance.** A queued change is public, and the app and
+   alerts show it during its wait (#3237 for the Timelock queue, #3422 for
+   vault code).
+4. **The user can avoid it where possible.** A loan's external choices
+   (price sources, swap routes, marketplace) are fixed when it opens and can
+   only be removed, never swapped (#3437); a vault owner may pin a vault
+   version and is never moved off it except by a revocation.
+
+**Where the code meets the rule today, and where it does not yet.** Stating
+the gaps is part of the commitment; each has an issue.
+
+| Test | Met today | Not yet met | Closed by |
+| --- | --- | --- | --- |
+| Never moves user funds | The pause, the guardian cancels and the emergency revoker stop things only. The notification biller moves a fixed, consented fee once per loan side (see §5's carve-out). | A Diamond code change (a diamond cut) can change how funds move once its delay ends, and the Diamond still decides some vault outflows by itself. | The vault checks outcomes, not the Diamond's say-so (#3431, #3205 Stage B); the vault-side exit (#3424). |
+| Slower than the user's exit | Vault code waits the beacon's code delay, and a pinned vault never takes new code. | The Diamond's 48h Timelock delay is shorter than the 14-day vault exit (#3424); the vault code delay is 3 days today against a 3-day escape period. | Vault code delay 7 days (#3421); escape 7 days (#3441); the vault-side exit (#3424) works without the Diamond. |
+| Visible in advance | Every delayed change emits an event when it is queued. | No app surface yet shows queued Timelock or vault-code changes to users. | #3237, #3422. |
+| Avoidable | Vault pins (#3204). | A loan's price sources and routes follow live settings. | #3437. |
+
+## 2. Inventory: who holds what after handover
+
+As of `main` on 2026-11-11. The canonical handover (`Handover.s.sol`, gate
+`HandoverGate.s.sol`) moves every listed authority, and every other owned
+contract `ChainContracts.walk` finds, to the holder named here. A contract
+owned by the Diamond itself (the backstop vault, the aggregator adapter
+proxies) is governed through Diamond code, so through the Diamond's own
+holders. This table is per component; the exhaustive per-setter list is
+#651's code-derived census, still open.
+
+**Holders.** *Timelock*: the governance Safe proposes, the Timelock executes
+after its delay (48h floor), the Pauser Safe may cancel. *Pauser Safe*: fast
+stop-only levers. *Governance Safe*: proposer, plus the one zero-delay
+emergency revoke. *Bot keys*: the keeper, watcher and notification biller.
+
+### 2.1 The Diamond
+
+| Authority | Holder | Can | Cannot | Delay |
+| --- | --- | --- | --- | --- |
+| ERC-173 owner (diamond cut, ownership) | Timelock | Add, replace or remove any facet code; a few owner-only setters (the sanctions list pointer, the liquidity-classification factory, tier reference assets, peer-protocol addresses) | Be renounced or moved to the zero address (#906) | Timelock |
+| `DEFAULT_ADMIN_ROLE` (role root) | Timelock (D1, #934) | Grant and revoke every other role; `transferAdmin` | Act without the delay | Timelock |
+| `ADMIN_ROLE` (about 190 setters) | Timelock | Protocol settings: fees within `MAX_FEE_BPS`, risk and liquidation settings within their ranges, keeper and reward settings, the rate model pointer, the collateral-sale executor pointer | Change an open loan's fee rate (fees are stamped per loan); exceed a setter's range | Timelock |
+| `VAULT_ADMIN_ROLE` (about 26 functions) | Timelock | Backstop vault settings and its upgrade; aggregator adapter template; sweep tokens sent to the backstop vault by mistake (never protocol position NFTs); set the vault beacon once | Change the vault beacon after it is set; move code into user vaults (that is the beacon's job) | Timelock |
+| `RISK_ADMIN_ROLE`, `KYC_ADMIN_ROLE`, `ORACLE_ADMIN_ROLE` | Timelock | Minimum health factor; KYC tiers (dormant on retail); nothing (`ORACLE_ADMIN_ROLE` gates no function) | — | Timelock |
+| `UNPAUSER_ROLE` | Timelock | Lift a pause | — | Timelock |
+| `PAUSER_ROLE` | Pauser Safe | Pause at once | Unpause; change any setting | None |
+| `EMERGENCY_REVOKER_ROLE` | Governance Safe | Strip a role from a compromised hot key | Grant anything; touch the role root or anything the Timelock holds | None |
+| `WATCHER_ROLE` | Watcher bot | `autoPause` for at most 2 hours | Unpause; extend past the cap | None |
+| `NOTIF_BILLER_ROLE` | Biller bot | Charge the fixed notification fee the payer consented to, once per side of an open loan | Charge more than the payer's cap, a closed loan, or a flagged wallet | None |
+| `KEEPER_ROLE` | Keeper bot | Lower an asset's liquidity tier (never raise it above the baseline); run the keeper-only reward and claim steps | Raise a tier; move funds to itself | None |
+
+User-granted keeper permissions are not governance: each user grants and
+revokes them for their own positions (#3353 replaces standing bits with
+owner-signed, bounded mandates).
+
+### 2.2 Standalone contracts
+
+| Contract | Upgradeable? | Owner can | Guardian (Pauser Safe) can | Delay |
+| --- | --- | --- | --- | --- |
+| `VaultBeacon` (code for every user vault, #3204) | No; ownership cannot be renounced | Register a version; propose a current version; propose a revocation naming a successor | Cancel a proposal; while the Diamond is paused, revoke a version onto code already registered | 3 days (`MIN_CODE_DELAY`), 7 days after #3421 |
+| `PositionNFT` (#3318) | No; ownership cannot be renounced | Propose a new renderer or transfer check | Cancel the proposal | 3 days (`MIN_COMPONENT_DELAY`) |
+| `ProtocolRegistry` (treasury, backstop, price guard, swap adapters, conduits; #3272) | No | Propose a pointer or a set addition; propose a longer delay | Cancel a proposal; remove a set member at once (removal only stops) | 3 to 30 days |
+| `PriceGuard` (every price read, #3272) | No | Propose a source or setting change within fixed ranges; raise the delay | Cancel a change; switch off a secondary source at once | 7 to 14 days |
+| `VaipakamFeedRegistry` | No | Name proposers; set the delay within range | Veto a proposed feed | 7 to 14 days |
+| `SanctionsList` | No | Name the adder and remover keys, the adder's daily cap | — | Listing is immediate (adder, capped per day); delisting by the remover Safe, or a bot proposal through `SanctionsDelistingTimelock` (1 to 30 days, default 2) |
+| `VPFIToken` (canonical chain) | Yes (UUPS) | Upgrade; set the minter; unpause | Pause | Timelock |
+| Cross-chain contracts (messenger, token pools, rate governor, reward messenger, receivers, mirror token) and the CCIP token-admin role | Some UUPS | Upgrade; lane and rate-limit settings within the governor's bounds | Pause | Timelock |
+| `CollateralListingExecutor` | Yes (UUPS, own owner) | Upgrade; approve or remove conduits; sweep stray tokens | — | Timelock once its owner is rotated |
+| Backstop vault, aggregator adapter proxies | Yes (UUPS, Diamond-owned) | Through `VAULT_ADMIN_ROLE` | — | Timelock |
+| `KeeperBackupUpkeep`, `RiskPremiumRateModel` | No | Step mask and timing; tier premiums | — | Whatever their owner's is: the handover moves every owned contract its walk finds to the Timelock, and #651 confirms none is missed |
+| `VaipakamTimelock` | No | Its delay can only rise above the deploy-time floor | Pauser Safe cancels queued operations | — |
+
+## 3. Guardian fast-pause — already in place
 
 The research recommended adding a Diamond-level guardian-pause mirroring the
 cross-chain `GuardianPausable` pattern (guardian can pause, only owner-via-
@@ -100,32 +189,79 @@ deliberately, and it renounces the deployer's `PAUSER`/`UNPAUSER` holds).
 > `GovernanceHandover.t.sol` asserts the deployer holds no `UNPAUSER_ROLE`
 > (nor the emergency revoker) after it.
 
-## 2. Staged ossification — what freezes, and when
+## 4. Authority + timelock shape
 
-We start fully upgradeable and renounce on a schedule, narrowing the trusted
-surface in stages. Targets by surface:
+- **Separated authorities:** a fast-key **guardian/Pauser Safe** (pause only),
+  an **upgrade/admin Safe** → **48–72h Timelock** for everything that can move
+  custody. The two are distinct keys, so a guardian-key compromise can only
+  *halt* user flows (it has no upgrade authority), and an upgrade-key
+  compromise still has to wait out the timelock delay — during which the
+  guardian halts user activity and the timelock proposer (governance) can
+  cancel the queued operation. The guardian does **not** itself block the
+  upgrade (the cut path is intentionally not pause-gated, for recovery).
+- **Closed by D1 — the root `DEFAULT_ADMIN_ROLE` is timelocked** (#934,
+  owner decision 2026-10-16). It used to move to the governance Safe at
+  handover, and because it is the `roleAdmin` of `ADMIN_ROLE`,
+  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE` and
+  `UNPAUSER_ROLE`, the Safe could grant itself any of them immediately and
+  skip the delay. It now moves to the timelock, so the "custody-moving changes
+  sit behind the timelock" guarantee is code-enforced for the role-grant path
+  too. The timelock's own delay cannot be lowered below its deploy-time value,
+  and an independent canceller can veto a queued operation (#938).
+- **Ossification cannot be done by renouncing ownership.** The ERC-173 owner
+  must always hold `DEFAULT_ADMIN_ROLE`, and ownership can never move to the
+  zero address (#906). Hardening therefore never goes through an ownership
+  renounce: a component either freezes in place by its own rule (§5), or, for
+  the lending core and the vault code, is succeeded by a final version users
+  opt into (§6). The vault beacon, the position NFT and the registry refuse a
+  renounce for the same reason: an ownerless one could never revoke a bad
+  version or remove a bad adapter again.
+- **No on-chain quorum yet** (acknowledged gap, shared with #394's governance
+  gap). The bounded-steward + timelock-asymmetry + guardian-pause fabric is the
+  same one the risk knobs ride on; an on-chain quorum is a later addition, not
+  a pre-audit blocker.
+- The handover ceremony (role + ownership rotation to the timelock/guardian
+  topology) is run by `Handover.s.sol`, exposed as a dedicated phase on **both**
+  testnet and mainnet (`deploy-testnet.sh … --phase handover`,
+  `deploy-mainnet.sh`). Testnet is where the split is **rehearsed**; mainnet
+  cutover is where it takes effect for real value. Operationally, flow-test
+  deploys are often left deployer/admin-owned for convenience (EOA keys keep the
+  flow tests simple), but that is a per-deploy choice, **not** a claim that
+  handover can't run on testnet — it can and should be rehearsed there.
 
-> **What "the schedule" is, honestly (no calendar dates yet).** This document
-> commits to the *order and the gating conditions*, not to dates — and
-> deliberately so: the protocol is pre-audit and pre-mainnet, and naming block
-> heights or calendar dates now would be a guess. The freeze schedule is
-> **milestone-gated**: (1) external audit sign-off on the surface being frozen,
-> then (2) a published mainnet **bake period** (a stated minimum number of weeks
-> of live operation with no critical findings), after which (3) the renounce
-> transaction for that surface is executed and announced. The concrete dates /
-> bake-length / audit-firm milestones are **published at audit time** in this
-> doc's revision and the release notes — until then, every "on the published
-> schedule" below means "on that milestone-gated schedule, to be dated at audit
-> time," not a commitment already in force.
+## 5. Staged hardening — per component, with exit criteria
 
-| Surface | Today | Commitment |
-| --- | --- | --- |
-| Fund custody + core accounting (loan lifecycle, repayment, claim, vault transfers) | upgradeable | **Freeze first** — the highest-trust surface; freeze its cut path on the published schedule once the audit + bake confirm stability. |
-| Per-user vault implementation (`VaipakamVaultImplementation`, UUPS, `_authorizeUpgrade` is `onlyOwner` = the Diamond) | upgradeable | **Part of the custody-freeze commitment.** A vault-impl upgrade is custody-moving (it runs in the proxy that holds user assets). The actual gate is **`VAULT_ADMIN_ROLE`**, *not* the Diamond's ERC-173 owner: `upgradeVaultImplementation` / `setMandatoryVaultUpgrade` (both `VAULT_ADMIN_ROLE`-only) set *which* template the proxies point at, and `upgradeUserVault(user)` is permissionless **but safe** — it can only migrate a proxy to that admin-set template, never to a caller-chosen impl. `VAULT_ADMIN_ROLE` rotates to the **timelock** at handover, so the template choice is timelock-delayed; this row is a freeze candidate on the same schedule as the cut path — explicitly, not just the Diamond facets. |
-| Other Diamond-owned UUPS custody surfaces — the ERC-4626 aggregator adapter proxies (hold aggregator principal), the protocol backstop vault (`BackstopFacet.upgradeBackstopVault`, holds backstop lending capital), and the Seaport collateral-sale executor (`CollateralListingExecutor`, UUPS `_authorizeUpgrade` is `onlyOwner`, validates/finalizes prepay collateral sales against the Diamond) | upgradeable | **Also part of the custody-freeze commitment.** These are *separate* UUPS upgrade hooks from the per-user vault, each on its own admin surface. As with the vault, the governance-controlled hook is the **template / implementation setter** — for the aggregator that is `upgradeAdapterImplementation(newImplementation)` (`VAULT_ADMIN_ROLE`), while `upgradeAggregatorAdapter(adapter)` is only the permissionless-but-safe migrate trigger (it can move a proxy to the published template or a mandated version, never to a caller-chosen impl). A malicious template cut in here moves aggregator / backstop / collateral-sale custody without ever touching the per-user vault path, so the **implementation setters** carry the **same timelock + freeze-candidate** treatment as the vault impl. **The executor is the exception to watch:** unlike the Diamond-template surfaces, `CollateralListingExecutor` is upgraded via its **own Ownable owner** (`__Ownable_init(_owner)` = the admin multisig at deploy), *not* a Diamond role / template setter — the Diamond only stores the current executor address via `setCollateralListingExecutor`. So a freeze scoped to Diamond template setters / `VAULT_ADMIN_ROLE` would miss it; its **own owner** must be rotated to the timelock and frozen separately. **And that alone is still insufficient** — the Diamond's *pointer* to the trusted executor is independently swappable: `PrepayListingFacet.setCollateralListingExecutor(address)` is `ADMIN_ROLE`-gated and writes `s.collateralListingExecutor` directly, so ADMIN could repoint the Diamond at a fresh malicious executor even with the old impl frozen. Freezing the collateral-sale surface therefore needs **both** levers behind the timelock — the executor's own Ownable owner **and** the `setCollateralListingExecutor` pointer. (The aggregator and backstop products themselves are later-phase; until they ship those rows are forward-looking, but the freeze guarantee names them explicitly so they can't slip the net when they do.) |
-| Price/risk inputs that *indirectly* move custody (oracle adapters #392, risk params + admission floor #394, rate model #400) | upgradeable | **Bounded-upgradeable, never freely replaceable.** A freely-swappable oracle/risk facet can drain custody indirectly, so these stay behind a **timelock**, and — for the *numeric* knobs (risk params, admission floor, rate-model premiums) — **range-checked setters** that evolve only within hard bounds, never via a free facet replace. **Honest caveat (gate + bound).** *Gate:* the `OracleAdminFacet` address setters are **owner-gated**, not role-gated — they route to `LibVaipakam` functions guarded by `LibDiamond.enforceIsContractOwner()` (the Diamond's ERC-173 owner). `ORACLE_ADMIN_ROLE` is *defined / exported but never used as an `onlyRole` gate* — so oracle hardening must target the **owner** path (post-handover the owner is the Timelock, so these *are* timelock-delayed; the role is a red herring here, not the lever). *Bound:* the address swaps are **not** range-bounded — they forward an arbitrary address into storage, so the timelock delay is their only bound (a queued, arbitrary feed replacement is still custody-moving). The surface is the **whole** address-setter set, not a short list — the price feeds + denominators (`setChainlinkRegistry`, `setEthUsdFeed`, `setStableTokenFeed`, `setFeedOverride`, `setSequencerUptimeFeed`, `setUsdChainlinkDenominator`, `setEthChainlinkDenominator`), the secondary-quorum oracles (`setTellorOracle`, `setApi3ServerV1`, `setDIAOracleV2`, `setPythOracle`), the liquidity-classification inputs (`setWethContract`, `setUniswapV3Factory`), and the risk/peer inputs (`setPeerProtocolAddresses`, `setTierReferenceAssets`) all take a free address. An on-chain **allowlist** constraining *which* addresses are settable is outstanding hardening, not in place today; **#651** tracks a code-derived census so the allowlist/freeze scope covers every such setter (the lists here are representative, not exhaustive). **Same class for the rate model:** the #400 *output* is range-bounded (deviation-clamped to the market band), but the *active model implementation* is a **free address swap** — `AdminFacet.setRateModel(address)` accepts any nonzero contract under `ADMIN_ROLE` (only a `code.length > 0` check). So a misconfigured/malicious model can't push an automated quote off-market (the clamp holds), but swapping the model pointer is itself an unbounded-address lever and is in the #651 census / freeze scope alongside the oracle setters. During the timelock delay the guardian can halt user flows; cancelling a queued change is the timelock proposer's lever. |
-| Curation / parameters (fees, tiers, kill-switches) | upgradeable | Stays upgradeable (bounded) — curation must keep evolving. |
-| Diamond-cut governance itself | timelock | **Freeze the whole cut path** — Add **and** Replace/Remove (freezing only existing selectors would still let a new facet add custody-moving code) — on the published schedule (post-audit), behind separated guardian/upgrade multisigs + timelock until then. |
+Hardening is component by component (the #3438 recommendation), so progress
+is visible and steady rather than one distant event. Each component has its
+own exit criteria and moves on its own once they are met.
+
+**Common exit criteria for any step below.** All three must hold, and the
+step's revision of this document names the dates:
+
+1. An external audit has signed off on that component's code as it will be
+   hardened.
+2. A published bake period of live mainnet operation has passed with no
+   critical finding on that component. The length is set at audit time and
+   published here; it is a minimum, never shortened later.
+3. Every issue this document lists as a gap for that component (§1) is
+   closed.
+
+| Stage | Component | Today | Hardened state | How it gets there |
+| --- | --- | --- | --- | --- |
+| A | Vault code (`VaultBeacon`) | Non-upgradeable beacon; versions registered and made current after the code delay; pins | The code delay is 7 days (#3421), every security version declares the version it patches and its review note, and the version list changes only by security patches | The beacon's rules are fixed in its code, so a narrower rule set is a **new beacon** and a new vault family that users move to by choice (§6). Until then the owner commits, here, to registering only security patches once Stage A's criteria are met |
+| B | Position NFT (`PositionNFT`) | Non-upgradeable; renderer and transfer check replaceable after 3 days | Transfer check fixed; renderer stays replaceable (display only, moves no value) | A new position NFT can only come with a new lending core (§6); until then the owner proposes no transfer-check change after Stage B's criteria are met, and says so here |
+| C | Price sources (`PriceGuard`, `VaipakamFeedRegistry`) | Changes wait 7 to 14 days; a guardian can switch off a secondary source | Stays governed for new loans (§7); open loans keep the sources they opened with (#3437) | #3437 is what takes open loans out of reach; the guard itself stays bounded and delayed |
+| D | Protocol pointers (`ProtocolRegistry`) | Pointer changes wait 3 to 30 days; set removal is immediate | Treasury and backstop pointers fixed; swap adapter and conduit sets add-only behind the delay, remove-only fast | Raise the delay to its maximum, then stop proposing pointer changes; the registry's own rules already make removal the only fast change |
+| E | Lending core (the Diamond's facets) | Every facet replaceable after the Timelock delay | A final non-upgradeable lending core, deployed beside the governed one, that users opt into | §6 |
+| F | Cross-chain contracts, `VPFIToken` | UUPS behind the Timelock; guardian pause | Upgrade paths frozen; lane limits stay bounded settings | Rotate each owner to a frozen state or a final deployment on the same criteria; #651 enumerates the full set |
+| G | Collateral-sale executor, backstop vault, aggregator adapters | UUPS, behind the Timelock (the executor through its own owner) | Frozen or replaced by final versions with the lending core | With Stage E: these serve the lending core, so they move with it |
+
+**Freeze candidates must cover the whole surface.** For any component that
+freezes in place, the freeze covers adding new code as well as replacing or
+removing existing code, and every pointer that could route around it. The
+collateral-sale executor is the reminder: freezing its code but not the
+Diamond's `setCollateralListingExecutor` pointer would let a new executor be
+pointed at. #651's census is the checklist for this.
 
 Guiding rule (the load-bearing line): **anything that *governs* custody —
 i.e. can change the rules by which funds move, directly or through a price/risk
@@ -180,103 +316,93 @@ lever is the incident team's **cancellation / remediation** (the timelock
 proposer cancels the queued op), not user exit. The guardian's pause buys the
 team time to cancel — it does not preserve the exit window it freezes.
 
-## 3. Authority + timelock shape
+## 6. The final version, and the one-fresh-deploy rule
 
-- **Separated authorities:** a fast-key **guardian/Pauser Safe** (pause only),
-  an **upgrade/admin Safe** → **48–72h Timelock** for everything that can move
-  custody. The two are distinct keys, so a guardian-key compromise can only
-  *halt* user flows (it has no upgrade authority), and an upgrade-key
-  compromise still has to wait out the timelock delay — during which the
-  guardian halts user activity and the timelock proposer (governance) can
-  cancel the queued operation. The guardian does **not** itself block the
-  upgrade (the cut path is intentionally not pause-gated, for recovery).
-- **Closed by D1 — the root `DEFAULT_ADMIN_ROLE` is timelocked** (#934,
-  owner decision 2026-10-16). It used to move to the governance Safe at
-  handover, and because it is the `roleAdmin` of `ADMIN_ROLE`,
-  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE` and
-  `UNPAUSER_ROLE`, the Safe could grant itself any of them immediately and
-  skip the delay. It now moves to the timelock, so the "custody-moving changes
-  sit behind the timelock" guarantee is code-enforced for the role-grant path
-  too. The timelock's own delay cannot be lowered below its deploy-time value,
-  and an independent canceller can veto a queued operation (#938).
-- **Ossification cannot be done by renouncing ownership.** The ERC-173 owner
-  must always hold `DEFAULT_ADMIN_ROLE`, and ownership can never move to the
-  zero address (#906). Freezing a surface therefore needs the per-selector
-  freeze mechanism below, not an ownership renounce — which is the intended
-  route anyway, since the curation surfaces stay bounded-upgradeable.
-- **No on-chain quorum yet** (acknowledged gap, shared with #394's governance
-  gap). The bounded-steward + timelock-asymmetry + guardian-pause fabric is the
-  same one the risk knobs ride on; an on-chain quorum is a later addition, not
-  a pre-audit blocker.
-- The handover ceremony (role + ownership rotation to the timelock/guardian
-  topology) is run by `Handover.s.sol`, exposed as a dedicated phase on **both**
-  testnet and mainnet (`deploy-testnet.sh … --phase handover`,
-  `deploy-mainnet.sh`). Testnet is where the split is **rehearsed**; mainnet
-  cutover is where it takes effect for real value. Operationally, flow-test
-  deploys are often left deployer/admin-owned for convenience (EOA keys keep the
-  flow tests simple), but that is a per-deploy choice, **not** a claim that
-  handover can't run on testnet — it can and should be rehearsed there.
+Mainnet gets **one fresh deploy**, and after that only facet refreshes
+(owner rule, 2026-11-05): storage must stay upgrade-safe forever, and no
+mainnet chain is ever redeployed in place. A final non-upgradeable version
+does not break that rule, because it is **not a redeploy of the governed
+Diamond**:
 
-## 4. Sequencing (what is pre- vs post-audit)
+- **It is a new, separate deployment beside the governed one.** The governed
+  Diamond keeps running. Nothing is migrated for a user, and no setting or
+  facet refresh moves anyone across.
+- **Users opt in.** A user moves by their own action: close or repay a loan
+  on the governed core, then open the next one on the final core; move vault
+  assets to a vault of the final family. Open loans finish where they opened.
+- **The governed core winds down to close-outs.** Once the final core is
+  live, the governed one stops admitting new offers and loans (a stop-only
+  change), and keeps repay, claim, default, liquidation and withdrawal open
+  for as long as anything remains in it.
+- **The final core keeps only what §7 says stays governed**, through bounded
+  setters with fixed ranges, and has no code upgrade path at all. Its vault
+  family answers to a beacon whose version list is fixed, or to no beacon.
+- **Bugs found after that are handled by another opt-in version**, never by
+  an upgrade, with the stop-only pause and admission refusal as the levers in
+  the meantime. That is the trade the exit criteria in §5 are there to make
+  safe.
 
-- **Pre-audit / now:** the guardian fast-pause (already present, §1) + *this*
-  published commitment. Pure safety + trust upside, no new attack surface.
-- **Post-audit:** the per-selector diamond-cut **freeze** mechanism (staged
-  renounce of the cut path), the formal on-chain renounce timeline, and the
-  on-chain quorum. These are deliberately deferred — freezing the cut path is
-  irreversible and must follow the audit + a stability bake. Two things this
-  freeze must explicitly cover, beyond replacing/removing existing selectors:
-  - **Add (new selectors / facets), not just Replace/Remove.** Freezing only
-    the existing selectors would still let a new facet introduce custody-moving
-    code. The freeze scope is the *whole* cut path — Add included.
-  - **Every UUPS custody upgrade path — not just the per-user vault.** The §2
-    table lists them all and each has its *own* control gate, so the freeze
-    checklist must cover the full set, not the vault alone: the per-user vault
-    (`VaipakamVaultImplementation`, `_authorizeUpgrade onlyOwner` = the Diamond,
-    template set by `VAULT_ADMIN_ROLE`), the aggregator-adapter **template**
-    (`upgradeAdapterImplementation`, `VAULT_ADMIN_ROLE`), the backstop vault
-    (`BackstopFacet.upgradeBackstopVault`), and the Seaport collateral-sale
-    **executor** (`CollateralListingExecutor`, upgraded via its **own Ownable
-    owner**, *not* a Diamond role — so freezing only Diamond template setters /
-    `VAULT_ADMIN_ROLE` would miss it; its owner must be rotated to the timelock
-    and frozen on the same schedule, **and** the Diamond's `ADMIN_ROLE`-gated
-    `setCollateralListingExecutor` pointer frozen with it, else ADMIN can
-    repoint to a fresh executor). Plus the **cross-chain UUPS / Ownable /
-    registry-admin family** that also moves value and is rotated *separately* by
-    `Handover.s.sol` — the `CcipMessenger`, the VPFI `TokenPool`,
-    `VpfiPoolRateGovernor`, `VaipakamRewardMessenger`, the `VPFIMirrorToken`, the
-    canonical-only `BuybackRemittanceReceiver`, the canonical **`VPFIToken`** itself
-    (Ownable2Step + UUPS — its owner controls `_authorizeUpgrade`, `setMinter`,
-    and pause, and the token pool + `TreasuryFacet.mintVPFI` rely on it, so
-    freezing the pool but not the token owner/minter leaves a mint/upgrade lever
-    open), and the **CCIP `TokenAdminRegistry` CCT admin** for VPFI (rotated via
-    `transferAdminRole`; it drives `setPool(localToken, pool)`, so an unfrozen
-    registry admin can repoint the token's pool). Each is owner- or
-    registry-admin-gated on its own surface, none reachable through the Diamond
-    cut path. **This list names the known members; the authoritative scope is
-    *every* Ownable / UUPS / registry-admin surface `Handover.s.sol` rotates —
-    #651 enumerates it from code, so any cross-chain surface is in freeze scope
-    whether or not named here.** All are custody-moving and ride the same
-    post-audit freeze as the Diamond cut path — not just the facets.
-  - **Independent canceller** for queued timelock ops (a guardian that can
-    cancel but not propose), so a compromised proposer key can be stopped
-    without itself holding the only cancel lever (see §0).
+This keeps the rule's purpose: one deployment's storage is never re-laid,
+and no user's position is moved without their action.
 
-## 5. Honesty clause
+## 7. What stays governed, and why
+
+Some levers stay governed even after Stage E, each for a stated reason:
+
+| Lever | Why it stays | How it is bounded |
+| --- | --- | --- |
+| Sanctions screening | A legal requirement for the retail deploy | Listing is immediate and capped per day; delisting is by the remover Safe or a timelocked proposal; screening blocks new positions but never close-outs, so a flagged counterparty cannot trap a clean one |
+| Price sources offered to new loans | Markets and feeds change; a feed can be retired by its provider | Delayed (7 to 14 days), quorum-checked, range-bound; open loans keep the sources they opened with (#3437) |
+| The pause | The fastest way to stop an exploit in progress | Stop-only; unpause waits the Timelock delay; the watcher's automatic pause lasts at most 2 hours |
+| Parameters for new markets | New assets and chains need settings | Every setter has fixed bounds in code; open loans keep the terms stamped at origination |
+
+Anything not in this table is a candidate to freeze under §5.
+
+## 8. How users are told
+
+| Step | What users see, and when |
+| --- | --- |
+| A queued governance change (any time) | The app shows queued Timelock changes and their execution time during the wait (#3237); an alert reaches subscribed users |
+| A vault code proposal or revocation | Every vault owner gets an alert when it is proposed, with the delay and how to pin or leave (#3422) |
+| A component meets its exit criteria (§5) | This document is revised with the dates, a release note states it, and the app's protocol page says which components are now hardened |
+| A final version goes live (§6) | An in-app notice on every governed position says how to move and that nothing moves without the user's action; the governed core's wind-down date is announced at least one bake period ahead |
+| A security fix shipped quietly | The incident runbook's procedure for shipping a fix without revealing the bug applies; users are told after the fix is live (`docs/ops/IncidentRunbook.md`, #3409) |
+
+Copy for all of these follows the honesty clause below: it names what can
+still change and who can change it, never "immutable" for anything that is
+not.
+
+## 9. Sequencing (what is pre- vs post-audit)
+
+- **Before mainnet:** the gaps named in §1 (#3205 Stage B, #3421, #3424,
+  #3431, #3437, #3441), the user-facing notices (#3237, #3422), and #651's
+  census.
+- **After the audit and the first bake period:** Stages A, B and D, each on
+  its own criteria.
+- **Later:** Stage E with F and G, as one opt-in final version (§6).
+- **No on-chain voting quorum yet** (acknowledged gap, shared with #394). The Timelock, its independent
+  canceller and the bounded setters are the governance fabric; a quorum is a
+  later addition if one is ever needed, not a pre-audit blocker.
+- **Independent canceller** for queued Timelock operations is in place
+  (#938): the Pauser Safe can cancel but not propose.
+
+## 10. Honesty clause
 
 This is **not** an "immutable protocol" claim. Vaipakam is upgradeable today
-and will remain so until the staged freezes above are executed on a published,
+and will remain so until the staged steps above are taken on a published,
 dated schedule. We publish this roadmap so users can see exactly which rules
 *can* still change, who can change them, and behind what delay — rather than
 implying guarantees we do not yet have. The marketing / user-facing copy must
 mirror this framing and never overstate immutability (see the retail-deploy
 copy policy).
 
-## 6. Related
+## 11. Related
 
 - Research + verdict: [`Research-404-OssificationRoadmap.md`](Research-404-OssificationRoadmap.md)
 - Governance config + bounded setters: [`GovernanceConfigDesign.md`](GovernanceConfigDesign.md)
-- Risk-appetite knob (bounded-upgradeable example): #394 / `RiskFacet.setMinHealthFactor`
+- Vault code: [`VaultCentralImplementationDesign.md`](VaultCentralImplementationDesign.md) (#3204)
+- Threat model: [`ThreatModel.md`](ThreatModel.md)
 - Handover wiring: `contracts/script/Handover.s.sol` (the only handover
-  script since #936)
-- Cross-chain guardian pattern this mirrors: `contracts/src/crosschain/GuardianPausable.sol`
+  script since #936) and its gate `contracts/script/HandoverGate.s.sol`
+- Cross-chain guardian pattern: `contracts/src/crosschain/GuardianPausable.sol`
+- Incident runbook: `docs/ops/IncidentRunbook.md`
