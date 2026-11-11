@@ -1,4 +1,4 @@
-## Thread — Risk-access preview for signed offers (PR #<n>)
+## Thread — Risk-access preview for signed offers (PR #3582)
 
 An app reviewing a fill of a signed offer can now ask, before the taker signs
 or approves anything, whether the risk-access gate would let the fill through.
