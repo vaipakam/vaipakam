@@ -12,6 +12,7 @@ import {
   matchChanged,
   matchReceipt,
   measureMatch,
+  makesPair,
   overlapPairs,
   pairKey,
   readMatchBand,
@@ -74,7 +75,7 @@ export function DeskMatchBand({
 }) {
   const { text, format } = copy;
   const diamond = chain.diamondAddress;
-  const found = overlapPairs(ladder);
+  const found = overlapPairs(ladder, own.account);
   const { pairs, more } = found;
   const read = useOwnRead(['matchBand', diamond, ...pairs.map(pairKey)], (c) => readMatchBand(c, diamond, pairs, own.account));
   const [open, setOpen] = useStoredValue<MatchPair>(openKey(market));
@@ -91,7 +92,6 @@ export function DeskMatchBand({
       days: p.ask.durationDays.toString(),
       collateral: amount(p.bid.collateralAsset, v.collateral),
     });
-  const who = (creator: Hex) => (creator.toLowerCase() === own.account.toLowerCase() ? text('matchBand.you') : shortAddress(creator));
   const reason = (code: number | null) => (code === null ? text('matchBand.previewUnread') : refusalText(code, copy));
 
   return (
@@ -121,6 +121,11 @@ export function DeskMatchBand({
           {text('matchBand.noRate')}
         </p>
       )}
+      {state?.kind === 'own-only' && (
+        <p className="tier-b" data-testid="desk-match-own">
+          {text('matchBand.ownOnly')}
+        </p>
+      )}
       {state?.kind === 'none' && (
         <p className="tier-a" data-testid="desk-match-refused">
           {format('matchBand.none', { ask: state.pair.ask.id.toString(), bid: state.pair.bid.id.toString(), reason: reason(state.code) })}
@@ -133,8 +138,8 @@ export function DeskMatchBand({
             {format('matchBand.pair', {
               ask: state.pair.ask.id.toString(),
               bid: state.pair.bid.id.toString(),
-              lender: who(state.pair.ask.creator),
-              borrower: who(state.pair.bid.creator),
+              lender: shortAddress(state.pair.ask.creator),
+              borrower: shortAddress(state.pair.bid.creator),
             })}
           </p>
           <p data-testid="desk-match-terms">{terms(state.pair, state.verdict)}</p>
@@ -156,10 +161,25 @@ export function DeskMatchBand({
           )}
         </div>
       )}
+      {found.ownLeftOut && state !== null && (state.kind === 'ready' || state.kind === 'none') && (
+        <p className="tier-b" data-testid="desk-match-own">
+          {text('matchBand.ownLeftOut')}
+        </p>
+      )}
       {more && state !== null && state.kind !== 'switch-off' && state.kind !== 'switch-unread' && (
         <p className="tier-a">{format('matchBand.more', { count: String(pairs.length) })}</p>
       )}
-      {open !== null && <MatchOffers pair={open} chain={chain} own={own} meta={meta} copy={copy} onClose={() => setOpen(null)} />}
+      {open !== null && makesPair(open, own.account) && (
+        <div className="card" data-testid="desk-match-own-pair">
+          <p className="tier-a">{text('matchBand.ownPair')}</p>
+          <button type="button" className="btn" onClick={() => setOpen(null)}>
+            {text('flow.close')}
+          </button>
+        </div>
+      )}
+      {open !== null && !makesPair(open, own.account) && (
+        <MatchOffers pair={open} chain={chain} own={own} meta={meta} copy={copy} onClose={() => setOpen(null)} />
+      )}
       <WhyLink summaryKey="matchBand.whySummary" detailKey="matchBand.why" />
     </section>
   );
@@ -346,7 +366,7 @@ function MatchOffers({
         publicQueue
         identity={identity}
         reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-        receipt={review ? matchReceipt(review, viewer, amount, copy) : null}
+        receipt={review ? matchReceipt(review, amount, copy) : null}
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}

@@ -24,8 +24,8 @@
  * `OfferMatched` event for this pair and this sender, and the lending-token
  * transfers that reached the sender's wallet or its vault.
  */
-import { erc20Abi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { ConfigFacetABI, OfferMatchFacetABI, ServiceCapacityFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
+import { ConfigFacetABI, OfferMatchFacetABI, ServiceCapacityFacetABI, VaultFactoryFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -42,6 +42,10 @@ type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
 export const MATCH = OfferMatchFacetABI as Abi;
+const OUTFLOW = VaultOutflowFacetABI as Abi;
+/** The `VaultOutflow` class of a payment to the actor of an action (a
+ *  matcher's share of the initiation fee): `OutflowClass.Incentive`. */
+export const INCENTIVE_CLASS = 8;
 const CONFIG = ConfigFacetABI as Abi;
 const CAPACITY = ServiceCapacityFacetABI as Abi;
 const VAULTS = VaultFactoryFacetABI as Abi;
@@ -114,11 +118,23 @@ export function ratesMeet(ask: Pick<BookRow, 'interestRateBps' | 'interestRateBp
 }
 
 /** The pairs a crossed ladder offers to match. `crossed` repeats the
- *  ladder's own overlap, so an empty list can say why it is empty. */
+ *  ladder's own overlap, so an empty list can say why it is empty;
+ *  `ownLeftOut` says a pair was left out because the viewer posted one of
+ *  its offers. */
 export interface OverlapPairs {
   pairs: MatchPair[];
   more: boolean;
   crossed: boolean;
+  ownLeftOut: boolean;
+}
+
+/** Whether `viewer` posted either offer of the pair. Matching such a pair
+ *  would make the viewer the lender or the borrower, with its own funds in
+ *  the loan, so the band never offers it as a gas-only match. */
+export function makesPair(pair: Pick<MatchPair, 'ask' | 'bid'>, viewer: string | null): boolean {
+  if (viewer === null) return false;
+  const v = viewer.toLowerCase();
+  return pair.ask.creator.toLowerCase() === v || pair.bid.creator.toLowerCase() === v;
 }
 
 /**
@@ -128,25 +144,32 @@ export interface OverlapPairs {
  * by how far each side sits from its best (the best ask against the best bid
  * first). A pair is kept only where the two rate ranges meet (`ratesMeet`),
  * and a pair from one wallet is left out: the protocol never matches a
- * wallet with itself. At most `limit` pairs; `more` says others stand behind.
+ * wallet with itself. A pair holding an offer `viewer` posted is left out
+ * too (`makesPair`), and `ownLeftOut` says so. At most `limit` pairs; `more`
+ * says others stand behind.
  */
-export function overlapPairs(ladder: Pick<DeskLadder, 'asks' | 'bids' | 'crossed'>, limit = MATCH_PAIRS): OverlapPairs {
-  if (!ladder.crossed) return { pairs: [], more: false, crossed: false };
+export function overlapPairs(ladder: Pick<DeskLadder, 'asks' | 'bids' | 'crossed'>, viewer: string | null, limit = MATCH_PAIRS): OverlapPairs {
+  if (!ladder.crossed) return { pairs: [], more: false, crossed: false, ownLeftOut: false };
   const bestBid = ladder.bids[0]?.rateBps;
   const bestAsk = ladder.asks[0]?.rateBps;
-  if (bestBid === undefined || bestAsk === undefined) return { pairs: [], more: false, crossed: false };
+  if (bestBid === undefined || bestAsk === undefined) return { pairs: [], more: false, crossed: false, ownLeftOut: false };
   const asks = ladder.asks.filter((s) => s.rateBps <= bestBid).flatMap((s) => s.offers);
   const bids = ladder.bids.filter((s) => s.rateBps >= bestAsk).flatMap((s) => s.offers);
   const all: { pair: MatchPair; rank: number; i: number }[] = [];
+  let ownLeftOut = false;
   asks.forEach((ask, i) =>
     bids.forEach((bid, j) => {
       if (ask.creator.toLowerCase() === bid.creator.toLowerCase()) return;
       if (!ratesMeet(ask, bid)) return;
+      if (makesPair({ ask, bid }, viewer)) {
+        ownLeftOut = true;
+        return;
+      }
       all.push({ pair: { ask, bid }, rank: i + j, i });
     }),
   );
   all.sort((a, b) => a.rank - b.rank || a.i - b.i);
-  return { pairs: all.slice(0, limit).map((x) => x.pair), more: all.length > limit, crossed: true };
+  return { pairs: all.slice(0, limit).map((x) => x.pair), more: all.length > limit, crossed: true, ownLeftOut };
 }
 
 /** The protocol's answer for one pair. */
@@ -220,17 +243,19 @@ export type BandState =
   /** The ladder's sides cross, but no lender's rate range meets a
    *  borrower's, so the protocol would refuse every pair. */
   | { kind: 'no-rate' }
+  /** Every pair whose ranges meet holds an offer the viewer posted. */
+  | { kind: 'own-only' }
   /** A pair the protocol confirms; `top` is the best-priced pair's refusal
    *  when that pair is not the one offered. */
   | { kind: 'ready'; pair: MatchPair; verdict: PairVerdict; top: { pair: MatchPair; code: number | null } | null }
   /** No pair checked can be matched now; the best-priced pair's reason. */
   | { kind: 'none'; pair: MatchPair; code: number | null };
 
-export function bandState(found: Pick<OverlapPairs, 'pairs' | 'crossed'>, read: MatchBandRead): BandState {
+export function bandState(found: Pick<OverlapPairs, 'pairs' | 'crossed' | 'ownLeftOut'>, read: MatchBandRead): BandState {
   const { pairs } = found;
   if (read.settings.switchOn === null) return { kind: 'switch-unread' };
   if (!read.settings.switchOn) return { kind: 'switch-off' };
-  if (pairs.length === 0) return { kind: found.crossed ? 'no-rate' : 'no-overlap' };
+  if (pairs.length === 0) return { kind: found.ownLeftOut ? 'own-only' : found.crossed ? 'no-rate' : 'no-overlap' };
   const first = pairs.findIndex((_, i) => read.verdicts[i]?.code === MATCH_OK);
   const topCode = read.verdicts[0]?.code ?? null;
   if (first < 0) return { kind: 'none', pair: pairs[0]!, code: topCode };
@@ -253,6 +278,8 @@ export function shareAtMost(amount: bigint, lifBps: bigint, matcherBps: bigint):
 export interface MatchReview {
   identity: string;
   pair: MatchPair;
+  /** The wallet the match would be sent from. */
+  sender: Hex;
   verdict: PairVerdict | null;
   settings: MatchSettings;
   /** The sender's vault, where a share lands when the sender has protected
@@ -263,8 +290,11 @@ export interface MatchReview {
 }
 
 /** What stops the match, in words (empty when nothing does). */
-export function matchBlockers(r: Pick<MatchReview, 'verdict' | 'settings' | 'dryRun'>, copy: Copy): string[] {
+export function matchBlockers(r: Pick<MatchReview, 'pair' | 'sender' | 'verdict' | 'settings' | 'dryRun'>, copy: Copy): string[] {
   const { text, format } = copy;
+  // The receipt describes a third party's gas-only match; a sender who
+  // posted either offer would put its own funds into the loan instead.
+  if (makesPair(r.pair, r.sender)) return [text('matchBand.ownPair')];
   if (r.settings.switchOn === null) return [text('matchBand.switchUnread')];
   if (!r.settings.switchOn) return [text('matchBand.switchOff')];
   if (r.verdict === null) return [text('matchBand.previewUnread')];
@@ -287,7 +317,7 @@ export async function readMatchReview(own: OwnStateClient, diamond: Hex, pair: M
       return { verdict: v, settings: s, vault: vaultAt === null || vaultAt.toLowerCase() === ZERO ? null : vaultAt };
     })
     .then((x) => x.value);
-  const base: MatchReview = { identity, pair, verdict, settings, vault, dryRun: null, readAt: Date.now() };
+  const base: MatchReview = { identity, pair, sender, verdict, settings, vault, dryRun: null, readAt: Date.now() };
   if (matchBlockers(base, copy).length > 0) return base;
   const dry = await askThrough(own, (c) =>
     c.simulateContract({ address: diamond, abi: MATCH, functionName: 'matchOffers', args: [pair.ask.id, pair.bid.id], account: sender }),
@@ -317,11 +347,6 @@ export function matchChanged(a: MatchReview, b: MatchReview, copy: Pick<CopyAcce
 /** Amount words, short or exact. */
 export type AmountWords = (asset: Hex, v: bigint, exact?: boolean) => string;
 
-/** Who posted a side, in words: you, or the wallet's short address. */
-function who(creator: Hex, sender: Hex, copy: Copy): string {
-  return creator.toLowerCase() === sender.toLowerCase() ? copy.text('matchBand.you') : shortAddress(creator);
-}
-
 /** The share line: what it is at most, or why it cannot be stated. */
 export function shareText(amount: bigint, lending: Hex, s: MatchSettings, words: AmountWords, copy: Copy, exact = false): string {
   if (s.lifBps === null || s.matcherBps === null) return copy.text('matchBand.shareUnread');
@@ -338,7 +363,7 @@ export function capacityText(s: MatchSettings, copy: Copy): string {
   return copy.text(s.capacityLimited ? 'matchBand.capacityYours' : 'matchBand.capacityNone');
 }
 
-export function matchReceipt(r: MatchReview, sender: Hex, words: AmountWords, copy: Copy): Receipt {
+export function matchReceipt(r: MatchReview, words: AmountWords, copy: Copy): Receipt {
   const { text, format } = copy;
   const { ask, bid } = r.pair;
   const lending = ask.lendingAsset;
@@ -350,8 +375,8 @@ export function matchReceipt(r: MatchReview, sender: Hex, words: AmountWords, co
         text: format('matchBand.pair', {
           ask: ask.id.toString(),
           bid: bid.id.toString(),
-          lender: who(ask.creator, sender, copy),
-          borrower: who(bid.creator, sender, copy),
+          lender: shortAddress(ask.creator),
+          borrower: shortAddress(bid.creator),
         }),
       },
       binding: true,
@@ -395,8 +420,8 @@ export function matchReceipt(r: MatchReview, sender: Hex, words: AmountWords, co
 }
 
 /** The outcome, from the transaction's own logs: the match for this pair
- *  and this sender, and the share that reached the sender's wallet or its
- *  vault. */
+ *  and this sender, and the share the lender's vault records paying to the
+ *  sender's wallet or its vault. */
 export function measureMatch(r: MatchReview, logs: readonly Log[], diamond: Hex, sender: Hex, words: AmountWords, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const me = sender.toLowerCase();
@@ -418,21 +443,28 @@ export function measureMatch(r: MatchReview, logs: readonly Log[], diamond: Hex,
       }),
     },
   ];
-  // The share is paid to the sender's wallet, or into its vault when the
-  // sender has protected mode on. A sender who is also the borrower gets
-  // the loan amount in its vault too, so only its wallet is counted then.
-  const borrower = r.pair.bid.creator.toLowerCase() === me;
-  const to = new Set([me, ...(r.vault && !borrower ? [r.vault.toLowerCase()] : [])]);
-  const transfers = parseEventLogs({ abi: erc20Abi, logs: logs as Log[], eventName: 'Transfer', strict: false }).filter(
-    (l) => l.address.toLowerCase() === lending.toLowerCase() && to.has(String((l.args as { to?: string }).to ?? '').toLowerCase()),
-  );
-  const got = transfers.reduce((n, l) => n + ((l.args as { value?: bigint }).value ?? 0n), 0n);
+  // The share is the lender vault's own record of an incentive payment in
+  // the lending token, to the sender's wallet or (protected mode) its vault.
+  // Reading that record, not token transfers, keeps an offer refund to a
+  // sender who is also the lender, and the loan amount reaching a sender who
+  // is also the borrower, out of the share.
+  const lender = r.pair.ask.creator.toLowerCase();
+  const to = new Set([me, ...(r.vault ? [r.vault.toLowerCase()] : [])]);
+  const got = parseEventLogs({ abi: OUTFLOW, logs: logs as Log[], eventName: 'VaultOutflow', strict: false })
+    .filter((l) => l.address.toLowerCase() === diamond.toLowerCase())
+    .map((l) => l.args as { owner?: string; asset?: string; delivered?: bigint; to?: string; class_?: number })
+    .filter(
+      (x) =>
+        Number(x.class_) === INCENTIVE_CLASS &&
+        String(x.owner ?? '').toLowerCase() === lender &&
+        String(x.asset ?? '').toLowerCase() === lending.toLowerCase() &&
+        to.has(String(x.to ?? '').toLowerCase()),
+    )
+    .reduce((n, x) => n + (x.delivered ?? 0n), 0n);
   legs.push(
     got > 0n
       ? { status: 'done', label: format('matchBand.legShare', { amount: words(lending, got) }) }
-      : borrower
-        ? { status: 'unknown', label: text('matchBand.legShareLabel'), reason: text('matchBand.legShareMixed') }
-        : { status: 'not-done', label: text('matchBand.legShareLabel'), reason: text('matchBand.legNoShare') },
+      : { status: 'not-done', label: text('matchBand.legShareLabel'), reason: text('matchBand.legNoShare') },
   );
   return legs;
 }
