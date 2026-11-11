@@ -2375,7 +2375,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2393,6 +2393,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
         s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
+        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
+        s[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

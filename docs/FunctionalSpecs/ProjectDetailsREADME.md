@@ -792,6 +792,20 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   preview), and the wallet-backed fill, whose stake is a token transfer the
   read does not perform. The fill's own simulation stays the final word.
 
+  **Risk-access preview for a signed offer.** The risk-access gate is read
+  through a preview of its own, and that preview must work for a signed offer
+  too, before the offer exists on-chain. Given the signed offer and the party
+  who would fill it, it reports, separately, whether the gate would stop the
+  signer and whether it would stop the taker, with the same reasons the gate
+  gives for an on-chain offer (risk tier too low, an illiquid pair without an
+  armed standing consent, a strict-mode pair without a fresh acknowledgement),
+  and names the asset pair both are judged on so the taker can record a consent
+  or an acknowledgement for exactly that pair. The two are reported apart
+  because the taker can clear only their own. A signed offer is never a sale of
+  an existing loan, so both parties are judged against the offer's own two
+  assets, by the same rule the gate applies to an on-chain offer. With the gate
+  switched off, it reports no block for either party.
+
   An offer counts as expired **at** its expiry time and after, on every path —
   on-chain offers, the matcher, and the signed fill alike — so the last second
   of an offer's life is never fillable on one path and refused on another.
