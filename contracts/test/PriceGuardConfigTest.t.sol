@@ -8,6 +8,7 @@ import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
 import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 import {IFeedRegistryPairBase} from "../src/interfaces/IFeedRegistryPairBase.sol";
 import {ITellor} from "../src/interfaces/ITellor.sol";
+import {IApi3ServerV1} from "../src/interfaces/IApi3ServerV1.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
@@ -320,24 +321,24 @@ contract PriceGuardConfigTest is Test {
         assertEq(g.pythMaxStaleness(), 600);
     }
 
-    // ─── The guardian's lever ────────────────────────────────────────────
+    // ─── The guardian's lever (#3537) ────────────────────────────────────
 
-    function test_DisablingASecondaryIsInstantAndReEnablingWaits() public {
+    function test_MutingASecondaryIsInstantAndReEnablingWaits() public {
         PriceGuard g = _guard(DELAY);
         bytes32 tellorKey = bytes32(uint256(PriceGuard.Source.Tellor));
 
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(PriceGuard.NotOwnerOrGuardian.selector, stranger));
-        g.disableSecondary(PriceGuard.Source.Tellor);
+        g.muteSecondary(PriceGuard.Source.Tellor);
 
         vm.expectEmit(address(g));
-        emit PriceGuard.SecondaryDisabled(PriceGuard.Source.Tellor, guardian);
+        emit PriceGuard.SecondaryMuted(PriceGuard.Source.Tellor, guardian);
         vm.prank(guardian);
-        g.disableSecondary(PriceGuard.Source.Tellor);
-        assertTrue(g.secondaryDisabled(PriceGuard.Source.Tellor));
-        // A second disable is a no-op, not a revert.
+        g.muteSecondary(PriceGuard.Source.Tellor);
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Muted));
+        // A second mute is a no-op, not a revert.
         vm.prank(owner);
-        g.disableSecondary(PriceGuard.Source.Tellor);
+        g.muteSecondary(PriceGuard.Source.Tellor);
 
         // The guardian has no way back: re-enabling is the owner's, delayed.
         vm.prank(guardian);
@@ -345,70 +346,228 @@ contract PriceGuardConfigTest is Test {
         g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
         vm.prank(owner);
         g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
-        assertTrue(g.secondaryDisabled(PriceGuard.Source.Tellor), "still off while it waits");
+        assertEq(
+            uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Muted), "still muted while it waits"
+        );
         vm.warp(block.timestamp + DELAY);
         g.executeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey);
-        assertFalse(g.secondaryDisabled(PriceGuard.Source.Tellor));
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Counted));
         // The address was kept: re-enabling restores the same source.
         assertEq(g.secondarySource(PriceGuard.Source.Tellor), tellor);
     }
 
-    /// @dev Stop-only, measured on a price: a source that contradicts the
-    ///      primary makes the price Divergent; disabling it leaves the quorum
-    ///      with no source, which accepts the primary. No price is introduced.
-    function test_DisablingASecondaryCancelsItsPendingReEnable() public {
+    /// @dev A stop cancels a pending re-enable, even one already due, so a
+    ///      re-enable approved before the stop cannot undo it.
+    function test_MutingASecondaryCancelsItsPendingReEnable() public {
         PriceGuard g = _guard(DELAY);
         bytes32 tellorKey = bytes32(uint256(PriceGuard.Source.Tellor));
         vm.prank(guardian);
-        g.disableSecondary(PriceGuard.Source.Tellor);
+        g.muteSecondary(PriceGuard.Source.Tellor);
         vm.prank(owner);
         g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
         vm.warp(block.timestamp + DELAY);
 
-        // Due, but a second stop while it is already off still cancels it.
+        // Due, but a second stop while it is already muted still cancels it.
         vm.expectEmit(address(g));
         emit PriceGuard.ChangeCancelled(PriceGuard.Kind.SecondaryEnabled, tellorKey, guardian);
         vm.prank(guardian);
-        g.disableSecondary(PriceGuard.Source.Tellor);
+        g.muteSecondary(PriceGuard.Source.Tellor);
         vm.expectRevert(
             abi.encodeWithSelector(PriceGuard.NothingPending.selector, PriceGuard.Kind.SecondaryEnabled, tellorKey)
         );
         g.executeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey);
-        assertTrue(g.secondaryDisabled(PriceGuard.Source.Tellor));
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Muted));
 
-        // The same holds for a source that was on: the re-enable waits anew.
+        // A removal proposal cancels a due re-enable the same way.
         bytes32 api3Key = bytes32(uint256(PriceGuard.Source.Api3));
         vm.prank(guardian);
-        g.disableSecondary(PriceGuard.Source.Api3);
+        g.muteSecondary(PriceGuard.Source.Api3);
         vm.prank(owner);
         g.proposeChange(PriceGuard.Kind.SecondaryEnabled, api3Key, bytes32(uint256(1)));
         vm.warp(block.timestamp + DELAY);
-        vm.prank(owner);
-        g.disableSecondary(PriceGuard.Source.Api3);
+        vm.prank(guardian);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Api3);
         (, uint256 at) = g.pendingChange(PriceGuard.Kind.SecondaryEnabled, api3Key);
-        assertEq(at, 0, "the stop cancels the due re-enable");
+        assertEq(at, 0, "the removal proposal cancels the due re-enable");
     }
 
-    function test_ADisabledSecondaryLeavesTheQuorum() public {
+    /// @dev The issue's own case: a source that contradicts the primary keeps
+    ///      the price refused after it is muted. Muting never accepts a price.
+    function test_AMutedSecondaryStillRefusesAContradictedPrice() public {
         PriceGuard g = _guard(DELAY);
         _arrangeDirectPrice(10e8);
         _tellorSays(20e18); // twice the primary
-
-        (IPriceGuard.PriceStatus st,,) = g.getAssetPriceStatus(asset);
-        assertEq(uint8(st), uint8(IPriceGuard.PriceStatus.Divergent), "contradicted");
-        vm.expectRevert(IPriceGuard.OraclePriceDivergence.selector);
-        g.getAssetPrice(asset);
+        _assertDivergent(g, "contradicted");
 
         vm.prank(guardian);
-        g.disableSecondary(PriceGuard.Source.Tellor);
-        uint256 price;
-        uint8 dec;
-        (st, price, dec) = g.getAssetPriceStatus(asset);
-        assertEq(uint8(st), uint8(IPriceGuard.PriceStatus.Priced), "the primary stands");
-        assertEq(price, 10e8, "the primary's own figure");
-        assertEq(dec, 8);
+        g.muteSecondary(PriceGuard.Source.Tellor);
+        _assertDivergent(g, "a muted source still refuses");
         (uint8 agreeing, uint8 disagreeing) = g.countLiveSecondaryOracleFeeds(asset);
-        assertEq(agreeing + disagreeing, 0, "a disabled source is not live");
+        assertEq(agreeing, 0);
+        assertEq(disagreeing, 1, "its disagreement still counts");
+    }
+
+    /// @dev Muting is the lever against a source that APPROVES a bad price:
+    ///      once the agreeing source is muted, the other source's refusal wins.
+    function test_MutingAnAgreeingSourceLetsTheOthersRefuse() public {
+        PriceGuard g = _guard(DELAY);
+        _arrangePrimary(10e8);
+        _tellorSays(10e18); // agrees with the primary
+        _api3Says(20e18); // contradicts it
+        (IPriceGuard.PriceStatus st,,) = g.getAssetPriceStatus(asset);
+        assertEq(uint8(st), uint8(IPriceGuard.PriceStatus.Priced), "one agreement accepts");
+
+        vm.prank(guardian);
+        g.muteSecondary(PriceGuard.Source.Tellor);
+        _assertDivergent(g, "the muted agreement no longer accepts");
+        (uint8 agreeing, uint8 disagreeing) = g.countLiveSecondaryOracleFeeds(asset);
+        assertEq(agreeing, 0, "a muted agreement is not counted");
+        assertEq(disagreeing, 1);
+    }
+
+    /// @dev A muted source alone that agrees: the price reads as if no source
+    ///      answered, which accepts the primary as before. Never stricter
+    ///      than "no data", never looser than counted.
+    function test_AMutedAgreementReadsAsNoData() public {
+        PriceGuard g = _guard(DELAY);
+        _arrangeDirectPrice(10e8);
+        _tellorSays(10e18);
+        vm.prank(guardian);
+        g.muteSecondary(PriceGuard.Source.Tellor);
+        (IPriceGuard.PriceStatus st, uint256 price,) = g.getAssetPriceStatus(asset);
+        assertEq(uint8(st), uint8(IPriceGuard.PriceStatus.Priced));
+        assertEq(price, 10e8);
+    }
+
+    /// @dev Removing a source's refusals is the step that loosens, so it waits
+    ///      {SECONDARY_REMOVAL_DELAY}; until then the contradicted price stays
+    ///      refused.
+    function test_RemovingASecondaryWaitsFortyEightHours() public {
+        PriceGuard g = _guard(DELAY);
+        _arrangeDirectPrice(10e8);
+        _tellorSays(20e18);
+        assertEq(g.SECONDARY_REMOVAL_DELAY(), 48 hours);
+
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.NotOwnerOrGuardian.selector, stranger));
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        uint256 at = block.timestamp + 48 hours;
+        vm.expectEmit(address(g));
+        emit PriceGuard.SecondaryMuted(PriceGuard.Source.Tellor, guardian);
+        vm.expectEmit(address(g));
+        emit PriceGuard.SecondaryRemovalProposed(PriceGuard.Source.Tellor, guardian, at);
+        vm.prank(guardian);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+        assertEq(g.secondaryRemovalAt(PriceGuard.Source.Tellor), at);
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Muted));
+        _assertDivergent(g, "still refused while the removal waits");
+
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.SecondaryRemovalPending.selector, PriceGuard.Source.Tellor, at));
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        vm.warp(at - 1);
+        _arrangeDirectPrice(10e8);
+        _tellorSays(20e18);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.SecondaryRemovalNotReady.selector, PriceGuard.Source.Tellor, at));
+        g.executeSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        vm.warp(at);
+        _arrangeDirectPrice(10e8);
+        _tellorSays(20e18);
+        vm.expectEmit(address(g));
+        emit PriceGuard.SecondaryRemoved(PriceGuard.Source.Tellor);
+        vm.prank(stranger); // anyone may execute a due removal
+        g.executeSecondaryRemoval(PriceGuard.Source.Tellor);
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Removed));
+        assertEq(g.secondaryRemovalAt(PriceGuard.Source.Tellor), 0);
+
+        (IPriceGuard.PriceStatus st, uint256 price,) = g.getAssetPriceStatus(asset);
+        assertEq(uint8(st), uint8(IPriceGuard.PriceStatus.Priced), "the primary stands once removed");
+        assertEq(price, 10e8);
+        (uint8 agreeing, uint8 disagreeing) = g.countLiveSecondaryOracleFeeds(asset);
+        assertEq(agreeing + disagreeing, 0, "a removed source is not asked");
+
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.SecondaryAlreadyRemoved.selector, PriceGuard.Source.Tellor));
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+        // Muting a removed source changes nothing.
+        vm.prank(guardian);
+        g.muteSecondary(PriceGuard.Source.Tellor);
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Removed));
+    }
+
+    function test_TheOwnerOrTheGuardianMayCancelARemoval() public {
+        PriceGuard g = _guard(DELAY);
+        vm.prank(guardian);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.NotOwnerOrGuardian.selector, stranger));
+        g.cancelSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        vm.expectEmit(address(g));
+        emit PriceGuard.SecondaryRemovalCancelled(PriceGuard.Source.Tellor, owner);
+        vm.prank(owner);
+        g.cancelSecondaryRemoval(PriceGuard.Source.Tellor);
+        assertEq(g.secondaryRemovalAt(PriceGuard.Source.Tellor), 0);
+        assertEq(
+            uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Muted), "a cancel leaves it muted"
+        );
+        vm.warp(block.timestamp + 48 hours);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.NoSecondaryRemovalPending.selector, PriceGuard.Source.Tellor));
+        g.executeSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(PriceGuard.NoSecondaryRemovalPending.selector, PriceGuard.Source.Tellor));
+        g.cancelSecondaryRemoval(PriceGuard.Source.Tellor);
+
+        // The guardian may cancel too.
+        vm.prank(owner);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+        vm.prank(guardian);
+        g.cancelSecondaryRemoval(PriceGuard.Source.Tellor);
+        assertEq(g.secondaryRemovalAt(PriceGuard.Source.Tellor), 0);
+    }
+
+    /// @dev Re-enabling counts a removed source again, and drops a removal
+    ///      still waiting on a muted one.
+    function test_ReEnablingRestoresARemovedSourceAndDropsAWaitingRemoval() public {
+        PriceGuard g = _guard(DELAY);
+        bytes32 tellorKey = bytes32(uint256(PriceGuard.Source.Tellor));
+        vm.prank(guardian);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+        vm.warp(block.timestamp + 48 hours);
+        g.executeSecondaryRemoval(PriceGuard.Source.Tellor);
+        vm.prank(owner);
+        g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
+        vm.warp(block.timestamp + DELAY);
+        g.executeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey);
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Counted));
+
+        // A removal proposed while a re-enable waits cancels the re-enable.
+        vm.prank(owner);
+        g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
+        vm.warp(block.timestamp + DELAY - 1 hours);
+        vm.prank(guardian);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor); // cancels the re-enable
+        (, uint256 reEnableAt) = g.pendingChange(PriceGuard.Kind.SecondaryEnabled, tellorKey);
+        assertEq(reEnableAt, 0);
+        // A re-enable proposed while a removal waits, and executed before
+        // anyone executes the removal, drops it.
+        vm.prank(owner);
+        g.cancelSecondaryRemoval(PriceGuard.Source.Tellor);
+        vm.prank(guardian);
+        g.proposeSecondaryRemoval(PriceGuard.Source.Tellor);
+        vm.prank(owner);
+        g.proposeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey, bytes32(uint256(1)));
+        vm.warp(block.timestamp + DELAY);
+        vm.expectEmit(address(g));
+        emit PriceGuard.SecondaryRemovalCancelled(PriceGuard.Source.Tellor, address(this));
+        g.executeChange(PriceGuard.Kind.SecondaryEnabled, tellorKey);
+        assertEq(uint8(g.secondaryState(PriceGuard.Source.Tellor)), uint8(PriceGuard.SecondaryState.Counted));
+        assertEq(g.secondaryRemovalAt(PriceGuard.Source.Tellor), 0);
     }
 
     /// @dev A sequencer feed that reports a start time in the future is
@@ -615,6 +774,13 @@ contract PriceGuardConfigTest is Test {
     }
 
     function _arrangeDirectPrice(int256 answer) internal {
+        _arrangePrimary(answer);
+        // API3 is configured but answers nothing, so only Tellor speaks.
+        vm.mockCallRevert(api3, bytes(""), bytes("down"));
+    }
+
+    /// @dev The primary feed alone; the secondaries are left to the test.
+    function _arrangePrimary(int256 answer) internal {
         vm.mockCall(registry, abi.encodeWithSignature("getFeed(address,address)", asset, usd), abi.encode(directFeed));
         vm.mockCall(registry, abi.encodeCall(IFeedRegistryPairBase.pairBase, (asset, usd)), abi.encode(bytes32("LINK")));
         vm.mockCall(
@@ -623,8 +789,21 @@ contract PriceGuardConfigTest is Test {
             abi.encode(uint80(1), answer, block.timestamp - 60, block.timestamp - 60, uint80(1))
         );
         vm.mockCall(directFeed, abi.encodeWithSignature("decimals()"), abi.encode(uint8(8)));
-        // API3 is configured but answers nothing, so only Tellor speaks.
-        vm.mockCallRevert(api3, bytes(""), bytes("down"));
+    }
+
+    function _api3Says(uint256 at18) internal {
+        vm.mockCall(
+            api3,
+            abi.encodePacked(IApi3ServerV1.readDataFeedWithDapiNameHash.selector),
+            abi.encode(int224(int256(at18)), uint32(block.timestamp - 60))
+        );
+    }
+
+    function _assertDivergent(PriceGuard g, string memory why) internal {
+        (IPriceGuard.PriceStatus st,,) = g.getAssetPriceStatus(asset);
+        assertEq(uint8(st), uint8(IPriceGuard.PriceStatus.Divergent), why);
+        vm.expectRevert(IPriceGuard.OraclePriceDivergence.selector);
+        g.getAssetPrice(asset);
     }
 
     function _tellorSays(uint256 at18) internal {
