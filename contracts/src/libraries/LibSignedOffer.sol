@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibTiming} from "./LibTiming.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
@@ -163,7 +164,45 @@ library LibSignedOffer {
     ///         (the standing-offer setter refuses the same shape), so refuse it before
     ///         any value moves. Both fill paths call this first.
     function requireFullWellFormed(SignedOffer calldata o) internal pure {
-        if (o.creatorFull && o.creatorMaxCStar == 0) revert SignedOfferFullNeedsMaxCStar();
+        if (!fullWellFormed(o)) revert SignedOfferFullNeedsMaxCStar();
+    }
+
+    /// @notice #1949 — whether `o`'s maker Full opt-in carries a ceiling (the
+    ///         rule {requireFullWellFormed} enforces, as an answer).
+    function fullWellFormed(SignedOffer calldata o) internal pure returns (bool) {
+        return !(o.creatorFull && o.creatorMaxCStar == 0);
+    }
+
+    /// @notice #3552 — why the vault-backed fill would refuse `o` before
+    ///         checking its signature, or `None`. The one statement of those
+    ///         checks: `SignedOfferFacet` reverts on the answer, and
+    ///         `OfferPreviewFacet.previewSignedOfferAccept` reports it.
+    enum VetFailure {
+        None,
+        FullNeedsMaxCStar,
+        DeadlinePassed,
+        Expired,
+        NonceInvalidated,
+        Consumed
+    }
+
+    /// @notice The first pre-signature check of a fill that `o` (whose order
+    ///         hash is `orderHash`) fails now, in the fill's order: a Full
+    ///         opt-in without a ceiling, the signature's own deadline (0 = none
+    ///         set), the order's expiry (0 = good till cancelled), the signer's
+    ///         batch-cancelled nonce, then an order hash already filled or
+    ///         cancelled.
+    function vetFailure(SignedOffer calldata o, bytes32 orderHash) internal view returns (VetFailure) {
+        if (!fullWellFormed(o)) return VetFailure.FullNeedsMaxCStar;
+        if (LibTiming.deadlinePassed(o.deadline)) return VetFailure.DeadlinePassed;
+        // The offer-expiry rule every other offer path reads ("expired AT and
+        // after `expiresAt`"); this check used `>` and left the exact second to
+        // the materialized offer's own expiry refusal.
+        if (LibVaipakam.offerExpiryPassed(o.expiresAt)) return VetFailure.Expired;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.signedOfferNonceUsed[o.signer][o.nonce]) return VetFailure.NonceInvalidated;
+        if (s.signedOfferFilled[orderHash] != 0) return VetFailure.Consumed;
+        return VetFailure.None;
     }
 
     /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes:

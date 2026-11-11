@@ -443,11 +443,9 @@ library LibOfferMatch {
         // to be self-trade is still primarily expired, not a
         // racing self-trade attempt; the indexer-facing classifier
         // should reflect that.
-        // L may be a memory slice (no storage ref for `isOfferExpired`), so
-        // inline the GTC-sentinel expiry check on it; B stays a storage read.
-        bool lExpired =
-            L.expiresAt != 0 && block.timestamp >= uint256(L.expiresAt);
-        if (lExpired || LibVaipakam.isOfferExpired(B)) {
+        // L may be a memory slice, so it is read through the same rule on its
+        // `expiresAt`; B stays a storage read.
+        if (LibVaipakam.offerExpiryPassed(L.expiresAt) || LibVaipakam.isOfferExpired(B)) {
             r.errorCode = MatchError.OfferExpired;
             return r;
         }

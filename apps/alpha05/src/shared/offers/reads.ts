@@ -71,11 +71,43 @@ export const ACCEPT_ERRORS = [
   // #3443 — the offer's terms were set less than the minimum age ago;
   // clears by itself within seconds.
   'TermsTooFresh',
+  // #3552 — reported only by `previewSignedOfferAccept`, the preview of a
+  // signed offer that is not yet stored; `previewAccept` never returns them.
+  'SignedOfferMalformed',
+  'SignedOfferDeadlinePassed',
+  'SignedOfferNonceUsed',
+  'SignedOfferConsumed',
+  'SignedOfferBadSignature',
+  'SignedOfferUnsupportedShape',
+  'SignedOfferMakerShort',
+  'SignedOfferBelowMinimumValue',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 
 export function acceptErrorName(code: number): AcceptErrorName {
   return ACCEPT_ERRORS[code] ?? 'Unrecognised';
+}
+
+/** Codes this build reads with `previewAccept` and that call never reports:
+ *  the retired vault-version code (#3204) and the signed-offer codes (#3552).
+ *  This build has no wording of its own for them, so should one arrive it
+ *  reads as a refusal this build cannot name. */
+const NOT_FROM_PREVIEW_ACCEPT: ReadonlySet<AcceptErrorName> = new Set<AcceptErrorName>([
+  'RetiredVaultUpgradeRequired',
+  'SignedOfferMalformed',
+  'SignedOfferDeadlinePassed',
+  'SignedOfferNonceUsed',
+  'SignedOfferConsumed',
+  'SignedOfferBadSignature',
+  'SignedOfferUnsupportedShape',
+  'SignedOfferMakerShort',
+  'SignedOfferBelowMinimumValue',
+]);
+
+/** The refusal as the page states it: a code `previewAccept` never reports
+ *  reads as `Unrecognised`, every other code as itself. */
+export function statedAcceptError(code: AcceptErrorName): AcceptErrorName {
+  return NOT_FROM_PREVIEW_ACCEPT.has(code) ? 'Unrecognised' : code;
 }
 
 export interface AcceptPreview {

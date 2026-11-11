@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OFFER_BORROWER } from '../offers/acceptTerms';
-import { termsWaitSec } from '../offers/reads';
+import { ACCEPT_ERRORS, termsWaitSec } from '../offers/reads';
 import { BORROWER, offer } from '../offers/testOffer';
 import { changedBetween, promptCount, reviewBlockers, type AcceptReview } from './acceptReview';
 import { acceptReceipt } from './receipt';
@@ -153,6 +153,17 @@ describe('retired vault-version refusal (#3204)', () => {
   const preview = { ...review().preview, error: 'RetiredVaultUpgradeRequired' as const };
   it('reads as the code this build cannot name', () => {
     expect(reviewBlockers(review({ preview }), null, copy)).toEqual(['accept.err.Unrecognised']);
+  });
+});
+
+describe('signed-offer refusals (#3552)', () => {
+  it('read as the code this build cannot name, since previewAccept never reports them', () => {
+    const signed = ACCEPT_ERRORS.filter((n) => n.startsWith('SignedOffer'));
+    expect(signed).toHaveLength(8);
+    for (const error of signed) {
+      const preview = { ...review().preview, error };
+      expect(reviewBlockers(review({ preview }), null, copy)).toEqual(['accept.err.Unrecognised']);
+    }
   });
 });
 

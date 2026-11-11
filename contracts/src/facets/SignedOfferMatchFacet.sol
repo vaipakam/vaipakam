@@ -166,10 +166,8 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // (optional: 0 = the signer set none).
         LibTiming.checkDeadline(o.deadline);
         // #1195 B3 (Pass-2, §1075) — the GTT rule is "expired AT and after the
-        // deadline", so use `>=` (matching `LibVaipakam.isOfferExpired` /
-        // `LibOfferMatch`), not `>` which left the exact `expiresAt` second
-        // fillable.
-        if (o.expiresAt != 0 && block.timestamp >= o.expiresAt) {
+        // deadline": the one offer-expiry rule (#3552).
+        if (LibVaipakam.offerExpiryPassed(o.expiresAt)) {
             revert SignedOfferGttExpired(o.expiresAt);
         }
         orderHash = LibSignedOffer.hashStruct(o);
