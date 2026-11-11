@@ -318,27 +318,48 @@ a commit. The template documents each line. In short:
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming any pass that alerts here: `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED` or `REWARD_DAY_CLOSE_ENABLED`.
-- **Private submission (#3240):** `PRIVATE_TX_RPCS` (a secret) names a
-  private submission endpoint per chain, as `<chainId>=<https URL>` entries,
-  for example Flashbots Protect on Ethereum. EVERY transaction the keeper key
-  sends on a named chain is broadcast there, not only sales and liquidations,
-  because the key's sends share one nonce sequence and the chain's ordinary RPC
-  cannot see a private transaction until it is mined. Reads stay on the
-  chain's `RPC_*`. `PRIVATE_TX_FALLBACK_CHAIN_IDS` lists the chains whose
-  private sends may fall back to that RPC when the endpoint refuses or does not
-  answer; the fallback sends the same signed transaction, which then becomes
-  public. A chain not listed has no fallback. Empty settings mean every chain
-  sends publicly. A value the keeper cannot read sends nothing on any chain, so
-  check the `submission routes:` line every tick prints after `chains
-  resolved`: it names each chain's route and the endpoint's provider domain
-  (the last two labels of its host, such as `flashbots.net`), never its URL
-  or a subdomain, either of which can carry an access key. Before each private broadcast the keeper records that nonce, with its own
-  send time, in its private database (`keeper_private_nonce`, keeper migration `0007`), so a
-  restart cannot reuse the nonce of a private transaction still pending; a
-  record it cannot read or write stops that chain's sends. On a private chain
-  a dropped transaction can hold later sends on that chain for up to seven
-  minutes from its own broadcast; the sends behind it keep their own seven. Which mainnet chains get a private route is an owner decision
-  recorded in the mainnet checklist.
+- **Private submission (#3240, #3408):** `PRIVATE_TX_RPCS` (a secret) names
+  the private submission endpoints per chain, as `<chainId>=<https URL>`
+  entries, for example Flashbots Protect on Ethereum. A provider whose private
+  submission is the `eth_sendPrivateTransaction` method rather than an
+  ordinary `eth_sendRawTransaction` is written
+  `<chainId>/eth_sendPrivateTransaction=<https URL>` (#3408: on Ethereum, the
+  private-transaction method of the RPC provider the keeper already uses). A
+  chain may be named more than once: its endpoints are tried in the order
+  written, each with the same signed transaction and eight seconds to answer,
+  so a later one is the fallback for an earlier one that refuses or does not
+  answer. EVERY transaction the keeper key sends on a named chain is broadcast
+  there, not only sales, liquidations and Telegram LOCKs, because the key's
+  sends share one nonce sequence and the chain's ordinary RPC cannot see a
+  private transaction until it is mined. Reads stay on the chain's `RPC_*`.
+  `PRIVATE_TX_FALLBACK_CHAIN_IDS` lists the chains whose private sends may
+  fall back to that RPC, in two cases: every private endpoint refused or did
+  not answer, or a send a private endpoint accepted is still unmined
+  `PRIVATE_TX_PUBLIC_AFTER_SECONDS` after it was accepted (24 to 300, default
+  60; the copy goes out on the first tick after that, so up to a minute
+  later). Either way the fallback sends the same signed transaction, which
+  then becomes public, and posts an ops alert (one per chain per ten minutes;
+  every fallback is logged). A chain not listed has no fallback: a failed
+  private send is a failed send, and an accepted one waits as long as the
+  private route keeps it. Empty settings mean every chain sends publicly. A
+  value the keeper cannot read sends nothing on any chain, so check the
+  `submission routes:` line every tick prints after `chains resolved`: it
+  names each chain's endpoints, in order, by provider domain (the last two
+  labels of the host, such as `flashbots.net`), never a URL or a subdomain,
+  either of which can carry an access key. Before each private broadcast the
+  keeper records that nonce, with its own send time, in its private database
+  (`keeper_private_nonce`, keeper migration `0007`), so a restart cannot reuse
+  the nonce of a private transaction still pending; a record it cannot read or
+  write stops that chain's sends. On a chain with a fallback it also records
+  each accepted private send with its signed bytes (`keeper_private_send`,
+  keeper migration `0008`); a record it cannot write is logged, and that one
+  send then gets no public copy. On a private chain a dropped transaction can
+  hold later sends on that chain for up to seven minutes from its own
+  broadcast; the sends behind it keep their own seven. No public copy is sent
+  past those seven minutes, because a later send may hold the nonce by then;
+  such a send is named in an alert. Which mainnet chains get a private route,
+  and which endpoints, is an owner decision recorded in the mainnet checklist
+  (#3408: Ethereum and BNB Chain, Polygon PoS before mainnet).
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or

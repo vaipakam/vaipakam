@@ -171,7 +171,25 @@ evidence that the migration has completed.
   send the same action again behind it; if it cannot keep that record, it sends
   nothing on that chain. A fallback to the ordinary RPC is a new broadcast and
   is not made once the run's deadline has passed. Each run states every chain's route.
-  Which chains need a private route at mainnet is an owner decision.
+  Which chains need a private route at mainnet is an owner decision (#3408:
+  Ethereum and BNB Chain, with Polygon PoS chosen before mainnet; the
+  sequencer chains need none).
+- A chain's private route may name several endpoints, tried in the order the
+  operator wrote them, each with the same signed transaction and a bounded
+  time to answer, so one endpoint that refuses or does not answer is not the
+  end of a protective send. An endpoint may be a provider's dedicated
+  private-transaction method as well as an ordinary submission endpoint.
+- On a chain the operator allows a public fallback, a transaction the private
+  route accepted but that is still not mined after a stated time (the
+  operator's setting, bounded well inside the time the keeper keeps that
+  nonce reserved) is sent through the ordinary RPC as the same signed
+  transaction, once. A fallback for either reason (every endpoint failed, or
+  the accepted send did not land) tells the operator, naming the transaction,
+  because the transaction is then public. No public copy is sent once the
+  keeper may have given the nonce to a later send; a send that reaches that
+  point unmined and never copied is reported as such, with its outcome stated
+  as unknown, never dropped silently. These rules cover every transaction the
+  keeper sends on that chain, including the Telegram LOCK and forced sales.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal
   names and identifiers, so redaction does not hide why an action was skipped.

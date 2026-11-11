@@ -16,6 +16,8 @@
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
 import { armSubmissionRoutes, describeSubmissionRoutes, readSubmissionRoutes } from './submissionRoute';
 import { d1NonceReservations } from './privateNonce';
+import { d1PrivateSendRecords } from './privateRebroadcast';
+import { privateRouteEvents, runPrivateRebroadcast } from './privateRouteOps';
 import {
   hasD1Binding,
   maintenanceSkipNotice,
@@ -159,10 +161,24 @@ export async function runKeeperTick(
   // #3240 — where each chain's sends are broadcast, armed for the process
   // before any pass launches, and named once per tick so the run's log says
   // which route its sends took. Unreadable settings send nothing anywhere.
-  const routes = readSubmissionRoutes(resolved.PRIVATE_TX_RPCS, resolved.PRIVATE_TX_FALLBACK_CHAIN_IDS);
-  armSubmissionRoutes(routes, d1NonceReservations(resolved.KEEPER_DB));
+  const routes = readSubmissionRoutes(
+    resolved.PRIVATE_TX_RPCS,
+    resolved.PRIVATE_TX_FALLBACK_CHAIN_IDS,
+    resolved.PRIVATE_TX_PUBLIC_AFTER_SECONDS,
+  );
+  const privateSends = d1PrivateSendRecords(resolved.KEEPER_DB);
+  armSubmissionRoutes(routes, d1NonceReservations(resolved.KEEPER_DB), privateRouteEvents(resolved, chains, privateSends));
   // eslint-disable-next-line no-console
   console.log(`[keeper] submission routes: ${describeSubmissionRoutes(routes, chains)}`);
+
+  // #3408 — a public copy of every private send still unmined after its
+  // chain's stated time, where the operator allows the fallback. Every tick,
+  // with a one-minute run deadline; a chain with no such route costs nothing.
+  launch('privateRebroadcast', () =>
+    timedPass('privateRebroadcast', () =>
+      runPrivateRebroadcast(resolved, chains, routes, privateSends, runDeadline({ cadenceMinutes: 1 }, scheduledTimeMs)),
+    ),
+  );
 
   // #3119 — a key that cannot sign leaves every pass below unable to send a
   // transaction, each gated pass saying so only in its own skip line. One ops

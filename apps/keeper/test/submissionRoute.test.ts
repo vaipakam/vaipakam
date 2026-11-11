@@ -15,6 +15,7 @@ import {
   readSubmissionRoutes,
   resetSubmissionRoutes,
   submissionRouteFor,
+  type PrivateRoute,
 } from '../src/submissionRoute';
 import {
   broadcastSigned,
@@ -63,8 +64,8 @@ describe('readSubmissionRoutes', () => {
 
   it('reads one route per chain, with its fallback where the list names it', () => {
     const r = readSubmissionRoutes(` 1=${URL_ETH}, 56=https://bsc.example.net/ `, '1');
-    expect(submissionRouteFor(r, 1)).toMatchObject({ kind: 'private', host: 'example.org', fallback: true });
-    expect(submissionRouteFor(r, 56)).toMatchObject({ kind: 'private', host: 'example.net', fallback: false });
+    expect(submissionRouteFor(r, 1)).toMatchObject({ kind: 'private', endpoints: [{ host: 'example.org', method: 'eth_sendRawTransaction' }], fallback: true, publicAfterMs: 60_000 });
+    expect(submissionRouteFor(r, 56)).toMatchObject({ kind: 'private', endpoints: [{ host: 'example.net' }], fallback: false });
     expect(submissionRouteFor(r, 8453)).toEqual({ kind: 'public' });
   });
 
@@ -72,11 +73,13 @@ describe('readSubmissionRoutes', () => {
     const cases: [string, string, string][] = [
       ['1', '', 'entry 1 of 1 is not <chainId>=<URL>'],
       ['x=https://a.example', '', 'does not start with a chain id'],
-      [`1=${URL_ETH},1=${URL_ETH}`, '', 'names chain 1 twice'],
+      [`1=${URL_ETH},1=${URL_ETH}`, '', 'names one endpoint twice for chain 1'],
       ['1=not a url', '', 'is not a URL'],
       ['1=http://rpc.example.org/SECRET', '', 'is not an https URL'],
       [`1=${URL_ETH}`, '56', 'names chain 56, which has no private route'],
       [`1=${URL_ETH}`, 'one', 'entry 1 of 1 is not a chain id'],
+      [`1/eth_sendBundle=${URL_ETH}`, '', 'names a method other than eth_sendRawTransaction or eth_sendPrivateTransaction'],
+      [`x/eth_sendPrivateTransaction=${URL_ETH}`, '', 'does not start with a chain id'],
     ];
     for (const [rpcs, fallback, why] of cases) {
       const r = readSubmissionRoutes(rpcs, fallback);
@@ -89,7 +92,7 @@ describe('readSubmissionRoutes', () => {
     const r = readSubmissionRoutes(`1=${URL_ETH},56=https://bsc.example.net/`, '1');
     const line = describeSubmissionRoutes(r, [{ id: 1, name: 'Ethereum' }, { id: 8453, name: 'Base' }]);
     expect(line).toBe(
-      'Ethereum(1) private via example.org, falling back to the public RPC when it fails; Base(8453) public RPC; a private route is set for chain 56, which this tick does not serve',
+      'Ethereum(1) private via example.org, falling back to the public RPC when every private endpoint fails or 60 s after an accepted send is still unmined; Base(8453) public RPC; a private route is set for chain 56, which this tick does not serve',
     );
     expect(line).not.toContain('SECRET');
     expect(describeSubmissionRoutes(readSubmissionRoutes('bad', ''), [])).toMatch(/^nothing is sent on any chain/);
@@ -115,8 +118,8 @@ function setup(opts: { fallback: boolean; priv: () => Promise<unknown>; pub?: ()
   const calls: string[] = [];
   const reservations = opts.reservations ?? memoryNonceReservations();
   armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, opts.fallback ? '1' : ''), reservations);
-  const route = submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as { url: string };
-  setPrivateSubmissionClientForTest(route.url, createPublicClient({ transport: rpc(opts.priv, calls, 'private') }) as PublicClient);
+  const route = submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as PrivateRoute;
+  setPrivateSubmissionClientForTest(route.endpoints[0].url, createPublicClient({ transport: rpc(opts.priv, calls, 'private') }) as PublicClient);
   const wallet = createWalletClient({ account, transport: rpc(opts.pub ?? (async () => keccak256(RAW)), calls, 'public') });
   return { calls, wallet, reservations };
 }
@@ -346,7 +349,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
     // The endpoint accepts every future nonce; the pending count stays 0.
     setPrivateSubmissionClientForTest(
-      (submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as { url: string }).url,
+      (submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as PrivateRoute).endpoints[0].url,
       createPublicClient({ transport: rpc(async () => keccak256(RAW), [], 'private') }) as PublicClient,
     );
     const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
@@ -376,7 +379,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     resetSubmissionQueues();
     armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
     setPrivateSubmissionClientForTest(
-      (submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as { url: string }).url,
+      (submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as PrivateRoute).endpoints[0].url,
       createPublicClient({ transport: rpc(async () => keccak256(RAW), [], 'private') }) as PublicClient,
     );
     const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
@@ -508,5 +511,181 @@ describe('the private broadcast through a capped pass', () => {
     );
     expect(await broadcastSigned(wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('#3408 — several endpoints per chain, the provider method and the stated public time', () => {
+  it('keeps a chain\'s endpoints in the order written, each with its method', () => {
+    const r = readSubmissionRoutes(
+      `1/eth_sendPrivateTransaction=https://eth.provider.example/v2/SECRET, 1=https://a.free.example/, 56=https://b.example/, 1=https://c.free.example/`,
+      '1',
+      '90',
+    );
+    const route = submissionRouteFor(r, 1) as PrivateRoute;
+    expect(route.endpoints.map((e) => [e.host, e.method])).toEqual([
+      ['provider.example', 'eth_sendPrivateTransaction'],
+      ['free.example', 'eth_sendRawTransaction'],
+      ['free.example', 'eth_sendRawTransaction'],
+    ]);
+    expect(route.publicAfterMs).toBe(90_000);
+    const line = describeSubmissionRoutes(r, [{ id: 1, name: 'Ethereum' }]);
+    expect(line).toContain('private via provider.example (eth_sendPrivateTransaction), then free.example, then free.example');
+    expect(line).toContain('90 s after an accepted send is still unmined');
+    expect(line).not.toContain('SECRET');
+  });
+
+  it('reads the public time by its bounds and refuses anything else, sending nothing', () => {
+    for (const bad of ['23', '301', '1.5', '60s', '-60']) {
+      const r = readSubmissionRoutes(`1=${URL_ETH}`, '1', bad);
+      expect('unread' in r && r.unread, bad).toContain('PRIVATE_TX_PUBLIC_AFTER_SECONDS');
+    }
+    expect((submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, '1', '24'), 1) as PrivateRoute).publicAfterMs).toBe(24_000);
+    expect((submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, '1', ' 300 '), 1) as PrivateRoute).publicAfterMs).toBe(300_000);
+  });
+
+  it('a chain with no fallback names no public time in its line', () => {
+    const line = describeSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, '', '90'), [{ id: 1, name: 'Ethereum' }]);
+    expect(line).toBe('Ethereum(1) private via example.org, no fallback');
+  });
+});
+
+const URL_A = 'https://a.example.org/KEY_A';
+const URL_B = 'https://b.example.net/KEY_B';
+
+/** A client that answers `eth_sendRawTransaction` and `eth_sendPrivateTransaction`
+ *  with `send`, noting each call's method and params. */
+function privateRpc(send: () => Promise<unknown>, calls: { name: string; method: string; params: unknown }[], name: string) {
+  return custom({
+    async request({ method, params }: { method: string; params?: unknown }) {
+      if (method === 'eth_sendRawTransaction' || method === 'eth_sendPrivateTransaction') {
+        calls.push({ name, method, params });
+        return send();
+      }
+      if (method === 'eth_chainId') return '0x1';
+      throw new Error(`unexpected ${method}`);
+    },
+  });
+}
+
+function setupTwo(opts: {
+  rpcs?: string;
+  fallback: boolean;
+  a: () => Promise<unknown>;
+  b: () => Promise<unknown>;
+  pub?: () => Promise<unknown>;
+}) {
+  const calls: { name: string; method: string; params: unknown }[] = [];
+  const accepted: unknown[] = [];
+  const alerts: string[] = [];
+  const rpcs = opts.rpcs ?? `1=${URL_A},1=${URL_B}`;
+  const routes = readSubmissionRoutes(rpcs, opts.fallback ? '1' : '');
+  armSubmissionRoutes(routes, memoryNonceReservations(), {
+    privateAccepted: async (send) => {
+      accepted.push(send);
+    },
+    publicFallback: async (_chainId, line) => {
+      alerts.push(line);
+    },
+  });
+  const [a, b] = (submissionRouteFor(routes, 1) as PrivateRoute).endpoints;
+  setPrivateSubmissionClientForTest(a.url, createPublicClient({ transport: privateRpc(opts.a, calls, 'a') }) as PublicClient);
+  setPrivateSubmissionClientForTest(b.url, createPublicClient({ transport: privateRpc(opts.b, calls, 'b') }) as PublicClient);
+  const pubCalls: string[] = [];
+  const wallet = createWalletClient({ account, transport: rpc(opts.pub ?? (async () => keccak256(RAW)), pubCalls, 'public') });
+  return { calls, accepted, alerts, wallet, pubCalls };
+}
+
+describe('#3408 — the private broadcast over several endpoints', () => {
+  it('tries the next endpoint, with the same signed bytes, when the first refuses', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = setupTwo({ fallback: false, a: async () => { throw rpcRefusal(); }, b: async () => keccak256(RAW) });
+    expect(await broadcastSigned(s.wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
+    expect(s.calls.map((c) => c.name)).toEqual(['a', 'b']);
+    expect(s.calls.map((c) => (c.params as unknown[])[0])).toEqual([RAW, RAW]);
+    expect(s.pubCalls).toEqual([]);
+  });
+
+  it('calls the provider method with the signed bytes in tx, asking for fast inclusion', async () => {
+    const s = setupTwo({
+      rpcs: `1/eth_sendPrivateTransaction=${URL_A},1=${URL_B}`,
+      fallback: false,
+      a: async () => keccak256(RAW),
+      b: async () => keccak256(RAW),
+    });
+    expect(await broadcastSigned(s.wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
+    expect(s.calls).toEqual([{ name: 'a', method: 'eth_sendPrivateTransaction', params: [{ tx: RAW, preferences: { fast: true } }] }]);
+  });
+
+  it('reports the hash the bytes determine, and says so, when an endpoint answers something else', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = setupTwo({ fallback: false, a: async () => '0xdeadbeef', b: async () => keccak256(RAW) });
+    expect(await broadcastSigned(s.wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
+    expect(warn.mock.calls.join(' ')).toContain('answered something other than its hash');
+  });
+
+  it('records an accepted send only where the chain allows a public fallback', async () => {
+    const withFallback = setupTwo({ fallback: true, a: async () => keccak256(RAW), b: async () => keccak256(RAW) });
+    await broadcastSigned(withFallback.wallet, 1, RAW, FAR);
+    expect(withFallback.accepted).toEqual([
+      expect.objectContaining({ chainId: 1, address: account.address, nonce: 0, hash: keccak256(RAW), serialized: RAW }),
+    ]);
+    resetSubmissionRoutes();
+    resetSubmissionQueues();
+    const without = setupTwo({ fallback: false, a: async () => keccak256(RAW), b: async () => keccak256(RAW) });
+    await broadcastSigned(without.wallet, 1, RAW, FAR);
+    expect(without.accepted).toEqual([]);
+  });
+
+  it('a record that cannot be written never fails a send that went out, and says what it costs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const routes = readSubmissionRoutes(`1=${URL_A}`, '1');
+    armSubmissionRoutes(routes, memoryNonceReservations(), {
+      privateAccepted: async () => { throw new Error('d1 down'); },
+      publicFallback: async () => {},
+    });
+    setPrivateSubmissionClientForTest((submissionRouteFor(routes, 1) as PrivateRoute).endpoints[0].url,
+      createPublicClient({ transport: privateRpc(async () => keccak256(RAW), [], 'a') }) as PublicClient);
+    const wallet = createWalletClient({ account, transport: rpc(async () => keccak256(RAW), [], 'public') });
+    expect(await broadcastSigned(wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
+    expect(warn.mock.calls.join(' ')).toContain('will not be sent through the public RPC');
+  });
+
+  it('when every endpoint fails and the chain allows it, the same bytes go public and the operator is told', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = setupTwo({ fallback: true, a: async () => { throw rpcRefusal(); }, b: async () => { throw lost(); } });
+    expect(await broadcastSigned(s.wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
+    expect(s.calls.map((c) => c.name)).toEqual(['a', 'b']);
+    expect(s.pubCalls).toEqual(['public']);
+    await Promise.resolve();
+    expect(s.alerts).toEqual([expect.stringContaining(`every private endpoint failed, so the same signed transaction ${keccak256(RAW)} was sent through the public RPC`)]);
+    // An accepted public copy is not a private send to watch.
+    expect(s.accepted).toEqual([]);
+  });
+
+  it('when every endpoint fails without a fallback, an attempt that may have relayed is what is thrown', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = setupTwo({ fallback: false, a: async () => { throw lost(); }, b: async () => { throw rpcRefusal(); } });
+    const err = await broadcastSigned(s.wallet, 1, RAW, FAR).catch((e: unknown) => e);
+    expect(isDefinitiveRejection(err)).toBe(false);
+    expect(s.pubCalls).toEqual([]);
+  });
+
+  it('a deadline that passes after a refused first endpoint defers the send, releasing the nonce', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let t = 0;
+    const s = setupTwo({ fallback: true, a: async () => { t = 100; throw rpcRefusal(); }, b: async () => keccak256(RAW) });
+    const err = await broadcastSigned(s.wallet, 1, RAW, 50, () => t).catch((e: unknown) => e);
+    expect(isSendPastDeadline(err)).toBe(true);
+    expect(s.calls.map((c) => c.name)).toEqual(['a']);
+  });
+
+  it('a deadline that passes after a first endpoint that may have relayed throws that attempt, keeping the nonce', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let t = 0;
+    const s = setupTwo({ fallback: true, a: async () => { t = 100; throw lost(); }, b: async () => keccak256(RAW) });
+    const err = await broadcastSigned(s.wallet, 1, RAW, 50, () => t).catch((e: unknown) => e);
+    expect(isSendPastDeadline(err)).toBe(false);
+    expect(isDefinitiveRejection(err)).toBe(false);
+    expect(s.calls.map((c) => c.name)).toEqual(['a']);
   });
 });
