@@ -1,4 +1,4 @@
-## Thread — Range matches fill the largest amount both sides accept (PR #TBD)
+## Thread — Range matches fill the largest amount both sides accept (PR #3591)
 
 A permissionless range match used to lend the midpoint of the two offers' amount overlap. A lender offering up to 100 against a borrower wanting up to 100 got a loan of about 50 plus the minimum, and reaching the full amount took further matches, each its own loan paying its own gas and matcher share. The midpoint is a fair split for the rate, because neither side should take the whole surplus. For the amount it has no fairness reason: both parties said they accept anything in the window.
 
