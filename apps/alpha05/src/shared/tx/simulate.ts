@@ -18,7 +18,7 @@ export interface CallRequest {
   args: readonly unknown[];
 }
 
-function isRevert(e: unknown): boolean {
+export function isRevert(e: unknown): boolean {
   if (e instanceof BaseError) return e.walk((x) => x instanceof ContractFunctionRevertedError) !== null;
   return false;
 }

@@ -1,5 +1,5 @@
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -57,7 +57,7 @@ export function useTermsGate(key: string, chain: SupportedChain | null, own: Own
     sources: own?.sources ?? [],
     send: () => {
       if (!session || !chain) throw new Error('no Terms under review');
-      return writeContract(config, {
+      return sendWrite(config, {
         address: diamond,
         abi: LEGAL_ABI,
         functionName: 'acceptTerms',

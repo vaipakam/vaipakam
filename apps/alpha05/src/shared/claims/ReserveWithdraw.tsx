@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -82,7 +82,7 @@ export function ReserveWithdraw({ loanId, chain, own, meta, onClose }: ReserveWi
       if (dry.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('reserve.stepSend') }));
-      return writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account });
     },
     measure: async (receipt) => (review ? measureReserve(review, receipt.logs, diamond, account, words, copy) : []),
     release: async () => null,

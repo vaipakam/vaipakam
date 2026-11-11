@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
@@ -164,7 +164,7 @@ export function ListForRent({ draft, chain, own, meta, terms, onEdit, onClose }:
       // 3. The listing.
       say(text('rentList.stepSend'));
       try {
-        return await writeContract(config, { address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], chainId: chain.chainId, account });
+        return await sendWrite(config, { address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], chainId: chain.chainId, account });
       } catch (e) {
         return stop(format('rentList.stoppedAfterApproval', { reason: listRefusal(e, copy) }));
       }

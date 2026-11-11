@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { requireSelector } from '../capability/types';
@@ -61,7 +61,7 @@ export function FeeDiscountConsent() {
     account,
     sources: own?.sources ?? [],
     send: () =>
-      writeContract(config, { address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'setVPFIDiscountConsent', args: [target], chainId: chain!.chainId, account }),
+      sendWrite(config, { address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'setVPFIDiscountConsent', args: [target], chainId: chain!.chainId, account }),
     measure: async (_receipt, at) => {
       const now = await at.read((c, b) => readFeeDiscountConsent(c, diamond, account, b));
       const label = format('consent.leg', { state: text(target ? 'consent.stateOn' : 'consent.stateOff') });

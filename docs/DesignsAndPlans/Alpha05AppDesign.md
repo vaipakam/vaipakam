@@ -175,6 +175,21 @@ holds signing until the new context has its own. Once a transaction has
 been handed to the wallet there is no silent retry that could leave it
 ambiguous whether the action may still confirm.
 
+### RB-GAS — every write carries the shared gas margin
+
+Every contract write is sent with a gas limit of a fresh estimate plus the
+margin every sender in the repository uses (30%, rounded up), never at the
+node's bare estimate. An estimate is the least gas the call needs in the
+latest block, and the write mines in a later one; a call whose cost grows
+with time (an oracle read, accrual, a limiter that refills) can then run
+short and revert with no reason. Unused gas is not charged. The estimate is
+asked of the wallet's own provider first, then the app's endpoints. When the
+call reverts on estimation, or nothing can estimate it, no limit is set and
+the wallet estimates and reports the refusal itself, as it always did. A
+batch whose estimate must be taken on a stricter form (claim everything)
+sets its limit from that estimate with the same margin. There is one sender
+for this, and a lint rule refuses any write that bypasses it.
+
 ### RB-CONFIDENCE — predictable confidence
 
 The same four things on every write, so the app is learned once: a review

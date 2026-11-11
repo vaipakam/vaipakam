@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { Link } from 'react-router-dom';
 import { useConfig } from 'wagmi';
-import { signTypedData, writeContract } from 'wagmi/actions';
+import { signTypedData } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
@@ -216,7 +217,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       // 4. The acceptance.
       say(text('accept.stepSend'));
       try {
-        return await writeContract(config, {
+        return await sendWrite(config, {
           address: diamond,
           abi: ACCEPT_ABI,
           functionName: 'acceptOffer',

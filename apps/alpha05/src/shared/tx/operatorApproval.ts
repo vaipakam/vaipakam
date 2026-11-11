@@ -11,7 +11,8 @@
  * node answers, so a revoke is never skipped as already done.
  */
 import type { Config } from 'wagmi';
-import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { waitForTransactionReceipt } from 'wagmi/actions';
+import { sendWrite } from './send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
@@ -60,7 +61,7 @@ export function operatorApproval(d: OperatorApprovalDeps, asset: Hex, tokenId: b
       .then((x) => x.value);
 
   async function setTo(on: boolean): Promise<{ landed: boolean; hash: Hex | null; at: bigint | null }> {
-    const hash = await writeContract(config, { address: asset, abi: NFT_ABI, functionName: 'setApprovalForAll', args: [diamond, on], chainId, account });
+    const hash = await sendWrite(config, { address: asset, abi: NFT_ABI, functionName: 'setApprovalForAll', args: [diamond, on], chainId, account });
     let block: bigint;
     try {
       block = (await waitForTransactionReceipt(config, { hash, chainId })).blockNumber;

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useConfig } from 'wagmi';
 import { zeroAddress } from 'viem';
-import { watchAsset, writeContract } from 'wagmi/actions';
+import { watchAsset } from 'wagmi/actions';
+import { sendWrite } from '../../shared/tx/send';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -80,9 +81,9 @@ export function Faucet() {
     send: () => {
       if (!pick || !chain) throw new Error('no mint under review');
       if (pick.kind === 'erc20')
-        return writeContract(config, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount], chainId: chain.chainId, account });
+        return sendWrite(config, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount], chainId: chain.chainId, account });
       if (pick.kind === 'multi')
-        return writeContract(config, {
+        return sendWrite(config, {
           address: pick.asset.address,
           abi: FAUCET_MULTI_ABI,
           functionName: 'mint',
@@ -90,7 +91,7 @@ export function Faucet() {
           chainId: chain.chainId,
           account,
         });
-      return writeContract(config, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, pick.tokenId], chainId: chain.chainId, account });
+      return sendWrite(config, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, pick.tokenId], chainId: chain.chainId, account });
     },
     measure: async (receipt, at) => {
       if (!pick) return [];

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { formatUnits } from 'viem';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
@@ -110,7 +110,7 @@ export function ArmTariff({ side, flowKey, ctx, own, onDone }: ArmTariffProps) {
     account,
     sources: own.sources,
     send: () =>
-      writeContract(config, {
+      sendWrite(config, {
         address: diamond,
         abi: PROFILE,
         functionName: 'setOfferCreatorFullTariff',
