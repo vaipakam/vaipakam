@@ -337,6 +337,9 @@ export function useDeskSignedBook(
        *  deploy) — not knowing whether depth was cut is not the same as
        *  knowing it was not (#2386 r1). */
       truncated: boolean | null;
+      /** #3411 — orders a reorg rebuild of the offer book is re-reading
+       *  (0 from a Worker that predates the count: it cannot rebuild). */
+      awaitingReplay: number;
     } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchSignedOffers(
@@ -358,6 +361,10 @@ export function useDeskSignedBook(
       return {
         offers: res.offers,
         truncated: typeof res.truncated === 'boolean' ? res.truncated : null,
+        awaitingReplay:
+          typeof res.awaitingReplay === 'number' && Number.isFinite(res.awaitingReplay) && res.awaitingReplay > 0
+            ? res.awaitingReplay
+            : 0,
       };
     },
   });

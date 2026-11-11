@@ -61,6 +61,13 @@ export interface SettledHead {
    */
   settled: boolean;
   /**
+   * The hash of that block, when the chain answered the `safe` tag and the
+   * provider returned one. The reorg guard records it as the anchor of the
+   * scan it bounds (`reorgGuard.ts`, #3411), so it is carried rather than
+   * fetched again.
+   */
+  hash?: string;
+  /**
    * Why the settled read did not answer, when it did not. Present only on a
    * fallback.
    *
@@ -85,8 +92,8 @@ interface HeadReader {
   // parameter type is a union of mutually exclusive selectors (hash OR
   // number OR tag), and a shape offering both at once is not assignable to
   // it.
-  getBlock(args: { blockTag: 'safe' }): Promise<{ number: bigint | null; timestamp: bigint }>;
-  getBlock(args: { blockNumber: bigint }): Promise<{ number: bigint | null; timestamp: bigint }>;
+  getBlock(args: { blockTag: 'safe' }): Promise<{ number: bigint | null; timestamp: bigint; hash?: string | null }>;
+  getBlock(args: { blockNumber: bigint }): Promise<{ number: bigint | null; timestamp: bigint; hash?: string | null }>;
   getBlockNumber(): Promise<bigint>;
 }
 
@@ -103,7 +110,12 @@ export async function resolveSettledHead(client: HeadReader): Promise<SettledHea
   try {
     const safe = await client.getBlock({ blockTag: 'safe' });
     if (safe.number !== null) {
-      return { block: safe.number, timestamp: safe.timestamp, settled: true };
+      return {
+        block: safe.number,
+        timestamp: safe.timestamp,
+        settled: true,
+        ...(safe.hash ? { hash: safe.hash } : {}),
+      };
     }
     // A `safe` block always has a number; `null` is the `pending` case, which
     // is not a tag this asks for. Treated as a non-answer rather than

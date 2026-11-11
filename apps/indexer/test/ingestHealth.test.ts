@@ -63,7 +63,7 @@ describe('readIngestHealth', () => {
           lastBlock: 500,
           scannedAt: 1_000,
           ageSeconds: 100,
-          deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false, adoptedBlind: false },
+          deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false, resetKind: null, adoptedBlind: false },
         },
       ],
       configured: { chains: [], basis: expect.stringMatching(/not resolved/) },
@@ -88,7 +88,7 @@ describe('readIngestHealth', () => {
       lastBlock: null,
       scannedAt: null,
       ageSeconds: null,
-      deployment: { diamond: DIAMOND, deployBlock: 320_151_741, adoptedAt: 1_050, resetPending: false, adoptedBlind: false },
+      deployment: { diamond: DIAMOND, deployBlock: 320_151_741, adoptedAt: 1_050, resetPending: false, resetKind: null, adoptedBlind: false },
     });
   });
 

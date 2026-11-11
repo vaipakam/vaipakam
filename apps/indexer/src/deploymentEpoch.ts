@@ -64,6 +64,7 @@
  * reuses the id. Restore treatment and epoch treatment are different axes.
  */
 import keep from './diamondEpochKeep.json';
+import rebuildKeep from './reorgRebuildKeep.json';
 
 /** The D1 surface this module uses; the sqlite test adapter provides the same. */
 export interface EpochDb {
@@ -82,6 +83,70 @@ export interface EpochDb {
 /** Tables a Diamond change on a chain leaves alone, with the reason each is the user's. */
 export const KEEP_ON_DIAMOND_CHANGE: Readonly<Record<string, string>> = keep.keep;
 
+/**
+ * Tables a reorg REBUILD leaves alone on top of {@link KEEP_ON_DIAMOND_CHANGE}
+ * (#3411, Codex #3528 r1). A rebuild replays the SAME Diamond, so every row
+ * born off chain stays valid for it: the restore runbook's §6 clear-and-replay
+ * treatment, applied to one chain. `scripts/check-table-classification.mjs`
+ * holds this list equal to the chain-scoped born-off-chain tables the Diamond
+ * keep list does not already cover.
+ */
+export const KEEP_ON_REBUILD: Readonly<Record<string, string>> = rebuildKeep.keep;
+
+/**
+ * Hybrid tables a rebuild keeps but whose replay-maintained columns it hands
+ * back to the replay: each column is set to the value the scan starts from,
+ * exactly as the restore converter's `RESTORE_PROJECTIONS` does (the guard
+ * holds the two equal). The replay then re-applies every fill and cancel from
+ * the chain as it now is.
+ */
+export const PROJECT_ON_REBUILD: Readonly<
+  Record<string, { reason: string; set: Record<string, string>; pendingThrough: string; touch: string }>
+> = rebuildKeep.project;
+
+/**
+ * The stamp a rebuild writes on a projected row (`pendingThrough`): the height
+ * the chain had been indexed to (the higher of its scan cursor and its
+ * reorg-guard anchor, read before the same batch clears them), or the row's
+ * existing stamp when that is higher. A second rebuild landing before the
+ * first replay caught up must not LOWER a stamp: the order's fills and
+ * cancels up to the first height have still not been re-read (Codex #3528 r3).
+ */
+const stampSql = (table: string, column: string): string => `(SELECT MAX(b) FROM (
+     SELECT "${table}"."${column}" AS b
+     UNION ALL SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'
+     UNION ALL SELECT block_number FROM indexer_chain_anchor WHERE chain_id = ?))`;
+
+/**
+ * The statements that list a rebuild's projected rows again once the scan has
+ * re-read their lifecycle: the stamp is cleared, and the row's `touch` column
+ * bumped so the market summary recomputes its market, wherever the cursor the
+ * same batch writes has reached the stamped height. For the caller to run IN
+ * the cursor write's batch, so the two land together.
+ */
+export function releaseReplayedRows<S>(
+  db: { prepare(sql: string): { bind(...args: unknown[]): S } },
+  args: { chainId: number; through: bigint; nowSec: number },
+): S[] {
+  return Object.entries(PROJECT_ON_REBUILD).map(([t, p]) => {
+    if (!IDENTIFIER.test(t) || !IDENTIFIER.test(p.pendingThrough) || !IDENTIFIER.test(p.touch)) {
+      throw new Error(`reorgRebuildKeep.json: malformed projection for ${t}`);
+    }
+    return db
+      .prepare(
+        `UPDATE "${t}" SET "${p.pendingThrough}" = NULL, "${p.touch}" = ?
+          WHERE chain_id = ? AND "${p.pendingThrough}" IS NOT NULL AND "${p.pendingThrough}" <= ?`,
+      )
+      .bind(args.nowSec, args.chainId, Number(args.through));
+  });
+}
+
+/** `reset_pending` values: which reset a set flag asks for. */
+export const RESET_DIAMOND_CHANGE = 1;
+export const RESET_REBUILD = 2;
+export type ResetKind = 'diamond-change' | 'rebuild';
+const resetValue = (k: ResetKind): number => (k === 'rebuild' ? RESET_REBUILD : RESET_DIAMOND_CHANGE);
+
 /** The epoch record itself carries `chain_id`; it is what the reset is ABOUT, never what it clears. */
 const EPOCH_RECORD_TABLE = 'indexer_deployment';
 
@@ -91,6 +156,8 @@ export interface DeploymentRecord {
   deployBlock: number;
   adoptedAt: number;
   resetPending: boolean;
+  /** Which reset the set flag asks for; null when none is pending. */
+  resetKind: ResetKind | null;
   /** Recorded by a first adoption with no prior record: nothing was reset, and a retired-Diamond seed may still correct it. */
   adoptedBlind: boolean;
 }
@@ -99,7 +166,7 @@ export type AdoptOutcome =
   | { outcome: 'first' }
   | { outcome: 'same' }
   | { outcome: 'reset'; previous: string; tables: string[] }
-  | { outcome: 'reset-resumed'; tables: string[] }
+  | { outcome: 'reset-resumed'; kind: ResetKind; tables: string[] }
   /** Another pass adopted a DIFFERENT Diamond between this pass's read and its claim (or overtook its reset). */
   | { outcome: 'raced'; adopted: string }
   /** The bundle names a Diamond deployed BEFORE the adopted one: a stale build, never a new epoch. */
@@ -133,6 +200,8 @@ export async function readAdoptedDeployment(db: EpochDb, chainId: number): Promi
     deployBlock: row.deploy_block,
     adoptedAt: row.adopted_at,
     resetPending: row.reset_pending !== 0,
+    // Any other non-zero value is read as the FULL reset: the safe direction.
+    resetKind: row.reset_pending === 0 ? null : row.reset_pending === RESET_REBUILD ? 'rebuild' : 'diamond-change',
     adoptedBlind: row.adopted_blind !== 0,
   };
 }
@@ -168,12 +237,27 @@ export async function listTablesResetOnDiamondChange(db: EpochDb): Promise<strin
   );
 }
 
+/**
+ * The chain-scoped tables a reorg rebuild DELETES: the Diamond-change set minus
+ * the born-off-chain tables ({@link KEEP_ON_REBUILD}) and the hybrid ones,
+ * which it keeps and projects ({@link PROJECT_ON_REBUILD}).
+ */
+export async function listTablesResetOnRebuild(db: EpochDb): Promise<string[]> {
+  return (await listTablesResetOnDiamondChange(db)).filter(
+    (t) => !Object.hasOwn(KEEP_ON_REBUILD, t) && !Object.hasOwn(PROJECT_ON_REBUILD, t),
+  );
+}
+
 /** What a pass claimed when it marked the epoch: every reset statement is guarded by it. */
 export interface EpochClaim {
   chainId: number;
   diamond: string;
   deployBlock: number;
+  /** Which reset the claim is; the guard matches the flag's value, so a Diamond change claimed over a pending rebuild runs in full. Default: a Diamond change. */
+  kind?: ResetKind;
 }
+
+const IDENTIFIER = /^[a-z][a-z0-9_]*$/;
 
 /**
  * Delete one chain's rows from every reset table and clear the pending flag,
@@ -183,27 +267,96 @@ export interface EpochClaim {
  * overtaken by a later deployment deletes nothing — the final UPDATE's change
  * count says whether this pass owned the reset (Codex #2545 r3 P1).
  */
-export async function resetChainAs(db: EpochDb, claim: EpochClaim): Promise<{ owned: boolean; tables: string[] }> {
+export async function resetChainAs(
+  db: EpochDb,
+  claim: EpochClaim,
+): Promise<{ owned: boolean; tables: string[]; projected: string[] }> {
   const { chainId, diamond, deployBlock } = claim;
-  const tables = await listTablesResetOnDiamondChange(db);
+  const kind = claim.kind ?? 'diamond-change';
+  const flag = resetValue(kind);
+  const tables = kind === 'rebuild' ? await listTablesResetOnRebuild(db) : await listTablesResetOnDiamondChange(db);
   const owns =
     `EXISTS (SELECT 1 FROM indexer_deployment d
-              WHERE d.chain_id = ? AND lower(d.diamond) = lower(?) AND d.deploy_block = ? AND d.reset_pending = 1)`;
-  const statements: unknown[] = tables.map((t) =>
-    db.prepare(`DELETE FROM "${t}" WHERE chain_id = ? AND ${owns}`).bind(chainId, chainId, diamond, deployBlock),
-  );
+              WHERE d.chain_id = ? AND lower(d.diamond) = lower(?) AND d.deploy_block = ? AND d.reset_pending = ?)`;
+  // A rebuild hands each kept hybrid table's replay-maintained columns back to
+  // the replay, under the same ownership guard as the deletes, and stamps each
+  // row with the height the chain had been indexed to, so no reader lists it
+  // as live before the replay has re-read its lifecycle (Codex #3528 r2).
+  // These run FIRST: the stamp reads the cursor and the anchor the deletes
+  // below remove.
+  const statements: unknown[] = [];
+  const projected: string[] = [];
+  if (kind === 'rebuild') {
+    for (const [t, p] of Object.entries(PROJECT_ON_REBUILD)) {
+      const cols = Object.keys(p.set);
+      if (
+        !IDENTIFIER.test(t) ||
+        cols.length === 0 ||
+        !cols.every((c) => IDENTIFIER.test(c)) ||
+        !IDENTIFIER.test(p.pendingThrough)
+      ) {
+        throw new Error(`reorgRebuildKeep.json: malformed projection for ${t}`);
+      }
+      statements.push(
+        db
+          .prepare(
+            `UPDATE "${t}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')}, "${p.pendingThrough}" = ${stampSql(t, p.pendingThrough)}
+              WHERE chain_id = ? AND ${owns}`,
+          )
+          .bind(...cols.map((c) => p.set[c]), chainId, chainId, chainId, chainId, diamond, deployBlock, flag),
+      );
+      projected.push(t);
+    }
+  }
+  for (const t of tables) {
+    statements.push(
+      db.prepare(`DELETE FROM "${t}" WHERE chain_id = ? AND ${owns}`).bind(chainId, chainId, diamond, deployBlock, flag),
+    );
+  }
   statements.push(
     db
       .prepare(
         `UPDATE indexer_deployment SET reset_pending = 0, adopted_blind = 0
-          WHERE chain_id = ? AND lower(diamond) = lower(?) AND deploy_block = ? AND reset_pending = 1`,
+          WHERE chain_id = ? AND lower(diamond) = lower(?) AND deploy_block = ? AND reset_pending = ?`,
       )
-      .bind(chainId, diamond, deployBlock),
+      .bind(chainId, diamond, deployBlock, flag),
   );
   const results = (await db.batch(statements)) as Array<{ meta?: { changes?: number } }> | undefined;
   const completion = Array.isArray(results) ? results[results.length - 1] : undefined;
   const owned = (completion?.meta?.changes ?? 0) === 1;
-  return { owned, tables };
+  return { owned, tables, projected };
+}
+
+/**
+ * Ask for the adopted epoch's rows to be rebuilt, without a Diamond change
+ * (#3411, the reorg guard).
+ *
+ * Sets `reset_pending` to {@link RESET_REBUILD} on the adopted record, guarded
+ * on the Diamond the caller believes is adopted and on no reset already
+ * pending. A rebuild is the narrower reset: it keeps every row born off chain
+ * (the user's signed orders, alert settings and dedupe, tickets) and clears
+ * only what the replay rebuilds. It deletes
+ * nothing itself: the NEXT pass's {@link adoptDeployment} finds the same
+ * Diamond with the flag set and finishes the reset under the same claim, with
+ * a fresh invocation's whole D1 budget, exactly as it finishes one a dying
+ * pass left behind. So a rebuild and an interrupted Diamond change share one
+ * path, and nothing here can half-delete a chain.
+ *
+ * Returns whether this call set the flag (false when the record names a
+ * different Diamond, or a reset is already pending).
+ */
+export async function requestChainRebuild(
+  db: EpochDb,
+  args: { chainId: number; diamond: string },
+): Promise<boolean> {
+  const r = await db
+    .prepare(
+      `UPDATE indexer_deployment SET reset_pending = ?
+        WHERE chain_id = ? AND lower(diamond) = lower(?) AND reset_pending = 0`,
+    )
+    .bind(RESET_REBUILD, args.chainId, args.diamond)
+    .run();
+  return (r.meta?.changes ?? 0) === 1;
 }
 
 /**
@@ -244,8 +397,9 @@ export async function adoptDeployment(
     if (!current.resetPending) return { outcome: 'same' };
     // A prior pass under this Diamond marked the epoch and died before its
     // batch landed: finish it, under the same claim.
-    const r = await resetChainAs(db, { chainId, diamond: current.diamond, deployBlock: current.deployBlock });
-    if (r.owned) return { outcome: 'reset-resumed', tables: r.tables };
+    const kind = current.resetKind ?? 'diamond-change';
+    const r = await resetChainAs(db, { chainId, diamond: current.diamond, deployBlock: current.deployBlock, kind });
+    if (r.owned) return { outcome: 'reset-resumed', kind, tables: r.tables };
     const now = await readAdoptedDeployment(db, chainId);
     return { outcome: 'raced', adopted: now?.diamond ?? '(none)' };
   }
@@ -306,7 +460,12 @@ export function describeAdoption(chainId: number, diamond: string, deployBlock: 
         `reset ${r.tables.length} chain-scoped table(s): ${r.tables.join(' ')}`
       );
     case 'reset-resumed':
-      return `[deploymentEpoch] chain ${chainId}: finished an interrupted reset for Diamond ${diamond} (${r.tables.length} table(s))`;
+      return (
+        r.kind === 'rebuild'
+          ? `[deploymentEpoch] chain ${chainId}: rebuilt Diamond ${diamond}'s rows after a reorganisation — cleared ` +
+            `${r.tables.length} table(s), kept rows born off chain; the scan replays from the deploy block`
+          : `[deploymentEpoch] chain ${chainId}: finished an interrupted Diamond-change reset for ${diamond} (${r.tables.length} table(s))`
+      );
     case 'raced':
       return `[deploymentEpoch] chain ${chainId}: another pass adopted Diamond ${r.adopted} while this one (${diamond}) was claiming — not scanning`;
     case 'refused-older':

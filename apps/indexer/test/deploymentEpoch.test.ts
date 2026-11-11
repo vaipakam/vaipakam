@@ -157,6 +157,7 @@ describe('adoptDeployment', () => {
       deployBlock: 100,
       adoptedAt: 1_000,
       resetPending: false,
+      resetKind: null,
       adoptedBlind: true,
     });
     for (const t of tables) expect(countFor(h, t, BASE), t).toBe(1);
@@ -205,6 +206,7 @@ describe('adoptDeployment', () => {
       deployBlock: 500,
       adoptedAt: 3_000,
       resetPending: false,
+      resetKind: null,
       adoptedBlind: false,
     });
     expect(await readAdoptedDeployment(h.d1 as never, ARB)).toMatchObject({ diamond: OLD, deployBlock: 7 });
@@ -223,7 +225,7 @@ describe('adoptDeployment', () => {
       .prepare(`INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES (?, ?, 500, 3000, 1)`)
       .run(BASE, NEW);
     const r = await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 3_100 });
-    expect(r).toEqual({ outcome: 'reset-resumed', tables: reset });
+    expect(r).toEqual({ outcome: 'reset-resumed', kind: 'diamond-change', tables: reset });
     for (const t of reset) expect(countFor(h, t, BASE), t).toBe(0);
     expect((await readAdoptedDeployment(h.d1 as never, BASE))?.resetPending).toBe(false);
   });
@@ -248,7 +250,7 @@ describe('adoptDeployment', () => {
     expect(isAdoptedEpoch({ outcome: 'first' })).toBe(true);
     expect(isAdoptedEpoch({ outcome: 'same' })).toBe(true);
     expect(isAdoptedEpoch({ outcome: 'reset', previous: OLD, tables: [] })).toBe(true);
-    expect(isAdoptedEpoch({ outcome: 'reset-resumed', tables: [] })).toBe(true);
+    expect(isAdoptedEpoch({ outcome: 'reset-resumed', kind: 'rebuild', tables: [] })).toBe(true);
     expect(isAdoptedEpoch({ outcome: 'refused-older', adopted: NEW, adoptedDeployBlock: 500 })).toBe(false);
     expect(isAdoptedEpoch({ outcome: 'raced', adopted: NEW })).toBe(false);
   });

@@ -20,6 +20,9 @@ describe('signedDepthOf', () => {
   });
   it('is complete only on an explicit false', () => {
     expect(signedDepthOf({ data: { truncated: false }, isError: false }, true)).toBe('complete');
+    expect(signedDepthOf({ data: { truncated: false, awaitingReplay: 0 }, isError: false }, true)).toBe('complete');
+    // #3411 — orders being re-read after a reorg rebuild: depth is missing for a known reason.
+    expect(signedDepthOf({ data: { truncated: false, awaitingReplay: 2 }, isError: false }, true)).toBe('rebuilding');
   });
   it('names an unconfigured service as such, never as an outage (r4)', () => {
     expect(signedDepthOf({ data: null, isError: false }, false)).toBe('unconfigured');

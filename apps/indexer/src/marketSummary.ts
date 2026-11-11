@@ -150,6 +150,7 @@ function recomputeSql(scope: string): string {
              MAX(CASE WHEN offer_type = 1 THEN interest_rate_bps_max END)
         FROM signed_offers
        WHERE chain_id = ?1 AND status = 'active'
+         AND replay_pending_through IS NULL
          AND asset_type = 0 AND collateral_asset_type = 0
          AND (expires_at = 0 OR expires_at > ?3)
          AND (deadline = 0 OR deadline > ?3)
