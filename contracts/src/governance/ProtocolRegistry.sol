@@ -32,15 +32,15 @@ import {RegistryKeys} from "./RegistryKeys.sol";
  *           Timelock) and an execution, by anyone, no sooner than the delay
  *           later. There is no instant path for any of them.
  *         - The delay is never below {MIN_DELAY} (the VaultBeacon's code
- *           delay) and never above {MAX_DELAY}.
+ *           delay) and never above {MAX_DELAY}. Raising it applies at once,
+ *           because a longer wait only tightens. Lowering it waits the
+ *           current delay.
  *         - An entry whose own contract promises a longer review window has
  *           a fixed minimum of its own ({minDelayFor}), and a change to that
  *           entry waits the longer of the delay and that minimum (#3540).
  *           The price guard holds its sources and settings behind a delay of
  *           at least {PRICE_GUARD_MIN_DELAY}; a swap of the whole guard must
- *           not be the faster route to changing every price. Raising it applies at once,
- *           because a longer wait only tightens. Lowering it waits the
- *           current delay.
+ *           not be the faster route to changing every price.
  *         - Every waiting time is fixed when it is proposed. A later change of
  *           the delay never moves the execution time of a change already
  *           pending, in either direction.
