@@ -1,4 +1,4 @@
-## Thread — Keeper checks fees and chain before it signs (PR #<n>)
+## Thread — Keeper checks fees and chain before it signs (PR #3553)
 
 The keeper lets its RPC fill in each transaction's chain id and fee fields, then signs. Until now nothing local checked those fields, so a faulty or hostile RPC could have had the keeper sign transactions that burn its gas money in fees, or one for a different chain. The keeper wallet holds only gas money, but it pays for liquidations, so draining it would stop them.
 
