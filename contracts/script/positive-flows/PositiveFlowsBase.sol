@@ -15,6 +15,7 @@ import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
 import {PriceGuardConfig} from "../lib/PriceGuardConfig.sol";
@@ -31,6 +32,7 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
 import {RevertProbe} from "../lib/RevertProbe.sol";
 import {RehearsalChain} from "../lib/RehearsalChain.sol";
 import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibPermit2} from "../../src/libraries/LibPermit2.sol";
 import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPermitHelper.sol";
 
@@ -44,13 +46,16 @@ import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPer
  *         build the market two ways.
  *
  *         Each module is a standalone `forge script` and builds the fixture
- *         itself, so it does not depend on another module having run first:
+ *         itself, so it does not depend on another module having run first.
+ *         Its `run()` is a simulation (see the offer-age rule below):
  *
  *             forge script script/positive-flows/PositiveFlowsBasicLifecycle.s.sol \
- *               --rpc-url <rpc> --broadcast --slow --disable-block-gas-limit
+ *               --rpc-url <rpc> --disable-block-gas-limit --skip-simulation
  *
- *         `script/PositiveFlows.s.sol` runs every module in turn. The two flags
- *         and the fresh block it documents apply to a single module too.
+ *         and a staged module broadcasts through
+ *         `script/positive-flows/run-staged.sh <module>`.
+ *         `script/PositiveFlows.s.sol` simulates every module in turn and
+ *         documents both flags, which apply to a single module too.
  *
  *         SCENARIO IDS. Each scenario carries the `PF-###` flow ID of its
  *         primary row in `docs/TestScopes/PositiveFlowCoverage.md`, plus the
@@ -110,9 +115,14 @@ import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPer
  *         sends the recorded transactions back to back at the chain's own
  *         clock, and its on-chain simulation runs them all at one block
  *         time. So under `--broadcast` a scenario that fills a fresh offer
- *         stops with `TermsAgeNeedsStagedRun` before anything is sent. Run
- *         the modules as simulations (no `--broadcast`) until they are
- *         staged like {PositiveFlowsTimed} (#3502).
+ *         stops with `TermsAgeNeedsStagedRun` before anything is sent. A
+ *         module built on {PositiveFlowsStaged} splits each scenario at its
+ *         fills and position moves and broadcasts one stage per `forge script`
+ *         call, waiting between them (`run-staged.sh`, #3502);
+ *         {PositiveFlowsTimed} has its own stages for its longer waits
+ *         (`run-timed.sh`), until it moves onto the staged runner (#3574).
+ *         Every other module runs as a simulation (no `--broadcast`) until it
+ *         is staged.
  *
  *         Env vars: DEPLOYER_PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
  *         LENDER_PRIVATE_KEY, LENDER_ADDRESS, BORROWER_PRIVATE_KEY,
@@ -302,6 +312,19 @@ abstract contract PositiveFlowsBase is Script {
     ///      prints. The scenario returns right after calling it.
     function _skip(string memory reason) internal {
         _skipReason = reason;
+    }
+
+    /// @dev True once the running scenario has called {_skip}.
+    function _skipPending() internal view returns (bool) {
+        return bytes(_skipReason).length != 0;
+    }
+
+    /// @dev The reason the running scenario was skipped, cleared as it is
+    ///      read; empty when it was not. For a runner other than {_runEach}
+    ///      ({PositiveFlowsStaged}).
+    function _takeSkipReason() internal returns (string memory reason) {
+        reason = _skipReason;
+        delete _skipReason;
     }
 
     // ─── Setup ────────────────────────────────────────────────────────────
@@ -630,14 +653,36 @@ abstract contract PositiveFlowsBase is Script {
         console.log("Lender offer created:", offerId);
     }
 
+    /// @dev What `who`'s vault holds of `token`. Value a position pays its
+    ///      holder lands in the holder's vault, not its wallet (#3205 part 2):
+    ///      an accept's net principal, and the collateral or repayment a
+    ///      close-out returns to a position's current holder. A check of what
+    ///      a party received reads this.
+    function _vaultBalance(ERC20Mock token, address who) internal view returns (uint256) {
+        address vault = VaultFactoryFacet(diamond).getUserVaultAddress(who);
+        return vault == address(0) ? 0 : token.balanceOf(vault);
+    }
+
     /// @dev `key` repays the whole USDC debt of `loanId`.
     function _repayInFull(uint256 key, uint256 loanId) internal {
         vm.startBroadcast(key);
         uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
-        usdc.approve(diamond, repayAmt);
+        usdc.approve(diamond, _repayAllowance(loanId, repayAmt));
         RepayFacet(diamond).repayLoan(loanId);
         vm.stopBroadcast();
         console.log("Loan repaid:", repayAmt);
+    }
+
+    /// @dev What to approve for a repayment of `loanId` the simulation priced
+    ///      at `due`. Interest accrues by the second (#3169), and a broadcast
+    ///      lands each transaction seconds after the simulation priced it, so
+    ///      an allowance of exactly `due` is short by those seconds' interest.
+    ///      One hour of interest at the loan's rate, rounded up, covers any
+    ///      broadcast; the repayment itself still pulls only what is due when
+    ///      it lands.
+    function _repayAllowance(uint256 loanId, uint256 due) internal view returns (uint256) {
+        LibVaipakam.Loan memory l = LoanFacet(diamond).getLoanDetails(loanId);
+        return due + (l.principal * l.interestRateBps * 1 hours) / (365 days * 10_000) + 1;
     }
 
     /// @dev Both sides claim a settled loan. Every caller reaches this right

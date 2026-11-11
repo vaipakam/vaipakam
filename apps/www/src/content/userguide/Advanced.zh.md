@@ -1838,7 +1838,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow：请求的条款
 
-Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 0，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 1 (AON)，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
 <a id="borrow-request-review"></a>
 
@@ -1862,7 +1862,7 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 ### Borrow: 请求的成交方式
 
-`fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
+`fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。单一金额的发布发送 AON（#3520）：`LibOfferMatch` 让每次撮合介于 `amount` 与 `amountMax` 剩余部分之间，因此单一金额只会整笔成交，Partial 和 IOC 仅在设置区间时提供。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
 
 <a id="borrow-request-cadence"></a>
 
@@ -1916,7 +1916,7 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：报价的条款
 
-未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 1 (AON)（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
 <a id="rate-check"></a>
 

@@ -2293,7 +2293,7 @@ Eine Anfrage ist `createOffer` mit `offerType` 1, ERC-20 auf beiden Seiten, gese
 
 ### Borrow: Die Bedingungen der Anfrage
 
-Basic stellt eine Anfrage mit Einzelwerten: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Beträge werden exakt in Basiseinheiten umgerechnet, der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung aus dem letzten Block festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true, `allowsPartialRepay` false.
+Basic stellt eine Anfrage mit Einzelwerten: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Beträge werden exakt in Basiseinheiten umgerechnet, der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung aus dem letzten Block festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true, `allowsPartialRepay` false.
 
 <a id="borrow-request-review"></a>
 
@@ -2317,7 +2317,7 @@ Eine Spanne sendet `amount` (den kleinsten) unter `amountMax` (dem größten), `
 
 ### Borrow: Der Füllmodus einer Anfrage
 
-`fillMode` ist 0 (Partial), 1 (AON) oder 2 (IOC) und ist nach dem Veröffentlichen unveränderlich. AON verlangt `amount` = `amountMax` (`AonRequiresSingleValueAmount`), IOC verlangt `expiresAt` ≠ 0 (`IocRequiresExpiry`); das Formular bietet keine der abgelehnten Formen an. Beträge, Zinssatz und Sicherheit lassen sich bei einer offenen Anfrage über `setOfferAmount`, `setOfferRate`, `setOfferCollateral` und `modifyOffer` ändern, nie unter `amountFilled` oder `collateralAmountFilled`; diese App ruft sie noch nicht auf.
+`fillMode` ist 0 (Partial), 1 (AON) oder 2 (IOC) und ist nach dem Veröffentlichen unveränderlich. AON verlangt `amount` = `amountMax` (`AonRequiresSingleValueAmount`), IOC verlangt `expiresAt` ≠ 0 (`IocRequiresExpiry`); das Formular bietet keine der abgelehnten Formen an. Ein Post mit einer Größe sendet AON (#3520): `LibOfferMatch` hält jeden Match zwischen `amount` und dem Rest von `amountMax`, eine Größe wird also immer nur ganz gefüllt, und Partial und IOC werden nur mit einer Spanne angeboten. Beträge, Zinssatz und Sicherheit lassen sich bei einer offenen Anfrage über `setOfferAmount`, `setOfferRate`, `setOfferCollateral` und `modifyOffer` ändern, nie unter `amountFilled` oder `collateralAmountFilled`; diese App ruft sie noch nicht auf.
 
 <a id="borrow-request-cadence"></a>
 
@@ -2371,7 +2371,7 @@ Ein Kreditangebot ist `createOffer` mit `offerType` 0, ERC-20 auf beiden Seiten,
 
 ### Lend: Die Bedingungen des Angebots
 
-Ohne Teile ist ein Kreditangebot ein Einzelwert-Angebot: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (die eine Sicherheit, die ein Kreditnehmer sperren muss), `fillMode` 0, sofern Advanced keinen anderen setzt (nächster Abschnitt), `periodicInterestCadence` 0, sofern Advanced keinen Plan setzt, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, und kein Full-Tarif, sofern Advanced ihn nicht wählt. Beträge werden exakt in Basiseinheiten geparst, und der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung vom neuesten Block aus festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true und `allowsPartialRepay` false.
+Ohne Teile ist ein Kreditangebot ein Einzelwert-Angebot: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (die eine Sicherheit, die ein Kreditnehmer sperren muss), `fillMode` 1 (AON), sofern Advanced keinen anderen setzt (nächster Abschnitt), `periodicInterestCadence` 0, sofern Advanced keinen Plan setzt, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, und kein Full-Tarif, sofern Advanced ihn nicht wählt. Beträge werden exakt in Basiseinheiten geparst, und der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung vom neuesten Block aus festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true und `allowsPartialRepay` false.
 
 <a id="rate-check"></a>
 

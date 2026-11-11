@@ -1017,8 +1017,13 @@ each item is checked:
       `cast call $DIAMOND 'getRepatriationTokenAdminRegistry()(address)'`
       returns that chain's CCIP TokenAdminRegistry, not the zero
       address.
-- [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
-      chain — capture the broadcast logs in
+- [ ] `PositiveFlows.s.sol` (a simulation), the staged positive-flow
+      modules through `script/positive-flows/run-staged.sh` and
+      `PartialFlows.s.sol` green on every chain. The partial flows and the
+      timed module are not staged yet (#3574), so any that fill an offer
+      they posted stop under `--broadcast` with `TermsAgeNeedsStagedRun`
+      before sending anything.
+      Capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/` (a private, git-ignored
       folder, #2764: the logs stay off GitHub). The positive flows run
       only against a Diamond deployed for the rehearsal, with
@@ -1880,15 +1885,32 @@ export NEW_BORROWER_ADDRESS=0x976EA74026E726554dB657fA54763abd0C3a0aa9
 
 cd contracts
 
-# Positive — every module under script/positive-flows/ (lifecycle backbone,
-# advanced credit, vault + VPFI, keeper authority, operator surfaces), each
-# scenario logged under its PF-### flow id. Mine a fresh block first: an idle
-# Anvil's head can be hours old, and a signed accept simulated at that time
-# arrives expired. `--disable-block-gas-limit` because a script's whole run is
-# one simulated frame (see the script's header):
-cast rpc evm_mine --rpc-url http://localhost:8545
+# Positive, simulated — every module under script/positive-flows/ (lifecycle
+# backbone, advanced credit, vault + VPFI, keeper authority, operator
+# surfaces), each scenario logged under its PF-### flow id, run against the
+# chain's real state and sends nothing. A scenario posts terms and then fills
+# them, and a fill waits until the terms have stood the minimum age (#3412),
+# which one `forge script --broadcast` cannot do; under `--broadcast` this
+# stops with `TermsAgeNeedsStagedRun` before sending anything.
+# `--disable-block-gas-limit` because a script's whole run is one simulated
+# frame; `--skip-simulation` because forge would otherwise replay the recorded
+# transactions at the chain's clock, without the scenarios' clock steps, and
+# report a failure after every scenario passed (see the script's header):
 ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
-  --rpc-url http://localhost:8545 --broadcast --slow --disable-block-gas-limit
+  --rpc-url http://localhost:8545 --disable-block-gas-limit --skip-simulation
+
+# Positive, broadcast in stages — the modules a rehearsal leaves on chain
+# (#3502). Each stage is one `forge script --broadcast`; the runner steps the
+# Anvil clock past the terms age between stages, then runs the read-only
+# finish that prints each scenario's result and removes the run's record
+# (contracts/deployments/<chain>/positive-flows-staged-<module>.json). A stage
+# runs only on top of a stage that landed whole: if a broadcast stops part-way,
+# the next stage refuses and names the record to remove for a fresh run.
+# One module at a time, since each checks its actors' nonces:
+for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsLenderIntent \
+         PositiveFlowsPositionHolder; do
+  ionice -c 2 -n 0 bash script/positive-flows/run-staged.sh "$m" || break
+done
 
 # Positive, timed — the flows whose second step must wait (offer cancel after
 # the cancel cooldown, a due periodic-interest checkpoint). The runner above
@@ -1896,12 +1918,17 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # the open stage records, runs their settle stage, and then the read-only
 # finish stage that removes the open-run record once the chain shows nothing
 # it names is still open (Anvil only). If a broadcast stops part-way the
-# record stays; run the script's settle() and then finish() again:
+# record stays; run the script's settle() and then finish() again.
+# KNOWN BROKEN until #3574: the open stage also opens PF-116's loan by filling
+# an offer it just posted, so it stops with `TermsAgeNeedsStagedRun` before
+# anything is sent. Expect that refusal; nothing is left on the chain:
 ionice -c 2 -n 0 bash script/positive-flows/run-timed.sh
 
 # Partial — 7 UI-testable midpoint states (offer states, partial repay,
 # collateral doubled, keeper enabled, refinance offer posted, stray token,
-# dual claimable):
+# dual claimable). Not staged yet (#3502): a state reached by filling an offer
+# the script posted stops the broadcast with `TermsAgeNeedsStagedRun` before
+# anything is sent; run it without `--broadcast` to check it meanwhile:
 ionice -c 2 -n 0 forge script script/AnvilNewPartialFlows.s.sol \
   --rpc-url http://localhost:8545 --broadcast --slow
 
@@ -1916,8 +1943,9 @@ Each script must exit `EXIT=0`. The positive flows log `[PF-###] PASS` per
 scenario and a passed/skipped count per module; a `[PF-###] SKIP` line says why
 that scenario could not run here, and is a skip, not a pass. The other two
 scripts log a `*** PASSED ***` banner, with skipped scenarios and their
-unit-test pointers listed at the bottom. Paths that need chain time to pass
-live in `forge test`, because Anvil `--broadcast` cannot advance chain time
+unit-test pointers listed at the bottom. A staged run's result is the summary
+its finish prints. Paths that need chain time to pass and have no staged run
+live in `forge test`, because one `--broadcast` cannot advance chain time
 mid-script.
 
 ### 5b. Testnet smoke tests (after the Anvil sweep is green)
@@ -1947,10 +1975,14 @@ entry points instead — each composes the legacy + new halves and runs
 them in append order (no merge of state, just one phase after the other):
 
 ```bash
-# Full positive flow — every module under script/positive-flows/ (a local
-# Anvil, or a rehearsal Diamond named in REHEARSAL_ALLOW_CHAIN_ID):
-forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --broadcast --slow \
-  --disable-block-gas-limit
+# Full positive flow, simulated — every module under script/positive-flows/
+# (a local Anvil, or a rehearsal Diamond named in REHEARSAL_ALLOW_CHAIN_ID):
+forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --disable-block-gas-limit \
+  --skip-simulation
+
+# The staged modules, broadcast (same chain rule; on a live chain the runner
+# waits for the chain's own clock between stages instead of stepping it):
+RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsBasicLifecycle
 
 # Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new)
 # (same chain rule as the positive flow):

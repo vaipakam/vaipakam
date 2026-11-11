@@ -153,6 +153,9 @@ step() { echo; echo "--- $*"; }
 # limit without it (see script/PositiveFlows.s.sol).
 FLOW_SCRIPT=script/positive-flows/PositiveFlowsAdvancedCredit.s.sol
 FLOW_SCRIPT_NAME=PositiveFlowsAdvancedCredit.s.sol
+FLOW_MODULE=PositiveFlowsAdvancedCredit
+# A staged run that stopped leaves its record; a fresh chain starts without it.
+FLOW_RECORD=deployments/anvil/positive-flows-staged-$FLOW_MODULE.json
 export DEPLOYER_PRIVATE_KEY="$DEPLOYER_KEY"
 export ADMIN_PRIVATE_KEY="$ADMIN_KEY"
 export ADMIN_ADDRESS="$ADMIN_ADDR"
@@ -224,7 +227,8 @@ rehearse() {
   rm -rf "broadcast/$refresh_script.s.sol/31337" \
          "cache/$refresh_script.s.sol/31337" \
          "broadcast/$FLOW_SCRIPT_NAME/31337" \
-         "cache/$FLOW_SCRIPT_NAME/31337"
+         "cache/$FLOW_SCRIPT_NAME/31337" \
+         "$FLOW_RECORD"
   bash script/anvil-bootstrap.sh > "$WORKDIR/bootstrap.log" 2>&1 \
     || { tail -30 "$WORKDIR/bootstrap.log"; fail "anvil-bootstrap failed"; }
 
@@ -267,9 +271,13 @@ rehearse() {
   step "5/6  assert routing"
   assert_risk_preview_routed "$diamond"
 
-  step "6/6  drive a real sale: $scen --broadcast"
-  ONLY_SCENARIO="$scen" forge script "$FLOW_SCRIPT" \
-    --rpc-url "$RPC" --broadcast --disable-block-gas-limit > "$WORKDIR/post.log" 2>&1 \
+  step "6/6  drive a real sale: $scen, broadcast in stages"
+  # The scenario posts and then fills, and a fill waits for the terms to stand
+  # the minimum age (#3412), so it broadcasts through the staged runner, which
+  # steps this Anvil's clock between stages (#3502). Its read-only finish
+  # prints the scenario's result.
+  ONLY_SCENARIO="$scen" RPC_URL="$RPC" \
+    bash script/positive-flows/run-staged.sh "$FLOW_MODULE" > "$WORKDIR/post.log" 2>&1 \
     || { tail -30 "$WORKDIR/post.log"; fail "$scen broadcast failed after refresh"; }
   grep -qF "[$scen] PASS" "$WORKDIR/post.log" \
     || { tail -30 "$WORKDIR/post.log"; fail "$scen did not report PASSED"; }

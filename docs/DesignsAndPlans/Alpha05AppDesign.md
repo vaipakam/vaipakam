@@ -581,7 +581,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   1a) is stated beside every range, with what the range does while it is
   off. A fill mode (OFF-11) the protocol would refuse (all or none with a
   range, immediate or cancel without an expiry) is not offered, and the
-  fill mode is said to be fixed once posted. The amounts, the rate and the
+  fill mode is said to be fixed once posted. A mode that promises parts
+  (partial, immediate or cancel) needs a range (#3520): a match fills only
+  between an offer's smallest and largest amount, so one size only ever
+  fills whole. Without a range the form shows all or none as the mode,
+  greys the other two with the reason, and posts all or none, the mode
+  that says what one size does; a range carries the mode chosen for it.
+  One rule in the posting model decides this for both guided forms, and
+  the desk ticket applies the same rule through its smallest single fill. The amounts, the rate and the
   collateral are not fixed: the protocol lets the creator edit an open
   request, never below what matches have already used. Until the app offers
   that edit, the review says the protocol allows it and that the app does

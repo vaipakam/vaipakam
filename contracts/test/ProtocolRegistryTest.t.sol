@@ -10,7 +10,8 @@ import {IProtocolRegistryReader} from "../src/interfaces/IProtocolRegistryReader
 /**
  * @title  ProtocolRegistryTest
  * @notice #3272 — the delayed registry the Diamond and the vaults share:
- *         pointers, membership sets, the delay and the roles.
+ *         pointers, membership sets, the delay and the roles; and #3540 —
+ *         the price-guard pointer waits at least the guard's own minimum.
  */
 contract ProtocolRegistryTest is Test {
     ProtocolRegistry internal reg;
@@ -22,7 +23,9 @@ contract ProtocolRegistryTest is Test {
     address internal constant GUARD_V2 = address(0x1002);
     address internal constant ADAPTER = address(0x2001);
 
-    bytes32 internal constant KEY = RegistryKeys.PRICE_GUARD;
+    /// @dev A pointer with no minimum of its own, so it waits the registry
+    ///      delay. The price guard's own minimum is tested on its own below.
+    bytes32 internal constant KEY = RegistryKeys.TREASURY;
     bytes32 internal constant SET = keccak256("vaipakam.registry.test.adapters");
 
     uint256 internal constant DELAY = 3 days;
@@ -341,6 +344,63 @@ contract ProtocolRegistryTest is Test {
     }
 
     // ── Roles ─────────────────────────────────────────────────────────
+
+    // ── Per-key minimum (#3540) ───────────────────────────────────────
+
+    /// @dev `PriceGuardConfigTest` keeps the 7 days equal to the guard's own floor.
+    function test_MinDelayFor_PriceGuardIsSevenDays_OthersTheRegistryFloor() public view {
+        assertEq(reg.PRICE_GUARD_MIN_DELAY(), 7 days);
+        assertEq(reg.minDelayFor(RegistryKeys.PRICE_GUARD), reg.PRICE_GUARD_MIN_DELAY());
+        assertEq(reg.minDelayFor(RegistryKeys.TREASURY), reg.MIN_DELAY());
+        assertEq(reg.minDelayFor(RegistryKeys.BACKSTOP), reg.MIN_DELAY());
+        assertEq(reg.minDelayFor(RegistryKeys.SWAP_ADAPTERS), reg.MIN_DELAY());
+        assertEq(reg.minDelayFor(RegistryKeys.CONDUITS), reg.MIN_DELAY());
+        assertEq(reg.waitFor(RegistryKeys.PRICE_GUARD), 7 days);
+        assertEq(reg.waitFor(RegistryKeys.TREASURY), DELAY);
+    }
+
+    function test_PriceGuardPointer_CannotExecuteBeforeSevenDays() public {
+        bytes32 pg = RegistryKeys.PRICE_GUARD;
+        address v1 = address(0x1101);
+        address v2 = address(0x1102);
+        bytes32[] memory keys = new bytes32[](1);
+        address[] memory values = new address[](1);
+        keys[0] = pg;
+        values[0] = v1;
+        ProtocolRegistry r =
+            new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values, new bytes32[](0), new address[](0));
+
+        vm.prank(OWNER);
+        r.proposePointer(pg, v2);
+        (, uint256 at) = r.pendingPointer(pg);
+        assertEq(at, block.timestamp + 7 days, "the guard's minimum, not the 3-day delay");
+
+        vm.warp(block.timestamp + DELAY);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolRegistry.TooEarly.selector, at));
+        r.executePointer(pg);
+        vm.warp(at - 1);
+        vm.expectRevert(abi.encodeWithSelector(ProtocolRegistry.TooEarly.selector, at));
+        r.executePointer(pg);
+        assertEq(r.pointer(pg), v1, "unchanged before seven days");
+
+        vm.warp(at);
+        r.executePointer(pg);
+        assertEq(r.pointer(pg), v2);
+    }
+
+    function test_PriceGuardPointer_WaitsTheDelayWhenItIsLonger() public {
+        bytes32 pg = RegistryKeys.PRICE_GUARD;
+        bytes32[] memory keys = new bytes32[](1);
+        address[] memory values = new address[](1);
+        keys[0] = pg;
+        values[0] = address(0x1101);
+        ProtocolRegistry r =
+            new ProtocolRegistry(OWNER, GUARDIAN, 10 days, keys, values, new bytes32[](0), new address[](0));
+        vm.prank(OWNER);
+        r.proposePointer(pg, address(0x1102));
+        (, uint256 at) = r.pendingPointer(pg);
+        assertEq(at, block.timestamp + 10 days);
+    }
 
     function test_Roles_GuardianSetByOwner_RenounceDisabled() public {
         vm.prank(STRANGER);
