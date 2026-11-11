@@ -1556,6 +1556,12 @@ Die Seite einer laufenden Miete bietet Ihnen als Mieter Miete schließen an. Das
 
 Das Schließen beendet Ihr Nutzungsrecht sofort, auch wenn noch vereinbarte Tage übrig sind, und lässt sich nicht rückgängig machen. Die Miete wird gezählt, wenn das Schließen auf der Chain landet; ein Tag, der vorher beginnt, wird als ganzer bezahlt. Bei voller Laufzeit wird jeder noch nicht abgerechnete vereinbarte Tag bezahlt, wie früh Sie auch schließen. Nach dem Ende der Laufzeit wird eine Verzugsgebühr aus Ihrem Puffer genommen: 1 % der ganzen Miete plus 0,5 % für jeden Tag Verzug, höchstens 5 % und nie mehr als der Puffer. Nach der Nachfrist lehnt das Protokoll ein Schließen ab; die Miete endet dann, wenn ihre restlichen Tage einzeln abgerechnet werden, was jeder tun darf, oder durch Ausfall, je nachdem, was zuerst eintritt. Der spätere Zeitpunkt, den die Prüfung zeigt, ist weder Frist noch Obergrenze: Ein Schließen, das später landet, wird dann gezählt, sodass mehr Miete oder eine höhere Verzugsgebühr anfallen kann und weniger an Sie zurückkommt. Was zurückkommt, bleibt als Anspruch in Ihrem eigenen Vault, bis Sie es abholen.
 
+<a id="rewards-programme"></a>
+
+### Belohnungen: Läuft das Programm hier?
+
+Oben auf der Seite Belohnungen sagt ein Satz, ob das Belohnungsprogramm in Ihrem Netzwerk läuft: es läuft und hält VPFI, um Belohnungen auszuzahlen; es läuft, hält aber gerade nichts zum Auszahlen; es hat keinen Starttermin; es startet zu einem genannten Zeitpunkt; oder das Netzwerk hat das Belohnungsnetz verlassen, sodass dort nichts Neues mehr einlösbar wird. Eine Einlösung zahlt nur aus VPFI, das in diesem Netzwerk bereits für Belohnungen gehalten wird. Lässt sich eine Angabe hinter dem Satz nicht lesen, sagt die Seite das und zeigt das Programm nie als laufend an. Ist das Protokoll pausiert, sagt die Seite auch das: Einlösungen von Belohnungen und Abhebungen sind gestoppt, während vollständige und teilweise Rückzahlung und das Hinzufügen von Sicherheiten möglich bleiben. Belohnungen sind ein Rabatt auf Ihre eigene Nutzung des Protokolls, nie ein Ertrag aus dem Halten von VPFI.
+
 <a id="rewards-vpfi"></a>
 
 ### Belohnungen: VPFI in Ihrem Vault

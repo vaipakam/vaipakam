@@ -2880,6 +2880,14 @@ The review reads the rental with `getLoanDetails`, its dates with `getLoanDeadli
 
 Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.
 
+<a id="rewards-programme"></a>
+
+### Rewards: Is the Programme Running Here?
+
+At the top of the Rewards page, one sentence says whether the reward programme runs on your network: running with VPFI held to pay rewards, running with nothing held to pay them right now, without a start date, starting at a stated time, or left the reward network, so nothing new becomes claimable there. A claim pays only from VPFI already held for rewards on that network. If a fact behind the sentence cannot be read, the page says so and never shows the programme as running. While the protocol is paused, the page says so: reward claims and withdrawals stop, while full and partial repayment and adding collateral stay open. Rewards are a rebate on your own use of the protocol, never a return on holding VPFI.
+
+Advanced lists what the sentence rests on: this network's reward role (VPFI's home network, which counts and funds rewards; a network that reports to the home network and is funded from there; no role set, which works as a home network; or detached), and for a network retired for good, where its leftover reward VPFI goes and how much has been sent; the programme's start time; the VPFI delivered for rewards and the VPFI recycled from fees that a claim can draw on now, each net of what pending settlements have reserved; whether reward VPFI sits in a separate custody contract or in the protocol's own balance; and whether unclaimed rewards can be removed, and after how long. A fact this network's contracts do not offer is stated as such. The page does not read whether the daily close that makes a day's rewards claimable is being run; anyone may run it, and your claim figure shows what a claim pays now.
+
 <a id="rewards-vpfi"></a>
 
 ### Rewards: VPFI in Your Vault

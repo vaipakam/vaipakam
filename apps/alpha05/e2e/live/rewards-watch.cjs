@@ -1,8 +1,10 @@
 // Watch-only live review of the Rewards page (#3180; RW-01..RW-11, RW-13,
-// RW-14; RB-REWARDS-VPFI, RB-REWARDS-TIER, RB-REWARDS-ELSEWHERE,
-// RB-REWARDS-SIGN; live tier, run after each deploy),
-// through the shared watch-only wallet (watch-wallet.cjs). The deployed build
-// opens Rewards for the watched wallet's network and prints the rewards
+// RW-14, RW-43, RW-44; RB-REWARDS-PROGRAMME, RB-REWARDS-VPFI,
+// RB-REWARDS-TIER, RB-REWARDS-ELSEWHERE, RB-REWARDS-SIGN; live tier, run
+// after each deploy), through the shared watch-only wallet
+// (watch-wallet.cjs). The deployed build opens Rewards for the watched
+// wallet's network and prints whether the reward programme runs there (the
+// sentence's kind, the pause line and, in Advanced, each fact), the rewards
 // widget, the VPFI panel (whether VPFI is set up there, and the wallet's
 // VPFI in its wallet, counted, free, held and uncounted), the consent and the
 // fee-discount tier card (its state and, when the holding rules hold the tier
@@ -10,7 +12,8 @@
 // record for sending and each network's standing). The
 // watch wallet cannot sign, so nothing is deposited, withdrawn, updated or
 // sent, and the signed deposit (RW-03) is never offered; those are covered
-// by the CI-Anvil specs (54-rewards.spec.ts, 75-rewards-tier-elsewhere.spec.ts).
+// by the CI-Anvil specs (54-rewards.spec.ts, 75-rewards-tier-elsewhere.spec.ts,
+// 76-rewards-programme.spec.ts).
 // Usage: node e2e/live/rewards-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed
 // origin; $LIVE_CHAIN_ID picks the network, as in watch-wallet.cjs)
@@ -31,6 +34,16 @@ async function view(b, opts, label) {
     .waitForFunction(() => document.querySelector('[data-testid="rewards-vpfi"]')?.getAttribute('data-vpfi'), null, { timeout: 90000 })
     .catch(() => console.log('(VPFI was still being read after 90 s)'));
   console.log(`===== ${label} (${p.url()})`);
+  const prog = p.getByTestId('rewards-programme');
+  await p
+    .waitForFunction(() => document.querySelector('[data-testid="rewards-programme-now"]')?.getAttribute('data-programme'), null, { timeout: 90000 })
+    .catch(() => console.log('(the reward programme was still being read after 90 s)'));
+  const now = p.getByTestId('rewards-programme-now');
+  const kind = (await now.count()) ? await now.getAttribute('data-programme') : 'none';
+  const pause = p.getByTestId('rewards-programme-pause');
+  const role = p.getByTestId('rewards-programme-role');
+  const marks = `${kind}${(await pause.count()) ? ` pause ${await pause.getAttribute('data-pause')}` : ''}${(await role.count()) ? ` role ${await role.getAttribute('data-role')}` : ''}`;
+  if (await prog.count()) console.log(`--- programme [${marks}]: ${(await prog.innerText()).replace(/\n+/g, ' · ')}`);
   const widget = p.getByTestId('rewards-widget');
   if (await widget.count()) console.log(`--- rewards: ${(await widget.innerText()).replace(/\n+/g, ' · ')}`);
   console.log(`--- vpfi [${await vpfi.getAttribute('data-vpfi')}]: ${(await vpfi.innerText()).replace(/\n+/g, ' · ')}`);

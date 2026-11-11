@@ -1552,6 +1552,12 @@ La page d'une location en cours vous propose, en tant que locataire, Clôturer l
 
 La clôture met fin tout de suite à votre droit d'utiliser le NFT, même s'il reste des jours convenus, et ne peut pas être annulée. Le loyer est compté quand la clôture est confirmée : un jour qui commence avant est payé en entier ; avec une durée complète, chaque jour convenu pas encore réglé est payé, aussi tôt que vous clôturiez. Après la fin de la durée, des frais de retard sont pris sur votre marge : 1 % du loyer total plus 0,5 % par jour de retard, au plus 5 % et jamais plus que la marge. Après le délai de grâce, le protocole refuse la clôture ; la location finit alors quand ses jours restants sont réglés un à un, ce que n'importe qui peut faire, ou par un défaut, selon ce qui arrive en premier. Le moment ultérieur que montre la revue n'est ni une échéance ni un plafond : une clôture confirmée plus tard est comptée à ce moment-là, donc plus de loyer ou des frais de retard plus élevés peuvent être pris et moins vous revient. Ce qui vous revient reste dans votre propre coffre sous forme de réclamation jusqu'à ce que vous l'encaissiez.
 
+<a id="rewards-programme"></a>
+
+### Récompenses : le programme fonctionne-t-il ici ?
+
+En haut de la page Récompenses, une phrase indique si le programme de récompenses fonctionne sur votre réseau : il fonctionne et détient du VPFI pour payer les récompenses ; il fonctionne, mais ne détient rien pour les payer en ce moment ; il n'a pas de date de début ; il démarre à un moment indiqué ; ou le réseau a quitté le réseau de récompenses, si bien que rien de nouveau n'y devient réclamable. Une réclamation ne paie qu'à partir du VPFI déjà détenu pour les récompenses sur ce réseau. Si une donnée derrière la phrase ne peut pas être lue, la page le dit et n'affiche jamais le programme comme en marche. Quand le protocole est en pause, la page le dit : les réclamations de récompenses et les retraits s'arrêtent, tandis que le remboursement total ou partiel et l'ajout de garantie restent ouverts. Les récompenses sont une remise sur votre propre usage du protocole, jamais un rendement pour la détention de VPFI.
+
 <a id="rewards-vpfi"></a>
 
 ### Récompenses : le VPFI dans votre coffre

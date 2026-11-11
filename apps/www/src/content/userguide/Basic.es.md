@@ -1534,6 +1534,12 @@ La página de un alquiler en curso te ofrece, como arrendatario, Cerrar el alqui
 
 Cerrar termina tu derecho a usar el NFT en el acto, aunque queden días acordados, y no se puede deshacer. El alquiler se cuenta cuando el cierre se confirma, así que un día que empieza antes se paga entero; con plazo completo se paga cada día acordado aún no liquidado, por pronto que cierres. Tras el fin del plazo se toma un recargo por demora de tu margen: el 1 % del alquiler total más el 0,5 % por cada día de retraso, como máximo el 5 % y nunca más que el margen. Pasado el periodo de gracia el protocolo rechaza el cierre; el alquiler termina entonces cuando sus días restantes se liquidan uno a uno, algo que cualquiera puede hacer, o en impago, lo que ocurra primero. El momento posterior que muestra la revisión no es un plazo ni un límite: un cierre que se confirma más tarde se cuenta entonces, así que se puede cobrar más alquiler o un recargo mayor y volverte menos. Lo que vuelve se queda en tu propia bóveda como reclamo hasta que lo cobres.
 
+<a id="rewards-programme"></a>
+
+### Recompensas: ¿funciona el programa aquí?
+
+En la parte superior de la página Recompensas, una frase dice si el programa de recompensas funciona en tu red: funciona y tiene VPFI para pagar recompensas; funciona, pero ahora no tiene nada para pagarlas; no tiene fecha de inicio; empieza en un momento indicado; o la red ha salido de la red de recompensas, así que allí no se puede reclamar nada nuevo. Un reclamo paga solo con VPFI ya reservado para recompensas en esa red. Si un dato detrás de la frase no se puede leer, la página lo dice y nunca muestra el programa como en marcha. Mientras el protocolo está en pausa, la página lo dice: los reclamos de recompensas y los retiros se detienen, mientras que el reembolso total y parcial y añadir garantía siguen abiertos. Las recompensas son un reembolso por tu propio uso del protocolo, nunca un rendimiento por tener VPFI.
+
 <a id="rewards-vpfi"></a>
 
 ### Recompensas: el VPFI en tu bóveda

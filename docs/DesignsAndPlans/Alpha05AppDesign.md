@@ -2045,6 +2045,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   vault totals, which expired and same-block rentals move) and the
   renter's claim (inside the range the review stated).
 
+- **RB-REWARDS-PROGRAMME** — The Rewards page opens with whether the
+  reward programme runs on the wallet's network (RW-43) and the network's
+  reward role (RW-44), read from the Diamond at one block: the launch time,
+  the resolved role (`getRewardRole`, never inferred from the reporter's
+  two raw fields) with the retirement record, the reporter's home network,
+  custody activation, the claim horizon and the VPFI a claim may draw now
+  (`getRewardReservations`: delivered and recycled, each net of what
+  staging records reserved). Basic shows one sentence: running only when the
+  launch has passed by the read block's own clock, the role pays here (an unconfigured network behaves as
+  a home network) and something is held to pay; otherwise running with
+  nothing held, no start date, a stated start, or left the reward network
+  (detached: nothing new becomes claimable). A deciding fact that is unread
+  makes the sentence unknown, never running, never zero. A global pause is
+  stated by name with what stays open (RB-SWITCH class 2), and an unread
+  pause is stated too. Advanced lists every fact; a fact the contracts do
+  not route says so rather than "could not be read". Whether the daily
+  close runs is not read (the keeper posture, RW-78, is blocked) and the
+  card says so instead of implying it. Rewards are rebates on the wallet's
+  own use, never yield (RL-6).
+
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
   RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
   its VPFI in its own vault and the fee-discount consent. On a network with
