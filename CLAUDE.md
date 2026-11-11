@@ -227,6 +227,18 @@ runs half of it on old code:
   `RedeployFacets` refuses a Diamond that does not route
   `vaultOutflowArgs` (`PredatesVaultOutflowPolicy`).
 
+- **OfferPreviewFacet + the match core's hosts (#3326).** The shared match
+  core (`LibOfferMatch`, inlined in OfferMatchFacet, OfferMatchIntentFacet,
+  SignedOfferMatchFacet and RiskPreviewFacet) asks
+  `OfferPreviewFacet.initRiskBounds` for the loan-initiation risk bounds: the
+  collateral floor for an amount and the largest amount a collateral backs.
+  Each host used to inline its own copy, and all four sat near EIP-170. A match
+  host refreshed onto a Diamond that does not route `initRiskBounds` reverts
+  `FunctionDoesNotExist` on every match and match preview (a hard revert, not a
+  split Diamond). `RedeployFacets` refreshes the match hosts but not
+  OfferPreviewFacet, so it refuses such a Diamond
+  (`PredatesMatchRiskBoundsHost`).
+
 - **SaleExitVerdictFacet + EarlyWithdrawalFacet + EarlyWithdrawalDirectFacet
   (#1841).** Both lender-exit entries run their opening checks through one
   self-call, `requireSaleExitOpen`, and carry no copy of those checks. An entry

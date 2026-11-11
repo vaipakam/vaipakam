@@ -16,7 +16,7 @@ import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
  * @notice Range Orders Phase 1 — bot-driven offer matching surface.
  *         Hosts the two entry points the keeper-bot consumes:
  *           - `previewMatch(L, B, matcher, initiator)` — pure preview that runs the
- *             validity matrix + computes the midpoint match terms
+ *             validity matrix + computes the match terms (largest acceptable amount, midpoint rate)
  *             so bots filter candidate pairs without paying for
  *             reverting txs.
  *           - `matchOffers(L, B)` — permissionless write that
@@ -65,7 +65,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
 
     /// @notice Range Orders Phase 1 — bot-facing preview of a candidate
     ///         (lender, borrower) match. Pure view; runs the validity
-    ///         matrix (§4.1) + computes midpoint terms (§4.2) + the
+    ///         matrix (§4.1) + computes the match terms (§4.2: largest acceptable amount, midpoint rate) + the
     ///         synthetic HF check via `LibRiskMath`. Bots filter
     ///         candidate pairs against this before submitting
     ///         `matchOffers` to avoid paying for reverting txs.
@@ -136,7 +136,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @dev    Gated on the `partialFillEnabled` master flag (default
     ///         off on a fresh deploy). When active, validates via
     ///         `LibOfferMatch.previewMatch`, sets the per-tx
-    ///         `matchOverride` slot with midpoint terms + counterparty
+    ///         `matchOverride` slot with the match terms + counterparty
     ///         + matcher addresses, calls into
     ///         `OfferFacet.acceptOfferInternal` (cross-facet) reusing
     ///         the existing vault + LIF + NFT + LoanFacet plumbing,

@@ -6,6 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -193,12 +194,26 @@ contract BorrowerPartialFillTest is SetupTest {
         uint256 rateMax,
         uint256 collateralRequired
     ) internal returns (uint256 offerId) {
+        return _postRangedLenderOffer(creator, amount, amount, rateMin, rateMax, collateralRequired);
+    }
+
+    /// @dev A lender offer with a principal RANGE `[amountMin, amountMax]`;
+    ///      `collateralRequired` is the requirement at `amountMax`, pro-rated
+    ///      per match (#3326).
+    function _postRangedLenderOffer(
+        address creator,
+        uint256 amountMin,
+        uint256 amount,
+        uint256 rateMin,
+        uint256 rateMax,
+        uint256 collateralRequired
+    ) internal returns (uint256 offerId) {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
-                amount: amount,
+                amount: amountMin,
                 interestRateBps: rateMin,
                 collateralAsset: mockCollateralERC20,
                 collateralAmount: collateralRequired,
@@ -214,7 +229,7 @@ contract BorrowerPartialFillTest is SetupTest {
                 allowsPartialRepay: false,
                 allowsPrepayListing: false,
                 allowsParallelSale: false,
-                amountMax: amount,           // single-value lender
+                amountMax: amount,
                 interestRateBpsMax: rateMax,
                 collateralAmountMax: collateralRequired,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
@@ -786,4 +801,131 @@ contract BorrowerPartialFillTest is SetupTest {
         assertTrue(loan.useFullTermInterest, "loan carries the agreed interest model");
         assertTrue(loan.allowsPartialRepay, "loan carries the agreed partial-repay term");
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // #3326 — the match lends the largest amount both offers accept
+    // ─────────────────────────────────────────────────────────────────
+
+    function _preview(uint256 lo, uint256 bo) internal view returns (LibOfferMatch.MatchResult memory) {
+        return OfferMatchFacet(address(diamond)).previewMatch(lo, bo, address(this), address(this));
+    }
+
+    /// @notice Two overlapping ranges with ample collateral fill the top of
+    ///         the window in one match: 8,000 here, where the midpoint rule
+    ///         lent 4,500 and left the rest to further matches.
+    function test_3326_matchFillsTheLargestAmountBothAccept() public {
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 8_000, rateMin: 500, rateMax: 600,
+            collateralMin: 500, collateralMax: 5_000
+        });
+        uint256 lo = _postRangedLenderOffer(lender, 1_000, 10_000, 500, 600, 3_000);
+
+        LibOfferMatch.MatchResult memory r = _preview(lo, bo);
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "matchable");
+        assertEq(r.matchAmount, 8_000, "the borrower's whole remaining request");
+        assertEq(r.matchRateBps, 550, "the rate stays at the midpoint");
+
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).principal, r.matchAmount, "executed as previewed");
+        assertTrue(OfferCancelFacet(address(diamond)).getOffer(bo).accepted, "borrower offer filled in one match");
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(lo).amountFilled, 8_000, "lender keeps 2,000 open");
+    }
+
+    /// @notice The lender takes an amount only with its pro-rated collateral
+    ///         covered, so the top of the window is capped at the most the
+    ///         borrower's collateral covers: 3,000 at 5,000-per-10,000 covers
+    ///         6,001 (requirement 3,000, rounded down), not the 10,000 window top.
+    function test_3326_matchCapsTheAmountAtTheBorrowersCollateral() public {
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 10_000, rateMin: 500, rateMax: 600,
+            collateralMin: 1_500, collateralMax: 3_000
+        });
+        uint256 lo = _postRangedLenderOffer(lender, 1_000, 10_000, 500, 600, 5_000);
+
+        LibOfferMatch.MatchResult memory r = _preview(lo, bo);
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "matchable");
+        assertEq(r.matchAmount, 6_001, "largest amount the collateral covers");
+        assertEq(r.reqCollateral, 3_000, "the borrower's whole collateral ceiling");
+
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.principal, 6_001, "executed as previewed");
+        assertEq(loan.collateralAmount, 3_000, "locks what the requirement asks");
+    }
+
+    /// @notice A borrower whose collateral cannot cover even the larger
+    ///         minimum is refused for collateral, never matched below a
+    ///         minimum.
+    function test_3326_collateralShortOfTheMinimumIsRefused() public {
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 10_000, rateMin: 500, rateMax: 600,
+            collateralMin: 1_500, collateralMax: 3_000
+        });
+        uint256 lo = _postRangedLenderOffer(lender, 8_000, 10_000, 500, 600, 5_000);
+
+        assertEq(
+            uint8(_preview(lo, bo).errorCode),
+            uint8(LibOfferMatch.MatchError.CollateralBelowRequired),
+            "6,001 coverable is below the lender's 8,000 minimum"
+        );
+        vm.expectRevert();
+        OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+    }
+
+    /// @notice Codex #3591 r1 — the largest amount must also pass the
+    ///         initiation risk gate. A lender whose requirement sits exactly
+    ///         at the gate's floor rounds DOWN (pro-rated) while the gate
+    ///         rounds UP, so the top amount the borrower's collateral covers
+    ///         for the lender can sit one step above what the gate admits.
+    ///         The match now also caps the amount at what that collateral
+    ///         supports under the gate, and locks at least the gate's floor,
+    ///         so every collateral level that covers the minimum matches —
+    ///         where an uncapped pick was refused for HF.
+    function test_3326_largestAmountAlsoPassesTheInitRiskGate() public {
+        (uint256 reqAtMax,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+            mockERC20, mockCollateralERC20, 10_000, 0
+        );
+        (uint256 reqAtMin,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+            mockERC20, mockCollateralERC20, 1_000, 0
+        );
+        assertGt(reqAtMax, 2 * reqAtMin, "room for two fills");
+        // The borrower posts the whole window backed at the gate's floor.
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 10_000, rateMin: 500, rateMax: 600,
+            collateralMin: reqAtMin, collateralMax: reqAtMax
+        });
+        // A lender whose requirement sits exactly at the gate's ratio: its
+        // pro-rated requirement rounds DOWN, the gate's floor rounds UP.
+        uint256 lo = _postRangedLenderOffer(lender, 1_000, 10_000, 500, 600, reqAtMax);
+
+        uint256 boundByRisk;
+        uint256 matched;
+        uint256 stride = (reqAtMax - 2 * reqAtMin) / 97 + 1;
+        for (uint256 r1 = reqAtMin; r1 + reqAtMin <= reqAtMax; r1 += stride) {
+            uint256 snap = vm.snapshotState();
+            // A first fill of 1,000 against a greedier requirement leaves the
+            // borrower less collateral per remaining unit than the gate's ratio.
+            uint256 greedy = _postRangedLenderOffer(lender, 1_000, 1_000, 500, 600, r1);
+            OfferMatchFacet(address(diamond)).matchOffers(greedy, bo);
+            uint256 avail = reqAtMax - OfferCancelFacet(address(diamond)).getOffer(bo).collateralAmountFilled;
+
+            LibOfferMatch.MatchResult memory r = _preview(lo, bo);
+            assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "every covering collateral level matches");
+            (uint256 floorAt,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+                mockERC20, mockCollateralERC20, r.matchAmount, 0
+            );
+            assertGe(r.reqCollateral, floorAt, "locks at least the gate's floor");
+            assertLe(r.reqCollateral, avail, "within the borrower's remaining collateral");
+            // The largest amount the lender's rounded-down requirement covers.
+            uint256 lenderCovers = ((avail + 1) * 10_000 - 1) / reqAtMax;
+            if (r.matchAmount < lenderCovers && r.matchAmount < 9_000) boundByRisk++;
+            uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+            assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).principal, r.matchAmount, "executed as previewed");
+            matched++;
+            vm.revertToState(snap);
+        }
+        assertGt(matched, 0, "the sweep covered at least one level");
+        assertGt(boundByRisk, 0, "the gate's bound, not the lender's, set the amount somewhere");
+    }
+
 }

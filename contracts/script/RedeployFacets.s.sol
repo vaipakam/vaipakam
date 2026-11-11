@@ -133,6 +133,9 @@ contract RedeployFacets is Script {
     /// @notice #3412 - the target Diamond predates the required transaction
     ///         deadline on price-exposed entries; see {_requireValidUntilEntries}.
     error PredatesValidUntilEntries(address diamond);
+    /// @notice #3326 - the target Diamond's OfferPreviewFacet predates the
+    ///         match core's risk bounds host; see {_requireMatchRiskBoundsHost}.
+    error PredatesMatchRiskBoundsHost(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -208,6 +211,9 @@ contract RedeployFacets is Script {
         // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
         // origination cadence check; see {_requireCadenceAdmissionHost}.
         _requireCadenceAdmissionHost(diamond);
+        // #3326 - and one whose OfferPreviewFacet cannot answer the match
+        // core's risk bounds; see {_requireMatchRiskBoundsHost}.
+        _requireMatchRiskBoundsHost(diamond);
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
@@ -1127,6 +1133,23 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(OfferPreviewFacet.requireOriginationCadenceAdmitted.selector)
                 == address(0)
         ) revert PredatesCadenceAdmissionHost(diamond);
+    }
+
+    /// @dev #3326 - refuse a Diamond whose OfferPreviewFacet predates the
+    ///      match core's risk bounds host. The match core (`LibOfferMatch`,
+    ///      compiled into OfferMatchFacet and RiskPreviewFacet among others)
+    ///      reads the initiation risk floor and amount cap by self-call to
+    ///      `initRiskBounds`, a selector only OfferPreviewFacet carries. This
+    ///      curated set refreshes OfferMatchFacet and RiskPreviewFacet but not
+    ///      OfferPreviewFacet, so run on an older Diamond it would leave every
+    ///      match and match preview reverting `FunctionDoesNotExist`. Crossing
+    ///      the boundary is a fresh deploy, `RefreshAllFacetsInPlace` or
+    ///      `ReplaceStaleFacets` (both carry the host), never this refresh.
+    ///      Called before the broadcast starts.
+    function _requireMatchRiskBoundsHost(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(OfferPreviewFacet.initRiskBounds.selector) == address(0)) {
+            revert PredatesMatchRiskBoundsHost(diamond);
+        }
     }
 
     /// @dev #1558 - refuse a Diamond from before the refinance payoff permit.
