@@ -370,6 +370,12 @@ interface BaseEnv {
    *  ACKs, stranded-compensation returns and a retired mirror's surplus
    *  return. Permissionless; every send pays its CCIP fee. */
   REWARD_RETURN_TRANSPORT_ENABLED?: string;
+  /** 'true' adds the closed-day remainder return (#3360 part B) to the
+   *  return-transport pass (needs REWARD_RETURN_TRANSPORT_ENABLED too): on a
+   *  mirror, sends a transport batch's leftover home to the Base that sent it
+   *  once its day is proven closed (`returnClosedDayRemainder`). KEEPER_ROLE;
+   *  every send pays its CCIP fee from the keeper key. */
+  REWARD_REMAINDER_RETURN_ENABLED?: string;
   /** The return-transport pass's CCIP fee ceiling per send, in the
    *  `REWARD_DAY_CLOSE_MAX_FEE_WEI` format (`src/feeCeiling.ts`). A plain var. */
   REWARD_RETURN_TRANSPORT_MAX_FEE_WEI?: string;
@@ -597,6 +603,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
   'REWARD_DELIVERY_CONFLICT_ENABLED',
   'REWARD_RETURN_TRANSPORT_ENABLED',
+  'REWARD_REMAINDER_RETURN_ENABLED',
   'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI',
   'REWARD_RETURN_MIN_PART',
   'GAS_MAX_FEE_PER_GAS_WEI',
@@ -801,6 +808,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
     REWARD_DELIVERY_CONFLICT_ENABLED: raw.REWARD_DELIVERY_CONFLICT_ENABLED,
     REWARD_RETURN_TRANSPORT_ENABLED: raw.REWARD_RETURN_TRANSPORT_ENABLED,
+    REWARD_REMAINDER_RETURN_ENABLED: raw.REWARD_REMAINDER_RETURN_ENABLED,
     REWARD_RETURN_TRANSPORT_MAX_FEE_WEI: raw.REWARD_RETURN_TRANSPORT_MAX_FEE_WEI,
     REWARD_RETURN_MIN_PART: raw.REWARD_RETURN_MIN_PART,
     GAS_MAX_FEE_PER_GAS_WEI: raw.GAS_MAX_FEE_PER_GAS_WEI,

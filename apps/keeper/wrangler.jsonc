@@ -375,6 +375,13 @@
   //     mirror's surplus return. All permissionless; every send pays its CCIP
   //     fee. Ships unset. Needs no on-chain role. Arming it is an owner
   //     decision.
+  //   - REWARD_REMAINDER_RETURN_ENABLED — 'true' adds the #3360 part B
+  //     closed-day remainder return to the armed return-transport pass: on a
+  //     mirror, returnClosedDayRemainder sends a transport batch's leftover
+  //     home to the Base that sent it once its day is proven closed. The
+  //     keeper's own entry (KEEPER_ROLE on each mirror); every send pays its
+  //     CCIP fee from the keeper key. Ships unset. Arming it is an owner
+  //     decision.
   //   - PROTOCOL_UPKEEP_ENABLED — 'true' arms the #2984 protocol upkeep
   //     pass: the expired-buyback-intent rollback and the tier LTV cache
   //     refresh. Both permissionless; it pays no fee and moves nothing to the
