@@ -61,8 +61,17 @@ export type PendingRewards =
   /** Nothing to claim on this chain, every entry read. */
   | { kind: 'none' }
   /** A day the claim needs is not ready yet: its global figures have not
-   *  landed (`global`) or its funding has not been delivered (`delivery`). */
-  | { kind: 'waiting'; day: bigint; why: 'global' | 'delivery' }
+   *  landed (`global`) or its funding has not been delivered (`delivery`).
+   *  `atBlock` is the preview's block, so why the day waits is read at the
+   *  same state (RW-28). */
+  | { kind: 'waiting'; day: bigint; why: 'global' | 'delivery'; atBlock: bigint }
+  /** RW-28 — what pays the claim is not available now: the programme's pool
+   *  is paid out in full (`pool-exhausted`, the one that does not lift), or
+   *  what is left of it or of the recycled VPFI is reserved for pending
+   *  settlements (`pool-reserved`, `recycled-reserved`), or the VPFI held
+   *  here does not cover the claim's fresh part (`backing`, with the claim's
+   *  need and what is available, as the protocol measured them). */
+  | { kind: 'short'; why: 'pool-exhausted' | 'pool-reserved' | 'recycled-reserved' | 'backing'; needed: bigint | null; available: bigint | null }
   /** The programme has not started on this chain. */
   | { kind: 'not-started' }
   /** The global pause stops every claim. */
@@ -140,9 +149,18 @@ export function pendingFromRevert(r: Reverted, atBlock: bigint): PendingRewards 
     case 'NoInteractionRewardsToClaim':
       return { kind: 'none' };
     case 'InteractionDayGlobalNotFinalized':
-      return { kind: 'waiting', day: a!, why: 'global' };
+      return { kind: 'waiting', day: a!, why: 'global', atBlock };
     case 'InteractionDayAwaitingDelivery':
-      return { kind: 'waiting', day: a!, why: 'delivery' };
+      return { kind: 'waiting', day: a!, why: 'delivery', atBlock };
+    case 'InteractionPoolExhausted':
+      return { kind: 'short', why: 'pool-exhausted', needed: null, available: null };
+    case 'InteractionPoolReservedShortfall':
+      return { kind: 'short', why: 'pool-reserved', needed: a!, available: b! };
+    case 'RecycleBucketReservedShortfall':
+      return { kind: 'short', why: 'recycled-reserved', needed: a!, available: b! };
+    case 'InteractionRewardBackingShort':
+    case 'DeliveredFreshShortfall':
+      return { kind: 'short', why: 'backing', needed: a!, available: b! };
     case 'InteractionEmissionsNotStarted':
     case 'VPFITokenNotSet':
       return { kind: 'not-started' };

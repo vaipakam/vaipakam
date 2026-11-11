@@ -1,11 +1,12 @@
 // Watch-only live review of the Rewards page (#3180; RW-01..RW-11, RW-13,
-// RW-14, RW-43, RW-44; RB-REWARDS-PROGRAMME, RB-REWARDS-VPFI,
+// RW-14, RW-28, RW-43, RW-44; RB-REWARDS-PROGRAMME, RB-REWARDS-WAIT, RB-REWARDS-VPFI,
 // RB-REWARDS-TIER, RB-REWARDS-ELSEWHERE, RB-REWARDS-SIGN; live tier, run
 // after each deploy), through the shared watch-only wallet
 // (watch-wallet.cjs). The deployed build opens Rewards for the watched
 // wallet's network and prints whether the reward programme runs there (the
 // sentence's kind, the pause line and, in Advanced, each fact), the rewards
-// widget, the VPFI panel (whether VPFI is set up there, and the wallet's
+// widget (with the claim's verdict and, when a claim waits or is refused,
+// the reason's kind and each line of what a waiting day waits on), the VPFI panel (whether VPFI is set up there, and the wallet's
 // VPFI in its wallet, counted, free, held and uncounted), the consent and the
 // fee-discount tier card (its state and, when the holding rules hold the tier
 // down, the rule it names), and the tier on other networks (its state, the
@@ -45,7 +46,16 @@ async function view(b, opts, label) {
   const marks = `${kind}${(await pause.count()) ? ` pause ${await pause.getAttribute('data-pause')}` : ''}${(await role.count()) ? ` role ${await role.getAttribute('data-role')}` : ''}`;
   if (await prog.count()) console.log(`--- programme [${marks}]: ${(await prog.innerText()).replace(/\n+/g, ' · ')}`);
   const widget = p.getByTestId('rewards-widget');
-  if (await widget.count()) console.log(`--- rewards: ${(await widget.innerText()).replace(/\n+/g, ' · ')}`);
+  if (await widget.count()) {
+    const pending = widget.getByTestId('rewards-pending');
+    const verdict = (await pending.count()) ? `${await pending.getAttribute('data-figure')}${(await pending.getAttribute('data-why')) ? ` ${await pending.getAttribute('data-why')}` : ''}` : 'reading';
+    console.log(`--- rewards [${verdict}]: ${(await widget.innerText()).replace(/\n+/g, ' · ')}`);
+    const wait = widget.getByTestId('rewards-wait');
+    if (await wait.count()) {
+      const lines = await wait.locator('[data-wait-line]').evaluateAll((els) => els.map((e) => e.getAttribute('data-wait-line')));
+      console.log(`--- waits on [${await wait.getAttribute('data-wait')}]: ${lines.join(', ')}`);
+    }
+  }
   console.log(`--- vpfi [${await vpfi.getAttribute('data-vpfi')}]: ${(await vpfi.innerText()).replace(/\n+/g, ' · ')}`);
   const consent = p.getByTestId('consent-toggle');
   if (await consent.count()) console.log(`--- consent: ${(await consent.innerText()).replace(/\n+/g, ' · ')}`);

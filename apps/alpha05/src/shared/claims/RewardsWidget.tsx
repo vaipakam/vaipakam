@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { RewardClaim, pendingText } from './RewardClaim';
+import { RewardWait } from './RewardWait';
 import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readsPartOfEntries, readVpfiToken } from './rewards';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
@@ -93,18 +94,22 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
       </>
     );
   } else if (p) {
-    const sentence = pendingText(p, copy);
+    const sentence = pendingText(p, copy, { chain: chain.name, amount });
     headline =
       p.kind === 'none' || p.kind === 'not-started' ? (
         <p className="tier-b" data-testid="rewards-pending" data-figure={p.kind}>
           {sentence}
         </p>
       ) : (
-        <Notice tone={p.kind === 'barred' || p.kind === 'refused' ? 'danger' : 'warn'} tier="A">
-          <span data-testid="rewards-pending" data-figure={p.kind}>
-            {sentence}
-          </span>
-        </Notice>
+        <>
+          <Notice tone={p.kind === 'barred' || p.kind === 'refused' || (p.kind === 'short' && p.why === 'pool-exhausted') ? 'danger' : 'warn'} tier="A">
+            <span data-testid="rewards-pending" data-figure={p.kind} data-why={p.kind === 'short' || p.kind === 'waiting' ? p.why : undefined}>
+              {sentence}
+            </span>
+          </Notice>
+          {/* RW-28: what the waiting day waits on, read at the preview's block. */}
+          {p.kind === 'waiting' && <RewardWait diamond={diamond} day={p.day} why={p.why} atBlock={p.atBlock} amount={amount} />}
+        </>
       );
   } else if (pending.state === 'failed') {
     headline =
