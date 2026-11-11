@@ -78,7 +78,7 @@ async function session(b, opts, label) {
       await consent.check();
       await signReview.getByTestId('desk-sign-submit').click();
       await p.waitForTimeout(3000);
-      const notice = signReview.locator('.notice').filter({ hasText: 'Nothing was signed' });
+      const notice = signReview.getByRole('alert').filter({ hasText: 'Nothing was signed' });
       console.log(`----- after the wallet refuses: ${(await notice.count()) ? await notice.innerText() : 'no not-signed notice'}`);
     } else console.log('----- no consent offered (a blocker stands)');
   }
