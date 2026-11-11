@@ -2649,6 +2649,10 @@
       },
       "repairStatusOther": "geschlossen",
       "repairUnknownNote": "In dieser Liste fehlt möglicherweise das Ende eines Kredits, dessen Abschlussereignis nie erfasst wurde: Dieser Teil des Verlaufs konnte gerade nicht gelesen werden.",
+      "pendingHeading": "Noch nicht endgültig",
+      "pendingBadge": "Ausstehend, noch nicht endgültig",
+      "pendingNote": "Diese Aktionen sind auf der Chain erfasst, aber noch nicht endgültig. Meist werden sie innerhalb weniger Minuten endgültig. Bis dahin kann die Chain sie noch ersetzen, und dann verschwinden sie aus dieser Liste.",
+      "pendingIncompleteNote": "Einige ganz neue Aktionen sind hier möglicherweise noch nicht aufgeführt. Sie erscheinen innerhalb weniger Minuten, sobald sie endgültig sind.",
       "loadMore": "Ältere Aktivität laden",
       "loadingMore": "Wird geladen…",
       "labels": {

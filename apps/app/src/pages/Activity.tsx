@@ -14,6 +14,7 @@ import { useMyLoansFull } from '../data/hooks';
 import {
   fetchActivity,
   fetchParticipantLoanIds,
+  readPendingActivity,
   type IndexedActivityEvent,
 } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -138,7 +139,13 @@ function ActivityRow({
         </>
       ) : null}
       {context.length ? `${context.join(' · ')} · ` : ''}
-      {formatTimeAgo(event.blockAt)}
+      {/* #3411 — a pending action has no stated time: its block may still be
+          replaced. It says so instead. */}
+      {event.final === false || event.blockAt === null ? (
+        <span className="badge badge-info">{copy.activity.pendingBadge}</span>
+      ) : (
+        formatTimeAgo(event.blockAt)
+      )}
       {hiddenCount > 0 ? copy.activity.plusMore(hiddenCount) : ''}
     </span>
   );
@@ -222,6 +229,8 @@ const PAGE = 25;
 function ActivityFeed({
   events,
   observations,
+  pending,
+  pendingKnownComplete,
   truncated,
   explorer,
   me,
@@ -230,6 +239,10 @@ function ActivityFeed({
 }: {
   events: IndexedActivityEvent[];
   observations: RepairObservation[];
+  /** #3411 — the wallet's actions above the chain's safe block. */
+  pending: IndexedActivityEvent[];
+  /** #3411 — false when the pending list is incomplete or not known. */
+  pendingKnownComplete: boolean;
   truncated: boolean;
   explorer: string;
   /** The connected wallet, for the rows that state the viewer's own part. */
@@ -243,6 +256,7 @@ function ActivityFeed({
   );
   const shown = items.slice(0, visible);
   const hasMore = items.length > visible;
+  const pendingRows = useMemo(() => coalesceByTx(pending), [pending]);
 
   return (
     <>
@@ -255,6 +269,24 @@ function ActivityFeed({
           <span className="banner-body">{copy.activity.truncatedNote}</span>
         </div>
       ) : null}
+      {pendingRows.length > 0 ? (
+        <section aria-labelledby="activity-pending-heading" style={{ marginBottom: 16 }}>
+          <h2 id="activity-pending-heading" className="card-title">
+            {copy.activity.pendingHeading}
+          </h2>
+          <p className="muted">{copy.activity.pendingNote}</p>
+          <div className="row-list">
+            {pendingRows.map((row) => (
+              <ActivityRow key={`pending-${row.key}`} row={row} explorer={explorer} me={me} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {pendingKnownComplete ? null : (
+        <p className="muted" role="status">
+          {copy.activity.pendingIncompleteNote}
+        </p>
+      )}
       <div className="row-list">
         {shown.map((item) =>
           item.type === 'tx' ? (
@@ -374,6 +406,10 @@ export function Activity() {
       observations: RepairObservation[];
       /** False when any page could not say which loans were repaired. */
       observationsKnown: boolean;
+      /** #3411 — the wallet's events above the chain's safe block. */
+      pending: IndexedActivityEvent[];
+      /** #3411 — false when the pending lane was incomplete or not known. */
+      pendingKnownComplete: boolean;
       truncated: boolean;
     } | null> => {
       // Protocol-wide feed, so one busy day can push a wallet's events
@@ -386,6 +422,8 @@ export function Activity() {
       const mine: IndexedActivityEvent[] = [];
       const observations: RepairObservation[] = [];
       let observationsKnown = true;
+      let pending: IndexedActivityEvent[] = [];
+      let pendingKnownComplete = false;
       let before: string | undefined;
       let truncated = true;
       for (let i = 0; i < 5; i++) {
@@ -393,8 +431,15 @@ export function Activity() {
           limit: 100,
           before,
           repairObservations: true,
+          // #3411 — the indexer serves the pending lane on the first page only.
+          pending: i === 0,
         });
         if (page === null) return null; // any page failing → unavailable
+        if (i === 0) {
+          const lane = readPendingActivity(page.pending, readChain.chainId);
+          pendingKnownComplete = lane?.complete === true;
+          pending = (lane?.events ?? []).filter((ev) => isWalletActivity(ev, me, myLoanIds));
+        }
         // An observation names a loan and nothing else (no actor, no
         // args), so the wallet's loan ids are the whole participation test.
         const pageObservations = readRepairObservations(page.repairObservations, readChain.chainId);
@@ -416,7 +461,7 @@ export function Activity() {
         if (distinctTx.size + observations.length >= 50) break; // plenty of rows — still truncated
         before = page.nextBefore;
       }
-      return { events: mine, observations, observationsKnown, truncated };
+      return { events: mine, observations, observationsKnown, pending, pendingKnownComplete, truncated };
     },
   });
 
@@ -463,7 +508,9 @@ export function Activity() {
             <Link to="/positions">{copy.activity.positionsLink}</Link>.
           </p>
         </>
-      ) : activity.data.events.length === 0 && activity.data.observations.length === 0 ? (
+      ) : activity.data.events.length === 0 &&
+        activity.data.observations.length === 0 &&
+        activity.data.pending.length === 0 ? (
         <>
           {/* A STALLED indexer returning zero rows is exactly the
               misleading empty feed — the self-gating note must cover
@@ -472,6 +519,13 @@ export function Activity() {
           {activity.data.observationsKnown ? null : (
             <p className="muted" role="status">
               {copy.activity.repairUnknownNote}
+            </p>
+          )}
+          {/* #3411 — an empty feed with the pending lane not known must not
+              read as "nothing just happened". */}
+          {activity.data.pendingKnownComplete ? null : (
+            <p className="muted" role="status">
+              {copy.activity.pendingIncompleteNote}
             </p>
           )}
           {participantTruncated ? (
@@ -528,6 +582,8 @@ export function Activity() {
           <ActivityFeed
             events={activity.data.events}
             observations={activity.data.observations}
+            pending={activity.data.pending}
+            pendingKnownComplete={activity.data.pendingKnownComplete}
             truncated={activity.data.truncated}
             explorer={readChain.blockExplorer}
             me={address}

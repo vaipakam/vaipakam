@@ -109,6 +109,14 @@ const CLASSIFICATION = {
     class: 'replay-derived',
     reason: 'the reorg guard\'s anchor (#3411): the block the scan cursor last advanced to and its hash; cleared with the cursor, and the replay anchors again as it advances',
   },
+  pending_activity_events: {
+    class: 'replay-derived',
+    reason: 'the pending lane (#3411 part 2): events above the safe block, replaced every caught-up pass; nothing is born here',
+  },
+  pending_activity_window: {
+    class: 'replay-derived',
+    reason: 'what the pending lane\'s last read covered (#3411 part 2); rewritten with the lane every caught-up pass',
+  },
   indexer_deployment: {
     class: 'replay-derived',
     reason:

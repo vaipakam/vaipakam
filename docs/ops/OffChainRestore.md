@@ -1687,8 +1687,17 @@ DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_chain_anchor; \
+DELETE FROM pending_activity_events; \
+DELETE FROM pending_activity_window; \
 DELETE FROM indexer_cursor"
 ```
+
+`pending_activity_events` and `pending_activity_window` (#3411 part 2) are the
+pending lane: the events the last caught-up pass found ABOVE the chain's safe
+block, and what that read covered. Nothing is born there, and every caught-up
+pass replaces both, so a cleared lane comes back on the first pass that
+catches up. Left in place it would list events from before the incident as
+pending until it went stale.
 
 `indexer_chain_anchor` (#3411) is the reorg guard's record of the block the
 scan cursor last advanced to and that block's hash. It goes with the cursor:
