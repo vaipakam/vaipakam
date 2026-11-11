@@ -2101,6 +2101,34 @@ above. Each resolves here, so a route reviewer needs no private file:
   the loan initiation fee and the fee on interest with that discount,
   computed exactly from the live settings read at one block. Copy follows
   RL-6.
+- **RB-REWARDS-ELSEWHERE** — The wallet's tier on the protocol's other
+  networks (RW-11, RW-13, RW-14), from the protocol's own status
+  (`getTierPushStatus`, #1277) read at one block with the tier applied now
+  and the messenger's fee quote for each owed network. Since #1277 the
+  protocol pays for a message only when it lowers what another network
+  grants; a raise, a first discount or a new tier table goes out only with
+  a paid send. So this section is shown in Basic as well, a departure from
+  the matrix's Advanced mode (the matrix rows predate #1277): a user whose
+  tier rose must act, or their other networks keep the older copy. On VPFI's
+  home network it states the tier recorded for sending, says when it differs
+  from the tier applied now (the recorded figure capped at 50% before
+  comparing), and offers the update (`pokeMyTier`, gas only); the tier
+  table's version has no reader, so the update stays offered when the two
+  match and the copy says a version change cannot be seen here. It lists
+  each network the protocol sends to with what it last received and whether
+  it is current, owed a lower tier the protocol sends at its own cost, or
+  owed one that goes only with a paid send. The paid send
+  (`deliverTierPush`) is offered only once the record matches the tier now
+  and every owed network's fee is quoted; its value is the sum of every owed
+  network's quote plus 20%, because the protocol spends the value on owed
+  networks in its own order, and the receipt states that each fee pays one
+  message, is not refunded once sent, and that the unspent value comes back
+  in the same transaction. The send is re-read and dry-run first; the
+  outcome is measured per network from the status at the receipt's block,
+  and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
+  value funded. With no messenger or no network to send to, nothing is
+  recorded or sent, so no action is offered. Away from the home network the
+  section says a higher tier is sent from there. Copy follows RL-6.
 - **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
   The deposit review offers "Sign instead of approve" only when the asset
   is this network's VPFI, Permit2 has code at its canonical address, and the
