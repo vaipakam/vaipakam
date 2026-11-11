@@ -248,7 +248,10 @@ describe('listing on the offer book', () => {
   it('bookAnswer needs the order it was sent', () => {
     expect(bookAnswer(201, { orderHash: sign.orderHash }, sign.orderHash)).toEqual({ kind: 'listed', orderHash: sign.orderHash, fresh: true });
     expect(bookAnswer(201, {}, sign.orderHash).kind).toBe('unknown');
-    expect(bookAnswer(429, { error: 'rate-limited' }, sign.orderHash)).toEqual({ kind: 'refused', code: 'rate-limited' });
+    // A refusal of the request, not of the order, proves nothing about an earlier send.
+    expect(bookAnswer(429, { error: 'rate-limited' }, sign.orderHash)).toMatchObject({ kind: 'unknown' });
+    expect(bookAnswer(408, { error: 'timeout' }, sign.orderHash)).toMatchObject({ kind: 'unknown' });
+    expect(bookAnswer(400, { error: 'bad-signature' }, sign.orderHash)).toEqual({ kind: 'refused', code: 'bad-signature' });
   });
 
   it('names the refusals the book shares with the chain, and quotes any other', () => {

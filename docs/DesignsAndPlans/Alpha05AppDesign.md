@@ -2246,12 +2246,17 @@ above. Each resolves here, so a route reviewer needs no private file:
   signature binds this network and this deployment. One consent to the
   Risk Disclosures and Terms, one wallet signature, then one send to the
   offer book. The book's answer is stated as it came: listed (or already
-  listed), refused with the book's own reason (the signature is then
-  dropped, since nobody else holds it), or unknown. An unknown answer
-  keeps the signed order on this device with a way to send it again,
-  because the book lists an order once. The signed order and the book's
-  step are kept above the router, so a reader who leaves the page while
-  the book is asked finds its answer on return. A listed order shows under the
+  listed), refused with the book's own reason, or unknown. A refusal of
+  the order drops the signature: it either fails checks an earlier send
+  would have failed too or says the order can no longer be filled. A
+  refusal of the request (rate limited, timed out) proves nothing about an
+  earlier send whose answer was lost, so it reads as unknown. An unknown
+  answer keeps the signed order on this device with a way to send it
+  again, because the book lists an order once. The signed order and the
+  flow's step (the wallet asked, its refusal, the book asked, its answer)
+  are kept above the router, so a reader who leaves the page mid-flow finds
+  the same step on return, with no second signature or edit offered while
+  the first may still complete. A listed order shows under the
   viewer's signed orders (RB-DESK-SIGNED).
 
 ## 3. Companion specifications

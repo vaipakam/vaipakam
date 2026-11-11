@@ -140,7 +140,16 @@ export type BookAnswer =
 /** The book's answer to `POST /signed-offers`: 201 lists it, 200 says it
  *  was already listed, a 4xx with the book's error code refused it; any
  *  other answer (a 5xx, a body this app cannot read) leaves it unknown. A
- *  listing must name the order this app signed. */
+ *  listing must name the order this app signed.
+ *
+ *  A refusal is final only when it is about the order. A 408 or 429 is about
+ *  the request (the book refuses a rate-limited caller before it looks for
+ *  the order), so it proves nothing about an earlier send whose answer was
+ *  lost, and leaves the order unknown with its resend. Every other refusal
+ *  either comes from checks an earlier send would have failed too (shape,
+ *  signature, chain) or says the order can no longer be filled (lapsed,
+ *  used, its nonce cancelled), so dropping the signature then can never
+ *  leave a fillable order behind unseen. */
 export function bookAnswer(status: number, body: unknown, expected: Hex): BookAnswer {
   const b = body !== null && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   if (status === 201 || status === 200) {
@@ -149,6 +158,7 @@ export function bookAnswer(status: number, body: unknown, expected: Hex): BookAn
     }
     return { kind: 'unknown', reason: `the offer book answered ${status} without naming this order` };
   }
+  if (status === 408 || status === 429) return { kind: 'unknown', reason: `the offer book did not take the request now (${status})` };
   if (status >= 400 && status < 500 && typeof b.error === 'string' && b.error !== '') return { kind: 'refused', code: b.error };
   return { kind: 'unknown', reason: `the offer book answered ${status}` };
 }

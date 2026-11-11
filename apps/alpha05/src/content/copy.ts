@@ -2649,7 +2649,7 @@ export const copy = {
     refusedUsed: A('The chain already holds this order as used or cancelled, so the offer book listed nothing.'),
     refusedLapsed: A('The offer book holds this order as already lapsed, so it listed nothing.'),
     refusedCode: A('The offer book refused it ({{code}}) and listed nothing.'),
-    refusedForgotten: A('The offer book stored nothing, and this app has dropped the signature.'),
+    refusedForgotten: A('This app has dropped the signature, so the order cannot be sent again from here.'),
     unknown: A(
       'The offer book gave no answer this app can read ({{reason}}), so whether it listed the order is not known. Send it again: the book lists an order once. If you close this instead, look under Your signed orders: a listed order stays fillable until it lapses or you cancel it on the chain.',
     ),

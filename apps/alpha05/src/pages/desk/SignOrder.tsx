@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useConfig } from 'wagmi';
 import { signTypedData } from 'wagmi/actions';
@@ -26,7 +26,6 @@ import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { termsUrl, type TermsState } from '../../shared/terms/terms';
 import { useStoredValue } from '../../shared/tx/txStore';
-import { useMounted } from '../../shared/tx/useReviewRefresh';
 import { Notice } from '../../shared/ui/Notice';
 import { Receipt } from '../../shared/ui/Receipt';
 import { shortAddress } from '../../shared/ui/format';
@@ -35,14 +34,17 @@ import { useMode } from '../../app/ModeContext';
 
 type Hex = `0x${string}`;
 
-/** Where the page's own step stands: the review, the wallet asked, or the
- *  wallet's refusal. */
-type Phase = { kind: 'review' } | { kind: 'signing' } | { kind: 'not-signed'; reason: string };
-
-/** The book's side of the flow, kept above the router with the signed
- *  order: a page left while the book is asked finds it there again, and its
- *  answer, when it comes back. */
-type BookStep = { orderHash: Hex; step: 'listing' } | { orderHash: Hex; step: 'answered'; answer: BookAnswer };
+/** Where the flow stands past the review, for one order: the wallet asked,
+ *  the wallet's refusal, the book asked, or the book's answer. It is kept
+ *  above the router with the signed order (RB-REVIEW): a page left while the
+ *  wallet or the book is asked finds that step again on return, with no
+ *  second signature or edit offered while the first may still complete, and
+ *  the answer once it comes back. No step stored is the review. */
+type Step =
+  | { orderHash: Hex; step: 'signing' }
+  | { orderHash: Hex; step: 'not-signed'; reason: string }
+  | { orderHash: Hex; step: 'listing' }
+  | { orderHash: Hex; step: 'answered'; answer: BookAnswer };
 
 const BLOCKER_TEXT: Readonly<Record<SignBlocker, Parameters<CopyAccess['text']>[0]>> = {
   'no-book': 'signNew.noBook',
@@ -88,15 +90,13 @@ export function SignOrder({
   const queryClient = useQueryClient();
   const { mode } = useMode();
   const nowMs = useNow();
-  const mounted = useMounted();
   const diamond = chain.diamondAddress as Hex;
   const identity = identityOf(own.chainId, own.account);
   const [record, setRecord] = useStoredValue<SignedRecord>(`${flowKey}:signed`);
   const [consentFor, setConsentFor] = useStoredValue<string>(`${flowKey}:signConsent`);
-  const [stored, setBook] = useStoredValue<BookStep>(`${flowKey}:signBook`);
-  const book = stored !== null && stored.orderHash === sign.orderHash ? stored : null;
-  const [phase, setPhase] = useState<Phase>({ kind: 'review' });
-  const busy = phase.kind === 'signing' || book?.step === 'listing';
+  const [stored, setStep] = useStoredValue<Step>(`${flowKey}:signStep`);
+  const step = stored !== null && stored.orderHash === sign.orderHash ? stored : null;
+  const busy = step?.step === 'signing' || step?.step === 'listing';
 
   const read = useOwnRead(['deskSign', sign.orderHash], (c) => readSignReview(c, diamond, sign.order), { enabled: identity === sign.identity });
   const review = read.data;
@@ -111,19 +111,19 @@ export function SignOrder({
 
   // The book's answer is the end of the flow for that order: a listing or a
   // refusal drops the kept signature; an unknown answer keeps it to resend.
-  // Both writes go to the store, so they land whether or not this page is
+  // Every write goes to the store, so it lands whether or not this page is
   // still shown.
   const list = async (rec: SignedRecord) => {
-    setBook({ orderHash: rec.orderHash, step: 'listing' });
+    setStep({ orderHash: rec.orderHash, step: 'listing' });
     const answer = await listSignedOrder(world.indexer, rec);
     if (answer.kind !== 'unknown') setRecord(null);
     if (answer.kind === 'listed') void queryClient.invalidateQueries({ queryKey: worldKey(sign.chainId, 'mySignedOrders') });
-    setBook({ orderHash: rec.orderHash, step: 'answered', answer });
+    setStep({ orderHash: rec.orderHash, step: 'answered', answer });
   };
 
   const signAndList = async () => {
     if (!consented || blockers.length > 0 || review == null || busy) return;
-    setPhase({ kind: 'signing' });
+    setStep({ orderHash: sign.orderHash, step: 'signing' });
     let signature: Hex;
     try {
       signature = await signTypedData(config, {
@@ -134,12 +134,11 @@ export function SignOrder({
         message: typedMessage(sign.order),
       });
     } catch (e) {
-      if (mounted.current) setPhase({ kind: 'not-signed', reason: refusalFromError(e).reason });
+      setStep({ orderHash: sign.orderHash, step: 'not-signed', reason: refusalFromError(e).reason });
       return;
     }
     const rec: SignedRecord = { identity: sign.identity, chainId: sign.chainId, order: sign.order, orderHash: sign.orderHash, signature };
     setRecord(rec);
-    if (mounted.current) setPhase({ kind: 'review' });
     await list(rec);
   };
 
@@ -148,12 +147,12 @@ export function SignOrder({
   const close = (listed: boolean) => {
     setRecord(null);
     setConsentFor(null);
-    setBook(null);
+    setStep(null);
     onClose(listed);
   };
 
   const firstFocus = useRef<HTMLHeadingElement>(null);
-  const answered = book?.step === 'answered';
+  const answered = step?.step === 'answered';
   useEffect(() => {
     if (answered) firstFocus.current?.focus();
   }, [answered]);
@@ -161,8 +160,8 @@ export function SignOrder({
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
   const riskLink = guideUrl(mode, RISK_GUIDE[sign.draft.side]);
 
-  if (book?.step === 'answered') {
-    const a = book.answer;
+  if (step?.step === 'answered') {
+    const a = step.answer;
     return (
       <div className="repay-loan" data-testid="desk-sign-result" data-kind={a.kind}>
         <h3 ref={firstFocus} tabIndex={-1}>
@@ -194,7 +193,7 @@ export function SignOrder({
               type="button"
               className="btn"
               onClick={() => {
-                setBook(null);
+                setStep(null);
                 onEdit();
               }}
               data-testid="desk-sign-edit"
@@ -225,9 +224,9 @@ export function SignOrder({
           {text(BLOCKER_TEXT[b])}
         </Notice>
       ))}
-      {phase.kind === 'not-signed' && (
+      {step?.step === 'not-signed' && (
         <Notice tone="danger" tier="A">
-          {format('signNew.notSigned', { reason: phase.reason })}
+          {format('signNew.notSigned', { reason: step.reason })}
         </Notice>
       )}
       {review != null && blockers.length === 0 && (
@@ -256,7 +255,7 @@ export function SignOrder({
       )}
       {busy && (
         <p className="tier-b" aria-live="polite" data-testid="desk-sign-step">
-          {text(phase.kind === 'signing' ? 'signNew.stepSign' : 'signNew.stepList')}
+          {text(step?.step === 'signing' ? 'signNew.stepSign' : 'signNew.stepList')}
         </p>
       )}
       <div className="thumb-action">
@@ -270,7 +269,16 @@ export function SignOrder({
           >
             {text('signNew.submit')}
           </button>
-          <button type="button" className="btn" disabled={busy} onClick={onEdit} data-testid="desk-sign-edit">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => {
+              setStep(null);
+              onEdit();
+            }}
+            data-testid="desk-sign-edit"
+          >
             {text('signNew.edit')}
           </button>
         </div>
