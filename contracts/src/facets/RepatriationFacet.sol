@@ -12,6 +12,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 
 /// @dev The slice of {VaipakamRewardMessenger} the Base-side dispatch
 ///      surfaces drive — the two #1568 C2 instruction kinds.
@@ -266,6 +267,18 @@ contract RepatriationFacet is
         uint256 amount,
         uint256 remainingAfter,
         bytes32 messageId
+    );
+
+    /// @notice #3360 part B — the return above went by the KEEPER route: the
+    ///         remainder of a batch whose day `dayId` is proven closed, with no
+    ///         operator acknowledgment. Emitted after
+    ///         {UntypedRemainderReturnDispatched}, which carries the amounts.
+    /// @custom:event-category state-change/reward-transport
+    event ClosedDayRemainderReturnedByKeeper(
+        bytes32 indexed packetHash,
+        uint256 indexed dayId,
+        uint256 amount,
+        address indexed keeper
     );
 
     /// @notice #2376 — Base side: an untyped-remainder return from
@@ -1205,6 +1218,79 @@ contract RepatriationFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
         returns (bytes32 messageId)
     {
+        messageId = _dispatchUntypedReturn(packetHash, amount, refundAddress, false);
+    }
+
+    /**
+     * @notice #3360 part B — the KEEPER route of the untyped return: send
+     *         `amount` of a budget packet's transport remainder home to the
+     *         Base that sent it, once the day the packet funds is proven
+     *         closed. Parks the batch first when nobody has yet.
+     * @dev    Owner decision 2026-11-11 ("Keeper role, pass ships off"). A
+     *         mirror claim draws from its day's batch only what it PAYS: the
+     *         part the loan-side reward cap or the per-wallet daily cap trims
+     *         is never drawn, so once every obligation covering the day has
+     *         terminated it is part of what the batch still holds, with
+     *         whatever else nobody claimed. This route returns it without the
+     *         operator's acknowledgment, which stays the gate for
+     *         CLASSIFYING a remainder into this chain's own ledgers
+     *         ({sendUntypedRemainderReturn} keeps both gates and stays
+     *         available to the operator).
+     *
+     *         What the keeper can and cannot do. It can only send value home:
+     *         to the packet's issuing chain and Diamond, never a destination
+     *         of its choosing, and only from a batch whose day the
+     *         irreversible closure proof marked closed
+     *         ({LibRewardCustody.takeFromClosedRemainderForReturn}). It
+     *         chooses the amount (at most the remainder, so it can size a
+     *         part to the lane's capacity) and pays the CCIP fee from its own
+     *         wallet; Base credits exactly what arrives to its recycle bucket.
+     *         `LibAuth.requireActiveKeeper`: the keeper role, and refused while
+     *         the global keeper pause is on (#1638).
+     * @param  packetHash   The budget packet's ingress stamp on this mirror.
+     * @param  amount       VPFI to return this call: non-zero, at most what
+     *                      the parked remainder holds.
+     * @param  refundAddress Where the transport refunds any excess fee.
+     */
+    function returnClosedDayRemainder(
+        bytes32 packetHash,
+        uint256 amount,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        returns (bytes32 messageId)
+    {
+        LibAuth.requireActiveKeeper();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 batchId = s.ingressPackets[packetHash].batchId;
+        if (batchId != bytes32(0) && s.transportRemainders[batchId].batchId == bytes32(0)) {
+            // Not parked yet: park it here, under the same closure proof the
+            // permissionless park applies, so one keeper call does the whole step.
+            LibRewardCustody.parkClosedTransportRemainder(s, batchId);
+        }
+        messageId = _dispatchUntypedReturn(packetHash, amount, refundAddress, true);
+        emit ClosedDayRemainderReturnedByKeeper(
+            packetHash, s.transportRemainders[batchId].dayId, amount, msg.sender
+        );
+    }
+
+    /// @dev The untyped return's one body, for both routes. `byClosure`
+    ///      selects the remainder's gate: the closure proof alone (the keeper
+    ///      route) or the operator's acknowledgment (the ADMIN route). Every
+    ///      other rule is shared: the packet must hold a batch and carry no
+    ///      live stranded-recovery record, the destination is the packet's
+    ///      issuer, the amount fits the lane, and the value leaves the
+    ///      `Unclassified` row untyped, bounded by the packet's own remainder.
+    function _dispatchUntypedReturn(
+        bytes32 packetHash,
+        uint256 amount,
+        address payable refundAddress,
+        bool byClosure
+    ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address sender = s.repatriationSender;
         if (sender == address(0)) revert RepatriationNotConfigured();
@@ -1224,7 +1310,8 @@ contract RepatriationFacet is
         uint32 dst = p.sourceChainId;
         _assertWithinLaneCapacity(s, dst, amount, false);
 
-        LibRewardCustody.takeFromReleasedRemainder(s, packetHash, amount);
+        if (byClosure) LibRewardCustody.takeFromClosedRemainderForReturn(s, packetHash, amount);
+        else LibRewardCustody.takeFromReleasedRemainder(s, packetHash, amount);
         uint256 remainingAfter = s.transportRemainders[batchId].amount;
         s.untypedRemainderReturnedCumulative += amount;
         LibRewardCustody.releaseUntypedRemainderForReturn(s, packetHash, sender, amount);

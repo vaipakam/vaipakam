@@ -3218,7 +3218,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](24);
+        s = new bytes4[](25);
         s[0] = RepatriationFacet.authorizeRepatriation.selector;
         s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -3251,6 +3251,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[21] = RepatriationFacet.onUntypedRemainderReturnReceived.selector;
         s[22] = RepatriationFacet.getChainUntypedRemainderReturned.selector;
         s[23] = RepatriationFacet.getUntypedRemainderReturnedCumulative.selector;
+        // #3360 part B — the keeper's return of a closed day's leftover.
+        s[24] = RepatriationFacet.returnClosedDayRemainder.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

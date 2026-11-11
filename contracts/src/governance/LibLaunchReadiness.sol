@@ -545,9 +545,14 @@ library LibLaunchReadiness {
     ///      check asks that D* is set, that the reward clock runs, and that
     ///      today is D* or later. D* can only be set to a future day, so the
     ///      clock must start at least that many days before the launch.
-    ///      Off the canonical chain it does not apply: D* reaches a mirror in
-    ///      Base's broadcast, and the loan-side cap is not yet stamped there
-    ///      (the #3360 mirror decision).
+    ///      Since #3360 part B a MIRROR's loans carry the same cap, so the
+    ///      check applies there too, with one difference: a mirror does not
+    ///      set D*, it adopts it from the first broadcast of Base's that
+    ///      carries it (`RewardReporterFacet`). So a mirror launches only once
+    ///      Base has armed the cap AND that broadcast has landed, and on or
+    ///      after D*; otherwise its first loans would earn under the legacy
+    ///      cap there. An Unconfigured or Detached Diamond runs no reward
+    ///      days, and the check does not apply.
     function _rewardCapArmed(address diamond) private view returns (Check memory c) {
         c.label = "the fee-linked reward cap is armed before any loan";
         ILaunchReadableDiamond d = ILaunchReadableDiamond(diamond);
@@ -558,13 +563,13 @@ library LibLaunchReadiness {
             c.detail = "getRewardRole() unreadable";
             return c;
         }
-        if (role != 0) {
+        if (role > 1) {
             c.checkable = true;
             c.met = true;
             c.detail = string.concat(
                 "does not apply: the reward role is ",
                 _roleName(role),
-                ", and the reward cap is armed on the canonical reward chain"
+                ", which runs no reward days"
             );
             return c;
         }
@@ -582,7 +587,9 @@ library LibLaunchReadiness {
         }
         c.checkable = true;
         if (armedFrom == 0) {
-            c.detail = "the reward cap is not armed (setGovernorCommitArmedFromDay): every reward day would run the legacy per-ETH cap, which self-loans can profit from";
+            c.detail = role == 0
+                ? "the reward cap is not armed (setGovernorCommitArmedFromDay): every reward day would run the legacy per-ETH cap, which self-loans can profit from"
+                : "this mirror has not received the reward cap's first armed day: arm it on Base (setGovernorCommitArmedFromDay) and launch after Base's next broadcast lands here";
             return c;
         }
         if (!active) {

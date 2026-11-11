@@ -3086,7 +3086,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](25);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -3121,6 +3121,8 @@ contract HelperTest {
         selectors[21] = RepatriationFacet.onUntypedRemainderReturnReceived.selector;
         selectors[22] = RepatriationFacet.getChainUntypedRemainderReturned.selector;
         selectors[23] = RepatriationFacet.getUntypedRemainderReturnedCumulative.selector;
+        // #3360 part B — the keeper's return of a closed day's leftover.
+        selectors[24] = RepatriationFacet.returnClosedDayRemainder.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

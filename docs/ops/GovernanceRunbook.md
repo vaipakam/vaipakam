@@ -659,13 +659,17 @@ even for the gap between the deploy and the handover.
      the ETH one), or every lookup under that key misses. How many feeds it
      holds is printed, not required: WETH prices without it, and the feed
      service fills it under the registry's own delay;
-   - on the canonical reward chain, the fee-linked reward cap armed before
-     any loan can open (#3360): `setGovernorCommitArmedFromDay` has set the
-     first armed reward day, `setInteractionLaunchTimestamp` has started the
-     reward clock, and today is that day or later. Without it the first
-     loans earn under the older per-ETH cap, which self-loans between one
-     person's wallets can profit from. The setter takes only a future day,
-     so arm it at least one reward day before the launch. A mirror reads as
+   - on the canonical reward chain AND on every reward mirror, the
+     fee-linked reward cap armed before any loan can open (#3360):
+     `setGovernorCommitArmedFromDay` has set the first armed reward day,
+     `setInteractionLaunchTimestamp` has started the reward clock, and today
+     is that day or later. Without it the first loans earn under the older
+     per-ETH cap, which self-loans between one person's wallets can profit
+     from. The setter takes only a future day, so arm it on Base at least one
+     reward day before the launch. A mirror does not call the setter: it
+     takes the day from the first Base broadcast that carries it, so a
+     mirror launches only after that broadcast has landed (#3360 part B).
+     An Unconfigured or Detached Diamond runs no reward days and reads as
      not applicable.
 
    The launch checks the chain against these DECLARED values rather than
@@ -1256,7 +1260,7 @@ Post-handover this is a Timelock action: Safe schedules, wait the delay, execute
 
 Before #3360, plain canonical originations skipped the stamp while this was
 off, so enabling first was what kept new loans out of the unstamped class. Since
-#3360 every origination off a reward mirror stamps itself whether or not the
+#3360 every token-loan origination stamps itself, on Base and (since #3360 part B) on mirrors, whether or not the
 switch is on, so enabling is now only the decision to offer the Full tariff; it
 no longer affects Step 2's scan.
 
@@ -1267,7 +1271,7 @@ On armed days the legacy cap retires and the loan-side cap deliberately skips an
 at `D*` earns **uncapped**. Enumerate open reward-eligible canonical loans with
 `openDays == 0`, resolve each, and read back **zero unresolved**.
 
-**Since #3360 every token-loan origination off a reward mirror stamps itself**,
+**Since #3360 every token-loan origination stamps itself** (mirrors too since #3360 part B),
 whatever the fee-entitlement switch says and whether or not anyone opted into
 Full: the stamp is the loan-side cap's base, and a party that did not opt in is
 charged nothing. Before #3360 a plain accept skipped the stamp while the switch
@@ -1288,11 +1292,23 @@ loan") refuses the first unpause until `D*` is set, the reward clock runs, and
 today is `D*` or later. `D*` can only name a future day, so start the reward
 clock (`SetInteractionLaunch.s.sol`) and arm at least one full reward day
 before the launch, and launch on day `D*`. Every prerequisite in this section
-therefore lands before the launch, not after it. Mirror chains are not held by
-this check: they learn `D*` from Base's broadcast, which needs Base unpaused,
-so Base launches first. The loan-side cap is not yet stamped on mirrors (the
-mirror half of #3360), so until it ships a mirror loan is bounded only by the
-per-wallet daily share.
+therefore lands before the launch, not after it. Mirror chains are held by the
+same check (#3360 part B, owner decision 2026-11-11), because a mirror loan
+carries the same loan-side cap: a mirror learns `D*` from Base's broadcast,
+which needs Base unpaused, so Base launches first and each mirror launches
+once that broadcast has landed on it and `D*` has arrived.
+
+**Where a capped mirror reward goes.** A mirror claim draws from its day's
+delivered batch only what it pays, so the part the loan-side cap or the
+per-wallet daily cap trims stays in the batch with whatever nobody claimed.
+Once the day's closure proof completes, a keeper returns the whole leftover
+to the Base that sent it (`RepatriationFacet.returnClosedDayRemainder`,
+`KEEPER_ROLE`, refused under the keeper pause; the keeper pays the transport
+fee), and Base credits what arrives to its recycle bucket. No operator step is
+needed for that return; the operator's acknowledged route
+(`sendUntypedRemainderReturn`) stays available. The keeper pass that makes
+this call ships disarmed, so until an owner arms it the leftover waits on the
+mirror, held and accounted, not lost.
 
 ### Step 3 — complete EVERY keeper prerequisite (still before the arm)
 
