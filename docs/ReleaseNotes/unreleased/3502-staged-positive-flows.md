@@ -26,7 +26,12 @@ before it sends anything, so the record also carries every actor's account
 nonce as the stage's simulation left it. The next stage, and the finish,
 refuse to continue when any account on the chain differs, and name the record
 to remove for a fresh run. Without this check, a broadcast that stopped
-part-way would let a later stage act on positions that do not exist.
+part-way would let a later stage act on positions that do not exist. A
+transaction that is mined and reverts still uses its nonce, so the next stage
+and the finish also read forge's own log of the stage's broadcast, tied to the
+record by those nonces, and refuse unless every transaction in it has a
+receipt and every receipt is a success. A step that reverted on chain can no
+longer be reported as passed.
 
 Two things a broadcast does that a simulation does not are now allowed for.
 Interest accrues by the second, so a repayment approves the simulated amount

@@ -59,7 +59,12 @@ import {Deployments} from "../lib/Deployments.sol";
  *         would act on positions that do not exist. The refusal names the
  *         actor; the remedy is a fresh run (remove the record). An actor key
  *         used by anything else between stages is refused the same way, so
- *         run one module at a time.
+ *         run one module at a time. Matching nonces show the transactions
+ *         were mined, not that they succeeded: a transaction that reverts
+ *         still uses its nonce. So both also read forge's own log of the
+ *         stage's broadcast (`broadcast/<module>.s.sol/<chain>/stage-latest.json`),
+ *         tie it to the record by those nonces, and refuse unless every
+ *         transaction in it has a receipt and every receipt is a success.
  *
  *         A wait this runner does not cover is not hidden behind it: an
  *         early stage is refused by the protocol rule itself (a fill too
@@ -353,21 +358,98 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
             string.concat(moduleName(), ": the staged-run record is for another Diamond"));
     }
 
-    /// @dev Every actor's nonce on the chain is the one the recorded stage's
-    ///      simulation left, so its broadcast landed whole and nothing else
-    ///      signed with those keys since.
+    /// @dev The recorded stage landed whole, and every transaction it sent
+    ///      succeeded. Two checks, because either alone can be fooled:
+    ///      - every actor's nonce on the chain is the one the recorded
+    ///        stage's simulation left, so its broadcast was mined in full and
+    ///        nothing else signed with those keys since;
+    ///      - forge's own log of that broadcast ({_stageBroadcastLog}) shows
+    ///        every transaction with a receipt and every receipt a success. A
+    ///        transaction that is mined and reverts still uses its nonce, so
+    ///        the nonces alone would let a scenario whose last fill reverted
+    ///        pass. The log is tied to the recorded stage by those same
+    ///        nonces: for each actor that sent in it, its last transaction's
+    ///        nonce is one below the recorded one. A stage that sent nothing
+    ///        leaves the log of the stage before, whose nonces the record
+    ///        then still carries, so it is judged by that stage's receipts.
     function _requireLanded(string memory json, string memory what) private view {
         (string[6] memory names, address[6] memory actors) = _actors();
+        uint256[6] memory expected;
         for (uint256 a = 0; a < actors.length; a++) {
-            uint256 expected = vm.parseJsonUint(json, string.concat(".nonce_", names[a]));
+            expected[a] = vm.parseJsonUint(json, string.concat(".nonce_", names[a]));
             uint256 onChain = vm.getNonce(actors[a]);
-            require(onChain == expected, string.concat(
+            require(onChain == expected[a], string.concat(
                 moduleName(), ": cannot run ", what, ". The ", names[a], " account's nonce is ",
-                vm.toString(onChain), " on the chain, and the recorded stage expected ", vm.toString(expected),
-                ": that stage's broadcast did not land whole, or the key signed something else since. Remove ",
-                Deployments.namedPath(_recordFile()), " and start a fresh run"
+                vm.toString(onChain), " on the chain, and the recorded stage expected ", vm.toString(expected[a]),
+                ": that stage's broadcast did not land whole, or the key signed something else since. ",
+                _freshRunRemedy()
             ));
         }
+        _requireStageSucceeded(what, actors, expected);
+    }
+
+    /// @dev Reads forge's log of this module's last `stage()` broadcast on
+    ///      this chain and refuses unless it is the recorded stage's (see
+    ///      {_requireLanded}) and every transaction in it succeeded.
+    function _requireStageSucceeded(string memory what, address[6] memory actors, uint256[6] memory expected)
+        private
+        view
+    {
+        string memory logPath = _stageBroadcastLog();
+        string memory cannot = string.concat(moduleName(), ": cannot run ", what, ". ");
+        require(vm.exists(logPath), string.concat(
+            cannot, "forge's log of the last stage's broadcast (", logPath, ") is missing, so nothing shows that",
+            " its transactions succeeded. ", _freshRunRemedy()
+        ));
+        string memory log = vm.readFile(logPath);
+        require(!vm.keyExistsJson(log, ".pending[0]"), string.concat(
+            cannot, "The last stage's broadcast left transactions pending (", logPath, "). ", _freshRunRemedy()
+        ));
+
+        uint256[6] memory sentUpTo;
+        bool tied;
+        uint256 txCount;
+        for (; vm.keyExistsJson(log, string.concat(".transactions[", vm.toString(txCount), "]")); txCount++) {
+            string memory txKey = string.concat(".transactions[", vm.toString(txCount), "].transaction");
+            address from = vm.parseJsonAddress(log, string.concat(txKey, ".from"));
+            uint256 next = vm.parseJsonUint(log, string.concat(txKey, ".nonce")) + 1;
+            for (uint256 a = 0; a < actors.length; a++) {
+                if (from == actors[a] && next > sentUpTo[a]) sentUpTo[a] = next;
+            }
+        }
+        for (uint256 a = 0; a < actors.length; a++) {
+            if (sentUpTo[a] == 0) continue;
+            require(sentUpTo[a] == expected[a], string.concat(
+                cannot, logPath, " is not the recorded stage's broadcast. ", _freshRunRemedy()
+            ));
+            tied = true;
+        }
+        require(tied, string.concat(cannot, logPath, " holds no transaction from this run's actors. ", _freshRunRemedy()));
+
+        uint256 receiptCount;
+        for (; vm.keyExistsJson(log, string.concat(".receipts[", vm.toString(receiptCount), "]")); receiptCount++) {
+            string memory rKey = string.concat(".receipts[", vm.toString(receiptCount), "]");
+            require(vm.parseJsonUint(log, string.concat(rKey, ".status")) == 1, string.concat(
+                cannot, "Transaction ", vm.parseJsonString(log, string.concat(rKey, ".transactionHash")),
+                " of the last stage was mined but reverted, so a scenario's step did not happen. ",
+                _freshRunRemedy()
+            ));
+        }
+        require(receiptCount == txCount, string.concat(
+            cannot, "The last stage sent ", vm.toString(txCount), " transactions and ", logPath, " holds ",
+            vm.toString(receiptCount), " receipts. ", _freshRunRemedy()
+        ));
+    }
+
+    /// @dev Where forge logs this module's last `stage()` broadcast on this
+    ///      chain: `broadcast/<script file>/<chain id>/<function>-latest.json`,
+    ///      relative to `contracts/`. Each module lives in `<moduleName>.s.sol`.
+    function _stageBroadcastLog() private view returns (string memory) {
+        return string.concat("broadcast/", moduleName(), ".s.sol/", vm.toString(block.chainid), "/stage-latest.json");
+    }
+
+    function _freshRunRemedy() private view returns (string memory) {
+        return string.concat("Remove ", Deployments.namedPath(_recordFile()), " and start a fresh run");
     }
 
     function _loadProgress(string memory json, uint256 count) private {
