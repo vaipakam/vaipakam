@@ -1,4 +1,4 @@
-## Keeper — private route: several endpoints, a provider method, and a timed public fallback (PR #<n>)
+## Keeper — private route: several endpoints, a provider method, and a timed public fallback (PR #3529)
 
 Advances #3408 (keeper side). On a public-mempool chain the keeper's protective transactions (the Telegram LOCK, forced sales, liquidations, every send its key makes on that chain) already went through a private submission endpoint (#3240). That route now matches the owner's 2026-11-09 decision.
 
