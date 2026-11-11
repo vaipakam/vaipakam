@@ -2142,7 +2142,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   promising every network goes. The send is re-read and dry-run first; the
   outcome is measured per network from the status at the receipt's block,
   and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
-  value funded. The status lists no network alike when no messenger is
+  value funded; a network counts as sent only from such an event, and one
+  whose record number moved without one is reported as settled with
+  nothing sent. The status lists no network alike when no messenger is
   set, when the messenger's list refuses and when it is empty, so the
   section reads the messenger and its list directly and says which; a list
   that could not be read is stated as unknown, never as no network. With

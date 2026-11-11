@@ -30,6 +30,7 @@ import {
   POKE_SIGNATURE,
   readTierPush,
   recordStanding,
+  sendsInReceipt,
   tierPushSupport,
   type PaidSend,
   type TierPushCard,
@@ -123,12 +124,16 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
       const status = await at.read((c, b) => readTierPush(c, diamond, account, b.blockNumber));
       const ids = r ? r.send.chainIds : status.lanes.map((l) => l.chainId);
       const nonce = r ? r.card.recorded.nonce : status.recorded.nonce;
+      // A send is proved only by its event; a lane whose record number moved
+      // without one was settled with no message.
+      const sentTo = new Set(sendsInReceipt(receipt, diamond, account).map((x) => x.chainId));
       const legs = ids.map((id) => {
         const lane = status.lanes.find((l) => l.chainId === id);
         const label = format('rewardsElsewhere.legSent', { chain: networkName(id) });
+        if (sentTo.has(id)) return { status: 'done' as const, label };
         if (!lane) return { status: 'unknown' as const, label, reason: format('rewardsElsewhere.legOwed', { chain: networkName(id) }) };
         return lane.delivered.nonce >= nonce
-          ? { status: 'done' as const, label }
+          ? { status: 'done' as const, label: format('rewardsElsewhere.legSettled', { chain: networkName(id) }) }
           : { status: 'not-done' as const, label, reason: format('rewardsElsewhere.legOwed', { chain: networkName(id) }) };
       });
       const paid = paidByCaller(receipt, diamond, account);

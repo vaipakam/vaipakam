@@ -10,7 +10,18 @@ import {
   type PublicClient,
 } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { FEE_MARGIN_BPS, laneSent, laneStanding, paidByCaller, paidSend, readTierPush, recordStanding, tierPushSupport, type TierLane } from './tierPush';
+import {
+  FEE_MARGIN_BPS,
+  laneSent,
+  laneStanding,
+  paidByCaller,
+  paidSend,
+  sendsInReceipt,
+  readTierPush,
+  recordStanding,
+  tierPushSupport,
+  type TierLane,
+} from './tierPush';
 import { selectorOf } from '../capability/CapabilityContext';
 
 type Hex = `0x${string}`;
@@ -212,5 +223,10 @@ describe('paidByCaller', () => {
   it('sums only the wallet-paid messages for the account from the Diamond', () => {
     const logs = [log(ME, 97n, 6_000n, true), log(ME, 11155111n, 4_000n, false), log(OTHER, 97n, 9_000n, true), log(ME, 97n, 8_000n, true, MESSENGER)];
     expect(paidByCaller({ logs } as never, DIAMOND, ME)).toBe(6_000n);
+  });
+  it('lists every message sent for the account, whoever paid, and nothing else', () => {
+    const logs = [log(ME, 97n, 6_000n, true), log(ME, 11155111n, 4_000n, false), log(OTHER, 97n, 9_000n, true), log(ME, 421614n, 8_000n, true, MESSENGER)];
+    expect(sendsInReceipt({ logs } as never, DIAMOND, ME).map((x) => x.chainId)).toEqual([97, 11155111]);
+    expect(sendsInReceipt({ logs: [] } as never, DIAMOND, ME)).toEqual([]);
   });
 });

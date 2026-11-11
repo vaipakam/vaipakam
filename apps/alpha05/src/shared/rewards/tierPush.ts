@@ -256,22 +256,37 @@ export function paidSend(lanes: readonly TierLane[]): PaidSend | 'nothing-owed' 
   return { quoted, value: quoted + (quoted * FEE_MARGIN_BPS) / 10_000n, chainIds: owed.map((l) => l.chainId) };
 }
 
-/** What a paid send's receipt says the wallet paid: the fee of every
- *  message the wallet's value carried (`ProtocolTierBroadcastSent` with
- *  `callerFunded`), for `account`, from the Diamond. The rest of the value
- *  came back in the same transaction. */
-export function paidByCaller(receipt: Pick<TransactionReceipt, 'logs'>, diamond: Hex, account: Hex): bigint {
-  let paid = 0n;
+/** One message a receipt shows the protocol sent for a wallet. */
+export interface ReceiptSend {
+  chainId: number;
+  feePaid: bigint;
+  callerFunded: boolean;
+}
+
+/** The messages a receipt shows sent for `account`, from the Diamond's
+ *  `ProtocolTierBroadcastSent` events. Only these are sends: a lane can also
+ *  be settled without a message (its record number moves, nothing goes), so
+ *  a lane's record number after the transaction proves no send. */
+export function sendsInReceipt(receipt: Pick<TransactionReceipt, 'logs'>, diamond: Hex, account: Hex): ReceiptSend[] {
+  const sends: ReceiptSend[] = [];
   for (const log of receipt.logs) {
     if (log.address.toLowerCase() !== diamond.toLowerCase()) continue;
     try {
       const ev = decodeEventLog({ abi: BROADCAST_ABI, data: log.data, topics: log.topics });
       if (ev.eventName !== 'ProtocolTierBroadcastSent') continue;
-      const a = ev.args as unknown as { user: Hex; feePaid: bigint; callerFunded: boolean };
-      if (a.callerFunded && a.user.toLowerCase() === account.toLowerCase()) paid += a.feePaid;
+      const a = ev.args as unknown as { user: Hex; destChainId: bigint; feePaid: bigint; callerFunded: boolean };
+      if (a.user.toLowerCase() !== account.toLowerCase()) continue;
+      sends.push({ chainId: Number(a.destChainId), feePaid: a.feePaid, callerFunded: a.callerFunded });
     } catch {
       // Another event of the Diamond's.
     }
   }
-  return paid;
+  return sends;
+}
+
+/** What a paid send's receipt says the wallet paid: the fee of every
+ *  message the wallet's value carried (`callerFunded`). The rest of the
+ *  value came back in the same transaction. */
+export function paidByCaller(receipt: Pick<TransactionReceipt, 'logs'>, diamond: Hex, account: Hex): bigint {
+  return sendsInReceipt(receipt, diamond, account).reduce((sum, x) => (x.callerFunded ? sum + x.feePaid : sum), 0n);
 }

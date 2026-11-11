@@ -1956,6 +1956,7 @@ export const copy = {
     loseFee: A('Each fee pays one message and is not refunded once sent, even if your tier there falls again later.'),
     loseRise: A('If fees rise before your send lands, the networks are paid in the protocol’s order from the whole amount, so an earlier one can use up the margin and leave a later one owed; only what is left comes back.'),
     legSent: B('Sent to {{chain}}'),
+    legSettled: B('{{chain}}: nothing was sent; your record already matched what it holds.'),
     legOwed: B('{{chain}} is still owed your tier.'),
     legPaid: B('Paid {{paid}} {{symbol}} in fees; {{back}} {{symbol}} came back'),
     staleRecord: A('Your record or tier changed since this review, so it no longer shows what a send would carry. Close it and start again.'),
