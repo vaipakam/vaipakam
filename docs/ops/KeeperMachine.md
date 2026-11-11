@@ -304,10 +304,18 @@ a commit. The template documents each line. In short:
   never give two machines the same one.
 - **Arming:** leave `KEEPER_ENABLED=false` and every per-pass flag empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
-  `TG_BOT_TOKEN` (the USER bot, for HF-band alerts — never `TG_OPS_BOT_TOKEN`,
-  CLAUDE.md "Two Telegram bots"), `PUSH_CHANNEL_PK` and the aggregator keys.
+  `KEEPER_AGENT_TOKEN`, `PUSH_CHANNEL_PK` and the aggregator keys.
+- **Owner Telegram (#1722):** `AGENT_ORIGIN` (the agent's https origin) and
+  `KEEPER_AGENT_TOKEN`, the bearer of the agent's keeper routes. The keeper
+  holds no user bot token and no chat id: every owner Telegram alert and
+  every LOCK request goes through the agent, which alone holds them. The
+  token is one fresh value written to the Secrets Store (for the agent) and
+  to this file together. Either unset, no Telegram alert is sent and the
+  Telegram LOCK step does not run, and every run says so. A machine set up
+  before #1722 has a `TG_BOT_TOKEN` line, which nothing reads any more:
+  delete it.
 - **Operator alerts:** `TG_OPS_BOT_TOKEN` and `TG_OPS_CHAT_ID`, the OPS bot
-  and its single operator chat. This is a separate bot from `TG_BOT_TOKEN`,
+  and its single operator chat. This is a separate bot from the user bot,
   and the two tokens are never shared (CLAUDE.md, "Two Telegram bots"). The
   sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
   here as one digest post per chain per run, however many wallets they name

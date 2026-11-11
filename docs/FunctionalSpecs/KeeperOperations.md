@@ -746,6 +746,15 @@ evidence that the migration has completed.
   An unfilled offer never proves a refinance will happen. Existing throttles
   still apply, and an active protocol pause holds a warning whose date is
   still moving. An unreadable pause record holds the warning and says why.
+- The keeper sends the Telegram half of these warnings through the alert
+  service, never to a chat itself (#1722): it says which warning it is (the
+  loan, the band and the health factor, or the hours left before grace),
+  and the alert service writes it in the owner's language and sends it to
+  the chat linked to the wallet then, or answers that none is linked. The
+  keeper's own record of which band it last warned about is the only guard
+  against a repeated warning; the alert service does not filter them.
+  Without a way to reach the alert service the keeper sends no Telegram
+  warning, still sends Push, and says so once per run.
 
 ## Protocol upkeep outside the reward system
 
@@ -1444,7 +1453,17 @@ backup, not a second keeper:
   alert service has already recorded is answered as recorded, with nothing
   sent again. The alert service reports each alert as sent, to be tried
   again, refused, or with no chat to send to, and the keeper counts it
-  exactly as it counts a Push send.
+  exactly as it counts a Push send. An alert whose owner has no linked chat
+  and no Push subscription is counted as having nobody to tell.
+- Only the alert service knows whether an owner linked a chat, so the
+  suggestion to send LOCK goes in the Telegram message alone, which reaches
+  only a linked chat. The Push copy of the same alert always gives the
+  advice to act in the app.
+- An outcome the alert service recorded but whose answer did not reach the
+  chat is not answered again later; the keeper's run says the answer did not
+  arrive. Without a way to reach the alert service the keeper does not work
+  LOCK requests at all (the alert service then tells owners to lock from the
+  app) and says so each run.
 
 ## Keeping the testnet sanctions stand-in fresh
 

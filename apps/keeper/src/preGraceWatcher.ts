@@ -83,6 +83,9 @@ import {
 } from './db';
 import { batchedRead } from './batchRead';
 import { AlertDelivery } from './alertDelivery';
+// #1722 — the warning's wording lives once, in the catalogue the agent
+// renders Telegram from, so the Push body and the chat message match.
+import { formatPreGraceWarning } from '@vaipakam/lib/telegramAlerts/message';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaipakam/lib/loanClock';
 import { positionHolderCalls, positionHolderFrom, positionNftForDiamond } from './positionNft';
@@ -421,7 +424,15 @@ async function notifyLoan(
   );
 
   await alerts.deliver({
-    tgChatId: sub.tg_chat_id,
+    // #1722 — as data, for the chat the owner linked through the agent.
+    telegram: {
+      diamond: chain.diamond,
+      message: {
+        chainId: chain.id,
+        wallet: sub.wallet,
+        alert: { kind: 'preGrace', loanId: Number(loanIdBig), hoursToEnd },
+      },
+    },
     pushSubscriber: sub.push_channel ? sub.wallet : null,
     text,
     pushTitle: 'Auto-refinance: no match found yet',
@@ -435,23 +446,4 @@ async function notifyLoan(
     Number(loanIdBig),
     nowSec,
   );
-}
-
-function formatPreGraceWarning(
-  chainName: string,
-  loanId: number,
-  hoursToEnd: number,
-  frontendOrigin: string,
-): string {
-  return [
-    `⚠️ Auto-refinance pre-grace warning`,
-    ``,
-    `Your loan #${loanId} on ${chainName} enters its grace period in ~${hoursToEnd}h.`,
-    `Auto-refinance is best-effort — if no compatible lender offer is matched before grace expires, your loan will default.`,
-    ``,
-    `What to do now:`,
-    `• Open ${frontendOrigin}/loans/${loanId} to review terms`,
-    `• Tighten your refinance caps if the market has moved`,
-    `• Or repay manually before grace ends to avoid liquidation`,
-  ].join('\n');
 }

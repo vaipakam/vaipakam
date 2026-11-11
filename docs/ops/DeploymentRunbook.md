@@ -2458,11 +2458,15 @@ on every tick and dispatches per-user threshold notifications via
 Telegram + Push Protocol. This section is one-time setup and does
 **not** repeat per-chain deploy.
 
-The bot token and the channel key below are needed in TWO places. The
-agent binds them from the account-level Secrets Store; the keeper does
-not read the store, and takes `TG_BOT_TOKEN` and `PUSH_CHANNEL_PK` from
-its env file, `/etc/vaipakam/keeper.env` (KeeperMachine §4), which it
-reads when it starts. The `cf-keeper` phase in
+The bot token lives in ONE place, the account-level Secrets Store, which
+the agent binds: since #1722 the keeper sends its Telegram alerts through
+the agent's keeper routes and holds no bot token. What the keeper needs
+instead is the agent's origin (`AGENT_ORIGIN`) and the routes' bearer
+(`KEEPER_AGENT_TOKEN`), the same value in the store and in its env file,
+`/etc/vaipakam/keeper.env` (KeeperMachine §4). The Push channel key is
+still needed in TWO places: the agent binds it from the store, and the
+keeper, which does not read the store, takes `PUSH_CHANNEL_PK` from its
+env file, which it reads when it starts. The `cf-keeper` phase in
 `contracts/script/deploy-{testnet,mainnet}.sh` deploys the keeper
 Worker and checks an RPC secret there; its green result says nothing
 about the machine.
@@ -2475,8 +2479,8 @@ about the machine.
    in plaintext.
 2. Create the token in the shared Secrets Store — the agent (which owns
    `/tg/webhook`) binds `TG_BOT_TOKEN` from it, so a per-Worker
-   `wrangler secret put` would leave the agent unprovisioned. Then put
-   the same token in the keeper machine's env file (above):
+   `wrangler secret put` would leave the agent unprovisioned. The keeper
+   needs no copy (above):
    ```bash
    npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
        --name TG_BOT_TOKEN --scopes workers --remote
@@ -2598,8 +2602,8 @@ about the machine.
 ### 8c. Smoke test the watcher
 
 The keeper reads its env file only when it starts. If it was already
-running when §8a and §8b put `TG_BOT_TOKEN` and `PUSH_CHANNEL_PK` in
-that file, apply the change first by KeeperMachine §6 ("Apply an
+running when `AGENT_ORIGIN`, `KEEPER_AGENT_TOKEN` (above §8a) and
+`PUSH_CHANNEL_PK` (§8b) were put in that file, apply the change first by KeeperMachine §6 ("Apply an
 env-file change"), or this test exercises the old or unset values. A
 keeper first started after both were written (§5 there) needs nothing.
 
@@ -2627,10 +2631,12 @@ journalctl -u vaipakam-keeper -f
 # `[push] sent channel=…` line, on that move into the warn band.
 ```
 
-A Telegram send that succeeds logs nothing: the keeper logs only
-failures, as `Telegram sendMessage failed: …`. So the message arriving
-is the Telegram confirmation, and a failure line is the evidence
-against it.
+A Telegram send that succeeds logs nothing on the keeper: it posts the
+alert to the agent, which sends it, and the keeper logs only what did not
+go out, once per pass, as `[watcher] Telegram unavailable (…)` (no agent
+configured) or `[watcher] N Telegram alert(s) not taken by the agent`. So
+the message arriving is the Telegram confirmation, and one of those lines
+is the evidence against it.
 
 A `[push] send failed …` line means either `PUSH_CHANNEL_PK` is
 wrong format or the channel hasn't cleared the post-stake delay

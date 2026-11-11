@@ -56,6 +56,17 @@ const PLAIN = /^[\p{L}\p{N} .,#×()_\-…?]{1,96}$/u;
  *  which keeps a token label such as `USDC.e` readable and never links. */
 const DOMAIN_DOT = /\.(?=\p{L})/gu;
 const NAME = /^[A-Za-z0-9_]{1,64}$/;
+
+/** `s` reduced to what a free field of a message accepts (`PLAIN`): every
+ *  other character dropped, spaces collapsed, at most 96 characters. Null when
+ *  nothing is left. The keeper fills a payout's asset description from a
+ *  token's own symbol, which any deployer chooses, so it reduces it here
+ *  rather than have the agent refuse the whole alert. */
+export function plainField(s: string): string | null {
+  const kept = [...s.replace(/\s+/g, ' ')].filter((ch) => PLAIN.test(ch)).join('').trim();
+  const cut = [...kept].slice(0, 96).join('').trim();
+  return cut.length > 0 && PLAIN.test(cut) ? cut : null;
+}
 const CODE = /^[A-Z0-9-]{1,24}$/;
 
 const isInt = (v: unknown, min: number, max: number): v is number => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;

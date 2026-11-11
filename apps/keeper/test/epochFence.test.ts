@@ -91,18 +91,24 @@ describe('the alert seam', () => {
   it('delivers nothing on either channel once the epoch moved, and both once it holds', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
-      calls.push(String(url).replace(/bot[^/]+/, 'bot<token>'));
-      return { ok: true, text: async () => '' } as Response;
+      calls.push(String(url));
+      return new Response(JSON.stringify({ results: ['sent'] }), { status: 200 });
     });
-    const env = { TG_BOT_TOKEN: 'tok', PUSH_CHANNEL_PK: undefined } as unknown as Env;
-    const alert = { tgChatId: '42', pushSubscriber: null, text: 'hi', pushTitle: 't', deepLinkUrl: '' };
+    const env = { AGENT_ORIGIN: 'https://agent.example', KEEPER_AGENT_TOKEN: 'tok', PUSH_CHANNEL_PK: undefined } as unknown as Env;
+    const alert = {
+      telegram: { diamond: OLD, message: { chainId: 84532, wallet: '0x' + 'a'.repeat(40), alert: { kind: 'hf' as const, band: 'warn' as const, loanId: 1, hf: 1.4 } } },
+      pushSubscriber: null,
+      text: 'hi',
+      pushTitle: 't',
+      deepLinkUrl: '',
+    };
     armFenceReading([{ chain_id: 84532, diamond: NEW, reset_pending: 0 }], [CHAIN]);
     const alerts = new AlertDelivery(env);
     await expect(alerts.deliver(alert)).rejects.toBeInstanceOf(EpochFenceRefusal);
     expect(calls).toEqual([]);
     armHeldFence([CHAIN]);
     await alerts.deliver(alert);
-    expect(calls).toEqual(['https://api.telegram.org/bot<token>/sendMessage']);
+    expect(calls).toEqual(['https://agent.example/keeper/alerts']);
     vi.unstubAllGlobals();
   });
 });
@@ -158,7 +164,9 @@ describe('the write seam — the guard inside the statement', () => {
     }
     expect(bare, 'a write to a table the indexer resets, without the epoch guard in its statement').toEqual([]);
     // The seam is exercised, not vacuous: the keeper does write such tables.
-    expect([...written].sort()).toEqual(['liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state', 'protected_lock_readiness', 'protected_lock_requests']);
+    // (The LOCK tables left this list with #1722: the agent owns them now,
+    // and its route refuses a request naming another Diamond instead.)
+    expect([...written].sort()).toEqual(['liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state']);
   });
 });
 

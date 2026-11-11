@@ -28,7 +28,6 @@ import {
   getNotifyState,
   listThresholdsForChain,
   putNotifyState,
-  sweepExpiredLinks,
 } from './db';
 import { AlertDelivery, publishRailStatus } from './alertDelivery';
 import { formatAlert, pushTitle } from './i18n';
@@ -58,8 +57,6 @@ const BAND_RANK: Record<Band, number> = {
 };
 
 export async function runWatcher(env: Env): Promise<void> {
-  // Sweep expired handshake codes first so the table stays bounded.
-  await sweepExpiredLinks(env.DB);
   // #2667 — say what this keeper's Push rail can do, for the agent's status
   // answer. Here because this pass is the risky-loan sender and runs every
   // tick: a row that stops being refreshed means the sender stopped too.
@@ -238,7 +235,12 @@ async function dispatchAlert(
   });
 
   await alerts.deliver({
-    tgChatId: user.tg_chat_id,
+    // #1722 — the same band, as data: the agent renders it from the same
+    // catalogue for the chat the owner linked, if any.
+    telegram: {
+      diamond: chain.diamond,
+      message: { chainId: chain.id, wallet: user.wallet, alert: { kind: 'hf', band, loanId, hf } },
+    },
     pushSubscriber: user.push_channel ? user.wallet : null,
     text,
     pushTitle: pushTitle(band, user.locale),
