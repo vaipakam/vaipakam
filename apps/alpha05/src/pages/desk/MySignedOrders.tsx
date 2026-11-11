@@ -175,8 +175,12 @@ export function MySignedOrders({
                         : text(STANDING_KEY[s])}
                     </p>
                     {o.replayPending && (
+                      // The hold is the book's; whether the order can still
+                      // be filled or cancelled is the chain's, said only
+                      // from a fresh standing that allows it.
                       <p className="tier-a" data-testid="desk-signed-replay">
                         {text('signedOrders.replayPending')}
+                        {fillable(s) && !standingStale && <> {text('signedOrders.replayOpen')}</>}
                       </p>
                     )}
                     {fillable(s) && open === null && !standingStale && (

@@ -188,6 +188,15 @@ test('a market’s signed orders are listed with the chain’s standing and each
   await expect(own.getByTestId('desk-signed-cancel')).toBeVisible();
   expect(flags.sentTransactions).toBe(0);
   await fitsWidth(page);
+
+  // The order is cancelled on the chain while the book still holds it: the
+  // hold is still said, but nothing claims it can be filled or cancelled.
+  await sc.diamondWrite('lender', 'cancelSignedOffer', [typedMessage(mine)]);
+  await page.reload();
+  await expect(own).toHaveAttribute('data-standing', 'used', { timeout: 60_000 });
+  await expect(own.getByTestId('desk-signed-replay')).toContainText('leaves it out of the shared book until then');
+  await expect(own.getByTestId('desk-signed-replay')).not.toContainText('still cancel');
+  await expect(own.getByTestId('desk-signed-cancel')).toHaveCount(0);
   await setSignedBookReplay([]);
   await setSignedBookLag(false);
 });

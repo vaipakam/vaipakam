@@ -2234,9 +2234,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   never assumed from its inclusion. One cancel is open at a time, and its
   finish card stays on screen when the book drops the order. An order the
   book holds out of the shared book while it re-checks it after the chain
-  replaced recent blocks is marked so on its row: anyone holding the
-  signature can still fill it, its standing still comes from the chain,
-  and its cancel stays offered.
+  replaced recent blocks is marked so on its row. Its standing still comes
+  from the chain, and only a fresh standing that can still be filled adds
+  that anyone holding the signature can fill it and that its cancel stays
+  offered.
 - **RB-DESK-BOOK-SIGNED** — On a market's desk (OFF-60) every maker's
   gasless signed orders are listed from the offer book's market read, apart
   from the ladder of posted offers, which says where they are. Lenders'

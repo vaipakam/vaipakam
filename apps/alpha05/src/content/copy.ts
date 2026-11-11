@@ -2553,9 +2553,8 @@ export const copy = {
     none: B('The offer book lists no signed orders of yours on this market.'),
     unreadRows: A('The offer book returned {{count}} rows this app could not read as your orders on this market; they are not shown.'),
     truncated: A('The offer book returned only part of your signed orders on this market; some are not shown here.'),
-    replayPending: A(
-      'The chain replaced some recent blocks, so the offer book is re-checking this order against it and leaves it out of the shared book until then. Anyone already holding the signature can still fill it. Its standing here is read from the chain, and you can still cancel it.',
-    ),
+    replayPending: A('The chain replaced some recent blocks, so the offer book is re-checking this order against it and leaves it out of the shared book until then.'),
+    replayOpen: A('Its standing above is read from the chain: anyone already holding the signature can still fill it, and you can still cancel it.'),
     standingFailed: A('Where the chain stands on these orders could not be read ({{reason}}), so no cancel is offered yet.'),
     standingStale: A(
       'The latest read of where the chain stands on these orders failed ({{reason}}). The standings below are from the last read that worked and may be out of date, so no cancel is offered until a read succeeds.',
