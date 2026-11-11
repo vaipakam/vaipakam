@@ -105,12 +105,16 @@ export const PROJECT_ON_REBUILD: Readonly<
 > = rebuildKeep.project;
 
 /**
- * The height the chain had been indexed to: the higher of its scan cursor and
- * its reorg-guard anchor. A rebuild stamps it on each projected row
- * (`pendingThrough`), before the same batch clears the cursor and the anchor.
+ * The stamp a rebuild writes on a projected row (`pendingThrough`): the height
+ * the chain had been indexed to (the higher of its scan cursor and its
+ * reorg-guard anchor, read before the same batch clears them), or the row's
+ * existing stamp when that is higher. A second rebuild landing before the
+ * first replay caught up must not LOWER a stamp: the order's fills and
+ * cancels up to the first height have still not been re-read (Codex #3528 r3).
  */
-const INDEXED_HEIGHT_SQL = `(SELECT MAX(b) FROM (
-     SELECT last_block AS b FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'
+const stampSql = (table: string, column: string): string => `(SELECT MAX(b) FROM (
+     SELECT "${table}"."${column}" AS b
+     UNION ALL SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'
      UNION ALL SELECT block_number FROM indexer_chain_anchor WHERE chain_id = ?))`;
 
 /**
@@ -296,7 +300,7 @@ export async function resetChainAs(
       statements.push(
         db
           .prepare(
-            `UPDATE "${t}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')}, "${p.pendingThrough}" = ${INDEXED_HEIGHT_SQL}
+            `UPDATE "${t}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')}, "${p.pendingThrough}" = ${stampSql(t, p.pendingThrough)}
               WHERE chain_id = ? AND ${owns}`,
           )
           .bind(...cols.map((c) => p.set[c]), chainId, chainId, chainId, chainId, diamond, deployBlock, flag),

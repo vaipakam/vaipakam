@@ -311,6 +311,24 @@ describe('a replaced indexed block is rolled back by a rebuild', () => {
 });
 
 describe('a rebuild is the narrower reset', () => {
+  it('a second rebuild before the first replay caught up never lowers an order\'s stamp (Codex #3528 r3)', async () => {
+    const h = chainDb();
+    seedOffChainRows(h);
+    h.db.prepare('UPDATE signed_offers SET replay_pending_through = ? WHERE chain_id = ?').run(CURSOR + 1_000, BASE);
+    expect(await requestChainRebuild(h.d1, { chainId: BASE, diamond: bundle!.diamond })).toBe(true);
+    expect((await adoptDeployment(h.d1, { chainId: BASE, diamond: bundle!.diamond, deployBlock: bundle!.deployBlock })).outcome).toBe(
+      'reset-resumed',
+    );
+    // The cursor stood at CURSOR, below the existing stamp: the stamp stays.
+    expect(pendingThrough(h)).toBe(CURSOR + 1_000);
+    // And an unstamped order takes the indexed height.
+    h.db.prepare('UPDATE signed_offers SET replay_pending_through = NULL WHERE chain_id = ?').run(BASE);
+    h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, 1)').run(BASE, 'diamond', CURSOR);
+    expect(await requestChainRebuild(h.d1, { chainId: BASE, diamond: bundle!.diamond })).toBe(true);
+    await adoptDeployment(h.d1, { chainId: BASE, diamond: bundle!.diamond, deployBlock: bundle!.deployBlock });
+    expect(pendingThrough(h)).toBe(CURSOR);
+  });
+
   it('a Diamond change claimed over a pending rebuild still runs in full', async () => {
     const h = chainDb();
     seedOffChainRows(h);
