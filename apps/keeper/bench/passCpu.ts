@@ -103,8 +103,11 @@ function makeEnv(): Env {
     SANCTIONS_FLAG_REFRESH_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
-    TG_BOT_TOKEN: 'test:token',
-    TG_BOT_USERNAME: 'VaipakamBot',
+    // The agent's keeper route (#1722): watcher and preGrace post every
+    // Telegram alert there, so the bench measures that request's build and
+    // serialization. The mock answers it with a bland 200.
+    AGENT_ORIGIN: 'https://agent.invalid',
+    KEEPER_AGENT_TOKEN: 'bench-token',
     FRONTEND_ORIGIN: 'https://app.vaipakam.com',
   };
   for (const k of RPC_KEYS) {

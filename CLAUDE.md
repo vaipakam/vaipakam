@@ -1355,7 +1355,8 @@ artifacts and stay in their respective env / config:
   `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `KEEPER_FEE_BALANCE_ALERT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
-  `TG_BOT_TOKEN`,
+  `KEEPER_AGENT_TOKEN` (the agent's keeper routes, with the plain var
+  `AGENT_ORIGIN`; the keeper holds no user bot token since #1722),
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
   `ONEINCH_API_KEY`. Every arming flag is `secret_text`, not an
@@ -1493,10 +1494,13 @@ deliberate dashboard action.
 
 **Two Telegram bots — by audience, never share tokens**:
 
-- `TG_BOT_TOKEN` — user-facing bot. Used by `apps/keeper` (HF-band
-  downgrade alerts) + `apps/agent` (Telegram link handshake +
-  periodic-interest pre-notify). Posts to user-supplied chat IDs
-  (`tg_chat_id` per subscription).
+- `TG_BOT_TOKEN` — user-facing bot. Held by `apps/agent` ONLY (#1722):
+  the link handshake, periodic-interest pre-notify, and every keeper alert
+  (HF bands, pre-grace warnings, LOCK answers, protected-vault alerts),
+  which the keeper posts to the agent's `/keeper/*` routes as typed data
+  with `KEEPER_AGENT_TOKEN` and the agent renders and sends. The
+  wallet-to-chat links live in the agent's own Durable Object, which no
+  other Worker can bind, so the keeper never sees a chat id.
 - `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/mesh-watcher`
   (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-warm`
   (nightly backup outcomes + weekly healthcheck verdicts) + `apps/keeper`'s

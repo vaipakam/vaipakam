@@ -61,7 +61,8 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, subStepArmed, type KeeperContext } from './keeper';
 import { AlertDelivery, type Alert, type DeliveryOutcome } from './alertDelivery';
-import { alertOwners, d1ProtectedStore, LOCK_REQUEST_TTL_SEC, lockFromTelegram, type AlertReport, type LockResult, type ProtectedStore } from './protectedTelegram';
+import { agentClientOf, agentUnconfiguredReason } from './agentClient';
+import { alertOwners, protectedStoreOf, LOCK_REQUEST_TTL_SEC, lockFromTelegram, type AlertReport, type LockResult, type ProtectedStore } from './protectedTelegram';
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline } from './batchRead';
 import { shortErr } from './callErrors';
@@ -299,6 +300,7 @@ export interface ProtectedDeps {
   telegram?: {
     lock: boolean;
     alerts: boolean;
+    /** This chain's store: its Diamond is in every request to the agent. */
     store: ProtectedStore;
     notify: (alert: Alert) => Promise<DeliveryOutcome>;
     appOrigin: string;
@@ -337,10 +339,18 @@ export interface ProtectedReport {
 
 export async function runProtectedAccount(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'protectedAccount', 'PROTECTED_ACCOUNT_ENABLED')) return;
-  const lock = subStepArmed(env, 'protectedAccount', 'Telegram LOCK', 'PROTECTED_LOCK_ENABLED');
   const alertsOn = subStepArmed(env, 'protectedAccount', 'owner alerts', 'PROTECTED_ALERTS_ENABLED');
-  const delivery = new AlertDelivery(env);
-  const store = d1ProtectedStore(env.DB);
+  const agent = agentClientOf(env);
+  const unconfigured = agentUnconfiguredReason(env);
+  // The LOCK requests are the agent's (#1722): with no agent configured
+  // the step cannot read one, so it runs as if unarmed, and says so. The
+  // agent then hears from no keeper and sends owners to the app.
+  let lock = subStepArmed(env, 'protectedAccount', 'Telegram LOCK', 'PROTECTED_LOCK_ENABLED');
+  if (lock && agent === null) {
+    console.warn(`[keeper] protectedAccount: Telegram LOCK is armed but ${unconfigured ?? 'no agent is configured'}; LOCK requests are not worked this run`);
+    lock = false;
+  }
+  const delivery = new AlertDelivery(env, agent);
   const appOrigin = env.FRONTEND_ORIGIN ?? '';
   const sendDeadline = tick.deadlineMs;
   const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
@@ -360,7 +370,13 @@ export async function runProtectedAccount(env: Env, tick: PassTick): Promise<voi
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'protectedAccount'),
           ledger,
           visit,
-          telegram: { lock, alerts: alertsOn, store, notify: (a) => delivery.deliver(a), appOrigin },
+          telegram: {
+            lock,
+            alerts: alertsOn,
+            store: protectedStoreOf(agent, env.DB, chain.diamond as Address, unconfigured ?? undefined),
+            notify: (a) => delivery.deliver(a),
+            appOrigin,
+          },
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -384,7 +400,7 @@ export function describeReport(r: ProtectedReport): string {
     `changes-finalized=${r.finalized.join(',') || 'none'}`,
     ...(r.locks === null
       ? []
-      : [`telegram-locks=${r.locks.map((l) => `${l.wallet.slice(0, 10)}(${l.outcome}${l.answered === false ? ', answer not delivered' : ''})`).join(',') || 'none'}`]),
+      : [`telegram-locks=${r.locks.map((l) => `${l.wallet.slice(0, 10)}(${l.outcome}${lockNote(l)})`).join(',') || 'none'}`]),
     ...(r.alerts === null
       ? []
       : [
@@ -397,6 +413,16 @@ export function describeReport(r: ProtectedReport): string {
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
   ];
   return parts.join(' ');
+}
+
+/** What the run line adds to a LOCK request's outcome: a report that did not
+ *  land (read again next run), one the agent already had (an earlier answer
+ *  was lost), or an outcome recorded whose chat answer did not arrive (never
+ *  sent later: the outcome is on record). */
+function lockNote(l: LockResult): string {
+  if (l.recorded === null) return ', not reported';
+  if (!l.recorded) return ', already on record';
+  return l.answered === false ? ', answer not delivered' : '';
 }
 
 /** One chain's run. Exported for tests. */
@@ -466,6 +492,7 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
           store: tg.store,
           ledger: deps.ledger,
           chainId,
+          diamond,
           notify: tg.notify,
           canSign: () => deps.context() !== null,
           lockOn: tg.lock === true,

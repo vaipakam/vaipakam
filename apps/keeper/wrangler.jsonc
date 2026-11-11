@@ -141,12 +141,9 @@
   // per-Worker table lists below are a source convention, not an
   // enforced boundary (#1722). Tables this Worker touches:
   //   - `user_thresholds`   (per-user-loan HF bands; written by frontend)
-  //   - `telegram_links`    (Telegram handshake links; agent writes — but
-  //                          THIS Worker deletes from them too:
-  //                          `watcher.ts:60` calls `sweepExpiredLinks`,
-  //                          which DELETEs expired rows (`db.ts:303`).
-  //                          "agent writes" alone read as though the keeper
-  //                          only consumed this table)
+  //   (No Telegram table: since #1722 the Telegram links and the LOCK
+  //   requests live in the agent's own Durable Object, which the keeper
+  //   reaches only through the agent's keeper routes, `AGENT_ORIGIN`.)
   //   - `notify_state`      (per-user notify dedupe)
   //   - `pre_grace_notify_state` (pre-grace warning dedupe; read and
   //                          written by the scheduled `runPreGraceWatcher`)
@@ -242,8 +239,11 @@
   //
   // `RPC_ZKEVM` is omitted (Polygon zkEVM out of scope); `RPC_POLYGON`
   // is agent-only. (#1651: this said `RPC_POLYGON_AMOY` was agent-only
-  // too — apps/indexer binds it.) `TG_BOT_TOKEN` must still be
-  // created in the store (the `VaipakamBot` token) before deploy.
+  // too — apps/indexer binds it.) No `TG_BOT_TOKEN` (#1722): the agent
+  // alone holds the user bot's token, and the keeper reaches Telegram
+  // through the agent with `KEEPER_AGENT_TOKEN`, which, like
+  // `PRIVATE_TX_RPCS`, is set only on the keeper machine (this Worker's
+  // `scheduled` handler declines every invocation).
   "secrets_store_secrets": [
     { "binding": "RPC_BASE",          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE" },
     { "binding": "RPC_ETH",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ETH" },
@@ -255,7 +255,6 @@
     { "binding": "RPC_ARB_SEPOLIA",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB_SEPOLIA" },
     { "binding": "RPC_OP_SEPOLIA",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_OP_SEPOLIA" },
     { "binding": "RPC_BNB_TESTNET",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
-    { "binding": "TG_BOT_TOKEN",      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "TG_BOT_TOKEN" },
     { "binding": "PUSH_CHANNEL_PK",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "PUSH_CHANNEL_PK" },
     { "binding": "ZEROEX_API_KEY",    "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ZEROEX_API_KEY" },
     { "binding": "ONEINCH_API_KEY",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ONEINCH_API_KEY" },
@@ -344,7 +343,7 @@
   //   The ops alert channel those passes report to — TG_OPS_BOT_TOKEN and
   //   TG_OPS_CHAT_ID — is likewise a secret / machine env value (the delivery
   //   ops/mesh-watcher uses), never a `vars` entry and never the user-facing
-  //   TG_BOT_TOKEN.
+  //   bot, which only the agent holds (#1722).
   //   - GRACE_DEFAULT_ENABLED — 'true' arms the #2483 time-based default
   //     pass, which submits the permissionless `triggerDefault` for
   //     past-grace loans and so sells or transfers the borrower's

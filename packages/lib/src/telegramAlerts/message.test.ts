@@ -5,7 +5,7 @@
  * carry a link) and the rendering from the shared catalogues.
  */
 import { describe, expect, it } from 'vitest';
-import { LOCK_OUTCOMES, parseAddressedAlert, renderTelegramAlert, type AddressedAlert } from './message';
+import { LOCK_OUTCOMES, parseAddressedAlert, plainField, renderTelegramAlert, type AddressedAlert } from './message';
 
 const WALLET = '0xAbC0000000000000000000000000000000000001';
 const OTHER = '0x00000000000000000000000000000000000000Ff';
@@ -94,5 +94,19 @@ describe('renderTelegramAlert', () => {
     const raw = { chainId: 84532, wallet: WALLET, alert: { kind: 'lock', outcome: 'refused', reason: 'NotOwner' } };
     expect(render(raw, 'xx').text).toContain('the protocol refused the call (NotOwner)');
     expect(render(raw, 'de').text).not.toBe(render(raw, 'en').text);
+  });
+});
+
+describe('plainField', () => {
+  it('reduces a free field to what the parser accepts, so a token symbol cannot get a payout alert refused', () => {
+    expect(plainField('2.5 USDC (0xA0b869…eB48)')).toBe('2.5 USDC (0xA0b869…eB48)');
+    // A link-forming symbol loses its `/`, `:` and `@`; what is left parses.
+    const reduced = plainField('1 https://evil.example/claim @x');
+    expect(reduced).toBe('1 httpsevil.exampleclaim x');
+    expect(parseAddressedAlert(payout({ what: reduced }))).not.toBeNull();
+    expect(plainField('a'.repeat(200))).toHaveLength(96);
+    expect(plainField('  many   spaces\n here ')).toBe('many spaces here');
+    expect(plainField('///')).toBeNull();
+    expect(plainField('')).toBeNull();
   });
 });

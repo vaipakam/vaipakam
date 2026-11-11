@@ -98,6 +98,13 @@ interface BaseEnv {
   // default before #1854; no such default was ever implemented.)
   FRONTEND_ORIGIN?: string;
 
+  // #1722 — the agent's origin (`https://…`), where the keeper posts its
+  // Telegram alerts and reads and answers LOCK requests
+  // (`agentClient.ts`). The agent alone holds the bot token and the chat
+  // links. Unset (or with `KEEPER_AGENT_TOKEN` unset), no Telegram alert is
+  // sent and the LOCK step reads no requests; each run says so.
+  AGENT_ORIGIN?: string;
+
   // The Push channel the alerts post as (#1456). A plain var, OPTIONAL:
   // unset or empty, the channel is the `PUSH_CHANNEL_PK` signer's own
   // address, as it always was. Set to another address, the signer posts as a
@@ -166,8 +173,9 @@ interface BaseEnv {
   /** #2627 — the most one day-close send pays as its CCIP fee: `<chainId>=<wei>` entries, comma-separated, plus an optional `*=<wei>` for the rest (default 0.002 native, 2e15 wei, on every chain). A plain var. */
   REWARD_DAY_CLOSE_MAX_FEE_WEI?: string;
 
-  // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
-  // Telegram bots": split by who reads the alert). Plain `wrangler secret
+  // OPERATOR alerts — the ops bot, never the user bot `TG_BOT_TOKEN`, which
+  // only the agent holds (CLAUDE.md, "Two Telegram bots": split by who reads
+  // the alert). Plain `wrangler secret
   // put` strings / machine env values, the same delivery `ops/mesh-watcher`
   // uses. Unset = alerts go to the log only, and the pass says so.
   /** Ops bot token. */
@@ -495,8 +503,11 @@ export interface WorkerEnv extends BaseEnv {
   RPC_OP_SEPOLIA?: SecretBinding;
   RPC_BNB_TESTNET?: SecretBinding;
 
-  // Telegram bot token — HF-band-downgrade alerts (watcher.ts).
-  TG_BOT_TOKEN?: SecretBinding;
+  // #1722 — the bearer the agent's keeper routes compare
+  // (`agentClient.ts`). The keeper holds no Telegram bot token: the agent
+  // sends every user-facing Telegram message. Not bound on the Worker, which
+  // declines every invocation; the machine sets it in its env file.
+  KEEPER_AGENT_TOKEN?: SecretBinding;
   // Push Protocol channel signer — parallel push-channel alert path.
   PUSH_CHANNEL_PK?: SecretBinding;
   // Aggregator API keys — server-side liquidation quoting.
@@ -534,7 +545,7 @@ export const SECRET_BINDING_KEYS = [
   'RPC_ARB_SEPOLIA',
   'RPC_OP_SEPOLIA',
   'RPC_BNB_TESTNET',
-  'TG_BOT_TOKEN',
+  'KEEPER_AGENT_TOKEN',
   'PUSH_CHANNEL_PK',
   'ZEROEX_API_KEY',
   'ONEINCH_API_KEY',
@@ -554,6 +565,7 @@ export const SECRET_BINDING_KEYS = [
 export const PLAIN_VAR_KEYS = [
   'TG_BOT_USERNAME',
   'FRONTEND_ORIGIN',
+  'AGENT_ORIGIN',
   'PUSH_CHANNEL_ADDRESS',
   'KEEPER_ENABLED',
   'KEEPER_RUNNER_ID',
@@ -674,7 +686,7 @@ export interface Env extends BaseEnv {
   RPC_OP_SEPOLIA?: string;
   RPC_BNB_TESTNET?: string;
 
-  TG_BOT_TOKEN?: string;
+  KEEPER_AGENT_TOKEN?: string;
   PUSH_CHANNEL_PK?: string;
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
@@ -737,7 +749,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
       RPC_ARB_SEPOLIA: raw.RPC_ARB_SEPOLIA,
       RPC_OP_SEPOLIA: raw.RPC_OP_SEPOLIA,
       RPC_BNB_TESTNET: raw.RPC_BNB_TESTNET,
-      TG_BOT_TOKEN: raw.TG_BOT_TOKEN,
+      KEEPER_AGENT_TOKEN: raw.KEEPER_AGENT_TOKEN,
       PUSH_CHANNEL_PK: raw.PUSH_CHANNEL_PK,
       ZEROEX_API_KEY: raw.ZEROEX_API_KEY,
       ONEINCH_API_KEY: raw.ONEINCH_API_KEY,
@@ -759,6 +771,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_DB: resolveD1Binding(raw.KEEPER_DB, WORKER_NAME) as KeeperD1,
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
+    AGENT_ORIGIN: raw.AGENT_ORIGIN,
     PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
     KEEPER_RUNNER_ID: raw.KEEPER_RUNNER_ID,
@@ -836,7 +849,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     RPC_ARB_SEPOLIA: secrets.RPC_ARB_SEPOLIA,
     RPC_OP_SEPOLIA: secrets.RPC_OP_SEPOLIA,
     RPC_BNB_TESTNET: secrets.RPC_BNB_TESTNET,
-    TG_BOT_TOKEN: secrets.TG_BOT_TOKEN,
+    KEEPER_AGENT_TOKEN: secrets.KEEPER_AGENT_TOKEN,
     PUSH_CHANNEL_PK: secrets.PUSH_CHANNEL_PK,
     ZEROEX_API_KEY: secrets.ZEROEX_API_KEY,
     ONEINCH_API_KEY: secrets.ONEINCH_API_KEY,
