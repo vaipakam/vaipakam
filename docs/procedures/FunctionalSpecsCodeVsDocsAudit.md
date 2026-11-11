@@ -1431,4 +1431,7 @@ changed together in the same pull request.
 
 **Status:** resolved. TokenomicsTechSpec's lender rules and §6a's discount
 application state the entry-and-settlement rule, and the VPFI fee-discount
-section of CLAUDE.md records it.
+section of CLAUDE.md records it. One part of the new intent is not built yet:
+the spec says the app shows a lender both figures and the one that applies.
+The contract exposes them (`lenderHoldDiscountView`), and neither app reads
+it yet; #3586 tracks that presentation.
