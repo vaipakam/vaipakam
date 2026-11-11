@@ -15,6 +15,7 @@ import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
@@ -567,15 +568,19 @@ contract OfferPreviewFacet {
      *      expiry, nonce, consumed hash) come from
      *      {LibSignedOffer.vetFailure}, the rule the fill enforces. They are
      *      reported in the fill's order: the protocol pause, the order's own
-     *      checks, its signature, its shape, the signer's free vault balance
-     *      of the stake, the offer-book value floor, then the accept checks.
+     *      checks, its signature, its shape, the signer's sanctions screen and
+     *      both assets' pause (which creation checks before it reads any
+     *      balance, and which can change after the order was signed), the
+     *      signer's free vault balance of the stake, the offer-book value
+     *      floor, then the accept checks.
      *
      *      What this does NOT check, stated so a clear answer is not read as
      *      more than it is: the creation checks the fill runs on the maker's
-     *      terms besides the shape and the value floor (duration and amount
-     *      bounds, the collateral floor, self-collateral, the maker's
+     *      terms besides the shape, the signer's screen, the pauses and the
+     *      value floor (duration and amount bounds, including the governance
+     *      duration cap, the collateral floor, self-collateral, the maker's
      *      risk-access standing and protected-account mode), which an order
-     *      signed through the app already meets; the acceptor's risk-access
+     *      signed through the app meets when it is signed; the acceptor's risk-access
      *      gate, read separately as for any offer
      *      (`RiskPreviewFacet.previewOfferAcceptBlock` is keyed on a stored
      *      offer, so a signed order has no such answer yet); and the
@@ -631,6 +636,13 @@ contract OfferPreviewFacet {
                 || params.collateralAssetType != LibVaipakam.AssetType.ERC20
                 || params.refinanceTargetLoanId != 0
         ) return OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape;
+        // `OfferCreateFacet._createOfferSetup`'s live gates, at their place in
+        // the fill: before the stake is read. Either can change after the
+        // order was signed, and neither is cured by funding or resizing it.
+        if (LibVaipakam.isSanctionedAddress(o.signer)) return OfferAcceptFacet.AcceptError.SanctionedCreator;
+        if (LibFacet.isAssetPaused(params.lendingAsset) || LibFacet.isAssetPaused(params.collateralAsset)) {
+            return OfferAcceptFacet.AcceptError.AssetPaused;
+        }
         if (p.makerFreeHolding < p.stakeRequired) return OfferAcceptFacet.AcceptError.SignedOfferMakerShort;
         (bool below, , ) = LibOfferAdmission.valueBelowFloor(params.lendingAsset, params.assetType, params.amount);
         if (below) return OfferAcceptFacet.AcceptError.SignedOfferBelowMinimumValue;

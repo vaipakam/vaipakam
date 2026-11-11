@@ -24,6 +24,9 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  SignedOfferBookTest
@@ -825,6 +828,33 @@ contract SignedOfferBookTest is SetupTest {
         _assertCode(p, OfferAcceptFacet.AcceptError.SignedOfferMakerShort, "short");
         assertEq(p.makerFreeHolding, PRINCIPAL - 1, "names the free holding");
         assertEq(p.stakeRequired, PRINCIPAL, "names the stake");
+    }
+
+    /// @dev Codex #3564 r2 — the fill screens the signer and the pauses in
+    ///      `_createOfferSetup`, before it reads the stake, so an unfunded
+    ///      order from a flagged signer is refused as a flagged signer.
+    function test_3552_previewReportsAFlaggedSignerBeforeTheStake() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1512, 0);
+        bytes memory sig = _sign(o);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(signer, true);
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.SanctionedCreator, "flagged");
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(ProfileFacet.SanctionedAddress.selector, signer));
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+    }
+
+    function test_3552_previewReportsAPausedAssetBeforeTheStake() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1513, 0);
+        bytes memory sig = _sign(o);
+        AdminFacet(address(diamond)).pauseAsset(o.collateralAsset);
+        _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.AssetPaused, "paused asset");
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, o.collateralAsset));
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
     }
 
     function test_3552_previewReportsTheValueFloor() public {
