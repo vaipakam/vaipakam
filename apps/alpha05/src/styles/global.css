@@ -179,7 +179,7 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 56px;
+  min-height: var(--bottom-bar-row);
   padding: 4px;
   border: 0;
   background: transparent;
@@ -201,9 +201,21 @@ code {
   color: var(--brand-soft-text);
   background: var(--brand-soft);
 }
+/* The phone bottom bar's height, the one figure every rule that must clear
+   it reads: the page's own padding, the sheet above it, sticky actions, and
+   where the browser scrolls a focused or targeted element (#3489). */
+:root {
+  --bottom-bar-row: 56px;
+  --bottom-bar-h: calc(var(--bottom-bar-row) + env(safe-area-inset-bottom));
+}
 @media (max-width: 719px) {
+  /* Scrolling an element into view (focus, an anchor, a test's click) keeps
+     it above the fixed bar instead of parking it underneath. */
+  html {
+    scroll-padding-bottom: var(--bottom-bar-h);
+  }
   .shell {
-    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+    padding-bottom: var(--bottom-bar-h);
   }
   .topbar {
     gap: 10px 12px;
@@ -219,7 +231,7 @@ code {
   .site-menu[data-open='true'] {
     position: fixed;
     inset-inline: 0;
-    bottom: calc(56px + env(safe-area-inset-bottom));
+    bottom: var(--bottom-bar-h);
     z-index: 39;
     display: flex;
     flex-direction: column;
@@ -1768,7 +1780,7 @@ a.btn {
   .thumb-action,
   .action-flow[data-phase='review'] > .actions {
     position: sticky;
-    bottom: calc(56px + env(safe-area-inset-bottom));
+    bottom: var(--bottom-bar-h);
     z-index: 5;
     margin-inline: -16px;
     padding: 12px 16px;
