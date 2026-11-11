@@ -16,6 +16,8 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
@@ -773,6 +775,49 @@ contract OfferPreviewFacet {
         LibCadenceAdmission.enforce(
             LibCadenceAdmission.originationTerms(LibVaipakam.storageSlot().offers[offerId], principal)
         );
+    }
+
+    /**
+     * @notice #3326 — the initiation risk gate's bounds for an ERC-20 loan of
+     *         `lendingAsset` against `collateralAsset`, read live: the
+     *         collateral the gate requires for `amount`, whether the
+     *         depth-tiered regime set that floor, and the largest principal
+     *         `collateral` supports under it (the inverse, rounded so any
+     *         amount at or below it passes). When the gate does not apply to
+     *         the pair (an illiquid leg), the floor is 0 and the cap is
+     *         unbounded.
+     * @dev The ONE host of the match core's risk bounds. The match core
+     *      ({LibOfferMatch}) is compiled into four facets; it asks here by
+     *      self-call so the rule, and its bytecode, live once. Under
+     *      depth-tiered LTV the cap is min(per-asset init-LTV ceiling, the
+     *      collateral tier's cap), as `LoanFacet._checkInitialLtvAndHf`
+     *      applies it; a Tier-0 collateral caps at 0, so the floor is
+     *      `type(uint256).max` and the cap 0. Otherwise the floor is the
+     *      HF admission floor. Reverts when a liquid leg has no usable price
+     *      (#2419), as the binding gate does.
+     */
+    function initRiskBounds(address lendingAsset, address collateralAsset, uint256 amount, uint256 collateral)
+        external
+        view
+        returns (uint256 floor, bool tiered, uint256 amountCap)
+    {
+        if (!LibInitRiskGate.applies(
+            OracleFacet(address(this)).checkLiquidity(lendingAsset),
+            OracleFacet(address(this)).checkLiquidity(collateralAsset)
+        )) return (0, false, type(uint256).max);
+        tiered = LibVaipakam.cfgDepthTieredLtvEnabled();
+        if (tiered) {
+            uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(
+                OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset)
+            ));
+            if (tierCap < capBps) capBps = tierCap;
+            floor = LibRiskMath.minCollateralForLtvCap(amount, lendingAsset, collateralAsset, capBps);
+            amountCap = LibRiskMath.maxLendingForLtvCap(collateral, lendingAsset, collateralAsset, capBps);
+        } else {
+            floor = LibRiskMath.minCollateralForLending(amount, lendingAsset, collateralAsset);
+            amountCap = LibRiskMath.maxLendingForCollateral(collateral, lendingAsset, collateralAsset);
+        }
     }
 
     /**

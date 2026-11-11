@@ -11,6 +11,7 @@ import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {OfferPreviewFacet} from "../facets/OfferPreviewFacet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
@@ -577,10 +578,16 @@ library LibOfferMatch {
             // most the borrower's available collateral covers. Below `lo`
             // nothing is acceptable, so the amount never drops under it; a
             // borrower who cannot cover even `lo` is refused by the collateral
-            // check below, as before. The rate stays at the midpoint of the
-            // rate overlap.
+            // check below, as before. The lender also accepts an amount only
+            // when the loan passes the initiation risk gate, so the top is
+            // capped as well at the most that collateral supports under it;
+            // the collateral pick below then locks at least the gate's floor.
+            // The rate stays at the midpoint of the rate overlap.
+            uint256 available = _borrowerCollateralAvailable(B);
             uint256 top = hi;
-            uint256 coverable = _largestAmountCovered(L, _borrowerCollateralAvailable(B));
+            uint256 coverable = _largestAmountCovered(L, available);
+            if (coverable < top) top = coverable;
+            (,, coverable) = _initRiskBounds(L, 0, available);
             if (coverable < top) top = coverable;
             r.matchAmount = top > lo ? top : lo;
         }
@@ -634,6 +641,9 @@ library LibOfferMatch {
         uint256 reqFromLender = L.amountMax == 0
             ? L.collateralAmount
             : (L.collateralAmount * r.matchAmount) / L.amountMax;
+        // #3326 — the initiation risk gate's collateral floor at the matched
+        // amount (0 when the gate does not apply), and which regime set it.
+        (uint256 riskFloor, bool tieredRisk,) = _initRiskBounds(L, r.matchAmount, 0);
         // Issue #164 — borrower-side collateral range. Two regimes,
         // chosen by whether `collateralAmountMax` actually widens the
         // borrower's committed range:
@@ -693,6 +703,11 @@ library LibOfferMatch {
                 r.errorCode = MatchError.CollateralBelowRequired;
                 return r;
             }
+            // #3326 — and up to the initiation risk floor, when the
+            // borrower's ceiling holds it (the borrower accepted any
+            // collateral up to it). A floor above the ceiling is left for the
+            // gate below to refuse with its own reason.
+            if (riskFloor > picked && riskFloor <= borrowerCeiling) picked = riskFloor;
         } else {
             // Single-value / legacy mode — pre-#164 semantic exactly when
             // `borrowerCollFloor == 0`: the borrower's posted collateral must
@@ -716,6 +731,10 @@ library LibOfferMatch {
                 r.errorCode = MatchError.CollateralBelowRequired;
                 return r;
             }
+            // #3326 — up to the initiation risk floor when the posted amount
+            // holds it; the excess-refund hook returns less of the posting.
+            // A signed slice posts exactly its floor, so `picked` stays at it.
+            if (riskFloor > req && riskFloor <= B.collateralAmount) req = riskFloor;
             picked = req;
         }
         r.reqCollateral = picked;
@@ -728,56 +747,18 @@ library LibOfferMatch {
         // the binding gate ({LibInitRiskGate.applies}) on the same live
         // liquidity reads: a pair with an illiquid leg (a rental among them,
         // #2949) carries no init-LTV check, so a consented illiquid pair is
-        // matchable whichever regime is on. Two regimes, switched by
-        // `depthTieredLtvEnabled`:
-        if (_initRiskGateApplies(L)) {
-            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-                // ON: the effective init-LTV cap = min(per-asset ceiling,
-                // tierMaxInitLtvBps[effectiveTier(collateral)]). An unset
-                // per-asset row is no ceiling (#2696); a Tier-0 collateral ⇒
-                // cap 0 ⇒ no positive amount works.
-                uint8 effTier =
-                    OracleFacet(address(this)).getEffectiveLiquidityTier(L.collateralAsset);
-                uint256 maxLtv = LibVaipakam.assetInitLtvCeilingBps(L.collateralAsset);
-                // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
-                // autonomous tier-LTV cache (peer-derived + bound-checked,
-                // refreshable permissionlessly) instead of the governance
-                // setter. Hard-stale cache falls back to per-tier library
-                // defaults. Keeps `matchOffers`' synthetic-HF check in sync
-                // with `LoanFacet._checkInitialLtvAndHf` — both consult
-                // the same effective cap.
-                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-                uint256 cap = maxLtv < tierCap ? maxLtv : tierCap;
-                uint256 capFloor = LibRiskMath.minCollateralForLtvCap(
-                    r.matchAmount,
-                    L.lendingAsset,
-                    L.collateralAsset,
-                    cap
-                );
-                // `capFloor == type(uint256).max` ⇒ cap is 0 (no borrow) ⇒
-                // reject. `capFloor == 0` only for a zero match amount (a
-                // missing or zero price reverts, #2419). Otherwise the matched
-                // collateral must meet the floor.
-                if (
-                    capFloor == type(uint256).max
-                    || (capFloor != 0 && r.reqCollateral < capFloor)
-                ) {
-                    r.errorCode = MatchError.LtvAboveTier;
-                    return r;
-                }
-            } else {
-                // OFF (the default): HF >= 1.5e18 — reuse the LibRiskMath
-                // floor; matched collateral >= floor(matchAmount) ⇒ satisfied.
-                uint256 floor = LibRiskMath.minCollateralForLending(
-                    r.matchAmount,
-                    L.lendingAsset,
-                    L.collateralAsset
-                );
-                if (floor > 0 && r.reqCollateral < floor) {
-                    r.errorCode = MatchError.HFTooLow;
-                    return r;
-                }
-            }
+        // matchable whichever regime is on. The floor comes from
+        // {OfferPreviewFacet.initRiskBounds}: under depth-tiered LTV the
+        // effective init-LTV cap = min(per-asset ceiling,
+        // tierMaxInitLtvBps[effectiveTier(collateral)]) read from the
+        // autonomous tier-LTV cache, as `LoanFacet._checkInitialLtvAndHf`
+        // does (a Tier-0 collateral ⇒ cap 0 ⇒ floor `type(uint256).max` ⇒
+        // no positive amount works); otherwise (the default) HF >= the
+        // admission floor via `LibRiskMath.minCollateralForLending`. A floor
+        // of 0 is no bound (a zero amount, or an illiquid leg).
+        if (r.reqCollateral < riskFloor) {
+            r.errorCode = tieredRisk ? MatchError.LtvAboveTier : MatchError.HFTooLow;
+            return r;
         }
 
         r.lenderRemainingPostMatch = lenderRemaining - r.matchAmount;
@@ -795,18 +776,18 @@ library LibOfferMatch {
         return r;
     }
 
-    /// @dev #2956 — whether the loan this match would create carries the
-    ///      initiation risk gate, by the one rule the binding accept applies
-    ///      ({LibInitRiskGate.applies}) to the same live reads
-    ///      (`OracleFacet.checkLiquidity` on each leg). A rental has no
-    ///      collateral leg, which reads Illiquid (#2949), so it never carries
-    ///      the gate and needs no read.
-    function _initRiskGateApplies(LibVaipakam.Offer memory L) private view returns (bool) {
-        if (L.assetType != LibVaipakam.AssetType.ERC20) return false;
-        return LibInitRiskGate.applies(
-            OracleFacet(address(this)).checkLiquidity(L.lendingAsset),
-            OracleFacet(address(this)).checkLiquidity(L.collateralAsset)
-        );
+    /// @dev #3326 — the initiation risk gate's bounds for this pair, from
+    ///      its one host ({OfferPreviewFacet.initRiskBounds}): the collateral
+    ///      floor for `amount`, whether the depth-tiered regime set it, and
+    ///      the largest amount `collateral` supports. Only an ERC-20 loan
+    ///      carries the gate (an NFT rental does not, #2949).
+    function _initRiskBounds(LibVaipakam.Offer memory L, uint256 amount, uint256 collateral)
+        private
+        view
+        returns (uint256 floor, bool tiered, uint256 amountCap)
+    {
+        if (L.assetType != LibVaipakam.AssetType.ERC20) return (0, false, type(uint256).max);
+        return OfferPreviewFacet(address(this)).initRiskBounds(L.lendingAsset, L.collateralAsset, amount, collateral);
     }
 
     /// @dev #2727 — whether the two offers agree on every term the loan

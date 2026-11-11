@@ -6,6 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -869,6 +870,62 @@ contract BorrowerPartialFillTest is SetupTest {
         );
         vm.expectRevert();
         OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+    }
+
+    /// @notice Codex #3591 r1 — the largest amount must also pass the
+    ///         initiation risk gate. A lender whose requirement sits exactly
+    ///         at the gate's floor rounds DOWN (pro-rated) while the gate
+    ///         rounds UP, so the top amount the borrower's collateral covers
+    ///         for the lender can sit one step above what the gate admits.
+    ///         The match now also caps the amount at what that collateral
+    ///         supports under the gate, and locks at least the gate's floor,
+    ///         so every collateral level that covers the minimum matches —
+    ///         where an uncapped pick was refused for HF.
+    function test_3326_largestAmountAlsoPassesTheInitRiskGate() public {
+        (uint256 reqAtMax,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+            mockERC20, mockCollateralERC20, 10_000, 0
+        );
+        (uint256 reqAtMin,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+            mockERC20, mockCollateralERC20, 1_000, 0
+        );
+        assertGt(reqAtMax, 2 * reqAtMin, "room for two fills");
+        // The borrower posts the whole window backed at the gate's floor.
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 10_000, rateMin: 500, rateMax: 600,
+            collateralMin: reqAtMin, collateralMax: reqAtMax
+        });
+        // A lender whose requirement sits exactly at the gate's ratio: its
+        // pro-rated requirement rounds DOWN, the gate's floor rounds UP.
+        uint256 lo = _postRangedLenderOffer(lender, 1_000, 10_000, 500, 600, reqAtMax);
+
+        uint256 boundByRisk;
+        uint256 matched;
+        uint256 stride = (reqAtMax - 2 * reqAtMin) / 97 + 1;
+        for (uint256 r1 = reqAtMin; r1 + reqAtMin <= reqAtMax; r1 += stride) {
+            uint256 snap = vm.snapshotState();
+            // A first fill of 1,000 against a greedier requirement leaves the
+            // borrower less collateral per remaining unit than the gate's ratio.
+            uint256 greedy = _postRangedLenderOffer(lender, 1_000, 1_000, 500, 600, r1);
+            OfferMatchFacet(address(diamond)).matchOffers(greedy, bo);
+            uint256 avail = reqAtMax - OfferCancelFacet(address(diamond)).getOffer(bo).collateralAmountFilled;
+
+            LibOfferMatch.MatchResult memory r = _preview(lo, bo);
+            assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "every covering collateral level matches");
+            (uint256 floorAt,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+                mockERC20, mockCollateralERC20, r.matchAmount, 0
+            );
+            assertGe(r.reqCollateral, floorAt, "locks at least the gate's floor");
+            assertLe(r.reqCollateral, avail, "within the borrower's remaining collateral");
+            // The largest amount the lender's rounded-down requirement covers.
+            uint256 lenderCovers = ((avail + 1) * 10_000 - 1) / reqAtMax;
+            if (r.matchAmount < lenderCovers && r.matchAmount < 9_000) boundByRisk++;
+            uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+            assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).principal, r.matchAmount, "executed as previewed");
+            matched++;
+            vm.revertToState(snap);
+        }
+        assertGt(matched, 0, "the sweep covered at least one level");
+        assertGt(boundByRisk, 0, "the gate's bound, not the lender's, set the amount somewhere");
     }
 
 }
