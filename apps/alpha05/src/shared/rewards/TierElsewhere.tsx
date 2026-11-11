@@ -20,7 +20,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { formatExact, formatFigureText, formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
 import { OwnStamp } from '../ui/OwnStamp';
-import { discountPercent } from './tiers';
+import { cappedBps, discountPercent } from './tiers';
 import {
   BROADCAST_ABI,
   laneStanding,
@@ -224,10 +224,15 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
     const refused = await paused();
     if (refused) return refused;
     const now = (await own.read((c) => readTierPush(c, diamond, account))).value;
+    // A review that no longer matches what a send would carry, or that has
+    // nothing left to send, is not refreshed in place: it is closed to
+    // signing, and the reader starts again from the section.
+    const obsolete = (code: string, reason: string): Recheck => ({ kind: 'refused', refusal: { code, reason, reopensAt: null, remedy: null } });
     if (recordStanding(now) !== 'same' || now.recorded.nonce !== reviewed.card.recorded.nonce)
-      return { kind: 'changed', what: text('rewardsElsewhere.changedRecord') };
+      return obsolete('TierRecordMoved', text('rewardsElsewhere.staleRecord'));
     const next = paidSend(now.lanes);
-    if (typeof next === 'string') return { kind: 'changed', what: text('rewardsElsewhere.changedFees') };
+    if (next === 'nothing-owed') return obsolete('TierNothingOwed', text('rewardsElsewhere.staleNothingOwed'));
+    if (next === 'unquoted') return obsolete('TierFeeUnquoted', text('rewardsElsewhere.sendUnquoted'));
     const sameNetworks = next.chainIds.join(',') === reviewed.send.chainIds.join(',');
     if (!sameNetworks || next.quoted > reviewed.send.value) {
       if (current()) setReviewed({ ...reviewed, card: now, send: next, readAt: readNow() });
@@ -246,7 +251,7 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
           text:
             r.now === null
               ? text('rewardsElsewhere.recordValueUnread')
-              : format('rewardsElsewhere.recordValue', { tier: String(r.now.tier), discount: discountPercent(r.now.bps) }),
+              : format('rewardsElsewhere.recordValue', { tier: String(r.now.tier), discount: discountPercent(cappedBps(r.now.bps)) }),
         },
         binding: false,
       },
@@ -265,7 +270,7 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
         label: text('rewardsElsewhere.rowCarries'),
         value: {
           kind: 'text',
-          text: format('rewardsElsewhere.carriesValue', { tier: String(r.card.recorded.tier), discount: discountPercent(r.card.recorded.bps) }),
+          text: format('rewardsElsewhere.carriesValue', { tier: String(r.card.recorded.tier), discount: discountPercent(cappedBps(r.card.recorded.bps)) }),
         },
         binding: true,
       },
@@ -353,11 +358,11 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
         <p className="tier-b">
           {rec.nonce === 0n
             ? text('rewardsElsewhere.recordedNone')
-            : format('rewardsElsewhere.recorded', { tier: String(rec.tier), discount: discountPercent(rec.bps) })}
+            : format('rewardsElsewhere.recorded', { tier: String(rec.tier), discount: discountPercent(cappedBps(rec.bps)) })}
         </p>
         {standing === 'behind' && data.effective !== null && data.lanes.length > 0 && (
           <p className="tier-a" data-testid="rewards-elsewhere-behind">
-            {format('rewardsElsewhere.behind', { tier: String(data.effective.tier), discount: discountPercent(data.effective.bps) })}
+            {format('rewardsElsewhere.behind', { tier: String(data.effective.tier), discount: discountPercent(cappedBps(data.effective.bps)) })}
           </p>
         )}
         {standing === 'unknown' && data.lanes.length > 0 && <p className="tier-a">{text('rewardsElsewhere.nowUnread')}</p>}
@@ -378,37 +383,42 @@ export function TierElsewhere({ chain, own }: { chain: SupportedChain; own: OwnS
           {text('rewardsElsewhere.noLanes')}
         </p>
       ) : (
-        <ul className="rows" data-testid="rewards-elsewhere-lanes">
-          {data.lanes.map((l) => {
-            const s = laneStanding(l);
-            const d = l.delivered;
-            return (
-              <li key={l.chainId} className="card" data-testid="rewards-elsewhere-lane" data-chain={l.chainId} data-standing={s}>
-                <p className="row-head">{networkName(l.chainId)}</p>
-                <p className="tier-b">
-                  {d.nonce === 0n && d.sentAt === 0
-                    ? text('rewardsElsewhere.laneNothing')
-                    : format('rewardsElsewhere.laneHolds', { tier: String(d.tier), discount: discountPercent(d.bps), sent: formatUtc(d.sentAt) })}
-                </p>
-                {s === 'current' && <p className="tier-b">{text('rewardsElsewhere.laneCurrent')}</p>}
-                {s === 'protocol-pays' && <p className="tier-a">{text('rewardsElsewhere.laneProtocol')}</p>}
-                {s === 'needs-paid-send' && <p className="tier-a">{format('rewardsElsewhere.lanePaid', { tier: String(rec.tier) })}</p>}
-                {l.owed && l.fee !== null && <p className="tier-b">{format('rewardsElsewhere.laneFee', { fee: native(l.fee), symbol })}</p>}
-                {l.owed && l.fee === null && <p className="tier-a">{text('rewardsElsewhere.laneFeeUnread')}</p>}
-                {mode === 'advanced' && d.nonce !== 0n && (
-                  <dl className="facts">
-                    <dt className="tier-b">{text('rewardsElsewhere.factRecordNo')}</dt>
-                    <dd>{d.nonce.toString()}</dd>
-                    <dt className="tier-b">{text('rewardsElsewhere.factVersion')}</dt>
-                    <dd>{String(d.version)}</dd>
-                    <dt className="tier-b">{text('rewardsElsewhere.factExpires')}</dt>
-                    <dd>{d.expiresAt === null ? text('rewardsElsewhere.factNoExpiry') : formatUtc(d.expiresAt)}</dd>
-                  </dl>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <p className="tier-a" data-testid="rewards-elsewhere-sent-only">
+            {text('rewardsElsewhere.lanesSentOnly')}
+          </p>
+          <ul className="rows" data-testid="rewards-elsewhere-lanes">
+            {data.lanes.map((l) => {
+              const s = laneStanding(l);
+              const d = l.delivered;
+              return (
+                <li key={l.chainId} className="card" data-testid="rewards-elsewhere-lane" data-chain={l.chainId} data-standing={s}>
+                  <p className="row-head">{networkName(l.chainId)}</p>
+                  <p className="tier-b">
+                    {d.nonce === 0n && d.sentAt === 0
+                      ? text('rewardsElsewhere.laneNothing')
+                      : format('rewardsElsewhere.laneHolds', { tier: String(d.tier), discount: discountPercent(cappedBps(d.bps)), sent: formatUtc(d.sentAt) })}
+                  </p>
+                  {s === 'current' && <p className="tier-b">{text('rewardsElsewhere.laneCurrent')}</p>}
+                  {s === 'protocol-pays' && <p className="tier-a">{text('rewardsElsewhere.laneProtocol')}</p>}
+                  {s === 'needs-paid-send' && <p className="tier-a">{format('rewardsElsewhere.lanePaid', { tier: String(rec.tier) })}</p>}
+                  {l.owed && l.fee !== null && <p className="tier-b">{format('rewardsElsewhere.laneFee', { fee: native(l.fee), symbol })}</p>}
+                  {l.owed && l.fee === null && <p className="tier-a">{text('rewardsElsewhere.laneFeeUnread')}</p>}
+                  {mode === 'advanced' && d.nonce !== 0n && (
+                    <dl className="facts">
+                      <dt className="tier-b">{text('rewardsElsewhere.factRecordNo')}</dt>
+                      <dd>{d.nonce.toString()}</dd>
+                      <dt className="tier-b">{text('rewardsElsewhere.factVersion')}</dt>
+                      <dd>{String(d.version)}</dd>
+                      <dt className="tier-b">{text('rewardsElsewhere.factExpires')}</dt>
+                      <dd>{d.expiresAt === null ? text('rewardsElsewhere.factNoExpiry') : formatUtc(d.expiresAt)}</dd>
+                    </dl>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
       <OwnStamp reads={[card]} />
       {!flowOpen && actions}

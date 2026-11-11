@@ -138,7 +138,8 @@ test('a higher tier reaches the other networks only with a paid send, after the 
   expect(spent).toBeLessThan(parseEther('0.0024'));
   expect(await sc.pub.getBalance({ address: MESSENGER })).toBe(parseEther('0.002'));
   await expect(lanes.nth(0)).toHaveAttribute('data-standing', 'current', { timeout: 60_000 });
-  await expect(lanes.nth(1)).toContainText(/Holds tier 1, 10% off, sent .*UTC/);
+  await expect(lanes.nth(1)).toContainText(/Last sent tier 1, 10% off, at .*UTC/);
+  await expect(page.getByTestId('rewards-elsewhere-sent-only')).toContainText('read on that network, not here');
   await expect(page.getByTestId('rewards-elsewhere-send')).toHaveCount(0);
 
   // Withdrawing every VPFI records tier 0: a lower tier, which the protocol

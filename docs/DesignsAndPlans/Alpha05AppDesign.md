@@ -2115,9 +2115,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   comparing), and offers the update (`pokeMyTier`, gas only); the tier
   table's version has no reader, so the update stays offered when the two
   match and the copy says a version change cannot be seen here. It lists
-  each network the protocol sends to with what it last received and whether
-  it is current, owed a lower tier the protocol sends at its own cost, or
-  owed one that goes only with a paid send. The paid send
+  each network the protocol sends to with what this network last sent it
+  (whether it arrived and applies there is read on that network, and the
+  section says so) and whether it is current, owed a lower tier the
+  protocol sends at its own cost, or owed one that goes only with a paid
+  send. Every discount shown is capped at 50%, as the fee path applies it.
+  A review whose record moved, or that has nothing left to send, is closed
+  to signing rather than refreshed in place. The paid send
   (`deliverTierPush`) is offered only once the record matches the tier now
   and every owed network's fee is quoted; its value is the sum of every owed
   network's quote plus 20%, because the protocol spends the value on owed
