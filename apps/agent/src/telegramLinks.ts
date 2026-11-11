@@ -10,7 +10,7 @@
  */
 import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
 import type { LocaleReader } from './alertChannelChange';
-import type { LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
+import type { ChainDeployment, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
 import { lockUnanswered } from './i18n';
 import { newLinkCode, type TelegramOutcome } from './telegram';
 import { shortWallet } from './alertChannelChange';
@@ -28,14 +28,20 @@ export interface LinkStatePort {
   issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number): Promise<boolean>;
   consumeLinkCode(code: string, now: number): Promise<{ wallet: string; chainId: number } | null>;
   chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
-  recordLockRequests(chatId: string, updateId: number, requestedAt: number | null, freshFrom: number): Promise<LockLink[]>;
+  recordLockRequests(
+    chatId: string,
+    updateId: number,
+    requestedAt: number | null,
+    freshFrom: number,
+    diamonds: Record<number, string>,
+  ): Promise<LockLink[]>;
 }
 
 /** The keeper-facing state methods (`keeperRoutes.ts`). */
 export interface KeeperStatePort {
-  keeperPoll(chainId: number, now: number, limit: number): Promise<LockRequest[]>;
-  pendingLockWallets(chainId: number, since: number): Promise<string[]>;
-  markLockHandled(chainId: number, wallet: string, upToId: number, outcome: string, at: number): Promise<{ chatId: string | null } | undefined>;
+  keeperPoll(dep: ChainDeployment, now: number, limit: number): Promise<LockRequest[]>;
+  pendingLockWallets(dep: ChainDeployment, since: number): Promise<string[]>;
+  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): Promise<{ chatId: string | null } | undefined>;
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): Promise<UnansweredLock[]>;
   chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
 }
@@ -51,8 +57,22 @@ export type { PendingChange };
 /** Issue a handshake code for (`wallet`, `chainId`), good for ten minutes.
  *  The code is the 120-bit `newLinkCode()` (#2753), so a collision is not a
  *  practical event; one retry stays so a clash reads as a retry, never as a
- *  failed link. */
-export async function issueTelegramLinkCode(state: LinkStatePort, wallet: string, chainId: number, now: number): Promise<string> {
+ *  failed link.
+ *
+ *  `ensureRow` makes the wallet's `user_thresholds` row first, the row the
+ *  keeper's watchers and the pre-notify lane find a wallet through. It runs
+ *  BEFORE any code exists and its failure throws, so no code is issued for a
+ *  wallet whose alerts would have nowhere to start from: the handshake's
+ *  "alerts will arrive" is never sent for a link nothing would serve (#1722,
+ *  Codex #3571 r1). */
+export async function issueTelegramLinkCode(
+  state: LinkStatePort,
+  ensureRow: (wallet: string, chainId: number) => Promise<void>,
+  wallet: string,
+  chainId: number,
+  now: number,
+): Promise<string> {
+  await ensureRow(wallet, chainId);
   for (let attempt = 0; attempt < 2; attempt++) {
     const code = newLinkCode();
     if (await state.issueLinkCode(code, wallet, chainId, now + LINK_CODE_TTL_SEC)) return code;
@@ -109,9 +129,10 @@ export async function recordLockRequests(
   updateId: number,
   sentAt: number | null,
   nowSec: number,
+  diamonds: Record<number, string>,
 ): Promise<{ wallet: string; chainId: number; locale: string; recorded: boolean }[]> {
   const requestedAt = lockRequestIsStale(sentAt, nowSec) ? null : Math.min(sentAt as number, nowSec);
-  const links = await state.recordLockRequests(chatId, updateId, requestedAt, nowSec - LOCK_READINESS_FRESH_SEC);
+  const links = await state.recordLockRequests(chatId, updateId, requestedAt, nowSec - LOCK_READINESS_FRESH_SEC, diamonds);
   const loc = await locales(links);
   return links.map((l, i) => ({ ...l, locale: loc[i] ?? 'en' }));
 }

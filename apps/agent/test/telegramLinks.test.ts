@@ -4,7 +4,7 @@
  * has had no answer from a keeper for an hour.
  */
 import { describe, expect, it } from 'vitest';
-import { getTelegramChatId, LOCK_UNANSWERED_SEC, warnUnansweredLocks, type LinkStatePort } from '../src/telegramLinks';
+import { getTelegramChatId, issueTelegramLinkCode, LOCK_UNANSWERED_SEC, warnUnansweredLocks, type LinkStatePort } from '../src/telegramLinks';
 import type { LocaleReader } from '../src/alertChannelChange';
 import { TelegramStateStore } from '../src/telegramState/store';
 import type { TelegramOutcome } from '../src/telegram';
@@ -14,6 +14,8 @@ const W = '0xAbC0000000000000000000000000000000000001';
 const w = W.toLowerCase();
 const CHAIN = 84532;
 const NOW = 1_800_000_000;
+const DIAMOND = '0x63816b149266c9dbfb7683dfd02d851915238049';
+const DEP = { chainId: CHAIN, diamond: DIAMOND };
 
 function harness() {
   const h = sqliteDo();
@@ -35,13 +37,41 @@ describe('getTelegramChatId', () => {
   });
 });
 
+describe('issueTelegramLinkCode', () => {
+  it('makes the alerts row before the code, and issues no code when it cannot (Codex #3571 r1)', async () => {
+    const { store } = harness();
+    const state = {
+      issueLinkCode: async (...a: Parameters<TelegramStateStore['issueLinkCode']>) => store.issueLinkCode(...a),
+    } as unknown as LinkStatePort;
+    const order: string[] = [];
+    const code = await issueTelegramLinkCode(
+      state,
+      async (wallet, chainId) => {
+        order.push(`row ${wallet} ${chainId}`);
+      },
+      w,
+      CHAIN,
+      NOW,
+    );
+    expect(order).toEqual([`row ${w} ${CHAIN}`]);
+    expect(store.consumeLinkCode(code, NOW)).toEqual({ wallet: w, chainId: CHAIN });
+
+    let issued = 0;
+    const counting = { issueLinkCode: async () => (issued++, true) } as unknown as LinkStatePort;
+    await expect(
+      issueTelegramLinkCode(counting, async () => Promise.reject(new Error('d1 down')), w, CHAIN, NOW),
+    ).rejects.toThrow('d1 down');
+    expect(issued).toBe(0);
+  });
+});
+
 describe('warnUnansweredLocks', () => {
   function recorded() {
     const { db, store } = harness();
     store.commit(w, CHAIN, [], [{ op: 'link', chainId: CHAIN, chatId: '42' }], 0);
-    store.keeperPoll(CHAIN, NOW, 1);
-    store.recordLockRequests('42', 1, NOW, NOW - 300);
-    store.recordLockRequests('42', 2, NOW + 60, NOW - 300);
+    store.keeperPoll(DEP, NOW, 1);
+    store.recordLockRequests('42', 1, NOW, NOW - 300, { [CHAIN]: DIAMOND });
+    store.recordLockRequests('42', 2, NOW + 60, NOW - 300, { [CHAIN]: DIAMOND });
     const state = { takeUnansweredLocks: async (...a: Parameters<TelegramStateStore['takeUnansweredLocks']>) => store.takeUnansweredLocks(...a) };
     const sent: { chat: string; text: string }[] = [];
     const send = (o: TelegramOutcome = 'accepted') => async (chat: string, text: string) => {
@@ -67,7 +97,7 @@ describe('warnUnansweredLocks', () => {
 
   it('says nothing for a request the keeper answered', async () => {
     const { store, state, sent, send } = recorded();
-    store.markLockHandled(CHAIN, w, 2, 'locked', NOW + 120);
+    store.markLockHandled(DEP, w, 2, 'locked', NOW + 120);
     expect(await warnUnansweredLocks(state, locales('en'), send(), NOW + 2 * LOCK_UNANSWERED_SEC)).toBe(0);
     expect(sent).toEqual([]);
   });

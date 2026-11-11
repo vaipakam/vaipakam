@@ -20,6 +20,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   TelegramStateStore,
+  type ChainDeployment,
   type ChannelOp,
   type CommitResult,
   type LinkedRow,
@@ -101,17 +102,23 @@ export class TelegramState extends DurableObject {
   }
 
   // ─── Telegram LOCK (#3088) ────────────────────────────────────────────
-  recordLockRequests(chatId: string, updateId: number, requestedAt: number | null, freshFrom: number): LockLink[] {
-    return this.store.recordLockRequests(chatId, updateId, requestedAt, freshFrom);
+  recordLockRequests(
+    chatId: string,
+    updateId: number,
+    requestedAt: number | null,
+    freshFrom: number,
+    diamonds: Record<number, string>,
+  ): LockLink[] {
+    return this.store.recordLockRequests(chatId, updateId, requestedAt, freshFrom, diamonds);
   }
-  keeperPoll(chainId: number, now: number, limit: number): LockRequest[] {
-    return this.store.keeperPoll(chainId, now, limit);
+  keeperPoll(dep: ChainDeployment, now: number, limit: number): LockRequest[] {
+    return this.store.keeperPoll(dep, now, limit);
   }
-  pendingLockWallets(chainId: number, since: number): string[] {
-    return this.store.pendingLockWallets(chainId, since);
+  pendingLockWallets(dep: ChainDeployment, since: number): string[] {
+    return this.store.pendingLockWallets(dep, since);
   }
-  markLockHandled(chainId: number, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null } | undefined {
-    return this.store.markLockHandled(chainId, wallet, upToId, outcome, at);
+  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null } | undefined {
+    return this.store.markLockHandled(dep, wallet, upToId, outcome, at);
   }
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): UnansweredLock[] {
     return this.store.takeUnansweredLocks(sentBefore, now, limit);

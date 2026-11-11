@@ -4,6 +4,10 @@ import { sqliteDo } from './helpers/sqliteDo';
 
 const W = '0xAbC0000000000000000000000000000000000001';
 const w = W.toLowerCase();
+/** The agent's own deployments in these tests: chain 1 and chain 2. */
+const DA = '0x00000000000000000000000000000000000000a1';
+const DIAMONDS: Record<number, string> = { 1: DA, 2: '0x00000000000000000000000000000000000000a2' };
+const dep1 = { chainId: 1, diamond: DA };
 
 function fresh() {
   const h = sqliteDo();
@@ -113,37 +117,62 @@ describe('telegram state store (#1722)', () => {
   it('records LOCK only on chains a keeper is polling, once per update', () => {
     const { store } = fresh();
     store.commit(W, null, [], [{ op: 'link', chainId: 1, chatId: '7' }, { op: 'link', chainId: 2, chatId: '7' }], 1);
-    expect(store.keeperPoll(1, 100, 20)).toEqual([]);
-    const links = store.recordLockRequests('7', 555, 150, 50);
+    expect(store.keeperPoll(dep1, 100, 20)).toEqual([]);
+    const links = store.recordLockRequests('7', 555, 150, 50, DIAMONDS);
     expect(links).toEqual([
       { wallet: w, chainId: 1, recorded: true },
       { wallet: w, chainId: 2, recorded: false },
     ]);
     // Redelivery records nothing new.
-    store.recordLockRequests('7', 555, 150, 50);
-    const polled = store.keeperPoll(1, 200, 20);
+    store.recordLockRequests('7', 555, 150, 50, DIAMONDS);
+    const polled = store.keeperPoll(dep1, 200, 20);
     expect(polled).toHaveLength(1);
     expect(polled[0]!.wallet).toBe(w);
-    expect(store.pendingLockWallets(1, 100)).toEqual([w]);
+    expect(store.pendingLockWallets(dep1, 100)).toEqual([w]);
     // A stale or undated request records nothing.
-    expect(store.recordLockRequests('7', 556, null, 50).every((l) => !l.recorded)).toBe(true);
-    expect(store.markLockHandled(1, W, polled[0]!.id, 'locked', 210)).toEqual({ chatId: '7' });
-    expect(store.markLockHandled(1, W, polled[0]!.id, 'locked', 211)).toBeUndefined();
-    expect(store.keeperPoll(1, 220, 20)).toEqual([]);
+    expect(store.recordLockRequests('7', 556, null, 50, DIAMONDS).every((l) => !l.recorded)).toBe(true);
+    expect(store.markLockHandled(dep1, W, polled[0]!.id, 'locked', 210)).toEqual({ chatId: '7' });
+    expect(store.markLockHandled(dep1, W, polled[0]!.id, 'locked', 211)).toBeUndefined();
+    expect(store.keeperPoll(dep1, 220, 20)).toEqual([]);
+  });
+
+  it('keeps LOCK state per Diamond, so a fresh deploy on the same chain starts empty (Codex #3571 r1)', () => {
+    const { store } = fresh();
+    store.commit(W, 1, [], [{ op: 'link', chainId: 1, chatId: '7' }], 1);
+    store.keeperPoll(dep1, 100, 20);
+    expect(store.recordLockRequests('7', 1, 100, 50, DIAMONDS)[0]!.recorded).toBe(true);
+    // The agent's bundle now names a new Diamond on chain 1.
+    const DB = '0x00000000000000000000000000000000000000b1';
+    const dep1b = { chainId: 1, diamond: DB };
+    // A keeper polling the new Diamond is handed nothing recorded for the old one.
+    expect(store.keeperPoll(dep1b, 110, 20)).toEqual([]);
+    expect(store.pendingLockWallets(dep1b, 0)).toEqual([]);
+    expect(store.markLockHandled(dep1b, W, 1, 'locked', 120)).toBeUndefined();
+    // Only the old Diamond's poll is fresh: under the new list nothing records.
+    const next = { ...DIAMONDS, 1: DB };
+    const { store: s2 } = fresh();
+    s2.commit(W, 1, [], [{ op: 'link', chainId: 1, chatId: '7' }], 1);
+    s2.keeperPoll(dep1, 100, 20);
+    expect(s2.recordLockRequests('7', 1, 100, 50, next)[0]!.recorded).toBe(false);
+    // Once the new Diamond is polled, a request records against it, and the
+    // old request stays with the old Diamond (case of the address does not matter).
+    store.recordLockRequests('7', 2, 115, 50, next);
+    expect(store.keeperPoll({ chainId: 1, diamond: DB.toUpperCase().replace('0X', '0x') }, 130, 20).map((r) => r.id)).toEqual([2]);
+    expect(store.keeperPoll(dep1, 130, 20).map((r) => r.id)).toEqual([1]);
   });
 
   it('warns each unanswered LOCK once, and prunes old records', () => {
     const { store } = fresh();
     store.commit(W, 1, [], [{ op: 'link', chainId: 1, chatId: '7' }], 1);
-    store.keeperPoll(1, 100, 20);
-    store.recordLockRequests('7', 1, 100, 50);
+    store.keeperPoll(dep1, 100, 20);
+    store.recordLockRequests('7', 1, 100, 50, DIAMONDS);
     expect(store.takeUnansweredLocks(99, 200, 10)).toEqual([]);
     const warned = store.takeUnansweredLocks(100, 200, 10);
     expect(warned).toEqual([{ chainId: 1, wallet: w, upToId: warned[0]!.upToId, chatId: '7' }]);
     expect(store.takeUnansweredLocks(100, 201, 10)).toEqual([]);
-    store.markLockHandled(1, W, warned[0]!.upToId, 'locked', 300);
+    store.markLockHandled(dep1, W, warned[0]!.upToId, 'locked', 300);
     store.pruneClosed(300 + LOCK_RETENTION_SECONDS + 1);
-    expect(store.keeperPoll(1, 400, 20)).toEqual([]);
+    expect(store.keeperPoll(dep1, 400, 20)).toEqual([]);
     expect(CLOSED_RETENTION_SECONDS).toBeGreaterThan(LOCK_RETENTION_SECONDS);
   });
 });

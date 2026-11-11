@@ -1,4 +1,4 @@
-## Agent — Telegram links and LOCK requests move into the agent's own storage (PR #<n>)
+## Agent — Telegram links and LOCK requests move into the agent's own storage (PR #3571)
 
 Which chat receives a wallet's alerts, the handshake codes that link a chat,
 the pending removals of a chat under protected mode and the Telegram LOCK
@@ -18,8 +18,11 @@ from the platform's own wording in the owner's language, and sends it to the
 chat linked now. So the token cannot send arbitrary text to the chats owners
 trust for alerts, and no value filled into a message can form a link. Each
 request names the keeper's Diamond, and the agent refuses one that is not its
-own, which keeps the guard the keeper's database writes had against a retired
-deployment. A repeated outcome report records and sends nothing.
+own, and LOCK requests are kept per Diamond, so a fresh deploy on a chain
+never hands a keeper a request made against the retired one. A repeated
+outcome report records and sends nothing. The wallet's alert settings row is
+made when a link code is issued, and a code is refused if it cannot be, so the
+"alerts will arrive" reply always has a row the watchers find.
 
 A LOCK that no keeper answers within an hour now gets one message telling the
 owner the vault may not be locked and to lock it from the app. The periodic

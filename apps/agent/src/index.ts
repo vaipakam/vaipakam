@@ -151,7 +151,15 @@ import {
 } from './telegramLinks';
 import { stateStub } from './telegramState/object';
 import { handleKeeperRoute, isKeeperPath, type KeeperRouteDeps } from './keeperRoutes';
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { DEPLOYMENTS, getDeployment } from '@vaipakam/contracts/deployments';
+
+/** #1722 — the agent's own deployments, chain id to Diamond (lower-case).
+ *  Telegram LOCK requests are recorded against these Diamonds only, the same
+ *  ones the keeper routes fence to, so a keeper still working a retired
+ *  Diamond on a chain is never treated as working the current one. */
+const CURRENT_DIAMONDS: Record<number, string> = Object.fromEntries(
+  Object.entries(DEPLOYMENTS).map(([chainId, d]) => [Number(chainId), d.diamond.toLowerCase()]),
+);
 import { extractCancelCommand, extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
 import { channelCopy, handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
 import {
@@ -805,12 +813,23 @@ async function handleIssueTelegramLink(
   const verified = await authoriseAlertRequest(req, env, parsed.req, 'link');
   if (!verified.ok) return refusal(verified, corsOrigin);
 
-  const code = await issueTelegramLinkCode(
-    stateStub(env),
-    parsed.req.wallet,
-    parsed.req.chain_id,
-    Math.floor(Date.now() / 1000),
-  );
+  // The wallet's `user_thresholds` row is made before any code exists (see
+  // `issueTelegramLinkCode`); if it or the code cannot be made, the request
+  // is refused and the app says linking failed, rather than a handshake that
+  // later reports alerts working while nothing would be sent.
+  let code: string;
+  try {
+    code = await issueTelegramLinkCode(
+      stateStub(env),
+      (wallet, chainId) => ensureThresholdsRow(env.DB, wallet, chainId),
+      parsed.req.wallet,
+      parsed.req.chain_id,
+      Math.floor(Date.now() / 1000),
+    );
+  } catch (err) {
+    console.error('[agent] no link code issued:', redactedError(err));
+    return json({ error: 'link-unavailable' }, 503, corsOrigin);
+  }
   // Build the Telegram deep link from the operator-configured bot
   // username. Both `TG_BOT_TOKEN` AND `TG_BOT_USERNAME` must be set:
   // the token authenticates message sends, the username is the
@@ -1043,7 +1062,15 @@ async function handleTelegramWebhook(
     const nowSec = Math.floor(Date.now() / 1000);
     let links: Awaited<ReturnType<typeof recordLockRequests>>;
     try {
-      links = await recordLockRequests(stateStub(env), d1LocaleReader(env.DB), lock.chatId, lock.updateId, lock.sentAt, nowSec);
+      links = await recordLockRequests(
+        stateStub(env),
+        d1LocaleReader(env.DB),
+        lock.chatId,
+        lock.updateId,
+        lock.sentAt,
+        nowSec,
+        CURRENT_DIAMONDS,
+      );
     } catch (err) {
       console.error('[agent] LOCK not recorded:', redactedError(err));
       await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockNotRecorded('en'));
@@ -1106,15 +1133,9 @@ async function handleTelegramWebhook(
   // #3246 — a different chat taking over from the one linked now waits
   // the account's delay while it is protected; `requestRelink` tells both
   // chats. Linking where none is linked, or the same chat again, is at once.
-  // The keeper's watchers iterate `user_thresholds`, so a first-time owner
-  // who links before saving settings still needs a row (default bands). A
-  // failure here is logged and the link goes ahead: the row is created again
-  // by the owner's next settings save, and the chat is what they asked for.
-  try {
-    await ensureThresholdsRow(env.DB, match.wallet, match.chainId);
-  } catch (err) {
-    console.error('[agent] thresholds row not ensured:', redactedError(err));
-  }
+  // The wallet's `user_thresholds` row was made when this code was issued
+  // (`handleIssueTelegramLink`), so the alerts the reply promises have a row
+  // to be found through.
   const relink = await requestRelink(channelDeps(env), match.wallet, match.chainId, chatId, match.locale);
   if (relink !== 'linked') return new Response('ok', { status: 200 });
   const walletShort = `${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)}`;

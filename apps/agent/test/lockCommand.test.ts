@@ -42,6 +42,13 @@ describe('extractLockCommand', () => {
   });
 });
 
+/** The agent's own Diamond on each chain in these tests. */
+const DIAMONDS: Record<number, string> = {
+  84532: '0x0000000000000000000000000000000000084532',
+  421614: '0x0000000000000000000000000000000000421614',
+  97: '0x0000000000000000000000000000000000000097',
+};
+
 /** The store with each (wallet, chain, chat) linked and each chain's
  *  keeper last seen polling at the given time. */
 function harness(links: [string, number, string][], polledAt: [number, number][]) {
@@ -50,7 +57,7 @@ function harness(links: [string, number, string][], polledAt: [number, number][]
   for (const [wallet, chainId, chatId] of links) {
     store.commit(wallet, chainId, [], [{ op: 'link', chainId, chatId }], 0);
   }
-  for (const [chainId, at] of polledAt) store.keeperPoll(chainId, at, 1);
+  for (const [chainId, at] of polledAt) store.keeperPoll({ chainId, diamond: DIAMONDS[chainId]! }, at, 1);
   const state = {
     recordLockRequests: async (...a: Parameters<TelegramStateStore['recordLockRequests']>) => store.recordLockRequests(...a),
   } as unknown as LinkStatePort;
@@ -81,13 +88,13 @@ describe('recordLockRequests', () => {
       ],
     );
     const loc = locales({ '0xaaa': 'de' });
-    const links = await recordLockRequests(state, loc, '42', 7, NOW, NOW);
+    const links = await recordLockRequests(state, loc, '42', 7, NOW, NOW, DIAMONDS);
     expect(links).toEqual([
       { wallet: '0xaaa', chainId: 84532, locale: 'de', recorded: true },
       { wallet: '0xaaa', chainId: 421614, locale: 'de', recorded: true },
     ]);
     // Telegram redelivers the same update: nothing new is recorded.
-    await recordLockRequests(state, loc, '42', 7, NOW, NOW);
+    await recordLockRequests(state, loc, '42', 7, NOW, NOW, DIAMONDS);
     // No chat is stored with a request: the keeper's answer goes to the chat
     // the wallet is linked to when it answers, so an unlink stops every reply.
     expect(requests(db, 'id, chain_id, wallet, update_id, requested_at, handled_at, outcome')).toEqual([
@@ -108,7 +115,7 @@ describe('recordLockRequests', () => {
         [421614, NOW - LOCK_READINESS_FRESH_SEC - 1],
       ],
     );
-    const links = await recordLockRequests(state, locales({}), '42', 7, NOW, NOW);
+    const links = await recordLockRequests(state, locales({}), '42', 7, NOW, NOW, DIAMONDS);
     expect(links.map((l) => [l.chainId, l.recorded])).toEqual([
       [97, false],
       [84532, true],
@@ -119,9 +126,9 @@ describe('recordLockRequests', () => {
 
   it('stamps the request with the time the owner SENT it, not the time it arrived (Codex #3092)', async () => {
     const { db, state } = harness([['0xaaa', 84532, '42']], [[84532, NOW - 60]]);
-    await recordLockRequests(state, locales({}), '42', 7, NOW - 600, NOW);
+    await recordLockRequests(state, locales({}), '42', 7, NOW - 600, NOW, DIAMONDS);
     // A send time ahead of this clock is recorded as now, never later.
-    await recordLockRequests(state, locales({}), '42', 8, NOW + 120, NOW);
+    await recordLockRequests(state, locales({}), '42', 8, NOW + 120, NOW, DIAMONDS);
     expect(requests(db, 'update_id, requested_at')).toEqual([
       { update_id: 7, requested_at: NOW - 600 },
       { update_id: 8, requested_at: NOW },
@@ -131,19 +138,19 @@ describe('recordLockRequests', () => {
   it('records nothing for a LOCK sent longer ago than the age limit, or with no send time, and still returns the links', async () => {
     const { db, state } = harness([['0xaaa', 84532, '42']], [[84532, NOW - 60]]);
     for (const sentAt of [NOW - LOCK_REQUEST_TTL_SEC - 1, null]) {
-      expect(await recordLockRequests(state, locales({}), '42', 7, sentAt, NOW)).toEqual([
+      expect(await recordLockRequests(state, locales({}), '42', 7, sentAt, NOW, DIAMONDS)).toEqual([
         { wallet: '0xaaa', chainId: 84532, locale: 'en', recorded: false },
       ]);
     }
     expect(requests(db)).toEqual([]);
     // Exactly at the limit is still in time.
-    await recordLockRequests(state, locales({}), '42', 9, NOW - LOCK_REQUEST_TTL_SEC, NOW);
+    await recordLockRequests(state, locales({}), '42', 9, NOW - LOCK_REQUEST_TTL_SEC, NOW, DIAMONDS);
     expect(requests(db)).toHaveLength(1);
   });
 
   it('records nothing for a chat linked to no wallet', async () => {
     const { db, state } = harness([], [[84532, NOW - 60]]);
-    expect(await recordLockRequests(state, locales({}), '42', 7, NOW, NOW)).toEqual([]);
+    expect(await recordLockRequests(state, locales({}), '42', 7, NOW, NOW, DIAMONDS)).toEqual([]);
     expect(requests(db)).toEqual([]);
   });
 });
