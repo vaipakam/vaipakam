@@ -2548,8 +2548,12 @@ export const copy = {
     unreadRows: A('The offer book returned {{count}} rows this app could not read as your orders on this market; they are not shown.'),
     truncated: A('The offer book returned only part of your signed orders on this market; some are not shown here.'),
     standingFailed: A('Where the chain stands on these orders could not be read ({{reason}}), so no cancel is offered yet.'),
+    standingStale: A(
+      'The latest read of where the chain stands on these orders failed ({{reason}}). The standings below are from the last read that worked and may be out of date, so no cancel is offered until a read succeeds.',
+    ),
     lend: B('Lend {{amount}} at {{rate}}% a year for {{days}} days, against {{collateral}}'),
     borrow: B('Borrow {{amount}} at {{rate}}% a year for {{days}} days, locking {{collateral}}'),
+    range: B('{{low}} to {{high}}'),
     lapses: B('Fillable until {{at}}.'),
     noLapse: B('No lapse time: fillable until cancelled on the chain.'),
     open: B('Open: nothing on the chain stops a fill.'),

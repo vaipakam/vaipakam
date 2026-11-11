@@ -117,16 +117,26 @@ export function signedCancelChanged(a: SignedCancelReview, b: SignedCancelReview
 /** Amount words, short or exact. */
 export type AmountWords = (asset: Hex, v: bigint, exact?: boolean) => string;
 
-/** One order in a sentence: its side, amount, rate, term and collateral. */
+/** One order in a sentence: its side, amount, rate, term and collateral.
+ *  Where an order carries a range (a lowest and a highest amount, rate or
+ *  collateral), the sentence states both ends: a direct take binds a
+ *  lender's highest amount at its lowest rate but a borrower's lowest
+ *  amount at its highest rate (`OfferAcceptFacet._bindTermsToOffer`), and a
+ *  match may fill anywhere inside both sides' bounds, so naming one end as
+ *  the order's terms would state terms it may not fill at. A zero upper
+ *  end means none was set. */
 export function orderSentence(o: SignedOrderWire, amount: AmountWords, copy: Copy, exact = false): string {
   const lender = o.offerType === SIGNED_LENDER;
-  const whole = BigInt(o.amountMax) === 0n ? BigInt(o.amount) : BigInt(o.amountMax);
-  const collateral = BigInt(o.collateralAmountMax) === 0n ? BigInt(o.collateralAmount) : BigInt(o.collateralAmountMax);
+  const span = (low: string, high: string, words: (v: bigint) => string): string => {
+    const lo = BigInt(low);
+    const hi = BigInt(high);
+    return hi === 0n || hi === lo ? words(lo) : copy.format('signedOrders.range', { low: words(lo < hi ? lo : hi), high: words(lo < hi ? hi : lo) });
+  };
   return copy.format(lender ? 'signedOrders.lend' : 'signedOrders.borrow', {
-    amount: amount(o.lendingAsset as Hex, whole, exact),
-    rate: formatBps(BigInt(o.interestRateBps)),
+    amount: span(o.amount, o.amountMax, (v) => amount(o.lendingAsset as Hex, v, exact)),
+    rate: span(o.interestRateBps, o.interestRateBpsMax, formatBps),
     days: o.durationDays,
-    collateral: amount(o.collateralAsset as Hex, collateral, exact),
+    collateral: span(o.collateralAmount, o.collateralAmountMax, (v) => amount(o.collateralAsset as Hex, v, exact)),
   });
 }
 

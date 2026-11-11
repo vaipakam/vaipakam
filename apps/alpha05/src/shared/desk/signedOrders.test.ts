@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, keccak256, type Log } from 'viem';
 import { canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
-import { cancelCall, measureSignedCancel, signedCancelBlockers, signedCancelReceipt, targetKey, type SignedCancelReview } from './cancelSigned';
+import { cancelCall, measureSignedCancel, orderSentence, signedCancelBlockers, signedCancelReceipt, targetKey, type SignedCancelReview } from './cancelSigned';
 import { mySignedOrderFrom, readMySignedOrders, sharedNonces, SIGNED_OFFER, standingOf, type MySignedOrder } from './mySignedOrders';
 import { lapsesAt, orderHashOf, signedStake, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from './signedOrder';
 import { createIndexerClient } from '../reads/world/indexerClient';
@@ -202,5 +202,26 @@ describe('the on-chain cancel', () => {
       { status: 'done', label: 'signedCancel.legNonce' },
     ]);
     expect(measureSignedCancel(review({ target: { kind: 'nonce', nonce: '8', orders: [o] } }), [burned], DIAMOND, ME as Hex, copy)[0]!.status).toBe('not-done');
+  });
+});
+
+describe('the order sentence', () => {
+  const words = (_a: Hex, v: bigint) => v.toString();
+  it('states an exact order as single figures', () => {
+    expect(orderSentence(order(), words, copy)).toBe('signedOrders.lend(100000000000000000,6.25,30,500000000)');
+  });
+  it('states both ends of every range a signed order allows, low to high', () => {
+    const bid = order({
+      offerType: '1',
+      amount: '50',
+      amountMax: '80',
+      interestRateBps: '500',
+      interestRateBpsMax: '700',
+      collateralAmount: '9',
+      collateralAmountMax: '12',
+    });
+    expect(orderSentence(bid, words, copy)).toBe('signedOrders.borrow(signedOrders.range(50,80),signedOrders.range(5,7),30,signedOrders.range(9,12))');
+    // A zero upper bound means no range: the single figure stands.
+    expect(orderSentence(order({ amountMax: '0' }), words, copy)).toContain('signedOrders.lend(100000000000000000,');
   });
 });

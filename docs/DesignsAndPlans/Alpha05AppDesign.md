@@ -2209,7 +2209,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   not, since anyone holding the signature can still fill it. Each order's
   standing is read from the chain at one block, because the book can lag
   both ways: used (filled or cancelled, one mark for both), its nonce
-  cancelled, lapsed on the chain's clock, or open. A cancel is offered only
+  cancelled, lapsed on the chain's clock, or open. Each row states both
+  ends of every range the order allows. When the latest standing read
+  failed, the last good standings are shown with a notice that they may be
+  stale and no cancel is offered. A cancel is offered only
   on an open order, and on a nonce when the book lists two or more open
   orders under it. The review says what the cancel does, that it moves
   nothing and returns nothing because nothing was held, that a fill already

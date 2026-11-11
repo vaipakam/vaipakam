@@ -103,6 +103,10 @@ export function MySignedOrders({
   const standings = standing.data?.standings ?? new Map<Hex, SignedStanding>();
   const groups = sharedNonces(orders, standings);
   const failed = noIndex || book.status === 'error';
+  // A refresh that failed after an earlier read worked keeps the earlier
+  // standings on screen: they are said to be from that read, and no cancel
+  // is offered on them until a read succeeds again.
+  const standingStale = standing.state === 'ready' && standing.error !== null;
   // Where the open cancel shows: under its own row while the book lists the
   // order (or under the nonce's group while it holds two open orders), else
   // on its own, so a cancel in flight never vanishes with its row.
@@ -134,6 +138,11 @@ export function MySignedOrders({
           {book.data.unread > 0 && <p className="tier-a">{format('signedOrders.unreadRows', { count: String(book.data.unread) })}</p>}
           {book.data.truncated && <p className="tier-a">{text('signedOrders.truncated')}</p>}
           {standing.state === 'failed' && <p className="tier-a">{format('signedOrders.standingFailed', { reason: standing.error ?? '' })}</p>}
+          {standingStale && (
+            <p className="tier-a" data-testid="desk-signed-stale">
+              {format('signedOrders.standingStale', { reason: standing.error ?? '' })}
+            </p>
+          )}
           {orders.length > 0 && (
             <ul className="offer-rows">
               {orders.map((o) => {
@@ -146,7 +155,7 @@ export function MySignedOrders({
                     <p className="tier-b">
                       {lapseText(o.order, copy)} {text(STANDING_KEY[s])}
                     </p>
-                    {s === 'open' && open === null && (
+                    {s === 'open' && open === null && !standingStale && (
                       <button type="button" className="btn" onClick={() => setOpen(target)} data-testid="desk-signed-cancel">
                         {text('signedOrders.cancel')}
                       </button>
@@ -163,7 +172,7 @@ export function MySignedOrders({
             return (
               <div key={nonce} className="tier-b" data-testid="desk-signed-nonce" data-nonce={nonce}>
                 <p>{format('signedOrders.sharedNonce', { count: String(list.length) })}</p>
-                {open === null && (
+                {open === null && !standingStale && (
                   <button type="button" className="btn" onClick={() => setOpen(target)} data-testid="desk-signed-cancel-nonce">
                     {text('signedOrders.cancelNonce')}
                   </button>
