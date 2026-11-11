@@ -2052,10 +2052,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   two raw fields) with the retirement record, the reporter's home network,
   custody activation, the claim horizon and the VPFI a claim may draw now
   (`getRewardReservations`: delivered and recycled, each net of what
-  staging records reserved; the delivered figure is capped by the delivered
-  allowance a claim charges before it pays, `getDeliveredFreshBound`, so
-  VPFI held but never delivered is never counted as payable, and the card
-  says how much is held beside it). Every amount is formatted in the VPFI
+  staging records reserved; the delivered figure is the lowest of every
+  programme-wide limit a claim checks before it pays fresh VPFI: the fresh
+  VPFI held, the delivered allowance it charges (`getDeliveredFreshBound`)
+  and the pool's available headroom (`poolAvailable`), so VPFI held beyond
+  any of them is never counted as payable, and the card says how much is
+  held beside it). A mirror whose home network cannot be read keeps its
+  role and states the missing reading. Every amount is formatted in the VPFI
   token read in the same snapshot. Basic shows one sentence: running only when the
   launch has passed by the read block's own clock, the role pays here (an unconfigured network behaves as
   a home network) and something is held to pay; otherwise running with

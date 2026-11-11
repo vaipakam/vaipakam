@@ -109,7 +109,9 @@ test('the Rewards page says whether the reward programme runs here, never callin
   // claim charges the delivered allowance first, so nothing is payable.
   await expect(now).toHaveAttribute('data-programme', 'unfunded');
   await expect(now).toContainText('but no VPFI from Arbitrum Sepolia is held here to pay rewards right now.');
-  await expect(page.getByTestId('rewards-programme-undelivered')).toContainText('is held, but a claim pays only what was delivered for rewards.');
+  await expect(page.getByTestId('rewards-programme-capped')).toContainText(
+    'is held, but a claim pays only within what was delivered and the programme’s remaining pool.',
+  );
   await expect(page.getByTestId('rewards-programme-pause')).toHaveCount(0);
 
   // 7. Detached: nothing new becomes claimable here.

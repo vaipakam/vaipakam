@@ -75,9 +75,11 @@ export interface ProgrammeRead {
   token: Hex | null;
   /** VPFI a reward settlement may draw now, net of what is reserved.
    *  `fresh` is what a claim can pay from VPFI delivered for rewards: the
-   *  lower of the fresh VPFI held (`held`) and the delivered allowance the
-   *  claim charges before it pays (`getDeliveredFreshBound`), so VPFI held
-   *  but never delivered is not counted as payable. `recycled` is the
+   *  lowest of every programme-wide limit a claim checks before it pays
+   *  fresh VPFI, so VPFI held beyond any of them is not counted as payable:
+   *  the fresh VPFI held (`held`), the delivered allowance the claim charges
+   *  (`getDeliveredFreshBound`) and the pool's available headroom
+   *  (`getRewardReservations`' `poolAvailable`). `recycled` is the
    *  recycled bucket's room. Zero, with `noToken`, on a network with no VPFI
    *  token set, where nothing can be held. */
   funding: { fresh: bigint; held: bigint; recycled: bigint; noToken: boolean } | null;
@@ -120,14 +122,14 @@ export async function readProgramme(c: PublicClient, diamond: Hex): Promise<Prog
     token: token === null || noToken ? null : token,
     custodyActivated: custody,
     horizonDays: horizon === null ? null : Number(horizon),
-    // liveFreshAvailable (capped by the delivered allowance) and
-    // bucketAvailable: what the claim gates draw.
+    // liveFreshAvailable (capped by the delivered allowance and the pool's
+    // available headroom) and bucketAvailable: what the claim gates draw.
     funding: noToken
       ? { fresh: 0n, held: 0n, recycled: 0n, noToken: true }
       : reservations === null || bound === null
         ? null
         : {
-            fresh: reservations[4] < bound[1] ? reservations[4] : bound[1],
+            fresh: [reservations[4], bound[1], reservations[1]].reduce((a, b) => (b < a ? b : a)),
             held: reservations[4],
             recycled: reservations[7],
             noToken: false,

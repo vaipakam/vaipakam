@@ -39,7 +39,7 @@ describe('programmeHeadline', () => {
       kind: 'unfunded',
       mirror: true,
     });
-    // VPFI held but never delivered for rewards cannot pay a claim.
+    // VPFI held beyond the delivered allowance or the pool cannot pay a claim.
     expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 50n, noToken: false } }))).toEqual({
       kind: 'unfunded',
       mirror: true,

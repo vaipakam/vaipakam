@@ -115,17 +115,23 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
           <dl className="facts" aria-labelledby="rewards-programme-facts-title" data-testid="rewards-programme-facts">
             <dt className="tier-b">{text('rewardsProgramme.factRole')}</dt>
             <dd data-testid="rewards-programme-role" data-role={r.role ?? ''}>
-              {r.role === null
-                ? missing('role')
-                : r.role === 'canonical'
-                  ? text('rewardsProgramme.roleCanonical')
-                  : r.role === 'mirror'
-                    ? base === null
-                      ? text('rewardsProgramme.roleMirrorHome')
-                      : format('rewardsProgramme.roleMirror', { base })
-                    : r.role === 'unconfigured'
-                      ? text('rewardsProgramme.roleUnconfigured')
-                      : text('rewardsProgramme.roleDetached')}
+              {r.role === null ? (
+                missing('role')
+              ) : r.role === 'canonical' ? (
+                text('rewardsProgramme.roleCanonical')
+              ) : r.role === 'mirror' ? (
+                base === null ? (
+                  <>
+                    {text('rewardsProgramme.roleMirrorHome')} {missing('reporter')}
+                  </>
+                ) : (
+                  format('rewardsProgramme.roleMirror', { base })
+                )
+              ) : r.role === 'unconfigured' ? (
+                text('rewardsProgramme.roleUnconfigured')
+              ) : (
+                text('rewardsProgramme.roleDetached')
+              )}
             </dd>
             {r.role === 'detached' && r.retirement === null && (
               <>
@@ -148,9 +154,9 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
             <dd className="value-amount" data-testid="rewards-programme-fresh">
               {r.funding === null ? missing('funding') : r.funding.noToken ? text('rewardsProgramme.noToken') : vpfi(r.funding.fresh)}
               {r.funding !== null && r.funding.held > r.funding.fresh && (
-                <span className="tier-b" data-testid="rewards-programme-undelivered">
+                <span className="tier-b" data-testid="rewards-programme-capped">
                   {' '}
-                  {format('rewardsProgramme.undelivered', { held: vpfi(r.funding.held) })}
+                  {format('rewardsProgramme.capped', { held: vpfi(r.funding.held) })}
                 </span>
               )}
             </dd>
