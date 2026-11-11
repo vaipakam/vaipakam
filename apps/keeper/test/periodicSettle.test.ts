@@ -30,6 +30,7 @@ import {
   type PeriodicSettleDeps,
 } from '../src/periodicSettle';
 import type { ServerOrchestrationResult } from '../src/serverQuotes';
+import { PREPARED_FEES_84532 } from './helpers/preparedFees';
 
 beforeEach(() => armHeldFence());
 
@@ -121,7 +122,7 @@ function harness(scene: Scene) {
     },
   } as unknown as PublicClient;
   const wallet = {
-    account: { address: KEEPER },
+    account: { address: KEEPER, type: 'local', signTransaction: async () => SIGNED },
     request: async ({ method }: { method: string }) => {
       if (method === 'eth_getTransactionCount') return '0x0';
       throw new Error(`unexpected request ${method}`);
@@ -129,9 +130,8 @@ function harness(scene: Scene) {
     prepareTransactionRequest: async (args: { data: Hex }) => {
       const d = decodeFunctionData({ abi: RepayPeriodicFacetABI as Abi, data: args.data });
       writes.push({ functionName: d.functionName, args: d.args ?? [] });
-      return args;
+      return { ...args, ...PREPARED_FEES_84532 };
     },
-    signTransaction: async () => SIGNED,
     sendRawTransaction: async () => keccak256(SIGNED),
   } as unknown as WalletClient;
   const deps: PeriodicSettleDeps = {
