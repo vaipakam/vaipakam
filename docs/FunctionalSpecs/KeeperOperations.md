@@ -1435,6 +1435,16 @@ backup, not a second keeper:
   transaction to confirm can hold a warning back.
 - Each of the two duties ships switched off behind its own flag, and runs
   only while the protected account duty is switched on too.
+- The keeper does not hold Telegram chats or LOCK requests itself (#1722).
+  It collects a network's open LOCK requests from the alert service, reports
+  how each ended there, and asks the alert service to send each owner alert;
+  the alert service sends to the chat linked to the wallet at that moment.
+  Every one of these requests names the deployment the keeper is working
+  for, and one the alert service does not serve is refused. A report the
+  alert service has already recorded is answered as recorded, with nothing
+  sent again. The alert service reports each alert as sent, to be tried
+  again, refused, or with no chat to send to, and the keeper counts it
+  exactly as it counts a Push send.
 
 ## Keeping the testnet sanctions stand-in fresh
 
