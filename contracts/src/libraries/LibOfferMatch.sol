@@ -11,6 +11,7 @@ import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title LibOfferMatch
@@ -25,7 +26,7 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *
  *         Today's surface:
  *           - `previewMatch(L, B)` view: validates the match-validity
- *             matrix from §4.1 + computes midpoint terms from §4.2 +
+ *             matrix from §4.1 + computes the match terms from §4.2 (largest acceptable amount, #3326; midpoint rate) +
  *             returns a structured `MatchResult` so bots can filter
  *             candidate pairs without submitting reverting txs.
  *           - `splitLifToMatcher` helper: splits a fee amount 99/1 and
@@ -241,6 +242,34 @@ library LibOfferMatch {
         // LIF_MATCHER_FEE_BPS (100 = 1%) when unset; capped at 50%
         // by the setter (`ConfigFacet.setLifMatcherFeeBps`).
         return (totalFee * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS;
+    }
+
+    /// @notice #3326 — the collateral a borrower offer can still post to a
+    ///         match: what is left under its ceiling for a ranged offer, its
+    ///         posted amount for a single-value one. The same figure the
+    ///         collateral check in {_previewMatchCore} compares against.
+    function _borrowerCollateralAvailable(LibVaipakam.Offer storage B) private view returns (uint256) {
+        uint256 collMax = B.collateralAmountMax == 0 ? B.collateralAmount : B.collateralAmountMax;
+        if (collMax > B.collateralAmount) {
+            return collMax > B.collateralAmountFilled ? collMax - B.collateralAmountFilled : 0;
+        }
+        return B.collateralAmount;
+    }
+
+    /// @notice #3326 — the largest amount whose pro-rated lender collateral
+    ///         requirement (`L.collateralAmount * amount / L.amountMax`,
+    ///         rounded down) is at most `available`. Unbounded when the lender
+    ///         asks for no collateral, its requirement does not scale with
+    ///         the amount, or `available` already covers the requirement at
+    ///         `L.amountMax` (every candidate amount is at most `L.amountMax`).
+    ///         That last case also keeps the arithmetic below in range: with
+    ///         `available < c`, the result is at most `L.amountMax`.
+    function _largestAmountCovered(LibVaipakam.Offer memory L, uint256 available) private pure returns (uint256) {
+        if (L.amountMax == 0 || L.collateralAmount == 0 || available >= L.collateralAmount) {
+            return type(uint256).max;
+        }
+        // floor(c * a / m) <= available  <=>  c * a < (available + 1) * m.
+        return Math.mulDiv(available + 1, L.amountMax, L.collateralAmount, Math.Rounding.Ceil) - 1;
     }
 
     /// @notice Pure midpoint helper: `(a + b) / 2`. Both args must be
@@ -523,14 +552,14 @@ library LibOfferMatch {
         }
         if (borrowerCarryOver) {
             // §3.2 — a carry-over refinance is AON single-full-fill: force the
-            // matched amount to the borrower's full `amount` (the midpoint could
+            // matched amount to the borrower's full `amount` (the largest amount could
             // exceed it against an open lender range and trip AonRequiresFullFill,
             // blocking a lender from staying partially open). KEEP every
             // lender-side bound: `lo = max(L.amount, B.amount)` and
             // `hi = min(lenderRemaining, borrowerRemaining)`, so requiring
             // `lo <= B.amount <= hi` rejects exactly the cases where B.amount is
             // below the lender's min fill (`L.amount > B.amount`) or above the
-            // lender's remaining capacity — only the midpoint *selection* is
+            // lender's remaining capacity — only the amount *selection* is
             // bypassed, never the legal window. The lender AON gate below then
             // correctly checks `B.amount == L.amount` for a lender-AON offer.
             if (B.amount < lo || B.amount > hi) {
@@ -539,7 +568,21 @@ library LibOfferMatch {
             }
             r.matchAmount = B.amount;
         } else {
-            r.matchAmount = midpoint(lo, hi);
+            // #3326 (owner decision 2026-11-08) — the LARGEST amount both
+            // sides accept, not the midpoint of the window: both parties said
+            // they take anything in it, and every extra match is another loan,
+            // more gas and another matcher share. "Accept" includes the
+            // collateral: the lender takes an amount only with its pro-rated
+            // requirement covered, so the top of the window is capped at the
+            // most the borrower's available collateral covers. Below `lo`
+            // nothing is acceptable, so the amount never drops under it; a
+            // borrower who cannot cover even `lo` is refused by the collateral
+            // check below, as before. The rate stays at the midpoint of the
+            // rate overlap.
+            uint256 top = hi;
+            uint256 coverable = _largestAmountCovered(L, _borrowerCollateralAvailable(B));
+            if (coverable < top) top = coverable;
+            r.matchAmount = top > lo ? top : lo;
         }
 
         // #125 — AON enforcement. An AON offer admits exactly one fill,
@@ -549,8 +592,8 @@ library LibOfferMatch {
         // fill size is `offer.amount` unambiguously. Two conditions
         // must hold per AON side:
         //   (1) the would-be matchAmount equals the AON side's amount,
-        //       i.e. the overlap midpoint coincides with the AON-
-        //       required full fill;
+        //       i.e. the largest acceptable amount is the AON-required
+        //       full fill;
         //   (2) `amountFilled == 0` — no prior partial fill has
         //       accumulated. Defensive: AON should naturally never
         //       admit a prior fill (it reverts every partial attempt),

@@ -21,6 +21,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     offer: offer(),
     signed: null,
     riskPreviewed: true,
+    riskPair: null,
     state: 'open',
     preview: {
       effectivePrincipal: 2n * 10n ** 18n,

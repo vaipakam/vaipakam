@@ -2268,9 +2268,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   loses a race opens no loan and puts back any approval it made. Any
   refusal the preview reports, the maker's vault short among them, is
   stated by name and blocks consent and the send. The Terms the taker
-  signs are keyed to the order's hash. Where the protocol cannot yet show
-  the risk-access check for a signed order before the fill (#3577), the
-  review says the dry run after signing makes it; a refusal there sends
+  signs are keyed to the order's hash. The risk-access check is read with
+  the review from the protocol's own preview of the signed fill (#3577),
+  which reports the maker's block and the taker's apart: the maker's is
+  stated and blocks consent with no step offered, since nothing the taker
+  does clears it; the taker's offers the step that clears it, for the pair
+  the preview names, before anything is signed, as a stored offer's review
+  does. Where that preview cannot be read (a deployment without it, or a
+  failed read), the review says the dry run after signing makes the check
+  instead; a refusal there sends
   nothing, puts back any approval, and offers the step that clears it for
   the order's pair where the flow stopped, which returns to a fresh review
   of the same order. The step is offered only when the refusal, decoded

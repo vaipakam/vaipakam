@@ -14,7 +14,8 @@ import { readFeeDiscountConsent } from '../consent/feeDiscount';
 import { readAssetClass, type AssetClass } from '../offers/assets';
 import type { PositionFlowReader, PositionFlowVerdict } from '../offers/positionFlow';
 import type { StoredOffer } from '../offers/acceptTerms';
-import { readSignedPreview, storedOfferFromSigned, type SignedFillPreview } from '../desk/signedFill';
+import { readSignedPreview, readSignedRiskBlocks, storedOfferFromSigned, type SignedFillPreview, type SignedRiskBlocks } from '../desk/signedFill';
+import type { RiskPair } from '../risk/riskAccess';
 import { sourceKey, type AcceptSource } from './acceptSource';
 import { acceptorRole, gateBlock, payLeg, shortfall, type AcceptRole, type GateBlock } from '../offers/model';
 import {
@@ -67,10 +68,16 @@ export interface AcceptReview {
    *  its hash and the stake a fill draws from the maker's vault against
    *  what that vault holds free now; null for a stored offer. */
   signed: Omit<SignedFillPreview, 'accept'> | null;
-  /** Whether the risk-access gate was read before the fill. A signed order
-   *  has no such preview yet (#3577): the gate is then judged by the dry run
-   *  alone, and `gate` and `creatorGate` read 0. */
+  /** Whether the risk-access gate was read before the fill: always for a
+   *  stored offer; for a signed order, when the protocol's preview of its
+   *  fill (#3577) could be read. Where it could not (a deployment without
+   *  that view, or a failed read), the gate is judged by the dry run alone,
+   *  and `gate` and `creatorGate` read 0. */
   riskPreviewed: boolean;
+  /** For a signed order whose gate was read, the pair the protocol gates
+   *  its fill against; null otherwise (a stored offer's pair is resolved by
+   *  the protocol from its id). */
+  riskPair: RiskPair | null;
   state: OfferState;
   preview: AcceptPreview;
   linkedLoanId: bigint;
@@ -139,14 +146,28 @@ export async function readAcceptReview(
     const { accept, ...signed } = await r<SignedFillPreview>((c) => readSignedPreview(c, diamond, order, account));
     return { preview: accept, signed };
   };
+  // The risk-access gate: a stored offer's from its two previews (a failed
+  // read fails the review, as every other figure's does); a signed order's
+  // from its own preview, or none.
+  const readGates = async (): Promise<{ previewed: boolean; gate: number; creatorGate: number; pair: RiskPair | null }> => {
+    if (order === null) {
+      const [gate, creatorGate] = await Promise.all([r<number>((c) => readAcceptGate(c, diamond, id, account)), r<number>((c) => readCreatorGate(c, diamond, id))]);
+      return { previewed: true, gate, creatorGate, pair: null };
+    }
+    const blocks = await r<SignedRiskBlocks>((c) => readSignedRiskBlocks(c, diamond, order, account)).catch(() => null);
+    if (blocks === null) return { previewed: false, gate: 0, creatorGate: 0, pair: null };
+    // The fill re-gates the maker first, so the maker's block is the one it raises.
+    return { previewed: true, gate: blocks.creator !== 0 ? blocks.creator : blocks.acceptor, creatorGate: blocks.creator, pair: blocks.pair };
+  };
   const role = acceptorRole(offer);
   // What this wallet pays: the collateral for a borrower, the principal for
   // a lender. Its token is known from the offer before the preview sizes it.
   const payAsset = role === 'borrower' ? offer.collateralAsset : offer.lendingAsset;
   // A signed order is not stored: it is open until the preview says
-  // otherwise (used, lapsed, cancelled), it is bound to no loan, and the
-  // risk-access gate has no preview for it yet (#3577).
-  const [state, { preview, signed }, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, protocolShareBps, vault, funds, gate, creatorGate, consent, positionFlow] =
+  // otherwise (used, lapsed, cancelled) and it is bound to no loan. Its
+  // risk-access gate has its own preview (#3577); a read that fails leaves
+  // the gate to the dry run, which the review then says.
+  const [state, { preview, signed }, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, protocolShareBps, vault, funds, gates, consent, positionFlow] =
     await Promise.all([
       stored ? r<OfferState>((c) => readOfferState(c, diamond, id)) : Promise.resolve<OfferState>('open'),
       readFillPreview(),
@@ -160,8 +181,7 @@ export async function readAcceptReview(
       role === 'lender' ? r<bigint>((c) => readTreasuryFeeBps(c, diamond)) : Promise.resolve(null),
       r<Hex>((c) => readVault(c, diamond, account)),
       r<WalletFunds>((c) => readWalletFunds(c, payAsset, account, diamond)),
-      stored ? r<number>((c) => readAcceptGate(c, diamond, id, account)) : Promise.resolve(0),
-      stored ? r<number>((c) => readCreatorGate(c, diamond, id)) : Promise.resolve(0),
+      readGates(),
       r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
       !stored ? Promise.resolve<PositionFlowVerdict>('not-bound') : flows ? flows(id) : Promise.resolve<PositionFlowVerdict>('unknown'),
     ]);
@@ -182,7 +202,8 @@ export async function readAcceptReview(
     source,
     offer,
     signed,
-    riskPreviewed: stored,
+    riskPreviewed: gates.previewed,
+    riskPair: gates.pair,
     state,
     preview,
     linkedLoanId,
@@ -196,8 +217,8 @@ export async function readAcceptReview(
     vault,
     funds,
     approvalSteps,
-    gate,
-    creatorGate,
+    gate: gates.gate,
+    creatorGate: gates.creatorGate,
     consent,
     positionFlow,
     values: { principal: principalValue, collateral: collateralValue, unit },
@@ -391,6 +412,7 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
   if (
     a.lendingClass !== b.lendingClass ||
     a.collateralClass !== b.collateralClass ||
+    a.riskPreviewed !== b.riskPreviewed ||
     a.gate !== b.gate ||
     a.creatorGate !== b.creatorGate ||
     a.graceSeconds !== b.graceSeconds ||
