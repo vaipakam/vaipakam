@@ -1455,6 +1455,17 @@
   },
   {
     "type": "error",
+    "name": "NomineeIsAccountWallet",
+    "inputs": [
+      {
+        "name": "nominee",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotDelegateCall",
     "inputs": []
   },

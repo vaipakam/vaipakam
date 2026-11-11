@@ -10,7 +10,7 @@ import {LibPausable} from "./LibPausable.sol";
 
 /// @dev #3379 B2 — the vault's own protected-mode record, as the Diamond reads it.
 interface IVaultProtectionRead {
-    function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner);
+    function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner, bool retired);
     function allowEntry(address destination) external view returns (ProtectionEntry memory);
     function signerEntry(address who) external view returns (ProtectionSigner memory);
     function protectionState()
@@ -221,12 +221,11 @@ library LibProtectedAccount {
         c.vault = _s().userVaipakamVaults[account];
         c.manager = account;
         if (c.vault == address(0)) return c;
-        address owner;
-        (c.enabled, c.locked, c.delay, owner) = IVaultProtectionRead(c.vault).protectionCore();
-        c.manager = owner;
-        // A verified replacement moved the owner record: the account wallet
-        // has lost every right over it, and the new owner manages it.
-        c.retired = owner != account;
+        // The owner record is the manager. `retired` is the vault's one-way
+        // latch, set by the first replacement and never cleared (Codex #3489
+        // r4): once replaced, the account wallet has lost every right over
+        // it for good, whatever the owner record later reads.
+        (c.enabled, c.locked, c.delay, c.manager, c.retired) = IVaultProtectionRead(c.vault).protectionCore();
     }
 
     /// @dev #3379 B2 — a protected-mode read through its host on

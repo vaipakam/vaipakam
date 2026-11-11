@@ -1404,7 +1404,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   refuses a broken checksum, and it refuses, with no override, a look-alike:
   an address whose first three and last three hex digits match one the
   reader already uses (their own wallet, a saved address, a destination, a
-  waiting request, a signer, an approved keeper, the network's own keeper)
+  waiting request, a signer, a wallet asked to be one, an approved keeper,
+  the network's own keeper)
   while the rest differs. Every box checks against that same one list, read
   from the chain at one block, and lets no address be used until all of it
   has been read: a list it could not read is stated, never treated as
@@ -1431,6 +1432,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   each request's wait, readiness and lapse by the chain's clock, and the
   at-most-five limit; a lapsed request still holds a waiting place, so it
   can be cancelled as well as asked for again.
+  A secondary signer is likewise chosen only from the saved wallets that
+  proved control by signing, never an exchange address. Asking a wallet,
+  cancelling the request, making it a signer, asking for its removal,
+  cancelling or carrying out that removal, and switching the co-sign on or
+  off are each one signed transaction through RB-CONFIDENCE; every review
+  states what a signer can do (cancel a waiting change, lock the account,
+  cancel or co-sign a queued payout, remove a destination, with the other
+  signers approve replacing the main wallet) and what it cannot (move
+  anything, open a position, add a destination or signer). The page shows
+  each asked wallet's acceptance and gives the link it opens to accept
+  (`?signer=<account>&chain=<id>`); that page names the account in full and
+  offers to accept only to the asked wallet, connected on that network,
+  while the request waits. A wallet becomes a signer only once it accepted
+  and the delay passed, within one further delay; a lapsed request must be
+  cancelled before the wallet is asked again. A removal waits the delay,
+  and removing the last signer also stops the co-sign, which the review
+  says.
 - **RB-OFFERS-MINE** — the Offers page (OFF-46) lists every offer the
   connected wallet created, from the protocol's own per-creator index
   (which keeps a cancelled id), together with every offer whose position
@@ -1529,6 +1547,31 @@ above. Each resolves here, so a route reviewer needs no private file:
   creator. A return it could not size is measured in the asset the offer
   itself can return, an ERC-20 or an NFT, and one that moved nothing is
   stated as nothing returned.
+- **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
+  page of an open or ended loan offer of a token against token collateral.
+  Read at the offer's own block, it states the limit, when it was set, and whether
+  the guard would refuse a fill now, and why (its own verdict only, never a
+  claim that the offer can be filled): the price moved past the limit
+  (by how much), the pair's hourly price checks are missing, the pair is not
+  calm, or a price cannot be read. A taker sees the same, so a refusal is
+  never a surprise at signing, and a guard that could not be read is said to
+  everyone, never shown as no guard. Only the creator of an open offer may set,
+  change or remove it, from 0.5% to 50%, through one flow keyed by the offer:
+  the review is read at one block (the offer, its guard, the pause), then the
+  protocol's dry run, and a non-creator, an ended or NFT offer, a pause, a
+  limit out of range, removing a guard that is off and the dry run's refusal
+  each stop it by name. The receipt states that a fill is refused while
+  either price moved past the limit since the change in either direction, or
+  while the pair is not calm against its two last hourly checks; that the
+  prices are recorded at the change; that the guard only refuses fills and
+  moves nothing; whether the offer has a guard now, as read (never a claimed
+  history, and an unread guard said as unread), so a fill can still happen
+  until the change lands; and that a change replaces the current guard. The finish card reads the change from the
+  transaction's own event. A change open or in flight keeps its panel, finish
+  card included, even after a cancel clears the offer's terms. Where the
+  network's protocol has no guard yet,
+  the creator is told so and nobody else sees a section. Arming a guard at
+  posting is later work.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

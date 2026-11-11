@@ -726,6 +726,11 @@
         "name": "owner",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "retired",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

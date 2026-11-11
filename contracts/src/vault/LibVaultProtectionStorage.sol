@@ -73,6 +73,11 @@ library LibVaultProtectionStorage {
         // Pending additions per epoch (listed, and at most five of each wait).
         mapping(uint64 => address[]) pendingAllow;
         mapping(uint64 => address[]) pendingSigners;
+        /// @dev Codex #3489 r4 — set by the first finalized replacement and
+        ///      NEVER cleared: the account is retired for good, whatever its
+        ///      owner record later says. The Diamond's protected-mode rules
+        ///      read this, not a comparison of the owner record.
+        bool retired;
     }
 
     function layout() internal pure returns (Layout storage l) {

@@ -2369,6 +2369,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 このセクションは同じブロックで `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（各リクエストとその `maturesAt`）、`getProtectedSigners`、`paused`、および `getPendingPayoutIds` から受取人ごとの待機中の支払いを読み取ります。ブロック時刻にその後の経過秒数を加えた時刻で、リクエストは `maturesAt` より前は待機中、`maturesAt + delay` までは準備完了、その後は失効です。四つの変更は `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted`、`removeAllowlisted` で、いずれも `(account, destination)` を取ります。確認画面は同じブロックで読み取られ、facet が拒否するものをウォレットを開く前に拒否します。一時停止やロック（追加と有効化の場合）、自分のウォレット、すでに有効または待機中のアドレス、すでに5つの支払先または5つのリクエスト、フラグ付きのアドレス、まだ満期でないか失効したリクエストです。各呼び出しはシミュレーションされ、ウォレットを開く直前に再確認され、それ自身の `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded`、`AllowlistRemoved` ログで計測されます。削除では、それによって発生した `PayoutCancelled` ログも数えます。
 
+<a id="protection-signers"></a>
+
+### セカンダリ署名者
+
+このセクションは1つのブロックで、`getProtectedAccount`(`requireCosign` と `pendingCosignOffAt` を含む)、各署名者の `removeAt` を読む `getSignerChange` 付きの `getProtectedSigners`、`getPendingSignerAdditions`(依頼された各ウォレットとその `maturesAt`、`accepted`)、`paused` を読みます。変更は `addSigner`、`cancelAddSigner`、`finalizeAddSigner`、`requestRemoveSigner`、`cancelRemoveSigner`、`finalizeRemoveSigner`(それぞれ `(account, signer)`)、依頼されたウォレットが承諾リンク(`/protection?signer=<account>&chain=<id>`)から送る `acceptSignerRole(account)`、そして `setRequireCosign(account, on)` です。レビューは facet が拒否するものをウォレットより先に拒否します。一時停止(取り消しを除く)、ロックまたは新しいメインウォレットのクールダウン(依頼、削除、共同署名のオフ)、自分のウォレット、すでに署名者または依頼済みのウォレット、取り消していない失効した依頼、すでに5人の署名者または5件の依頼、承諾していないウォレット、終わっていない待機または過ぎた期間、署名者のいない共同署名です。各呼び出しは試行実行され、ウォレットが開く直前にもう一度確認され、自身の `SignerAddRequested`、`SignerAccepted`、`SignerAddCancelled`、`SignerAdded`、`SignerRemoveRequested`、`SignerRemoveCancelled`、`SignerRemoved`、`CosignRequirementSet`、`SettingChangeRequested` ログから測定されます。待機中の依頼ウォレットはアドレスチェックの既知アドレス一覧に加わります。
+
 <a id="my-offers"></a>
 
 ### あなたのオファー
@@ -2392,6 +2398,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 ### オファーを取り消す
 
 確認画面は1つのブロックで `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` と作成者の `getProtectedAccount` を読み、`OfferCancelFacet.cancelOffer(id)` を試行実行します。ファセットは作成者のマネージャーにはいつでも、`expiresAt` を過ぎれば誰にでも取消を認めます。`OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` を拒否し、`amountFilled == 0` のオファーが300秒未満で期限内なら `CancelCooldownActive` を返し、`whenNotPaused` です。返却額はファセット自身の分岐で算出します。ERC-20の貸付オファーは貸付資産の `(amountMax または amount) - amountFilled`、NFTの貸付オファーはそのトークンまたはERC-1155の数量、借入リクエストは未使用の担保 `(collateralAmountMax または collateralAmount) - collateralAmountFilled` またはそのNFT（`refinanceCarryOver` で担保がローンに残る場合はなし）、レンタルリクエストは `amount × durationDays` に `rentalBufferBpsAtCreate` のバッファを加えた額です。`getOfferLinkedLoanId` でローンに結びつくオファーや、記録されたバッファがゼロのレンタルリクエスト（その場合プロトコルは現行率を使う）は署名前に算出しません。返却はすべてボールト出金を通じて作成者のボールトから出るため、保護モードではキューに入るか、ロック中はボールトに留まります。ポジショントークンは廃止されます。完了カードは `OfferCanceled(offerId, creator)`、作成者へのプロトコルの支払い記録、作成者へのトークン自身の送金を読みます。
+
+<a id="offers-price-guard"></a>
+
+### 価格変動ガード
+
+ERC-20 担保に対する ERC-20 の開いているオファーでは、作成者がオファーのページから価格変動ガードを設定・変更・解除できます。記録時にプロトコルは両トークンのオラクル価格を記録し、その後は、担保対元本のレートがその水準から上限(0.5%〜50%、どちら向きでも)を超えて動いている間、ペアが直近 2 回の毎時価格チェックのいずれかに対して平穏の範囲を超えて動いている間、または現在の価格やそれらのチェックのいずれかが欠けている間、すべての受け入れが拒否されます。チェックはローン作成時に行われるため、直接の受け入れもマッチングも対象になり、ページは誰に対しても上限、レートの変動幅、今受けられるかどうかを示します。毎時チェックは誰でも書き込めます。プロトコルのキーパーは、開いているガード付きオファーの資産についてそれを書き込む想定です。両トークンについてそれが揃うまで、誰もオファーを受けられません。出したオファーに設定したガードは、記録されたブロックから保護し、それ以前は保護しません。変更すると価格が記録し直されます。何も動かさず、条件も変えません。
 
 <a id="risk-access"></a>
 

@@ -176,6 +176,10 @@ contract VaultProtection {
     error NotReady(uint64 readyAt);
     error Expired(uint64 expiredAt);
     error BadNominee(address nominee);
+    /// @dev Codex #3489 r4 — a replacement may not name the account's own
+    ///      wallet: neither its creation owner (which would undo the
+    ///      retirement) nor the wallet that holds it now.
+    error NomineeIsAccountWallet(address nominee);
     error NotEnoughSigners(uint256 have, uint256 need);
     error AlreadyApproved();
     error NoProposal();
@@ -530,7 +534,10 @@ contract VaultProtection {
             if (bySigner && l.signers.length < MIN_RECOVERY_SIGNERS) {
                 revert NotEnoughSigners(l.signers.length, MIN_RECOVERY_SIGNERS);
             }
-            if (nominee == address(0) || nominee == owner || nominee == address(this) || l.signer[nominee].active) {
+            if (nominee == owner || nominee == IProtectedVaultSelf(address(this)).vaultCreationOwner()) {
+                revert NomineeIsAccountWallet(nominee);
+            }
+            if (nominee == address(0) || nominee == address(this) || l.signer[nominee].active) {
                 revert BadNominee(nominee);
             }
             l.nominee = nominee;
@@ -584,6 +591,7 @@ contract VaultProtection {
         _dropPending(l);
         while (l.allowlist.length != 0) _dropAllow(l, l.allowlist[l.allowlist.length - 1]);
         l.cooldownUntil = _later(l);
+        l.retired = true; // one-way (Codex #3489 r4)
         IProtectedVaultSelf(address(this)).setOwnerFromProtection(nominee);
         emit PrimaryReplaced(previous, nominee, l.cooldownUntil);
     }

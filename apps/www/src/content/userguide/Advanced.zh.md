@@ -2102,6 +2102,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 本部分在同一区块读取 `getProtectedAccount`、`getAllowlist`、`getPendingAllowlistAdditions`（每个请求及其 `maturesAt`）、`getProtectedSigners`、`paused`，以及从 `getPendingPayoutIds` 得出的按收款方排队的付款。按区块时间加上此后经过的秒数计算，请求在 `maturesAt` 之前处于等待，直到 `maturesAt + delay` 为就绪，此后失效。四种更改是 `addAllowlisted`、`cancelAddAllowlisted`、`finalizeAddAllowlisted` 和 `removeAllowlisted`，参数均为 `(account, destination)`。审核在同一区块读取，并在打开钱包前拒绝 facet 会拒绝的情形：暂停或锁定（添加和激活时）、您自己的钱包、已有效或等待中的地址、已有五个目的地或五个请求、被标记的地址、尚未到期或已失效的请求。每次调用都会先模拟执行，在打开钱包前再核对一次，并以其自身的 `AllowlistAddRequested`、`AllowlistAddCancelled`、`AllowlistAdded` 或 `AllowlistRemoved` 日志计量；移除还会统计它引发的 `PayoutCancelled` 日志。
 
+<a id="protection-signers"></a>
+
+### 辅助签名人
+
+本节在同一区块读取 `getProtectedAccount`(含 `requireCosign` 和 `pendingCosignOffAt`)、`getProtectedSigners` 及用于每位签名人 `removeAt` 的 `getSignerChange`、`getPendingSignerAdditions`(每个被请求的钱包及其 `maturesAt` 和 `accepted`)以及 `paused`。更改包括 `addSigner`、`cancelAddSigner`、`finalizeAddSigner`、`requestRemoveSigner`、`cancelRemoveSigner` 和 `finalizeRemoveSigner`,均接收 `(account, signer)`;由被请求的钱包从接受链接(`/protection?signer=<account>&chain=<id>`)发送的 `acceptSignerRole(account)`;以及 `setRequireCosign(account, on)`。审阅会在钱包之前拒绝 facet 将会拒绝的情况:暂停(取消除外)、锁定或新主钱包的冷却期(请求、移除和关闭共同签名时)、您自己的钱包、已是签名人或已被请求的钱包、尚未取消的失效请求、已有五位签名人或五个请求、未接受的钱包、未结束的等待或已过的期限,以及没有签名人时的共同签名。每次调用都会先模拟执行,在钱包打开前再次确认,并从其自身的 `SignerAddRequested`、`SignerAccepted`、`SignerAddCancelled`、`SignerAdded`、`SignerRemoveRequested`、`SignerRemoveCancelled`、`SignerRemoved`、`CosignRequirementSet` 或 `SettingChangeRequested` 日志中计量。等待中的被请求钱包会加入地址检查的已知地址列表。
+
 <a id="my-offers"></a>
 
 ### 你的报价
@@ -2125,6 +2131,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 ### 取消报价
 
 确认页在同一区块读取 `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` 以及创建者的 `getProtectedAccount`，然后试运行 `OfferCancelFacet.cancelOffer(id)`。该切面允许创建者的管理者随时取消，`expiresAt` 过后任何人都可取消；它会以 `OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` 拒绝，并在 `amountFilled == 0` 的报价创建不足 300 秒且未过期时以 `CancelCooldownActive` 拒绝，且受 `whenNotPaused` 限制。退回数额按切面自身的分支计算：ERC-20 借出报价退回借出资产的 `(amountMax 或 amount) - amountFilled`；NFT 借出报价退回其代币或 ERC-1155 数量；借款请求退回未使用的抵押品 `(collateralAmountMax 或 collateralAmount) - collateralAmountFilled` 或其 NFT，当 `refinanceCarryOver` 把抵押品留在贷款中时不退回；租赁请求退回 `amount × durationDays` 加上按 `rentalBufferBpsAtCreate` 计算的缓冲金。通过 `getOfferLinkedLoanId` 与贷款绑定的报价，或记录的缓冲率为零的租赁请求（此时协议使用当前费率），在签名前不计算。所有退回都经由金库提取离开创建者的金库，因此保护模式会将其排入队列，或在账户锁定期间留在金库中。仓位代币被注销。完成卡片读取 `OfferCanceled(offerId, creator)`、协议给创建者的付款记录，以及代币本身向创建者的转账。
+
+<a id="offers-price-guard"></a>
+
+### 价格变动保护
+
+对于以 ERC-20 为抵押、出借 ERC-20 的开放报价，创建者可以在报价页面设置、修改或移除价格变动保护。记录时，协议会记下两个代币的预言机价格；此后，只要抵押对本金的比率偏离该水平超过上限（0.5% 到 50%，任一方向），只要该交易对相对最近两次每小时价格检查中的任一次超出平稳界限，或者缺少当前价格或其中一次检查，每一次接受都会被拒绝。检查在创建贷款时进行，因此直接接受和撮合都在其中，页面向所有人显示上限、比率变动了多少以及现在是否允许接受。任何人都可以写入每小时检查，协议的 keeper 按设计会为开放的受保护报价的资产写入它们；在两个代币都有检查之前，任何人都无法接受该报价。对已发布报价设置的保护从记录所在的区块起生效，之前不生效；修改会重新记录价格。它不转移任何资产，也不改变任何条款。
 
 <a id="risk-access"></a>
 

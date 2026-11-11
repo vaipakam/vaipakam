@@ -2652,7 +2652,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](45);
+        s = new bytes4[](46);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -2705,6 +2705,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[42] = TreasuryFacet.setKeeperRewardEnabled.selector;
         s[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
         s[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
+        s[45] = TreasuryFacet.getBuybackTopUpHeadroom.selector; // #908
         // #687-C: former s[56] getKeeperRewardTwapMaxAgeSec relocated to s[23].
     }
 

@@ -1013,15 +1013,20 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     event KeeperRewardTopUpTargetSet(uint256 target);
 
     /// @notice Admin: top-up target for the reward emissions budget.
-    ///         Buyback proceeds cascade up to this floor first; the
-    ///         excess flows to keepers + staking. Pass `0` to disable
-    ///         the reward step entirely (cascade skips straight to
-    ///         keepers).
+    ///         Buyback proceeds cascade up to this target first; the
+    ///         excess flows to the keeper step, and a delivery past both
+    ///         targets reverts. Pass `0` to disable the reward step
+    ///         (cascade skips straight to keepers).
+    /// @dev    #908 — refused (`BuybackHeadroomShort`) when the lowered
+    ///         target would leave less top-up headroom than the pending
+    ///         buyback orders' VPFI floors hold.
     function setRewardEmissionsTopUpTarget(uint256 target)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibVaipakam.storageSlot().cfgRewardEmissionsTopUpTarget = target;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.cfgRewardEmissionsTopUpTarget = target;
+        LibTreasuryBuyback.requireHeadroomHeld(s);
         emit RewardEmissionsTopUpTargetSet(target);
     }
 
@@ -1036,11 +1041,15 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @notice Admin: top-up target for the keeper reward budget.
     ///         Second step of the priority cascade. Pass `0` to
     ///         disable the keeper step entirely.
+    /// @dev    #908 — refused like {setRewardEmissionsTopUpTarget} when it
+    ///         would leave pending buyback floors without headroom.
     function setKeeperRewardTopUpTarget(uint256 target)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibVaipakam.storageSlot().cfgKeeperRewardTopUpTarget = target;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.cfgKeeperRewardTopUpTarget = target;
+        LibTreasuryBuyback.requireHeadroomHeld(s);
         emit KeeperRewardTopUpTargetSet(target);
     }
 
@@ -1050,6 +1059,21 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
 
     function getKeeperRewardBudget() external view returns (uint256) {
         return LibVaipakam.storageSlot().keeperRewardBudget;
+    }
+
+    /// @notice #908 — the buyback top-up headroom: `headroom` is what the
+    ///         reward-emissions and keeper steps can still absorb (the sum
+    ///         of each target's gap over its budget), `held` the part kept
+    ///         for the VPFI floors of pending buyback orders. A new commit's
+    ///         `minVpfiOut` must fit in `headroom - held`.
+    function getBuybackTopUpHeadroom()
+        external
+        view
+        returns (uint256 headroom, uint256 held)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        headroom = LibTreasuryBuyback.topUpHeadroom(s);
+        held = s.buybackVpfiFloorReserved;
     }
 
     // ─── T-087 Sub 3 add-on #474 — keeper VPFI rewards config ───────

@@ -1165,6 +1165,18 @@ Buyback dormancy and fee-converted VPFI routing:
   more VPFI than the configured reward-emissions and keeper-reward top-up targets
   can absorb, the fill should revert rather than credit an unspendable staking
   budget
+- because that revert would let one order's fill strand another order's tokens,
+  the room under the two top-up targets is reserved when an order is placed
+  (#908): an order may be placed only if its guaranteed minimum VPFI fits in the
+  room left after every open order's remaining minimum, each fill releases the
+  part of its own minimum it delivered, an expired order releases what it still
+  held, and governance may not lower a target below what open orders hold. A
+  fill above its order's minimum can still be refused if the extra does not
+  fit, but it can never take room another open order was promised. Each order
+  releases only the room it recorded when it was placed, never a figure worked
+  out again from its terms, so an order placed before reservations existed (on
+  a deployment upgraded in place) holds nothing, releases nothing, and settles
+  only from free room
 - reward-emissions and keeper-reward budgets may degrade gracefully to zero when
   their top-up targets are unset
 - reward-emissions budget credit is intended to offset fresh VPFI minting once

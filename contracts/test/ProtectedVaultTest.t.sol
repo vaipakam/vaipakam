@@ -164,11 +164,11 @@ contract ProtectedVaultTest is Test {
     }
 
     function _locked() internal returns (bool locked) {
-        (, locked,,) = _v().protectionCore();
+        (, locked,,,) = _v().protectionCore();
     }
 
     function _enabled() internal returns (bool enabled) {
-        (enabled,,,) = _v().protectionCore();
+        (enabled,,,,) = _v().protectionCore();
     }
 
     /// @dev A direct vault write `key` makes, expected to revert with `err`.
@@ -1425,7 +1425,15 @@ contract ProtectedVaultTest is Test {
         P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
         uint256 id = _queue(1 ether, user);
         vm.warp(vm.getBlockTimestamp() + DELAY);
+        // Before anyone applies the platform side, the stored flag is still
+        // set: every reader uses the effective rule, so nothing waits on a
+        // co-signature nobody can give.
+        assertFalse(_pay().payoutNeedsCosign(id), "the view: no co-sign needed");
+        (, bool inForce,) = _prot().getProtection(user);
+        assertFalse(inForce, "reported as it binds");
+        uint256 before = token.balanceOf(user);
         _pay().releasePayout(id); // no co-sign: no signer is left to give one
+        assertEq(token.balanceOf(user) - before, 1 ether, "paid without a co-sign");
         _prot().applyProtection(user);
         (, bool requireCosign,) = _prot().getProtection(user);
         assertFalse(requireCosign, "cleared on apply");
@@ -1462,6 +1470,57 @@ contract ProtectedVaultTest is Test {
         assertFalse(on, "reported as it binds");
         _pay().releasePayout(toUser);
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
+    }
+
+    /// @dev Codex #3489 r4 — a replacement may not name the account's own
+    ///      wallet: the creation owner (which would undo the retirement) or
+    ///      the wallet holding it now.
+    function testAReplacementBackToTheAccountsOwnWalletIsRefused() public {
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), user, P.direct(nominee))));
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(nominee))));
+    }
+
+    /// @dev Codex #3489 r4 — after A→B→C the account stays retired, protected
+    ///      and routed through its vault, even once switched off.
+    function testRetirementIsPermanentAcrossReplacementsAndASwitchOff() public {
+        _deposit20(10 ether);
+        _enable();
+        address third = makeAddr("third");
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        P.propose(address(diamond), user, nominee, third);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        P.requestDisable(address(diamond), user, third);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeSettings(address(diamond), user);
+        (bool on,,,, bool retired) = P.vaultOf(address(diamond), user).protectionCore();
+        assertFalse(on, "fixture: switched off");
+        assertTrue(retired, "still retired");
+        assertTrue(_prot().isProtectionOn(user), "still governed");
+        assertEq(_prot().protectionManagerOf(user), third, "managed by the latest wallet");
+        vm.prank(user);
+        vm.expectRevert();
+        _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, user);
+        vm.prank(third);
+        uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, third);
+        assertEq(token.balanceOf(third), 0, "queued through the vault");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(third), 1 ether, "paid to the latest wallet");
     }
 
     /// @dev Codex #3489 r3 — a row the release would cancel (its destination

@@ -873,9 +873,15 @@ contract VaipakamVaultImplementation is
 
     /// @notice The four facts every Diamond read of protected mode needs, in
     ///         one call: on, locked, the delay, and the owner record.
-    function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner) {
+    ///      `retired` is the one-way latch the first replacement sets (Codex
+    ///      #3489 r4), never derived from the owner record.
+    function protectionCore()
+        external
+        view
+        returns (bool enabled, bool locked, uint32 delay, address owner, bool retired)
+    {
         LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
-        return (l.enabled, l.locked, l.delay, ownerWallet);
+        return (l.enabled, l.locked, l.delay, ownerWallet, l.retired);
     }
 
     /// @notice One allowlist entry (#3415 `verified` included).

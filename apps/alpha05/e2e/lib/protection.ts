@@ -72,3 +72,20 @@ export async function allowlistOf(sc: ScenarioChain, account: Hex): Promise<read
   const s = (await sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'protectionState' })) as VaultProtectionState;
   return s[6] as readonly Hex[];
 }
+
+/** The account's active secondary signers, as its vault holds them. */
+export async function signersOf(sc: ScenarioChain, account: Hex): Promise<readonly Hex[]> {
+  const vault = await vaultOf(sc, account);
+  if (ZERO.test(vault)) return [];
+  const s = (await sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'protectionState' })) as VaultProtectionState;
+  return s[5] as readonly Hex[];
+}
+
+/** The wallets asked to become a signer and still waiting (the vault's
+ *  current list). */
+export async function pendingSignersOf(sc: ScenarioChain, account: Hex): Promise<readonly Hex[]> {
+  const vault = await vaultOf(sc, account);
+  if (ZERO.test(vault)) return [];
+  const [, signers] = (await sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'pendingAdditions' })) as readonly [readonly Hex[], readonly Hex[]];
+  return signers;
+}

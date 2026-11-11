@@ -2265,6 +2265,12 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 يقرأ القسم، في كتلة واحدة، `getProtectedAccount` و`getAllowlist` و`getPendingAllowlistAdditions` (كل طلب مع `maturesAt` الخاص به) و`getProtectedSigners` و`paused`، والدفعات المنتظرة لكل مستلم من `getPendingPayoutIds`. بحسب وقت الكتلة مضافًا إليه الثواني المنقضية، يكون الطلب منتظرًا قبل `maturesAt`، وجاهزًا حتى `maturesAt + delay`، ومنتهيًا بعد ذلك. التغييرات الأربعة هي `addAllowlisted` و`cancelAddAllowlisted` و`finalizeAddAllowlisted` و`removeAllowlisted`، وكل منها يأخذ `(account, destination)`. تُقرأ المراجعة في كتلة واحدة وترفض قبل المحفظة ما سيرفضه الـ facet: إيقاف مؤقت أو قفل (عند الإضافة والتفعيل)، ومحفظتك نفسها، وعنوان نشط أو منتظر أصلًا، ووجود خمس وجهات أو خمسة طلبات، وعنوان مُعلَّم، وطلب لم ينضج بعد أو انتهى. تُحاكى كل عملية استدعاء، ويُعاد التحقق قبيل فتح المحفظة، وتُقاس من سجلها الخاص `AllowlistAddRequested` أو `AllowlistAddCancelled` أو `AllowlistAdded` أو `AllowlistRemoved`؛ وتعدّ الإزالة أيضًا سجلات `PayoutCancelled` التي سببتها.
 
+<a id="protection-signers"></a>
+
+### الموقّعون الثانويون
+
+يقرأ هذا القسم، في كتلة واحدة، `getProtectedAccount` (مع `requireCosign` و`pendingCosignOffAt`)، و`getProtectedSigners` مع `getSignerChange` لقيمة `removeAt` لكل موقّع، و`getPendingSignerAdditions` (كل محفظة مطلوبة مع `maturesAt` و`accepted`)، و`paused`. التغييرات هي `addSigner` و`cancelAddSigner` و`finalizeAddSigner` و`requestRemoveSigner` و`cancelRemoveSigner` و`finalizeRemoveSigner`، وكل منها يأخذ `(account, signer)`؛ و`acceptSignerRole(account)` الذي ترسله المحفظة المطلوبة من رابط القبول (`/protection?signer=<account>&chain=<id>`)؛ و`setRequireCosign(account, on)`. ترفض المراجعة قبل المحفظة ما سترفضه الـ facet: الإيقاف المؤقت (إلا للإلغاء)، أو القفل أو فترة تهدئة محفظة رئيسية جديدة (عند الطلب والإزالة وإيقاف التوقيع المشترك)، ومحفظتك نفسها، ومحفظة هي موقّع بالفعل أو مطلوبة بالفعل، وطلبًا منتهيًا لم يُلغَ بعد، ووجود خمسة موقّعين أو خمسة طلبات بالفعل، ومحفظة لم تقبل، وانتظارًا لم ينتهِ أو نافذة انقضت، وتوقيعًا مشتركًا بلا موقّع. تُجرَّب كل استدعاء أولًا، ويُسأل عنه مجددًا قبل فتح المحفظة مباشرة، ويُقاس من سجله الخاص `SignerAddRequested` أو `SignerAccepted` أو `SignerAddCancelled` أو `SignerAdded` أو `SignerRemoveRequested` أو `SignerRemoveCancelled` أو `SignerRemoved` أو `CosignRequirementSet` أو `SettingChangeRequested`. تنضم المحافظ المطلوبة قيد الانتظار إلى قائمة العناوين المعروفة في فحص العناوين.
+
 <a id="my-offers"></a>
 
 ### عروضك
@@ -2288,6 +2294,12 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 ### إلغاء عرض
 
 تقرأ المراجعة، في كتلة واحدة، `getOffer(id)` و`getOffersWithState([id])` و`getOfferLinkedLoanId(id)` و`paused()` و`getProtectedAccount` الخاص بالمنشئ، ثم تُجري تشغيلًا تجريبيًا لـ`OfferCancelFacet.cancelOffer(id)`. يسمح الوجه لمدير المنشئ بالإلغاء في أي وقت ولأي شخص بعد مرور `expiresAt`؛ ويرفض `OfferAlreadyAccepted` و`OfferAlreadyConsumedBySale` و`CancelCooldownActive` ما دام عرض بقيمة `amountFilled == 0` أحدث من 300 ثانية وغير منتهٍ، وهو `whenNotPaused`. يُقدَّر المُسترَد من فروع الوجه نفسها: عرض إقراض ERC-20 يُعيد `(amountMax أو amount) - amountFilled` من الأصل المُقرَض؛ وعرض إقراض NFT رمزه، أو كمية ERC-1155؛ وطلب الاقتراض ضمانه غير المستخدم `(collateralAmountMax أو collateralAmount) - collateralAmountFilled` أو رمزه، ولا شيء حين يُبقي `refinanceCarryOver` الضمان في القرض؛ وطلب الاستئجار `amount × durationDays` مع الهامش بمعدل `rentalBufferBpsAtCreate`. العرض المرتبط بقرض عبر `getOfferLinkedLoanId`، أو طلب الاستئجار الذي سُجّل هامشه صفرًا (فيستخدم البروتوكول معدله الحالي)، لا يُقدَّر قبل التوقيع. يغادر كل مُسترَد خزنة المنشئ عبر سحب الخزنة، فيضعه الوضع المحمي في الطابور أو يُبقيه في الخزنة ما دام الحساب مقفلًا. يُسحب رمز المركز. تقرأ بطاقة الإنهاء `OfferCanceled(offerId, creator)` وسجل الدفع لدى البروتوكول للمنشئ وتحويل الرمز نفسه إلى المنشئ.
+
+<a id="offers-price-guard"></a>
+
+### حماية من تحرّك السعر
+
+في عرض مفتوح لرمز ERC-20 مقابل ضمان ERC-20، يمكن لمنشئه وضع حماية من تحرّك السعر أو تغييرها أو إزالتها من صفحة العرض. عند تسجيلها يدوّن البروتوكول أسعار أوراكل الرمزين؛ وبعد ذلك يُرفض كل أخذ ما دامت نسبة الضمان إلى الأصل قد ابتعدت عن ذلك المستوى أكثر من الحد (من 0.5% إلى 50%، في أي اتجاه)، أو ما دام الزوج قد تجاوز حد الهدوء مقارنة بأيٍّ من آخر فحصين ساعيين للسعر، أو ما دام سعر حالي أو أحد هذين الفحصين مفقودًا. يجري الفحص عند إنشاء القرض، فيشمل الأخذ المباشر والمطابقة معًا، وتعرض الصفحة للجميع الحد ومقدار تحرك النسبة وما إذا كان الأخذ مسموحًا الآن. يمكن لأي أحد كتابة الفحوص الساعية، ومن المفترض أن يكتبها حارس البروتوكول لأصول العروض المحمية المفتوحة؛ وإلى أن تتوفر للرمزين لا يستطيع أحد أخذ العرض. الحماية الموضوعة على عرض منشور تحمي من الكتلة التي تُسجَّل فيها لا قبلها؛ وتغييرها يعيد تسجيل الأسعار. لا تنقل شيئًا ولا تغيّر أي شرط.
 
 <a id="risk-access"></a>
 

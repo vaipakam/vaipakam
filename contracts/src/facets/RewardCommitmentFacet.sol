@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibCommitmentReport} from "../libraries/LibCommitmentReport.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -78,7 +79,12 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 dayId,
         uint8 side,
         uint256[] calldata entryIds
-    ) external onlyRole(LibAccessControl.KEEPER_ROLE) {
+    ) external {
+        // #1638 — KEEPER_ROLE, and the global keeper pause is off. A paused
+        // batch reverts and the keeper resubmits after the pause lifts: the
+        // entry cursor has not moved, so nothing is lost, and the day's
+        // remittance waits on the report (delays, never zeroes).
+        LibAuth.requireActiveKeeper();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
         // Enum bounds-check reverts a side outside {0,1}.
