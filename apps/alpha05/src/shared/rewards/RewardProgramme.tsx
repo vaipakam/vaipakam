@@ -3,21 +3,17 @@ import { useMode } from '../../app/ModeContext';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { FullAddress } from '../address/AddressEntry';
 import { selectorOf, useCapabilities } from '../capability/CapabilityContext';
-import { readVpfiToken } from '../claims/rewards';
 import { useCopy } from '../copy/useCopy';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import { WhyLink } from '../help/WhyLink';
-import { useChainRead } from '../reads/chainRead';
 import { usePosture } from '../reads/posture';
 import { tokenAmount, useTokenMeta } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
-import { formatFigureText, formatUtc } from '../ui/format';
+import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
 import { OwnStamp } from '../ui/OwnStamp';
 import { useNow } from '../ui/useNow';
 import { PROGRAMME_SIGNATURES, programmeHeadline, readProgramme, type ProgrammeFact } from './programme';
-
-const ZERO = '0x0000000000000000000000000000000000000000';
 
 /**
  * RW-43, RW-44 — whether the reward programme runs on the wallet's network,
@@ -44,14 +40,16 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
   const nowSec = Math.floor(useNow() / 1000);
   const prog = useOwnRead(['rewards', 'programme', diamond], (c) => readProgramme(c, diamond));
   const posture = usePosture(diamond);
-  const tokenRead = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { immutable: true });
-  const token = tokenRead.data && tokenRead.data.toLowerCase() !== ZERO ? tokenRead.data : null;
+  // Amounts are formatted in the token read in the same snapshot, so a token
+  // set or rotated while the page is open never formats new figures with an
+  // old token's decimals.
+  const token = prog.data?.token ?? null;
   const meta = useTokenMeta(token ? [token] : []).data ?? null;
 
   const name = chain.name;
   const networkName = (id: number) => getSupportedChain(id)?.name ?? format('rewardsProgramme.network', { id: String(id) });
-  const vpfi = (v: bigint) => (token ? tokenAmount(v, token, meta, format) : `${formatFigureText(v, 18)} VPFI`);
-  const routed = (fact: ProgrammeFact) => caps?.routedSelectors?.has(selectorOf(PROGRAMME_SIGNATURES[fact])) !== false;
+  const vpfi = (v: bigint) => (token ? tokenAmount(v, token, meta, format) : format('rewardsProgramme.baseUnits', { amount: v.toString() }));
+  const routed = (fact: ProgrammeFact) => PROGRAMME_SIGNATURES[fact].every((sig) => caps?.routedSelectors?.has(selectorOf(sig)) !== false);
   const missing = (fact: ProgrammeFact): ReactNode => (
     <span data-fact-missing={routed(fact) ? 'unread' : 'unrouted'}>{text(routed(fact) ? 'rewardsProgramme.unread' : 'rewardsProgramme.unrouted')}</span>
   );
@@ -149,6 +147,12 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
             <dt className="tier-b">{text('rewardsProgramme.factFresh')}</dt>
             <dd className="value-amount" data-testid="rewards-programme-fresh">
               {r.funding === null ? missing('funding') : r.funding.noToken ? text('rewardsProgramme.noToken') : vpfi(r.funding.fresh)}
+              {r.funding !== null && r.funding.held > r.funding.fresh && (
+                <span className="tier-b" data-testid="rewards-programme-undelivered">
+                  {' '}
+                  {format('rewardsProgramme.undelivered', { held: vpfi(r.funding.held) })}
+                </span>
+              )}
             </dd>
             <dt className="tier-b">{text('rewardsProgramme.factRecycled')}</dt>
             <dd className="value-amount" data-testid="rewards-programme-recycled">

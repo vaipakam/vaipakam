@@ -9,9 +9,10 @@ function read(over: Partial<ProgrammeRead> = {}): ProgrammeRead {
     role: 'canonical',
     retirement: { retired: false, returnChainId: 0, returnDeployment: '0x0000000000000000000000000000000000000000', returned: 0n },
     baseChainId: 84532,
+    token: '0x00000000000000000000000000000000000000aa',
     custodyActivated: true,
     horizonDays: 0,
-    funding: { fresh: 10n, recycled: 0n, noToken: false },
+    funding: { fresh: 10n, held: 10n, recycled: 0n, noToken: false },
     blockNumber: 1n,
     chainTime: NOW,
     ...over,
@@ -28,13 +29,21 @@ describe('roleOf', () => {
 describe('programmeHeadline', () => {
   it('is live only when launched, in a paying role and funded', () => {
     expect(programmeHeadline(read())).toEqual({ kind: 'live' });
-    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 5n, noToken: false } }))).toEqual({ kind: 'live' });
+    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 5n, held: 0n, noToken: false } }))).toEqual({ kind: 'live' });
     expect(programmeHeadline(read({ role: 'unconfigured' }))).toEqual({ kind: 'live' });
   });
 
   it('says nothing is held to pay when both sources are empty', () => {
-    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, noToken: true } }))).toEqual({ kind: 'unfunded', mirror: false });
-    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, noToken: false } }))).toEqual({ kind: 'unfunded', mirror: true });
+    expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: true } }))).toEqual({ kind: 'unfunded', mirror: false });
+    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: false } }))).toEqual({
+      kind: 'unfunded',
+      mirror: true,
+    });
+    // VPFI held but never delivered for rewards cannot pay a claim.
+    expect(programmeHeadline(read({ role: 'mirror', funding: { fresh: 0n, recycled: 0n, held: 50n, noToken: false } }))).toEqual({
+      kind: 'unfunded',
+      mirror: true,
+    });
   });
 
   it('states a missing or future start before funding', () => {

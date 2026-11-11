@@ -1921,6 +1921,8 @@ export const copy = {
     factFresh: B('VPFI delivered for rewards, ready to pay now'),
     factRecycled: B('VPFI recycled from fees, ready to pay now'),
     noToken: B('None: no VPFI token is set on this network.'),
+    undelivered: B('{{held}} is held, but a claim pays only what was delivered for rewards.'),
+    baseUnits: B('{{amount}} in the smallest units of a VPFI token that could not be read'),
     factCustody: B('Where reward VPFI is held'),
     custodyOn: B('In a separate reward custody contract, apart from the protocol’s own balance.'),
     custodyOff: B('In the protocol’s own balance; the separate reward custody is not switched on here.'),

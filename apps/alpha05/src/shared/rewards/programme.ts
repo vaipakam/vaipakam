@@ -11,7 +11,14 @@
  * paid from fees already received, never yield (RL-6).
  */
 import type { Abi, Hex, PublicClient } from 'viem';
-import { ConfigFacetABI, InteractionRewardsLensFacetABI, RewardCustodyFacetABI, RewardReporterFacetABI, VPFITokenFacetABI } from '@vaipakam/contracts/abis';
+import {
+  ConfigFacetABI,
+  InteractionRewardsLensFacetABI,
+  RewardCustodyFacetABI,
+  RewardRemittanceLensFacetABI,
+  RewardReporterFacetABI,
+  VPFITokenFacetABI,
+} from '@vaipakam/contracts/abis';
 import { answerOrNull } from '../reads/answer';
 
 const LENS = InteractionRewardsLensFacetABI as Abi;
@@ -19,17 +26,18 @@ const REPORTER = RewardReporterFacetABI as Abi;
 const CUSTODY = RewardCustodyFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
 const VPFI_TOKEN = VPFITokenFacetABI as Abi;
+const REMITTANCE_LENS = RewardRemittanceLensFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
-/** The views this card reads, by signature, so a missing route is stated. */
+/** The views each fact reads, by signature, so a missing route is stated. */
 export const PROGRAMME_SIGNATURES = {
-  launch: 'getInteractionLaunchTimestamp()',
-  role: 'getRewardRole()',
-  retirement: 'getRewardChainRetirement()',
-  reporter: 'getRewardReporterConfig()',
-  custody: 'rewardCustodyActivated()',
-  horizon: 'getRewardClaimHorizonDays()',
-  funding: 'getRewardReservations()',
+  launch: ['getInteractionLaunchTimestamp()'],
+  role: ['getRewardRole()'],
+  retirement: ['getRewardChainRetirement()'],
+  reporter: ['getRewardReporterConfig()'],
+  custody: ['rewardCustodyActivated()'],
+  horizon: ['getRewardClaimHorizonDays()'],
+  funding: ['getVPFIToken()', 'getRewardReservations()', 'getDeliveredFreshBound()'],
 } as const;
 
 export type ProgrammeFact = keyof typeof PROGRAMME_SIGNATURES;
@@ -62,10 +70,17 @@ export interface ProgrammeRead {
   custodyActivated: boolean | null;
   /** The claim horizon in days; 0 when off. */
   horizonDays: number | null;
-  /** VPFI a reward settlement may draw now, net of what is reserved:
-   *  delivered (fresh) and recycled from fees. Zero, with `noToken`, on a
-   *  network with no VPFI token set, where nothing can be held. */
-  funding: { fresh: bigint; recycled: bigint; noToken: boolean } | null;
+  /** This network's VPFI token at the read block; null when none is set or
+   *  it could not be read. Every amount here is in this token. */
+  token: Hex | null;
+  /** VPFI a reward settlement may draw now, net of what is reserved.
+   *  `fresh` is what a claim can pay from VPFI delivered for rewards: the
+   *  lower of the fresh VPFI held (`held`) and the delivered allowance the
+   *  claim charges before it pays (`getDeliveredFreshBound`), so VPFI held
+   *  but never delivered is not counted as payable. `recycled` is the
+   *  recycled bucket's room. Zero, with `noToken`, on a network with no VPFI
+   *  token set, where nothing can be held. */
+  funding: { fresh: bigint; held: bigint; recycled: bigint; noToken: boolean } | null;
   blockNumber: bigint;
   /** The read block's timestamp: the start is judged against the chain's
    *  clock, never the reader's. */
@@ -92,21 +107,31 @@ export async function readProgramme(c: PublicClient, diamond: Hex): Promise<Prog
   // The reservations view refuses on a network with no VPFI token
   // (`RecycleBackingTokenUnset`); there nothing can be held to pay.
   const noToken = token !== null && token.toLowerCase() === ZERO;
-  const reservations = token === null || noToken ? null : await read<RawReservations>(LENS, 'getRewardReservations');
+  const [reservations, bound] =
+    token === null || noToken
+      ? [null, null]
+      : await Promise.all([read<RawReservations>(LENS, 'getRewardReservations'), read<readonly [bigint, bigint]>(REMITTANCE_LENS, 'getDeliveredFreshBound')]);
   return {
     launch,
     role: role === null ? null : roleOf(Number(role)),
     retirement:
       retirement === null ? null : { retired: retirement[0], returnChainId: Number(retirement[1]), returnDeployment: retirement[2], returned: retirement[3] },
     baseChainId: reporter === null ? null : Number(reporter[2]),
+    token: token === null || noToken ? null : token,
     custodyActivated: custody,
     horizonDays: horizon === null ? null : Number(horizon),
-    // liveFreshAvailable and bucketAvailable: what the claim gates draw.
+    // liveFreshAvailable (capped by the delivered allowance) and
+    // bucketAvailable: what the claim gates draw.
     funding: noToken
-      ? { fresh: 0n, recycled: 0n, noToken: true }
-      : reservations === null
+      ? { fresh: 0n, held: 0n, recycled: 0n, noToken: true }
+      : reservations === null || bound === null
         ? null
-        : { fresh: reservations[4], recycled: reservations[7], noToken: false },
+        : {
+            fresh: reservations[4] < bound[1] ? reservations[4] : bound[1],
+            held: reservations[4],
+            recycled: reservations[7],
+            noToken: false,
+          },
     blockNumber,
     chainTime: Number(block.timestamp),
   };

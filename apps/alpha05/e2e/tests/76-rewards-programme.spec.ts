@@ -11,7 +11,8 @@
  *   4. with a VPFI token and VPFI in the Diamond, the programme runs and
  *      the delivered VPFI ready to pay is stated;
  *   5. a global pause is stated by name with what stays open;
- *   6. reporting to another network names that network as the home network;
+ *   6. reporting to another network names that network as the home network,
+ *      and the VPFI held there is not payable until it is delivered;
  *   7. detached, the network has left the reward network and nothing new
  *      becomes claimable.
  *
@@ -104,6 +105,11 @@ test('the Rewards page says whether the reward programme runs here, never callin
   await reopen();
   await expect(role).toHaveAttribute('data-role', 'mirror', { timeout: 60_000 });
   await expect(role).toHaveText('Reports its activity to Arbitrum Sepolia, which counts the rewards and funds them here.');
+  // The 50 VPFI is held, but nothing was delivered for rewards: a mirror's
+  // claim charges the delivered allowance first, so nothing is payable.
+  await expect(now).toHaveAttribute('data-programme', 'unfunded');
+  await expect(now).toContainText('but no VPFI from Arbitrum Sepolia is held here to pay rewards right now.');
+  await expect(page.getByTestId('rewards-programme-undelivered')).toContainText('is held, but a claim pays only what was delivered for rewards.');
   await expect(page.getByTestId('rewards-programme-pause')).toHaveCount(0);
 
   // 7. Detached: nothing new becomes claimable here.
