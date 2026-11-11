@@ -174,6 +174,11 @@ export function MySignedOrders({
                           })
                         : text(STANDING_KEY[s])}
                     </p>
+                    {o.replayPending && (
+                      <p className="tier-a" data-testid="desk-signed-replay">
+                        {text('signedOrders.replayPending')}
+                      </p>
+                    )}
                     {fillable(s) && open === null && !standingStale && (
                       <button type="button" className="btn" onClick={() => setOpen(target)} data-testid="desk-signed-cancel">
                         {text('signedOrders.cancel')}

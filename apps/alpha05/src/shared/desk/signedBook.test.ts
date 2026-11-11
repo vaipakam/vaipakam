@@ -55,7 +55,7 @@ function row(o: SignedOrderWire, signature: string = SIG) {
   return { orderHash: orderHashOf(o), signer: o.signer, order: JSON.parse(canonicalOrderJson(o)), signature, status: 'active', filledAmount: '0' };
 }
 
-const book = (o: SignedOrderWire): BookSignedOrder => ({ orderHash: orderHashOf(o), order: o, signature: SIG as Hex });
+const book = (o: SignedOrderWire): BookSignedOrder => ({ orderHash: orderHashOf(o), order: o, signature: SIG as Hex, replayPending: false });
 
 describe('a market’s signed book, from the offer book', () => {
   it('keeps any maker’s order on this market with a readable signature, and nothing else', () => {
@@ -89,12 +89,29 @@ describe('a market’s signed book, from the offer book', () => {
     const fetchImpl = (async (url: string) => {
       asked.push(url);
       const rows = [row(order()), row(order()), row(order({ signer: OTHER, offerType: '1' })), { junk: true }, row(order({ nonce: '9' }), '0x')];
-      return new Response(JSON.stringify({ offers: rows, truncated: true }), { status: 200 });
+      return new Response(JSON.stringify({ offers: rows, truncated: true, awaitingReplay: 3 }), { status: 200 });
     }) as unknown as typeof fetch;
     const got = await readMarketSignedBook(createIndexerClient('https://book.test', fetchImpl), 84532, market);
     expect(asked[0]).toContain('/signed-offers?chainId=84532&lendingAsset=0x');
     expect(asked[0]).not.toContain('signer=');
-    expect(got).toEqual({ asks: [book(order())], bids: [book(order({ signer: OTHER, offerType: '1' }))], unread: 2, truncated: true });
+    expect(got).toEqual({ asks: [book(order())], bids: [book(order({ signer: OTHER, offerType: '1' }))], unread: 2, truncated: true, awaitingReplay: 3 });
+  });
+
+  it('reads the count of orders held back for a re-check: none when not sent, unknown when unreadable', async () => {
+    const answer = (body: Record<string, unknown>) =>
+      readMarketSignedBook(
+        createIndexerClient(
+          'https://book.test',
+          (async () => new Response(JSON.stringify({ offers: [], ...body }), { status: 200 })) as unknown as typeof fetch,
+        ),
+        84532,
+        market,
+      );
+    expect((await answer({})).awaitingReplay).toBe(0);
+    expect((await answer({ awaitingReplay: 0 })).awaitingReplay).toBe(0);
+    expect((await answer({ awaitingReplay: '2' })).awaitingReplay).toBeNull();
+    expect((await answer({ awaitingReplay: -1 })).awaitingReplay).toBeNull();
+    expect((await answer({ awaitingReplay: 1.5 })).awaitingReplay).toBeNull();
   });
 
   it('refuses an answer without an order list', async () => {
