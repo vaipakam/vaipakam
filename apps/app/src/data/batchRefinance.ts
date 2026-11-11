@@ -51,11 +51,13 @@ export function chunkRefinanceLoans<T>(loans: readonly T[]): T[][] {
 }
 
 /** Every Diamond call one send makes, in order: each loan's pair kept
- *  together. */
+ *  together. Every request in the send carries the same transaction
+ *  deadline (#3412). */
 export function refinanceSendCalls(
   plans: readonly RefinanceRequestReady[],
+  validUntil: bigint,
 ): { functionName: string; args: readonly unknown[] }[] {
-  return plans.flatMap(refinanceCalls);
+  return plans.flatMap((plan) => refinanceCalls(plan, validUntil));
 }
 
 /**
@@ -109,6 +111,9 @@ export async function readBackRequests(
   ctx: RefinanceCtx,
   planned: readonly RefinanceRequestReady[],
   mined: Mined,
+  /** The deadline the send's requests carried (#3412), so the "why would it
+   *  fail" read asks about the call that was actually made. */
+  validUntil: bigint,
 ): Promise<RefinanceBatchOutcome[]> {
   const posted =
     'block' in mined ? requestsInLogs(mined.logs, ctx.diamond, ctx.holder) : new Map();
@@ -131,7 +136,7 @@ export async function readBackRequests(
             address: ctx.diamond,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'createOffer',
-            args: [plan.payload],
+            args: [plan.payload, validUntil],
             blockNumber: block,
           });
           return { loanId, kind: 'open', reason: copy.batchRefinance.skippedRetry };

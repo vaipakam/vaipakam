@@ -10,6 +10,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -132,6 +133,20 @@ contract LoanFacetTest is Test {
 
     // Vault impl
     VaipakamVaultImplementation vaultImpl;
+
+    /// @dev #3360 - every ERC-20 accept stamps the loan's fee-entitlement
+    ///      record (its loan-side reward cap) through a self-call to
+    ///      FeeEntitlementFacet. Cut in its own call: adding it to setUp's
+    ///      cut literal trips a solc internal error in this compile unit.
+    function _cutFeeEntitlement() private {
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        cut[0] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        IDiamondCut(address(diamond)).diamondCut(cut, address(0), "");
+    }
 
     function setUp() public {
         owner = address(this);
@@ -315,6 +330,7 @@ contract LoanFacetTest is Test {
         // #3379 B2 — ProtectedAccountFacet, built in HelperTest: inlining the
         // library here takes this contract past solc's assembly tag limit.
         IDiamondCut(address(diamond)).diamondCut(helperTest.protectedAccountCut(), address(0), "");
+        _cutFeeEntitlement();
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -547,7 +563,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 
@@ -812,7 +829,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Call initiateLoan via prank with acceptorRiskAndTermsConsent = false → RiskAndTermsConsentRequired
@@ -965,7 +983,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(address(diamond), lender, lenderPk, offerId);
 
@@ -1007,7 +1026,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
@@ -1059,7 +1079,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Lender accepts the Borrower offer
@@ -1235,7 +1256,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // acceptor does NOT consent → NonLiquidAsset revert
@@ -1281,7 +1303,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
@@ -1336,7 +1359,8 @@ contract LoanFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         vm.prank(lender);

@@ -14,6 +14,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @title OfferExpiryTest
 /// @notice #195 — GTT (Good-Till-Time) offer-expiry coverage. The
@@ -124,14 +125,16 @@ contract OfferExpiryTest is SetupTest {
     function _createLender(uint64 expiresAt) internal returns (uint256) {
         vm.prank(lender);
         return OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderParams(expiresAt)
+            _buildLenderParams(expiresAt),
+            type(uint64).max
         );
     }
 
     function _createBorrower(uint64 expiresAt) internal returns (uint256) {
         vm.prank(borrower);
         return OfferCreateFacet(address(diamond)).createOffer(
-            _buildBorrowerParams(expiresAt)
+            _buildBorrowerParams(expiresAt),
+            type(uint64).max
         );
     }
 
@@ -159,7 +162,8 @@ contract OfferExpiryTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(OfferCreateFacet.OfferExpiryInPast.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderParams(uint64(block.timestamp))
+            _buildLenderParams(uint64(block.timestamp)),
+            type(uint64).max
         );
     }
 
@@ -169,7 +173,8 @@ contract OfferExpiryTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(OfferCreateFacet.OfferExpiryInPast.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderParams(uint64(block.timestamp - 1))
+            _buildLenderParams(uint64(block.timestamp - 1)),
+            type(uint64).max
         );
     }
 
@@ -185,7 +190,8 @@ contract OfferExpiryTest is SetupTest {
             )
         );
         OfferCreateFacet(address(diamond)).createOffer(
-            _buildLenderParams(tooFar)
+            _buildLenderParams(tooFar),
+            type(uint64).max
         );
     }
 
@@ -282,6 +288,8 @@ contract OfferExpiryTest is SetupTest {
     function testPreviewAcceptIsCleanWhenUnexpired() public {
         uint64 deadline = uint64(block.timestamp + ONE_HOUR);
         uint256 id = _createLender(deadline);
+        // #3443 — past the minimum terms age, so only expiry is in question.
+        LibTestTiming.waitOutTermsAge(address(diamond), id);
 
         OfferAcceptFacet.AcceptPreview memory p =
             OfferPreviewFacet(address(diamond)).previewAccept(id, borrower);

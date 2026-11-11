@@ -1417,7 +1417,7 @@ Cancel on an open offer you made takes it off the book and returns what it still
 
 ### Price-move guard
 
-An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open.
+An offer of a token against token collateral can carry a price-move guard. While your offer waits on the book, prices move, and someone could take it the moment the market has moved in their favour. On the offer's page you can set a limit, between 0.5% and 50%: the offer then refuses to be taken while the collateral-to-principal rate has moved more than that since the guard was set, or while the market for the pair is not calm. Anyone looking at the offer sees the guard and whether it allows a fill now. Set on an offer already posted, it protects only from the moment it lands. It never moves anything, and you can change or remove it while the offer is open. In Advanced mode you can also add the guard while posting an offer, so it is guarded from the moment it is on the book.
 
 <a id="risk-access"></a>
 
@@ -1529,10 +1529,34 @@ Your tier is not your balance today. It is zero until your current holding has l
 
 ### Rewards: Your Fee-Discount Tier
 
-Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown.
+Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown. The page names the holding rule that keeps your tier down, and while your consent is off it says which tier would apply with it on.
 
 <a id="rewards-vpfi-sign"></a>
 
 ### Rewards: Signing Instead of Approving
 
 Where your wallet has already approved Permit2 for VPFI, a shared contract many apps use to move tokens with a signature, the VPFI deposit review offers Sign instead of approve. You then sign a one-time transfer of exactly the amount, valid for 30 minutes, and send the deposit: two wallet steps and no approval to the protocol. The signature can be used once, only by a transaction your own wallet sends, and only into your own vault; unused, it lapses. The app never asks you to approve Permit2 itself, because that approval is open-ended and shared with other apps. Without it, the review keeps the usual approval of exactly the amount. On a network without Permit2 the choice is not offered.
+
+<a id="desk-markets"></a>
+
+### Rate Desk: Markets and Rate Ladders
+
+The Rate desk, under Advanced in the menu, shows the open token loan offers on this network grouped into markets: one token lent against one token as collateral, for one term. Each market shows how many lenders' offers and borrowers' requests it holds and the best rate on each side. Choosing a market shows its rate ladder: lenders' offers from the lowest rate up, and borrowers' requests from the highest rate down. Each rate shows how many offers stand at it and their open amounts added up. That total is depth, not one amount you can take: every offer is still taken on its own, with its own collateral and terms. The middle rate sits halfway between the best two rates; the app works it out, the protocol does not report it. The desk reads the protocol's index, which can lag the chain by a few minutes, and an offer's own page checks it on the chain before you take it. Signed orders are counted in the markets but not listed on the ladder yet. In Basic mode a card on top says what the page is and links Borrow and Lend, which do the same job step by step.
+
+<a id="offer-terms-wait"></a>
+
+### When an Offer Was Just Posted or Changed
+
+An offer or request can be taken only once its terms have stood a few seconds since it was posted or last changed. If you open one sooner, the review says how long the terms must stand and about how long is left, and shows no step to sign. You do not need to do anything: the review checks again on its own and lets you continue once the time is up. Nothing is sent while you wait.
+
+<a id="desk-tape"></a>
+
+### Rate Desk: Your Offers, Recent Loans and Agreed Rates
+
+Below a market's ladder, the Rate desk shows three more things. First, your own offers on that ladder, with how much of each has been taken and how much is still open, as the index last recorded it; an offer's own page checks it on the chain. Second, the market's recent loans, newest first: each line is a loan agreed in this market, at the rate and amount set when it opened, and later repayments or extensions do not change it. Third, a chart of the rates loans were agreed at over the last 7, 30 or 90 days, or all time. Each step is the rate of the last loan agreed in its period, and the shaded bar spans that period's lowest and highest rate. A gap means no loan was agreed then, so nothing is drawn across it. The dashed line is the ladder's middle rate now, worked out by the app, and the same figures are in a table under the chart. When the index cannot confirm a loan's term, it does not place that loan in any market; the desk states how many such loans the token pair has.
+
+<a id="desk-history"></a>
+
+### Rate Desk: Your Live Loans and Desk History
+
+Below a market's activity, the Rate desk lists your live loans in that market. They come from the app's own reading of your positions on the chain, the same one Positions uses. Each shows the side you hold, the amount and rate, and its health factor, or says there is no health reading, and opens the loan's page, where you manage it. Below that is your desk history: every token loan against token collateral you have held a side of, at any status, newest first, twenty at a time. The status shown is the index's record, which can lag the chain, so the loan's own page is the one to trust. "Show older loans" appears only when there really are older loans, and if the history cannot be read the desk says so instead of showing an empty list.

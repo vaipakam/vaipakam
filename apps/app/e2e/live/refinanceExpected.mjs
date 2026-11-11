@@ -47,8 +47,15 @@ export function illiquidAcknowledgementsFor(illiquidLegs, lendingAsset, collater
 
 /** RefinanceFlow's REQUEST_WINDOW_DAYS — the request's own expiry window. */
 export const REQUEST_WINDOW_SEC = 30n * 86_400n;
-/** useAcceptTerms' ACCEPT_DEADLINE_SECONDS — the signed terms' lifetime. */
-export const ACCEPT_DEADLINE_SEC = 30n * 60n;
+/** `@vaipakam/lib/txDeadline` TX_DEADLINE_SECONDS — the one window every
+ *  price-exposed transaction's `validUntil` carries (#3412), measured from
+ *  the app's own chain-time read at the send. Restated (this module is plain
+ *  ESM and cannot import the TypeScript source); `refinanceExpected.test.mjs`
+ *  pins it to the shared constant. */
+export const TX_DEADLINE_SEC = 30n * 60n;
+/** useAcceptTerms' deadline — the signed terms' lifetime. Since #3412 it is
+ *  the same shared window as every transaction deadline. */
+export const ACCEPT_DEADLINE_SEC = TX_DEADLINE_SEC;
 /**
  * TIME WINDOWS ARE ANCHORED TO CHAIN TIME, NOT THE LOCAL CLOCK (#2422 r4).
  *
@@ -420,8 +427,10 @@ export function expectedApproveCall({ spender, min, max, why, reset = false }) {
 }
 
 /**
- * `createOffer(params)` — the refinance request, every one of the 26
- * fields of `CreateOfferParams`:
+ * `createOffer(params, validUntil)` — the refinance request, every one of
+ * the 26 fields of `CreateOfferParams`, then the transaction deadline the
+ * app reads from chain time at the send (#3412; after the anchor, so it is
+ * judged like every other anchored field). The params are:
  *   - the loan's principal asset and amount (amountMax too — a request is
  *     taken whole, fillMode 1 = all-or-nothing);
  *   - the loan's collateral identity verbatim (asset, amount, amountMax,
@@ -467,6 +476,7 @@ export function expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor })
         refinanceTargetLoanId: loanId,
         useFullTermInterest: loan.useFullTermInterest,
       },
+      validUntil: afterAnchor('transaction deadline', anchor, TX_DEADLINE_SEC),
     },
   };
 }

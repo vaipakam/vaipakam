@@ -13,6 +13,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title KYCTierEnforcementIntegration
@@ -237,7 +238,9 @@ contract KYCTierEnforcementIntegration is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 }

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -177,11 +178,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///                          Must be ≤ `loan.collateralAmount`. The
     ///                          amount actually sold is sized to the debt
     ///                          and is usually well below this bound.
+    /// @param validUntil       The caller's MANDATORY transaction deadline
+    ///                          (#3412): a swap is price-exposed, so one that
+    ///                          waited in a queue and lands after this reverts
+    ///                          instead of selling at a price the borrower never
+    ///                          saw. `LibTiming.requireDeadline`.
     function swapToRepayFull(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls,
-        uint256 maxCollateralIn
+        uint256 maxCollateralIn,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         // T-090 v1.1 (#389) §5.8 — borrower can't run the v1 atomic
         // close path while their v1.1 intent commit is live; the
         // intent surface already pulled the collateral into custody.

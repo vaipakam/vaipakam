@@ -369,9 +369,11 @@ export function reviewedBoundMoved(
 /** The Diamond calls a ready request makes, in order: the guardrail
  *  write when needed, then the request. The request's own validation
  *  refuses caps that do not cover it, so it can never post without the
- *  guardrails it needs. */
+ *  guardrails it needs. `validUntil` is the request's transaction deadline
+ *  (#3412), read from chain time at the send (`contracts/txDeadline.ts`). */
 export function refinanceCalls(
   plan: RefinanceRequestReady,
+  validUntil: bigint,
 ): { functionName: string; args: readonly unknown[] }[] {
   const calls: { functionName: string; args: readonly unknown[] }[] = [];
   if (plan.caps) {
@@ -380,7 +382,7 @@ export function refinanceCalls(
       args: [BigInt(plan.loanId), true, plan.caps.rateBps, plan.caps.maxNewExpiry],
     });
   }
-  calls.push({ functionName: 'createOffer', args: [plan.payload] });
+  calls.push({ functionName: 'createOffer', args: [plan.payload, validUntil] });
   return calls;
 }
 

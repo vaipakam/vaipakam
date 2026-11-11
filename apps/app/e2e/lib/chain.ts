@@ -12,7 +12,10 @@ import {
   createWalletClient,
   decodeErrorResult,
   http,
+  hexToBigInt,
+  numberToHex,
   type Account,
+  type Transport,
   type Hex,
   type PublicClient,
   type WalletClient,
@@ -20,6 +23,7 @@ import {
   type TransactionReceipt,
 } from 'viem';
 import { extractRevertData } from '@vaipakam/lib/decodeContractError';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { ANVIL_URL } from './anvil';
 import { failingFrame, type TraceFrame } from './traceFrame';
 import { loadDeployment, loadDiamondAbi } from './artifacts';
@@ -60,10 +64,38 @@ export const pub: PublicClient = createPublicClient({
   transport: http(ANVIL_URL),
 });
 
+/**
+ * The anvil transport, with every `eth_estimateGas` answer turned into a
+ * gas limit by the shared rule (`@vaipakam/lib/gasLimit`): the estimate plus
+ * its margin. A node's estimate is the lowest limit that works in the LATEST
+ * block's environment; the write mines a block later, and an oracle read
+ * whose cost moves with the timestamp then needs slightly more. Sent at the
+ * bare estimate, a nested cross-facet call runs out of gas under the 63/64
+ * rule and the setup write reverts with no reason (#3512: a seeded
+ * `createOffer` ran out inside `openOfferOnBook` with 1,775,703 of its
+ * 1,809,039 estimate used). Applied at the transport so every wallet write
+ * a helper or spec makes gets it, not only the ones that remember to pad.
+ */
+function marginedTransport(url: string): Transport {
+  const base = http(url);
+  return (params) => {
+    const t = base(params);
+    return {
+      ...t,
+      request: (async (args: { method: string; params?: unknown }) => {
+        const result = await t.request(args as Parameters<typeof t.request>[0]);
+        return args.method === 'eth_estimateGas'
+          ? numberToHex(gasLimitFromEstimate(hexToBigInt(result as Hex)))
+          : result;
+      }) as typeof t.request,
+    };
+  };
+}
+
 export function walletFor(account: Account): WalletClient {
   return createWalletClient({
     chain: forkChain,
-    transport: http(ANVIL_URL),
+    transport: marginedTransport(ANVIL_URL),
     account,
   });
 }

@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, attachPayoffPermitIfRouted, ZERO, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, txValidUntil, attachPayoffPermitIfRouted, ZERO, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -96,7 +96,7 @@ export async function run() {
       [await (await import('../lib/flow.mjs')).offerParams({
         offerType: 1, interestRateBps: 300n, interestRateBpsMax: 300n,
         refinanceTargetLoanId: oldLoanId, fillMode: 1,
-      })], borrower.address);
+      }), await txValidUntil()], borrower.address);
     expectRefusal('A6.6a', 'a refinance-tagged offer is refused until the borrower has set auto-refinance caps', capless, 'RefinanceCapsRequired');
 
     // `maxNewExpiry` must be a FUTURE timestamp when enabling: the setter
@@ -115,7 +115,7 @@ export async function run() {
       [await (await import('../lib/flow.mjs')).offerParams({
         offerType: 1, interestRateBps: 300n, interestRateBpsMax: 300n,
         refinanceTargetLoanId: oldLoanId, fillMode: 1,
-      })], borrower.address);
+      }), await txValidUntil()], borrower.address);
     check('A6.6c', 'once the borrower has capped the rate in advance, a refinance offer within the cap is admitted',
       capsNow.ok, `loanId=${oldLoanId} maxRateBps=400 expiry=+365d gas=${capsReceipt.gasUsed}${capsNow.ok ? '' : ` -> ${capsNow.name}`}`);
 
@@ -123,7 +123,7 @@ export async function run() {
       [await (await import('../lib/flow.mjs')).offerParams({
         offerType: 1, interestRateBps: 500n, interestRateBpsMax: 500n,
         refinanceTargetLoanId: oldLoanId, fillMode: 1,
-      })], borrower.address);
+      }), await txValidUntil()], borrower.address);
     expectRefusal('A6.6d', 'an offer above the consented rate cap is refused', overCap, 'RefinanceRateExceedsCap');
 
     await mint(outsider, lending, '100000');

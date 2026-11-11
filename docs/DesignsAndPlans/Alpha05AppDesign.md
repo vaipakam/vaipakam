@@ -1570,8 +1570,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   transaction's own event. A change open or in flight keeps its panel, finish
   card included, even after a cancel clears the offer's terms. Where the
   network's protocol has no guard yet,
-  the creator is told so and nobody else sees a section. Arming a guard at
-  posting is later work.
+  the creator is told so and nobody else sees a section. A guard can also be
+  armed at posting (Advanced, a token against token collateral only): the
+  post is then the protocol's batch of the arm and the create, as one
+  transaction, and the review's dry run and the write send exactly that
+  batch, so its verdict covers the guard. Because that dry run stops at the
+  token pull while an approval is owed, both tokens' prices are also read on
+  their own, and a pair that cannot be priced is named as a blocker with
+  its remedy (post without a guard). The receipt carries the limit as a
+  bound row and the guard's consequences; the finish card reads the guard
+  from the transaction's event for the offer it created.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the
@@ -2033,13 +2041,20 @@ above. Each resolves here, so a route reviewer needs no private file:
   RW-09, RW-10), shown on a network with VPFI set up. The card states the
   tier and discount the protocol's own fee path applies now
   (`getEffectiveDiscount`), never one worked out by the app: none while the
-  consent is off; on VPFI's home network, beside the tier the counted VPFI
-  alone would give, with one line when the holding rules hold the effective
-  tier below it; elsewhere, the copy sent from the home network, or that
-  none applies when none was sent or it lapsed. Which holding rule holds a
-  tier down, and the rules' settings, are not stated: the protocol reports
-  neither (#3459); Advanced says the settings cannot be read yet, and the
-  help names the three look-backs. The table is shown on the home network
+  consent is off, with the tier that would apply with it on (or that it
+  could not be read); on VPFI's home
+  network, with one line naming the holding rule that holds the effective
+  tier below what the counted VPFI alone would give (no holding recorded,
+  the minimum holding period with its end, the weighted average's tier, or
+  the lowest tier in the look-back); elsewhere, the copy sent from the home
+  network, or that none applies when none was sent or it lapsed. The rule
+  comes from the protocol's own explanation (`explainTier`, #3459), read at
+  the same block, and is used only when it resolves the tier the fee path
+  applies; unread or different, the card says why could not be read and
+  names no rule. Advanced shows, on the home network, each rule's figure
+  for the wallet and this network's settings for the rules
+  (`getTwaConfig`), the average's window and the look-back stated as two
+  separate lengths. The table is shown on the home network
   only, where tiers are set: for each tier, its VPFI band with the
   protocol's exact boundaries (tiers 1 to 3 start at their figure, tier 4
   above its own, every digit shown), its discount after the 50% cap, and
@@ -2064,6 +2079,84 @@ above. Each resolves here, so a route reviewer needs no private file:
   own `VPFIDepositedToVault` event and the token transfer into the vault.
   The same Terms gate, pause, sanctions and protected-mode statements apply
   as on the approval route.
+
+- **RB-DESK-LADDER** — The rate desk's market list and rate ladder
+  (OFF-73), read from the index once a wallet is connected on a served
+  network, as the offer book is. A market is one lending token against one
+  collateral token for one term, both legs fungible, as the index groups
+  the open book; the list states each side's count and best rate, says
+  when the index listed only its deepest markets, and counts rows it could
+  not read. One completeness note stands above every view: the index lags
+  the chain, and its market counts include signed orders, which the desk
+  does not list yet; where a market's count differs from what its ladder
+  lists, the ladder states both numbers. The ladder reads the market's own
+  open offers a bounded number of pages deep and says when the market held
+  more. A lender's offer stands at its lowest accepted rate and a
+  borrower's request at its highest, the rate each side is held to when the
+  other takes it. Each rate step states how many offers stand at it and
+  their open amounts added up, as depth: every offer is still taken on its
+  own, so a step's total is never offered as one amount. Expired offers,
+  sale and early-close vehicles, offers bound to a loan position that
+  moved, offers with nothing left open and offers on other terms are left
+  out and counted by reason. The middle rate is worked out from the best
+  two rates and labelled so; a crossed ladder is stated, never acted on.
+  Every offer opens its own page, which reads it from the chain before
+  anything is offered. A failed read is a degraded-source warning pointing
+  to the guided pages, never an empty desk.
+- **RB-ORIENTATION** — A Basic reader on an Advanced page (ACC-07) sees a
+  card on top of it saying what the page is, linking the guided pages that
+  do the same job, and offering the switch to Advanced. It is never shown
+  in Advanced mode, hides for good per page once dismissed (for the visit
+  where browser storage is blocked), and hides nothing on the page under
+  it. A page shows the card once its own entry names what it is and its
+  guided equivalent.
+- **RB-TERMS-AGE** — An offer or request whose terms were set or
+  changed too recently to be filled (#3443) is refused in its review with
+  the protocol's own figures: how long terms must stand, and how long was
+  left at the block the review read (the offer's terms time, the minimum
+  age and the block's time, read at one block). No step to sign is shown
+  while it stands; the review reads the chain each block, so the refusal
+  lifts by itself. When the figures cannot be read, or nothing was left at
+  that block, the refusal still says it lifts within seconds.
+- **RB-DESK-TAPE** — Below a market's ladder (OFF-75) the desk shows the
+  viewer's own offers on it, the market's recent loans and the rates loans
+  were agreed at over time, all from the index. An own offer states how
+  much was taken against the most it can lend or borrow and how much is
+  open, as the index last recorded it, and opens its own page. A fill is a
+  loan's terms as agreed when it opened (its rate and amount at opening),
+  never the live terms that repayment or an extension rewrite; an amount
+  the index cannot confirm is stated as not confirmed, not guessed. A loan
+  belongs to a market only where the index places it, and the pair's loans
+  it places nowhere are counted beside the tape and the chart, never filed
+  under a term. The tape says when the market has none and when it has
+  older loans than it shows, with the last fill's rate and age on top. The
+  chart is a stepped line of each period's last agreed rate, joined only
+  across periods that follow one another, so a period with no loan is a
+  gap, never interpolated; a shaded bar spans each period's low and high;
+  the ladder's middle rate is a labelled reference; no change figure is
+  shown. Every figure is also in a table, and hover or focus shows a
+  period's figures. The period choice lives in the page address. A failed
+  read is a degraded-source warning, never an empty tape or chart.
+- **RB-DESK-HISTORY** — Below a market's activity (OFF-76) the desk shows
+  the viewer's live loans in that market and its desk history. The live
+  loans come from the viewer's own chain read of its positions, the same
+  inventory Positions reads, never from the index: each states the side
+  held, the amount and rate, and its health reading (or that there is
+  none), and opens the loan's page, where the protocol's verdict decides
+  what can be done. The section carries that read's own age, source and
+  refresh, never the index's freshness. A read that did not complete says
+  a loan may be missing. The history is the index's append-only record of the loans the
+  wallet has held a side of, token loans against token collateral only,
+  any status, newest participation first, a page at a time. A row names
+  its market by the term agreed at opening, only where the index confirms
+  it, and otherwise says the agreed term is not confirmed; never the live
+  term an extension rewrites. Its status is
+  labelled as the index's record, which can trail the chain, and each row
+  opens the loan's page, which reads the chain. An older page is offered
+  only when the index returned a row past the current one, never on a
+  full page alone; a row the reader refuses is counted, never dropped
+  silently. A failed read is a degraded-source warning, never an empty
+  history.
 
 ## 3. Companion specifications
 

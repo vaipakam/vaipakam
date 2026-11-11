@@ -28,6 +28,7 @@ function review(over: Partial<PostReview> = {}): PostReview {
     fullTerm: true,
     allowsPartialRepay: false,
     tariff: null,
+    guardBps: null,
   };
   const draft = { side: 'borrower' as const, parsed, pair: { lending, collateral, leg: { kind: 'erc20' as const } }, expiresAt: 1_000n };
   return {
@@ -52,6 +53,7 @@ function review(over: Partial<PostReview> = {}): PostReview {
     graceSeconds: 86_400n,
     periodGraceSeconds: null,
     tariff: null,
+    guardPriced: null,
     lifBps: 20n,
     protocolShareBps: null,
     vault: ZERO,
@@ -86,6 +88,16 @@ describe('judgeDryRun', () => {
 });
 
 describe('postBlockers', () => {
+  it('names a guard on a pair that cannot be priced, read alone or refused by the dry run, once', () => {
+    const covered = { holding: { kind: 'erc20' as const, funds: { balance: 10_000n, allowance: 10_000n }, approvalSteps: 0 } };
+    expect(postBlockers(review({ ...covered, guardPriced: false, verdict: { kind: 'ok' } }), null, copy)).toEqual(['request.blockGuardUnpriced']);
+    expect(postBlockers(review({ ...covered, guardPriced: true, verdict: { kind: 'refused', code: 'OfferPriceGuardUnpriced', reason: 'r' } }), null, copy)).toEqual([
+      'request.blockGuardUnpriced',
+    ]);
+    expect(postBlockers(review({ ...covered, guardPriced: true, verdict: { kind: 'ok' } }), null, copy)).toEqual([]);
+    expect(changedBetween(review({ guardPriced: true }), review({ guardPriced: false }), copy)).toBe('request.changedGuardPriced');
+  });
+
   it('names a shortfall and keeps the protocol refusal it explains out', () => {
     const r = review({ holding: { kind: 'erc20', funds: { balance: 1_000n, allowance: 0n }, approvalSteps: 1 }, verdict: { kind: 'refused', code: 'X', reason: 'r' } });
     expect(postBlockers(r, null, copy)).toEqual(['request.blockShortfall']);

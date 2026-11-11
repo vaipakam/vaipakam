@@ -27,6 +27,7 @@ import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 
 /**
  * @title Handler
@@ -164,7 +165,7 @@ contract Handler is Test {
         });
 
         vm.prank(lender);
-        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {
             lenderOfferIds.push(id);
             ghostDeposits[usdc] += amount;
         } catch {}
@@ -218,7 +219,7 @@ contract Handler is Test {
         });
 
         vm.prank(borrower);
-        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {
             borrowerOfferIds.push(id);
             ghostDeposits[weth] += collateralAmount;
         } catch {}
@@ -356,7 +357,8 @@ contract Handler is Test {
 
         vm.prank(L.borrower);
         try PrecloseFacet(diamond).offsetWithNewOffer(
-            loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset
+            loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset,
+            type(uint64).max
         ) returns (uint256 offerId) {
             lenderOfferIds.push(offerId);
             ghostOffsetOf[offerId] = loanId;
@@ -413,7 +415,7 @@ contract Handler is Test {
         try AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
             loanId, true, uint16(rateBps), uint64(block.timestamp + 400 days)
         ) {
-            try OfferCreateFacet(diamond).createOffer(p) returns (uint256 offerId) {
+            try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 offerId) {
                 vm.stopPrank();
                 RefinancePayoffPermitHelper.attach(diamond, L.borrower, L.principalAsset, offerId);
                 borrowerOfferIds.push(offerId);
@@ -467,7 +469,7 @@ contract Handler is Test {
             useFullTermInterest: false
         });
         vm.prank(lender);
-        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {
             rentalOfferIds.push(id);
         } catch {}
     }
@@ -523,8 +525,9 @@ contract Handler is Test {
         LibVaipakam.Loan memory L = _getLoan(loanId);
         if (L.status != LibVaipakam.LoanStatus.Active) return;
 
+        LibTestTiming.waitOutTermsAge(diamond, offerId); // #3443
         vm.prank(L.lender);
-        try EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, offerId) {
+        try EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, offerId, 0, type(uint256).max, type(uint64).max) {
             ghostSold[loanId] = true;
             _popOfferAt(lenderOfferIds, oIdx);
         } catch {}

@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, positionNftOwner, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS, NFT_LOCK } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, txValidUntil, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, positionNftOwner, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS, NFT_LOCK } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -40,7 +40,7 @@ export async function run() {
     const { loanId } = await openLoan({ lender, borrower });
 
     const impostor = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
-      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending], outsider.address);
+      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], outsider.address);
     expectRefusal('A7.1', 'only the borrower can offset their own loan', impostor, 'KeeperAccessRequired');
 
     // The replacement's maturity must not pass the ORIGINAL loan's, and the
@@ -50,18 +50,18 @@ export async function run() {
     // that makes a simulate-then-send pair disagree.
     await warpDays(1 / 1440); // one minute, so the comparison is not same-second
     const sameTerm = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
-      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending], borrower.address);
+      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], borrower.address);
     expectRefusal('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise', sameTerm, 'InvalidOfferTerms');
 
     const OFFSET_DAYS = 6n;
     const sim = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
-      [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending], borrower.address);
+      [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], borrower.address);
     if (!sim.ok) cannotContinue('A7.2 offset offer', sim.name);
     const prePostPos = await positionOf(loanId);
     const beforeOffsetPost = await snapshot(tokens, holders);
     const posted = await tx(borrower, {
       address: DIAMOND, abi: ABIS.preclose, functionName: 'offsetWithNewOffer',
-      args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending],
+      args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()],
     }, 'offsetWithNewOffer');
     const offsetOfferId = BigInt(sim.result);
     const stillOpen = await read(ABIS.loan, 'getLoanDetails', [loanId]);
@@ -235,17 +235,17 @@ export async function run() {
       `loanId=${loanId} offerId=${replacement.offerId}`);
 
     const notBorrower = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
-      [loanId, replacement.offerId], outsider.address);
+      [loanId, replacement.offerId, await txValidUntil()], outsider.address);
     expectRefusal('A7.6', 'only the exiting borrower can hand over their own obligation', notBorrower, 'KeeperAccessRequired');
 
     const handover = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
-      [loanId, replacement.offerId], borrower.address);
+      [loanId, replacement.offerId, await txValidUntil()], borrower.address);
     if (!handover.ok) cannotContinue('A7.7 handover', handover.name);
     const handoverPosBefore = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, {
       address: DIAMOND, abi: ABIS.preclose, functionName: 'transferObligationViaOffer',
-      args: [loanId, replacement.offerId],
+      args: [loanId, replacement.offerId, await txValidUntil()],
     }, 'transferObligationViaOffer');
     const after = await snapshot(tokens, holders);
     const moved = await read(ABIS.loan, 'getLoanDetails', [loanId]);

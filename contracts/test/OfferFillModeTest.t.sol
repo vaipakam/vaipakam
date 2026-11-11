@@ -13,6 +13,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @title OfferFillModeTest
 /// @notice #125 — coverage for the new `FillMode` flavour of an offer
@@ -78,7 +79,9 @@ contract OfferFillModeTest is SetupTest {
 
     function _create(LibVaipakam.CreateOfferParams memory p) internal returns (uint256) {
         vm.prank(lender);
-        return OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     function _createBorrower(LibVaipakam.FillMode fillMode, uint256 amount, uint256 amountMax)
@@ -113,7 +116,9 @@ contract OfferFillModeTest is SetupTest {
             useFullTermInterest: false
         });
         vm.prank(borrower);
-        return OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     // ─── Partial (default) — preserves legacy behaviour ─────────────
@@ -131,7 +136,8 @@ contract OfferFillModeTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LibOfferShape.AonRequiresSingleValueAmount.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1500 ether, 0)
+            _lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1500 ether, 0),
+            type(uint64).max
         );
     }
 
@@ -159,7 +165,8 @@ contract OfferFillModeTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(OfferCreateFacet.IocRequiresExpiry.selector);
         OfferCreateFacet(address(diamond)).createOffer(
-            _lenderParams(LibVaipakam.FillMode.Ioc, 1000 ether, 1000 ether, 0)
+            _lenderParams(LibVaipakam.FillMode.Ioc, 1000 ether, 1000 ether, 0),
+            type(uint64).max
         );
     }
 

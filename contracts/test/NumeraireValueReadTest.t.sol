@@ -258,7 +258,8 @@ contract NumeraireValueReadTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 

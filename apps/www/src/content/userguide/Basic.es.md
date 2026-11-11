@@ -1444,7 +1444,7 @@ Cancelar en una oferta abierta que creaste la retira del libro y devuelve lo que
 
 ### Protección ante movimientos de precio
 
-Una oferta de un token contra garantía en token puede llevar una protección ante movimientos de precio. Mientras su oferta espera en el libro, los precios se mueven, y alguien podría tomarla justo cuando el mercado se ha movido a su favor. En la página de la oferta puede fijar un límite entre el 0,5 % y el 50 %: la oferta rechaza entonces ser tomada mientras la relación garantía/principal se haya movido más que ese límite desde que se fijó la protección, o mientras el mercado del par no esté en calma. Cualquiera que mire la oferta ve la protección y si permite tomarla ahora. Fijada en una oferta ya publicada, protege solo desde el momento en que se registra. Nunca mueve nada, y puede cambiarla o quitarla mientras la oferta esté abierta.
+Una oferta de un token contra garantía en token puede llevar una protección ante movimientos de precio. Mientras su oferta espera en el libro, los precios se mueven, y alguien podría tomarla justo cuando el mercado se ha movido a su favor. En la página de la oferta puede fijar un límite entre el 0,5 % y el 50 %: la oferta rechaza entonces ser tomada mientras la relación garantía/principal se haya movido más que ese límite desde que se fijó la protección, o mientras el mercado del par no esté en calma. Cualquiera que mire la oferta ve la protección y si permite tomarla ahora. Fijada en una oferta ya publicada, protege solo desde el momento en que se registra. Nunca mueve nada, y puede cambiarla o quitarla mientras la oferta esté abierta. En el modo Avanzado también puede añadir la protección al publicar una oferta, de modo que esté protegida desde el momento en que entra en el libro.
 
 <a id="risk-access"></a>
 
@@ -1548,10 +1548,34 @@ Tu nivel no es tu saldo de hoy. Es cero hasta que tu tenencia actual haya durado
 
 ### Recompensas: tu nivel de descuento en comisiones
 
-Debajo de tu VPFI, la página muestra el nivel de descuento que el protocolo aplica ahora a tus comisiones, leído del propio protocolo, y cuánto les quita. Mientras tu consentimiento al descuento en comisiones esté desactivado, no se aplica ningún nivel. Una tenencia nueva cuenta del todo solo con el tiempo, así que la página dice cuándo las reglas de tenencia mantienen tu nivel por debajo del que daría solo tu VPFI contado. En la red de origen del VPFI, una tabla muestra cada nivel: el VPFI contado que requiere, su descuento, y la comisión de inicio del préstamo y la comisión sobre los intereses ganados con ese descuento, calculadas con los ajustes actuales de la red. Cada nivel empieza en su cifra, salvo el más alto, que empieza justo por encima. Ningún descuento supera nunca la mitad de una comisión. En otras redes la página muestra el nivel enviado desde la red de origen, y la tabla no se muestra.
+Debajo de tu VPFI, la página muestra el nivel de descuento que el protocolo aplica ahora a tus comisiones, leído del propio protocolo, y cuánto les quita. Mientras tu consentimiento al descuento en comisiones esté desactivado, no se aplica ningún nivel. Una tenencia nueva cuenta del todo solo con el tiempo, así que la página dice cuándo las reglas de tenencia mantienen tu nivel por debajo del que daría solo tu VPFI contado. En la red de origen del VPFI, una tabla muestra cada nivel: el VPFI contado que requiere, su descuento, y la comisión de inicio del préstamo y la comisión sobre los intereses ganados con ese descuento, calculadas con los ajustes actuales de la red. Cada nivel empieza en su cifra, salvo el más alto, que empieza justo por encima. Ningún descuento supera nunca la mitad de una comisión. En otras redes la página muestra el nivel enviado desde la red de origen, y la tabla no se muestra. La página nombra la regla de tenencia que frena su nivel y, con el consentimiento desactivado, dice qué nivel se aplicaría con él activado.
 
 <a id="rewards-vpfi-sign"></a>
 
 ### Recompensas: firmar en lugar de aprobar
 
 Si tu billetera ya aprobó Permit2 para VPFI, un contrato compartido que muchas aplicaciones usan para mover tokens con una firma, la revisión del depósito de VPFI ofrece «Firmar en lugar de aprobar». Entonces firmas una transferencia única de exactamente el importe, válida 30 minutos, y envías el depósito: dos pasos en la billetera y ninguna aprobación al protocolo. La firma se puede usar una vez, solo en una transacción que envíe tu propia billetera y solo hacia tu propia bóveda; si no se usa, caduca. La aplicación nunca te pide aprobar Permit2 en sí, porque esa aprobación es indefinida y se comparte con otras aplicaciones. Sin ella, la revisión mantiene la aprobación habitual de exactamente el importe. En una red sin Permit2 no se ofrece esta opción.
+
+<a id="desk-markets"></a>
+
+### Rate desk: mercados y escaleras de tipos
+
+El Rate desk, en Avanzado del menú, muestra las ofertas abiertas de préstamos de tokens en esta red agrupadas en mercados: un token prestado contra un token como garantía, a un plazo. Cada mercado muestra cuántas ofertas de prestamistas y solicitudes de prestatarios contiene y el mejor tipo de cada lado. Al elegir un mercado ve su escalera de tipos: ofertas de prestamistas desde el tipo más bajo hacia arriba y solicitudes de prestatarios desde el más alto hacia abajo. Cada tipo muestra cuántas ofertas hay en él y sus importes abiertos sumados. Esa suma es profundidad, no un importe que pueda tomar de una vez: cada oferta se sigue aceptando por separado, con su propia garantía y condiciones. El tipo medio queda a mitad entre los dos mejores tipos; lo calcula la app, el protocolo no lo informa. El desk lee el índice del protocolo, que puede ir unos minutos por detrás de la cadena, y la página propia de una oferta la comprueba en la cadena antes de que la acepte. Las órdenes firmadas se cuentan en los mercados, pero aún no se listan en la escalera. En el modo Básico una tarjeta arriba dice qué es la página y enlaza Borrow y Lend, que hacen lo mismo paso a paso.
+
+<a id="offer-terms-wait"></a>
+
+### Cuando una oferta se acaba de publicar o cambiar
+
+Una oferta o solicitud solo se puede tomar cuando sus condiciones llevan unos segundos vigentes desde que se publicó o se cambió por última vez. Si la abre antes, la revisión indica cuánto tiempo deben mantenerse las condiciones y aproximadamente cuánto falta, y no muestra ningún paso para firmar. No tiene que hacer nada: la revisión vuelve a comprobar por sí sola y le deja continuar cuando se cumple el tiempo. No se envía nada mientras espera.
+
+<a id="desk-tape"></a>
+
+### Rate desk: sus ofertas, préstamos recientes y tipos acordados
+
+Debajo de la escalera de un mercado, el Rate desk muestra tres cosas más. Primero, sus propias ofertas en esa escalera, con cuánto de cada una se ha tomado y cuánto sigue abierto, según lo registró el índice por última vez; la página propia de una oferta lo comprueba en la cadena. Segundo, los préstamos recientes del mercado, los más nuevos primero: cada línea es un préstamo acordado en este mercado, al tipo y por el importe fijados al abrirse, y los reembolsos o prórrogas posteriores no lo cambian. Tercero, un gráfico de los tipos a los que se acordaron préstamos en los últimos 7, 30 o 90 días, o en todo el período. Cada escalón es el tipo del último préstamo acordado en su periodo, y la barra sombreada abarca el tipo más bajo y el más alto de ese periodo. Un hueco significa que entonces no se acordó ningún préstamo, así que no se dibuja nada sobre él. La línea discontinua es el tipo medio actual de la escalera, calculado por la app, y las mismas cifras aparecen en una tabla bajo el gráfico. Cuando el índice no puede confirmar el plazo de un préstamo, no lo coloca en ningún mercado; el desk indica cuántos préstamos así tiene el par de tokens.
+
+<a id="desk-history"></a>
+
+### Rate desk: tus préstamos vivos y tu historial
+
+Debajo de la actividad de un mercado, el Rate desk muestra tus préstamos vivos en ese mercado. Provienen de la lectura que la propia app hace de tus posiciones en la cadena, la misma que usa Posiciones. Cada uno indica el lado que tienes, el importe y la tasa, y su factor de salud o que no hay lectura, y abre la página del préstamo, donde lo gestionas. Debajo está tu historial: cada préstamo de tokens con garantía en tokens en el que has tenido un lado, en cualquier estado, del más reciente al más antiguo, de veinte en veinte. El estado mostrado es el registro del índice, que puede ir por detrás de la cadena; la página del préstamo es la que cuenta. "Mostrar préstamos anteriores" solo aparece si de verdad los hay, y si el historial no se puede leer el desk lo dice en lugar de mostrar una lista vacía.

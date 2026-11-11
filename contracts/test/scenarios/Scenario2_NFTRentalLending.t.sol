@@ -11,6 +11,7 @@ import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
+import {FeeEntitlementFacet} from "../../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
@@ -170,7 +171,7 @@ contract Scenario2_NFTRentalLending is Test {
         vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut all facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -280,6 +281,13 @@ contract Scenario2_NFTRentalLending is Test {
             functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
 
+        // #3360 - every ERC-20 accept stamps the loan's fee-entitlement record
+        // (its loan-side reward cap) through a self-call to FeeEntitlementFacet.
+        cuts[26] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -399,7 +407,8 @@ contract Scenario2_NFTRentalLending is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower accepts offer

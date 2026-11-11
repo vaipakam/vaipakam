@@ -126,6 +126,7 @@ import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.s
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -537,6 +538,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3358 — the maker's price-move guard on an offer.
         OfferPriceGuardFacet offerPriceGuardFacet =
             OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
+        // #3443 — the signed-offer keeper-matcher, split off OfferMatchFacet.
+        SignedOfferMatchFacet signedOfferMatchFacet =
+            SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -585,7 +589,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](114);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](115);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -701,6 +705,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[111] = _buildCut(address(vaultOutflowFacet), _getVaultOutflowSelectors());
         cuts[112] = _buildCut(address(forcedSalePreviewFacet), _getForcedSalePreviewSelectors());
         cuts[113] = _buildCut(address(offerPriceGuardFacet), _getOfferPriceGuardSelectors());
+        cuts[114] = _buildCut(address(signedOfferMatchFacet), _getSignedOfferMatchSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1437,6 +1442,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("forcedSalePreviewFacet", address(forcedSalePreviewFacet));
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
+        Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2046,17 +2052,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      matching surface. Carved out of OfferFacet to bring it
     ///      under EIP-170; same selectors, separate facet.
     function _getOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         // `matchOffers` is the write entry bots submit; `previewMatch`
         // is the structured-error view they consult before
-        // submitting. `matchSignedOffer` (#396 v0.6) is the keeper entry
-        // for filling a signed off-chain offer against an on-chain
-        // counterparty. `matchIntent` (#393 v1-b) lives on
-        // OfferMatchIntentFacet since the #1219 host split (EIP-170). All
-        // gated on the `partialFillEnabled` master flag inside the facet body.
+        // submitting. `matchSignedOffer` (#396 v0.6) lives on
+        // SignedOfferMatchFacet since #3443, and `matchIntent` (#393 v1-b)
+        // on OfferMatchIntentFacet since the #1219 host split (both
+        // EIP-170). All gated on the `partialFillEnabled` master flag
+        // inside the facet body.
         s[0] = OfferMatchFacet.matchOffers.selector;
         s[1] = OfferMatchFacet.previewMatch.selector;
-        s[2] = OfferMatchFacet.matchSignedOffer.selector;
+    }
+
+    /// @dev #3443 — the signed-offer keeper-matcher (#396 v0.6), split off
+    ///      OfferMatchFacet for EIP-170: fills a signed off-chain offer
+    ///      against an on-chain counterparty.
+    function _getSignedOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = SignedOfferMatchFacet.matchSignedOffer.selector;
     }
 
     /// @dev OfferCancelFacet — cancellation + read views carved out of
@@ -2533,7 +2546,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function _getProtectedAccountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = ProtectedAccountFacet.applyProtection.selector;
         s[1] = ProtectedAccountFacet.cancelSettingChange.selector;
         s[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
@@ -2547,6 +2560,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = ProtectedAccountFacet.isProtectionOn.selector;
         s[11] = ProtectedAccountFacet.protectionManagerOf.selector;
         s[12] = ProtectedAccountFacet.requireCanOpenFor.selector;
+        s[13] = ProtectedAccountFacet.protectsNftsOf.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
@@ -2722,25 +2736,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
+        // #1810 / #3412 — the one listing entry: quote-bound (adverse-drift
+        // check against the reviewed quote) and deadline-bound. The unbound
+        // variant was retired with #3412.
         s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry for the
         // accept-then-complete auto-link (skips the outer nonReentrant guard).
         s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
-        // #1810 — quote-bound listing creation (adverse-drift check against
-        // the reviewed quote); the unbound entry stays routed unchanged.
-        s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
     }
 
     /// @dev #1780 — the direct lender-exit route's own facet. It carries the
     ///      whole Option-1 body, which is why the split bought the listed route
-    ///      its EIP-170 headroom back. #1922 (#1503 item 6) added the bound
-    ///      entry `sellLoanViaBuyOfferBound` beside the unbound one.
+    ///      its EIP-170 headroom back. #1922 (#1503 item 6) bound the sale to
+    ///      the seller's reviewed quote; #3412 made that the only entry.
     function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](1);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
-        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
@@ -3259,7 +3272,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](85);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -3436,6 +3449,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3242 — the per-wallet open-offer cap.
         s[83] = ConfigFacet.setMaxOpenOffersPerWallet.selector;
         s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
+        // #3443 — the minimum age of an offer's terms at fill.
+        s[85] = ConfigFacet.setMinTermsAgeSec.selector;
+        s[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

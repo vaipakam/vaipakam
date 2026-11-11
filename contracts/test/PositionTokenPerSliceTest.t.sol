@@ -19,6 +19,7 @@ import {PositionNFT} from "../src/PositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title PositionTokenPerSliceTest
@@ -97,8 +98,10 @@ contract PositionTokenPerSliceTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     function _loan(uint256 id) internal view returns (LibVaipakam.Loan memory) {

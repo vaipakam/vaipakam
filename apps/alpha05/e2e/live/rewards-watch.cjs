@@ -4,7 +4,9 @@
 // through the shared watch-only wallet (watch-wallet.cjs). The deployed build
 // opens Rewards for the watched wallet's network and prints the rewards
 // widget, the VPFI panel (whether VPFI is set up there, and the wallet's
-// VPFI in its wallet, counted, free, held and uncounted) and the consent. The
+// VPFI in its wallet, counted, free, held and uncounted), the consent and the
+// fee-discount tier card (its state and, when the holding rules hold the tier
+// down, the rule it names). The
 // watch wallet cannot sign, so nothing is deposited or withdrawn, and the
 // signed deposit (RW-03) is never offered; all three are covered by the
 // CI-Anvil spec (54-rewards.spec.ts).
@@ -33,6 +35,12 @@ async function view(b, opts, label) {
   console.log(`--- vpfi [${await vpfi.getAttribute('data-vpfi')}]: ${(await vpfi.innerText()).replace(/\n+/g, ' · ')}`);
   const consent = p.getByTestId('consent-toggle');
   if (await consent.count()) console.log(`--- consent: ${(await consent.innerText()).replace(/\n+/g, ' · ')}`);
+  const tier = p.getByTestId('rewards-tier-now');
+  if (await tier.count()) {
+    const held = p.getByTestId('rewards-tier-held');
+    const rule = (await held.count()) ? ` held by ${await held.getAttribute('data-held')}` : '';
+    console.log(`--- tier [${await tier.getAttribute('data-state')} ${await tier.getAttribute('data-tier')}${rule}]: ${(await tier.innerText()).replace(/\n+/g, ' · ')}`);
+  }
   await p.screenshot({ path: `${OUT}/live-rewards-${label}.png`, fullPage: true });
   console.log('errors:', JSON.stringify(errs));
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));

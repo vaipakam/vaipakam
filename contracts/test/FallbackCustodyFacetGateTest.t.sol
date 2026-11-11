@@ -16,6 +16,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  FallbackCustodyFacetGateTest
@@ -81,6 +82,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         // address other than the Diamond, so it is an observable transfer like
         // the other two.
         AdminFacet(address(diamond)).setTreasury(treasury);
+        LibTestVaultBeacon.sync(address(diamond));
         loanId = _fcOpenLoanPastGrace();
     }
 
@@ -119,7 +121,8 @@ contract FallbackCustodyFacetGateTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         id = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 

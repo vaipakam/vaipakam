@@ -11,6 +11,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -151,7 +152,7 @@ contract AddCollateralFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -250,6 +251,13 @@ contract AddCollateralFacetTest is Test {
             functionSelectors: helperTest.getOfferBookFacetSelectors()
         });
 
+        // #3360 - every ERC-20 accept stamps the loan's fee-entitlement record
+        // (its loan-side reward cap) through a self-call to FeeEntitlementFacet.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -363,7 +371,8 @@ contract AddCollateralFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId
@@ -402,7 +411,8 @@ contract AddCollateralFacetTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, offerId

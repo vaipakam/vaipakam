@@ -233,6 +233,7 @@ export interface DeploymentFacets {
   forcedSalePreviewFacet?: HexAddress;
   /** #3358 — the maker's price-move guard on an offer. */
   offerPriceGuardFacet?: HexAddress;
+  signedOfferMatchFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

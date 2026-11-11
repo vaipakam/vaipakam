@@ -38,6 +38,7 @@ import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
@@ -100,6 +101,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // LIF treasury legs don't clash with the diamond balance assertions.
         treasuryRecipient = makeAddr("treasury");
         AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
+        LibTestVaultBeacon.sync(address(diamond));
 
         // Deploy VPFI token behind an ERC1967 proxy (UUPS).
         VPFIToken impl = new VPFIToken();
@@ -442,7 +444,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         LibVaipakam.CreateOfferParams memory p = _vpfiRentalOfferParams();
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.VpfiNotAllowedAsRentalPrepay.selector);
-        OfferCreateFacet(address(diamond)).createOffer(p);
+        OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
     }
 
     /// @dev NFT-rental lender offer whose prepay asset is VPFI (the
@@ -1309,7 +1311,8 @@ contract VPFIDiscountFacetTest is SetupTest {
                     fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-                })
+                }),
+                type(uint64).max
             );
     }
 

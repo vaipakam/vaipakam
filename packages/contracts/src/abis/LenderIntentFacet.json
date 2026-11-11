@@ -100,6 +100,11 @@
             "name": "requiresKeeperAuth",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "termsSetAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -421,6 +426,11 @@
         "name": "riskAndTermsConsent",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -833,6 +843,22 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "DeadlinePassed",
+    "inputs": [
+      {
+        "name": "validUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeadlineRequired",
+    "inputs": []
   },
   {
     "type": "error",

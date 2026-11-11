@@ -18,6 +18,7 @@ import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
+import {FeeEntitlementFacet} from "../../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -49,6 +50,7 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 
 /**
  * @title Scenario7_LenderEarlyWithdrawal
@@ -142,7 +144,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -271,6 +273,13 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             functionSelectors: helperTest.getSellerClaimFacetSelectors()
         });
 
+        // #3360 - every ERC-20 accept stamps the loan's fee-entitlement record
+        // (its loan-side reward cap) through a self-call to FeeEntitlementFacet.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -360,7 +369,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
@@ -407,7 +417,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Mock cross-facet NFT calls (vault withdraw works natively)
@@ -416,13 +427,14 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         // Expect LoanSold event
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
         emit EarlyWithdrawalDirectFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
 
         // Original lender sells the loan
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
 
         // Verify: loan.lender is now newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -459,7 +471,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         );
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
 
         vm.clearMockedCalls();
 

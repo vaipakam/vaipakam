@@ -49,8 +49,10 @@ import {
   type ReviewedTokenScreen,
 } from './acceptTokenScreen';
 import { readPositionOwnerOn } from '../contracts/positionNft';
+// One deadline window for every price-exposed transaction (#3412): the
+// signed accept terms, the Permit2 pulls and every `validUntil` share it.
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
 
-const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
 // EIP-712 type for `AcceptTerms`. Field ORDER + types MUST match
 // `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH` exactly (enums encoded as
@@ -511,7 +513,7 @@ export function useAcceptTermsSigning() {
         // passing on a consent the user never gave.
         ...illiquidAcknowledgements(input.expected.illiquidLegs, lendingAsset, collateralAsset),
         nonce: randomNonce(),
-        deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
+        deadline: txValidUntil(chainNow),
         riskTermsHash,
         // #1355 — the acceptor's Full VPFI tariff opt-in, from the
         // review screen's control (absent ⇒ non-Full).
@@ -864,7 +866,7 @@ export function useSignedOfferAcceptTermsSigning() {
         // refused above).
         ...illiquidAcknowledgements(input.reviewed.illiquidLegs, lendingAsset, collateralAsset),
         nonce: randomNonce(),
-        deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
+        deadline: txValidUntil(chainNow),
         riskTermsHash,
         // #1355 — the taker's Full VPFI tariff opt-in (absent ⇒ non-Full).
         ...fullTariff,

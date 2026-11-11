@@ -430,7 +430,7 @@ contract OfferParallelSaleFacetTest is SetupTest {
         // Any mutator should now revert with OfferLockedByParallelSale.
         vm.prank(borrowerHolder);
         vm.expectRevert(OfferMutateFacet.OfferLockedByParallelSale.selector);
-        OfferMutateFacet(address(diamond)).setOfferAmount(OFFER_ID, PRINCIPAL_AMOUNT + 1, PRINCIPAL_AMOUNT + 1);
+        OfferMutateFacet(address(diamond)).setOfferAmount(OFFER_ID, PRINCIPAL_AMOUNT + 1, PRINCIPAL_AMOUNT + 1, type(uint64).max);
     }
 
     function test_offerMutate_succeedsAfterReleaseParallelSaleLock() public {
@@ -451,7 +451,7 @@ contract OfferParallelSaleFacetTest is SetupTest {
         // (It may still revert with downstream validation errors — that's
         // fine; the test asserts the lock-specific error is gone.)
         vm.prank(borrowerHolder);
-        try OfferMutateFacet(address(diamond)).setOfferAmount(OFFER_ID, PRINCIPAL_AMOUNT + 1, PRINCIPAL_AMOUNT + 1) {
+        try OfferMutateFacet(address(diamond)).setOfferAmount(OFFER_ID, PRINCIPAL_AMOUNT + 1, PRINCIPAL_AMOUNT + 1, type(uint64).max) {
             // success path is also acceptable
         } catch (bytes memory err) {
             bytes4 lockSel = OfferMutateFacet.OfferLockedByParallelSale.selector;

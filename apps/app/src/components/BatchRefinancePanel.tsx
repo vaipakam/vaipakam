@@ -46,6 +46,7 @@ import {
   type SignedPayoffPermit,
 } from '../contracts/refinancePayoffPermit';
 import { assertErc20BalanceLive } from '../contracts/preflights';
+import { readTxValidUntil } from '../contracts/txDeadline';
 import { captureTxError, isPositiveDecimal } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { formatBpsAsPercent, formatTokenAmountExact } from '../lib/format';
@@ -387,11 +388,14 @@ export function BatchRefinancePanel({
         if (go.length === 0) continue;
         for (const p of go) sentPlans.set(p.loanId, p);
         setStage({ kind: 'sending', step: 'submitting' });
+        // The deadline every request in this send carries (#3412), read
+        // from chain time immediately before the send is built.
+        const validUntil = await readTxValidUntil(ctx.publicClient);
         let submitted: `0x${string}` | null = null;
         let mined: Mined;
         sent = true;
         try {
-          const { receipt } = await write('multicall', [encodeBestEffort(refinanceSendCalls(go))], {
+          const { receipt } = await write('multicall', [encodeBestEffort(refinanceSendCalls(go, validUntil))], {
             onSubmitted: (hash) => (submitted = hash),
           });
           mined = { block: receipt.blockNumber, logs: receipt.logs };
@@ -400,7 +404,7 @@ export function BatchRefinancePanel({
         }
         sendPending = 'pending' in mined;
         if ('block' in mined && mined.block > lastBatchBlock) lastBatchBlock = mined.block;
-        const read = await readBackRequests(ctx, go, mined);
+        const read = await readBackRequests(ctx, go, mined, validUntil);
         for (const o of read) {
           // The loan page names its request from this before discovery's
           // next poll.

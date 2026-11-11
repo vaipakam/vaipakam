@@ -45,7 +45,7 @@ interface IDiamondForProof {
     function getPerkEntitlement(address, uint256) external view returns (bool, uint64, uint256);
     // LenderIntentFacet
     function setLenderIntentEnabled(bool) external;
-    function setLenderIntent(address, address, uint256, uint256, uint16, uint32, uint256, bool, bool) external;
+    function setLenderIntent(address, address, uint256, uint256, uint16, uint32, uint256, bool, bool, uint64) external;
     function fundLenderIntent(address, address, uint256) external;
     function setLenderIntentPriority(address, address, bool) external;
     function getLenderIntentPriority(address, address, address, address, address)
@@ -54,7 +54,7 @@ interface IDiamondForProof {
         returns (bool, uint256, bool, bool);
     // OfferMatchIntentFacet / OfferCreateFacet / RiskFacet / VPFIDiscountFacet / Admin
     function matchIntent(address, address, address, uint256, uint256) external returns (uint256);
-    function createOffer(LibVaipakam.CreateOfferParams calldata) external returns (uint256);
+    function createOffer(LibVaipakam.CreateOfferParams calldata, uint64) external returns (uint256);
     function updateRiskParams(address, uint256, uint256) external;
     function depositVPFIToVault(uint256) external;
     function getVPFIToken() external view returns (address);
@@ -277,7 +277,7 @@ contract PriorityRoutingLiveFork is Test {
         _kyc(who);
         ERC20Mock(lendAsset).mint(who, 10 * PRINCIPAL);
         vm.startPrank(who);
-        d.setLenderIntent(lendAsset, collAsset, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, true);
+        d.setLenderIntent(lendAsset, collAsset, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, true, type(uint64).max);
         ERC20Mock(lendAsset).approve(address(d), 5 * PRINCIPAL);
         d.fundLenderIntent(lendAsset, collAsset, 5 * PRINCIPAL);
         vm.stopPrank();
@@ -317,7 +317,8 @@ contract PriorityRoutingLiveFork is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
         vm.stopPrank();
     }

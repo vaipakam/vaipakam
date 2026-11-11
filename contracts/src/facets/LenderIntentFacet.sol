@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
@@ -198,6 +199,13 @@ contract LenderIntentFacet is
     ///                           commitment, so the lender consents to the
     ///                           risk/terms framework here, once, at registration
     ///                           (the loans it later materializes inherit it).
+    /// @param validUntil The caller's MANDATORY transaction deadline (#3412):
+    ///                   a standing intent is a standing offer, so setting or
+    ///                   re-pricing one is price-exposed and a transaction that
+    ///                   lands after this reverts. A contract registering an
+    ///                   intent inside its own transaction (the backstop vault,
+    ///                   the aggregator adapter) has no queue to wait in and
+    ///                   passes the current block's timestamp.
     function setLenderIntent(
         address lendingAsset,
         address collateralAsset,
@@ -207,8 +215,10 @@ contract LenderIntentFacet is
         uint32 maxDurationDays,
         uint256 minFillAmount,
         bool requiresKeeperAuth,
-        bool riskAndTermsConsent
+        bool riskAndTermsConsent,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibProtectedAccount.requireCanOpen(msg.sender);
 
@@ -256,7 +266,9 @@ contract LenderIntentFacet is
             maxInitLtvBps: maxInitLtvBps,
             maxDurationDays: maxDurationDays,
             minFillAmount: minFillAmount,
-            requiresKeeperAuth: requiresKeeperAuth
+            requiresKeeperAuth: requiresKeeperAuth,
+            // #3443 — a fill waits until these terms have stood the minimum age.
+            termsSetAt: uint64(block.timestamp)
         });
 
         // #625 WI-2a — sync the discovery registry. A bare registration commits NO

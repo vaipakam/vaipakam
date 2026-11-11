@@ -122,7 +122,7 @@ contract SepoliaActiveLoan is Script {
         // ── Lender creates offer ────────────────────────────────────────
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_offerParams());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_offerParams(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Offer created:", offerId);
 

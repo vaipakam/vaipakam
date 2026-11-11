@@ -27,6 +27,7 @@ import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, trackApproval } from '../contracts/erc20';
+import { readTxValidUntil } from '../contracts/txDeadline';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -464,6 +465,10 @@ export function OffsetFlow({
           return;
         }
       }
+      // The transaction deadline (#3412), read from chain time at the send:
+      // an offset that waits in a queue past it is refused, never posted
+      // late on a market the user no longer agreed to.
+      const validUntil = await readTxValidUntil(publicClient);
       const { receipt } = await write('offsetWithNewOffer', [
         BigInt(row.loanId),
         BigInt(rateBps),
@@ -472,6 +477,7 @@ export function OffsetFlow({
         collateralWei,
         consent.given,
         liveLoan.prepayAsset,
+        validUntil,
       ]);
       const created = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,

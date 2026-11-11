@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "../test/helpers/LibTestTiming.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -96,7 +97,8 @@ contract BaseSepoliaSellerClaim is Script {
         ERC20Mock(mUsdc).mint(lender, principal);
         ERC20Mock(mUsdc).approve(diamond, principal);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(
-            _lenderOffer(mUsdc, principal, tLiq, collateral, rateBps)
+            _lenderOffer(mUsdc, principal, tLiq, collateral, rateBps),
+            type(uint64).max
         );
         vm.stopBroadcast();
 
@@ -129,15 +131,18 @@ contract BaseSepoliaSellerClaim is Script {
         vm.startBroadcast(buyerKey);
         ERC20Mock(loan.principalAsset).mint(buyer, loan.principal);
         ERC20Mock(loan.principalAsset).approve(diamond, loan.principal);
-        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_buyOffer(loan));
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_buyOffer(loan), type(uint64).max);
         vm.stopBroadcast();
+        // The offer-age rule (#3412): steps a simulation only; under
+        // --broadcast it refuses before sending anything (#3502).
+        LibTestTiming.waitOutTermsAge(diamond, buyOfferId);
 
         uint64 deadline = uint64(block.timestamp + SALE_WINDOW);
         (uint256 minSellerNet, uint256 maxHeld) =
             RiskPreviewFacet(diamond).quoteSellerBounds(loanId, loan.interestRateBps, deadline);
         console.log("Quoted bounds (min seller net, max held):", minSellerNet, maxHeld);
         vm.startBroadcast(lenderKey);
-        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOfferBound(
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(
             loanId, buyOfferId, minSellerNet, maxHeld, deadline
         );
         vm.stopBroadcast();

@@ -407,6 +407,45 @@ contract VaultBeaconTest is Test {
         VaultDepositoryFacet(address(diamond)).pinVaultVersion(2, sig);
     }
 
+    /// #3522 seam 4 (in #3489): pin authority follows the vault's owner
+    /// record. After a replacement the controller can unpin; the retired
+    /// owner cannot unpin or change the pin delay, and a signature it gave
+    /// before the recovery cannot be replayed.
+    function test_pinAuthorityMovesToTheControllerOnReplacement() public {
+        _protectAlice();
+        // Pinned to the real vault code (version 1): the test markers carry no
+        // protection code, and the replacement runs through the vault.
+        _pinAlice(1);
+        vm.warp(block.timestamp + beacon.pinDelay(vaultA));
+        beacon.executePin(vaultA);
+        assertEq(beacon.pinnedVersion(vaultA), 1, "fixture: pinned");
+        bytes memory preRecovery = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
+
+        LibTestProtection.propose(address(diamond), alice, alice, bob);
+        vm.warp(vm.getBlockTimestamp() + LibProtectedAccount.MIN_DELAY);
+        LibTestProtection.finalizeReplacement(address(diamond), alice);
+        vm.warp(vm.getBlockTimestamp() + LibProtectedAccount.MIN_DELAY + 1); // past the cool-down
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, preRecovery);
+        bytes memory retired = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, retired);
+        uint256 d = beacon.pinDelay(vaultA);
+        bytes memory retiredDelay = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, d + 1));
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        beacon.setPinDelay(vaultA, d + 1, retiredDelay);
+
+        bytes memory controller = _sign(BOB_KEY, beacon.pinChangeDigest(vaultA, 0));
+        vm.prank(bob);
+        VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, controller);
+        vm.warp(vm.getBlockTimestamp() + beacon.pinDelay(vaultA));
+        beacon.executePin(vaultA);
+        assertEq(beacon.pinnedVersion(vaultA), 0, "the controller unpinned");
+    }
+
     /// A facet calling the beacon directly with a valid owner signature can
     /// neither execute a pin before its time nor after a cancel, nor lower
     /// the pin delay before the current delay has passed.

@@ -15,7 +15,7 @@
  *    default path, after which a wall-clock expiry is already in the past and
  *    every later offer dies on `OfferExpiryInPast`.
  */
-import { keccak256, encodeAbiParameters, toFunctionSelector } from 'viem';
+import { keccak256, encodeAbiParameters, maxUint256, toFunctionSelector } from 'viem';
 import {
   DIAMOND,
   ERC20,
@@ -26,6 +26,7 @@ import {
   forkChain,
   parseUnits,
   pub,
+  rpc,
   tx,
   walletFor,
 } from './chain.mjs';
@@ -166,6 +167,34 @@ export async function attachPayoffPermitIfRouted(borrower, loanId, offerId, expi
 }
 
 /** A liquid/liquid lender offer with every range bound pinned to the point value. */
+/**
+ * #3412 — how long a price-exposed transaction stays valid. This harness is
+ * plain Node and cannot import the TypeScript source, so it mirrors the one
+ * rule in `packages/lib/src/txDeadline.ts` (`TX_DEADLINE_SECONDS`); keep the
+ * two equal.
+ */
+export const TX_DEADLINE_SECONDS = 30 * 60;
+
+/**
+ * The `validUntil` every price-exposed entry takes (`createOffer`, the offer
+ * mutators, `setLenderIntent`, swap-to-repay, the sale entries, the offset and
+ * the handover): the chain's latest block time plus the window — never the
+ * host clock, since the fork's clock is moved by the scenarios. Read it right
+ * before the write or dry run it goes into.
+ */
+export async function txValidUntil() {
+  return BigInt(await chainNow()) + BigInt(TX_DEADLINE_SECONDS);
+}
+
+/**
+ * #3412 — the seller's reviewed bounds a sale entry takes
+ * (`reviewedMinSellerNet`, `reviewedMaxHeld`) when the scenario has no review
+ * to bind: no floor on the net, no ceiling on the held balance, so the
+ * protocol performs no drift check. Spread before the deadline:
+ * `[...args, ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()]`.
+ */
+export const NO_DRIFT_SALE_BOUNDS = Object.freeze([0n, maxUint256]);
+
 export async function offerParams(overrides = {}) {
   const now = await chainNow();
   const amount = overrides.amount ?? parseUnits('1000', 18);
@@ -218,9 +247,10 @@ const refusalName = (reason) => String(reason ?? '').split('(')[0];
 
 export async function createOffer(creator, overrides = {}) {
   const offer = await offerParams(overrides);
-  const sim = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [offer], creator.address);
+  const deadline = await txValidUntil();
+  const sim = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [offer, deadline], creator.address);
   if (!sim.ok) { requireAdmissible('offer', sim.name); throw new Error(`createOffer would revert: ${sim.name}`); }
-  const receipt = await tx(creator, { address: DIAMOND, abi: ABIS.offerCreate, functionName: 'createOffer', args: [offer] }, 'createOffer');
+  const receipt = await tx(creator, { address: DIAMOND, abi: ABIS.offerCreate, functionName: 'createOffer', args: [offer, deadline] }, 'createOffer');
   return { offerId: BigInt(sim.result), offer, gas: receipt.gasUsed };
 }
 
@@ -317,7 +347,27 @@ export async function acceptStoredOffer(offerId, acceptor, overrides = {}) {
   return acceptOffer(offerId, stored, acceptor, { address: stored.creator }, { linkedLoanId, ...overrides });
 }
 
+/**
+ * #3443 — an offer can be filled only once its terms have stood the
+ * Diamond's minimum age (`getMinTermsAgeSec`). A live taker simply arrives
+ * later; a scenario that posts and accepts back to back advances the fork by
+ * exactly the shortfall first, never otherwise.
+ */
+export async function waitOutTermsAge(offerId) {
+  const minAge = await read(ABIS.config, 'getMinTermsAgeSec', []).catch(() => null);
+  if (minAge === null) return; // a Diamond without the rule
+  const { termsSetAt } = await read(ABIS.offerCancel, 'getOffer', [offerId]);
+  if (!termsSetAt) return; // terms that carry no age
+  const readyAt = BigInt(termsSetAt) + BigInt(minAge);
+  const now = BigInt(await chainNow());
+  if (readyAt > now + 1n) {
+    await rpc('evm_increaseTime', [Number(readyAt - now)]);
+    await rpc('evm_mine');
+  }
+}
+
 export async function acceptOffer(offerId, offer, acceptor, creator, overrides = {}) {
+  await waitOutTermsAge(offerId);
   const terms = await acceptTerms(offerId, offer, acceptor, creator, overrides);
   const signature = await walletFor(acceptor).signTypedData({
     domain: { name: 'Vaipakam AcceptOffer', version: '1', chainId: forkChain.id, verifyingContract: DIAMOND },

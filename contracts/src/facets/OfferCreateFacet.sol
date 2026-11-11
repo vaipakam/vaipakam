@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -343,11 +344,20 @@ contract OfferCreateFacet is
      *      amount, InvalidAssetType on unknown asset enums.
      *      Emits OfferCreated. Callable by anyone when not paused.
      * @param params CreateOfferParams struct containing all offer parameters.
+     * @param validUntil The caller's deadline (unix seconds) for this
+     *        transaction, MANDATORY (#3412): posting an offer is
+     *        price-exposed, so a transaction that waited in a queue and lands
+     *        after it reverts instead of posting terms the creator no longer
+     *        wants. Checked by `LibTiming.requireDeadline`, the one rule every
+     *        price-exposed entry uses. Distinct from `params.expiresAt`, which
+     *        is how long the posted OFFER lives.
      * @return offerId The ID of the created offer.
      */
     function createOffer(
-        LibVaipakam.CreateOfferParams calldata params
+        LibVaipakam.CreateOfferParams calldata params,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        LibTiming.requireDeadline(validUntil);
         address vault;
         (offerId, vault) = _createOfferSetup(msg.sender, params);
         _pullCreatorAssetsClassic(offerId, msg.sender, params, vault);
@@ -408,13 +418,17 @@ contract OfferCreateFacet is
      * @param params    Same `CreateOfferParams` as {createOffer}.
      * @param permit    `PermitTransferFrom` struct the user signed.
      * @param signature 65-byte ECDSA signature over the EIP-712 digest.
+     * @param validUntil The caller's MANDATORY transaction deadline, exactly
+     *        as {createOffer}.
      * @return offerId  The created offer's id.
      */
     function createOfferWithPermit(
         LibVaipakam.CreateOfferParams calldata params,
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        bytes calldata signature
+        bytes calldata signature,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
+        LibTiming.requireDeadline(validUntil);
         // Permit2 only covers ERC-20 pulls. Reject NFT offers here so
         // the caller can't accidentally sign a Permit2 payload that
         // never gets honoured.
@@ -1219,6 +1233,14 @@ contract OfferCreateFacet is
         LibProtectedAccount.requireCanOpen(creator);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
+
+        // #3443 — the terms are set now, so the offer can be filled only once
+        // they have stood the minimum age. A signed offer materialized for its
+        // own fill carries no age: its terms were set off-chain, and it is
+        // bound by its signature and the taker's signed terms instead.
+        if (route != LibOfferAdmission.Route.SignedMaterialize) {
+            LibTiming.stampOfferTerms(offer);
+        }
 
         unchecked {
             offer.positionTokenId = ++s.nextTokenId;

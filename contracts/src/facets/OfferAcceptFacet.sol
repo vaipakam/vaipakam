@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
@@ -249,9 +250,6 @@ contract OfferAcceptFacet is
     ///         Parameterless to keep the facet under EIP-170 (the caller holds
     ///         both addresses); same rationale for the two below.
     error AcceptorMismatch();
-    /// @notice `block.timestamp` is past `terms.deadline` — the signing window
-    ///         for this acceptance has closed.
-    error AcceptDeadlineExpired();
     /// @notice `terms.nonce` was already consumed by `terms.acceptor` — a
     ///         captured acceptance signature cannot be replayed.
     error AcceptNonceUsed();
@@ -486,10 +484,9 @@ contract OfferAcceptFacet is
         address acceptor
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // 1 — signing window.
-        if (block.timestamp > terms.deadline) {
-            revert AcceptDeadlineExpired();
-        }
+        // 1 — signing window: the acceptance's own deadline (#3412, the one
+        // timing rule; required).
+        LibTiming.requireDeadline(terms.deadline);
         // 2 — bind the digest to the funds-mover (no cross-ERC-1271 replay).
         if (terms.acceptor != acceptor) {
             revert AcceptorMismatch();
@@ -838,6 +835,9 @@ contract OfferAcceptFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(offerId, offer.expiresAt);
         }
+        // #3443 — the offer's terms must have stood the minimum age, so an
+        // offer cannot be created or re-priced and taken in the same block.
+        LibTiming.requireOfferAged(offerId, offer);
         // #1503 PR-A (Codex #1505 r1 P1) — a sale VEHICLE's fill must also
         // respect the linked loan's LIVE maturity, enforced HERE, before any
         // value moves. Post-upgrade vehicles are covered by the expiry gate
@@ -1486,9 +1486,11 @@ contract OfferAcceptFacet is
         // authorization from the offer (creator) + the transient accept binding
         // (acceptor).
         //
-        // Invoke the tariff facet when the master switch is on OR a party
-        // presented a Full opt-in (see {_fullTariffShouldRun}). The predicate is
-        // in a helper so its storage reads stay OFF this at-viaIR-budget frame.
+        // Invoke the fee-entitlement facet, which stamps the loan-side reward
+        // cap and charges any Full tariff — for every ERC-20 origination off a
+        // reward mirror (#3360), and on a mirror only for a Full opt-in (see
+        // {_fullTariffShouldRun}). The predicate is in a helper so its storage
+        // reads stay OFF this at-viaIR-budget frame.
         if (_fullTariffShouldRun(offerId)) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1691,18 +1693,37 @@ contract OfferAcceptFacet is
     // signature and not from the host contract, so the Diamond routes the
     // same selector to a different address and every caller is untouched.
 
-    /// @dev Whether the post-mint Full VPFI tariff cross-facet call should run
-    ///      for `offerId`. Only ERC-20 originations bear a tariff (a rental pays
-    ///      no LIF; a sale-vehicle accept already paid its LIF at origination).
-    ///      Among those it runs when the master switch is on OR a party presented
-    ///      a Full opt-in — the acceptor's (transient, read only while
-    ///      `acceptAckActive`, so a matcher fill carries none) or the creator's
-    ///      (on the offer). A Full opt-in presented while the switch is off still
-    ///      routes so it fails closed / downgrades per the party's signed terms
-    ///      (kill-switch-first, rev-15 §4); a plain non-Full accept while dark
-    ///      skips the call entirely (nothing to charge, and no routing dependency
-    ///      for minimal-cut diamonds). Kept in its own frame so the compound read
-    ///      set stays off the at-viaIR-budget `_acceptOffer` path.
+    /// @dev Whether the post-mint fee-entitlement cross-facet call should run
+    ///      for `offerId`. That call is the ONE writer of the loan's
+    ///      fee-entitlement record, which carries both the Full tariff outcome
+    ///      AND the loan-side reward cap (`cStarOpen`, `openDays`,
+    ///      `loanSideRewardCapOpen`). Only ERC-20 originations bear either (a
+    ///      rental pays no LIF and its unpriced principal earns no reward; a
+    ///      sale-vehicle accept already paid its LIF and stamped its cap at
+    ///      origination).
+    ///
+    ///      #3360 — on every chain that is not a reward MIRROR, it runs for
+    ///      EVERY such origination, whatever the tariff switch says and whether
+    ///      or not anyone opted into Full. A non-Full party resolves to
+    ///      HoldOnly / None and is charged nothing, but the loan is stamped, so
+    ///      the loan-side reward cap binds on armed days. Skipping it for a
+    ///      plain accept while the switch was off left the loan unstamped, and
+    ///      an unstamped loan is UNCAPPED on armed days (`_loanSideCapCompute`),
+    ///      bounded only by the per-address daily share cap that a second
+    ///      wallet walks around: self-loan reward farming. The arming rule
+    ///      ("D* must not be armed while any reward-eligible canonical loan is
+    ///      unstamped") holds by construction from genesis instead of by
+    ///      backfill.
+    ///
+    ///      On a MIRROR the loan-side cap is deliberately inert today: a mirror
+    ///      claim is funded from Base against a per-entry commitment that
+    ///      assumes no loan-side trim (#1222 B2-d), so stamping there changes
+    ///      cross-chain settlement and waits on its own design (#3360 mirror
+    ///      decision). There it keeps the old rule: it runs when a party
+    ///      presented a Full opt-in, so that opt-in fails closed / downgrades
+    ///      per the party's signed terms (kill-switch-first, rev-15 §4). Kept
+    ///      in its own frame so the compound read set stays off the
+    ///      at-viaIR-budget `_acceptOffer` path.
     function _fullTariffShouldRun(uint256 offerId)
         private
         view
@@ -1712,6 +1733,7 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.assetType != LibVaipakam.AssetType.ERC20) return false;
         if (s.saleOfferToLoanId[offerId] != 0) return false;
+        if (!LibVaipakam.isMirrorRewardChain(s)) return true;
         if (
             LibVaipakam.cfgFeeEntitlementEnabled() ||
             (s.acceptAckActive && s.acceptAckAcceptorFull) ||
@@ -1726,10 +1748,10 @@ contract OfferAcceptFacet is
         // auth lives — and the disagreement is only visible in the
         // configuration that matters most.
         //
-        // With the master switch ON the first disjunct already short-circuits
-        // this to true, so the extra read costs nothing on the live path. It
-        // binds when the switch is OFF (today's posture, and permanent on
-        // every non-canonical VPFI chain): there, a lender who armed Full
+        // Since #3360 this is reached only on a reward MIRROR (every other
+        // chain returned true above), where the master switch is permanently
+        // OFF because it requires the canonical VPFI chain. It binds there:
+        // a lender who armed Full
         // with `allowFullDowngrade == false` must have the fill REVERT
         // `FeeEntitlementDisabled` (rev-14 kill-switch rule; silently
         // continuing as non-Full is named Forbidden). Skipping the tariff
@@ -1972,7 +1994,14 @@ contract OfferAcceptFacet is
         // checkpoint is missing. The exact refusal is
         // `OfferPriceGuardFacet.requireOfferPriceGuardsClear`'s revert, and
         // `getOfferPriceGuard` says which. APPENDED; prior values stay stable.
-        PriceGuardRefused
+        PriceGuardRefused,
+        // #3443 — the offer's terms were set (created or last edited) less
+        // than the minimum age ago, so `_acceptOffer` reverts
+        // `LibTiming.OfferTermsTooFresh`. Ordered where `_acceptOffer` orders
+        // it, right after the expiry gate. Transient: the offer becomes
+        // takeable on its own a few seconds later. APPENDED; prior values stay
+        // stable.
+        TermsTooFresh
     }
 
     /// @notice Projection of the loan that would land if the supplied

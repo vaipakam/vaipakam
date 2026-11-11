@@ -12,6 +12,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  InitRiskGateRuleTest
@@ -81,12 +82,15 @@ contract InitRiskGateRuleTest is SetupTest {
     {
         vm.prank(lender);
         lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Lender, collateralAsset)
+            _params(LibVaipakam.OfferType.Lender, collateralAsset),
+            type(uint64).max
         );
         vm.prank(borrower);
         borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, collateralAsset)
+            _params(LibVaipakam.OfferType.Borrower, collateralAsset),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), lenderOfferId, borrowerOfferId); // #3443
     }
 
     /// @dev Depth-tiered LTV on, with `asset` measured at tier 0 — the

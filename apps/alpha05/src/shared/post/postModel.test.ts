@@ -91,6 +91,7 @@ describe('createParams', () => {
         fullTerm: DEFAULT_INPUT.fullTerm,
         allowsPartialRepay: false,
         tariff: null,
+        guardBps: null,
       },
       { lending, collateral, leg: { kind: 'erc20' } },
       99n,
@@ -124,6 +125,7 @@ describe('createParams for a lending offer', () => {
       fullTerm: true,
       allowsPartialRepay: true,
       tariff: null,
+      guardBps: null,
     };
     const p = createParams(parsed, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'lender');
     expect(p.offerType).toBe(0);
@@ -163,6 +165,7 @@ describe('createParams for an NFT', () => {
         fullTerm: true,
         allowsPartialRepay: false,
         tariff: null,
+        guardBps: null,
       },
       { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } },
       99n,
@@ -198,6 +201,7 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     fullTerm: true,
     allowsPartialRepay: false,
     tariff: null,
+    guardBps: null,
   };
   it('sends the smallest and largest amount, the floor and the locked collateral, one rate, and the fill mode', () => {
     const p = createParams(ranged, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'borrower');
@@ -249,6 +253,7 @@ describe("a lending offer's parts (OFF-10 / OFF-11)", () => {
     fullTerm: true,
     allowsPartialRepay: false,
     tariff: null,
+    guardBps: null,
   };
   it('sends the smallest part as the minimum, the whole amount as the maximum and escrow, one collateral figure, and the fill mode', () => {
     const p = createParams(parts, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'lender');

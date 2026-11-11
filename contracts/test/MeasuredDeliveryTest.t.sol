@@ -42,6 +42,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @dev Exposes {LibDelivery.pullExact}, which only libraries reach.
 contract LibDeliveryHarness {
@@ -440,7 +441,7 @@ contract MeasuredDeliveryTest is SetupTest {
     ///         a lien over collateral the vault does not hold.
     function test_Accept_CollateralRefusedUnlessAllArrives() public {
         vm.prank(lender);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer());
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer(), type(uint64).max);
         _chargesFee(col, address(0));
 
         LibAcceptTerms.AcceptTerms memory t =
@@ -462,7 +463,7 @@ contract MeasuredDeliveryTest is SetupTest {
     /// @dev    Kills: the borrower owing principal they never received.
     function test_Accept_PrincipalRefusedUnlessAllArrives() public {
         vm.prank(lender);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer());
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer(), type(uint64).max);
         _chargesFee(mockERC20, _vault(lender));
 
         LibAcceptTerms.AcceptTerms memory t =
@@ -527,6 +528,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function test_RentalDefault_ShortfallFromTreasuryFeeFirst() public {
         address treasury = makeAddr("externalTreasury");
         AdminFacet(address(diamond)).setTreasury(treasury);
+        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
         uint256 loanId = _openRental();
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         ERC20Mock(mockERC20).mint(address(diamond), OTHER);
@@ -750,6 +752,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function test_TreasuryFeeHost_DiamondShareAccruesWhatArrived() public {
         address treasury = makeAddr("externalTreasury");
         AdminFacet(address(diamond)).setTreasury(treasury);
+        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
         ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
         _chargesFee(mockERC20, address(diamond));
 
@@ -811,6 +814,7 @@ contract MeasuredDeliveryTest is SetupTest {
         // An external treasury, so the share really leaves the Diamond (where
         // the Diamond is the treasury nothing moves, see the #2623 cell).
         AdminFacet(address(diamond)).setTreasury(makeAddr("externalTreasury"));
+        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
         ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
         _chargesFeeOnTop(mockERC20, address(diamond));
 
@@ -1009,7 +1013,8 @@ contract MeasuredDeliveryTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         assertEq(

@@ -1450,7 +1450,11 @@
       "moreOffers_many": "{{count}} offres correspondantes supplémentaires paient moins que celles affichées.",
       "moreOffers_other": "{{count}} offres correspondantes supplémentaires paient moins que celles affichées.",
       "checking": "Vérification de la possibilité de sortir tôt de ce prêt…",
-      "checkFailed": "Impossible de lire les détails de sortie de ce prêt pour le moment — nouvelle tentative."
+      "checkFailed": "Impossible de lire les détails de sortie de ce prêt pour le moment — nouvelle tentative.",
+      "floorLoading": "Lecture du minimum que cette vente vous versera…",
+      "floorUnavailable": "Le minimum que cette vente vous versera n’a pas pu être lu pour le moment, la vente ne peut donc pas être examinée tant qu’il ne l’est pas. Réessayez dans un instant.",
+      "receiptFloor": "Au moins {{amount}} {{sym}} une fois le complément de taux déduit, si la vente aboutit dans les 30 prochaines minutes. La vente est refusée plutôt qu’effectuée si elle vous versait moins.",
+      "receiptHeld": "{{amount}} {{sym}} déjà mis de côté pour le prêteur sur ce prêt passent à l’acheteur avec la position. La vente est refusée si davantage a été mis de côté au moment où elle s’exécute."
     },
     "saleHold": {
       "title": "Le prêteur a mis cette position en vente",
@@ -2429,6 +2433,7 @@
         "refinanceUntakeable": "Cette demande de refinancement ne peut pas être acceptée pour le moment — soit ce n’est pas la demande que le protocole a enregistrée pour ce prêt (une plus ancienne, ou une que l’emprunteur a remplacée), soit l’emprunteur a une offre de compensation pour clôture anticipée ouverte sur le prêt. Rien n’a été envoyé.",
         "cadenceNotAdmitted": "Le calendrier de paiement des intérêts de cette offre n’est plus autorisé à ces conditions : les réglages des intérêts périodiques, le seuil de montant ou le statut de marché d’un actif ont changé depuis sa publication. Son créateur doit l’annuler et la republier. Rien n’a été envoyé.",
         "priceGuardRefused": "Le créateur de cette offre a limité la variation de prix admise avant qu’elle ne soit prise. Le prix a dépassé cette limite, ou il bouge trop vite (ou ne peut pas être lu) pour être vérifié maintenant, donc l’offre ne peut pas être prise. Rien n’a été envoyé.",
+        "termsTooFresh": "Cette offre a été publiée ou modifiée il y a quelques secondes, et une offre ne peut être prise qu’une fois ses conditions en place depuis quelques secondes. Réessayez dans un instant. Rien n’a été envoyé.",
         "unknown": "Le protocole n’accepte pas cette offre pour le moment. Rien n’a été envoyé — actualisez et réessayez, ou revenez un peu plus tard."
       },
       "termsNotAccepted": "Vous devez accepter les conditions de Vaipakam avant de faire cela. Ouvrez la page Accueil et la demande vous sera faite une seule fois ; rembourser, réclamer et retirer continuent de fonctionner dans tous les cas.",
@@ -4249,6 +4254,12 @@
     "SaleBelowSellerFloor": "Cette annonce ne peut plus être achetée : le prêt a changé depuis sa mise en vente (par exemple, une partie a été remboursée), si bien que la vente rapporterait au vendeur moins que le minimum garanti par son annonce. Rien n'a été prélevé. Le vendeur peut l'annuler et la remettre en vente.",
     "SaleAboveHeldCeiling": "Cette annonce ne peut plus être achetée : depuis sa mise en vente, davantage a été mis de côté pour le prêteur sur ce prêt que l'annonce ne le permet. Rien n'a été prélevé. Le vendeur peut l'annuler et la remettre en vente.",
     "OfferBelowMinimumValue": "Cette offre est plus petite que ce que le protocole autorise : le montant, ou la plus petite part qu’un appariement peut prendre, vaut moins que la valeur minimale d’une offre. Augmentez le montant et réessayez.",
-    "TooManyOpenOffers": "Ce portefeuille a déjà autant d’offres ouvertes que le protocole l’autorise. Annulez une offre dont vous n’avez plus besoin (une offre expirée compte jusqu’à ce que vous l’annuliez), puis réessayez."
+    "TooManyOpenOffers": "Ce portefeuille a déjà autant d’offres ouvertes que le protocole l’autorise. Annulez une offre dont vous n’avez plus besoin (une offre expirée compte jusqu’à ce que vous l’annuliez), puis réessayez.",
+    "DeadlinePassed": "Cette transaction a attendu trop longtemps avant d’atteindre la chaîne : elle a donc expiré sans rien faire. Vérifiez les conditions et envoyez-la à nouveau.",
+    "DeadlineRequired": "Cette action exige une limite de temps et aucune n’a été envoyée. Rien n’a été fait ; rechargez la page et réessayez.",
+    "OfferTermsTooFresh": "Cette offre a été publiée ou modifiée il y a quelques secondes, et une offre ne peut être prise qu’une fois ses conditions en place depuis quelques secondes. Réessayez dans un instant. Rien n’a été envoyé.",
+    "IntentTermsTooFresh": "Cette offre permanente a été définie ou modifiée il y a quelques secondes, et elle ne peut être prise qu’une fois ses conditions en place depuis quelques secondes. Réessayez dans un instant. Rien n’a été envoyé.",
+    "SaleNetBelowReviewed": "Cette vente vous verserait désormais moins que le minimum que vous avez examiné (une partie du prêt a peut-être été remboursée). Rien n’a été vendu. Examinez à nouveau la vente pour voir le montant actuel.",
+    "SaleHeldAboveReviewed": "Davantage a été mis de côté pour le prêteur sur ce prêt depuis que vous avez examiné la vente. Rien n’a été vendu. Examinez à nouveau la vente pour voir les montants actuels."
   }
 }

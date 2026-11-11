@@ -53,7 +53,8 @@ contract RentalBufferSnapshotTest is SetupTest {
 
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _lenderRentalParams(dailyFee, duration, totalPrepay5)
+            _lenderRentalParams(dailyFee, duration, totalPrepay5),
+            type(uint64).max
         );
 
         // Governance RAISES the rental buffer to 10% AFTER the offer is posted.
@@ -91,7 +92,8 @@ contract RentalBufferSnapshotTest is SetupTest {
         uint256 borrowerBefore = IERC20(mockERC20).balanceOf(borrower);
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerRentalParams(dailyFee, duration, 1)
+            _borrowerRentalParams(dailyFee, duration, 1),
+            type(uint64).max
         );
         // Create vaulted exactly the 5% prepay.
         assertEq(
@@ -126,7 +128,8 @@ contract RentalBufferSnapshotTest is SetupTest {
 
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _borrowerRentalParams(10 ether, duration, 2)
+            _borrowerRentalParams(10 ether, duration, 2),
+            type(uint64).max
         );
 
         // Governance RAISES the buffer to 20% after create.
@@ -147,7 +150,8 @@ contract RentalBufferSnapshotTest is SetupTest {
                 interestRateBpsMax: 0,
                 collateralAmount: 0, // a rental carries no collateral (#2949)
                 collateralAmountMax: 0
-            })
+            }),
+            type(uint64).max
         );
         assertEq(
             borrowerBefore - IERC20(mockERC20).balanceOf(borrower),

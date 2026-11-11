@@ -30,6 +30,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  PriorityRoutingPerkTest
@@ -80,6 +81,9 @@ contract PriorityRoutingPerkTest is SetupTest {
         setupHelper();
         solver = makeAddr("prioritySolver");
         AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        // #3431 — the vault code fixes its treasury; bring it to this one
+        // (test convenience), or every treasury leg of a fill is refused.
+        LibTestVaultBeacon.sync(address(diamond));
 
         // The intent fill path: both master gates on (they are also two of the
         // perk's three deliverability conditions).
@@ -143,8 +147,10 @@ contract PriorityRoutingPerkTest is SetupTest {
     function _setIntent() internal {
         vm.prank(lender);
         _intentFacet().setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            type(uint64).max
         );
+        LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
     }
 
     function _fundIntent(uint256 amount) internal {
@@ -236,8 +242,10 @@ contract PriorityRoutingPerkTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     function _fill(uint256 cp) internal returns (uint256 loanId) {
@@ -474,8 +482,10 @@ contract PriorityRoutingPerkTest is SetupTest {
     function test_SetLenderIntent_Reset_StopsTheCreditFromBeingSpent() public {
         _optedInFixture(1);
         uint256 cp = _postBorrower("b-reset");
-        _exhaustSolver();
+        // #3443 — reset first: the reset terms must age, and exhausting the
+        // solver after it keeps that wait from refilling its capacity.
         _setIntent(); // reset
+        _exhaustSolver();
         _expectExhausted();
         _fill(cp);
         assertEq(_credits(), 1, "the reset intent spent nothing");

@@ -15,6 +15,7 @@
  */
 import { encodeAbiParameters, keccak256, parseEther, type Address, type Hex } from 'viem';
 import { TOKEN_ABI, type Party, type ScenarioChain } from './scenarioChain';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
 
 export const WETH: Address = '0x4200000000000000000000000000000000000006';
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
@@ -102,6 +103,9 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
   const collateral = parseEther(t.collateralTliq);
   await sc.write(t.lender, WETH, TOKEN_ABI, 'deposit', [], principal);
   await sc.write(t.lender, WETH, TOKEN_ABI, 'approve', [sc.diamond, principal]);
+  // The transaction deadline (#3412): the chain's own time plus the shared
+  // window, never the host clock.
+  const validUntil = txValidUntil(BigInt(await sc.now()));
   const created = await sc.diamondWrite(t.lender, 'createOffer', [
     {
       offerType: 0,
@@ -131,10 +135,13 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       refinanceTargetLoanId: 0n,
       useFullTermInterest: t.fullTermInterest ?? false,
     },
+    validUntil,
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
-  return BigInt(offerEv.args.offerId as bigint);
+  const offerId = BigInt(offerEv.args.offerId as bigint);
+  await ageOffer(sc, offerId);
+  return offerId;
 }
 
 export interface RequestTerms {
@@ -155,6 +162,9 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
   const collateralAsset = tliq(sc);
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'mint', [sc.address(t.borrower), collateral]);
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'approve', [sc.diamond, collateral]);
+  // The transaction deadline (#3412): the chain's own time plus the shared
+  // window, never the host clock.
+  const validUntil = txValidUntil(BigInt(await sc.now()));
   const created = await sc.diamondWrite(t.borrower, 'createOffer', [
     {
       offerType: 1,
@@ -184,10 +194,13 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
     },
+    validUntil,
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
-  return BigInt(offerEv.args.offerId as bigint);
+  const offerId = BigInt(offerEv.args.offerId as bigint);
+  await ageOffer(sc, offerId);
+  return offerId;
 }
 
 /** The lender posts a lender offer; the borrower accepts it with a signed
@@ -203,11 +216,37 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
   return acceptPostedOffer(sc, t.borrower, offerId);
 }
 
+/** #3443 — an offer can be filled only once its terms have stood the
+ *  Diamond's minimum age (`getMinTermsAgeSec`, 5 s by default). A live taker
+ *  simply arrives later; a scenario that posts and accepts back to back moves
+ *  the chain to the moment the terms become fillable first. Terms that carry
+ *  no age (0), or a Diamond without the rule, need no wait. */
+export async function waitOutTermsAge(sc: ScenarioChain, termsSetAt: bigint | undefined): Promise<void> {
+  if (!termsSetAt) return;
+  const minAge = await sc.read<bigint>('getMinTermsAgeSec').catch(() => 0n);
+  const readyAt = Number(termsSetAt + minAge);
+  const now = await sc.now();
+  if (readyAt > now) await sc.warp(readyAt - now);
+}
+
+/** Moves the chain past the moment offer `offerId`'s terms become fillable,
+ *  and mines a block there, so every read (a page's preview included) sees
+ *  the offer as takeable. A seeded offer stands for one its maker posted
+ *  earlier; on an idle Anvil no block would otherwise carry the clock past
+ *  the age, and the page would keep reading the offer as just posted. The
+ *  post helpers above call it; a spec that posts its own offer for a page to
+ *  take calls it too. */
+export async function ageOffer(sc: ScenarioChain, offerId: bigint): Promise<void> {
+  const o = await sc.read<Record<string, unknown>>('getOffer', [offerId]);
+  await waitOutTermsAge(sc, o.termsSetAt as bigint | undefined);
+}
+
 /** `who` signs the acceptance terms of a posted offer exactly as it stands
  *  and accepts it, whatever it carries (a loan offer or a rental listing);
  *  the caller funds and approves whatever the acceptance pulls first. */
 export async function acceptPostedOffer(sc: ScenarioChain, who: Party, offerId: bigint): Promise<OpenedLoan> {
   const o = await sc.read<Record<string, unknown>>('getOffer', [offerId]);
+  await waitOutTermsAge(sc, o.termsSetAt as bigint | undefined);
   const linkedLoanId = await sc.read<bigint>('getOfferLinkedLoanId', [offerId]);
   const riskTermsHash = await sc.read<Hex>('getCurrentRiskTermsHash').catch(() => ZERO_HASH);
   const chainNow = BigInt(await sc.now());
@@ -242,7 +281,7 @@ export async function acceptPostedOffer(sc: ScenarioChain, who: Party, offerId: 
     acknowledgedIlliquidLendingAsset: o.lendingAsset as Address,
     acknowledgedIlliquidCollateralAsset: o.collateralAsset as Address,
     nonce: BigInt(Date.now()),
-    deadline: chainNow + 1800n,
+    deadline: txValidUntil(chainNow),
     riskTermsHash,
     acceptorFull: false,
     acceptorMaxCStar: 0n,

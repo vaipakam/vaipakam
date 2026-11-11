@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -613,11 +614,17 @@ contract PrecloseFacet is
      *      shortfall. The live loan is updated to reflect ben as borrower.
      * @param loanId The loan ID to transfer.
      * @param borrowerOfferId The existing Borrower Offer from ben.
+     * @param validUntil The caller's MANDATORY transaction deadline (#3412):
+     *        handing the obligation over fills ben's offer at its terms and
+     *        charges alice the shortfall at the moment it lands, so it is
+     *        price-exposed and a transaction landing after this reverts.
      */
     function transferObligationViaOffer(
         uint256 loanId,
-        uint256 borrowerOfferId
+        uint256 borrowerOfferId,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         // T-090 v1.1 (#389) §5.8 — transferObligation rewrites
         // `loan.borrower` + `loan.collateralAmount` + the borrower
         // NFT; the v1.1 commit's `lopAtCommit` pin and orderHash
@@ -676,6 +683,9 @@ contract PrecloseFacet is
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(borrowerOfferId, offer.expiresAt);
         }
+        // #3443 — the offer's terms must have stood the minimum age before
+        // this path takes it, as on every other fill.
+        LibTiming.requireOfferAged(borrowerOfferId, offer);
         // #3358 — the incoming borrower posted this offer as a maker, so its
         // price-move guard holds here as on every other fill. The handover
         // opens no loan, so loan creation's check never sees it; this is that
@@ -1363,6 +1373,10 @@ contract PrecloseFacet is
      * @param collateralAmount The collateral amount required from the new borrower.
      * @param creatorRiskAndTermsConsent Consent for illiquid assets in new offer.
      * @param prepayAsset Prepay asset for NFT loans (address(0) for ERC20).
+     * @param validUntil The caller's MANDATORY transaction deadline (#3412):
+     *        an offset posts a new offer and pays the shortfall at the moment
+     *        it lands, so it is price-exposed and one landing after this
+     *        reverts.
      * @return newOfferId The ID of the newly created offset lender offer.
      */
     function offsetWithNewOffer(
@@ -1372,8 +1386,10 @@ contract PrecloseFacet is
         address collateralAsset,
         uint256 collateralAmount,
         bool creatorRiskAndTermsConsent,
-        address prepayAsset
+        address prepayAsset,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 newOfferId) {
+        LibTiming.requireDeadline(validUntil);
         // T-090 v1.1 (#389) §5.8 — offset writes a new offer that
         // settles against `loan.collateralAmount`; same custody-
         // conflict rationale as the other PrecloseFacet entry

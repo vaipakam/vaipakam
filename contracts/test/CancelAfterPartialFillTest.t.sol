@@ -18,6 +18,7 @@ import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title CancelAfterPartialFillTest
@@ -137,8 +138,10 @@ contract CancelAfterPartialFillTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     function _postLenderOffer(
@@ -178,8 +181,10 @@ contract CancelAfterPartialFillTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     /// @notice Protected account mode — a good-till-cancelled offer left

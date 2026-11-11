@@ -17,7 +17,7 @@ import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
  */
 library LibTestProtectedCut {
     function selectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = ProtectedAccountFacet.applyProtection.selector;
         s[1] = ProtectedAccountFacet.cancelSettingChange.selector;
         s[2] = ProtectedAccountFacet.finalizeSettingChanges.selector;
@@ -31,6 +31,7 @@ library LibTestProtectedCut {
         s[10] = ProtectedAccountFacet.isProtectionOn.selector;
         s[11] = ProtectedAccountFacet.protectionManagerOf.selector;
         s[12] = ProtectedAccountFacet.requireCanOpenFor.selector;
+        s[13] = ProtectedAccountFacet.protectsNftsOf.selector;
     }
 
     /// @dev The facet's Add cut, deployed from its artifact.

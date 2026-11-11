@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import type { Hex } from 'viem';
 import { anvilControl } from '@vaipakam/anvil-harness/rpc';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
 import { ScenarioChain, type ChainFixture } from '@vaipakam/anvil-harness/scenarioChain';
 import { ANVIL_URL } from './anvil';
 import { FIXTURE_FILE } from './artifacts';
@@ -30,4 +31,15 @@ export function scenario(cast: { lender?: Role; borrower?: Role } = {}): Scenari
     name: 'alpha05-e2e',
     accounts: { lender: accountFor(cast.lender ?? 'lender'), borrower: accountFor(cast.borrower ?? 'borrower') },
   });
+}
+
+/** #3412 — the `validUntil` a price-exposed write carries (posting or
+ *  changing an offer or a standing intent, a sale, a swap-to-repay, an
+ *  offset, a handover): the shared thirty-minute window
+ *  (`@vaipakam/lib/txDeadline`) measured from the chain's latest block,
+ *  never the host clock, since the suite moves the chain's time on its own.
+ *  Read it right before the write it goes into. */
+export async function txDeadline(sc: ScenarioChain): Promise<bigint> {
+  const block = await sc.pub.getBlock({ blockTag: 'latest' });
+  return txValidUntil(block.timestamp);
 }

@@ -22,6 +22,7 @@ import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {SignedOfferMatchFacet} from "../src/facets/SignedOfferMatchFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibSignedOffer} from "../src/libraries/LibSignedOffer.sol";
@@ -36,11 +37,14 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibFeeEntitlement} from "../src/libraries/LibFeeEntitlement.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  FeeEntitlementFacetTest
@@ -79,6 +83,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         treasuryRecipient = makeAddr("treasury");
         (signedMaker, signedMakerPk) = makeAddrAndKey("signed-maker");
         AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
+        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
 
         // Deploy VPFI behind a UUPS proxy, register it, mark this chain
         // canonical, and seed the Diamond reserve + party wallets.
@@ -120,7 +125,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     function _createLenderErc20Offer() internal returns (uint256) {
         ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
         vm.prank(lender);
-        return OfferCreateFacet(address(diamond)).createOffer(
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -148,8 +153,11 @@ contract FeeEntitlementFacetTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     /// @dev #1955 — the same lender offer as {_createLenderErc20Offer} but as an
@@ -229,7 +237,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 bucketBefore = _config().getRecycleBucket();
         vm.expectEmit(false, false, false, true, address(diamond));
         emit OfferCreatorFullTariffSet(0, true, c, false);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
         assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "the signed maker's own C*, charged on a matched slice");
         assertEq(_config().getRecycleBucket() - bucketBefore, c, "absorbed once");
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
@@ -251,7 +259,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         bytes memory sig = _signMaker(o);
         address mVault = _vault(signedMaker);
         uint256 mBefore = vpfiToken.balanceOf(mVault);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
         assertEq(vpfiToken.balanceOf(mVault), mBefore, "nothing charged");
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
         assertTrue(uint8(fe.lenderMode) != uint8(LibVaipakam.FeeEntitlementMode.Full), "not Full");
@@ -265,7 +273,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         LibSignedOffer.SignedOffer memory o = _signedLender(PRINCIPAL, true, 0, false);
         bytes memory sig = _signMaker(o);
         vm.expectRevert(LibSignedOffer.SignedOfferFullNeedsMaxCStar.selector);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
         LibAcceptTerms.AcceptTerms memory noTerms;
         vm.prank(borrower);
         vm.expectRevert(LibSignedOffer.SignedOfferFullNeedsMaxCStar.selector);
@@ -284,10 +292,10 @@ contract FeeEntitlementFacetTest is SetupTest {
         bytes memory sig = _signMaker(o);
         address mVault = _vault(signedMaker);
         uint256 mBefore = vpfiToken.balanceOf(mVault);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
         assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar, c, "half the order, half the ceiling");
         assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "the first slice charged within its share");
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
         assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 2).creatorMaxCStar, c, "the second slice too");
         assertEq(mBefore - vpfiToken.balanceOf(mVault), 2 * c, "two slices, the whole signed ceiling, no more");
     }
@@ -306,10 +314,10 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 signed = 2 * c + 1;
         LibSignedOffer.SignedOffer memory o = _signedLender(2 * PRINCIPAL, true, signed, false);
         bytes memory sig = _signMaker(o);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
         uint256 first = OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar;
         assertEq(first, c + 1, "the first half takes its cumulative share, rounded up");
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
         uint256 second = OfferCancelFacet(address(diamond)).getOffer(b2 + 2).creatorMaxCStar;
         assertEq(second, c, "the second half takes only what is left");
         assertEq(first + second, signed, "the slices sum to the signed ceiling, never past it");
@@ -328,7 +336,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         bytes memory sig = _signMaker(o);
         address mVault = _vault(signedMaker);
         uint256 mBefore = vpfiToken.balanceOf(mVault);
-        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
         assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar, 1 << 255, "half the word, rounded up");
         assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "charged its C*, well inside the share");
     }
@@ -337,7 +345,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(lender);
         IERC721(mockNft721).setApprovalForAll(address(diamond), true);
         vm.prank(lender);
-        return OfferCreateFacet(address(diamond)).createOffer(
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
@@ -365,8 +373,11 @@ contract FeeEntitlementFacetTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     function _cStar() internal view returns (uint256 c) {
@@ -461,6 +472,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     function test_1955_refinance_discountKeysOnHolder_notStoredLender() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Refi");
         AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
         (address holder, ) = makeAddrAndKey("holder1955");
         (address newLender, uint256 newLenderPk) = makeAddrAndKey("newLender1955");
         // `SetupTest` blanket-approves only its OWN actors; these two are new,
@@ -717,19 +729,51 @@ contract FeeEntitlementFacetTest is SetupTest {
 
     // ─── dark default (kill switch off) ────────────────────────────────────────
 
-    function testDark_NonFullAccept_NoTariffNoStamp() public {
+    /// @dev #3360 — while the tariff is dark a plain accept is charged
+    ///      nothing, but the loan is STILL stamped: its loan-side reward cap
+    ///      (`cStarOpen`, `openDays`, the cached ceiling) is recorded, so the
+    ///      cap binds once the reward cutover is armed. Before #3360 the whole
+    ///      call was skipped and the loan earned uncapped on armed days.
+    function testDark_NonFullAccept_NoTariffButCapStamped() public {
         uint256 offerId = _createLenderErc20Offer();
         uint256 bucketBefore = _config().getRecycleBucket();
+        uint256 c = _cStar();
+        assertGt(c, 0, "fixture: a priced loan has a non-zero C*");
 
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
-        // While dark the whole tariff call is skipped: no fee-entitlement record
-        // is written and the recycle bucket is untouched.
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
         assertEq(uint8(fe.borrowerMode), uint8(LibVaipakam.FeeEntitlementMode.None));
         assertEq(uint8(fe.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.None));
-        assertEq(fe.cStarOpen, 0, "no stamp while dark");
+        assertEq(fe.borrowerTariffPaid, 0, "nothing charged to the borrower");
+        assertEq(fe.lenderTariffPaid, 0, "nothing charged to the lender");
+        assertEq(fe.cStarOpen, c, "the cap base is stamped while dark");
+        assertEq(uint256(fe.openDays), 30, "the open term is stamped while dark");
+        assertGt(uint256(fe.loanSideRewardCapOpen), 0, "the per-side ceiling is cached");
         assertEq(_config().getRecycleBucket(), bucketBefore, "bucket untouched");
+    }
+
+    /// @dev #3360 — the same on the canonical reward chain, the one where the
+    ///      armed cap binds.
+    function test3360_CanonicalRewardChain_PlainAcceptStamped() public {
+        TestMutatorFacet(address(diamond)).setRewardRoleRaw(0, true, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20Offer());
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint256(fe.openDays), 30, "a canonical plain loan carries its cap");
+        assertEq(fe.cStarOpen, _cStar());
+    }
+
+    /// @dev #3360 — on a reward MIRROR the loan-side cap stays inert for now
+    ///      (mirror claims settle against Base under a commitment that assumes
+    ///      no loan-side trim), so a plain accept still skips the call and the
+    ///      loan stays unstamped. Pinned so lifting that rule is a deliberate
+    ///      change, not a side effect.
+    function test3360_Mirror_PlainAcceptStaysUnstamped() public {
+        TestMutatorFacet(address(diamond)).setRewardRoleRaw(84532, false, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, _createLenderErc20Offer());
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint256(fe.openDays), 0, "a mirror plain loan is not stamped");
+        assertEq(fe.cStarOpen, 0);
     }
 
     function testDark_FullOptIn_RevertsClosed() public {
@@ -862,7 +906,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     function _createBorrowerErc20OfferTargeting(uint256 target) internal returns (uint256) {
         ERC20Mock(mockCollateralERC20).mint(borrower, PRINCIPAL * 2);
         vm.prank(borrower);
-        return OfferCreateFacet(address(diamond)).createOffer(
+        uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -890,8 +934,11 @@ contract FeeEntitlementFacetTest is SetupTest {
                 fillMode: target != 0 ? LibVaipakam.FillMode.Aon : LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: target,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), oid_); // #3443
+        return oid_;
     }
 
     /// A matched fill accepts the BORROWER offer, so before #1369 the lender's
@@ -1527,6 +1574,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     function test_1955_refinance_pegged_vpfiDebitAttributedToHolder() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Peg");
         AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
         (address holder, ) = makeAddrAndKey("pegHolder1955");
         (address newLender, uint256 newLenderPk) = makeAddrAndKey("pegNewLender1955");
         for (uint256 i = 0; i < 2; i++) {

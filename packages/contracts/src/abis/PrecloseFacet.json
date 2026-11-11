@@ -63,6 +63,11 @@
         "name": "prepayAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -100,6 +105,11 @@
         "name": "borrowerOfferId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -1309,6 +1319,22 @@
   },
   {
     "type": "error",
+    "name": "DeadlinePassed",
+    "inputs": [
+      {
+        "name": "validUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeadlineRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DeliveredFreshBoundExceeded",
     "inputs": [
       {
@@ -2088,6 +2114,22 @@
         "name": "expiresAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OfferTermsTooFresh",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

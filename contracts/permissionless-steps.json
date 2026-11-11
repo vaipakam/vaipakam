@@ -69,11 +69,7 @@
       "flag": "GRACE_DEFAULT_ENABLED",
       "evidence": "apps/keeper/src/closeOut.ts"
     },
-    "EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer(uint256,uint256)": {
-      "class": "user",
-      "why": "the lender sells its own loan"
-    },
-    "EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound(uint256,uint256,uint256,uint256,uint64)": {
+    "EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer(uint256,uint256,uint256,uint256,uint64)": {
       "class": "user",
       "why": "the lender sells its own loan"
     },
@@ -81,11 +77,7 @@
       "class": "user",
       "why": "completes the lender's own sale; an accepted sale offer completes it automatically"
     },
-    "EarlyWithdrawalFacet.createLoanSaleOffer(uint256,uint256,bool,uint64)": {
-      "class": "user",
-      "why": "the lender lists its own loan"
-    },
-    "EarlyWithdrawalFacet.createLoanSaleOfferBound(uint256,uint256,bool,uint64,uint256,uint256)": {
+    "EarlyWithdrawalFacet.createLoanSaleOffer(uint256,uint256,bool,uint64,uint256,uint256,uint64)": {
       "class": "user",
       "why": "the lender lists its own loan"
     },
@@ -137,7 +129,7 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,bool)": {
+    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,bool,uint64)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
@@ -188,11 +180,11 @@
       "class": "user",
       "why": "arms a price-move guard for the caller's own next offer in this transaction (transient, keyed by the caller); no step waits on it"
     },
-    "OfferCreateFacet.createOffer(struct:LibVaipakam.CreateOfferParams)": {
+    "OfferCreateFacet.createOffer(struct:LibVaipakam.CreateOfferParams,uint64)": {
       "class": "user",
       "why": "the offer creator's own offer"
     },
-    "OfferCreateFacet.createOfferWithPermit(struct:LibVaipakam.CreateOfferParams,struct:ISignatureTransfer.PermitTransferFrom,bytes)": {
+    "OfferCreateFacet.createOfferWithPermit(struct:LibVaipakam.CreateOfferParams,struct:ISignatureTransfer.PermitTransferFrom,bytes,uint64)": {
       "class": "user",
       "why": "the offer creator's own offer"
     },
@@ -206,7 +198,7 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "OfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,uint256,uint256)": {
+    "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,uint256,uint256)": {
       "class": "alternative",
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
       "why": "matches an off-chain signed offer the matcher does not index; on-chain offers are matched by matchOffers"
@@ -294,7 +286,7 @@
       "class": "user",
       "why": "completes the borrower's own offset; an accepted offset offer completes it automatically"
     },
-    "PrecloseFacet.offsetWithNewOffer(uint256,uint256,uint256,address,uint256,bool,address)": {
+    "PrecloseFacet.offsetWithNewOffer(uint256,uint256,uint256,address,uint256,bool,address,uint64)": {
       "class": "user",
       "why": "the borrower offsets its own loan"
     },
@@ -302,7 +294,7 @@
       "class": "user",
       "why": "the borrower closes its own loan early"
     },
-    "PrecloseFacet.transferObligationViaOffer(uint256,uint256)": {
+    "PrecloseFacet.transferObligationViaOffer(uint256,uint256,uint64)": {
       "class": "user",
       "why": "the borrower hands over its own loan"
     },

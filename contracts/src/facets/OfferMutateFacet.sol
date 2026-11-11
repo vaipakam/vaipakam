@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -163,12 +164,18 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      * @param  offerId       Offer to modify.
      * @param  newAmount     New floor of the principal range.
      * @param  newAmountMax  New ceiling. Must be >= `amountFilled`.
+     * @param  validUntil    The caller's MANDATORY transaction deadline
+     *         (#3412): changing an offer's terms is price-exposed, so a
+     *         change that lands after it reverts. The same rule, and the same
+     *         parameter, as every terms setter here and {createOffer}.
      */
     function setOfferAmount(
         uint256 offerId,
         uint256 newAmount,
-        uint256 newAmountMax
+        uint256 newAmountMax,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
@@ -216,12 +223,16 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *         OfferAlreadyAccepted, InvalidRateRange,
      *         InterestRateAboveCeiling, SanctionedAddress, plus
      *         per-asset pause reverts.
+     * @param  validUntil The caller's MANDATORY transaction deadline,
+     *         as {setOfferAmount}.
      */
     function setOfferRate(
         uint256 offerId,
         uint256 newRateBps,
-        uint256 newRateBpsMax
+        uint256 newRateBpsMax,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
@@ -250,12 +261,16 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *         borrower NFT-rental reverts `CollateralMutationUnsupportedForShape`
      *         because that shape pre-vaults prepay (in `prepayAsset`)
      *         rather than collateral.
+     * @param  validUntil The caller's MANDATORY transaction deadline,
+     *         as {setOfferAmount}.
      */
     function setOfferCollateral(
         uint256 offerId,
         uint256 newCollateralAmount,
-        uint256 newCollateralAmountMax
+        uint256 newCollateralAmountMax,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
@@ -294,11 +309,15 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *         invariants and settles the union of deltas. Atomic —
      *         either every change lands, or none do (the whole tx
      *         reverts on the first violation).
+     * @param  validUntil The caller's MANDATORY transaction deadline,
+     *         as {setOfferAmount}.
      */
     function modifyOffer(
         uint256 offerId,
-        LibVaipakam.OfferModifyParams calldata params
+        LibVaipakam.OfferModifyParams calldata params,
+        uint64 validUntil
     ) external nonReentrant whenNotPaused {
+        LibTiming.requireDeadline(validUntil);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
@@ -889,6 +908,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.backstopEligibleAfter = 0;
             emit OfferBackstopEligibilitySet(offerId, 0);
         }
+        // #3443 — the terms changed now, so the offer fills again only once
+        // the new terms have stood the minimum age.
+        LibTiming.stampOfferTerms(offer);
         // #3413 — the offer's terms changed: its token cools down, so a sale
         // of the offer position cannot fill against terms changed just before.
         LibPositionNFT.markOfferValueOut(offerId);

@@ -265,6 +265,12 @@ library LibProtectedAccount {
     ///         every right over it. A protocol route that would take a
     ///         position out of the account (a lender sale) reads this.
     function protectsNfts(address account) internal view returns (bool) {
+        return abi.decode(_viaHost(abi.encodeWithSignature("protectsNftsOf(address)", account)), (bool));
+    }
+
+    /// @notice The rule {protectsNfts} applies, run in its host (the vault
+    ///         read is compiled there only, not into every caller).
+    function protectsNftsLocal(address account) internal view returns (bool) {
         return core(account).retired || LibPositionNFT.isHolderLocked(account);
     }
 

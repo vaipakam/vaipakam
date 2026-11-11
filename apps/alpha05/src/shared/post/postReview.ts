@@ -27,6 +27,7 @@ import { shortfall } from '../offers/model';
 import { CONFIG, ORACLE, readGraceSeconds, readLifBps, readTreasuryFeeBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../offers/reads';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { askThrough } from '../tx/simulate';
+import { chainValidUntil } from '../tx/deadline';
 import { allowanceSteps } from '../tx/approval';
 import { formatBps, shortAddress } from '../ui/format';
 import { createParams, isRanged, stakeOf, type CreateParams, type ParsedPost, type PostPair, type PostSide } from './postModel';
@@ -34,6 +35,7 @@ import { POST_KEYS } from './postCopy';
 import { CADENCE_ERRORS, cadenceRefusalText, classifyCadenceError, periodGraceLookupDays, type CadenceRefusal } from '../offers/cadence';
 import { needFromRefusal, type RiskNeed } from '../risk/riskAccess';
 import { readPostTariff, tariffBlockers, tariffKey, type PostTariff } from './tariffReview';
+import { postCall, readGuardPriced } from './guardPost';
 import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../nft/nft';
 
 type Hex = `0x${string}`;
@@ -95,6 +97,9 @@ export interface PostReview {
   periodGraceSeconds: bigint | null;
   /** OFF-22: the Full fee tariff's reads, when the request chose it. */
   tariff: PostTariff | null;
+  /** #3358: whether the pair can be priced for the guard the post arms;
+   *  null when it arms none. */
+  guardPriced: boolean | null;
   lifBps: bigint;
   /** A lending offer's protocol share of interest, today's setting (the
    *  loan fixes the share in force when it opens); null for a request, or
@@ -334,7 +339,9 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     holding = { kind: 'erc20', funds, approvalSteps };
   }
   const allowanceCovers = !needsApproval({ holding, draft, diamond });
-  const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params], account }));
+  // The post exactly as it is sent: with a guard, the batch that arms it
+  // (guardPost), so the protocol's verdict covers the guard too.
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...postCall(CREATE_ABI, params, parsed.guardBps, await chainValidUntil(c)), account }));
   const verdict = judgeDryRun(dry, allowanceCovers);
   // A token is never priced, so only a liquid ERC-20 pair has a risk figure.
   const priced = leg.kind === 'erc20' && lendingClass === 'liquid' && collateralClass === 'liquid';
@@ -350,19 +357,19 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
           .catch((e: unknown) => ({ kind: 'unread' as const, reason: refusalFromError(e).reason }))
       : Promise.resolve({ kind: 'unpriced' as const });
   const collateralRanged = parsed.collateralFloor < parsed.collateral;
-  const [direct, largest, largestAtFloor, probe, start, partialFill, periodGraceSeconds, tariff] = await Promise.all([
+  const [direct, largest, largestAtFloor, probe, start, partialFill, periodGraceSeconds, tariff, guardPriced] = await Promise.all([
     lender ? ltv(parsed.amountMax, parsed.collateral) : ltv(parsed.amount, parsed.collateralFloor),
     ranged ? ltv(parsed.amountMax, parsed.collateral) : Promise.resolve(null),
     ranged && collateralRanged ? ltv(parsed.amountMax, parsed.collateralFloor) : Promise.resolve(null),
     // The create dry run applies the limit at the largest point only; the
     // direct point is asked as a single-value request there.
     priced && ranged
-      ? askThrough(own, (c) =>
+      ? askThrough(own, async (c) =>
           c.simulateContract({
             address: diamond,
             abi: CREATE_ABI,
             functionName: 'createOffer',
-            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }],
+            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }, await chainValidUntil(c)],
             account,
           }),
         )
@@ -371,6 +378,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     r<boolean>((c) => c.readContract({ address: diamond, abi: CONFIG, functionName: 'getPartialFillEnabled' }) as Promise<boolean>).catch(() => null),
     parsed.cadence === 0 ? Promise.resolve(null) : r<bigint>((c) => readGraceSeconds(c, diamond, BigInt(periodGraceLookupDays(parsed.cadence)))).catch(() => null),
     readPostTariff(own, diamond, parsed, pair, lendingClass),
+    parsed.guardBps === null ? Promise.resolve(null) : r<boolean>((c) => readGuardPriced(c, diamond, pair.lending, pair.collateral)),
   ]);
   const probed = probe === null ? null : judgeLimit(probe, allowanceCovers);
   const risk: PostRisk = {
@@ -396,6 +404,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     graceSeconds,
     periodGraceSeconds,
     tariff,
+    guardPriced,
     lifBps,
     protocolShareBps: protocolShareBps as bigint | null,
     vault,
@@ -477,6 +486,7 @@ export function postBlockers(r: PostReview, meta: TokenMetaMap | null, copy: Pic
   // A risk-access refusal comes before the pull, so the shortfall never
   // explains it; it is named with the step that clears it (ACC-RISK).
   const risk = postRiskNeed(r);
+  const guardUnpriced = r.guardPriced === false || (r.verdict.kind === 'refused' && r.verdict.code === 'OfferPriceGuardUnpriced');
   if (risk !== null) out.push(copy.text(RISK_BLOCK_KEYS[risk]));
   // The protocol's own refusal, unless what the wallet lacks already
   // explains it (a pull from a wallet that lacks the tokens or the token).
@@ -500,6 +510,10 @@ export function postBlockers(r: PostReview, meta: TokenMetaMap | null, copy: Pic
       }),
     );
   // A closed schedule is refused before any pull too, and named with why.
+  // A guard on a pair that cannot be priced: read on its own while the
+  // dry run still stops at the pull, or the dry run's own refusal. Its
+  // remedy is to post without one.
+  else if (guardUnpriced) out.push(copy.text('request.blockGuardUnpriced'));
   else if (r.verdict.kind === 'refused' && r.verdict.schedule !== undefined)
     out.push(copy.format('request.blockSchedule', { reason: cadenceRefusalText(r.verdict.schedule, unit || copy.text('home.exposureUnit'), copy) }));
   else if (r.verdict.kind === 'refused' && lack.kind === 'none') out.push(copy.format(k.blockRefused, { reason: r.verdict.reason }));
@@ -531,6 +545,7 @@ export function changedBetween(a: PostReview, b: PostReview, copy: Pick<CopyAcce
   )
     return copy.text('request.changedConfig');
   if (tariffKey(a.tariff) !== tariffKey(b.tariff)) return copy.text('request.changedTariff');
+  if (a.guardPriced !== b.guardPriced) return copy.text('request.changedGuardPriced');
   if (lackKey(collateralLack(a)) !== lackKey(collateralLack(b)) || needsApproval(a) !== needsApproval(b) || approvalPrompts(a) !== approvalPrompts(b))
     return copy.text(a.holding.kind === 'erc20' ? 'accept.changedFunds' : 'request.changedToken');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');

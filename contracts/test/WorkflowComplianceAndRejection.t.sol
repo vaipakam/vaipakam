@@ -10,6 +10,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -54,6 +55,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 contract MockRentableNFT721Test is ERC721 {
     mapping(uint256 => address) private _users;
@@ -192,7 +194,7 @@ contract WorkflowComplianceAndRejection is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -310,6 +312,13 @@ contract WorkflowComplianceAndRejection is Test {
             functionSelectors: helperTest.getSellerClaimFacetSelectors()
         });
 
+        // #3360 - every ERC-20 accept stamps the loan's fee-entitlement record
+        // (its loan-side reward cap) through a self-call to FeeEntitlementFacet.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -427,7 +436,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         activeLoanId = LibAcceptTestSigner.signAndAccept(
             address(diamond), borrower, borrowerPk, erc20OfferId
@@ -489,7 +499,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower accepts the NFT rental offer (pays prepay from mockUsdc)
@@ -537,7 +548,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // sanctionedUser (IR) tries to accept -> CountriesNotCompatible.
@@ -588,15 +600,17 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Borrower (US) tries to transfer obligation to sanctionedUser (IR) -> CountriesNotCompatible
         // transferObligationViaOffer checks _enforceCountryAndKYC(newBorrower=sanctionedUser, existingParty=loan.lender)
         // sanctionedUser(IR) vs lender(US) -> no trade allowance -> revert
+        LibTestTiming.waitOutTermsAge(address(diamond), sanctionedOfferId); // #3443
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, sanctionedOfferId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, sanctionedOfferId, type(uint64).max);
     }
 
     /// @notice sanctionedUser creates a lender offer. Original lender tries sellLoanViaBuyOffer -> reverts CountriesNotCompatible
@@ -633,13 +647,15 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Lender (US) tries to sell to sanctionedUser (IR) -> CountriesNotCompatible
+        LibTestTiming.waitOutTermsAge(address(diamond), sanctionedOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -691,7 +707,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Tier0 user can accept small offer (no KYC required)
@@ -745,7 +762,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Tier0 user cannot accept large offer -> KYCRequired.
@@ -797,13 +815,15 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Lender tries to sell NFT rental loan -> InvalidSaleOffer (assetType != ERC20)
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @notice NFT rental loan: createLoanSaleOffer reverts InvalidSaleOffer
@@ -811,7 +831,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Lender tries to create a sale offer for NFT rental loan -> InvalidSaleOffer
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
     }
 
     /// @notice NFT rental loan: a refinance request against it is refused at
@@ -849,7 +869,8 @@ contract WorkflowComplianceAndRejection is Test {
                 fillMode: LibVaipakam.FillMode.Aon,
                 refinanceTargetLoanId: nftLoanId,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
     }
 

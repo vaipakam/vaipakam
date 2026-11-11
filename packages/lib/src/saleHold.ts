@@ -46,12 +46,13 @@ export const LOCK_EARLY_WITHDRAWAL_SALE = POSITION_ROUTE.EarlyWithdrawalSale;
  *  but with the OLD semantics (terminal-loans-only, pause-gated, no expiry
  *  admission), and it shares error names with the new facet — so a raw
  *  probe against it would misclassify a legacy GTC listing as boundedly
- *  `live` (Codex #1511 r1 P1). Only a Diamond that routes the 4-arg
+ *  `live` (Codex #1511 r1 P1). Only a Diamond that routes the CURRENT
  *  `createLoanSaleOffer` carries the lifecycle the classifier describes; a
  *  caller that cannot confirm it routes must treat a sale-locked position
- *  as `unknown`. */
+ *  as `unknown`. Since #3412 that is the 7-argument form (reviewed bounds
+ *  plus the required `validUntil`); the shapes before it are not routed. */
 export const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
-  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
+  'function createLoanSaleOffer(uint256,uint256,bool,uint64,uint256,uint256,uint64)',
 );
 
 /** The teardown probe, with the two errors it classifies. Inline so this

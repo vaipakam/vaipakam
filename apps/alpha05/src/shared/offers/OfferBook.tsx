@@ -32,7 +32,7 @@ const KIND_KEY: Partial<Record<BookKind, CopyKey>> = {
  *  sooner whenever the index changes. */
 export const BOOK_POLL_MS = 60_000;
 
-function indexReason(e: unknown, text: CopyAccess['text']): string {
+export function indexReason(e: unknown, text: CopyAccess['text']): string {
   if (e instanceof IndexerUnavailable) {
     return text(
       e.why === 'not-configured' ? 'offerBook.noIndex' : e.why === 'network' ? 'offerBook.indexNetwork' : e.why === 'status' ? 'offerBook.indexStatus' : 'offerBook.indexShape',

@@ -8,7 +8,7 @@
  * inventing one from a price it does not have.
  */
 import { ADMIN, DIAMOND, ERC20, MOCKS, OWNER, POSTURE, VENUE_ROUTE, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
-import { ABIS, FORCED_SALE_KIND, approveDiamond, acceptOffer, createOffer, forcedSaleQuote, mint, offerParams, read } from '../lib/flow.mjs';
+import { ABIS, FORCED_SALE_KIND, approveDiamond, txValidUntil, acceptOffer, createOffer, forcedSaleQuote, mint, offerParams, read } from '../lib/flow.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, observe, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -64,7 +64,7 @@ async function runGates() {
   check('A5.2', 'the admin can arm the sanctions oracle', armed.toLowerCase() === ALWAYS_SANCTIONED.toLowerCase(), `oracle=${armed}`);
 
   const params = await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.02', 18) });
-  const tier1Create = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [params], lender.address);
+  const tier1Create = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [params, await txValidUntil()], lender.address);
   expectRefusal('A5.3', 'Tier-1 createOffer refuses a flagged wallet', tier1Create, 'SanctionedAddress');
 
   const tier1Vault = await simulate(DIAMOND, ABIS.vaultFactory, 'getOrCreateUserVault', [outsider.address], outsider.address);
@@ -92,7 +92,7 @@ async function runGates() {
   await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
   // Fresh params: A5.5b warped the chain past the first set's expiry.
   const freshParams = await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.02', 18) });
-  const restored = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [freshParams], lender.address);
+  const restored = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [freshParams, await txValidUntil()], lender.address);
   check('A5.6', 'disarming the oracle restores permissionless access', restored.ok,
     restored.ok ? 'createOffer clean again' : restored.name);
 
@@ -122,7 +122,7 @@ async function runGates() {
   const [tier0, tier1] = await read(ABIS.profile, 'getKYCThresholds');
   requireEnvelope('KYC thresholds', bigNeedsKyc,
     `the probe's ${f18(bigValue)} numeraire value needs no KYC for an unverified wallet (tier0=${f18(tier0)}, tier1=${f18(tier1)})`);
-  const bigCreate = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [await offerParams(bigParams)], lender.address);
+  const bigCreate = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [await offerParams(bigParams), await txValidUntil()], lender.address);
   await mint(lender, MOCKS.liquidToken2, '100000');
   await approveDiamond(lender, MOCKS.liquidToken2);
   await mint(borrower, MOCKS.liquidToken, '1000');

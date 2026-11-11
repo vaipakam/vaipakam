@@ -2,6 +2,7 @@ import { lazy, type ComponentType } from 'react';
 import { AlertsPage } from '../pages/alerts/AlertsPage';
 import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { ClaimsPage } from '../pages/claims/ClaimsPage';
+import { DeskPage } from '../pages/desk/DeskPage';
 import { HomePage } from '../pages/home/HomePage';
 import { LendPage } from '../pages/lend/LendPage';
 import { OfferPage } from '../pages/offers/OfferPage';
@@ -37,4 +38,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/rent': RentPage,
   '/rewards': RewardsPage,
   '/protection': ProtectionPage,
+  '/desk': DeskPage,
 };

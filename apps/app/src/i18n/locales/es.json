@@ -1450,7 +1450,11 @@
       "moreOffers_many": "{{count}} ofertas coincidentes más pagan menos que las mostradas.",
       "moreOffers_other": "{{count}} ofertas coincidentes más pagan menos que las mostradas.",
       "checking": "Comprobando si este préstamo puede salirse antes…",
-      "checkFailed": "No pudimos leer ahora mismo los detalles de salida de este préstamo — reintentando."
+      "checkFailed": "No pudimos leer ahora mismo los detalles de salida de este préstamo — reintentando.",
+      "floorLoading": "Leyendo lo mínimo que te pagaría esta venta…",
+      "floorUnavailable": "No se pudo leer ahora lo mínimo que te pagaría esta venta, así que no se puede revisar hasta que se pueda. Inténtalo de nuevo en un momento.",
+      "receiptFloor": "Al menos {{amount}} {{sym}} una vez descontado el ajuste de tasa, si la venta se completa en los próximos 30 minutos. La venta se rechaza en lugar de realizarse si te pagara menos.",
+      "receiptHeld": "{{amount}} {{sym}} ya reservados para el prestamista en este préstamo pasan al comprador con la posición. La venta se rechaza si para cuando se ejecute se ha reservado más."
     },
     "saleHold": {
       "title": "El prestamista ha puesto esta posición en venta",
@@ -2429,6 +2433,7 @@
         "refinanceUntakeable": "Esta solicitud de refinanciación no se puede aceptar ahora: o no es la solicitud que el protocolo tiene registrada para su préstamo (una anterior, o una que el prestatario sustituyó), o el prestatario tiene abierta una oferta de compensación para cierre anticipado del préstamo. No se envió nada.",
         "cadenceNotAdmitted": "El calendario de pago de intereses de esta oferta ya no está permitido en estas condiciones: la configuración de intereses periódicos, el umbral de importe o el estado de mercado de un activo cambiaron después de publicarla. Su creador debe cancelarla y volver a publicarla. No se envió nada.",
         "priceGuardRefused": "Quien creó esta oferta limitó cuánto puede moverse el precio antes de que se acepte. El precio ha superado ese límite, o se mueve demasiado rápido (o no se puede leer) para comprobarlo ahora, así que la oferta no se puede aceptar. No se envió nada.",
+        "termsTooFresh": "Esta oferta se publicó o cambió hace unos segundos, y una oferta solo puede aceptarse cuando sus condiciones llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
       },
       "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre la página de Inicio y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente.",
@@ -4249,6 +4254,12 @@
     "SaleBelowSellerFloor": "Este anuncio ya no se puede comprar: el préstamo ha cambiado desde que se anunció (por ejemplo, se pagó una parte), así que la venta pagaría al vendedor menos que el mínimo que garantiza su anuncio. No se cobró nada. El vendedor puede cancelarlo y volver a anunciarlo.",
     "SaleAboveHeldCeiling": "Este anuncio ya no se puede comprar: desde que se anunció se ha reservado más para el prestamista en este préstamo de lo que el anuncio permite. No se cobró nada. El vendedor puede cancelarlo y volver a anunciarlo.",
     "OfferBelowMinimumValue": "Esta oferta es más pequeña de lo que permite el protocolo: el importe, o la parte más pequeña que puede tomar una coincidencia, vale menos que el valor mínimo de oferta. Aumenta el importe e inténtalo de nuevo.",
-    "TooManyOpenOffers": "Esta billetera ya tiene tantas ofertas abiertas como permite el protocolo. Cancela una oferta que ya no necesites (una oferta vencida cuenta hasta que la canceles) e inténtalo de nuevo."
+    "TooManyOpenOffers": "Esta billetera ya tiene tantas ofertas abiertas como permite el protocolo. Cancela una oferta que ya no necesites (una oferta vencida cuenta hasta que la canceles) e inténtalo de nuevo.",
+    "DeadlinePassed": "Esta transacción esperó demasiado antes de llegar a la cadena, así que caducó sin hacer nada. Revisa los términos y envíala de nuevo.",
+    "DeadlineRequired": "Esta acción necesita un límite de tiempo y no se envió ninguno. No se hizo nada; recarga la página e inténtalo de nuevo.",
+    "OfferTermsTooFresh": "Esta oferta se publicó o cambió hace unos segundos, y una oferta solo puede aceptarse cuando sus términos llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
+    "IntentTermsTooFresh": "Esta oferta permanente se fijó o cambió hace unos segundos, y solo puede aceptarse cuando sus términos llevan unos segundos vigentes. Inténtalo de nuevo en un momento. No se envió nada.",
+    "SaleNetBelowReviewed": "Esta venta ahora te pagaría menos que el mínimo que revisaste (quizá se devolvió parte del préstamo). No se vendió nada. Revisa la venta de nuevo para ver la cifra actual.",
+    "SaleHeldAboveReviewed": "Desde que revisaste la venta se ha reservado más para el prestamista en este préstamo. No se vendió nada. Revisa la venta de nuevo para ver las cifras actuales."
   }
 }

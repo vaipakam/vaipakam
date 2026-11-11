@@ -68,12 +68,18 @@ export function listingsInLogs(
  * Active may have been listed by that send first and then repaid or
  * liquidated: its status cannot say whether the send listed it, and only
  * the send's own logs can.
+ *
+ * `validUntil` is the deadline the batch's listings were SENT with (#3412):
+ * the "why would it fail" read asks about the call that was actually made,
+ * so a listing the batch sent too late is reported as expired, not as a
+ * listing that would have succeeded.
  */
 export async function readBackListings(
   ctx: SaleListingCtx,
   planned: readonly { loanId: number; bounds: ListingBounds }[],
   terms: SaleListingTerms,
   mined: Mined,
+  validUntil: bigint,
 ): Promise<SaleBatchOutcome[]> {
   const listed = 'block' in mined ? listingsInLogs(mined.logs, ctx.diamond) : new Map();
   const block = 'block' in mined ? mined.block : undefined;
@@ -91,8 +97,8 @@ export async function readBackListings(
             account: ctx.holder,
             address: ctx.diamond,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'createLoanSaleOfferBound',
-            args: boundListingArgs(loanId, terms, bounds),
+            functionName: 'createLoanSaleOffer',
+            args: boundListingArgs(loanId, terms, bounds, validUntil),
             blockNumber: block,
           });
           return { loanId, kind: 'open', reason: copy.batchSale.skippedRetry };

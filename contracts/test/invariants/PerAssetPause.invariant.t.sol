@@ -154,7 +154,7 @@ contract PauseHandler is Test {
             durationDays
         );
         vm.prank(lender);
-        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {
             lenderOfferIds.push(id);
             if (anyPausedBefore) violations++;
         } catch {}
@@ -184,7 +184,7 @@ contract PauseHandler is Test {
             durationDays
         );
         vm.prank(borrower);
-        try OfferCreateFacet(diamond).createOffer(p) returns (uint256 id) {
+        try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 id) {
             borrowerOfferIds.push(id);
             if (anyPausedBefore) violations++;
         } catch {}

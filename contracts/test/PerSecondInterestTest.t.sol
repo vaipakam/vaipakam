@@ -79,7 +79,8 @@ contract PerSecondInterestTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: fullTerm
-            })
+            }),
+            type(uint64).max
         );
         loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);

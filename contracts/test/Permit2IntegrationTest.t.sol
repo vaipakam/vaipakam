@@ -141,7 +141,8 @@ contract Permit2IntegrationTest is SetupTest {
         uint256 offerId = OfferCreateFacet(address(diamond)).createOfferWithPermit(
             _lenderErc20OfferParams(principal),
             permit,
-            ""
+            "",
+            type(uint64).max
         );
 
         assertGt(offerId, 0, "offer created");
@@ -164,7 +165,8 @@ contract Permit2IntegrationTest is SetupTest {
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _lenderErc20OfferParams(principal)
+            _lenderErc20OfferParams(principal),
+            type(uint64).max
         );
 
         // Now accept via Permit2 — borrower signs a permit for their
@@ -251,7 +253,8 @@ contract Permit2IntegrationTest is SetupTest {
         OfferCreateFacet(address(diamond)).createOfferWithPermit(
             _lenderErc20OfferParams(principal),
             wrongPermit,
-            ""
+            "",
+            type(uint64).max
         );
     }
 
@@ -263,7 +266,8 @@ contract Permit2IntegrationTest is SetupTest {
         IERC20(mockERC20).approve(address(diamond), principal);
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
-            _lenderErc20OfferParams(principal)
+            _lenderErc20OfferParams(principal),
+            type(uint64).max
         );
 
         // Borrower signs a permit for the WRONG asset (the principal

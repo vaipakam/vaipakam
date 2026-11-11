@@ -25,6 +25,15 @@
  * OfferAccepted on a direct sale), so submit ALWAYS re-verifies the
  * offer live (`getOfferDetails.accepted === false`) plus term
  * equality with what was reviewed.
+ *
+ * Bound to the reviewed figures (#3412): opening the review reads the chain's
+ * own quote of the two seller figures for this buyer's rate
+ * (`RiskPreviewFacet.quoteSellerBounds`, the computation a listing records),
+ * the review states them, and the sale is sent with exactly those figures. The
+ * chain refuses it (`SaleNetBelowReviewed` / `SaleHeldAboveReviewed`) rather
+ * than settle it if, when it runs, the seller would net less or more money set
+ * aside for the lender would move with the position. No readable quote, no
+ * review.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -34,6 +43,12 @@ import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { PREVIEW_VALID_UNTIL, readTxValidUntil } from '../contracts/txDeadline';
+import {
+  readSellerBoundsQuote,
+  type SellerBoundsQuote,
+} from '../data/sellerBoundsQuote';
+import { reviewedBoundsMoved } from '../data/saleListingPlan';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -58,6 +73,7 @@ import {
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
+
 import type { TokenMeta } from '../contracts/erc20';
 
 
@@ -105,6 +121,10 @@ export function EarlyExitFlow({
 
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // The chain's quote of the two seller figures, read when the review opens
+  // and sent with the sale (#3412). Null = no review is bound to a quote.
+  const [reviewed, setReviewed] = useState<SellerBoundsQuote | null>(null);
+  const [quoting, setQuoting] = useState(false);
 
   // Every seller figure prices at the SNAPSHOT's block. Since #1801 r9 that is
   // not something this component arranges — `sellerEconomics` reads
@@ -157,26 +177,69 @@ export function EarlyExitFlow({
   // a stale or consumed buy offer shows up as a would-fail heads-up
   // before the wallet prompt.
   const simTx = useMemo((): TxSimInput | null => {
-    if (!walletChain || !selected) return null;
+    if (!walletChain || !selected || !reviewed) return null;
     return {
       to: walletChain.diamondAddress,
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
         functionName: 'sellLoanViaBuyOffer',
-        args: [BigInt(row.loanId), BigInt(selected.offerId)],
+        // An advisory dry run, never sent: the reviewed bounds the send
+        // carries; the deadline is the send's own, read from chain time at
+        // submit.
+        args: [
+          BigInt(row.loanId),
+          BigInt(selected.offerId),
+          reviewed.minSellerNet,
+          reviewed.maxHeld,
+          PREVIEW_VALID_UNTIL,
+        ],
       }),
       value: 0n,
     };
-  }, [walletChain, selected, row.loanId]);
+  }, [walletChain, selected, reviewed, row.loanId]);
 
   function choose(offerId: number) {
     setSelectedId(offerId);
+    setReviewed(null);
     setDriftNotice(false);
     onCloseConfirm(); // a different candidate = a different review
   }
 
+  /** Opens the review bound to the chain's quote of the seller figures for
+   *  this buyer's rate, taken for a sale confirmed within the transaction
+   *  deadline's window (`listingSeconds` 0 plus the quote's confirmation
+   *  allowance, clamped at the due date). */
+  async function openReview() {
+    if (!walletChain || !publicClient || !selected) return;
+    setQuoting(true);
+    setError(null);
+    try {
+      const q = await readSellerBoundsQuote(publicClient, walletChain.diamondAddress, {
+        loanId: row.loanId,
+        saleRateBps: BigInt(selected.interestRateBps),
+        listingSeconds: 0n,
+        maturity: loanEndTimeOf(live),
+      });
+      setReviewed(q);
+      setDriftNotice(false);
+      onOpenConfirm();
+    } catch {
+      setReviewed(null);
+      setError(copy.earlyExit.floorUnavailable);
+    } finally {
+      setQuoting(false);
+    }
+  }
+
   async function submit() {
-    if (!address || !walletChain || !walletClient || !publicClient || !selected) {
+    if (
+      !address ||
+      !walletChain ||
+      !walletClient ||
+      !publicClient ||
+      !selected ||
+      !reviewed
+    ) {
       return;
     }
     setBusy(true);
@@ -293,9 +356,15 @@ export function EarlyExitFlow({
       if (liveEcon.toSeller + twoDaysInterest < reviewedToSeller) {
         throw new Error(copy.match.termsChanged);
       }
+      // The transaction deadline (#3412), read from chain time at the send:
+      // a sale that waits in a queue past it is refused, never filled late.
+      const validUntil = await readTxValidUntil(publicClient);
       await write('sellLoanViaBuyOffer', [
         BigInt(row.loanId),
         BigInt(selected.offerId),
+        reviewed.minSellerNet,
+        reviewed.maxHeld,
+        validUntil,
       ]);
       onSold();
       setSelectedId(null);
@@ -306,6 +375,13 @@ export function EarlyExitFlow({
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
+      // The reviewed figures no longer hold (the loan moved, the deadline
+      // passed, or the sale mined reverted): close the review so the next one
+      // reads a fresh quote instead of resending these.
+      if (reviewedBoundsMoved(err)) {
+        setReviewed(null);
+        onCloseConfirm();
+      }
       setError(captureTxError(err));
     } finally {
       setBusy(false);
@@ -399,15 +475,12 @@ export function EarlyExitFlow({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  disabled={busy || !walletReady}
-                  onClick={() => {
-                    setDriftNotice(false);
-                    onOpenConfirm();
-                  }}
+                  disabled={busy || quoting || !walletReady}
+                  onClick={() => void openReview()}
                 >
-                  {copy.earlyExit.action}
+                  {quoting ? copy.earlyExit.floorLoading : copy.earlyExit.action}
                 </button>
-              ) : (
+              ) : reviewed ? (
                 <ConfirmReceipt
                   busy={busy}
                   confirmLabel={copy.earlyExit.confirm}
@@ -421,19 +494,28 @@ export function EarlyExitFlow({
                       toSellerStr,
                       selected.offerId,
                       formatBpsAsPercent(selected.interestRateBps),
+                    )} ${copy.earlyExit.receiptFloor(
+                      formatTokenAmountExact(reviewed.minSellerNet, dec),
+                      sym,
                     )} ${copy.sellerClaims.saleNote(
                       `${formatTokenAmountExact(selectedEcon.claim, dec)} ${sym}`,
                     )}`,
                     youLock: copy.earlyExit.receiptLockNothing,
                     youMayOwe: copy.earlyExit.receiptOweNothing,
-                    youCanLose: copy.earlyExit.receiptCanLose,
+                    youCanLose:
+                      reviewed.maxHeld > 0n
+                        ? `${copy.earlyExit.receiptCanLose} ${copy.earlyExit.receiptHeld(
+                            formatTokenAmountExact(reviewed.maxHeld, dec),
+                            sym,
+                          )}`
+                        : copy.earlyExit.receiptCanLose,
                     fees: copy.earlyExit.receiptFees,
                     whenThisEnds: copy.earlyExit.receiptEnds,
                   }}
                 >
                   <SimulationPreview tx={simTx} />
                 </ConfirmReceipt>
-              )}
+              ) : null}
             </div>
           ) : null}
         </div>

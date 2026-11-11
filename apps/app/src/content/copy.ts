@@ -4209,6 +4209,22 @@ const copySource = {
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
+    // #3412 — the direct sale is bound to the chain's own quote of the two
+    // seller figures (`quoteSellerBounds`, the listing's computation), read
+    // when the review opens, and refused rather than made if either is worse
+    // when it runs.
+    floorLoading: 'Reading the least this sale would pay you…',
+    floorUnavailable:
+      'The least this sale would pay you couldn’t be read right now, so it can’t be reviewed until it can. Try again shortly.',
+    receiptFloor: tmpl(
+      'At least {{amount}} {{sym}} once the rate top-up is taken, if the sale goes through within the next 30 minutes. The sale is refused rather than made if it would pay you less.',
+      ['amount', 'sym'],
+    ),
+    receiptHeld: tmpl(
+      '{{amount}} {{sym}} already set aside for the lender on this loan moves to the buyer with the position. The sale is refused if more than this has been set aside by the time it runs.',
+      ['amount', 'sym'],
+    ),
+
     moreOffers: tmpl(
       '{{count}} more matching offers pay less than the ones shown.',
       ['count'],
@@ -6297,6 +6313,10 @@ const copySource = {
       // each means the same thing to the taker: not now.
       priceGuardRefused:
         'The creator of this offer limited how far the price may move before it is taken. The price has moved past that limit, or it is moving too fast (or can’t be read) to check right now, so the offer can’t be taken. Nothing was sent.',
+      // #3443 — an offer can be taken only once its terms have stood the
+      // minimum age (a few seconds); this clears by itself.
+      termsTooFresh:
+        'This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.

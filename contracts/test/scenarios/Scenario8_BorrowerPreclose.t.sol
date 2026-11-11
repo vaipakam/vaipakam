@@ -14,6 +14,7 @@ import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
+import {FeeEntitlementFacet} from "../../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -46,6 +47,7 @@ import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
+import {LibTestTiming} from "../helpers/LibTestTiming.sol";
 
 /**
  * @title Scenario8_BorrowerPreclose
@@ -142,7 +144,7 @@ contract Scenario8_BorrowerPreclose is Test {
         helperTest = new HelperTest();
 
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -256,6 +258,13 @@ contract Scenario8_BorrowerPreclose is Test {
             functionSelectors: helperTest.getInteractionRewardsFacetSelectors()
         });
 
+        // #3360 - every ERC-20 accept stamps the loan's fee-entitlement record
+        // (its loan-side reward cap) through a self-call to FeeEntitlementFacet.
+        cuts[28] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -345,7 +354,8 @@ contract Scenario8_BorrowerPreclose is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
@@ -389,7 +399,8 @@ contract Scenario8_BorrowerPreclose is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
 
         // Record balances before transfer
@@ -405,6 +416,7 @@ contract Scenario8_BorrowerPreclose is Test {
         mockHealthFactor(activeLoanId, 2e18);
 
         // Expect LoanObligationTransferred event
+        LibTestTiming.backdateTerms(address(diamond), borrowerOfferId); // #3443
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
         // (loanId, origBorrower, newBorrower, shortfall, newBorrowerTokenId,
@@ -414,7 +426,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Original borrower transfers obligation
         vm.prank(borrower);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, borrowerOfferId);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, borrowerOfferId, type(uint64).max);
 
         // Verify: loan.borrower is now newBorrower
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -464,7 +476,8 @@ contract Scenario8_BorrowerPreclose is Test {
 
         vm.prank(borrower);
         uint256 newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20
+            activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            type(uint64).max
         );
         assertEq(newOfferId, expectedNewOfferId, "Returned offerId should match expected");
 

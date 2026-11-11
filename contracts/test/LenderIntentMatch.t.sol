@@ -33,6 +33,8 @@ import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LibOfferAdmission} from "../src/libraries/LibOfferAdmission.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {LibTiming} from "../src/libraries/LibTiming.sol";
 
 /**
  * @title  LenderIntentMatchTest
@@ -112,8 +114,10 @@ contract LenderIntentMatchTest is SetupTest {
             MAX_DURATION,
             MIN_FILL,
             false, // requiresKeeperAuth
-            true // riskAndTermsConsent
+            true, // riskAndTermsConsent
+            type(uint64).max
         );
+        LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
     }
 
     /// @dev Provision a borrower actor (KYC + country + approvals + balances).
@@ -166,8 +170,10 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     function _livePrincipal() internal view returns (uint256) {
@@ -196,6 +202,54 @@ contract LenderIntentMatchTest is SetupTest {
     function _intentCapital() internal view returns (uint256) {
         return LenderIntentFacet(address(diamond)).getLenderIntentCapital(
             lender, mockERC20, mockCollateralERC20
+        );
+    }
+
+    // ─── #3443 — the intent's terms must stand the minimum age ─────────────
+
+    /// @dev An intent set (or re-set) in this block cannot be filled yet: the
+    ///      preview names it and the live fill refuses it, and both clear once
+    ///      the minimum age has passed.
+    function test_matchIntent_refusedWhileIntentTermsFresh() public {
+        uint256 cp = _postBorrower(_newBorrower("b-age"), PRINCIPAL, 2 * PRINCIPAL);
+        uint256 setAt = vm.getBlockTimestamp();
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            type(uint64).max
+        );
+        _fundIntent(PRINCIPAL);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "fresh intent previews refused");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.TermsTooFresh),
+            "preview names the fresh terms"
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTiming.IntentTermsTooFresh.selector,
+                lender,
+                setAt + LibTiming.DEFAULT_MIN_TERMS_AGE_SEC
+            )
+        );
+        vm.prank(solver);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        vm.warp(setAt + LibTiming.DEFAULT_MIN_TERMS_AGE_SEC);
+        r = _preview(solver, PRINCIPAL, cp);
+        assertTrue(r.ok, "aged intent previews fillable");
+        vm.prank(solver);
+        assertGt(
+            OfferMatchIntentFacet(address(diamond)).matchIntent(
+                lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+            ),
+            0,
+            "aged intent fills"
         );
     }
 
@@ -345,7 +399,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
         vm.prank(solver);
         vm.expectRevert(OfferMatchIntentFacet.LenderIntentDurationTooLong.selector);
@@ -389,7 +444,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false // ← disables the floor
-            })
+            }),
+            type(uint64).max
         );
         vm.prank(solver);
         vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
@@ -433,7 +489,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
         vm.prank(solver);
         vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
@@ -499,8 +556,10 @@ contract LenderIntentMatchTest is SetupTest {
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL,
             true, // requiresKeeperAuth
-            true // riskAndTermsConsent
+            true, // riskAndTermsConsent
+            type(uint64).max
         );
+        LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
     }
 
     function test_matchIntent_keeperGated_unauthorizedSolver_reverts() public {
@@ -610,8 +669,10 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: fullTerm
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     // ── Happy path: preview Ok, figures mirror the loan, fill succeeds ──
@@ -976,7 +1037,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
 
         // Tier 3 == blue-chip (lowest required risk level). The intent's OWN legs
@@ -1558,7 +1620,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
 
         // Pre-set the seller-paid notification flag: a GENUINE holder change
@@ -1570,9 +1633,13 @@ contract LenderIntentMatchTest is SetupTest {
             TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
         }
 
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            loanId, buyOfferId
+            loanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         assertEq(
@@ -1666,7 +1733,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
 
         {
@@ -1676,9 +1744,13 @@ contract LenderIntentMatchTest is SetupTest {
             TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
         }
 
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            loanId, buyOfferId
+            loanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         assertEq(
@@ -1777,11 +1849,16 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            loanId, buyOfferId
+            loanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         // The pre-map seller's bit stays truthfully FALSE — the refuted
@@ -1854,11 +1931,16 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), rebuyOfferId); // #3443
         vm.prank(posBuyer);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            loanId, rebuyOfferId
+            loanId, rebuyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         assertEq(
@@ -1930,7 +2012,8 @@ contract LenderIntentMatchTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
 
         // Fabricate the pathological legacy state: strip the born-exact flag
@@ -1954,9 +2037,13 @@ contract LenderIntentMatchTest is SetupTest {
         assertEq(preCount, 1501, "fixture: real id buried under 1,500 fillers");
 
         // The fill must complete — bounded scan, no out-of-gas brick.
+        LibTestTiming.waitOutTermsAge(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
-            loanId, buyOfferId
+            loanId, buyOfferId,
+            0,
+            type(uint256).max,
+            type(uint64).max
         );
 
         assertTrue(

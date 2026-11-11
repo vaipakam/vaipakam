@@ -12,24 +12,6 @@
         "name": "buyOfferId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sellLoanViaBuyOfferBound",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "buyOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
         "name": "reviewedMinSellerNet",
@@ -42,7 +24,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "deadline",
+        "name": "validUntil",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -1192,6 +1174,22 @@
   },
   {
     "type": "error",
+    "name": "DeadlinePassed",
+    "inputs": [
+      {
+        "name": "validUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeadlineRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DeliveredFreshBoundExceeded",
     "inputs": [
       {
@@ -2019,6 +2017,22 @@
         "name": "expiresAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OfferTermsTooFresh",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -3828,11 +3842,6 @@
   },
   {
     "type": "error",
-    "name": "SaleDeadlineRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "SaleExposureExceedsAuthoredDuration",
     "inputs": [
       {
@@ -3902,17 +3911,6 @@
         "name": "which",
         "type": "uint8",
         "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SaleQuoteExpired",
-    "inputs": [
-      {
-        "name": "deadline",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ]
   },

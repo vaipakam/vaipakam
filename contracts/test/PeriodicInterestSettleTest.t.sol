@@ -86,7 +86,8 @@ contract PeriodicInterestSettleTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
         return 1;
@@ -173,7 +174,8 @@ contract PeriodicInterestSettleTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 noneLoanId = 2;
@@ -269,7 +271,8 @@ contract PeriodicInterestSettleTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 noneLoanId = 2;

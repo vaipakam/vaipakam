@@ -2143,3 +2143,151 @@ a.btn {
 .destinations .actions .btn {
   min-height: var(--taptarget);
 }
+
+/* ── ACC-07: the orientation card on top of an Advanced page ─────────── */
+.orientation {
+  max-width: 728px;
+  margin: 24px max(16px, calc((100% - 728px) / 2)) 0;
+}
+.orientation h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+/* ── OFF-73: the rate desk's ladder, two sides side by side when there is
+   room, stacked on a phone ─────────────────────────────────────────── */
+.ladder-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 12px;
+}
+@media (min-width: 640px) {
+  .ladder-sides {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.ladder-sides h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  color: var(--text-strong);
+}
+.ladder-offers {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.ladder-offers .badge {
+  margin-inline-start: 6px;
+}
+/* OFF-75: own offers, the fills tape and the executed-rate chart. */
+.order-progress {
+  width: 100%;
+  height: 6px;
+  margin-top: 6px;
+  accent-color: var(--chart-series);
+}
+.tape-rows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-periods {
+  margin: 8px 0 12px;
+}
+.rate-chart {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.rate-chart svg {
+  display: block;
+  overflow: visible;
+}
+.rate-chart text {
+  font-size: 11px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.chart-grid line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chart-range {
+  fill: var(--chart-series);
+  fill-opacity: 0.18;
+}
+.chart-line {
+  fill: none;
+  stroke: var(--chart-series);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chart-dot {
+  fill: var(--chart-series);
+  stroke: var(--surface-raised);
+  stroke-width: 2;
+}
+.chart-middle line {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.chart-cross {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.chart-hit {
+  fill: transparent;
+  cursor: crosshair;
+  outline: none;
+}
+.chart-hit:focus-visible {
+  stroke: var(--focus-ring);
+  stroke-width: 2;
+}
+.chart-tip {
+  position: absolute;
+  min-width: min(170px, 100%);
+  max-width: min(220px, 100%);
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-body);
+  font-size: 0.8rem;
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-tip p {
+  margin: 0;
+}
+.chart-table {
+  margin-top: 12px;
+}
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.chart-table table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chart-table th,
+.chart-table td {
+  padding: 4px 8px;
+  text-align: start;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-body);
+}

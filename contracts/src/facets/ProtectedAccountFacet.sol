@@ -276,6 +276,13 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibProtectedAccount.governs(LibProtectedAccount.core(account));
     }
 
+    /// @notice Whether `account`'s positions are held against leaving it
+    ///         ({LibProtectedAccount.protectsNfts}): the PositionNFT holder
+    ///         lock, or the account retired by a replacement.
+    function protectsNftsOf(address account) external view returns (bool) {
+        return LibProtectedAccount.protectsNftsLocal(account);
+    }
+
     /// @notice The wallet that manages `account`: its vault's owner record.
     function protectionManagerOf(address account) external view returns (address) {
         return LibProtectedAccount.core(account).manager;

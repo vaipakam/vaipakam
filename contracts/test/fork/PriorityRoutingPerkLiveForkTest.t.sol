@@ -240,7 +240,8 @@ contract PriorityRoutingPerkLiveForkTest is Test {
     function _openIntent(address lender) internal {
         vm.prank(lender);
         LenderIntentFacet(diamond).setLenderIntent(
-            weth, collateral, 10 * PRINCIPAL, RATE_BPS, MAX_INIT_LTV_BPS, DURATION_DAYS, PRINCIPAL / 10, false, true
+            weth, collateral, 10 * PRINCIPAL, RATE_BPS, MAX_INIT_LTV_BPS, DURATION_DAYS, PRINCIPAL / 10, false, true,
+            type(uint64).max
         );
         uint256 fund = 4 * PRINCIPAL;
         deal(weth, lender, fund);
@@ -284,7 +285,8 @@ contract PriorityRoutingPerkLiveForkTest is Test {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
     }
 

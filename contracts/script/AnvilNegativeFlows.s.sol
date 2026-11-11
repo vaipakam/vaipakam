@@ -303,7 +303,7 @@ contract AnvilNegativeFlows is Script {
         // Spin up a fresh active loan.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t15 = LibAcceptTestSigner.buildTerms(
             diamond, vm.addr(borrowerKey), offerId, true, 0
@@ -336,7 +336,7 @@ contract AnvilNegativeFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
         p.allowsPartialRepay = false;
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(p, type(uint64).max);
         vm.stopBroadcast();
 
         LibAcceptTerms.AcceptTerms memory _t20 = LibAcceptTestSigner.buildTerms(
@@ -376,7 +376,7 @@ contract AnvilNegativeFlows is Script {
         (ok, ) = RevertProbe.call(
             caller,
             address(diamond),
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, p)
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, p, type(uint64).max)
         );
     }
 

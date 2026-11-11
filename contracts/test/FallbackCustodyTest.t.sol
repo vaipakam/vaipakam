@@ -32,6 +32,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  FallbackCustodyTest
@@ -1035,6 +1036,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         (, uint256 t,) = _fcSlices(id);
         assertGt(t, 0, "fixture-live: a treasury slice");
         AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.sync(address(diamond));
         uint256 diamond0 = _fcBal(weth, address(diamond));
         uint256 recorded0 = TreasuryFacet(address(diamond)).getTreasuryBalance(weth);
 
@@ -1099,7 +1101,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
             useFullTermInterest: false
         });
         vm.prank(lender_);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
         loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower_, borrowerPk_, offerId);
         _fcSetRisk(loanId, FC_HF_HEALTHY, FC_LTV_HEALTHY);
         assertEq(uint8(_fcStatus(loanId)), uint8(LibVaipakam.LoanStatus.Active), "fixture-live: the loan opened Active");

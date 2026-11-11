@@ -22,6 +22,8 @@ import {
   type Hex,
 } from 'viem';
 import type { Page } from '@playwright/test';
+import { txValidUntil } from '@vaipakam/lib/txDeadline';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { chooseMenuValue, newestOfferIdFor, newestLoanIdFor } from './flows';
 import {
   CHAIN_ID,
@@ -37,6 +39,7 @@ import {
 } from './chain';
 import { accountFor, type Role } from './wallets';
 import { increaseTime } from './anvil';
+import { waitOutTermsAge } from './termsAge';
 import { fetchSignedBook } from './signed';
 import { ensureWeth } from './seed';
 
@@ -221,11 +224,14 @@ export async function seedDeskOffer(opts: {
     refinanceTargetLoanId: 0n,
     useFullTermInterest: opts.terms?.useFullTermInterest ?? false,
   };
+  // The transaction deadline (#3412): the chain's latest block time plus
+  // the shared window, never the host clock (the e2e chain's clock is warped).
+  const { timestamp: chainNow } = await pub.getBlock({ blockTag: 'latest' });
   const hash = await wallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'createOffer',
-    args: [params],
+    args: [params, txValidUntil(chainNow)],
     account,
     chain: forkChain,
   });
@@ -401,6 +407,10 @@ function randomNonce(): bigint {
   return nonce;
 }
 
+/** #3443 offer-age wait — lives in `termsAge.ts` (see its header for
+ *  why); re-exported so the desk specs keep importing it from here. */
+export { waitOutTermsAge } from './termsAge';
+
 /** Direct-write accept of an ERC-20/ERC-20 offer of EITHER side (both
  *  shapes seedDeskOffer creates): escrow the acceptor's leg, sign the
  *  canonical AcceptTerms bound to the LIVE getOffer fields, send
@@ -451,6 +461,7 @@ export async function acceptOfferDirect(
   });
   await confirm(approveHash, 'approve (acceptOffer allowance)');
 
+  await waitOutTermsAge(offerId);
   // The chain clock judges the signature deadline — never Date.now()
   // (evm_increaseTime moves the fork far from wall time).
   const chainNow = (await pub.getBlock({ blockTag: 'latest' })).timestamp;
@@ -526,6 +537,18 @@ export async function acceptOfferDirect(
     primaryType: 'AcceptTerms',
     message: terms,
   });
+  // The estimate plus the shared margin (`@vaipakam/lib/gasLimit`), the
+  // rule the app's writes follow. The estimate is taken against the latest
+  // block and the fill lands in the next one, so a time-dependent branch can
+  // cost more than was measured; an unpadded limit then runs out exactly at
+  // the estimate.
+  const estimate = await pub.estimateContractGas({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'acceptOffer',
+    args: [offerId, terms, signature],
+    account,
+  });
   const hash = await wallet.writeContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -533,6 +556,7 @@ export async function acceptOfferDirect(
     args: [offerId, terms, signature],
     account,
     chain: forkChain,
+    gas: gasLimitFromEstimate(estimate),
   });
   await confirm(hash, 'acceptOffer');
   // The acceptor's side is the mirror of the creator's.

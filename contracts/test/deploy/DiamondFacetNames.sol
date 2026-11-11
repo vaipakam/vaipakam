@@ -120,7 +120,9 @@ abstract contract DiamondFacetNames {
     ///      forced-sale previews, split off ForcedSaleFacet).
     ///      113 → 114 with `OfferPriceGuardFacet` (#3358 — the maker's
     ///      price-move guard on an offer).
-    function cutFacetNames() internal pure returns (string[114] memory) {
+    ///      114 → 115 with `SignedOfferMatchFacet` (#3443 — the signed-offer
+    ///      keeper-matcher, split off OfferMatchFacet).
+    function cutFacetNames() internal pure returns (string[115] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -276,6 +278,8 @@ abstract contract DiamondFacetNames {
             "ForcedSalePreviewFacet",
             // The maker's price-move guard (#3358).
             "OfferPriceGuardFacet",
+            // The signed-offer keeper-matcher (#3443, split off OfferMatchFacet).
+            "SignedOfferMatchFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

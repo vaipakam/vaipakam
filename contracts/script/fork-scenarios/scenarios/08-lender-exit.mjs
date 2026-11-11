@@ -14,7 +14,7 @@
  *    exercising for that reason alone.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, acceptStoredOffer, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionNftOwner, positionOf, read, snapshot, vaultAddressFor, NFT_LOCK } from '../lib/flow.mjs';
+import { ABIS, ANY, NO_DRIFT_SALE_BOUNDS, acceptStoredOffer, txValidUntil, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionNftOwner, positionOf, read, snapshot, vaultAddressFor, NFT_LOCK } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
@@ -59,13 +59,13 @@ export async function run() {
     const prePos = await positionOf(loanId);
 
     const listing = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer',
-      [loanId, 500n, true, BigInt(3 * 86_400)], lender.address);
+      [loanId, 500n, true, BigInt(3 * 86_400), ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()], lender.address);
     if (!listing.ok) cannotContinue('A8.1 listing', listing.name);
     {
       const beforeList = await snapshot(tokens, holders);
       const listed = await tx(lender, {
         address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer',
-        args: [loanId, 500n, true, BigInt(3 * 86_400)],
+        args: [loanId, 500n, true, BigInt(3 * 86_400), ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()],
       }, 'createLoanSaleOffer');
       // `createLoanSaleOffer` returns nothing, so the vehicle's id comes from
       // the `LoanSaleOfferLinked` event rather than from a return value.
@@ -150,17 +150,17 @@ export async function run() {
       `loanId=${loanId} buyOfferId=${buy.offerId}`);
 
     const notLender = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
-      [loanId, buy.offerId], outsider.address);
+      [loanId, buy.offerId, ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()], outsider.address);
     expectRefusal('A8.6', 'only the current lender can sell the position', notLender, 'NotNFTOwner');
 
     const sim = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
-      [loanId, buy.offerId], lender.address);
+      [loanId, buy.offerId, ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()], lender.address);
     if (!sim.ok) cannotContinue('A8.7 direct sale', sim.name);
     const directPos = await positionOf(loanId);
     const pre = await snapshot(tokens, holders);
     const receipt = await tx(lender, {
       address: DIAMOND, abi: ABIS.earlyWithdrawalDirect, functionName: 'sellLoanViaBuyOffer',
-      args: [loanId, buy.offerId],
+      args: [loanId, buy.offerId, ...NO_DRIFT_SALE_BOUNDS, await txValidUntil()],
     }, 'sellLoanViaBuyOffer');
     const post = await snapshot(tokens, holders);
     const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);

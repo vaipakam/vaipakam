@@ -25,6 +25,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  LenderIntentCapitalTest
@@ -68,8 +69,10 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            type(uint64).max
         );
+        LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
     }
 
     /// @dev Mint wallet balance + approve the Diamond for exactly `amount`,
@@ -160,8 +163,10 @@ contract LenderIntentCapitalTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: true
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     // ─── 1. Fund — increments capital + moves wallet → vault ─────────────────
@@ -794,7 +799,8 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockCollateralERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            type(uint64).max
         ); // pair B: (mockCollateralERC20, mockERC20)
         (, uint256 total) = _byOwner(lender);
         assertEq(total, 2, "both pairs listed for the owner");
@@ -808,7 +814,8 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockCollateralERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            type(uint64).max
         );
         (
             LibMetricsTypes.OwnerLenderIntentSummary[] memory p0,

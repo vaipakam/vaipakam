@@ -6,6 +6,7 @@ import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "../../test/helpers/LibAcceptTestSigner.sol";
+import {LibTestTiming} from "../../test/helpers/LibTestTiming.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
@@ -94,7 +95,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // Lender posts an offer with partial-repay opt-in ON.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferAllowsPartial());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferAllowsPartial(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Lender offer with allowsPartialRepay=true:", offerId);
 
@@ -170,7 +171,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
-        uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
+        uint256 requestId = OfferCreateFacet(diamond).createOffer(request, type(uint64).max);
         vm.stopBroadcast();
         // The wallet's share of the payoff, through the request's permit.
         if (!_attachPayoffPermit(borrowerKey, oldLoanId, requestId)) {
@@ -245,14 +246,14 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         request.refinanceTargetLoanId = oldLoanId;
         _requireRefused(
             borrower,
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, request),
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, request, type(uint64).max),
             abi.encodeWithSelector(LibAutoRefinanceCheck.RefinanceRateExceedsCap.selector),
             "PF-215: a request priced above the caps should be refused (RefinanceRateExceedsCap)"
         );
 
         request.interestRateBpsMax = capRateBps;
         vm.startBroadcast(borrowerKey);
-        uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
+        uint256 requestId = OfferCreateFacet(diamond).createOffer(request, type(uint64).max);
         vm.stopBroadcast();
         // The wallet's share of the payoff, through the request's permit.
         if (!_attachPayoffPermit(borrowerKey, oldLoanId, requestId)) {
@@ -260,6 +261,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         }
         uint256 lenderOfferId = _createLenderOffer(newLenderKey);
         console.log("Refinance request / standing lender offer:", requestId, lenderOfferId);
+        // The offer-age rule (#3412): a fill waits until the terms have stood
+        // the minimum age. Steps a simulation only; see {LibTestTiming}.
+        LibTestTiming.waitOutTermsAge(diamond, lenderOfferId, requestId);
 
         // Gate 2: the matcher is refused while the switch is off.
         bool switchWasOn = AdminFacet(diamond).getAutoRefinanceEnabled();
@@ -371,7 +375,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, amountMax);
         uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(
-            _rangedLenderOffer(amountMin, amountMax, rateMin, rateMax, lenderCollateral)
+            _rangedLenderOffer(amountMin, amountMax, rateMin, rateMax, lenderCollateral),
+            type(uint64).max
         );
         vm.stopBroadcast();
         console.log("Ranged lender offer:", lenderOfferId);
@@ -386,10 +391,14 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT * 3);
         uint256 borrowerOffer1 = OfferCreateFacet(diamond).createOffer(
-            _matchableBorrowerOffer(2_500e6, 500, COLLATERAL_AMOUNT * 3)
+            _matchableBorrowerOffer(2_500e6, 500, COLLATERAL_AMOUNT * 3),
+            type(uint64).max
         );
         vm.stopBroadcast();
         console.log("Borrower offer 1 (matchable):", borrowerOffer1);
+        // The offer-age rule (#3412): a fill waits until the terms have stood
+        // the minimum age. Steps a simulation only; see {LibTestTiming}.
+        LibTestTiming.waitOutTermsAge(diamond, lenderOfferId, borrowerOffer1);
 
         // Preview the match before submitting — real bot's flow.
         LibOfferMatch.MatchResult memory preview =
@@ -437,8 +446,12 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         uint256 b2Collateral = (COLLATERAL_AMOUNT * 25) / 10; // 2.5 WETH
         weth.approve(diamond, b2Collateral);
         uint256 borrowerOffer2 = OfferCreateFacet(diamond).createOffer(
-            _matchableBorrowerOfferAs(newBorrower, 2_000e6, 500, b2Collateral)
+            _matchableBorrowerOfferAs(newBorrower, 2_000e6, 500, b2Collateral),
+            type(uint64).max
         );
+        vm.stopBroadcast();
+        LibTestTiming.waitOutTermsAge(diamond, borrowerOffer2);
+        vm.startBroadcast(newBorrowerKey);
         LibOfferMatch.MatchResult memory preview2 =
             OfferMatchFacet(diamond).previewMatch(lenderOfferId, borrowerOffer2, newBorrower, newBorrower);
         // newBorrower also doubles as the matcher here — fine, the
@@ -623,7 +636,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
 
         vm.startBroadcast(liamKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
 
         LibAcceptTerms.AcceptTerms memory _t6 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), lenderOfferId, true, 0);
@@ -640,9 +653,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // (HANDOVER_DURATION_DAYS), collateralAmount >= l1.collateralAmount.
         vm.startBroadcast(benKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben));
+        uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben), type(uint64).max);
         vm.stopBroadcast();
         console.log("Ben's takeover offer:", benOfferId);
+        LibTestTiming.waitOutTermsAge(diamond, benOfferId);
 
         // alice calls transferObligation, paying accrued + shortfall.
         // Approve generous principal — at t≈0 accrued is tiny but
@@ -650,7 +664,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // duration mismatch. We approve full LOAN_AMOUNT for headroom.
         vm.startBroadcast(aliceKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        PrecloseFacet(diamond).transferObligationViaOffer(loanL1, benOfferId);
+        PrecloseFacet(diamond).transferObligationViaOffer(loanL1, benOfferId, type(uint64).max);
         vm.stopBroadcast();
 
         // Verify: l1 is still Active but borrower changed from alice
@@ -728,7 +742,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // Setup loan l1: liam -> alice.
         vm.startBroadcast(liamKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
 
         LibAcceptTerms.AcceptTerms memory _t7 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), lenderOfferId, true, 0);
@@ -758,7 +772,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             address(weth),
             COLLATERAL_AMOUNT,
             true,                   // creatorRiskAndTermsConsent
-            address(usdc)           // prepayAsset (unused on ERC20 path)
+            address(usdc),           // prepayAsset (unused on ERC20 path)
+            type(uint64).max
         );
         vm.stopBroadcast();
         console.log("Alice's offset offer:", offsetOfferId);
@@ -812,7 +827,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // Step 1: liam (newLender) lends to newBorrower → loan active.
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t11 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
         bytes memory _sig11 = LibAcceptTestSigner.sign(diamond, _t11, newBorrowerKey);
@@ -827,13 +842,14 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // collateral parity (or no-worse terms for borrower).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         console.log("bob's buy offer:", buyOfferId);
+        LibTestTiming.waitOutTermsAge(diamond, buyOfferId);
 
         // Step 3: liam sells the position to bob.
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.stopBroadcast();
         LibVaipakam.Loan memory loanAfterSale = LoanFacet(diamond).getLoanDetails(loanId);
         require(
@@ -875,7 +891,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // 1 WETH at $2000 → ~1.7 HF, comfortably admissible.
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t25 =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
@@ -887,8 +903,11 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
 
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
+        // Aged before the floor probe below, so its refusal can only be the
+        // solvency floor and not the offer-age rule (#3412).
+        LibTestTiming.waitOutTermsAge(diamond, buyOfferId);
 
         uint256 hfHealthy = RiskFacet(diamond).calculateHealthFactor(loanId);
         console.log("HF at $2000 collateral:", hfHealthy);
@@ -935,7 +954,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         _requireRefusedWithSelector(
             newLender,
             abi.encodeWithSelector(
-                EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId
+                EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId,
+                0,
+                type(uint256).max,
+                type(uint64).max
             ),
             LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
             "PF-230-floor: a sub-floor position must be refused for the solvency reason (SalePositionBelowSolvencyFloor)"
@@ -949,7 +971,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         vm.stopBroadcast();
 
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.stopBroadcast();
         require(
             LoanFacet(diamond).getLoanDetails(loanId).lender == lender,
@@ -984,7 +1006,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     function _saleAdmissionOnAcceptBranch() internal {
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t26 =
             LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
@@ -999,7 +1021,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // -while-collateral-falls case the accept-time check exists for.
         vm.recordLogs();
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalFacet(diamond).createLoanSaleOffer(loanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(diamond).createLoanSaleOffer(loanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max);
         vm.stopBroadcast();
         uint256 saleOfferId;
         {

@@ -11,6 +11,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title RiskAccessMatchGateTest
@@ -106,8 +107,10 @@ contract RiskAccessMatchGateTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     /// @dev A borrower range offer on the same pair, generously
@@ -142,8 +145,10 @@ contract RiskAccessMatchGateTest is SetupTest {
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
                 useFullTermInterest: false
-            })
+            }),
+            type(uint64).max
         );
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId); // #3443
     }
 
     /// @dev Mock both legs to `tier` so the matched pair classifies uniformly.

@@ -81,7 +81,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         // pre-flag). Use the standard helpers.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         LibAcceptTerms.AcceptTerms memory _t4 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
         bytes memory _sig4 = LibAcceptTestSigner.sign(diamond, _t4, borrowerKey);
@@ -105,7 +105,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         require(isFlagged, "PF-008: borrower should be flagged on the oracle");
         _requireRefused(
             borrower,
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _borrowerOfferStandard()),
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _borrowerOfferStandard(), type(uint64).max),
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower),
             "PF-008: createOffer by a flagged wallet should revert SanctionedAddress(borrower)"
         );
@@ -161,7 +161,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         // Probed in the simulation only (`RevertProbe`, see PF-008).
         _requireRefused(
             newLender,
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _lenderOfferStandard()),
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _lenderOfferStandard(), type(uint64).max),
             abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, address(usdc)),
             "PF-323: createOffer on a paused asset should revert AssetPaused(usdc)"
         );
@@ -177,7 +177,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         );
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Post-unpause createOffer succeeded; offerId:", offerId);
         // Note: do NOT cancel here. Range Orders Phase 1 enforces a
@@ -202,7 +202,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         // the simulation only (`RevertProbe`, see PF-008).
         _requireRefused(
             lender,
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _lenderOfferStandard()),
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _lenderOfferStandard(), type(uint64).max),
             abi.encodeWithSelector(LibPausable.EnforcedPause.selector),
             "PF-322: createOffer while the Diamond is paused should revert EnforcedPause"
         );
@@ -219,7 +219,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         // sufficient evidence the global pause was lifted.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
         console.log("Post-unpause sanity create ok; offerId:", offerId);
 
@@ -328,7 +328,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     function _loanRoundTrip() internal returns (uint256 initiationFee) {
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
 
         uint256 borrowerBefore = usdc.balanceOf(newBorrower);

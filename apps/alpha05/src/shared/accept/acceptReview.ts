@@ -26,12 +26,15 @@ import {
   readOfferState,
   readPreview,
   readRiskTermsHash,
+  readTermsAge,
+  termsWaitSec,
   readTreasuryFeeBps,
   readVault,
   readWalletFunds,
   tokenAcceptsApproval,
   type AcceptPreview,
   type OfferState,
+  type TermsAge,
   type WalletFunds,
 } from '../offers/reads';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
@@ -40,7 +43,7 @@ import { equivalentText, readEquivalentFor, type NumeraireEquivalent, type Value
 import type { ReceiptRow } from '../receipt/types';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { allowanceSteps } from '../tx/approval';
-import { shortAddress } from '../ui/format';
+import { formatAge, shortAddress } from '../ui/format';
 
 type Hex = `0x${string}`;
 
@@ -93,6 +96,11 @@ export interface AcceptReview {
    *  (`unit` null: the numeraire's symbol unset or unread). Shown, never
    *  compared in a re-check: a price moves every block. */
   values: { principal: NumeraireEquivalent | null; collateral: NumeraireEquivalent | null; unit: string | null };
+  /** #3443 — read only when the preview refuses because the terms are too
+   *  new: when they were set, the minimum age and the block's time, so the
+   *  refusal can say how long is left. Null otherwise, or when unread (the
+   *  refusal then says only that it lifts within seconds). */
+  termsAge: TermsAge | null;
   readAt: number;
 }
 
@@ -136,6 +144,7 @@ export async function readAcceptReview(
     value(offer.collateralAsset, preview.collateralAmount, 'collateral', collateralClass),
     r<string | null>((c) => readNumeraireSymbol(c, diamond)).catch(() => null),
   ]);
+  const termsAge = preview.error === 'TermsTooFresh' ? await r<TermsAge>((c) => readTermsAge(c, diamond, offerId)).catch(() => null) : null;
   const pay = payLeg(role, offer, preview).amount;
   const approvalSteps =
     funds.allowance >= pay ? 0 : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, payAsset, account, diamond, amount)) }, funds.allowance, pay)).length;
@@ -162,6 +171,7 @@ export async function readAcceptReview(
     consent,
     positionFlow,
     values: { principal: principalValue, collateral: collateralValue, unit },
+    termsAge,
     readAt: Date.now(),
   };
 }
@@ -238,6 +248,7 @@ const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
   RefinanceRequestUntakeable: 'lendAccept.err.RefinanceRequestUntakeable',
   CadenceNotAdmitted: 'lendAccept.err.CadenceNotAdmitted',
   PriceGuardRefused: 'lendAccept.err.PriceGuardRefused',
+  TermsTooFresh: 'lendAccept.err.TermsTooFresh',
   Unrecognised: 'lendAccept.err.Unrecognised',
 };
 
@@ -269,9 +280,20 @@ export function cadenceText(cadence: number, copy: Pick<CopyAccess, 'text'>): st
  * wallet holds what it pays. Each is a tier-A sentence with its remedy
  * where this session can offer one.
  */
+/** #3443 — the too-new refusal with the protocol's own figures: how long the
+ *  terms must stand, and how long was left at the block the review read.
+ *  The review reads again each block, so the refusal lifts by itself. */
+export function termsAgeText(t: TermsAge, copy: Pick<CopyAccess, 'text' | 'format'>, role: AcceptRole): string {
+  return copy.format(role === 'lender' ? 'lendAccept.termsWait' : 'accept.termsWait', {
+    min: formatAge(Number(t.minAgeSec)),
+    left: formatAge(Number(termsWaitSec(t))),
+  });
+}
+
 export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const out: string[] = [];
   if (r.state !== 'open') out.push(copy.format('accept.blockState', { state: stateText(r.state, copy, r.role) }));
+  else if (r.preview.error === 'TermsTooFresh' && r.termsAge !== null && termsWaitSec(r.termsAge) > 0n) out.push(termsAgeText(r.termsAge, copy, r.role));
   else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.role));
   // #3205 — bound to a loan position that moved since it opened: it can
   // never complete, so the acceptance is never sent.
