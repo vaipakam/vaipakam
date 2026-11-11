@@ -13,6 +13,9 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LibOfferAdmission} from "../src/libraries/LibOfferAdmission.sol";
@@ -884,6 +887,111 @@ contract SignedOfferBookTest is SetupTest {
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, PRINCIPAL);
         _assertCode(_previewSigned(o, sig, signer), OfferAcceptFacet.AcceptError.SelfTrade, "signer cannot take");
+    }
+
+    // ─── 16. #3577 signed-order risk-gate preview ─────────────────────────
+
+    uint8 internal constant BLUECHIP = uint8(LibVaipakam.RiskAccessLevel.BlueChipOnly);
+    uint8 internal constant ILLIQUID = uint8(LibVaipakam.RiskAccessLevel.IlliquidCustom);
+
+    /// @dev Force the liquidity tier the gate classifies `asset` with.
+    function _mockTier(address asset, uint8 tier) internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, asset),
+            abi.encode(tier)
+        );
+    }
+
+    /// @dev A signed lender order whose collateral leg is illiquid, so the
+    ///      gate requires IlliquidCustom plus a standing consent on the pair.
+    function _illiquidCollateralOrder(uint256 nonce) internal returns (LibSignedOffer.SignedOffer memory o) {
+        _mockTier(mockERC20, 3);
+        _mockTier(mockIlliquidERC20, 0);
+        o = _lenderSignedOffer(nonce, 0);
+        o.collateralAsset = mockIlliquidERC20;
+    }
+
+    function _riskBlocks(LibSignedOffer.SignedOffer memory o, address acceptor)
+        internal
+        view
+        returns (uint8 c, uint8 a, LibRiskAccess.PairId memory pair)
+    {
+        return RiskPreviewFacet(address(diamond)).previewSignedOfferRiskBlocks(o, acceptor);
+    }
+
+    function _arm(address who, LibRiskAccess.PairId memory pair) internal {
+        vm.startPrank(who);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(pair, true);
+        vm.stopPrank();
+    }
+
+    /// @dev Gate off: both blocks are 0, and the pair is the order's own legs.
+    function test_3577_gateOffReportsNoBlockAndTheOrdersPair() public {
+        LibSignedOffer.SignedOffer memory o = _illiquidCollateralOrder(1601);
+        (uint8 c, uint8 a, LibRiskAccess.PairId memory pair) = _riskBlocks(o, borrower);
+        assertEq(c, 0, "creator: gate off");
+        assertEq(a, 0, "acceptor: gate off");
+        assertEq(pair.lendAsset, mockERC20, "lend leg");
+        assertEq(uint8(pair.lendType), uint8(LibVaipakam.AssetType.ERC20), "lend type");
+        assertEq(pair.collAsset, mockIlliquidERC20, "collateral leg");
+        assertEq(uint8(pair.collType), uint8(LibVaipakam.AssetType.ERC20), "collateral type");
+        assertEq(pair.prepayAsset, o.prepayAsset, "prepay");
+    }
+
+    /// @dev Each block the preview reports is the refusal the fill gives, in
+    ///      the fill's order (the signer first, then the taker), and a clear
+    ///      preview is a fill that goes through on that pair.
+    function test_3577_blocksMatchTheFillStepByStep() public {
+        LibSignedOffer.SignedOffer memory o = _illiquidCollateralOrder(1602);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Both BlueChipOnly on an IlliquidCustom pair: both under-tiered.
+        (uint8 c, uint8 a, LibRiskAccess.PairId memory pair) = _riskBlocks(o, borrower);
+        assertEq(c, 1, "signer under-tiered");
+        assertEq(a, 1, "taker under-tiered");
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.expectRevert(abi.encodeWithSelector(LibRiskAccess.RiskTierTooLow.selector, signer, ILLIQUID, BLUECHIP));
+        vm.prank(borrower);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+
+        // Signer armed on the reported pair: only the taker's block is left.
+        _arm(signer, pair);
+        (c, a,) = _riskBlocks(o, borrower);
+        assertEq(c, 0, "signer clear once armed");
+        assertEq(a, 1, "taker still under-tiered");
+        vm.expectRevert(abi.encodeWithSelector(LibRiskAccess.RiskTierTooLow.selector, borrower, ILLIQUID, BLUECHIP));
+        vm.prank(borrower);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+
+        // Taker opts up but records no consent: the consent block (2).
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        (, a,) = _riskBlocks(o, borrower);
+        assertEq(a, 2, "taker needs the pair consent");
+        vm.expectRevert(
+            abi.encodeWithSelector(LibRiskAccess.IlliquidPairNotConsented.selector, borrower, LibRiskAccess.pairKey(pair))
+        );
+        vm.prank(borrower);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+
+        // Consent on the reported pair: both clear, and the fill goes through.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(pair, true);
+        (c, a,) = _riskBlocks(o, borrower);
+        assertEq(c, 0, "signer clear");
+        assertEq(a, 0, "taker clear");
+        vm.prank(borrower);
+        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+
+        // The stored-offer view, keyed on the offer the fill created, names
+        // the same pair: the two builders cannot disagree.
+        LibRiskAccess.PairId memory stored =
+            RiskPreviewFacet(address(diamond)).acceptMidTierAckPair(LoanFacet(address(diamond)).getLoanDetails(loanId).offerId);
+        assertEq(LibRiskAccess.pairKey(stored), LibRiskAccess.pairKey(pair), "same pair as the stored-offer view");
     }
 }
 

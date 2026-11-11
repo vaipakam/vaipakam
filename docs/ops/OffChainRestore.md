@@ -1751,6 +1751,20 @@ cancels is the one that could silence a protected account's alerts. Its
 stated cost: an owner whose unlink or chat move was pending must ask again,
 and is not told that the earlier request was dropped.
 
+**Telegram links are no longer in this database (#1722).** Since migration
+`0091` the agent keeps every Telegram link, pending alert-chat change and
+`LOCK` request in its own Durable Object (`TelegramState`), and the shared
+copies above (`telegram_links`, `alert_channel_changes`,
+`protected_lock_requests` and `user_thresholds.tg_chat_id`) are empty until a
+later migration drops them. Nothing in this runbook restores that state: it is
+recovered through the Durable Object storage's own point-in-time restore (30
+days), described in `apps/agent/README.md`. One step follows from it: an
+archive taken BEFORE `0091` still carries the old copies, and importing one
+puts chat ids back where the keeper's old code reads them. After importing
+such an archive, run the four statements of
+`apps/indexer/migrations/0091_telegram_state_moved.sql` again against the
+shared database, so no chat the owner has since removed receives an alert.
+
 `protected_lock_readiness` (#3088) is the keeper's heartbeat for the
 Telegram `LOCK` step: it says, per chain, when a keeper able to sign last
 worked the requests, and the agent records a `LOCK` only while that is

@@ -181,7 +181,7 @@ library FacetSelectors {
         s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
     }
 
-    /// @notice Full external selector surface of {RiskPreviewFacet} (10) —
+    /// @notice Full external selector surface of {RiskPreviewFacet} (11) —
     ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
     ///
     /// @dev    #1649. This facet is not itself refreshed for its own sake by the
@@ -208,7 +208,7 @@ library FacetSelectors {
     ///         Replace the routed), so it is correct against a pre-#1503 diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -226,6 +226,8 @@ library FacetSelectors {
         s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
         s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
+        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
+        s[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
     }
 
     /// @notice Full external selector surface of {RepayPeriodicFacet} (4).

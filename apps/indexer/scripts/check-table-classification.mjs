@@ -370,6 +370,21 @@ const CLASSIFICATION = {
 // Tables written by tooling/infra, not domain state.
 const IGNORED = new Set(['d1_migrations']);
 
+// Source directories whose SQL runs against a Durable Object's own SQLite,
+// not against D1 (#1722). Their tables are in neither database this check
+// governs: the nightly archive cannot read them and the replay cannot
+// rebuild them, so a restore class would describe nothing. Their recovery
+// is the Durable Object storage's own point-in-time restore, stated in the
+// owning Worker's README and in the restore runbook. Each entry is a
+// DECLARATION with its reason, never a silent skip, and it is checked: the
+// directory must exist and must not name a D1 binding type, so D1 code
+// moved into it fails here instead of escaping classification.
+const NON_D1_STORAGE = {
+  'apps/agent/src/telegramState':
+    "the agent's TelegramState Durable Object (Telegram links, alert-chat changes, LOCK requests); " +
+    'recovered through Durable Object point-in-time restore, see apps/agent/README.md',
+};
+
 // ── Diamond-change keep list (#1566, Codex #2545 r1) ─────────────────
 // `src/deploymentEpoch.ts` resets EVERY table carrying a `chain_id` column
 // when a chain's Diamond changes, minus the user-owned tables
@@ -580,9 +595,27 @@ function tsFilesUnder(dir) {
 
 function runChecks() {
 const writers = new Map(); // table -> Set<relative file>
+const nonD1Problems = [];
+for (const dir of Object.keys(NON_D1_STORAGE)) {
+  const abs = join(REPO_ROOT, dir);
+  if (!existsSync(abs)) {
+    nonD1Problems.push(`${dir} (declared, but no such directory)`);
+    continue;
+  }
+  for (const file of tsFilesUnder(abs)) {
+    if (/\bD1Database\b/.test(stripJsComments(readFileSync(file, 'utf8')))) {
+      nonD1Problems.push(`${relative(REPO_ROOT, file)} (under a non-D1 directory, but names D1Database)`);
+    }
+  }
+}
+const isNonD1 = (file) => {
+  const rel = relative(REPO_ROOT, file);
+  return Object.keys(NON_D1_STORAGE).some((dir) => rel === dir || rel.startsWith(`${dir}/`));
+};
 for (const app of ['indexer', 'keeper', 'agent']) {
   const srcDir = join(REPO_ROOT, 'apps', app, 'src');
   for (const file of tsFilesUnder(srcDir)) {
+    if (isNonD1(file)) continue;
     const literals = stringLiteralContents(readFileSync(file, 'utf8')).join('\n');
     for (const re of WRITE_RES) {
       re.lastIndex = 0;
@@ -935,6 +968,11 @@ if (missingExternal.length > 0) {
   failed = true;
   console.error('✗ EXTERNAL_WRITERS entry resolves to nothing real (needs an\n  existing script, or `pending: "#NNNN"` with a reason):');
   for (const t of missingExternal) console.error(`    ${t}`);
+}
+if (nonD1Problems.length > 0) {
+  failed = true;
+  console.error('✗ NON_D1_STORAGE declaration does not hold:');
+  for (const t of nonD1Problems) console.error(`    ${t}`);
 }
 if (dead.length > 0) {
   // Warn-only: a dropped table leaves a harmless entry; flag for cleanup.

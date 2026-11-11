@@ -1250,7 +1250,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1265,6 +1265,8 @@ contract HelperTest {
         selectors[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
         selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
+        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
+        selectors[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

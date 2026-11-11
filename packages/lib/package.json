@@ -217,6 +217,18 @@
     "./requestCode": {
       "types": "./src/requestCode.ts",
       "default": "./src/requestCode.ts"
+    },
+    "./telegramAlerts/hfCopy": {
+      "types": "./src/telegramAlerts/hfCopy.ts",
+      "default": "./src/telegramAlerts/hfCopy.ts"
+    },
+    "./telegramAlerts/protectedCopy": {
+      "types": "./src/telegramAlerts/protectedCopy.ts",
+      "default": "./src/telegramAlerts/protectedCopy.ts"
+    },
+    "./telegramAlerts/message": {
+      "types": "./src/telegramAlerts/message.ts",
+      "default": "./src/telegramAlerts/message.ts"
     }
   },
   "scripts": {
