@@ -2226,6 +2226,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   and the outcome is measured from the transaction's own cancel event,
   never assumed from its inclusion. One cancel is open at a time, and its
   finish card stays on screen when the book drops the order.
+- **RB-DESK-BOOK-SIGNED** — On a market's desk (OFF-60) every maker's
+  gasless signed orders are listed from the offer book's market read, apart
+  from the ladder of posted offers, which says where they are. Lenders'
+  orders run from the lowest rate, borrowers' from the highest (the higher
+  of a borrower's two rates), the book's own order kept between equal
+  rates. A row is kept only when its hash is the order's own, it names
+  this market and it carries a readable signature; anything else is counted
+  and said, and a list the book cut to its best-priced rows is said. Each
+  row names its maker (the viewer's own as theirs), states both ends of
+  every range and when it lapses, and shows where the chain stands on it,
+  read at one block by the same rule as the viewer's own orders
+  (RB-DESK-SIGNED); a partly filled order says what is left. Because a
+  signed order sets nothing aside, each order that can still be filled
+  states what its maker's vault holds free of the stake, read from the
+  protocol at that block, against what a fill of the rest would draw:
+  enough, short (a fill now would fail), or unread. The section says that
+  one maker's orders share one vault and are each weighed alone. Until the
+  protocol can preview a signed fill (#3552), the section says the page does
+  not fill signed orders and why, and offers no fill: a taker is never asked
+  to pay without the fill's figures.
 - **RB-DESK-SIGN** — The ticket (OFF-59) may sign a new order instead of
   posting it: no gas, nothing set aside, listed on the offer book, and the
   stake drawn from the signer's own vault when someone fills it. The app
