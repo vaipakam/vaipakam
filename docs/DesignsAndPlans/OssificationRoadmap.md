@@ -80,7 +80,7 @@ the gaps is part of the commitment; each has an issue.
 
 | Test | Met today | Not yet met | Closed by |
 | --- | --- | --- | --- |
-| Never moves user funds | The pause, the guardian cancels and the emergency revoker stop things only. The notification biller moves a fixed, consented fee once per loan side (see §5's carve-out). | A Diamond code change (a diamond cut) can change how funds move once its delay ends, and the Diamond still decides some vault outflows by itself. | The vault checks outcomes, not the Diamond's say-so (#3431, #3205 Stage B); the vault-side exit (#3424). |
+| Never moves user funds | The pause, the guardian cancels and the emergency revoker stop things only. The notification biller moves a fixed, consented fee once per loan side (see §5's carve-out). | A Diamond code change (a diamond cut) can change how funds move once its delay ends, and the Diamond still decides some vault outflows by itself. A fast key can also loosen, not only tighten: the keeper can promote an asset's liquidity tier at once (§2.1). | The vault checks outcomes, not the Diamond's say-so (#3431, #3205 Stage B); the vault-side exit (#3424); keeper promotions wait a cancellable delay (#3535). |
 | Slower than the user's exit | Vault code waits the beacon's code delay, and a pinned vault never takes new code. | The test needs each change's delay to be **strictly longer** than the exit it races, plus a stated margin for the user to act. Neither path meets that. The vault code delay and the escape period are both 3 days today (so new code can land the moment escape opens), and the planned 7 and 7 days would still leave no margin. The Diamond's 48h Timelock delay is far shorter than the 14-day vault-side exit (#3424), so making that exit independent of the Diamond does not make it finish first. | **Vault code:** #3421 and #3441 must set the code delay longer than the escape period plus a published margin; equal figures do not close this. **Diamond:** a faster exit cannot win against 48h, so this closes only when a Diamond change can no longer reach vault assets at all (#3431, #3205 Stage B), with the vault-side exit (#3424) as the route out. Until both hold, this test stays an open gap. |
 | Visible in advance | Every delayed change emits an event when it is queued. | No app surface yet shows queued Timelock or vault-code changes to users. | #3237, #3422. |
 | Avoidable | Vault pins (#3204). | A loan's price sources and routes follow live settings. | #3437. |
@@ -114,7 +114,7 @@ emergency revoke. *Bot keys*: the keeper, watcher and notification biller.
 | `EMERGENCY_REVOKER_ROLE` | Governance Safe | Strip a role from a compromised hot key | Grant anything; touch the role root or anything the Timelock holds | None |
 | `WATCHER_ROLE` | Watcher bot | `autoPause` for at most 2 hours | Unpause; extend past the cap | None |
 | `NOTIF_BILLER_ROLE` | Biller bot | Charge the fixed notification fee the payer consented to, once per side of an open loan | Charge more than the payer's cap, a closed loan, or a flagged wallet | None |
-| `KEEPER_ROLE` | Keeper bot | Lower an asset's liquidity tier (never raise it above the baseline); run the keeper-only reward and claim steps | Raise a tier; move funds to itself | None |
+| `KEEPER_ROLE` | Keeper bot | Set an asset's liquidity tier from 1 to 3, at once and in either direction. The effective tier is the lower of this and the asset's on-chain tier, so a **promotion is bounded by the on-chain ceiling, not by the default**: raising it can raise new loans' origination LTV and admit the asset to the blue-chip basket (open loans keep their stamped thresholds). It also runs the keeper-only reward and claim steps | Raise a tier above the on-chain ceiling; move funds to itself. Making promotions wait a cancellable delay, with demotions staying instant, is an open gap (#3535) | None |
 
 User-granted keeper permissions are not governance: each user grants and
 revokes them for their own positions (#3353 replaces standing bits with
@@ -377,7 +377,7 @@ not.
 
 - **Before mainnet:** the gaps named in §1 (#3205 Stage B, #3421, #3424,
   #3431, #3437, #3441, with the delay ordering §1 states), the per-loan
-  close-out fee stamps (#3534), the user-facing notices (#3237, #3422), and #651's
+  close-out fee stamps (#3534), delayed keeper tier promotions (#3535), the user-facing notices (#3237, #3422), and #651's
   census.
 - **After the audit and the first bake period:** Stages A, B and D, each on
   its own criteria.
