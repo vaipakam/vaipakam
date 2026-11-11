@@ -2198,6 +2198,33 @@ above. Each resolves here, so a route reviewer needs no private file:
   the Terms are accepted before that review opens. A ticket's typed state
   and consent are kept per market, so a market change never carries one
   across.
+- **RB-DESK-SIGNED** — On a market's desk (OFF-61) the viewer's own gasless
+  signed orders are listed from the offer book read scoped to the viewer as
+  signer, so other makers' depth never pushes one out. Each row is kept only
+  when its hash is the order's own and it names this viewer and this
+  market; a row the app cannot read so is counted and said, and a list the
+  book cut short is said. Before any cancel is offered the panel states
+  that nothing is set aside for a signed order and that the cancel on the
+  chain is the only way to stop one: taking it off the book alone would
+  not, since anyone holding the signature can still fill it. Each order's
+  standing is read from the chain at one block, because the book can lag
+  both ways: used (its fill has reached its ceiling: filled, or cancelled,
+  one mark for both), its nonce cancelled, lapsed on the chain's clock,
+  partly filled (a match took a slice; the rest stays fillable), or open. Each row states both
+  ends of every range the order allows. When the latest standing read
+  failed, the last good standings are shown with a notice that they may be
+  stale and no cancel is offered. A cancel is offered only
+  on an order that can still be filled (open or partly filled), and on a nonce when the book lists two or more open
+  orders under it. The review says what the cancel does, that it moves
+  nothing and returns nothing because nothing was held, that a fill already
+  sent can land first, what a fill would have drawn from the viewer's own
+  vault (one order only; for a partly filled order, the share filled and
+  only what the rest could still draw), and, for a nonce, that it also stops orders under
+  that nonce this page does not list. The protocol's own dry run runs
+  before the wallet opens, a pause or an unread standing blocks the send,
+  and the outcome is measured from the transaction's own cancel event,
+  never assumed from its inclusion. One cancel is open at a time, and its
+  finish card stays on screen when the book drops the order.
 
 ## 3. Companion specifications
 
