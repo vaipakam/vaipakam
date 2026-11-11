@@ -259,7 +259,7 @@ contract Scenario4_IlliquidCollateral is Test {
         LibTestVaultBeacon.install(address(diamond), address(this));
         LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroEx"));
 

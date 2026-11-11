@@ -19,6 +19,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @dev A minimal ERC-20 that skims a fee on every transfer. The ONLY use is
 ///      to make the replacement ceremony's delta check fail for the right
@@ -562,7 +563,7 @@ contract RewardCustodyFacetTest is SetupTest {
     ///      stays closed to every inbound NFT.
     function test_Sweep_RefusesNftsIntoADiamondTreasury() public {
         address holder = _bind();
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         address alice = makeAddr("alice");
 
         MockRentableNFT721 nft = new MockRentableNFT721();
@@ -642,7 +643,7 @@ contract RewardCustodyFacetTest is SetupTest {
     ///      balance.
     function test_Sweep_CreditsADiamondTreasurysTrackedBalance() public {
         address holder = _bind();
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         TreasuryFacet tf = TreasuryFacet(address(diamond));
 
         PlainERC20 foreign = new PlainERC20();
@@ -661,7 +662,7 @@ contract RewardCustodyFacetTest is SetupTest {
     ///      destination instead of stranding the value in the raw balance.
     function test_SweepNative_RefusesADiamondTreasury() public {
         address holder = _bind();
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         vm.deal(holder, 1 ether);
         vm.expectRevert(IVaipakamErrors.RewardCustodyNativeToDiamondTreasury.selector);
         _custody().sweepNativeFromRewardCustody(holder, 1 ether);
@@ -704,7 +705,7 @@ contract RewardCustodyFacetTest is SetupTest {
 
     function _treasury() internal returns (address t) {
         t = makeAddr("treasury");
-        AdminFacet(address(diamond)).setTreasury(t);
+        LibTestVaultBeacon.setTreasury(address(diamond), t);
     }
 
     function test_Sweep_IsAdminOnly() public {
@@ -1011,7 +1012,7 @@ contract RewardCustodyFacetTest is SetupTest {
     function test_SweepNative_RefusesWhenTheTreasuryForcesTheValueBack() public {
         address holder = _bind();
         RefundingTreasury refunding = new RefundingTreasury();
-        AdminFacet(address(diamond)).setTreasury(address(refunding));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(refunding));
         vm.deal(holder, 1 ether);
         vm.expectRevert(
             abi.encodeWithSelector(IVaipakamErrors.RewardCustodySourceNotDebited.selector, holder, 1 ether, 0)

@@ -38,6 +38,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @dev The RL-1 forced-failure harness, reused: a Replace-cut over the
 ///      tier record refresh (#1820) makes the vault credit's LAST step revert after
@@ -88,7 +89,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
         treasury = makeAddr("treasury");
-        AdminFacet(address(diamond)).setTreasury(treasury);
+        LibTestVaultBeacon.setTreasury(address(diamond), treasury);
         alice = makeAddr("alice");
         _facet().setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 5 days);
@@ -2255,7 +2256,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(10e18, 66, keccak256("legacy-tr"));
         _evidence(h, 10e18);
         _classify(h, 10e18, 0, keccak256("e-tr"));
-        _admin().setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         _admin().pause();
         _custody().releaseRestitutionToTreasury(6e18, keccak256("tr-6"));
         _admin().unpause();
@@ -2415,7 +2416,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(10e18, 74, keccak256("legacy-refill"));
         _evidence(h, 10e18);
         _classify(h, 10e18, 0, keccak256("e-refill"));
-        _admin().setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         _admin().pause();
         _custody().releaseRestitutionToTreasury(6e18, keccak256("tr"));
         _admin().unpause();

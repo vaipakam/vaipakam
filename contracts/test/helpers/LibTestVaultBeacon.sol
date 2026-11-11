@@ -18,6 +18,12 @@ interface IEndpointReads {
     function getCollateralListingExecutor() external view returns (address);
 }
 
+/// @dev The one setter {setTreasury} wraps (AdminFacet's), by interface so
+///      this library does not pull the facet into every suite's compile.
+interface ITreasurySetter {
+    function setTreasury(address treasury) external;
+}
+
 interface IExecutorSeaport {
     function seaport() external view returns (address);
 }
@@ -40,8 +46,9 @@ library LibTestVaultBeacon {
 
     /// @dev #3205 part 2 / #3431 — the vault code fixes the PositionNFT core
     ///      and its endpoints as immutables, so both exist before it: the core
-    ///      is installed here (idempotently) and the endpoints start as the
-    ///      test convention (the Diamond its own treasury, nothing else set).
+    ///      is installed here (idempotently) and the endpoints start with the
+    ///      treasury the Diamond is configured with (the Diamond itself, the
+    ///      test convention, when none is set yet) and nothing else set.
     ///      A suite that configures more calls {sync} (live Diamond reads) or
     ///      {setEndpoints} afterwards. #3272 part 2 — the Diamond records a
     ///      protocol registry and prices through the guard it names
@@ -51,7 +58,7 @@ library LibTestVaultBeacon {
         MockProtocolRegistry registry = new MockProtocolRegistry(diamond);
         LibTestPriceGuard.install(diamond, owner, registry);
         VaultOutflowTypes.VaultEndpoints memory e;
-        e.treasury = diamond;
+        e.treasury = _configuredTreasury(diamond);
         e.priceGuard = LibTestPriceGuard.guardOf(diamond);
         address impl = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name, abi.encode(nft, e));
         beacon = VaultBeacon(
@@ -105,12 +112,54 @@ library LibTestVaultBeacon {
         setEndpoints(diamond, e);
     }
 
+    /// @notice The ONE way a test changes a Diamond's treasury: set it, and
+    ///         bring the vault code's treasury endpoint with it. The vault
+    ///         code fixes its treasury as an immutable (#3431), so a raw
+    ///         `setTreasury` leaves every vault refusing fee and treasury
+    ///         movements to the new address (`OutflowDestinationRefused`).
+    ///         `check-test-treasury-sync.sh` refuses a raw call under `test/`.
+    /// @dev    The setter is the first external call made here, so a
+    ///         `vm.prank` placed just before this call applies to it, and a
+    ///         `vm.expectRevert` placed before it expects the setter's revert
+    ///         (the endpoint is then brought to the treasury still in force).
+    ///         Before {install} has run there is no vault code to update;
+    ///         {install} then reads the treasury set here. Only the treasury
+    ///         endpoint moves: the others are left as they are ({sync} brings
+    ///         them all).
+    function setTreasury(address diamond, address treasury) internal {
+        ITreasurySetter(diamond).setTreasury(treasury);
+        if (_beaconOf(diamond) == address(0)) return;
+        VaultOutflowTypes.VaultEndpoints memory e = endpointsOf(diamond);
+        // Read back rather than trust the argument: under `vm.expectRevert`
+        // the setter's revert is absorbed and the treasury did not change.
+        e.treasury = _configuredTreasury(diamond);
+        setEndpoints(diamond, e);
+    }
+
     /// @notice TEST CONVENIENCE — set the vault code's listing conduit and key.
     function setConduit(address diamond, address conduit, bytes32 conduitKey) internal {
         VaultOutflowTypes.VaultEndpoints memory e = endpointsOf(diamond);
         e.conduit = conduit;
         e.conduitKey = conduitKey;
         setEndpoints(diamond, e);
+    }
+
+    /// @dev The Diamond's configured treasury, or the Diamond itself when none
+    ///      is set or the Diamond does not route the read.
+    function _configuredTreasury(address diamond) private view returns (address) {
+        try IEndpointReads(diamond).getTreasury() returns (address t) {
+            if (t != address(0)) return t;
+        } catch {}
+        return diamond;
+    }
+
+    /// @dev The Diamond's vault beacon, or zero before {install} has run.
+    function _beaconOf(address diamond) private view returns (address) {
+        try VaultFactoryFacet(diamond).getVaultBeacon() returns (address b) {
+            return b;
+        } catch {
+            return address(0);
+        }
     }
 
     function _impl(address diamond) private view returns (address) {

@@ -574,6 +574,17 @@ not the hosts #2308 moved their walks onto, so a claim reverted
 one, grep the tests for `_buildCuts` / their own `FacetCut[]` lists, not only
 `HelperTest` and `SetupTest`.
 
+**Change a test Diamond's treasury with `LibTestVaultBeacon.setTreasury(diamond,
+treasury)`, never with `AdminFacet.setTreasury`** (#3431). The vault code
+fixes its treasury as an immutable, so a raw setter call leaves every vault
+refusing fee and treasury movements to the new address
+(`OutflowDestinationRefused`), usually in a test far from the call. The helper
+sets the treasury and moves the vault code's treasury endpoint with it; before
+the beacon is installed it only sets the treasury, and `LibTestVaultBeacon.install`
+then reads it. `contracts/script/check-test-treasury-sync.sh` refuses a raw
+call under `test/` (CI job `test treasury sync guard`); the setter's own
+suites are listed in it with their reasons.
+
 **Stub the vault withdrawal with `MockVaultWithdraw.deliversAll(diamond)`,
 never with a selector-wide `abi.encode(true)` mock** (#2440).
 `vaultWithdrawERC20` returns what the recipient received, and the protocol

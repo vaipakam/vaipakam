@@ -5,7 +5,6 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
@@ -18,6 +17,7 @@ import {LibClaimWork} from "../src/libraries/LibClaimWork.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /// @notice #1787 — a reward claim does BOUNDED work per call. Its walk, a
 ///         domain's preparation and every domain page charge each step to one
@@ -48,7 +48,7 @@ contract RewardClaimWorkMeterTest is SetupTest {
         vpfi = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 60 days);
         uint256 have = vpfi.balanceOf(address(this));

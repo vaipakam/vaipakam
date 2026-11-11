@@ -19,6 +19,7 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title InteractionRewardsInvariant
@@ -110,7 +111,7 @@ contract InteractionRewardsInvariant is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        AdminFacet(address(diamond)).setTreasury(address(diamond));
+        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
 
         VPFIToken impl = new VPFIToken();
         bytes memory initData = abi.encodeCall(

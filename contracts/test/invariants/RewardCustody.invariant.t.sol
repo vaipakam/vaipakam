@@ -24,6 +24,7 @@ import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {LibD8Delivery} from "../helpers/LibD8Delivery.sol";
+import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  RewardCustodyInvariant
@@ -63,7 +64,7 @@ contract RewardCustodyInvariant is SetupTest {
         vpfi = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 5 days);
         TestMutatorFacet mut = TestMutatorFacet(address(diamond));

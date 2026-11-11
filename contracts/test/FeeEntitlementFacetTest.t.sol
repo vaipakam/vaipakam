@@ -28,7 +28,6 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibSignedOffer} from "../src/libraries/LibSignedOffer.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
-import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
@@ -82,8 +81,7 @@ contract FeeEntitlementFacetTest is SetupTest {
 
         treasuryRecipient = makeAddr("treasury");
         (signedMaker, signedMakerPk) = makeAddrAndKey("signed-maker");
-        AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
-        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryRecipient);
 
         // Deploy VPFI behind a UUPS proxy, register it, mark this chain
         // canonical, and seed the Diamond reserve + party wallets.
@@ -471,8 +469,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///         really can produce a discount on this path.
     function test_1955_refinance_discountKeysOnHolder_notStoredLender() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Refi");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
         (address holder, ) = makeAddrAndKey("holder1955");
         (address newLender, uint256 newLenderPk) = makeAddrAndKey("newLender1955");
         // `SetupTest` blanket-approves only its OWN actors; these two are new,
@@ -1573,8 +1570,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      debited party pins the same attribution property from the call side.
     function test_1955_refinance_pegged_vpfiDebitAttributedToHolder() public {
         address treasuryEoa = makeAddr("treasuryEoaFor1955Peg");
-        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
-        LibTestVaultBeacon.sync(address(diamond)); // #3431 — the vault code fixes its treasury
+        LibTestVaultBeacon.setTreasury(address(diamond), treasuryEoa);
         (address holder, ) = makeAddrAndKey("pegHolder1955");
         (address newLender, uint256 newLenderPk) = makeAddrAndKey("pegNewLender1955");
         for (uint256 i = 0; i < 2; i++) {

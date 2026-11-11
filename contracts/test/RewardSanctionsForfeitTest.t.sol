@@ -38,6 +38,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  RewardSanctionsForfeitTest (and its siblings in this file)
@@ -2406,7 +2407,7 @@ abstract contract RewardSanctionsMirrorBase is RewardSanctionsTestBase {
         vpfi = VPFIToken(address(proxy));
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("treasury"));
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         vm.warp(block.timestamp + 60 days);
         uint256 have = vpfi.balanceOf(address(this));
