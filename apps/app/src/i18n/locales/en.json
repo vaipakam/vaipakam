@@ -3230,6 +3230,10 @@
       },
       "repairStatusOther": "closed",
       "repairUnknownNote": "This list may be missing the ending of a loan whose closing event was never recorded: that part of the history could not be read just now.",
+      "pendingHeading": "Not final yet",
+      "pendingBadge": "Pending, not final yet",
+      "pendingNote": "These actions are recorded on the chain but not final yet. They usually become final within a few minutes. Until then the chain can still replace them, and then they leave this list.",
+      "pendingIncompleteNote": "Some very recent actions may not be listed yet. They appear here within a few minutes, once they are final.",
       "loadMore": "Load older activity",
       "loadingMore": "Loading…",
       "labels": {

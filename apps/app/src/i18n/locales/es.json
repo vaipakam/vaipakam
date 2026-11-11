@@ -2649,6 +2649,10 @@
       },
       "repairStatusOther": "cerrado",
       "repairUnknownNote": "Puede que a esta lista le falte el final de un préstamo cuyo evento de cierre nunca se registró: esa parte del historial no se pudo leer en este momento.",
+      "pendingHeading": "Aún no definitivas",
+      "pendingBadge": "Pendiente, aún no definitiva",
+      "pendingNote": "Estas acciones están registradas en la cadena, pero aún no son definitivas. Normalmente lo son en pocos minutos. Hasta entonces la cadena aún puede reemplazarlas y, en ese caso, desaparecen de esta lista.",
+      "pendingIncompleteNote": "Es posible que algunas acciones muy recientes aún no aparezcan. Aparecerán aquí en pocos minutos, cuando sean definitivas.",
       "loadMore": "Cargar actividad anterior",
       "loadingMore": "Cargando…",
       "labels": {

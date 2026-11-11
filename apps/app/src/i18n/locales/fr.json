@@ -2649,6 +2649,10 @@
       },
       "repairStatusOther": "clôturé",
       "repairUnknownNote": "Il peut manquer à cette liste la fin d’un prêt dont l’événement de clôture n’a jamais été enregistré : cette partie de l’historique n’a pas pu être lue pour le moment.",
+      "pendingHeading": "Pas encore définitives",
+      "pendingBadge": "En attente, pas encore définitive",
+      "pendingNote": "Ces actions sont enregistrées sur la chaîne mais ne sont pas encore définitives. Elles le deviennent généralement en quelques minutes. D’ici là, la chaîne peut encore les remplacer, et elles disparaissent alors de cette liste.",
+      "pendingIncompleteNote": "Certaines actions très récentes ne sont peut-être pas encore listées. Elles apparaîtront ici en quelques minutes, une fois définitives.",
       "loadMore": "Charger l'activité plus ancienne",
       "loadingMore": "Chargement…",
       "labels": {

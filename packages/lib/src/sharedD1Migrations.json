@@ -85,5 +85,6 @@
   "0086_notifications_unread_index.sql",
   "0087_asset_rankings.sql",
   "0088_indexer_chain_anchor.sql",
-  "0089_signed_offer_replay_pending.sql"
+  "0089_signed_offer_replay_pending.sql",
+  "0090_pending_activity.sql"
 ]
