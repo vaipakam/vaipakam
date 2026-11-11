@@ -2045,6 +2045,7 @@
         "depthLoading": "Signierte Angebote werden noch geladen – vorerst stammen die angezeigten Zinssätze nur aus Angeboten, die auf der Blockchain veröffentlicht sind, daher können bei den besten Zinssätzen und beim mittleren Zinssatz signierte Angebote fehlen.",
         "depthUnavailable": "Wir konnten die signierten Angebote nicht vom Angebotsbuch-Dienst laden, daher sehen Sie nur Angebote, die auf der Blockchain veröffentlicht sind. Bei den besten Zinssätzen und beim mittleren Zinssatz können signierte Angebote fehlen.",
         "depthPartial": "Möglicherweise sind nicht alle signierten Angebote geladen, daher können bei den angezeigten Zinssätzen und Beträgen – auch beim besten Zinssatz – und bei den laufenden Summen einige fehlen.",
+        "depthRebuilding": "Der Angebotsbuch-Dienst prüft einige signierte Angebote erneut gegen die Blockchain, weil die Blockchain einige neuere Blöcke ersetzt hat. Bis er fertig ist, werden diese Angebote ausgelassen, daher können bei den angezeigten Zinssätzen, Beträgen und laufenden Summen einige fehlen.",
         "depthUnconfigured": "Signierte Angebote sind in dieser Bereitstellung nicht verfügbar – ihr Angebotsbuch-Dienst ist nicht eingerichtet –, daher sehen Sie nur Angebote, die auf der Blockchain veröffentlicht sind.",
         "rangedBadgeTooltip": "Ein signiertes Angebot mit einer Größenspanne. Es zählt weiter, aber nur die automatische Zuordnung kann es annehmen, in Teilen und nur solange sie eingeschaltet ist – als Ganzes in einem Schritt geht es nicht.",
         "fill": "Ausführen",
@@ -2234,7 +2235,8 @@
         "signedCancelling": "Wird abgebrochen…",
         "signedCancelNote": "Das Veröffentlichen war kostenlos, aber das Stornieren erfordert eine Transaktion mit Netzwerkgebühr: Nur so lässt sich eine Signatur zurückziehen, die der Angebotsdienst bereits hat.",
         "signedCancelled": "Signiertes Angebot storniert.",
-        "signedTruncated": "Sie haben für dieses Paar mehr signierte Angebote, als wir auf einmal anzeigen können — das sind nicht alle."
+        "signedTruncated": "Sie haben für dieses Paar mehr signierte Angebote, als wir auf einmal anzeigen können — das sind nicht alle.",
+        "signedReplayPending": "Der Angebotsbuch-Dienst prüft dieses Angebot erneut gegen die Blockchain, daher wird es anderen vorerst nicht angezeigt, und der Betrag oben wurde möglicherweise bereits genommen. Jeder, der seine Signatur hat, kann es weiterhin annehmen, daher können Sie es weiterhin stornieren."
       },
       "positions": {
         "loading": "Ihre Positionen werden geladen…",

@@ -6,7 +6,7 @@ The indexer now records, with every cursor advance, the hash of the last block o
 
 A rebuild is narrower than the reset a new Diamond gets, because the Diamond is the same. It keeps every row born off chain, the same rows a restore from backup keeps: users' signed orders are kept, with their filled or cancelled state worked out again by the replay, and alert settings, alert dedupe records, Telegram links and support tickets are kept. A check in the build holds the list of kept tables equal to the table classification, so a new user-owned table cannot be wiped by a rebuild unnoticed.
 
-A kept signed order is not offered on the book again until the replay has re-read the chain as far as it had been indexed before the rebuild. Until then an order that had in fact been filled or cancelled would look live, so the order book leaves these orders out and reports how many of the market's orders are waiting (`awaitingReplay`). They return, and the market summary is recomputed, in the same write that moves the scan past that point.
+A kept signed order is not offered on the book again until the replay has re-read the chain as far as it had been indexed before the rebuild. Until then an order that had in fact been filled or cancelled would look live, so the shared order book leaves these orders out and reports how many of the market's orders are waiting (`awaitingReplay`). The maker still sees each of their own waiting orders, marked as being re-checked, and can still cancel it: its signature stays valid on chain, so cancelling must remain possible. On the Rate Desk, the market note says the offer book is re-checking some signed offers, and an empty list does not claim the market has none. They return, and the market summary is recomputed, in the same write that moves the scan past that point.
 
 A rebuild is the rollback because loan and offer rows are updated in place by later events, so a replaced block cannot be undone row by row. It is reserved for an event the chain said would not happen. To keep one bad provider answer from wiping a chain, a different hash must be seen on two reads in a row. A failed read, or two reads that disagree, holds the scan for that pass, in the same way a missing safe block does.
 
@@ -15,6 +15,6 @@ A chain already indexed before this change anchors its cursor where it stands on
 Advances #3411. A second part, showing recent events as pending until they are final, follows separately.
 
 > Caveat: during a rebuild, that chain's offers, loans and activity are incomplete until the replay catches up.
-> Caveat: the apps do not yet show the order book's waiting count; until they do, a market in a rebuild simply shows fewer signed orders.
+> Caveat: the new app shows a maker's waiting orders in its own list as ordinary open orders, without the re-checking note the Rate Desk shows.
 > Caveat: the chain's in-app notification inbox is derived from chain events, so a rebuild recreates it and its entries come back unread.
 > Caveat: the remembered block can sit just above the cursor when a pass stops short of its range, so a replacement of blocks not yet indexed can also start a rebuild. That is the expensive direction, chosen over missing one.

@@ -848,6 +848,8 @@ interface SignedOfferRow {
   filled_amount: string;
   expires_at: number;
   deadline: number;
+  /** #3411 — set while a reorg rebuild re-reads the order's state (migration 0089). */
+  replay_pending_through: number | null;
 }
 
 /** Hard response cap PER SIDE, and the capped slice is PRICE-RELEVANT,
@@ -944,10 +946,10 @@ export async function handleSignedOffersGet(
     const sideQuery = (offerType: 0 | 1, orderBy: string) =>
       env.DB.prepare(
         `SELECT order_hash, signer, order_json, signature, status,
-                filled_amount, expires_at, deadline
+                filled_amount, expires_at, deadline, replay_pending_through
            FROM signed_offers
           WHERE chain_id = ? AND status = 'active'
-            AND replay_pending_through IS NULL
+            ${signer !== null ? '' : 'AND replay_pending_through IS NULL'}
             AND lending_asset = ? AND collateral_asset = ? AND duration_days = ?
             AND offer_type = ?
             ${signer !== null ? 'AND signer = ?' : ''}
@@ -973,10 +975,13 @@ export async function handleSignedOffersGet(
           ],
         )
         .all<SignedOfferRow>();
-    // #3411 (Codex #3528 r2) — orders a reorg rebuild kept but whose fills
-    // and cancels the replay has not re-read yet are left out of the book
-    // above, and COUNTED here, so a reader is told the book is incomplete
-    // rather than shown it as whole.
+    // #3411 (Codex #3528 r2, r4) — orders a reorg rebuild kept but whose
+    // fills and cancels the replay has not re-read yet. The shared book
+    // leaves them out (an order already filled or cancelled must not be
+    // offered as live) and COUNTS them here, so a reader is told the book is
+    // incomplete rather than shown it as whole. A signer-scoped read is the
+    // maker's own view and LISTS them, flagged `replayPending`: the signature
+    // is still valid on chain, so the maker must keep the way to cancel it.
     const awaitingQuery = env.DB.prepare(
       `SELECT COUNT(*) AS n
          FROM signed_offers
@@ -1022,9 +1027,12 @@ export async function handleSignedOffersGet(
       filledAmount: r.filled_amount,
       expiresAt: r.expires_at,
       deadline: r.deadline,
+      // Present only while the order's state is being re-read after a reorg rebuild.
+      ...(r.replay_pending_through !== null && r.replay_pending_through !== undefined ? { replayPending: true } : {}),
     }));
-    // `awaitingReplay`: orders in this market left out because a reorg rebuild
-    // is re-reading their state from the chain; they return once it has.
+    // `awaitingReplay`: this market's orders whose state a reorg rebuild is
+    // re-reading from the chain (left out of a shared read, listed and flagged
+    // in a signer-scoped one); they are listed as usual once it has.
     return jsonResponse({ chainId, offers, truncated, awaitingReplay: awaiting?.n ?? 0 });
   } catch (err) {
     console.error('[signedOfferRoutes] book read failed', redactedError(err));

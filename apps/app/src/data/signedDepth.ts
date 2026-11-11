@@ -28,6 +28,11 @@
  *                    but more than the cap can share the best rate, and a
  *                    kept row can expire locally before the next poll while
  *                    the next-best one stays unfetched (#2386 r1, r4).
+ *  - `rebuilding`  — the offer-book service is rebuilding its record of the
+ *                    chain after the chain replaced blocks it had already
+ *                    read (#3411), and is re-checking whether some signed
+ *                    offers were taken or cancelled. Those are left out
+ *                    until it has, so depth is missing for a known reason.
  *  - `complete`    — the service reported every active signed offer for
  *                    the market.
  */
@@ -36,11 +41,12 @@ export type SignedDepth =
   | 'unconfigured'
   | 'unavailable'
   | 'partial'
+  | 'rebuilding'
   | 'complete';
 
 export function signedDepthOf(
   q: {
-    data: { truncated: boolean | null } | null | undefined;
+    data: { truncated: boolean | null; awaitingReplay?: number } | null | undefined;
     isError: boolean;
   },
   /** Whether this deployment has an offer-book service origin at all. */
@@ -49,5 +55,6 @@ export function signedDepthOf(
   if (!serviceConfigured) return 'unconfigured';
   if (q.isError || q.data === null) return 'unavailable';
   if (q.data === undefined) return 'loading';
+  if ((q.data.awaitingReplay ?? 0) > 0) return 'rebuilding';
   return q.data.truncated === false ? 'complete' : 'partial';
 }

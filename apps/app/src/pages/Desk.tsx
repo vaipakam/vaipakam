@@ -135,7 +135,10 @@ export function Desk() {
     // #2386 — the hook returns fresh data only (a cached signed order
     // behind a failed refetch may have been taken or cancelled), and
     // `signedDepth` then tells the reader signed offers are missing.
+    // #3411 — an order whose state a rebuild is re-reading is never offered
+    // (the shared read leaves it out; this holds should one arrive).
     const signedRows = (signedBook.data?.offers ?? [])
+      .filter((r) => r.replayPending !== true)
       .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
       .filter((r): r is DeskBookRow => r !== null);
     return buildLadder(
@@ -195,7 +198,9 @@ export function Desk() {
               ? copy.desk.signed.depthUnconfigured
               : signedDepth === 'unavailable'
                 ? copy.desk.signed.depthUnavailable
-                : copy.desk.signed.depthPartial}
+                : signedDepth === 'rebuilding'
+                  ? copy.desk.signed.depthRebuilding
+                  : copy.desk.signed.depthPartial}
         </p>
       ) : null}
 

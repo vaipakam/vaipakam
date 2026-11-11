@@ -668,6 +668,25 @@ describe('GET /signed-offers — truncation flag + signer scope (#1247 PAG-011)'
     expect(body.awaitingReplay).toBe(1);
   });
 
+  it('a signer-scoped read lists the maker\'s own replay-pending order, flagged, so it can still be cancelled (#3411)', async () => {
+    const res = await handleSignedOffersGet(
+      new Request(
+        `http://indexer.test/signed-offers?chainId=${CHAIN_ID}&lendingAsset=${LEND}&collateralAsset=${COLL}` +
+          `&durationDays=${DAYS}&signer=${SIGNER.address}`,
+      ),
+      seedBook([
+        { orderHash: 'ask-live', offerType: 0, rateBps: 500, rateBpsMax: 500, createdAt: 1_000 },
+        { orderHash: 'ask-replaying', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000, replayPendingThrough: 900 },
+      ]),
+    );
+    const body = (await res.json()) as { offers: { orderHash: string; replayPending?: boolean }[]; awaitingReplay: number };
+    expect(body.offers.map((o) => [o.orderHash, o.replayPending === true])).toEqual([
+      ['ask-replaying', true],
+      ['ask-live', false],
+    ]);
+    expect(body.awaitingReplay).toBe(1);
+  });
+
   it('reports truncated: false when both sides fit', async () => {
     const body = await getBookBody(
       seedBook([
