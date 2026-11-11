@@ -5,7 +5,7 @@ pragma solidity ^0.8.29;
 import {Vm} from "forge-std/Vm.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -162,7 +162,7 @@ contract RefinanceFacetTest is SetupTest {
         oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, lenderOfferId);
 
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         vm.prank(borrower);

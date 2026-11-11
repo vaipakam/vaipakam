@@ -15,7 +15,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
-import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
@@ -897,7 +897,7 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      Accepting it completes the refinance in the same transaction.
     function _createTaggedBorrowerErc20Offer(uint256 oldLoanId) internal returns (uint256) {
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
         );
         return _createBorrowerErc20OfferTargeting(oldLoanId);

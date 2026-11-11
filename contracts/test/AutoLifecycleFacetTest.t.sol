@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -32,16 +33,21 @@ contract AutoLifecycleFacetTest is SetupTest {
         return AutoLifecycleFacet(address(diamond));
     }
 
+    /// @dev The consent and caps surface (#3410: AutoLifecycleSettingsFacet).
+    function _s() internal view returns (AutoLifecycleSettingsFacet) {
+        return AutoLifecycleSettingsFacet(address(diamond));
+    }
+
     // ─── Auto-lend flag ──────────────────────────────────────────────
 
     function test_SetAutoLendConsent_HappyPath() public {
         address user = makeAddr("user");
         vm.prank(user);
-        _f().setAutoLendConsent(true);
-        assertTrue(_f().getAutoLendConsent(user));
+        _s().setAutoLendConsent(true);
+        assertTrue(_s().getAutoLendConsent(user));
         vm.prank(user);
-        _f().setAutoLendConsent(false);
-        assertFalse(_f().getAutoLendConsent(user));
+        _s().setAutoLendConsent(false);
+        assertFalse(_s().getAutoLendConsent(user));
     }
 
     function test_SetAutoLendConsent_SanctionedReverts() public {
@@ -58,7 +64,7 @@ contract AutoLifecycleFacetTest is SetupTest {
             )
         );
         vm.prank(bob);
-        _f().setAutoLendConsent(true);
+        _s().setAutoLendConsent(true);
     }
 
     // ─── Auto-opt-in convenience ─────────────────────────────────────
@@ -66,17 +72,17 @@ contract AutoLifecycleFacetTest is SetupTest {
     function test_SetAutoOptInOnNewLoan_HappyPath() public {
         address user = makeAddr("user");
         vm.prank(user);
-        _f().setAutoOptInOnNewLoan(true);
-        assertTrue(_f().getAutoOptInOnNewLoan(user));
+        _s().setAutoOptInOnNewLoan(true);
+        assertTrue(_s().getAutoOptInOnNewLoan(user));
     }
 
     function test_SetDefaultAutoRefinanceCaps_HappyPath() public {
         address user = makeAddr("user");
         uint64 future = uint64(block.timestamp + 90 days);
         vm.prank(user);
-        _f().setDefaultAutoRefinanceCaps(true, 1500, future);
+        _s().setDefaultAutoRefinanceCaps(true, 1500, future);
         LibVaipakam.AutoRefinanceCaps memory caps =
-            _f().getDefaultAutoRefinanceCaps(user);
+            _s().getDefaultAutoRefinanceCaps(user);
         assertTrue(caps.enabled);
         assertEq(caps.maxRateBps, 1500);
         assertEq(caps.maxNewExpiry, future);
@@ -87,9 +93,9 @@ contract AutoLifecycleFacetTest is SetupTest {
     {
         address user = makeAddr("user");
         // expiry in the past
-        vm.expectRevert(AutoLifecycleFacet.InvalidCaps.selector);
+        vm.expectRevert(AutoLifecycleSettingsFacet.InvalidCaps.selector);
         vm.prank(user);
-        _f().setDefaultAutoRefinanceCaps(true, 1500, uint64(block.timestamp - 1));
+        _s().setDefaultAutoRefinanceCaps(true, 1500, uint64(block.timestamp - 1));
     }
 
     function test_SetDefaultAutoRefinanceCaps_ZeroRateIsValid() public {
@@ -97,13 +103,13 @@ contract AutoLifecycleFacetTest is SetupTest {
         // consent only to a 0% refinance. The setter must accept it.
         address user = makeAddr("user");
         vm.prank(user);
-        _f().setDefaultAutoRefinanceCaps(
+        _s().setDefaultAutoRefinanceCaps(
             true,
             0,
             uint64(block.timestamp + 90 days)
         );
         LibVaipakam.AutoRefinanceCaps memory caps =
-            _f().getDefaultAutoRefinanceCaps(user);
+            _s().getDefaultAutoRefinanceCaps(user);
         assertTrue(caps.enabled);
         assertEq(caps.maxRateBps, 0);
     }
@@ -113,9 +119,9 @@ contract AutoLifecycleFacetTest is SetupTest {
         // are permitted so a user can clear the slot.
         address user = makeAddr("user");
         vm.prank(user);
-        _f().setDefaultAutoRefinanceCaps(false, 0, 0);
+        _s().setDefaultAutoRefinanceCaps(false, 0, 0);
         LibVaipakam.AutoRefinanceCaps memory caps =
-            _f().getDefaultAutoRefinanceCaps(user);
+            _s().getDefaultAutoRefinanceCaps(user);
         assertFalse(caps.enabled);
     }
 
@@ -155,20 +161,20 @@ contract AutoLifecycleFacetTest is SetupTest {
         // Disable + try to opt in → reverts.
         AdminFacet(address(diamond)).setAutoLendEnabled(false);
         address user = makeAddr("kskUser");
-        vm.expectRevert(AutoLifecycleFacet.AutoLendDisabled.selector);
+        vm.expectRevert(AutoLifecycleSettingsFacet.AutoLendDisabled.selector);
         vm.prank(user);
-        _f().setAutoLendConsent(true);
+        _s().setAutoLendConsent(true);
     }
 
     function test_AutoLendKillSwitch_AllowsRevocation() public {
         // Enable, consent, then disable feature, then revoke → succeeds.
         address user = makeAddr("kskRevoke");
         vm.prank(user);
-        _f().setAutoLendConsent(true);
+        _s().setAutoLendConsent(true);
         AdminFacet(address(diamond)).setAutoLendEnabled(false);
         vm.prank(user);
-        _f().setAutoLendConsent(false);
-        assertFalse(_f().getAutoLendConsent(user));
+        _s().setAutoLendConsent(false);
+        assertFalse(_s().getAutoLendConsent(user));
     }
 
     // ─── T-092 Phase 2b (#506) — refinance-target cap enforcement ────

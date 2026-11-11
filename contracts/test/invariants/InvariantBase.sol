@@ -28,6 +28,7 @@ import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {LenderIntentFacet} from "../../src/facets/LenderIntentFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../../src/facets/PrecloseOffsetFacet.sol";
 import {ConsolidationFacet} from "../../src/facets/ConsolidationFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
@@ -59,6 +60,7 @@ import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol"
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../../src/facets/AutoLifecycleSettingsFacet.sol";
 import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
@@ -206,7 +208,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](45);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -409,6 +411,18 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(AutoLifecycleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAutoLifecycleFacetSelectors()
+        });
+        // #3410 — split out of PrecloseFacet.
+        cuts[43] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseOffsetFacetSelectors()
+        });
+        // #3410 — split out of AutoLifecycleFacet.
+        cuts[44] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(AutoLifecycleSettingsFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getAutoLifecycleSettingsFacetSelectors()
         });
 
         // #3360 - every ERC-20 accept stamps the loan's fee-entitlement record

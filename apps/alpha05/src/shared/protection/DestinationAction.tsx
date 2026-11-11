@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import type { SavedAddress } from '../address/book';
@@ -91,7 +91,7 @@ export function DestinationActionFlow({ chain, own, choice, saved, onClose }: Pr
       if (dry.kind === 'reverted') return stop(format('safety.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text(STEP[action]) }));
-      return writeContract(config, { ...call, chainId: chain.chainId, account });
+      return sendWrite(config, { ...call, chainId: chain.chainId, account } as never);
     },
     measure: async (receipt) => (review ? measureDestination(review, receipt.logs, diamond, copy) : []),
     release: async () => null,

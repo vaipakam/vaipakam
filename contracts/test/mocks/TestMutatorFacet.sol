@@ -734,7 +734,7 @@ contract TestMutatorFacet {
     ///         Twin of `setLoanToSaleOfferIdRaw`, for the same reason: it lets a
     ///         suite assert that a live offset freezes the sale routes without
     ///         cutting `PrecloseFacet` into that suite's diamond.
-    ///         `PrecloseFacet.offsetWithNewOffer` writes exactly this mapping, so
+    ///         `PrecloseOffsetFacet.offsetWithNewOffer` writes exactly this mapping, so
     ///         the scaffolded state matches what production produces.
     function setLoanToOffsetOfferIdRaw(uint256 loanId, uint256 offsetOfferId) external {
         LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] = offsetOfferId;

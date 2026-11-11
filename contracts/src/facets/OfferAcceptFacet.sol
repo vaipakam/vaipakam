@@ -31,7 +31,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LoanFacet} from "./LoanFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
-import {PrecloseFacet} from "./PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "./PrecloseOffsetFacet.sol";
 import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
@@ -76,7 +76,7 @@ import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
  *      On accept, initiates the loan via cross-facet call to
  *      {LoanFacet.initiateLoan} and auto-completes any linked lender-sale
  *      vehicle ({EarlyWithdrawalFacet.completeLoanSale}) or borrower-offset
- *      offer ({PrecloseFacet.completeOffset}) atomically.
+ *      offer ({PrecloseOffsetFacet.completeOffset}) atomically.
  */
 contract OfferAcceptFacet is
     DiamondReentrancyGuard,
@@ -1623,7 +1623,7 @@ contract OfferAcceptFacet is
             if (offsetLoanId != 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        PrecloseFacet.completeOffsetInternal.selector,
+                        PrecloseOffsetFacet.completeOffsetInternal.selector,
                         offsetLoanId
                     ),
                     OfferAcceptFailed.selector

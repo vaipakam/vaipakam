@@ -41,7 +41,10 @@ import {LibPairCalm} from "../libraries/LibPairCalm.sol";
  *
  * @dev    Read through a Diamond self-call by every forced seller, so the
  *         rule exists once: ForcedSaleFacet (sizing and the minimum output)
- *         and RiskFacet's partial liquidation. The checkpoint writer is
+ *         and RiskFacet's partial liquidation. Treasury conversions
+ *         (TreasuryFacet.convertTreasuryAsset, #3414) read the same market
+ *         rule without the cushion ({swapFloorBps}), so every
+ *         protocol-initiated swap has one slippage rule. The checkpoint writer is
  *         permissionless (it stores only the oracle's own reading, first
  *         caller per asset per hour) and is backed by a keeper pass that
  *         ships disarmed; until it runs, every sale uses the full cap.
@@ -128,7 +131,9 @@ contract SaleFloorFacet is DiamondAccessControl {
      * @notice The slippage floor for a forced sale of `collateralAmount` of
      *         `collateralAsset` against a debt of `debt` in `principalAsset`.
      * @dev    Never above `cfgMaxLiquidationSlippageBps`: a tier figure above
-     *         a lowered cap reads as the cap.
+     *         a lowered cap reads as the cap. The market half of the rule
+     *         (depth, a current price, calm) is the one {swapFloorBps}
+     *         applies; a forced sale adds the cushion on top.
      * @return f The floor, the tier read and the reason.
      */
     function saleFloorBps(
@@ -137,35 +142,11 @@ contract SaleFloorFacet is DiamondAccessControl {
         uint256 collateralAmount,
         uint256 debt
     ) external view returns (SaleFloor memory f) {
-        uint256 cap = LibVaipakam.cfgMaxLiquidationSlippageBps();
-        f.bps = cap;
-        LibVaipakam.SaleFloorConfig memory c = LibVaipakam.cfgSaleFloor();
-
-        f.tier = OracleFacet(address(this)).getCloseOutLiquidityTier(collateralAsset);
-        uint256 tierBps = f.tier == 3 ? c.tier3Bps : f.tier == 2 ? c.tier2Bps : f.tier == 1 ? c.tier1Bps : 0;
-        if (tierBps == 0) {
-            f.reason = FloorReason.Shallow;
-            return f;
-        }
-
-        (bool okC, uint256 pC) = LibPairCalm.price1e18(collateralAsset);
-        (bool okP, uint256 pP) = LibPairCalm.price1e18(principalAsset);
-        if (!okC || !okP) {
-            f.reason = FloorReason.Unpriced;
-            return f;
-        }
-
-        // Calm: the rate now against each of the last two hours' rates (the
-        // one rule, shared with the maker's price-move guard, #3358).
-        LibPairCalm.Calm calm = LibPairCalm.calmNow(collateralAsset, principalAsset, pC, pP, c.calmMoveBps);
-        if (calm == LibPairCalm.Calm.NoCheckpoint) {
-            f.reason = FloorReason.NoCheckpoint;
-            return f;
-        }
-        if (calm == LibPairCalm.Calm.Moving) {
-            f.reason = FloorReason.Moving;
-            return f;
-        }
+        uint256 tightBps;
+        uint256 pC;
+        uint256 pP;
+        (f, tightBps, pC, pP) = _marketFloor(collateralAsset, principalAsset);
+        if (f.reason != FloorReason.Tight) return f;
 
         // Cushion: the collateral's value in the numeraire against the
         // debt's, both at the current oracle, read in 1e18 per whole token.
@@ -177,13 +158,34 @@ contract SaleFloorFacet is DiamondAccessControl {
         }
         uint256 colValue = Math.mulDiv(collateralAmount, pC, 10 ** dC);
         uint256 debtValue = Math.mulDiv(debt, pP, 10 ** dP, Math.Rounding.Ceil);
-        if (debtValue == 0 || colValue * LibVaipakam.BASIS_POINTS < debtValue * c.cushionBps) {
+        if (
+            debtValue == 0 ||
+            colValue * LibVaipakam.BASIS_POINTS < debtValue * LibVaipakam.cfgSaleFloor().cushionBps
+        ) {
             f.reason = FloorReason.ThinCushion;
             return f;
         }
 
-        f.bps = tierBps < cap ? tierBps : cap;
-        f.reason = FloorReason.Tight;
+        f.bps = tightBps;
+    }
+
+    /**
+     * @notice #3414 — the slippage floor for a protocol-initiated swap of
+     *         `assetIn` into `assetOut` that is not a loan's forced sale (a
+     *         treasury conversion). The same market rule as {saleFloorBps}:
+     *         the tier figure of `assetIn`'s close-out depth when the pair
+     *         has a current price and is calm, otherwise the full slippage
+     *         cap. There is no debt, so no cushion test.
+     * @dev    Never above `cfgMaxLiquidationSlippageBps`. A missing input can
+     *         only return the floor to the cap, never tighten it. The caller
+     *         prices the swap itself; this returns only how much of that
+     *         oracle value the swap may lose.
+     * @return f The floor, the tier read and the reason (never ThinCushion).
+     */
+    function swapFloorBps(address assetIn, address assetOut) external view returns (SaleFloor memory f) {
+        uint256 tightBps;
+        (f, tightBps, , ) = _marketFloor(assetIn, assetOut);
+        if (f.reason == FloorReason.Tight) f.bps = tightBps;
     }
 
     // ─── Config ──────────────────────────────────────────────────────────
@@ -247,6 +249,54 @@ contract SaleFloorFacet is DiamondAccessControl {
     }
 
     // ─── Internals ───────────────────────────────────────────────────────
+
+    /// @dev The market half of the floor rule, shared by {saleFloorBps} and
+    ///      {swapFloorBps}: `assetIn`'s close-out depth tier, a current price
+    ///      for both assets, and a calm pair. Returns `f.bps` at the cap with
+    ///      the reason the market half failed, or `f.reason == Tight` with
+    ///      `tightBps` (the tier figure, never above the cap) for the caller
+    ///      to apply once its own checks pass; `pIn`/`pOut` are the 1e18
+    ///      prices read, valid only when the reason is Tight.
+    function _marketFloor(address assetIn, address assetOut)
+        private
+        view
+        returns (SaleFloor memory f, uint256 tightBps, uint256 pIn, uint256 pOut)
+    {
+        uint256 cap = LibVaipakam.cfgMaxLiquidationSlippageBps();
+        f.bps = cap;
+        LibVaipakam.SaleFloorConfig memory c = LibVaipakam.cfgSaleFloor();
+
+        f.tier = OracleFacet(address(this)).getCloseOutLiquidityTier(assetIn);
+        uint256 tierBps = f.tier == 3 ? c.tier3Bps : f.tier == 2 ? c.tier2Bps : f.tier == 1 ? c.tier1Bps : 0;
+        if (tierBps == 0) {
+            f.reason = FloorReason.Shallow;
+            return (f, 0, 0, 0);
+        }
+
+        bool okIn;
+        bool okOut;
+        (okIn, pIn) = LibPairCalm.price1e18(assetIn);
+        (okOut, pOut) = LibPairCalm.price1e18(assetOut);
+        if (!okIn || !okOut) {
+            f.reason = FloorReason.Unpriced;
+            return (f, 0, 0, 0);
+        }
+
+        // Calm: the rate now against each of the last two hours' rates (the
+        // one rule, shared with the maker's price-move guard, #3358).
+        LibPairCalm.Calm calm = LibPairCalm.calmNow(assetIn, assetOut, pIn, pOut, c.calmMoveBps);
+        if (calm == LibPairCalm.Calm.NoCheckpoint) {
+            f.reason = FloorReason.NoCheckpoint;
+            return (f, 0, 0, 0);
+        }
+        if (calm == LibPairCalm.Calm.Moving) {
+            f.reason = FloorReason.Moving;
+            return (f, 0, 0, 0);
+        }
+
+        tightBps = tierBps < cap ? tierBps : cap;
+        f.reason = FloorReason.Tight;
+    }
 
     function _inRange(bytes32 name, uint256 value, uint256 lo, uint256 hi) private pure {
         if (value != 0 && (value < lo || value > hi)) {

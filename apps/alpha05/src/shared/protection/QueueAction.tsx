@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -94,7 +94,7 @@ export function QueuePayoutAction({ account, id, action, chain, own, meta, onClo
       setStep(
         format('accept.stepOf', { n: '1', total: '1', what: text(action === 'release' ? 'queue.stepRelease' : action === 'cancel' ? 'queue.stepCancel' : 'queue.stepCosign') }),
       );
-      return writeContract(config, { address: diamond, abi: PAYOUT, functionName, args: [id], chainId: chain.chainId, account: viewer });
+      return sendWrite(config, { address: diamond, abi: PAYOUT, functionName, args: [id], chainId: chain.chainId, account: viewer });
     },
     measure: async (receipt) => (review ? measureQueueAction(review, receipt.logs, diamond, viewer, words, copy) : []),
     release: async () => null,

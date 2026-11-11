@@ -25,6 +25,7 @@ import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -194,7 +195,7 @@ contract WorkflowComplianceAndRejection is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -225,6 +226,12 @@ contract WorkflowComplianceAndRejection is Test {
         // #1780 — the direct lender-exit route lives in its own facet now.
         cuts[21] = IDiamondCut.FacetCut({facetAddress: address(earlyFacetDirect), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
+        // #3410 — split out of PrecloseFacet.
+        cuts[32] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getPrecloseOffsetFacetSelectors()
+        });
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(refinanceFacet),      action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRefinanceFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[16] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),    action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});

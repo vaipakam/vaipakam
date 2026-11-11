@@ -11,7 +11,8 @@
  * nothing standing.
  */
 import type { Config } from 'wagmi';
-import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { waitForTransactionReceipt } from 'wagmi/actions';
+import { sendWrite } from './send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
@@ -70,7 +71,7 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
       .then((x) => x.value);
 
   async function setTo(to: Hex): Promise<{ landed: boolean; hash: Hex | null; now: Erc721State | null; at: bigint | null }> {
-    const hash = await writeContract(config, { address: asset, abi: NFT_ABI, functionName: 'approve', args: [to, tokenId], chainId, account });
+    const hash = await sendWrite(config, { address: asset, abi: NFT_ABI, functionName: 'approve', args: [to, tokenId], chainId, account });
     let block: bigint;
     try {
       block = (await waitForTransactionReceipt(config, { hash, chainId })).blockNumber;

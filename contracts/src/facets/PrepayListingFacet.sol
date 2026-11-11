@@ -483,7 +483,7 @@ contract PrepayListingFacet is
         }
 
         // Codex round-10 P2 #2 + round-11 P1 — BLOCK fills while a
-        // PrecloseFacet offset offer is live. Unlike loan-keyed prepay
+        // PrecloseOffsetFacet offset offer is live. Unlike loan-keyed prepay
         // listings, the carried offer-keyed parallel-sale listing
         // doesn't take the borrower-position NFT lock, so the borrower
         // CAN post a preclose-offset offer (which DOES lock the
@@ -777,7 +777,7 @@ contract PrepayListingFacet is
     error SaleProceedsAssetMismatch(uint256 loanId, address paid, address lendingAsset);
     /// @notice T-086 Round-8 (#358) Codex round-11 P1 — raised when a
     ///         carried parallel-sale fill is attempted while the
-    ///         borrower has an active PrecloseFacet offset offer linked
+    ///         borrower has an active PrecloseOffsetFacet offset offer linked
     ///         to the loan. Borrower must cancel the offset offer
     ///         first (via `OfferCancelFacet.cancelOffer`, which runs
     ///         the full teardown) before the buyer can fill.

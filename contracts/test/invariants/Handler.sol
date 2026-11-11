@@ -16,6 +16,7 @@ import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../../src/facets/PrecloseOffsetFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
@@ -24,7 +25,7 @@ import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 import {LibSwap} from "../../src/libraries/LibSwap.sol";
-import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../../src/facets/AutoLifecycleSettingsFacet.sol";
 import {RefinancePayoffPermitHelper} from "../helpers/RefinancePayoffPermitHelper.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibTestTiming} from "../helpers/LibTestTiming.sol";
@@ -356,7 +357,7 @@ contract Handler is Test {
         rateBps = bound(rateBps, 100, 2000);
 
         vm.prank(L.borrower);
-        try PrecloseFacet(diamond).offsetWithNewOffer(
+        try PrecloseOffsetFacet(diamond).offsetWithNewOffer(
             loanId, rateBps, durationDays, L.collateralAsset, L.collateralAmount, true, L.prepayAsset,
             type(uint64).max
         ) returns (uint256 offerId) {
@@ -412,7 +413,7 @@ contract Handler is Test {
         });
 
         vm.startPrank(L.borrower);
-        try AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+        try AutoLifecycleSettingsFacet(diamond).setAutoRefinanceCaps(
             loanId, true, uint16(rateBps), uint64(block.timestamp + 400 days)
         ) {
             try OfferCreateFacet(diamond).createOffer(p, type(uint64).max) returns (uint256 offerId) {

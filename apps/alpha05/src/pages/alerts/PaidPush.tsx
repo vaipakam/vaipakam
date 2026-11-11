@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../../shared/tx/send';
 import { useMode } from '../../app/ModeContext';
 import type { SupportedChain } from '../../chain/chains';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
@@ -283,7 +283,7 @@ function ConsentFlow({
       if (dry.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text(subject.kind === 'agree' ? 'paidPush.agreeTitle' : 'paidPush.withdrawTitle') }));
-      return writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account });
     },
     measure: async (receipt) => measureConsent(receipt.logs, diamond, account, subject ?? { kind: 'withdraw' }, copy),
     release: async () => null,

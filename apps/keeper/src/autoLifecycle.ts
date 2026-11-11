@@ -77,6 +77,7 @@ import {
 import {
   AdminFacetABI,
   AutoLifecycleFacetABI,
+  AutoLifecycleSettingsFacetABI,
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
@@ -91,6 +92,8 @@ import { revertErrorName } from '@vaipakam/lib/contractRevert';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
+/** #3410 — the consent and caps readers, split out of AutoLifecycleFacet. */
+const AUTO_LIFECYCLE_SETTINGS_ABI: Abi = AutoLifecycleSettingsFacetABI as Abi;
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 
 /** Pagination size for `getActiveLoansPaginated`. */
@@ -268,7 +271,7 @@ async function tryExtend(
   // `enabled` is returned as `false` and we skip without firing.
   const borrowerCaps = (await publicClient.readContract({
     address: diamond,
-    abi: AUTO_LIFECYCLE_ABI,
+    abi: AUTO_LIFECYCLE_SETTINGS_ABI,
     functionName: 'getAutoExtendBorrowerCaps',
     args: [loanIdBig],
   })) as ExtendCaps;
@@ -276,7 +279,7 @@ async function tryExtend(
 
   const lenderCaps = (await publicClient.readContract({
     address: diamond,
-    abi: AUTO_LIFECYCLE_ABI,
+    abi: AUTO_LIFECYCLE_SETTINGS_ABI,
     functionName: 'getAutoExtendLenderCaps',
     args: [loanIdBig],
   })) as ExtendCaps;

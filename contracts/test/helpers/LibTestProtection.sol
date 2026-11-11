@@ -13,11 +13,14 @@ import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol"
  *         a DIRECT call from the key to `vault.protect(...)` (no signature),
  *         then the platform side applied (`applyProtection`, permissionless).
  *         Signed and relayed forms are exercised in `VaultProtectionTest`.
+ *         The helpers are `public`: forge links the library once instead of
+ *         inlining it into every test contract, which kept large SetupTest
+ *         suites under solc's assembly tag limit.
  */
 library LibTestProtection {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-    function vaultOf(address diamond, address account) internal returns (VaipakamVaultImplementation) {
+    function vaultOf(address diamond, address account) public returns (VaipakamVaultImplementation) {
         return VaipakamVaultImplementation(VaultFactoryFacet(diamond).getOrCreateUserVault(account));
     }
 
@@ -26,61 +29,61 @@ library LibTestProtection {
     }
 
     /// @dev `key` calls the protection code of `account`'s vault with `data`.
-    function call(address diamond, address account, address key, bytes memory data) internal returns (bytes memory) {
+    function call(address diamond, address account, address key, bytes memory data) public returns (bytes memory) {
         VaipakamVaultImplementation v = vaultOf(diamond, account);
         vm.prank(key);
         return v.protect(data);
     }
 
     /// @dev Apply the platform side; tolerates "nothing changed".
-    function apply_(address diamond, address account) internal {
+    function apply_(address diamond, address account) public {
         try ProtectedAccountFacet(diamond).applyProtection(account) {} catch {}
     }
 
-    function enable(address diamond, address account, uint32 delay) internal {
+    function enable(address diamond, address account, uint32 delay) public {
         call(diamond, account, account, abi.encodeCall(VaultProtection.enable, (delay, direct(account))));
         apply_(diamond, account);
     }
 
     /// @dev Enable, and put the account's position NFTs under the holder lock.
-    function enableWithNfts(address diamond, address account, uint32 delay) internal {
+    function enableWithNfts(address diamond, address account, uint32 delay) public {
         enable(diamond, account, delay);
         vm.prank(account);
         ProtectedAccountFacet(diamond).lockPositionNfts(account);
     }
 
-    function lock(address diamond, address account, address key) internal {
+    function lock(address diamond, address account, address key) public {
         call(diamond, account, key, abi.encodeCall(VaultProtection.lock, (direct(key))));
         apply_(diamond, account);
     }
 
-    function requestUnlock(address diamond, address account, address owner) internal {
+    function requestUnlock(address diamond, address account, address owner) public {
         call(diamond, account, owner, abi.encodeCall(VaultProtection.requestUnlock, (direct(owner))));
     }
 
-    function requestDisable(address diamond, address account, address owner) internal {
+    function requestDisable(address diamond, address account, address owner) public {
         call(diamond, account, owner, abi.encodeCall(VaultProtection.requestDisable, (direct(owner))));
     }
 
-    function finalizeSettings(address diamond, address account) internal {
+    function finalizeSettings(address diamond, address account) public {
         VaipakamVaultImplementation v = vaultOf(diamond, account);
         v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
         apply_(diamond, account);
     }
 
     /// @dev Ask, wait the delay, finalize: `destination` becomes allowlisted.
-    function allow(address diamond, address account, address owner, address destination, uint32 delay) internal {
+    function allow(address diamond, address account, address owner, address destination, uint32 delay) public {
         call(diamond, account, owner, abi.encodeCall(VaultProtection.addAllowlisted, (destination, direct(owner))));
         vm.warp(vm.getBlockTimestamp() + delay);
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (destination)));
     }
 
-    function removeAllowed(address diamond, address account, address key, address destination) internal {
+    function removeAllowed(address diamond, address account, address key, address destination) public {
         call(diamond, account, key, abi.encodeCall(VaultProtection.removeAllowlisted, (destination, direct(key))));
     }
 
     /// @dev `destination` verifies itself (#3415) by a direct call.
-    function verify(address diamond, address account, address destination) internal {
+    function verify(address diamond, address account, address destination) public {
         call(
             diamond,
             account,
@@ -90,7 +93,7 @@ library LibTestProtection {
     }
 
     /// @dev Owner adds, signer accepts, wait, finalize.
-    function addSigner(address diamond, address account, address owner, address signer, uint32 delay) internal {
+    function addSigner(address diamond, address account, address owner, address signer, uint32 delay) public {
         uint8 add = 1; // SIGNER_ADD
         uint8 accept = 2; // SIGNER_ACCEPT
         call(diamond, account, owner, abi.encodeCall(VaultProtection.signerChange, (add, signer, direct(owner))));
@@ -99,15 +102,15 @@ library LibTestProtection {
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeSigner, (signer)));
     }
 
-    function propose(address diamond, address account, address key, address nominee) internal {
+    function propose(address diamond, address account, address key, address nominee) public {
         call(diamond, account, key, abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, direct(key))));
     }
 
-    function approve(address diamond, address account, address signer, address nominee) internal {
+    function approve(address diamond, address account, address signer, address nominee) public {
         call(diamond, account, signer, abi.encodeCall(VaultProtection.replacement, (uint8(2), nominee, direct(signer))));
     }
 
-    function finalizeReplacement(address diamond, address account) internal {
+    function finalizeReplacement(address diamond, address account) public {
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeReplacement, ()));
         apply_(diamond, account);
     }

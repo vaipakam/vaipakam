@@ -70,7 +70,7 @@ import {
   type PublicClient,
 } from 'viem';
 import {
-  AutoLifecycleFacetABI,
+  AutoLifecycleSettingsFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
@@ -88,7 +88,8 @@ import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaip
 import { positionHolderCalls, positionHolderFrom, positionNftForDiamond } from './positionNft';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
-const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
+/** #3410 — the caps readers live on the settings facet. */
+const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleSettingsFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 
 const SCAN_PAGE = 200n;

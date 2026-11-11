@@ -175,6 +175,21 @@ holds signing until the new context has its own. Once a transaction has
 been handed to the wallet there is no silent retry that could leave it
 ambiguous whether the action may still confirm.
 
+### RB-GAS — every write carries the shared gas margin
+
+Every contract write is sent with a gas limit of a fresh estimate plus the
+margin every sender in the repository uses (30%, rounded up), never at the
+node's bare estimate. An estimate is the least gas the call needs in the
+latest block, and the write mines in a later one; a call whose cost grows
+with time (an oracle read, accrual, a limiter that refills) can then run
+short and revert with no reason. Unused gas is not charged. The estimate is
+asked of the wallet's own provider first, then the app's endpoints. When the
+call reverts on estimation, or nothing can estimate it, no limit is set and
+the wallet estimates and reports the refusal itself, as it always did. A
+batch whose estimate must be taken on a stricter form (claim everything)
+sets its limit from that estimate with the same margin. There is one sender
+for this, and a lint rule refuses any write that bypasses it.
+
 ### RB-CONFIDENCE — predictable confidence
 
 The same four things on every write, so the app is learned once: a review
@@ -2157,6 +2172,59 @@ above. Each resolves here, so a route reviewer needs no private file:
   full page alone; a row the reader refuses is counted, never dropped
   silently. A failed read is a degraded-source warning, never an empty
   history.
+- **RB-DESK-TICKET** — Below a market's ladder (OFF-74) the desk offers an
+  order ticket: an exact-rate offer or request on that market, typed in one
+  compact form. The market fixes the lending token, the collateral token
+  and the term; the ticket adds the side, the amount, the collateral, the
+  rate, how long it stays open and how matches may fill it. The rate is
+  one exact rate and is labelled so, never as a lowest or highest: a match
+  needs the other side's rate range to include it. A partial or
+  immediate-or-cancel ticket also takes the smallest single fill, below the
+  whole amount: a match fills only between an offer's smallest and largest
+  amount, so a fill mode that promises parts must post a range, never one
+  size that only ever fills whole. Everything else is the guided flows'
+  default and is stated on the ticket in words, never implied: full-term
+  interest, no partial repayment, interest paid at repayment, no rate
+  range, no collateral range, no fee tariff, no price guard. Only the FIRST
+  thing that stops the ticket is shown, beneath the action, in a fixed
+  order: the wallet, the network, the market, the reads the ticket needs,
+  the term, then each field in the order it is typed. "Fill to balance"
+  types the wallet's whole balance of the token posting locks, exactly,
+  every digit. Fees are stated at today's list rates, and a figure that
+  could not be read is said to be unread. The mode posted is the mode
+  shown: a ticket is always posted on the chain, and gasless signed orders
+  are named as not available yet. The review, consent, dry run and risk
+  warning are the guided flows' own (RB-REVIEW), never a second copy, and
+  the Terms are accepted before that review opens. A ticket's typed state
+  and consent are kept per market, so a market change never carries one
+  across.
+- **RB-DESK-SIGNED** — On a market's desk (OFF-61) the viewer's own gasless
+  signed orders are listed from the offer book read scoped to the viewer as
+  signer, so other makers' depth never pushes one out. Each row is kept only
+  when its hash is the order's own and it names this viewer and this
+  market; a row the app cannot read so is counted and said, and a list the
+  book cut short is said. Before any cancel is offered the panel states
+  that nothing is set aside for a signed order and that the cancel on the
+  chain is the only way to stop one: taking it off the book alone would
+  not, since anyone holding the signature can still fill it. Each order's
+  standing is read from the chain at one block, because the book can lag
+  both ways: used (its fill has reached its ceiling: filled, or cancelled,
+  one mark for both), its nonce cancelled, lapsed on the chain's clock,
+  partly filled (a match took a slice; the rest stays fillable), or open. Each row states both
+  ends of every range the order allows. When the latest standing read
+  failed, the last good standings are shown with a notice that they may be
+  stale and no cancel is offered. A cancel is offered only
+  on an order that can still be filled (open or partly filled), and on a nonce when the book lists two or more open
+  orders under it. The review says what the cancel does, that it moves
+  nothing and returns nothing because nothing was held, that a fill already
+  sent can land first, what a fill would have drawn from the viewer's own
+  vault (one order only; for a partly filled order, the share filled and
+  only what the rest could still draw), and, for a nonce, that it also stops orders under
+  that nonce this page does not list. The protocol's own dry run runs
+  before the wallet opens, a pause or an unread standing blocks the send,
+  and the outcome is measured from the transaction's own cancel event,
+  never assumed from its inclusion. One cancel is open at a time, and its
+  finish card stays on screen when the book drops the order.
 
 ## 3. Companion specifications
 

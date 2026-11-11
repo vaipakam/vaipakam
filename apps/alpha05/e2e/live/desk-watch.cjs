@@ -9,7 +9,10 @@
 // wallet's own offers, the market's recent loans and the agreed-rate chart
 // (its period count, the first period's figures on hover, and the table).
 // Then (OFF-76, RB-DESK-HISTORY) the wallet's live loans in that market and
-// its desk history from the index.
+// its desk history from the index, and (OFF-74, RB-DESK-TICKET) the order
+// ticket, with its first blocker before and after an amount is typed, and
+// (OFF-61, RB-DESK-SIGNED) the wallet's own signed orders on that market
+// with each one's standing on the chain. Nothing is cancelled.
 // Checks that nothing scrolls sideways and saves full-page screenshots per
 // device.
 // Usage: node e2e/live/desk-watch.cjs <address>
@@ -85,6 +88,41 @@ async function activity(p) {
     }
     console.log(`----- ${id}\n${(await sec.count()) ? await text(sec) : 'not shown'}`);
   }
+  await ticket(p);
+  await signedOrders(p);
+}
+
+// The wallet's own signed orders (OFF-61, RB-DESK-SIGNED): the panel's
+// text, once the book has answered, and each order's standing. No cancel
+// is opened.
+async function signedOrders(p) {
+  const sec = p.getByTestId('desk-signed');
+  if (!(await sec.count())) return console.log('----- desk-signed not shown');
+  await sec
+    .locator('[data-testid="desk-signed-order"], [data-testid="desk-signed-none"], [data-testid="desk-signed-failed"]')
+    .first()
+    .waitFor({ timeout: 60000 })
+    .catch(() => {});
+  const rows = sec.getByTestId('desk-signed-order');
+  const standings = [];
+  for (let i = 0; i < (await rows.count()); i++) standings.push(await rows.nth(i).getAttribute('data-standing'));
+  console.log(`----- desk-signed (${standings.length} orders: ${standings.join(', ') || 'none'})\n${await text(sec)}`);
+}
+
+// The order ticket (OFF-74, RB-DESK-TICKET): its text, then the first
+// blocker before and after an amount is typed. Nothing is reviewed or sent.
+async function ticket(p) {
+  const t = p.getByTestId('desk-ticket');
+  if (!(await t.count())) return console.log('----- desk-ticket not shown');
+  const blocker = t.getByTestId('desk-ticket-blocker');
+  await blocker
+    .filter({ hasNotText: 'Reading' })
+    .waitFor({ timeout: 60000 })
+    .catch(() => {});
+  console.log(`----- desk-ticket (${await t.getAttribute('data-market')})\n${await text(t)}`);
+  await t.getByTestId('desk-ticket-amount').fill('0.001');
+  console.log(`----- blocker after an amount: ${(await blocker.count()) ? await blocker.innerText() : 'none'}`);
+  await t.getByTestId('desk-ticket-amount').fill('');
 }
 
 async function session(b, opts, label) {

@@ -2273,3 +2273,15 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 利率台：进行中贷款与历史记录
 
 进行中贷款是你自己的仓位读取（“仓位”页面背后的 `LoanSummary` 行，含每笔贷款的健康因子以及你的仓位 NFT 所持一方）中，两端均为 ERC-20 代币且与市场的代币和期限一致的行。它们从不从索引读取；读取未完成时会提示可能缺少某笔贷款。历史通过 `scope=desk` 读取索引的 `/loans/by-participant`：出借资产与抵押品均为 ERC-20 的贷款，不含出借人出售时开出的记账贷款，数据来自记录谁持有过哪一方的只追加记录（在发起时及每次仓位转移时写入，从不删除）。行按最近参与排序；读取方请求 21 行，只有第 21 行返回时，才从第 20 行的参与时间和贷款 ID 提供更早的一页，因此恰好止于边界的一页不会提供任何内容。每行都会再次按利率台范围校验，被拒绝的行会计数而不是丢弃。状态为索引的记录（`active`、`repaid`、`defaulted`、`liquidated`、`settled`、`internal_matched`、`fallback_pending` 或未知），贷款页面读取链上数据。
+
+<a id="desk-ticket"></a>
+
+### 利率台：下单票
+
+下单票通过 `createOffer` 在当前市场发布：出借资产、抵押资产和 `durationDays` 来自市场，下单票提供方向（`offerType`）、以全额作为 `amountMax`，部分成交或立即成交或取消时 `amount` 为单笔最小成交额，全部或不成交时为全额（`LibOfferMatch` 将每笔撮合限定在 `amount` 与剩余额之间，因此单一金额总是整笔成交）、`collateralAmount`、单一利率（`interestRateBpsMax` 等于 `interestRateBps`）（确切利率：`LibOfferMatch` 要求两个利率区间重叠，因此票据只与区间包含该利率的一方撮合）、到期时间和 `fillMode`（部分成交、全部或不成交、立即成交或取消；最后一种需要有限的到期时间）。其余为引导流程的默认值，并写在下单票上：`useFullTermInterest` true、`allowsPartialRepay` false、`periodicInterestCadence` 0、无抵押品区间（`collateralFloor` 等于抵押品）、无费用费率表、无价格保护。打开审核时，`expiresAt` 由最新区块的时间戳确定；永不过期的报价为 0。金额按代币精度读取，绝不四舍五入；小数位多于代币精度会阻止下单票。第一个阻碍按固定顺序报告：钱包、网络、市场、读取（`readPostFormInputs`、两种代币的精度与现行条款）、期限对照 `maxDurationDays`，然后是金额、抵押品、利率（年化最高 100%）和成交方式。费用使用列示的贷款发起费和金库分成；费用折扣只会降低它们。审核即引导流程自己的发布审核，并先接受条款。
+
+<a id="desk-signed"></a>
+
+### 利率台：签名订单与链上取消
+
+列表读取该市场索引的 `/signed-offers`，并把 `signer` 设为你的钱包（每侧最多 500 行，并说明 `truncated`），因此其他挂单者的深度无法把你的订单挤出列表。每一行都必须能重新序列化为 31 个字段的规范传输格式，其 `orderHash` 必须等于根据订单重新计算的 EIP-712 结构哈希，并且必须指向你的钱包以及该市场的代币和期限；其他行都计为无法读取。报价簿只提供它认为有效且未过期的订单，并可能在两个方向上落后于链，因此每个订单的状态都在同一个区块读取：`signedOfferFilledAmount(orderHash)` 达到订单上限（`amountMax`，为零时为 `amount`）即为已使用（直接成交与 `cancelSignedOffer` 都写入上限），否则 `isSignedOfferNonceUsed(signer, nonce)` 为 nonce 已取消，否则当区块时间超过非零的 `expiresAt` 与 `deadline` 中较早者时为已过期，该数值大于零时为部分成交（撮合取走了一部分，其余仍可成交、可取消），其余为有效。取消单个订单发送 `cancelSignedOffer(order)`（仅签名者可调用）；按 nonce 取消发送 `invalidateSignedOfferNonce(nonce)`，在列出的有效订单中有两个或以上共用该 nonce 时提供，并在所有市场停止该钱包用该 nonce 签署的每个订单。协议暂停期间两者都会被拒绝。审核读取各订单状态和暂停状态，然后从你的钱包运行协议自身的试运行。成交本会扣取的金额：出借方为 `amountMax`（为零时为 `amount`），借款方为 `collateralAmountMax`（或 `collateralAmount`）。对部分成交的订单，审核会说明已成交的部分，以及其余部分仍可能扣取的金额：上限以下剩余的本金，或对借款方而言按订单自身比例对应的抵押品，向上取整。结果从交易自身由 Diamond 发出的 `SignedOfferCancelled` 或 `SignedOfferNonceBurned` 日志中读取，并按订单哈希或 nonce 以及你的钱包匹配。

@@ -12,7 +12,8 @@
  */
 import { erc20Abi } from 'viem';
 import type { Config } from 'wagmi';
-import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { waitForTransactionReceipt } from 'wagmi/actions';
+import { sendWrite } from './send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
@@ -97,7 +98,7 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
       read: (block) => readAllowance(token, block, since),
       accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, token, account, diamond, amount)).then((x) => x.value),
       send: (amount) =>
-        writeContract(config, {
+        sendWrite(config, {
           address: token,
           abi: erc20Abi,
           functionName: 'approve',

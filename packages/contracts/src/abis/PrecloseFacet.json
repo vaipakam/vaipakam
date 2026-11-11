@@ -1,86 +1,6 @@
 [
   {
     "type": "function",
-    "name": "completeOffset",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "completeOffsetInternal",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "offsetWithNewOffer",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "interestRateBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "durationDays",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "creatorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "validUntil",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "newOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "precloseDirect",
     "inputs": [
       {
@@ -243,68 +163,6 @@
       },
       {
         "name": "lenderShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OffsetCompleted",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newOfferId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OffsetOfferCreated",
-    "inputs": [
-      {
-        "name": "originalLoanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newOfferId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrower",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "shortfallPaid",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2140,16 +1998,6 @@
   },
   {
     "type": "error",
-    "name": "OffsetNotLinked",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OffsetOfferNotAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OnlyMirrorRewardChain",
     "inputs": []
   },
@@ -2341,27 +2189,6 @@
         "name": "signed",
         "type": "address",
         "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PositionMovedSinceRouteOpened",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "countAtOpen",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "countNow",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -3853,48 +3680,6 @@
   },
   {
     "type": "error",
-    "name": "RouteConflict",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "enum LibPositionNFT.RouteReason"
-      },
-      {
-        "name": "attempted",
-        "type": "uint8",
-        "internalType": "enum LibPositionNFT.RouteReason"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RouteNotOpen",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expected",
-        "type": "uint8",
-        "internalType": "enum LibPositionNFT.RouteReason"
-      },
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "enum LibPositionNFT.RouteReason"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -3924,11 +3709,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "SaleListingActiveOnLoan",
-    "inputs": []
   },
   {
     "type": "error",

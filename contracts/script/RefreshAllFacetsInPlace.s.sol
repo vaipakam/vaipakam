@@ -34,6 +34,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -72,6 +73,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
@@ -311,7 +313,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 114 -> 115: SignedOfferMatchFacet (#3443) - the signed-offer
     // keeper-matcher, split off OfferMatchFacet for EIP-170. Its selector
     // moves hosts, so the Replace cut repoints it.
-    uint256 public constant EXPECTED_FACETS = 115;
+    // 115 -> 117: AutoLifecycleSettingsFacet and PrecloseOffsetFacet (#3410) -
+    // the auto-lifecycle consent and caps surface and the borrower's offset
+    // route, split off AutoLifecycleFacet and PrecloseFacet for EIP-170. Their
+    // selectors move hosts, so the Replace cut repoints them.
+    uint256 public constant EXPECTED_FACETS = 117;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1351,6 +1357,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[112] = Item("forcedSalePreviewFacet", ArtifactDeploy.deploy(type(ForcedSalePreviewFacet).name), _getForcedSalePreviewSelectors());
         items[113] = Item("offerPriceGuardFacet", ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name), _getOfferPriceGuardSelectors());
         items[114] = Item("signedOfferMatchFacet", ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name), _getSignedOfferMatchSelectors());
+        // #3410 — split out of AutoLifecycleFacet and PrecloseFacet.
+        items[115] = Item(
+            "autoLifecycleSettingsFacet",
+            ArtifactDeploy.deploy(type(AutoLifecycleSettingsFacet).name),
+            _getAutoLifecycleSettingsSelectors()
+        );
+        items[116] = Item(
+            "precloseOffsetFacet", ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name), _getPrecloseOffsetSelectors()
+        );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

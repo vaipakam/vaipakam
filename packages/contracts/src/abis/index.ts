@@ -43,6 +43,7 @@ import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
 // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
 import IntentDispatchFacetABI from './IntentDispatchFacet.json';
 import AutoLifecycleFacetABI from './AutoLifecycleFacet.json';
+import AutoLifecycleSettingsFacetABI from './AutoLifecycleSettingsFacet.json';
 import EncumbranceMutateFacetABI from './EncumbranceMutateFacet.json';
 import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
@@ -94,6 +95,7 @@ import AdminFacetABI from './AdminFacet.json';
 import AddCollateralFacetABI from './AddCollateralFacet.json';
 import PartialWithdrawalFacetABI from './PartialWithdrawalFacet.json';
 import PrecloseFacetABI from './PrecloseFacet.json';
+import PrecloseOffsetFacetABI from './PrecloseOffsetFacet.json';
 import RefinanceFacetABI from './RefinanceFacet.json';
 import EarlyWithdrawalFacetABI from './EarlyWithdrawalFacet.json';
 import EarlyWithdrawalDirectFacetABI from './EarlyWithdrawalDirectFacet.json';
@@ -247,6 +249,7 @@ export {
   SwapToRepayIntentFacetABI,
   IntentDispatchFacetABI,
   AutoLifecycleFacetABI,
+  AutoLifecycleSettingsFacetABI,
   EncumbranceMutateFacetABI,
   IntentConfigFacetABI,
   DefaultedFacetABI,
@@ -285,6 +288,7 @@ export {
   AddCollateralFacetABI,
   PartialWithdrawalFacetABI,
   PrecloseFacetABI,
+  PrecloseOffsetFacetABI,
   RefinanceFacetABI,
   EarlyWithdrawalFacetABI,
   EarlyWithdrawalDirectFacetABI,

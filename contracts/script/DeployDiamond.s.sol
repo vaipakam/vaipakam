@@ -39,6 +39,7 @@ import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
@@ -73,6 +74,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
@@ -388,6 +390,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Phase 2/3 wire the caps into RefinanceFacet + add the
         // extendLoanInPlace executor.
         AutoLifecycleFacet autoLifecycleFacet = AutoLifecycleFacet(ArtifactDeploy.deploy(type(AutoLifecycleFacet).name));
+        // #3410 — the consent and caps surface, split out of AutoLifecycleFacet.
+        AutoLifecycleSettingsFacet autoLifecycleSettingsFacet =
+            AutoLifecycleSettingsFacet(ArtifactDeploy.deploy(type(AutoLifecycleSettingsFacet).name));
         // #407 PR 2 — thin cross-facet mutate surface for the
         // vault encumbrance sub-ledger; see facet natspec.
         EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
@@ -446,6 +451,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet = EarlyWithdrawalDirectFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name));
         PartialWithdrawalFacet partialWithdrawalFacet = PartialWithdrawalFacet(ArtifactDeploy.deploy(type(PartialWithdrawalFacet).name));
         PrecloseFacet precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
+        // #3410 — the offset route, split out of PrecloseFacet.
+        PrecloseOffsetFacet precloseOffsetFacet = PrecloseOffsetFacet(ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name));
         PrepayListingFacet prepayListingFacet = PrepayListingFacet(ArtifactDeploy.deploy(type(PrepayListingFacet).name));
         NFTPrepayListingFacet nftPrepayListingFacet = NFTPrepayListingFacet(ArtifactDeploy.deploy(type(NFTPrepayListingFacet).name));
         NFTPrepayDutchListingFacet nftPrepayDutchListingFacet = NFTPrepayDutchListingFacet(ArtifactDeploy.deploy(type(NFTPrepayDutchListingFacet).name));
@@ -589,7 +596,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](115);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](117);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -706,6 +713,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[112] = _buildCut(address(forcedSalePreviewFacet), _getForcedSalePreviewSelectors());
         cuts[113] = _buildCut(address(offerPriceGuardFacet), _getOfferPriceGuardSelectors());
         cuts[114] = _buildCut(address(signedOfferMatchFacet), _getSignedOfferMatchSelectors());
+        // #3410 — split out of AutoLifecycleFacet and PrecloseFacet.
+        cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
+        cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1395,6 +1405,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("earlyWithdrawalDirectFacet", address(earlyWithdrawalDirectFacet));
         Deployments.writeFacet("partialWithdrawalFacet",  address(partialWithdrawalFacet));
         Deployments.writeFacet("precloseFacet",           address(precloseFacet));
+        Deployments.writeFacet("precloseOffsetFacet",     address(precloseOffsetFacet));
         Deployments.writeFacet("prepayListingFacet",      address(prepayListingFacet));
         Deployments.writeFacet("refinanceFacet",          address(refinanceFacet));
         Deployments.writeFacet("metricsFacet",            address(metricsFacet));
@@ -1454,6 +1465,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("numeraireConfigFacet",    address(numeraireConfigFacet));
         Deployments.writeFacet("legalFacet",              address(legalFacet));
         Deployments.writeFacet("autoLifecycleFacet",      address(autoLifecycleFacet));
+        Deployments.writeFacet("autoLifecycleSettingsFacet", address(autoLifecycleSettingsFacet));
         Deployments.writeFacet("encumbranceMutateFacet",  address(encumbranceMutateFacet));
         // #393 v1 — LenderIntentVault standing-terms surface.
         Deployments.writeFacet("lenderIntentFacet",       address(lenderIntentFacet));
@@ -1955,7 +1967,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
         s[2] = OfferCreateFacet.createOfferWithPermit.selector;
-        // Cross-facet entry used by `PrecloseFacet.offsetWithNewOffer`
+        // Cross-facet entry used by `PrecloseOffsetFacet.offsetWithNewOffer`
         // (Option 3) to mint a new lender offer without colliding on
         // the shared diamond reentrancy guard the caller already holds.
         // `address(this)`-only gated inside the facet body.
@@ -2191,31 +2203,40 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // retired `isOrderValid` validator); it signs for the order it hashed.
     }
 
-    /// @notice T-092 Phase 1 (#499) — auto-lifecycle consent surface.
-    ///         Setters + readers for auto-lend / auto-opt-in / per-loan
-    ///         refinance caps + per-loan + per-side extend caps.
+    /// @notice T-092 (#499 / #503 / #2738 / #2814) — the auto-lifecycle
+    ///         execution surface: the in-place extension, its window and the
+    ///         extension reserve. The consent and caps setters and readers
+    ///         moved to {AutoLifecycleSettingsFacet} in #3410.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
-        s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
-        s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
-        s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
-        s[3] = AutoLifecycleFacet.getAutoOptInOnNewLoan.selector;
-        s[4] = AutoLifecycleFacet.setDefaultAutoRefinanceCaps.selector;
-        s[5] = AutoLifecycleFacet.getDefaultAutoRefinanceCaps.selector;
-        s[6] = AutoLifecycleFacet.setAutoRefinanceCaps.selector;
-        s[7] = AutoLifecycleFacet.getAutoRefinanceCaps.selector;
-        s[8] = AutoLifecycleFacet.setAutoExtendBorrowerCaps.selector;
-        s[9] = AutoLifecycleFacet.getAutoExtendBorrowerCaps.selector;
-        s[10] = AutoLifecycleFacet.setAutoExtendLenderCaps.selector;
-        s[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
+        s = new bytes4[](5);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
-        s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
+        s[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
-        s[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
+        s[1] = AutoLifecycleFacet.getAutoExtendWindow.selector;
         // #2814 — the extension reserve: fund, withdraw, and what is ready.
-        s[14] = AutoLifecycleFacet.fundExtendReserve.selector;
-        s[15] = AutoLifecycleFacet.withdrawExtendReserve.selector;
-        s[16] = AutoLifecycleFacet.getExtendFunding.selector;
+        s[2] = AutoLifecycleFacet.fundExtendReserve.selector;
+        s[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
+        s[4] = AutoLifecycleFacet.getExtendFunding.selector;
+    }
+
+    /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface:
+    ///         setters + readers for auto-lend / auto-opt-in / per-loan
+    ///         refinance caps + per-loan + per-side extend caps. Split out of
+    ///         AutoLifecycleFacet in #3410.
+    function _getAutoLifecycleSettingsSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](12);
+        s[0] = AutoLifecycleSettingsFacet.setAutoLendConsent.selector;
+        s[1] = AutoLifecycleSettingsFacet.getAutoLendConsent.selector;
+        s[2] = AutoLifecycleSettingsFacet.setAutoOptInOnNewLoan.selector;
+        s[3] = AutoLifecycleSettingsFacet.getAutoOptInOnNewLoan.selector;
+        s[4] = AutoLifecycleSettingsFacet.setDefaultAutoRefinanceCaps.selector;
+        s[5] = AutoLifecycleSettingsFacet.getDefaultAutoRefinanceCaps.selector;
+        s[6] = AutoLifecycleSettingsFacet.setAutoRefinanceCaps.selector;
+        s[7] = AutoLifecycleSettingsFacet.getAutoRefinanceCaps.selector;
+        s[8] = AutoLifecycleSettingsFacet.setAutoExtendBorrowerCaps.selector;
+        s[9] = AutoLifecycleSettingsFacet.getAutoExtendBorrowerCaps.selector;
+        s[10] = AutoLifecycleSettingsFacet.setAutoExtendLenderCaps.selector;
+        s[11] = AutoLifecycleSettingsFacet.getAutoExtendLenderCaps.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
@@ -2620,12 +2641,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `SaleFloorFacet` (#3359) — the forced-sale floor
     ///      rule, its settings and the hourly price checkpoints it reads.
     function _getSaleFloorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = SaleFloorFacet.saleFloorBps.selector;
         s[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         s[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         s[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         s[4] = SaleFloorFacet.getSaleFloorConfig.selector;
+        s[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
     }
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
@@ -2666,7 +2688,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](46);
+        s = new bytes4[](48);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -2720,6 +2742,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
         s[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
         s[45] = TreasuryFacet.getBuybackTopUpHeadroom.selector; // #908
+        s[46] = TreasuryFacet.setTreasuryConvertMaxTranche.selector; // #3414
+        s[47] = TreasuryFacet.getTreasuryConvertMaxTranche.selector; // #3414
         // #687-C: former s[56] getKeeperRewardTwapMaxAgeSec relocated to s[23].
     }
 
@@ -2763,15 +2787,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getPrecloseSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](2);
         s[0] = PrecloseFacet.precloseDirect.selector;
-        s[1] = PrecloseFacet.offsetWithNewOffer.selector;
-        s[2] = PrecloseFacet.completeOffset.selector;
-        s[3] = PrecloseFacet.transferObligationViaOffer.selector;
+        s[1] = PrecloseFacet.transferObligationViaOffer.selector;
+    }
+
+    /// @dev #3410 — the offset route, split out of PrecloseFacet.
+    function _getPrecloseOffsetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = PrecloseOffsetFacet.offsetWithNewOffer.selector;
+        s[1] = PrecloseOffsetFacet.completeOffset.selector;
         // Cross-facet entry consumed by `OfferFacet._acceptOffer`'s
         // auto-link block when a third party accepts an offset offer.
         // Same `address(this)`-only gate as `acceptOfferInternal`.
-        s[4] = PrecloseFacet.completeOffsetInternal.selector;
+        s[2] = PrecloseOffsetFacet.completeOffsetInternal.selector;
     }
 
     /// @dev T-086 step 5 — `PrepayListingFacet` selectors. Hosts the

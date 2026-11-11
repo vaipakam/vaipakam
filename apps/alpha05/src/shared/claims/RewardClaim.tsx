@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy, type CopyAccess } from '../copy/useCopy';
@@ -111,8 +111,8 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
     sources: own?.sources ?? [],
     send: () =>
       kind === 'interaction'
-        ? writeContract(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [VENUE_VAULT], chainId: chain!.chainId, account })
-        : writeContract(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT], chainId: chain!.chainId, account }),
+        ? sendWrite(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [VENUE_VAULT], chainId: chain!.chainId, account })
+        : sendWrite(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT], chainId: chain!.chainId, account }),
     measure: async (receipt, at) => {
       const record = claimRecord(receipt.logs, diamond, account);
       if (record.paid === null) return [{ status: 'not-done', label: text(kind === 'interaction' ? 'claim.titleRewards' : 'claim.titleHeld'), reason: text('claim.noLog') }];

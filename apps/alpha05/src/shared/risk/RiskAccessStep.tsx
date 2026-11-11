@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { requireSelector } from '../capability/types';
@@ -138,7 +138,7 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
     send: async () => {
       const call = reviewed && planCall(reviewed.plan, reviewed.status);
       if (!call) throw new Error('no risk-access step under review');
-      return writeContract(config, { address: diamond, abi: RISK_ACCESS_ABI, functionName: call.functionName, args: call.args, chainId: chain.chainId, account });
+      return sendWrite(config, { address: diamond, abi: RISK_ACCESS_ABI, functionName: call.functionName, args: call.args, chainId: chain.chainId, account });
     },
     measure: async (_receipt, at) => {
       if (!reviewed || !isAction(reviewed.plan)) return [];

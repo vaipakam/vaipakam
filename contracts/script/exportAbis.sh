@@ -126,7 +126,8 @@ FACETS=(
   "OfferMatchFacet"   # previewMatch, matchOffers — current home of the matcher selectors after the facet split
   "ConfigFacet"       # getInternalMatchConfigBundle — kill-switch + tunables read by the internalMatcher detector
   "AdminFacet"        # T-092 #518 — getAutoExtendEnabled (admin kill switch read by autoExtendDetector)
-  "AutoLifecycleFacet" # T-092 #518 — getAutoExtendBorrowerCaps / getAutoExtendLenderCaps / extendLoanInPlace (autoExtendDetector)
+  "AutoLifecycleFacet" # T-092 #518 — extendLoanInPlace / getAutoExtendWindow (autoExtendDetector)
+  "AutoLifecycleSettingsFacet" # #3410 — getAutoExtendBorrowerCaps / getAutoExtendLenderCaps (autoExtendDetector), split off AutoLifecycleFacet
 )
 
 # The combined Diamond ABI the error set is read from (see the header).

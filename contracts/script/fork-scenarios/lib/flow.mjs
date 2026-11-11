@@ -52,9 +52,13 @@ export const ABIS = {
   claim: abi('ClaimFacet'),
   defaulted: abi('DefaultedFacet'),
   preclose: abi('PrecloseFacet'),
+  // #3410 — the offset route lives on its own facet.
+  precloseOffset: abi('PrecloseOffsetFacet'),
   partialWithdrawal: abi('PartialWithdrawalFacet'),
   refinance: abi('RefinanceFacet'),
   autoLifecycle: abi('AutoLifecycleFacet'),
+  // #3410 — the consent and caps setters and readers.
+  autoLifecycleSettings: abi('AutoLifecycleSettingsFacet'),
   config: abi('ConfigFacet'),
   offerCancel: abi('OfferCancelFacet'),
   numeraireConfig: abi('NumeraireConfigFacet'),

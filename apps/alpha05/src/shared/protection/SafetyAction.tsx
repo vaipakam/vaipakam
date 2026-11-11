@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { waitForTransactionReceipt } from 'wagmi/actions';
 import { VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import type { Abi } from 'viem';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -102,7 +103,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
           if (dry.kind === 'reverted') return stop(format('safety.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
           if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
           setStep(what(i));
-          return writeContract(config, { ...call, chainId: chain.chainId, account });
+          return sendWrite(config, { ...call, chainId: chain.chainId, account } as never);
         },
         async (hash) => {
           const landed = await waitForTransactionReceipt(config, { hash, chainId: chain.chainId });
