@@ -69,9 +69,10 @@ export function pendingText(p: Exclude<PendingRewards, { kind: 'exact' }>, copy:
       return format('rewards.paused', { chain: ctx.chain, staysOpen: SWITCH_EFFECTS['2'].staysOpen });
     case 'short':
       if (p.why === 'pool-exhausted') return text('rewards.shortPoolExhausted');
-      if (p.why === 'pool-reserved') return text('rewards.shortPoolReserved');
-      if (p.why === 'recycled-reserved') return text('rewards.shortRecycled');
-      return format('rewards.shortBacking', { needed: ctx.amount(p.needed ?? 0n), available: ctx.amount(p.available ?? 0n) });
+      return format(p.why === 'pool-reserved' ? 'rewards.shortPoolReserved' : p.why === 'recycled-reserved' ? 'rewards.shortRecycled' : 'rewards.shortBacking', {
+        needed: ctx.amount(p.needed ?? 0n),
+        available: ctx.amount(p.available ?? 0n),
+      });
     case 'barred':
       return text('rewards.barred');
     case 'refused':

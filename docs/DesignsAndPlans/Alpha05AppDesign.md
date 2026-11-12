@@ -2086,18 +2086,21 @@ above. Each resolves here, so a route reviewer needs no private file:
   flag the claim checks, never a zero total) states, on a home network or
   one with no role set, the finalisation's own readiness answer
   (`isDayReadyToFinalize`: no listed report, reports within their grace
-  time, an unusable expected-source list, or ready to run), and on a mirror
-  whether the home network's figures arrived (`getBroadcastV2Applied`). A
+  time, an unusable expected-source list, or ready to run), on a mirror
+  whether the home network's figures arrived (`getBroadcastV2Applied`), and
+  on a detached network that nothing new becomes claimable there (no step
+  clears it, so none is offered). A
   day waiting for funding states whether the home network priced it here,
   whether this network's report was sent, and the parts landed against the
   declared whole (`getDayDeliveryState`, `getDayDeliveryParts`); a day whose
-  parts declared different wholes is disclosed as one that can be closed
-  unpaid after a waiting period. Every waiting reason ends with: later days
+  parts declared different wholes is disclosed as one that cannot be
+  repaired and can be closed unpaid after a waiting period. Every waiting reason ends with: later days
   wait behind it, no step of the wallet's own clears it, and anyone may run
   the step that does. A funding refusal is named with the protocol's own
-  figures: the pool paid out in full (it does not lift), pool or recycled
-  VPFI reserved for pending settlements, or the fresh backing short
-  (needed against available). The global pause is named with what stays
+  figures: the pool of new VPFI paid out with no recycled part in the claim
+  (it does not lift; recycled VPFI still pays later rewards), pool or
+  recycled VPFI reserved for pending settlements (needed against free), or
+  the fresh backing short (needed against available). The global pause is named with what stays
   open (RB-SWITCH class 2), as the claim's own refusal measured it. Any
   fact that does not answer is stated as unread, never guessed.
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,

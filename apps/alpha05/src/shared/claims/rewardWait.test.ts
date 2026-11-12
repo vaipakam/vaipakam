@@ -21,6 +21,10 @@ describe('waitLines', () => {
     expect(keys({ kind: 'unknown' })).toEqual(['rewardsWait.roleUnread', 'rewardsWait.behind']);
   });
 
+  it('a detached network says nothing new becomes claimable, and offers no step that could clear it', () => {
+    expect(keys({ kind: 'detached' })).toEqual(['rewardsWait.detached']);
+  });
+
   it('states a delivery wait in order: not priced, the report, then the parts landed against the whole', () => {
     expect(keys({ kind: 'delivery', stamped: false, reportSent: false, parts: null })).toEqual(['rewardsWait.priced', 'rewardsWait.behind']);
     expect(keys({ kind: 'delivery', stamped: null, reportSent: null, parts: null })).toEqual(['rewardsWait.pricedUnread', 'rewardsWait.behind']);

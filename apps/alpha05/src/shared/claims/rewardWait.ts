@@ -53,6 +53,10 @@ export type WaitDetail =
    *  priced the day for this network, whether this network's report for it
    *  has been sent, and the parts that have landed (each null when unread). */
   | { kind: 'delivery'; stamped: boolean | null; reportSent: boolean | null; parts: DeliveryParts | null }
+  /** A detached network: it has left the reward network, so no
+   *  finalisation or report clears the wait and nothing new becomes
+   *  claimable here. */
+  | { kind: 'detached' }
   /** The network's reward role could not be read, so which gate applies is
    *  not known. */
   | { kind: 'unknown' };
@@ -94,6 +98,7 @@ export async function readWaitDetail(c: PublicClient, diamond: Hex, day: bigint,
   const raw = await read<number>(REPORTER, 'getRewardRole');
   const role: RewardRole | null = raw === null ? null : roleOf(Number(raw));
   if (role === null) return { kind: 'unknown' };
+  if (role === 'detached') return { kind: 'detached' };
   if (role === 'mirror') return { kind: 'broadcast', applied: await read<boolean>(REPORTER, 'getBroadcastV2Applied', [day]) };
   const ready = await read<readonly [boolean, number]>(AGGREGATOR, 'isDayReadyToFinalize', [day]);
   return { kind: 'finalize', reason: ready === null ? null : Number(ready[1]) };
@@ -116,6 +121,9 @@ export function waitLines(day: bigint, d: WaitDetail): WaitLine[] {
     case 'unknown':
       lines.push({ key: 'rewardsWait.roleUnread', vars: v });
       break;
+    case 'detached':
+      // Nothing clears it, so the "anyone may run the step" line is not said.
+      return [{ key: 'rewardsWait.detached', vars: v }];
     case 'finalize': {
       const key: CopyKey =
         d.reason === null
