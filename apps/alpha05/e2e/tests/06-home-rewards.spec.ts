@@ -94,7 +94,9 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('the rewards widget: a waiting day, the removal estimate, an exact claim measured in the vault, then nothing left', async ({ launchWallet }) => {
+test('the rewards widget: a waiting day, the removal estimate, an exact claim measured in the vault, then nothing left, and a claim sent to the wallet from Advanced', async ({
+  launchWallet,
+}) => {
   // A cold compile of the reward script, ~70 day closes and two claims.
   test.setTimeout(900_000);
   const sc = scenario();
@@ -175,6 +177,8 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   const walletVpfi = () => sc.pub.readContract({ address: vpfi, abi: ERC20, functionName: 'balanceOf', args: [lender] });
   const [vaultBefore, walletBefore] = await Promise.all([vaultVpfi(), walletVpfi()]);
   const sent = flags.sentTransactions;
+  // RW-26: Basic offers no venue choice; the receipt names the vault.
+  await expect(widget.getByTestId('claim-interaction-venue')).toHaveCount(0);
   await widget.getByTestId('claim-interaction').click();
   const receipt = widget.locator('.receipt');
   await expect(receipt).toContainText('Claim rewards');
@@ -199,4 +203,38 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(pending).toHaveAttribute('data-figure', 'none', { timeout: 60_000 });
   await expect(pending).toContainText('No rewards available to claim on this chain.');
   await expect(widget.getByTestId('claim-interaction')).toHaveCount(0);
+
+  // 6. RW-26: the borrower's own claim, sent to its wallet from Advanced.
+  //    A person's own account starts on its vault; the choice is bound by
+  //    the receipt, re-checked by simulating that venue, and the delivery
+  //    is measured in the wallet with the vault untouched.
+  const borrower = accountFor('borrower').address;
+  const owed = await exactPreview(sc, borrower);
+  expect(owed.amount, 'the borrower earned rewards on the same loan').toBeGreaterThan(0n);
+  const b = await launchWallet('borrower');
+  await b.page.goto('/');
+  await b.page.evaluate(() => localStorage.setItem('app.mode', 'advanced'));
+  await b.page.reload();
+  await connectWallet(b.page);
+  const bWidget = b.page.getByTestId('rewards-widget');
+  await expect(bWidget.getByTestId('rewards-pending')).toHaveAttribute('data-figure', 'exact', { timeout: 60_000 });
+  const venue = bWidget.getByTestId('claim-interaction-venue');
+  await expect(venue).toContainText('Deliver this claim to');
+  await expect(venue.getByTestId('claim-interaction-venue-vault')).toBeChecked();
+  await expect(venue).toContainText('Your vault: not locked, you can withdraw any time, and it counts toward your tier.');
+  await venue.getByTestId('claim-interaction-venue-wallet').check();
+  const bVault = async () => (await sc.read<readonly [number, bigint, bigint]>('getVPFIDiscountTier', [borrower]))[1];
+  const bWallet = () => sc.pub.readContract({ address: vpfi, abi: ERC20, functionName: 'balanceOf', args: [borrower] });
+  const [bVaultBefore, bWalletBefore] = await Promise.all([bVault(), bWallet()]);
+  await bWidget.getByTestId('claim-interaction').click();
+  await expect(bWidget.getByTestId('claim-interaction-venue')).toHaveCount(0);
+  const bReceipt = bWidget.locator('.receipt');
+  await expect(bReceipt).toContainText('Your wallet. VPFI there sets no fee-discount tier until you deposit it in your vault.');
+  await fitsWidth(b.page);
+  await bWidget.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const bFinish = bWidget.locator('[data-phase="measured"]');
+  await expect(bFinish).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await expect(bFinish).toContainText('delivered to your wallet');
+  expect((await bWallet()) - bWalletBefore).toBe(owed.amount);
+  expect(await bVault()).toBe(bVaultBefore);
 });

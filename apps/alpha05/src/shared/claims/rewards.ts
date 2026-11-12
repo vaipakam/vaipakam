@@ -36,6 +36,32 @@ const VAULT_FACTORY = VaultFactoryFacetABI as Abi;
  *  would make the receipt's destination depend on something the receipt
  *  does not show. The preview, the re-check and the claim all pass this. */
 export const VENUE_VAULT = 2;
+/** The protocol's Wallet venue: a plain transfer to the claimant. */
+export const VENUE_WALLET = 1;
+
+/** RW-26 — where a reward claim delivers. Always passed explicitly, so the
+ *  receipt names the destination the call carries. */
+export type RewardVenue = 'vault' | 'wallet';
+
+/** The protocol's venue argument for a choice. */
+export const venueArg = (v: RewardVenue): number => (v === 'vault' ? VENUE_VAULT : VENUE_WALLET);
+
+/** `LibAccountShape.isEoaStyle` read from an account's code: no code, or
+ *  exactly an EIP-7702 delegation designator (`0xef0100` and a 20-byte
+ *  address), is a person's own account; any other code is a contract. */
+export function isEoaStyle(code: string | undefined): boolean {
+  if (code === undefined || code === '0x' || code === '') return true;
+  return code.length === 2 + 23 * 2 && code.toLowerCase().startsWith('0xef0100');
+}
+
+/** RW-26 — the venue a claim starts on, by the protocol's own default
+ *  rule: a person's own account (EIP-7702 included) gets its vault, a
+ *  contract account its wallet. An account whose shape is not read yet
+ *  starts on the vault, which takes a claim for every kind of account and
+ *  falls back to the wallet when it cannot; the receipt names it either way. */
+export function defaultVenue(eoaStyle: boolean | null): RewardVenue {
+  return eoaStyle === false ? 'wallet' : 'vault';
+}
 
 /** The days the protocol counts from when it ends the final notice. */
 export const FINAL_NOTICE_DAYS = 90;

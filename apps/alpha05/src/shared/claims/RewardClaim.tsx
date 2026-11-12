@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useConfig } from 'wagmi';
+import { useMode } from '../../app/ModeContext';
+import { useOwnRead } from '../reads/useOwnRead';
 import { sendWrite } from '../tx/send';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
@@ -14,17 +16,20 @@ import { shortAddress } from '../ui/format';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import {
   REWARD_CLAIM_ABI,
-  VENUE_VAULT,
   claimRecord,
+  defaultVenue,
   deliveryOutcome,
+  isEoaStyle,
   moreRemains,
   readHeldRewards,
   readPendingRewards,
   readVaultAddress,
   readVpfiToken,
+  venueArg,
   vpfiArrivals,
   type ClaimWindow,
   type PendingRewards,
+  type RewardVenue,
 } from './rewards';
 
 type Hex = `0x${string}`;
@@ -80,10 +85,12 @@ export function pendingText(p: Exclude<PendingRewards, { kind: 'exact' }>, copy:
   }
 }
 
-/** The review's inputs, with the identity they were read under. */
+/** The review's inputs, with the identity they were read under and the
+ *  venue the claim names (RW-26). */
 interface Reviewed extends RewardReady {
   readAt: number;
   identity: string;
+  venue: RewardVenue;
 }
 
 interface RewardClaimProps {
@@ -104,9 +111,13 @@ interface RewardClaimProps {
  * balance and the screen) and simulates the call as the sender; the outcome
  * is the payment the claim's logs record, placed by the VPFI the claim's own
  * transaction delivered to the wallet and to the vault (unknown when those
- * do not add up to it). Every send, preview and re-check passes the Vault
- * venue explicitly. After an interaction claim that stopped at its bound,
- * the remainder is offered as "claim again" (RW-27).
+ * do not add up to it). Every send and re-check passes its venue
+ * explicitly (RW-26): the protocol's own default for the account's shape
+ * (vault for a person's own account, wallet for a contract), which Advanced
+ * may change before the review; the receipt names it and binds it. The
+ * preview reads with the vault venue, since the venue changes only where a
+ * payment lands, never its amount. After an interaction claim that stopped
+ * at its bound, the remainder is offered as "claim again" (RW-27).
  */
 export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   const copy = useCopy();
@@ -117,8 +128,19 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const account = (own?.account ?? '0x') as Hex;
   const [reviewed, setReviewed] = useState<Reviewed | null>(null);
+  const { isAdvanced } = useMode();
+  // RW-26: the account's shape decides the protocol's default venue.
+  const shape = useOwnRead(['accountShape'], async (c) => isEoaStyle(await c.getCode({ address: account })));
+  const [picked, setPicked] = useState<RewardVenue | null>(null);
+  const venue: RewardVenue = picked ?? defaultVenue(shape.data);
   const claimAmount = (v: bigint) => (token ? tokenAmount(v, token, meta, format) : format('asset.baseUnits', { amount: v.toString(), token: 'VPFI' }));
 
+  // The send follows a re-check, which answers "unreadable" without a
+  // review, so a claim is never sent on a venue the receipt did not show.
+  const sentVenue = () => {
+    if (!reviewed) throw new Error(text('flow.reading'));
+    return venueArg(reviewed.venue);
+  };
   const tx = useTrackedTx({
     key: `claim.reward.${kind}`,
     chainId: chain?.chainId ?? 0,
@@ -126,8 +148,8 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
     sources: own?.sources ?? [],
     send: () =>
       kind === 'interaction'
-        ? sendWrite(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [VENUE_VAULT], chainId: chain!.chainId, account })
-        : sendWrite(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT], chainId: chain!.chainId, account }),
+        ? sendWrite(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [sentVenue()], chainId: chain!.chainId, account })
+        : sendWrite(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [sentVenue()], chainId: chain!.chainId, account }),
     measure: async (receipt, at) => {
       const record = claimRecord(receipt.logs, diamond, account);
       if (record.paid === null) return [{ status: 'not-done', label: text(kind === 'interaction' ? 'claim.titleRewards' : 'claim.titleHeld'), reason: text('claim.noLog') }];
@@ -162,7 +184,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
 
   const start = () => {
     if (!ready) return;
-    setReviewed({ ...ready, readAt: readNow(), identity });
+    setReviewed({ ...ready, readAt: readNow(), identity, venue });
     // A review left open when this page last unmounted has lost its inputs.
     if (tx.phase.kind !== 'idle') tx.reset();
     tx.review();
@@ -179,7 +201,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
         if (current()) setReviewed({ ...reviewed, amount: now.amount, fromDay: now.fromDay, toDay: now.toDay, readAt: readNow() });
         return { kind: 'changed', what: text('claim.changedAmount') };
       }
-      return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [VENUE_VAULT] });
+      return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [venueArg(reviewed.venue)] });
     }
     const held = (await own.read((c) => readHeldRewards(c, diamond, account))).value;
     if (held.decision !== 'deliver') return { kind: 'refused', refusal: { code: 'SanctionedAddress', reason: text('claim.heldStillFlagged'), reopensAt: null, remedy: null } };
@@ -188,7 +210,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
       if (current()) setReviewed({ ...reviewed, amount: held.held, readAt: readNow() });
       return { kind: 'changed', what: text('claim.changedHeld') };
     }
-    return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT] });
+    return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [venueArg(reviewed.venue)] });
   };
 
   const receipt: Receipt | null =
@@ -207,7 +229,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
                   binding: false,
                 }
               : { label: text('claim.rowFrom'), value: { kind: 'text', text: text('claim.heldFrom') }, binding: false },
-            { label: text('claim.rowTo'), value: { kind: 'text', text: text('claim.to') }, binding: true },
+            { label: text('claim.rowTo'), value: { kind: 'text', text: text(reviewed.venue === 'vault' ? 'claim.to' : 'claim.toWallet') }, binding: true },
             { label: text('claim.rowNetwork'), value: { kind: 'text', text: format('claim.network', { chain: chain.name }) }, binding: false },
           ],
           consequences: [],
@@ -232,6 +254,17 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
 
   return (
     <>
+      {!flowOpen && isAdvanced && (
+        <fieldset className="choice-group" data-testid={`claim-${kind}-venue`}>
+          <legend>{text('rewards.venueLegend')}</legend>
+          {(['vault', 'wallet'] as const).map((v) => (
+            <label className="choice" key={v}>
+              <input type="radio" name={`claim-${kind}-venue`} value={v} checked={venue === v} onChange={() => setPicked(v)} data-testid={`claim-${kind}-venue-${v}`} />
+              <span>{text(v === 'vault' ? 'rewards.venueVault' : 'rewards.venueWallet')}</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       {!flowOpen && (
         <p className="actions">
           <button type="button" className="btn btn-primary" onClick={start} data-testid={`claim-${kind}`}>

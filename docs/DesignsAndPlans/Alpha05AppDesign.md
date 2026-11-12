@@ -2112,6 +2112,22 @@ above. Each resolves here, so a route reviewer needs no private file:
   the fresh backing short (needed against available). The global pause is named with what stays
   open (RB-SWITCH class 2), as the claim's own refusal measured it. Any
   fact that does not answer is stated as unread, never guessed.
+- **RB-REWARDS-VENUE** — A reward claim names where it delivers, and the
+  receipt binds it (RW-26). The venue is always passed explicitly, never
+  the protocol's `Default`, so the destination never depends on something
+  the receipt does not show. It starts on the protocol's own default rule:
+  the vault for a person's own account (no code, or exactly an EIP-7702
+  delegation designator, as `LibAccountShape.isEoaStyle` reads it), the
+  wallet for a contract account. An account whose shape is not read yet
+  starts on the vault, which takes a claim from every kind of account and
+  falls back to the wallet when it cannot. Advanced offers the choice
+  before the review; the vault option says it is not a lockup and that it
+  counts toward the tier, and the wallet option says VPFI there counts
+  toward no tier until deposited. The re-check simulates the chosen venue;
+  the preview runs with the vault whichever is chosen, since the venue
+  changes only where a payment lands, never its amount. The outcome is
+  measured where the VPFI actually arrived. Claim everything keeps the
+  vault for its reward legs and says so on its own receipt.
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
   RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
   its VPFI in its own vault and the fee-discount consent. On a network with
