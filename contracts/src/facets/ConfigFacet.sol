@@ -514,135 +514,126 @@ contract ConfigFacet is DiamondAccessControl {
         emit MaxPartialLiquidationCloseFactorBpsSet(newBps);
     }
 
-    /// @notice Emitted whenever the per-tier LTV safety-box parameters
-    ///         (floor / ceiling / haircut) are updated via
-    ///         `setTierLtvParams`. Off-chain monitoring watches this
-    ///         so a governance change is publicly observable.
+    /// @notice Emitted whenever the per-tier LTV governance ceilings and
+    ///         haircuts are updated via `setTierLtvParams`. Off-chain
+    ///         monitoring watches this so a governance change is publicly
+    ///         observable.
     /// @custom:event-category informational/config
     event TierLtvParamsSet(
-        uint16 tier1FloorBps, uint16 tier1CeilBps, uint16 tier1HaircutBps,
-        uint16 tier2FloorBps, uint16 tier2CeilBps, uint16 tier2HaircutBps,
-        uint16 tier3FloorBps, uint16 tier3CeilBps, uint16 tier3HaircutBps
+        uint16 tier1CeilBps, uint16 tier1HaircutBps,
+        uint16 tier2CeilBps, uint16 tier2HaircutBps,
+        uint16 tier3CeilBps, uint16 tier3HaircutBps
     );
 
     /// @notice Per-tier LTV params validation errors.
-    error TierLtvFloorAboveCeil(uint8 tier, uint16 floorBps, uint16 ceilBps);
-    error TierLtvCeilTooHigh(uint8 tier, uint16 ceilBps);
+    error TierLtvCeilZero(uint8 tier);
+    error TierLtvCeilTooHigh(uint8 tier, uint16 ceilBps, uint256 maxBps);
     error TierLtvHaircutTooHigh(uint8 tier, uint16 haircutBps);
-    error TierLtvBoundsNonMonotonic(
-        uint16 tier1CeilBps, uint16 tier2FloorBps,
-        uint16 tier2CeilBps, uint16 tier3FloorBps
-    );
+    error TierLtvCeilsNonMonotonic(uint16 tier1CeilBps, uint16 tier2CeilBps, uint16 tier3CeilBps);
 
     /// @notice Max haircut governance may configure (10pp = 1000 BPS).
     ///         A haircut larger than that would push the autonomous
-    ///         cache so far below the peer median that the gate becomes
+    ///         cache so far below the peer reading that the gate becomes
     ///         vacuous; bounded here so a misfire can't lock borrowers
     ///         out via accidentally aggressive haircuts.
     uint16 internal constant TIER_LTV_HAIRCUT_CEIL_BPS = 1_000;
 
     /**
-     * @notice Set the per-tier LTV safety-box parameters (floor /
-     *         ceiling / haircut) for all three tiers atomically.
-     *         Phase 7 of AutonomousLtvAndOracleFallback.md.
+     * @notice Set every tier's GOVERNANCE CEILING and peer haircut
+     *         atomically. Phase 7 of AutonomousLtvAndOracleFallback.md,
+     *         reshaped by #3547.
      *
      * @dev    ADMIN_ROLE-only — TimelockController post-handover, so
-     *         48h-gated. Atomic for all three tiers so governance
-     *         can never leave the protocol in a half-updated state
-     *         where the cross-tier monotonic invariant (T1 box <= T2
-     *         box <= T3 box) is temporarily broken.
+     *         48h-gated. Atomic for all three tiers so the cross-tier
+     *         ordering is never half-updated.
+     *
+     *         #3547 (owner decision 2026-11-11) — the ceiling is the most
+     *         a tier's init LTV may ever be: a fresh peer reading replaces
+     *         the tier default (`setTierMaxInitLtvBps`), lower or higher,
+     *         and the result is clipped to this ceiling at every read
+     *         (`LibVaipakam.effectiveTierMaxInitLtvBps`), so a lowered
+     *         ceiling binds the next loan with no cache refresh. There is
+     *         no floor: a peer reading below the old box floor is used.
      *
      *         Validation:
-     *           - For each tier: `floor < ceil` and `ceil <= 10_000`.
-     *           - Haircut <= 1_000 BPS (10pp) per tier — beyond that
-     *             the gate is effectively vacuous.
-     *           - Cross-tier monotonic: `T1.ceil <= T2.floor` AND
-     *             `T2.ceil <= T3.floor` (boxes don't overlap, tier
-     *             ordering is preserved).
+     *           - For each tier: `0 < ceil <= MAX_TIER_INIT_LTV_BPS_CEIL`
+     *             (82%), the hard ceiling on every tier-LTV setter.
+     *           - Haircut <= 1_000 BPS (10pp) per tier.
+     *           - Ceilings non-decreasing by tier: `T1 <= T2 <= T3`
+     *             (deeper liquidity never gets a lower ceiling).
      *
      *         Defaults (library constants used until governance
-     *         overrides):
-     *           Tier 1: floor 37% / ceil 55% / haircut 0pp
-     *           Tier 2: floor 55% / ceil 69% / haircut 0pp
-     *           Tier 3: floor 69% / ceil 82% / haircut 5pp
+     *         overrides): ceilings 55% / 69% / 82%; haircuts 0 / 0 / 5pp.
      *
-     *         Each `TierLtvParams` slot is "configured" iff its
-     *         `ceilBps` is non-zero — that's the storage-vs-default
-     *         indicator. Passing a `ceilBps` of 0 for any tier is
-     *         therefore rejected by the `floor < ceil` check (0 isn't
-     *         a valid ceiling anyway).
+     *         A tier's `TierLtvParams` slot is "configured" iff its
+     *         `ceilBps` is non-zero, which the `0 < ceil` check keeps true
+     *         after any call.
      */
     function setTierLtvParams(
-        uint16 tier1FloorBps, uint16 tier1CeilBps, uint16 tier1HaircutBps,
-        uint16 tier2FloorBps, uint16 tier2CeilBps, uint16 tier2HaircutBps,
-        uint16 tier3FloorBps, uint16 tier3CeilBps, uint16 tier3HaircutBps
+        uint16 tier1CeilBps, uint16 tier1HaircutBps,
+        uint16 tier2CeilBps, uint16 tier2HaircutBps,
+        uint16 tier3CeilBps, uint16 tier3HaircutBps
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        uint16 bpsCeil = uint16(LibVaipakam.BASIS_POINTS);
-
-        // Per-tier internal consistency.
-        if (tier1FloorBps >= tier1CeilBps) revert TierLtvFloorAboveCeil(1, tier1FloorBps, tier1CeilBps);
-        if (tier1CeilBps > bpsCeil)        revert TierLtvCeilTooHigh(1, tier1CeilBps);
-        if (tier1HaircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(1, tier1HaircutBps);
-
-        if (tier2FloorBps >= tier2CeilBps) revert TierLtvFloorAboveCeil(2, tier2FloorBps, tier2CeilBps);
-        if (tier2CeilBps > bpsCeil)        revert TierLtvCeilTooHigh(2, tier2CeilBps);
-        if (tier2HaircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(2, tier2HaircutBps);
-
-        if (tier3FloorBps >= tier3CeilBps) revert TierLtvFloorAboveCeil(3, tier3FloorBps, tier3CeilBps);
-        if (tier3CeilBps > bpsCeil)        revert TierLtvCeilTooHigh(3, tier3CeilBps);
-        if (tier3HaircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(3, tier3HaircutBps);
-
-        // Cross-tier monotonic invariant.
-        if (tier1CeilBps > tier2FloorBps || tier2CeilBps > tier3FloorBps) {
-            revert TierLtvBoundsNonMonotonic(
-                tier1CeilBps, tier2FloorBps,
-                tier2CeilBps, tier3FloorBps
-            );
+        _checkTierLtvParams(1, tier1CeilBps, tier1HaircutBps);
+        _checkTierLtvParams(2, tier2CeilBps, tier2HaircutBps);
+        _checkTierLtvParams(3, tier3CeilBps, tier3HaircutBps);
+        if (tier1CeilBps > tier2CeilBps || tier2CeilBps > tier3CeilBps) {
+            revert TierLtvCeilsNonMonotonic(tier1CeilBps, tier2CeilBps, tier3CeilBps);
         }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.tierLtvParams[1] = LibVaipakam.TierLtvParams({
-            floorBps: tier1FloorBps,
-            ceilBps:  tier1CeilBps,
+            retiredFloorBps: 0,
+            ceilBps: tier1CeilBps,
             haircutBps: tier1HaircutBps
         });
         s.tierLtvParams[2] = LibVaipakam.TierLtvParams({
-            floorBps: tier2FloorBps,
-            ceilBps:  tier2CeilBps,
+            retiredFloorBps: 0,
+            ceilBps: tier2CeilBps,
             haircutBps: tier2HaircutBps
         });
         s.tierLtvParams[3] = LibVaipakam.TierLtvParams({
-            floorBps: tier3FloorBps,
-            ceilBps:  tier3CeilBps,
+            retiredFloorBps: 0,
+            ceilBps: tier3CeilBps,
             haircutBps: tier3HaircutBps
         });
 
         emit TierLtvParamsSet(
-            tier1FloorBps, tier1CeilBps, tier1HaircutBps,
-            tier2FloorBps, tier2CeilBps, tier2HaircutBps,
-            tier3FloorBps, tier3CeilBps, tier3HaircutBps
+            tier1CeilBps, tier1HaircutBps,
+            tier2CeilBps, tier2HaircutBps,
+            tier3CeilBps, tier3HaircutBps
         );
     }
 
-    /// @notice Read the effective per-tier safety-box parameters
-    ///         (governance override if set, library default otherwise).
-    ///         Single-call view returning all three tiers' triples for
-    ///         the protocol-console + audit-package per-chain
-    ///         verification step.
+    /// @dev One tier's bounds for {setTierLtvParams}.
+    function _checkTierLtvParams(uint8 tier, uint16 ceilBps, uint16 haircutBps) private pure {
+        if (ceilBps == 0) revert TierLtvCeilZero(tier);
+        if (ceilBps > LibVaipakam.MAX_TIER_INIT_LTV_BPS_CEIL) {
+            revert TierLtvCeilTooHigh(tier, ceilBps, LibVaipakam.MAX_TIER_INIT_LTV_BPS_CEIL);
+        }
+        if (haircutBps > TIER_LTV_HAIRCUT_CEIL_BPS) revert TierLtvHaircutTooHigh(tier, haircutBps);
+    }
+
+    /// @notice Read every tier's effective governance ceiling and peer
+    ///         haircut (governance override if set, library default
+    ///         otherwise), for the protocol console and the audit
+    ///         package's per-chain verification step. The tier DEFAULTS
+    ///         are in {getDepthTierConfigBundle}; the value a loan uses
+    ///         now is `OracleFacet.getEffectiveTierMaxInitLtvBps`.
     function getTierLtvParams()
         external
         view
         returns (
-            uint16 tier1FloorBps, uint16 tier1CeilBps, uint16 tier1HaircutBps,
-            uint16 tier2FloorBps, uint16 tier2CeilBps, uint16 tier2HaircutBps,
-            uint16 tier3FloorBps, uint16 tier3CeilBps, uint16 tier3HaircutBps
+            uint16 tier1CeilBps, uint16 tier1HaircutBps,
+            uint16 tier2CeilBps, uint16 tier2HaircutBps,
+            uint16 tier3CeilBps, uint16 tier3HaircutBps
         )
     {
-        (tier1FloorBps, tier1CeilBps) = LibVaipakam.tierLtvBoundsBps(1);
+        tier1CeilBps = LibVaipakam.tierLtvCeilBps(1);
         tier1HaircutBps = LibVaipakam.tierLtvHaircutBps(1);
-        (tier2FloorBps, tier2CeilBps) = LibVaipakam.tierLtvBoundsBps(2);
+        tier2CeilBps = LibVaipakam.tierLtvCeilBps(2);
         tier2HaircutBps = LibVaipakam.tierLtvHaircutBps(2);
-        (tier3FloorBps, tier3CeilBps) = LibVaipakam.tierLtvBoundsBps(3);
+        tier3CeilBps = LibVaipakam.tierLtvCeilBps(3);
         tier3HaircutBps = LibVaipakam.tierLtvHaircutBps(3);
     }
 
@@ -1790,13 +1781,20 @@ contract ConfigFacet is DiamondAccessControl {
         emit LiquidityTierSizesSet(floorPad, tier1Pad, tier2Pad, tier3Pad);
     }
 
-    /// @notice Set the per-tier max init-LTV caps (bps). Any field `0`
+    /// @notice Set each tier's DEFAULT init-LTV (bps). Any field `0`
     ///         ⇒ its library default (5000 / 6000 / 6500). On the
     ///         *effective* values: `tier1 ≤ tier2 ≤ tier3` and each ≤
-    ///         `MAX_TIER_INIT_LTV_BPS_CEIL` (8000 ≡ 80%). When
+    ///         `MAX_TIER_INIT_LTV_BPS_CEIL` (8200 ≡ 82%). When
     ///         `depthTieredLtvEnabled`, loan-init caps the LTV at
-    ///         `min(assetRiskParams.loanInitMaxLtvBps, tierMaxInitLtvBps[
-    ///         effectiveTier])`.
+    ///         `min(assetRiskParams.loanInitMaxLtvBps,
+    ///         effectiveTierMaxInitLtvBps(effectiveTier))`.
+    ///
+    ///         #3547 (owner decision 2026-11-11) — the default applies
+    ///         while there is no usable peer reading (none yet, paused, or
+    ///         over 14 days old); a usable reading replaces it, lower or
+    ///         higher. Either way the tier's governance ceiling
+    ///         (`setTierLtvParams`) bounds the result, so a default set
+    ///         above the ceiling reads as the ceiling.
     function setTierMaxInitLtvBps(uint16 tier1, uint16 tier2, uint16 tier3)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)

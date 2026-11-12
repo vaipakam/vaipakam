@@ -770,9 +770,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     // ─── Phase 4: autonomous tier-LTV cache ─────────────────────────────
 
     /// @notice Emitted when a tier's LTV cache is updated by a
-    ///         successful refresh. `newLtvBps` already had the per-tier
-    ///         haircut applied and passed the per-tier safety-box
-    ///         bound check.
+    ///         successful refresh. `newLtvBps` is the peer reading after
+    ///         the per-tier haircut, stored unclipped: a loan uses it up
+    ///         to the tier's governance ceiling (#3547), and
+    ///         `getEffectiveTierMaxInitLtvBps` reports what a loan uses.
     /// @custom:event-category state-change/risk-config
     event TierLtvCacheUpdated(
         uint8 indexed tier,
@@ -787,8 +788,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///           - "no-reference-assets"     — `tierReferenceAssets[tier]` empty.
     ///           - "insufficient-readings"   — fewer than 2 reference
     ///                                          assets passed per-asset consensus.
-    ///           - "out-of-band-low"         — candidate < tier floor.
-    ///           - "out-of-band-high"        — candidate > tier ceiling.
+    ///         #3547 retired "out-of-band-low" / "out-of-band-high": a
+    ///         reading outside the old safety box is now stored, and the
+    ///         tier ceiling applies at the read.
     /// @custom:event-category state-change/risk-config
     event TierLtvCacheRefreshRejected(
         uint8 indexed tier,
@@ -807,13 +809,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         i.e. 30%) for each reference asset (the
      *         divergence-tolerance guard — a wide tolerance is
      *         intentional, peers legitimately differ by 10-25% across
-     *         protocols for the same asset; the safety floor is the
-     *         per-tier `[floor, ceil]` bound applied below). Per-tier
-     *         consensus requires ≥ 2 reference assets contribute
-     *         (the multi-asset-stability guard). After aggregation,
-     *         the per-tier haircut is subtracted and the result is
-     *         bound-checked against the tier's safety box
-     *         (`[floor, ceil]` per `LibVaipakam.tierLtvBoundsBps`).
+     *         protocols for the same asset, and each asset contributes
+     *         the LOWEST of its agreeing peers). Per-tier consensus
+     *         requires ≥ 2 reference assets contribute (the
+     *         multi-asset-stability guard). After aggregation, the
+     *         per-tier haircut is subtracted and the result is cached.
+     *
+     *         #3547 (owner decision 2026-11-11) — the result is stored as
+     *         it is, not bound-checked: a reading below the old box floor
+     *         is honoured, and one above the tier's governance ceiling is
+     *         clipped to that ceiling when a loan reads it
+     *         (`LibVaipakam.effectiveTierMaxInitLtvBps`), never here, so a
+     *         ceiling governance changes later binds without a refresh.
      *
      *         Rejected candidates leave the previous cached value
      *         untouched (and the previous `lastRefreshedAt` unchanged).
@@ -860,20 +867,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 continue;
             }
 
-            // Apply per-tier haircut (saturate at 0 — never wrap).
+            // Apply per-tier haircut (saturate at 0 — never wrap). The
+            // tier ceiling is applied at the read (#3547), not here.
             uint16 haircut = LibVaipakam.tierLtvHaircutBps(tier);
             uint16 candidate = tierMedian > haircut ? tierMedian - haircut : 0;
-
-            // Bound-check against the tier's safety box.
-            (uint16 floorBps, uint16 ceilBps) = LibVaipakam.tierLtvBoundsBps(tier);
-            if (candidate < floorBps) {
-                emit TierLtvCacheRefreshRejected(tier, candidate, "out-of-band-low");
-                continue;
-            }
-            if (candidate > ceilBps) {
-                emit TierLtvCacheRefreshRejected(tier, candidate, "out-of-band-high");
-                continue;
-            }
 
             // Persist + emit.
             uint16 oldVal = s.tierLtvCache[tier].ltvBps;
@@ -889,7 +886,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         timestamp. Returns (0, 0) for a never-refreshed tier
     ///         or for invalid tier indices. Loan init reads the
     ///         *effective* value via {getEffectiveTierMaxInitLtvBps}
-    ///         (handles cache-stale fallback to library default).
+    ///         (the tier default when the reading is stale, the ceiling always).
     function getTierLtvCacheEntry(uint8 tier)
         external
         view
@@ -901,10 +898,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /// @notice Read the *effective* per-tier max-init-LTV the
-    ///         loan-init gate will use. Returns the cached value while it
-    ///         is under 14 days old, inside the tier's current safety box
-    ///         and peer reads are not paused; otherwise the governance tier
-    ///         cap. Returns 0 for invalid tier indices.
+    ///         loan-init gate will use: the cached peer reading while it is
+    ///         at most 14 days old and peer reads are not paused, otherwise
+    ///         the tier default, and in both cases no more than the tier's
+    ///         governance ceiling (#3547). Returns 0 for invalid tier indices.
     function getEffectiveTierMaxInitLtvBps(uint8 tier) external view returns (uint16) {
         return LibVaipakam.effectiveTierMaxInitLtvBps(tier);
     }

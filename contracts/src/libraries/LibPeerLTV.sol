@@ -44,14 +44,15 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *             `PEER_DIVERGENCE_TOLERANCE`).
  *           - Multi-asset stability per tier (≥ 2 reference assets
  *             reporting; tier median over those).
- *           - Per-tier bound enforcement (final value in `[floor, ceil]`).
+ *           - The tier's governance ceiling, applied when a loan reads the
+ *             cached value, never at the refresh (#3547: no floor).
  */
 library LibPeerLTV {
     /// @dev Plausibility bounds for a peer-reported LTV. Below 1 BPS
     ///      almost certainly means "not listed" reported as 0; above
     ///      99% is implausible for any real lending protocol's safe LTV.
-    ///      Library-side guards complement the Phase-4 per-tier bound
-    ///      check (which is the actual safety floor / ceiling per tier).
+    ///      Library-side guards complement the per-tier governance
+    ///      ceiling applied at the read (#3547).
     uint16 internal constant MIN_PLAUSIBLE_LTV_BPS = 1;
     uint16 internal constant MAX_PLAUSIBLE_LTV_BPS = 9_900;
 
@@ -193,7 +194,8 @@ library LibPeerLTV {
     ///              `minPeerReadings` peers report, or if the spread
     ///              across reporting peers exceeds
     ///              `divergenceToleranceBps`. Otherwise take the
-    ///              asset's median across peers.
+    ///              LOWEST reading across peers (#3547), so one
+    ///              optimistic peer can never lift the value.
     ///           2. Per-tier: median across all asset-medians. Reject
     ///              the whole tier if fewer than `minAssetReadings`
     ///              assets contributed.
@@ -240,7 +242,7 @@ library LibPeerLTV {
         uint256 n;
 
         for (uint256 i = 0; i < refAssets.length; ++i) {
-            (uint16 amed, bool aOk) = _perAssetMedian(
+            (uint16 amed, bool aOk) = _perAssetConservative(
                 aave,
                 comet,
                 refAssets[i],
@@ -277,18 +279,26 @@ library LibPeerLTV {
         return (true, medianBps, SafeCast.toUint8(n));
     }
 
-    /// @dev Per-asset consensus: collect peer LTVs for one asset,
-    ///      return the asset-median if `minPeerReadings` peers agree
-    ///      within `divergenceToleranceBps`. The library currently
-    ///      reads Aave + Compound; the Morpho peer is deferred to
-    ///      Phase 3.5.
-    function _perAssetMedian(
+    /// @dev Per-asset consensus: collect peer LTVs for one asset and,
+    ///      when at least `minPeerReadings` peers report and their spread
+    ///      is within `divergenceToleranceBps`, return the LOWEST reading.
+    ///      The library currently reads Aave + Compound; the Morpho peer
+    ///      is deferred to Phase 3.5.
+    ///
+    ///      #3547 — the lowest, never the average. Averaging let one
+    ///      optimistic or misconfigured peer lift the asset's value by up
+    ///      to half the tolerance (15 points at 30), and the tier value
+    ///      built from it. Taking the more conservative peer means a peer
+    ///      can only ever pull the value down. The tolerance stays as a
+    ///      liveness rule: peers that disagree by more than it reject the
+    ///      asset rather than letting the lower one stand alone.
+    function _perAssetConservative(
         address aave,
         address comet,
         address asset,
         uint16 divergenceToleranceBps,
         uint8 minPeerReadings
-    ) private view returns (uint16 medianBps, bool ok) {
+    ) private view returns (uint16 lowBps, bool ok) {
         uint16[] memory ltvs = new uint16[](2);
         uint256 p;
 
@@ -297,15 +307,17 @@ library LibPeerLTV {
         (bool cOk, uint16 cLtv, ) = readCometLtv(comet, asset);
         if (cOk) ltvs[p++] = cLtv;
 
-        if (p < uint256(minPeerReadings)) return (0, false);
+        if (p == 0 || p < uint256(minPeerReadings)) return (0, false);
 
-        // For p == 2 (current cap): spread = |a - b|; reject if it
-        // exceeds the divergence tolerance, else median = average.
-        // For p == 1: handled by the minPeerReadings >= 2 guard above
-        // (single-peer doesn't satisfy consensus).
-        uint16 hi = ltvs[0] > ltvs[1] ? ltvs[0] : ltvs[1];
-        uint16 lo = ltvs[0] > ltvs[1] ? ltvs[1] : ltvs[0];
+        // Spread and minimum over the readings actually taken, so an
+        // unread slot never counts as a zero reading.
+        uint16 hi = ltvs[0];
+        uint16 lo = ltvs[0];
+        for (uint256 i = 1; i < p; ++i) {
+            if (ltvs[i] > hi) hi = ltvs[i];
+            if (ltvs[i] < lo) lo = ltvs[i];
+        }
         if (hi - lo > divergenceToleranceBps) return (0, false);
-        return (uint16((uint256(ltvs[0]) + uint256(ltvs[1])) / 2), true);
+        return (lo, true);
     }
 }

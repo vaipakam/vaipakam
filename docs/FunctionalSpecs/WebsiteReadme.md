@@ -835,7 +835,7 @@ Governance-configuration visibility:
 - fallback-split data should be available as lender / borrower split values so pages can read it without custom one-off contract calls
 - user-facing constants, thresholds, and percentages should flow from live protocol config reads rather than hardcoded locale strings where they can change through governance or redeploy
 - `useProtocolConfig` should read both mutable config and compile-time constants exposed by the Diamond, and reusable info components should inject common placeholders such as treasury fee, LIF, fee-discount tier thresholds, max slippage, and min Health Factor into translated tooltip copy
-- tier tables, rental-buffer math, autonomous tier-LTV safety boxes, cache freshness labels, and validation copy should derive from live config where possible, so governance changes or peer-derived cache refreshes appear on next page load without a frontend redeploy
+- tier tables, rental-buffer math, tier-LTV defaults and ceilings, cache freshness labels, and validation copy should derive from live config where possible, so governance changes or peer-derived cache refreshes appear on next page load without a frontend redeploy
 - discounted-liquidation discount tables, route labels, and liquidation preview copy should derive from live config and deployed receiver metadata rather than hardcoded constants.
 - internal-match warning chips, threshold displays, route labels, priority-window copy, and terminal-state labels should derive from live config and indexed loan state rather than hardcoded constants.
 - VPFI unit displays should use the token contract's live decimal precision where available, with an 18-decimal fallback during transient read failures

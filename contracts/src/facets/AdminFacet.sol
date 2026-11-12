@@ -351,7 +351,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         // entry — including the compromised reading the pause was meant to
         // neutralize — before `refreshTierLtvCache()` (which can't run while
         // paused) is re-run. Zeroing `lastRefreshedAt` forces
-        // `effectiveTierMaxInitLtvBps` to use the governance cap until a fresh
+        // `effectiveTierMaxInitLtvBps` to use the tier default until a fresh
         // post-unpause refresh succeeds.
         for (uint8 t = 1; t <= LibVaipakam.MAX_LIQUIDITY_TIER; ++t) {
             s.tierLtvCache[t].lastRefreshedAt = 0;

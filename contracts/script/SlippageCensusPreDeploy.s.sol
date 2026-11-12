@@ -229,7 +229,7 @@ contract SlippageCensusPreDeploy is Script {
 
         // ── Header row for the CSV. ─────────────────────────────────
         console.log(
-            "CENSUS_PRE,label,chainId,tier,refAssetCount,cachedLtvBps,effectiveLtvBps,librarydefaultBps"
+            "CENSUS_PRE,label,chainId,tier,refAssetCount,cachedLtvBps,effectiveLtvBps,defaultBps,ceilingBps"
         );
 
         // ── Refresh the cache from the LIVE forked peer state ───────
@@ -239,7 +239,14 @@ contract SlippageCensusPreDeploy is Script {
         for (uint8 t = 1; t <= 3; ++t) {
             (uint16 cachedLtvBps, ) = OracleFacet(address(diamond)).getTierLtvCacheEntry(t);
             uint16 effectiveLtvBps = OracleFacet(address(diamond)).getEffectiveTierMaxInitLtvBps(t);
-            uint16 libraryDefault = LibVaipakam.tierLtvLibraryDefaultBps(t);
+            // #3547 — the tier's default and governance ceiling. This census
+            // Diamond is fresh, so both are the library values.
+            uint256 tierDefault = t == 1
+                ? LibVaipakam.TIER1_MAX_INIT_LTV_BPS_DEFAULT
+                : (t == 2 ? LibVaipakam.TIER2_MAX_INIT_LTV_BPS_DEFAULT : LibVaipakam.TIER3_MAX_INIT_LTV_BPS_DEFAULT);
+            uint256 tierCeiling = t == 1
+                ? LibVaipakam.TIER1_LTV_CEIL_BPS
+                : (t == 2 ? LibVaipakam.TIER2_LTV_CEIL_BPS : LibVaipakam.TIER3_LTV_CEIL_BPS);
             uint256 refCount = t == 1 ? tier1.length : (t == 2 ? tier2.length : tier3.length);
             console.log(
                 string.concat(
@@ -250,7 +257,8 @@ contract SlippageCensusPreDeploy is Script {
                     _uintStr(refCount), ",",
                     _uintStr(uint256(cachedLtvBps)), ",",
                     _uintStr(uint256(effectiveLtvBps)), ",",
-                    _uintStr(uint256(libraryDefault))
+                    _uintStr(tierDefault), ",",
+                    _uintStr(tierCeiling)
                 )
             );
         }
