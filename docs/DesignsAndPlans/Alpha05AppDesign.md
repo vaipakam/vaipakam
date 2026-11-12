@@ -2045,6 +2045,73 @@ above. Each resolves here, so a route reviewer needs no private file:
   vault totals, which expired and same-block rentals move) and the
   renter's claim (inside the range the review stated).
 
+- **RB-REWARDS-PROGRAMME** — The Rewards page opens with whether the
+  reward programme runs on the wallet's network (RW-43) and the network's
+  reward role (RW-44), read from the Diamond at one block: the launch time,
+  the resolved role (`getRewardRole`, never inferred from the reporter's
+  two raw fields) with the retirement record, the reporter's home network,
+  custody activation, the claim horizon and the VPFI a claim may draw now
+  (`getRewardReservations`: delivered and recycled, each net of what
+  staging records reserved; the delivered figure is the lowest of every
+  programme-wide limit a claim checks before it pays fresh VPFI: the fresh
+  VPFI held, the delivered allowance it charges (`getDeliveredFreshBound`)
+  and the pool's available headroom (`poolAvailable`), so VPFI held beyond
+  any of them is never counted as payable, and the card says how much is
+  held beside it). These are standing funds only: a mirror's claim can also
+  draw on VPFI its home network sent with a particular day's rewards
+  (transport epochs), which is held per day and has no programme-wide
+  figure, so on a mirror the card says so beside the figure and an empty
+  standing figure never reads as nothing to pay; the wallet's own claim
+  figure (the claim run in a reverting frame) is what shows what a claim
+  pays now. A mirror whose home network cannot be read keeps its
+  role and states the missing reading. Every amount is formatted in the VPFI
+  token read in the same snapshot. Basic shows one sentence: running only when the
+  launch has passed by the read block's own clock, the role pays here and
+  something is held to pay; a network with no reward role set says that no
+  reward day there can be finalised or claimed yet, whatever else reads
+  (`finalizeDay` needs the canonical flag); otherwise running with
+  nothing held (a home network), running on a
+  mirror with no standing VPFI while VPFI sent for a day can still pay, no start date, a stated start, or left the reward network
+  (detached: nothing new becomes claimable). A deciding fact that is unread
+  makes the sentence unknown, never running, never zero. A global pause is
+  stated by name with what stays open (RB-SWITCH class 2), and an unread
+  pause is stated too. Advanced lists every fact; a fact the contracts do
+  not route says so rather than "could not be read". Whether the daily
+  close runs is not read (the keeper posture, RW-78, is blocked) and the
+  card says so instead of implying it. Rewards are rebates on the wallet's
+  own use, never yield (RL-6).
+
+- **RB-REWARDS-WAIT** — A reward claim that cannot run now says why, by
+  name (RW-28). The reason is the claim's own preview refusal; what a
+  waiting day waits on is read at the preview's own block, so both describe
+  one chain state. A day waiting for its global figures (the known-global
+  flag the claim checks, never a zero total) states, on a home network,
+  the finalisation's own readiness answer
+  (`isDayReadyToFinalize`: no listed report, reports within their grace
+  time, an unusable expected-source list, or ready to run), on a mirror
+  whether the home network's figures arrived (`getBroadcastV2Applied`), and
+  on a detached network that nothing new becomes claimable there, and on a
+  network with no reward role set that no day can be finalised there until
+  one is set (in both, no step anyone may run clears it, so none is
+  offered). A
+  day waiting for funding states whether the home network priced it here,
+  whether this network's report was sent, and the parts landed, the new and
+  the recycled VPFI each against its own declared whole, since the day opens
+  only once both are whole and an excess in one never covers the other
+  (`getDayDeliveryState`, `getDayDeliveryParts`). The report
+  is named only for an armed day (from `getGovernorCommitState`'s arming
+  day on): an unarmed day is funded without it and its report cannot be
+  sent, and an unread arming day is stated as unread; a day whose
+  parts declared different wholes is disclosed as one that cannot be
+  repaired and can be closed unpaid after a waiting period. Every waiting reason ends with: later days
+  wait behind it, no step of the wallet's own clears it, and anyone may run
+  the step that does. A funding refusal is named with the protocol's own
+  figures: the pool of new VPFI paid out with no recycled part in the claim
+  (it does not lift; recycled VPFI still pays later rewards), pool or
+  recycled VPFI reserved for pending settlements (needed against free), or
+  the fresh backing short (needed against available). The global pause is named with what stays
+  open (RB-SWITCH class 2), as the claim's own refusal measured it. Any
+  fact that does not answer is stated as unread, never guessed.
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
   RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
   its VPFI in its own vault and the fee-discount consent. On a network with
@@ -2101,6 +2168,58 @@ above. Each resolves here, so a route reviewer needs no private file:
   the loan initiation fee and the fee on interest with that discount,
   computed exactly from the live settings read at one block. Copy follows
   RL-6.
+- **RB-REWARDS-ELSEWHERE** — The wallet's tier on the protocol's other
+  networks (RW-11, RW-13, RW-14), from the protocol's own status
+  (`getTierPushStatus`, #1277) read at one block with the tier applied now
+  and the messenger's fee quote for each owed network. Since #1277 the
+  protocol pays for a message only when it lowers what another network
+  grants; a raise, a first discount or a new tier table goes out only with
+  a paid send. So this section is shown in Basic as well, a departure from
+  the matrix's Advanced mode (the matrix rows predate #1277): a user whose
+  tier rose must act, or their other networks keep the older copy. On VPFI's
+  home network it states the tier recorded for sending, says when it differs
+  from the tier applied now (the recorded figure capped at 50% before
+  comparing), and offers the update (`pokeMyTier`, gas only) only where
+  this Diamond routes it; the tier table's version has no reader, so the
+  update stays offered when the two match and the copy says a version
+  change cannot be seen here. The update and the send are gated on their
+  own routes: where the update is not routed and the record differs, the
+  section says only a VPFI deposit or withdrawal records the tier now and
+  that a send waits until the record matches. It lists
+  each network the protocol sends to with what this network last sent it
+  (whether it arrived and applies there is read on that network, and the
+  section says so; a copy there lapses at the end carried in the message
+  or earlier at that network's own maximum age, 60 days unless it set
+  another) and whether it is current, owed a lower tier the
+  protocol sends at its own cost, or owed one that goes only with a paid
+  send. A lane counts as sent only from its send time: one settled without
+  a message (its record grants no discount, so its record number moves and
+  nothing goes) is shown as nothing sent and nothing owed, never as a sent
+  tier 0. Every discount shown is capped at 50%, as the fee path applies it.
+  A review whose record moved, or that has nothing left to send, is closed
+  to signing rather than refreshed in place. The paid send
+  (`deliverTierPush`) is offered only once the record matches the tier now
+  and every owed network's fee is quoted; its value is the sum of every owed
+  network's quote plus 20%, because the protocol spends the value on owed
+  networks in its own order, and the receipt states that each fee pays one
+  message, is not refunded once sent, and that the unspent value comes back
+  in the same transaction. Because the networks share one value, a fee
+  that rises after review is met from the margin first by earlier
+  networks, so a later one can stay owed; the copy says so rather than
+  promising every network goes. The send is re-read and dry-run first; the
+  outcome is measured per network from the status at the receipt's block,
+  and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
+  value funded; a network counts as sent only from such an event, and one
+  whose record number moved without one is reported as settled with
+  nothing sent. The status lists no network alike when no messenger is
+  set, when the messenger's list refuses and when it is empty, so the
+  section reads the messenger and its list directly and says which; a list
+  that could not be read is stated as unknown, never as no network. With
+  no network listed, nothing is recorded or sent, so no action is offered. A
+  home network whose Diamond does not route the status says the section
+  cannot read or send the tier there, rather than hiding it, since the
+  vault card points to it. Away from the home network the
+  section says a higher tier is sent from there. Copy follows RL-6.
 - **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
   The deposit review offers "Sign instead of approve" only when the asset
   is this network's VPFI, Permit2 has code at its canonical address, and the

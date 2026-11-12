@@ -1059,6 +1059,8 @@ discount is ever more than half the fee. On a loan you lend, it is never more th
 
 Rewards are usage rebates for your lending and borrowing on this network, counted per reward day and paid in VPFI. Home shows exactly what a claim made now would pay, because the app runs the claim as a preview first. If that preview cannot run, Home shows a lower bound instead, labelled as such, and does not offer the claim until the exact figure can be worked out. One claim pays up to 30 reward days; when more remain, Home offers to claim again, and stopping partway is safe. A claim is delivered to your vault, ready to use, or to your wallet when the vault cannot take it; a claim never opens a vault. When a reward day is still waiting to be finalised across networks, or for its funding to reach this network, Home names that day instead of offering a claim that would fail. Rewards are not interest or yield, and claiming never stakes or reinvests anything. Now and then a claim pays nothing but still moves past reward days that paid you nothing, so the days after them can be paid; Home says so and still offers it.
 
+When a claim waits on a reward day, Home also says what that day waits on: reports from other networks before it can be finalised, the home network's figures reaching this network, or the day's funding, with how much of it has landed. Later days wait behind it, and no step of yours clears the wait; anyone may run the step that does. On a network with no reward role set, or one that has left the reward network, no step anyone can run clears the wait, and Home says so. A day whose funding arrived in parts stating different totals can be closed unpaid after a waiting period. When the VPFI that pays a claim is not held here now, or is reserved for pending settlements, Home says so with the figures; once the programme's pool of new VPFI is paid out in full, rewards are paid only from recycled VPFI. While the protocol is paused, Home names the pause and says that full and partial repayment and adding collateral stay open.
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: Reward Removal Dates
@@ -1515,6 +1517,12 @@ A running rental's page offers you, as the renter, Close the rental. Closing pay
 
 Closing ends your right to use the NFT at once, even if agreed days are left, and cannot be undone. Rent is counted when the close lands, so a day that begins before then is paid as a whole day; with full-term rent every agreed day not yet settled is paid, however early you close. After the term ends a late fee is taken from your buffer: 1% of the whole rent plus 0.5% for each day late, at most 5%, and never more than the buffer. After the grace period the protocol refuses a close; the rental then ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first. The later moment the review shows is not a deadline or a limit: a close that lands later is counted then, so more rent or a higher late fee can be taken and less comes back to you. What comes back stays in your own vault as a claim until you collect it.
 
+<a id="rewards-programme"></a>
+
+### Rewards: Is the Programme Running Here?
+
+At the top of the Rewards page, one sentence says whether the reward programme runs on your network: running with VPFI held to pay rewards, running with nothing held to pay them right now, without a start date, starting at a stated time, or left the reward network, so nothing new becomes claimable there. With no reward role set on the network, it says that no reward day there can be finalised or claimed yet. A claim pays only from VPFI already held for rewards on that network. On a network funded from VPFI's home network, VPFI sent for a particular day can also pay that day's rewards; the sentence does not count it, so there it never says that nothing can pay. If a fact behind the sentence cannot be read, the page says so and never shows the programme as running. While the protocol is paused, the page says so: reward claims and withdrawals stop, while full and partial repayment and adding collateral stay open. Rewards are a rebate on your own use of the protocol, never a return on holding VPFI.
+
 <a id="rewards-vpfi"></a>
 
 ### Rewards: VPFI in Your Vault
@@ -1532,6 +1540,12 @@ Your tier is not your balance today. It is zero until your current holding has l
 ### Rewards: Your Fee-Discount Tier
 
 Below your VPFI, the page shows the fee-discount tier the protocol applies to your fees now, read from the protocol itself, and how much it takes off them. While your fee-discount consent is off, no tier applies. A new holding counts fully only with time, so the page says when the holding rules keep your tier below what your counted VPFI alone would give. On VPFI's home network a table shows every tier: the counted VPFI it needs, its discount, and the loan initiation fee and the fee on interest earned with that discount, worked out from the network's live settings. Each tier starts at its figure, except the top one, which starts just above it. No discount is ever more than half a fee. On other networks the page shows the tier sent from the home network, and the table is not shown. The page names the holding rule that keeps your tier down, and while your consent is off it says which tier would apply with it on.
+
+<a id="rewards-tier-elsewhere"></a>
+
+### Rewards: Your Tier on Other Networks
+
+Your fee-discount tier is worked out on VPFI's home network, and every other network the protocol serves keeps a copy sent from there. On the home network, the Rewards page shows the tier recorded for sending and, for each other network, what this network last sent it and whether more is owed. The protocol sends a lower tier at its own cost, so a discount never outlives your VPFI. A higher tier, a first discount, or a tier under a new tier table goes only when someone pays its message fee; until then the other network keeps what it last received, and a copy under an older tier table counts there as no discount. When your tier has grown since it was last recorded, the page says so and offers Update your record, which costs only network gas. Send to other networks then pays the fee for every network still owed your tier, shown before you sign, plus a small margin; what the messages do not use comes back in the same transaction. Away from the home network, the page says a higher tier is sent from there. Advanced also shows each record's number, its tier table version and when it lapses. Whether a copy has arrived and applies on another network is read on that network, not here. Each other network also stops counting a copy once it is older than its own maximum age (60 days unless that network set another), which can end it before the end the message carries.
 
 <a id="rewards-vpfi-sign"></a>
 

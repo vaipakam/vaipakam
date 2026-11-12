@@ -89,7 +89,7 @@ describe('the Claim everything list', () => {
     const exact = claimAllList(inputs({ rewards: { kind: 'exact', amount: 5n, fromDay: 1n, toDay: 2n, atBlock: 10n }, held: { held: 3n, decision: 'deliver' } }), copy, 1);
     expect(keys(exact.legs)).toEqual(['loan:lender:7', 'rewards']);
     expect(exact.legs[1]!.route).toBe('reward-vault');
-    const held = claimAllList(inputs({ rewards: { kind: 'waiting', day: 3n, why: 'global' }, held: { held: 3n, decision: 'deliver' } }), copy, 1);
+    const held = claimAllList(inputs({ rewards: { kind: 'waiting', day: 3n, why: 'global', atBlock: 1n }, held: { held: 3n, decision: 'deliver' } }), copy, 1);
     expect(keys(held.legs)).toEqual(['loan:lender:7', 'held']);
     // A flag still under observation: the held reward is not released.
     expect(keys(claimAllList(inputs({ held: { held: 3n, decision: 'hold' } }), copy, 1).legs)).toEqual(['loan:lender:7']);

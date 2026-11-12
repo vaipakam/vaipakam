@@ -1,4 +1,4 @@
-## Cross-chain tier pushes — the protocol budget pays only for a lowered tier (PR #<n>)
+## Cross-chain tier pushes — the protocol budget pays only for a lowered tier (PR #3580)
 
 Base sends each user's VPFI discount tier to every other chain, and the
 protocol's broadcast budget paid for those messages. It paid a lowered tier

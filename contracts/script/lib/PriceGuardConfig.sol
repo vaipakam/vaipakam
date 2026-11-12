@@ -121,7 +121,9 @@ library PriceGuardConfig {
         if (kind == PriceGuard.Kind.StableRef) return _w(guard.stableRefFeed(subject));
         if (kind == PriceGuard.Kind.AssetDirectFeed) return _w(guard.assetDirectFeed(address(uint160(uint256(subject)))));
         if (kind == PriceGuard.Kind.SecondaryEnabled) {
-            return guard.secondaryDisabled(PriceGuard.Source(uint8(uint256(subject)))) ? bytes32(0) : bytes32(uint256(1));
+            return guard.secondaryState(PriceGuard.Source(uint8(uint256(subject)))) == PriceGuard.SecondaryState.Counted
+                ? bytes32(uint256(1))
+                : bytes32(0);
         }
         return bytes32(uint256(guard.delay()));
     }

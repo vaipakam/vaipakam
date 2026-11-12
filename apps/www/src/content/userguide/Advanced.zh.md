@@ -1774,6 +1774,8 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 标题数字是 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`，它以 Vault 交付目标执行领取并始终 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带确切数字，其他任何 revert 都是领取本身的拒绝 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)，按名称显示。只有在任何来源都无法运行预览时，Home 才读取下限 `previewInteractionRewards`，并暂不提供领取。确切数字为零时仍会提供领取：协议只在领取越过未支付任何金额的奖励日时才允许一次不支付任何金额的领取，Home 会说明这一点。Home 通过 `claimInteractionRewardsTo(2)` 领取，每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；在已完成领取的区块或之后读取的预览若仍给出金额，Home 就提供剩余部分。仅从奖励条目支付的领取不标明日期范围（0 到 0），Home 会说明这一点而不显示日期。Vault 交付目标会传给每个账户，包括合约钱包，因为 Default 目标会把合约调用者的款项付到其钱包：款项记入金库，记入无法完成时（尚无金库）退回钱包。结果从回执读取：`InteractionRewardsClaimed` 给出支付金额，同一交易中发往钱包和 `getUserVaultAddress(user)` 的 VPFI `Transfer` 日志给出款项到达何处；两者合计与支付金额不符时，目的地标为未知。累计领取额不显示：目前还没有对应的按用户索引路由。
 
+等待中的日期为何等待，是在预览所用的区块上读取的。在主网络上，`RewardAggregatorFacet.isDayReadyToFinalize(day)` 给出最终确定尚不能运行的原因（没有已列出的报告、报告仍在宽限时间内、预期来源列表不可用），或说明现在可以运行。在镜像网络上，`RewardReporterFacet.getBroadcastV2Applied(day)` 说明主网络的数据是否已到达；对于交付等待，`RewardRemittanceLensFacet.getDayDeliveryState(day)` 和 `getDayDeliveryParts(day)`（启用日由 `getGovernorCommitState()` 给出：只有从该日起的日期才等待本网络的报告） 给出该日是否已在此定价、本网络的报告是否已发送，以及相对于声明总额已到达的部分；各部分声明总额不同的日期会被披露为可能不予支付而跳过。领取的资金类拒绝会附上协议的数字说明：`InteractionPoolExhausted`（新 VPFI 奖励池已付完且该领取没有回收部分，不会解除）、`InteractionPoolReservedShortfall` 和 `RecycleBucketReservedShortfall`（已为待处理结算预留），以及 `InteractionRewardBackingShort`（所需与可用）。`EnforcedPause` 会附上仍然可用的操作。在未设置奖励角色的网络上，`finalizeDay` 无法运行（它需要规范标志），因此卡片会说明在设置角色之前任何日期都无法最终确定，并且不提供任何步骤。已到达的新 VPFI 和回收 VPFI 会分别对照各自声明的总额显示，因为只有两者都完整时该日才会开放。
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: 奖励移除日期
@@ -2226,6 +2228,14 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 结束会立即终止你使用该 NFT 的权利，即使还有约定天数，而且无法撤销。租金按结束上链的时刻计算，所以在此之前开始的一天按整天支付；按全期计租时，无论多早结束，所有尚未结算的约定天数都要支付。租期结束后会从你的缓冲金中扣除逾期费：全部租金的 1%，每逾期一天再加 0.5%，最多 5%，且绝不超过缓冲金。超过宽限期后，协议会拒绝结束；此后租用要么在剩余天数逐日结算完时结束（任何人都可以结算），要么以违约告终，以先发生者为准。审核显示的稍后时刻既不是截止时间也不是上限：较晚上链的结束按那时计算，因此可能扣除更多租金或更高的逾期费，退还给你的会更少。退还的金额作为待领款项留在你自己的金库中，直到你领取。
 
+<a id="rewards-programme"></a>
+
+### 奖励：本网络上的奖励计划是否在运行？
+
+奖励页面顶部的一句话说明奖励计划是否在你的网络上运行：正在运行且持有用于支付奖励的 VPFI；正在运行但目前没有可用于支付的资金；没有开始日期；将在指定时间开始；或者该网络已退出奖励网络，因此那里不会再有新的可领取奖励。领取只从该网络上已为奖励持有的 VPFI 中支付。在由 VPFI 主网络提供资金的网络上，为某一天发送的 VPFI 也可以支付当天的奖励；这句话不计入这部分，因此在那里它绝不会说没有任何资金可以支付。如果这句话所依据的某项信息无法读取，页面会说明，并且绝不会把计划显示为正在运行。当协议暂停时，页面也会说明：奖励领取和提取停止，而全额和部分还款以及追加抵押品仍然可用。奖励是对你自己使用协议的返利，绝不是持有 VPFI 的收益。
+
+高级模式列出这句话所依据的信息：本网络的奖励角色（VPFI 的主网络，负责计算并资助奖励；向主网络报告并由那里资助的网络；未设置角色，因此在设置之前任何奖励日都无法最终确定；或已脱离），以及对于已永久退役的网络，其剩余奖励 VPFI 的去向和已发送的数量；计划的开始时间；领取现在可以动用的、为奖励交付的 VPFI 和从费用中回收的 VPFI，各自扣除待处理结算已预留的部分；奖励 VPFI 是存放在单独的托管合约中还是协议自身的余额中；以及未领取的奖励是否可能被移除、在多长时间之后。本网络合约不提供的信息会如实注明。页面不读取使某一天的奖励可领取的每日结算是否正在运行；任何人都可以运行它，而你的领取金额显示现在领取会支付多少。超出为奖励交付的数量、或超出计划剩余奖励池而持有的 VPFI，会显示在可支付金额旁边，不计为可支付，因为领取只在这两个限额之内支付。
+
 <a id="rewards-vpfi"></a>
 
 ### 奖励：金库中的 VPFI
@@ -2243,6 +2253,12 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 奖励：手续费折扣等级
 
 卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。它还在同一区块读取 `explainTier` 和 `getTwaConfig`。无论是否同意，`explainTier` 都返回仅凭已计入 VPFI 得到的等级、每条持有规则的数值，以及把有效等级压在其下的规则；只有当该解释得出与手续费路径相同的等级时，卡片才会指出这条规则；同意关闭时，卡片会说明开启后将适用哪个等级。Advanced 列出每条规则的数值和 `getTwaConfig` 返回的设置，平均值的时间窗口与回看期作为两个不同的长度分别显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
+
+<a id="rewards-tier-elsewhere"></a>
+
+### 奖励：你在其他网络上的等级
+
+该部分在同一个区块读取 `getTierPushStatus(wallet)`（#1277）：最后提交待发送的推送（nonce、等级、bps、到期、表版本），以及每个广播目的地最后收到的元组、是否仍欠它已提交的推送、协议预算是否为其付费；只有当推送降低该通道授予的折扣时预算才付费。在同一区块，它读取 `getEffectiveDiscount`、来自 `getRewardReporterConfig` 的信使，以及对每个欠付通道，用已提交元组和区块时间调用信使的 `quoteSendTierUpdateTo`；报价回退时该费用保持未知，且不提供发送。当已提交等级或其按 50% 上限处理后的 bps 与实际生效值不同，记录即为落后；表版本没有读取接口，因此无论如何都提供更新。“更新你的记录”发送 `pokeMyTier()`，它重新计算并提交等级，并投递预算付费的通道。“发送到其他网络”发送 `deliverTierPush(wallet)`，附带每个欠付通道报价之和再加 20%，因为调用者的金额会按目的地顺序先支付欠付通道，包括预算付费的通道；只有在记录与当前等级一致且每个欠付通道都有报价时才提供，审核会重新读取二者并用该金额试运行调用。完成卡在收据所在区块读取每个通道已投递的 nonce，并累加带 `callerFunded` 的 `ProtocolTierBroadcastSent` 事件以说明实际支付；其余部分已在同一调用中退回。仍路由 `getTierPushSpacingSec()` 的 Diamond 早于该规则，其通道不会被读取。在不是 VPFI 主网络或没有信使的网络上，通道列表为空，此时不提供任何步骤。副本是否已到达并在其他网络上生效，要在那个网络上读取，而不是在这里。此外，每个其他网络在副本超过其自身最长有效期（除非该网络另行设置，否则为 60 天）后便不再计入，因此副本可能早于消息所带的截止时间结束。
 
 <a id="rewards-vpfi-sign"></a>
 

@@ -445,6 +445,10 @@
       "class": "user",
       "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
+    "PriceGuard.executeSecondaryRemoval(enum:PriceGuard.Source)": {
+      "class": "user",
+      "why": "the owner or the guardian applies a secondary-source removal it proposed once the fixed 48-hour wait has passed; a removal nobody executes leaves the source muted, still able to refuse a price"
+    },
     "ProtocolRegistry.executeAdd(bytes32,address)": {
       "class": "user",
       "why": "governance applies a change it proposed through the Timelock once the registry's own delay has passed; a change nobody executes leaves the current entry in place"
