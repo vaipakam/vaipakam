@@ -70,7 +70,17 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     ///         the current version, or a revoke. A constant, so no later
     ///         configuration (of this contract or of the Timelock) can shorten
     ///         the window in which owners see a change coming and pin.
-    uint256 public constant MIN_CODE_DELAY = 3 days;
+    /// @dev    RULE (owner decision 2026-11-09, #3421): this must always be
+    ///         LONGER than the longest payout delay a protected account may
+    ///         choose (`LibProtectedAccount.MAX_DELAY`, 5 days). New vault code
+    ///         can move a vault's assets, so a change that executed sooner than
+    ///         an owner's own delay would reach the vault before that delay
+    ///         could protect it; at 7 days every proposed change is visible for
+    ///         longer than any protected delay, so an owner who is alerted
+    ///         always has time to pin. If the protected-delay range ever grows,
+    ///         this constant must grow with it, which is a new beacon (this
+    ///         contract is not upgradeable). `VaultBeaconTest` pins the rule.
+    uint256 public constant MIN_CODE_DELAY = 7 days;
 
     /// @notice The highest pin delay the Diamond can set without the owner's
     ///         signature. Strictly below {MIN_CODE_DELAY}, so a pin requested

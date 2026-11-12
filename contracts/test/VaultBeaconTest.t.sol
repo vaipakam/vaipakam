@@ -188,6 +188,42 @@ contract VaultBeaconTest is Test {
         assertEq(beacon.currentVersionId(), 1);
     }
 
+    /// #3421 — the code delay is 7 days, longer than the longest payout
+    /// delay a protected account may choose, and the Diamond's pin-delay cap
+    /// stays below it. If either side moves, this fails before a deploy does.
+    function test_codeDelayOutlastsEveryProtectedPayoutDelay() public view {
+        assertEq(beacon.MIN_CODE_DELAY(), 7 days, "the code delay");
+        assertGt(beacon.MIN_CODE_DELAY(), uint256(LibProtectedAccount.MAX_DELAY),
+            "the code delay must exceed the longest protected payout delay");
+        assertLt(beacon.MAX_DIAMOND_PIN_DELAY(), beacon.MIN_CODE_DELAY(),
+            "a pin requested at proposal time must mature before the change");
+    }
+
+    /// #3421 — a current-version change and a revoke each wait the full 7
+    /// days: one second short is refused with the time it becomes due.
+    function test_changeAndRevokeWaitSevenDays() public {
+        uint256 proposedAt = vm.getBlockTimestamp();
+        beacon.proposeCurrentVersion(2);
+        (, , , uint64 at) = beacon.pendingProposal();
+        assertEq(uint256(at), proposedAt + 7 days, "a change is due 7 days after its proposal");
+        vm.warp(proposedAt + 7 days - 1);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.TooEarly.selector, uint256(at)));
+        beacon.executeCurrentVersion();
+        vm.warp(at);
+        beacon.executeCurrentVersion();
+        assertEq(beacon.currentVersionId(), 2);
+
+        uint256 revokeProposedAt = vm.getBlockTimestamp();
+        beacon.proposeRevoke(3, 0);
+        (, , , uint64 revokeAt) = beacon.pendingProposal();
+        assertEq(uint256(revokeAt), revokeProposedAt + 7 days, "a revoke is due 7 days after its proposal");
+        vm.warp(revokeProposedAt + 7 days - 1);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.TooEarly.selector, uint256(revokeAt)));
+        beacon.executeRevoke();
+        vm.warp(revokeAt);
+        beacon.executeRevoke();
+    }
+
     /// The guardian can cancel but never propose, register or execute early.
     function test_guardianCannotProposeOrRegister() public {
         address v4 = address(new VaultImplV2Marker());

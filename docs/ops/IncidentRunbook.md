@@ -2104,7 +2104,7 @@ The repository is public, every Diamond upgrade waits the Timelock's 48h delay
 (a permanent floor, see `GovernanceRunbook.md`), and new vault code reaches
 vaults only through a VaultBeacon proposal that waits the beacon's minimum
 code delay from the moment it is proposed (`VaultBeacon.MIN_CODE_DELAY`:
-3 days today, 7 days once #3421 lands). An ordinary fix PR, a queued
+7 days, #3421). An ordinary fix PR, a queued
 diamond-cut, a newly registered vault version or a beacon proposal
 therefore tells anyone watching what changed, days before the fix is live.
 There is no faster path, and none should be added: the delays are what

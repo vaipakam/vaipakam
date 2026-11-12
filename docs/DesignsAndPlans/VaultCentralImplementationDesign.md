@@ -82,8 +82,13 @@ versions. Three properties, decided with it (owner, 2026-11-06):
   in-place change, so nothing can replace the rules it enforces.
 - **It holds its own delay.** Setting the current version and revoking one are
   two steps, a proposal and then an execution no sooner than
-  `MIN_CODE_DELAY` (a constant, default 3 days, longer than the Timelock's
-  48h) after it. Each step emits an event. A later misconfiguration of the
+  `MIN_CODE_DELAY` (a constant, 7 days, longer than the Timelock's 48h)
+  after it. It was 3 days until #3421 (owner decision 2026-11-09): new
+  vault code can move a vault's assets, so the delay must always be longer
+  than the longest payout delay a protected account may choose (5 days).
+  Then every proposed change is visible for longer than any protected
+  delay, and an alerted owner always has time to pin. If the protected
+  range grows, this constant grows with it, on a new beacon. Each step emits an event. A later misconfiguration of the
   Timelock therefore cannot shorten the window in which owners can see a
   change coming and pin.
 - **The Pauser Safe can cancel a pending proposal**, and can never propose
@@ -326,7 +331,7 @@ Decided while building (owner, 2026-11-07, via the project thread):
   from the Diamond would let a faulty facet name itself. The beacon reads
   only `paused()` from the Diamond.
 - **The pin delay raised by the Diamond is capped** at
-  `MAX_DIAMOND_PIN_DELAY` (2 days), strictly below `MIN_CODE_DELAY` (3 days),
+  `MAX_DIAMOND_PIN_DELAY` (2 days), strictly below `MIN_CODE_DELAY` (7 days),
   so a pin requested as soon as a code change is proposed always executes
   before that change. Only the owner's own signature may raise it above the
   cap; lowering it needs the owner's signature and waits the current delay.
