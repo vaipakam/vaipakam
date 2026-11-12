@@ -318,6 +318,19 @@
   },
   {
     "type": "function",
+    "name": "SECONDARY_REMOVAL_DELAY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "SEQUENCER_GRACE_PERIOD",
     "inputs": [],
     "outputs": [
@@ -440,6 +453,19 @@
   },
   {
     "type": "function",
+    "name": "cancelSecondaryRemoval",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "countLiveSecondaryOracleFeeds",
     "inputs": [
       {
@@ -474,19 +500,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "disableSecondary",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -540,6 +553,19 @@
         "name": "subject",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "executeSecondaryRemoval",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
       }
     ],
     "outputs": [],
@@ -664,6 +690,19 @@
   },
   {
     "type": "function",
+    "name": "muteSecondary",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "owner",
     "inputs": [],
     "outputs": [
@@ -761,6 +800,19 @@
         "name": "value",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposeSecondaryRemoval",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
       }
     ],
     "outputs": [],
@@ -887,25 +939,6 @@
   },
   {
     "type": "function",
-    "name": "secondaryDisabled",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "secondaryMaxDeviationBps",
     "inputs": [],
     "outputs": [
@@ -932,6 +965,25 @@
   },
   {
     "type": "function",
+    "name": "secondaryRemovalAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "secondarySource",
     "inputs": [
       {
@@ -945,6 +997,25 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "secondaryState",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.SecondaryState"
       }
     ],
     "stateMutability": "view"
@@ -1252,7 +1323,7 @@
   },
   {
     "type": "event",
-    "name": "SecondaryDisabled",
+    "name": "SecondaryMuted",
     "inputs": [
       {
         "name": "source",
@@ -1265,6 +1336,63 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SecondaryRemovalCancelled",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "enum PriceGuard.Source"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SecondaryRemovalProposed",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "enum PriceGuard.Source"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "executableAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SecondaryRemoved",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "enum PriceGuard.Source"
       }
     ],
     "anonymous": false
@@ -1342,6 +1470,17 @@
     "type": "error",
     "name": "NoPriceFeed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoSecondaryRemovalPending",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1469,6 +1608,49 @@
     "type": "error",
     "name": "RenounceDisabled",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SecondaryAlreadyRemoved",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SecondaryRemovalNotReady",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      },
+      {
+        "name": "executableAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SecondaryRemovalPending",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "enum PriceGuard.Source"
+      },
+      {
+        "name": "executableAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

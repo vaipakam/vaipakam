@@ -58,9 +58,13 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *           the feed registry allows. Raising the delay applies at once;
  *           lowering it waits the current delay.
  *         - One fast lever: the owner or the guardian (the Pauser Safe) may
- *           disable a secondary source at once. That only stops a source
- *           counting: the quorum runs on fewer sources, and no price is
- *           introduced. Re-enabling it waits the delay.
+ *           MUTE a secondary source at once (#3537). A muted source no
+ *           longer approves a price, but it still refuses one it contradicts,
+ *           so muting can only refuse more prices, never accept one the
+ *           quorum refused. Removing a source's refusals too loosens the
+ *           quorum, so it waits {SECONDARY_REMOVAL_DELAY} after it is
+ *           proposed, visibly, and the owner or the guardian may cancel it.
+ *           Re-enabling a muted or removed source waits the delay.
  *         - Every write emits an event naming exactly what it changed.
  */
 contract PriceGuard is Ownable2Step, IPriceGuard {
@@ -74,6 +78,13 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     ///         reads sooner than a vault code change could.
     uint64 public constant MIN_DELAY = 7 days;
     uint64 public constant MAX_DELAY = 14 days;
+
+    /// @notice How long a proposed secondary removal waits (#3537). Fixed and
+    ///         the same on every chain: removing a source's refusals is the
+    ///         step that loosens the quorum, and 48 hours matches the
+    ///         Timelock's unpause, so a wrong source can hold an asset's
+    ///         pricing refused for at most that long.
+    uint64 public constant SECONDARY_REMOVAL_DELAY = 48 hours;
 
     /// @notice A volatile feed's answer must be at most this old.
     uint256 public constant VOLATILE_STALENESS = 2 hours;
@@ -175,6 +186,16 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         Disagree
     }
 
+    /// @notice How a secondary source takes part in the quorum (#3537).
+    ///         `Counted`: its agreement accepts a price and its disagreement
+    ///         refuses one. `Muted`: its agreement no longer counts, its
+    ///         disagreement still refuses. `Removed`: it is not asked.
+    enum SecondaryState {
+        Counted,
+        Muted,
+        Removed
+    }
+
     // ─── Immutable identity ──────────────────────────────────────────────
 
     address public immutable NUMERAIRE_DENOMINATOR;
@@ -212,8 +233,10 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     uint40 public secondaryMaxStaleness;
     /// @notice The source contract per {Source}.
     mapping(Source => address) public secondarySource;
-    /// @notice Whether the owner or the guardian has stopped a source counting.
-    mapping(Source => bool) public secondaryDisabled;
+    /// @notice How each source takes part in the quorum (#3537).
+    mapping(Source => SecondaryState) public secondaryState;
+    /// @notice When a proposed removal of the source may execute; 0 = none.
+    mapping(Source => uint64) public secondaryRemovalAt;
     mapping(address feed => uint40) public feedMaxStaleness;
     mapping(address feed => int256) public feedMinAnswer;
     mapping(address asset => address) public assetDirectFeed;
@@ -229,7 +252,10 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     event ConfigSet(Kind indexed kind, bytes32 indexed subject, bytes32 value);
     event ChangeProposed(Kind indexed kind, bytes32 indexed subject, bytes32 value, uint256 executableAt);
     event ChangeCancelled(Kind indexed kind, bytes32 indexed subject, address indexed by);
-    event SecondaryDisabled(Source indexed source, address indexed by);
+    event SecondaryMuted(Source indexed source, address indexed by);
+    event SecondaryRemovalProposed(Source indexed source, address indexed by, uint256 executableAt);
+    event SecondaryRemovalCancelled(Source indexed source, address indexed by);
+    event SecondaryRemoved(Source indexed source);
     event DelaySet(uint256 oldDelay, uint256 newDelay);
     event GuardianSet(address indexed previous, address indexed next);
 
@@ -246,6 +272,10 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     error NotAContract(Kind kind, address value);
     error TooManyStableRefs(uint256 max);
     error InvalidNumeraireSymbol(bytes32 symbol);
+    error SecondaryAlreadyRemoved(Source source);
+    error SecondaryRemovalPending(Source source, uint256 executableAt);
+    error NoSecondaryRemovalPending(Source source);
+    error SecondaryRemovalNotReady(Source source, uint256 executableAt);
 
     // ─── Construction ────────────────────────────────────────────────────
 
@@ -345,8 +375,7 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         (uint256 primary, uint8 dec) = _primaryPrice(asset);
         bytes32 symbol = _secondarySymbol(asset);
         if (symbol == bytes32(0)) return (0, 0);
-        SecondaryStatus[3] memory statuses =
-            [_checkTellor(symbol, primary, dec), _checkApi3(symbol, primary, dec), _checkDia(symbol, primary, dec)];
+        SecondaryStatus[3] memory statuses = _secondaryStatuses(symbol, primary, dec);
         for (uint256 i; i < 3; ++i) {
             if (statuses[i] == SecondaryStatus.Agree) agreeing++;
             else if (statuses[i] == SecondaryStatus.Disagree) disagreeing++;
@@ -497,21 +526,66 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         emit ChangeCancelled(kind, subject, msg.sender);
     }
 
-    /// @notice Stop a secondary source counting toward the quorum, at once.
-    ///         Stop-only: the quorum falls back to fewer sources. It also
-    ///         cancels a pending re-enable of that source, even one already
-    ///         due, so a re-enable approved before this stop cannot undo it;
-    ///         the way back is a new proposal that waits the full delay.
-    function disableSecondary(Source source) external onlyOwnerOrGuardian {
+    /// @notice Mute a secondary source at once (#3537): its agreement stops
+    ///         counting, its disagreement still refuses. Stop-only: a muted
+    ///         source can only refuse more prices, never accept one the
+    ///         quorum refused. It also cancels a pending re-enable of that
+    ///         source, even one already due, so a re-enable approved before
+    ///         this stop cannot undo it; the way back is a new proposal that
+    ///         waits the full delay. Muting a removed source changes nothing.
+    function muteSecondary(Source source) external onlyOwnerOrGuardian {
+        _cancelReEnable(source);
+        if (secondaryState[source] != SecondaryState.Counted) return;
+        secondaryState[source] = SecondaryState.Muted;
+        emit SecondaryMuted(source, msg.sender);
+    }
+
+    /// @notice Propose removing a secondary source from the quorum (#3537).
+    ///         The source is muted at once; its refusals stop counting only
+    ///         when the removal executes, {SECONDARY_REMOVAL_DELAY} later.
+    ///         This is the lever for a source that is broken rather than
+    ///         wrong in the price's favour: while it waits, an asset that
+    ///         source contradicts stays refused.
+    function proposeSecondaryRemoval(Source source) external onlyOwnerOrGuardian {
+        if (secondaryState[source] == SecondaryState.Removed) revert SecondaryAlreadyRemoved(source);
+        uint64 pendingAt = secondaryRemovalAt[source];
+        if (pendingAt != 0) revert SecondaryRemovalPending(source, pendingAt);
+        _cancelReEnable(source);
+        if (secondaryState[source] == SecondaryState.Counted) {
+            secondaryState[source] = SecondaryState.Muted;
+            emit SecondaryMuted(source, msg.sender);
+        }
+        uint64 at = uint64(block.timestamp) + SECONDARY_REMOVAL_DELAY;
+        secondaryRemovalAt[source] = at;
+        emit SecondaryRemovalProposed(source, msg.sender, at);
+    }
+
+    /// @notice Cancel a proposed removal. The owner or the guardian; a cancel
+    ///         keeps the source's refusals and leaves it muted.
+    function cancelSecondaryRemoval(Source source) external onlyOwnerOrGuardian {
+        if (secondaryRemovalAt[source] == 0) revert NoSecondaryRemovalPending(source);
+        delete secondaryRemovalAt[source];
+        emit SecondaryRemovalCancelled(source, msg.sender);
+    }
+
+    /// @notice Execute a proposed removal once it has waited. Anyone may call.
+    function executeSecondaryRemoval(Source source) external {
+        uint64 at = secondaryRemovalAt[source];
+        if (at == 0) revert NoSecondaryRemovalPending(source);
+        if (block.timestamp < at) revert SecondaryRemovalNotReady(source, at);
+        delete secondaryRemovalAt[source];
+        secondaryState[source] = SecondaryState.Removed;
+        emit SecondaryRemoved(source);
+    }
+
+    /// @dev Drop a pending re-enable of `source`, even one already due.
+    function _cancelReEnable(Source source) private {
         bytes32 subject = bytes32(uint256(uint8(source)));
         bytes32 key = _id(Kind.SecondaryEnabled, subject);
         if (_pending[key].executableAt != 0) {
             delete _pending[key];
             emit ChangeCancelled(Kind.SecondaryEnabled, subject, msg.sender);
         }
-        if (secondaryDisabled[source]) return;
-        secondaryDisabled[source] = true;
-        emit SecondaryDisabled(source, msg.sender);
     }
 
     /// @notice Raise the delay at once: a longer wait only tightens. Changes
@@ -660,9 +734,20 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         else if (kind == Kind.FeedMaxStaleness) feedMaxStaleness[_addr(subject)] = uint40(uint256(value));
         else if (kind == Kind.FeedMinAnswer) feedMinAnswer[_addr(subject)] = int256(uint256(value));
         else if (kind == Kind.AssetDirectFeed) assetDirectFeed[_addr(subject)] = a;
-        else if (kind == Kind.SecondaryEnabled) secondaryDisabled[Source(uint8(uint256(subject)))] = false;
+        else if (kind == Kind.SecondaryEnabled) _reEnable(Source(uint8(uint256(subject))));
         else if (kind == Kind.StableRef) _setStableRef(subject, a);
         emit ConfigSet(kind, subject, value);
+    }
+
+    /// @dev A re-enable counts the source again and drops any removal still
+    ///      waiting, which the re-enable outranks: both were the owner's or
+    ///      the guardian's call, and this one waited the longer delay.
+    function _reEnable(Source source) private {
+        secondaryState[source] = SecondaryState.Counted;
+        if (secondaryRemovalAt[source] != 0) {
+            delete secondaryRemovalAt[source];
+            emit SecondaryRemovalCancelled(source, msg.sender);
+        }
     }
 
     function _setStableRef(bytes32 symbol, address feed) private {
@@ -903,24 +988,42 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     // ─── Secondary quorum (soft 2-of-N) ──────────────────────────────────
 
     /// @dev Every secondary unavailable: accept the primary alone. Any one
-    ///      agreeing: accept. Some disagreeing and none agreeing: revert
-    ///      {OraclePriceDivergence}.
+    ///      counted source agreeing: accept. Some disagreeing and none
+    ///      agreeing: revert {OraclePriceDivergence}.
     function _enforceSecondaryQuorum(address asset, uint256 primary, uint8 dec) private view {
         bytes32 symbol = _secondarySymbol(asset);
         if (symbol == bytes32(0)) return;
-        SecondaryStatus t = _checkTellor(symbol, primary, dec);
-        SecondaryStatus a = _checkApi3(symbol, primary, dec);
-        SecondaryStatus d = _checkDia(symbol, primary, dec);
-        if (t == SecondaryStatus.Agree || a == SecondaryStatus.Agree || d == SecondaryStatus.Agree) return;
-        if (t == SecondaryStatus.Disagree || a == SecondaryStatus.Disagree || d == SecondaryStatus.Disagree) {
+        SecondaryStatus[3] memory st = _secondaryStatuses(symbol, primary, dec);
+        if (st[0] == SecondaryStatus.Agree || st[1] == SecondaryStatus.Agree || st[2] == SecondaryStatus.Agree) return;
+        if (st[0] == SecondaryStatus.Disagree || st[1] == SecondaryStatus.Disagree || st[2] == SecondaryStatus.Disagree) {
             revert OraclePriceDivergence();
         }
     }
 
+    /// @dev The one reading of every source as the quorum counts it, in
+    ///      {Source} order: a removed source is not asked, and a muted
+    ///      source's agreement reads as no data while its disagreement stands.
+    function _secondaryStatuses(bytes32 symbol, uint256 primary, uint8 dec)
+        private
+        view
+        returns (SecondaryStatus[3] memory st)
+    {
+        st[0] = _asCounted(Source.Tellor, _checkTellor(symbol, primary, dec));
+        st[1] = _asCounted(Source.Api3, _checkApi3(symbol, primary, dec));
+        st[2] = _asCounted(Source.Dia, _checkDia(symbol, primary, dec));
+    }
+
+    function _asCounted(Source source, SecondaryStatus status) private view returns (SecondaryStatus) {
+        if (status == SecondaryStatus.Agree && secondaryState[source] == SecondaryState.Muted) {
+            return SecondaryStatus.Unavailable;
+        }
+        return status;
+    }
+
     /// @dev The source contract a probe may ask, or zero when it is unset or
-    ///      disabled.
+    ///      removed.
     function _liveSource(Source source) private view returns (address) {
-        if (secondaryDisabled[source]) return address(0);
+        if (secondaryState[source] == SecondaryState.Removed) return address(0);
         return secondarySource[source];
     }
 
