@@ -307,7 +307,8 @@ library LibProtectedAccount {
     function isAllowed(address account, address recipient) internal view returns (bool) {
         Core memory c = core(account);
         if (recipient == c.manager) return true;
-        if (c.vault == address(0)) return false;
+        // A replaced account pays only its manager (Codex #3489 r6).
+        if (c.vault == address(0) || c.retired) return false;
         return IVaultProtectionRead(c.vault).allowEntry(recipient).active;
     }
 

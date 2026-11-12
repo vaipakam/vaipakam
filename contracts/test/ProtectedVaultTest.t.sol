@@ -755,7 +755,10 @@ contract ProtectedVaultTest is Test {
         uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 4 ether, nominee);
         _expectProtectRevert(
             nominee,
-            abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(nominee))),
+            // A loosening change (here a signer addition) waits the new
+            // owner's cool-down. (A replaced account takes no payout
+            // destination at all: testAReplacedAccountTakesNoPayoutDestination.)
+            abi.encodeCall(VaultProtection.signerChange, (uint8(1), s3, P.direct(nominee))),
             abi.encodeWithSelector(VaultProtection.InCooldown.selector, uint64(block.timestamp + DELAY))
         );
         vm.warp(block.timestamp + DELAY);
@@ -1472,6 +1475,44 @@ contract ProtectedVaultTest is Test {
         assertFalse(on, "reported as it binds");
         _pay().releasePayout(toUser);
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
+    }
+
+    /// @dev Codex #3489 r6 — a replaced account pays only its manager: the
+    ///      new wallet cannot add a payout destination, not even the original
+    ///      wallet, and the readers admit no destination but the manager.
+    function testAReplacedAccountTakesNoPayoutDestination() public {
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (user, P.direct(nominee))));
+        vm.prank(nominee);
+        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(nominee))));
+    }
+
+    /// @dev Codex #3489 r6 — a signer may withdraw its own nomination but
+    ///      never cancel its own removal; the owner or another signer may.
+    function testASignerCannotCancelItsOwnRemoval() public {
+        _enable();
+        _addSigner(s1);
+        _addSigner(s2);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(s1);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.CannotCancelOwnRemoval.selector, s1));
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s1))));
+        assertGt(v.signerEntry(s1).removeAt, 0, "still being removed");
+        P.call(address(diamond), user, s2, abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s2))));
+        assertEq(v.signerEntry(s1).removeAt, 0, "another signer may cancel it");
+        // A nominee still withdraws its own pending nomination.
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s3, P.direct(user))));
+        P.call(address(diamond), user, s3, abi.encodeCall(VaultProtection.signerChange, (uint8(4), s3, P.direct(s3))));
+        assertEq(v.signerEntry(s3).addAt, 0, "nomination withdrawn");
     }
 
     /// @dev Codex #3489 r4 — a replacement may not name the account's own

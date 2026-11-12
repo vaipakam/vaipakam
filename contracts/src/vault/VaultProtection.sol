@@ -187,6 +187,7 @@ contract VaultProtection {
     error PendingRowsExist();
     /// @dev Codex #3489 r5 — a replaced account's protection is permanent.
     error RetiredAccount();
+    error CannotCancelOwnRemoval(address signer);
 
     constructor() {
         SELF = address(this);
@@ -316,6 +317,9 @@ contract VaultProtection {
     ///         finalized after the delay, within one further delay.
     function addAllowlisted(address destination, Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
+        // Codex #3489 r6 — a replaced account pays only its manager: it takes
+        // no payout destination at all (its list was cleared at replacement).
+        if (l.retired) revert RetiredAccount();
         _loosenable(l);
         address owner = _asOwner(auth, PURPOSE_ALLOWLIST_ADD, keccak256(abi.encode(ALLOWLIST_ADD_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_ADD), auth.expiry)));
         P.Entry storage e = l.allow[destination];
@@ -425,9 +429,15 @@ contract VaultProtection {
             emit SignerRemoveRequested(who, sg.removeAt, auth.key);
         } else if (action == SIGNER_CANCEL) {
             // The nominee may withdraw its own pending nomination; anyone else
-            // must be the owner or an active signer.
-            if (auth.key == who && sg.addAt != 0) _authorize(auth, PURPOSE_SIGNER_CHANGE, h);
-            else _asOwnerOrSigner(auth, PURPOSE_SIGNER_CHANGE, h);
+            // must be the owner or an active signer. A signer may never cancel
+            // its OWN removal (Codex #3489 r6): that would let the signer being
+            // revoked veto the owner's decision.
+            if (auth.key == who) {
+                if (sg.addAt == 0) revert CannotCancelOwnRemoval(who);
+                _authorize(auth, PURPOSE_SIGNER_CHANGE, h);
+            } else {
+                _asOwnerOrSigner(auth, PURPOSE_SIGNER_CHANGE, h);
+            }
             if ((sg.addAt == 0 && sg.removeAt == 0) || sg.epoch != l.epoch) revert NotRequested();
             if (sg.addAt != 0) _remove(l.pendingSigners[l.epoch], who);
             sg.addAt = 0;

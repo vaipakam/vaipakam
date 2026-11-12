@@ -741,7 +741,8 @@ contract VaipakamVaultImplementation is
         // protected record, finalized after its delay, while not locked.
         if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
             LibVaultProtectionStorage.Layout storage pl = LibVaultProtectionStorage.layout();
-            if (!pl.enabled || pl.locked) return false;
+            // A replaced account pays only its manager (Codex #3489 r6).
+            if (!pl.enabled || pl.locked || pl.retired) return false;
             if (pl.allow[o.to].active) return true;
             // Codex #3489 r1 — a destination that has protected mode on is
             // paid into ITS vault (the outflow policy redirects it there): the
