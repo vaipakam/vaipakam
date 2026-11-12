@@ -221,7 +221,11 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   const venue = bWidget.getByTestId('claim-interaction-venue');
   await expect(venue).toContainText('Deliver this claim to');
   await expect(venue.getByTestId('claim-interaction-venue-vault')).toBeChecked();
-  await expect(venue).toContainText('Your vault: not locked, you can withdraw any time, and it counts toward your tier.');
+  await expect(venue).toContainText('Your vault: not locked; you can withdraw it any time.');
+  // The fixture is VPFI's home network, so vault VPFI sets the tier here.
+  await expect(venue.getByTestId('claim-interaction-venue-tier')).toHaveText(
+    'On this network VPFI in your vault counts toward your fee-discount tier; VPFI in your wallet does not.',
+  );
   await venue.getByTestId('claim-interaction-venue-wallet').check();
   const bVault = async () => (await sc.read<readonly [number, bigint, bigint]>('getVPFIDiscountTier', [borrower]))[1];
   const bWallet = () => sc.pub.readContract({ address: vpfi, abi: ERC20, functionName: 'balanceOf', args: [borrower] });
@@ -229,7 +233,7 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await bWidget.getByTestId('claim-interaction').click();
   await expect(bWidget.getByTestId('claim-interaction-venue')).toHaveCount(0);
   const bReceipt = bWidget.locator('.receipt');
-  await expect(bReceipt).toContainText('Your wallet. VPFI there sets no fee-discount tier until you deposit it in your vault.');
+  await expect(bReceipt).toContainText('Your wallet, paid straight to it.');
   await fitsWidth(b.page);
   await bWidget.getByRole('button', { name: 'Confirm in wallet' }).click();
   const bFinish = bWidget.locator('[data-phase="measured"]');

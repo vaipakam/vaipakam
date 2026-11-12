@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useConfig } from 'wagmi';
 import { useMode } from '../../app/ModeContext';
 import { useOwnRead } from '../reads/useOwnRead';
+import { readProtection } from '../protection/payout';
+import { readVpfiHome } from '../rewards/vpfiFacts';
 import { sendWrite } from '../tx/send';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
@@ -17,7 +19,7 @@ import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import {
   REWARD_CLAIM_ABI,
   claimRecord,
-  defaultVenue,
+  claimVenue,
   deliveryOutcome,
   isEoaStyle,
   moreRemains,
@@ -26,6 +28,7 @@ import {
   readVaultAddress,
   readVpfiToken,
   venueArg,
+  venueLine,
   vpfiArrivals,
   type ClaimWindow,
   type PendingRewards,
@@ -91,6 +94,8 @@ interface Reviewed extends RewardReady {
   readAt: number;
   identity: string;
   venue: RewardVenue;
+  /** Protected mode as read for the review (null when unread). */
+  protectedOn: boolean | null;
 }
 
 interface RewardClaimProps {
@@ -131,8 +136,15 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   const { isAdvanced } = useMode();
   // RW-26: the account's shape decides the protocol's default venue.
   const shape = useOwnRead(['accountShape'], async (c) => isEoaStyle(await c.getCode({ address: account })));
+  // Protected mode sends every reward claim to the vault, so the wallet is
+  // offered only while the mode reads as off.
+  const protection = useOwnRead(['protection', diamond], (c) => readProtection(c, diamond, account));
+  const protectedOn = protection.data === null ? null : protection.data.enabled;
   const [picked, setPicked] = useState<RewardVenue | null>(null);
-  const venue: RewardVenue = picked ?? defaultVenue(shape.data);
+  // Whether vault VPFI sets the tier here: only on VPFI's home network; a
+  // mirror applies the tier sent from there.
+  const vpfiHome = useOwnRead(['vpfiHome', diamond], (c) => readVpfiHome(c, diamond), { enabled: isAdvanced });
+  const venue: RewardVenue = claimVenue(picked, shape.data, protectedOn);
   const claimAmount = (v: bigint) => (token ? tokenAmount(v, token, meta, format) : format('asset.baseUnits', { amount: v.toString(), token: 'VPFI' }));
 
   // The send follows a re-check, which answers "unreadable" without a
@@ -184,7 +196,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
 
   const start = () => {
     if (!ready) return;
-    setReviewed({ ...ready, readAt: readNow(), identity, venue });
+    setReviewed({ ...ready, readAt: readNow(), identity, venue, protectedOn });
     // A review left open when this page last unmounted has lost its inputs.
     if (tx.phase.kind !== 'idle') tx.reset();
     tx.review();
@@ -194,6 +206,15 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   // own rail, then the call itself simulated as the sender.
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!reviewed) return { kind: 'unreadable', reason: text('flow.reading') };
+    // The destination is bound: protected mode is read again, and a change
+    // that moves the claim to the vault, or changes what the line says,
+    // re-shows the review.
+    const nowOn = (await own.read((c) => readProtection(c, diamond, account))).value?.enabled ?? null;
+    const nowVenue: RewardVenue = reviewed.venue === 'wallet' && nowOn !== false ? 'vault' : reviewed.venue;
+    if (nowVenue !== reviewed.venue || venueLine(nowVenue, nowOn) !== venueLine(reviewed.venue, reviewed.protectedOn)) {
+      if (current()) setReviewed({ ...reviewed, venue: nowVenue, protectedOn: nowOn, readAt: readNow() });
+      return { kind: 'changed', what: text('claim.changedVenue') };
+    }
     if (kind === 'interaction') {
       const now = (await own.read((c) => readPendingRewards(c, diamond, account))).value;
       if (now.kind !== 'exact') return { kind: 'refused', refusal: { code: now.kind, reason: pendingText(now, copy, { chain: chain!.name, amount: claimAmount }), reopensAt: null, remedy: null } };
@@ -229,7 +250,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
                   binding: false,
                 }
               : { label: text('claim.rowFrom'), value: { kind: 'text', text: text('claim.heldFrom') }, binding: false },
-            { label: text('claim.rowTo'), value: { kind: 'text', text: text(reviewed.venue === 'vault' ? 'claim.to' : 'claim.toWallet') }, binding: true },
+            { label: text('claim.rowTo'), value: { kind: 'text', text: text(venueLine(reviewed.venue, reviewed.protectedOn)) }, binding: true },
             { label: text('claim.rowNetwork'), value: { kind: 'text', text: format('claim.network', { chain: chain.name }) }, binding: false },
           ],
           consequences: [],
@@ -254,7 +275,12 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
 
   return (
     <>
-      {!flowOpen && isAdvanced && (
+      {!flowOpen && isAdvanced && (protectedOn === true || (protectedOn === null && protection.state !== 'reading')) && (
+        <p className="tier-b" data-testid={`claim-${kind}-venue-fixed`}>
+          {text(protectedOn === true ? 'rewards.venueProtected' : 'rewards.venueUnread')}
+        </p>
+      )}
+      {!flowOpen && isAdvanced && protectedOn === false && (
         <fieldset className="choice-group" data-testid={`claim-${kind}-venue`}>
           <legend>{text('rewards.venueLegend')}</legend>
           {(['vault', 'wallet'] as const).map((v) => (
@@ -263,6 +289,11 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
               <span>{text(v === 'vault' ? 'rewards.venueVault' : 'rewards.venueWallet')}</span>
             </label>
           ))}
+          {vpfiHome.state !== 'reading' && (
+            <p className="tier-b" data-testid={`claim-${kind}-venue-tier`}>
+              {text(vpfiHome.data === true ? 'rewards.venueTierHome' : vpfiHome.data === false ? 'rewards.venueTierMirror' : 'rewards.venueTierUnread')}
+            </p>
+          )}
         </fieldset>
       )}
       {!flowOpen && (

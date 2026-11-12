@@ -17,6 +17,7 @@ import { InteractionRewardsLensFacetABI, RewardClaimFacetABI, VPFIDiscountFacetA
 import { extractRevertData } from '@vaipakam/lib/decodeContractError';
 import { refusalFromError } from '../eligibility/refusal';
 import { isContractAnswer } from '../reads/answer';
+import type { CopyKey } from '../copy/useCopy';
 import type { AtBlock } from '../tx/anchored';
 
 type Hex = `0x${string}`;
@@ -61,6 +62,21 @@ export function isEoaStyle(code: string | undefined): boolean {
  *  falls back to the wallet when it cannot; the receipt names it either way. */
 export function defaultVenue(eoaStyle: boolean | null): RewardVenue {
   return eoaStyle === false ? 'wallet' : 'vault';
+}
+
+/** RW-26 — the venue a claim names. Protected mode sends every reward
+ *  claim to the vault whatever venue is passed
+ *  (`RewardClaimFacet._toVault`), so the wallet is offered and named only
+ *  while the mode reads as off; on, or unread, the claim names the vault. */
+export function claimVenue(picked: RewardVenue | null, eoaStyle: boolean | null, protectedOn: boolean | null): RewardVenue {
+  if (protectedOn !== false) return 'vault';
+  return picked ?? defaultVenue(eoaStyle);
+}
+
+/** The receipt's destination line for a venue under the account's mode. */
+export function venueLine(venue: RewardVenue, protectedOn: boolean | null): CopyKey {
+  if (venue === 'wallet') return 'claim.toWallet';
+  return protectedOn === true ? 'claim.toProtected' : 'claim.to';
 }
 
 /** The days the protocol counts from when it ends the final notice. */
