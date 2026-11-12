@@ -1,9 +1,0 @@
-## Thread — CCIP lanes born limited, NFT deposits checked on arrival (PR #<n>)
-
-Two hardening items from the external security review, filed together as one card because both close a window where the platform trusted something it had not checked.
-
-CCIP token-pool lanes are now added with their inbound and outbound rate limits already switched on. Before, the configure step added each lane with both limits off and then set them through the rate governor in a later transaction, so for a short time a freshly added lane could move VPFI with no cap. The lane is now created at the run's capacity and refill figures, and the governor's call that follows only re-asserts them. The figures are checked against the governor's bounds before the script broadcasts anything, so a run with a capacity or rate the governor would refuse stops before it touches a chain. The deployment rehearsal test now adds its lanes with the script's own builder and checks that each lane is limited from the moment it exists.
-
-NFT deposits that back an offer or a loan are now checked on arrival. Offer creation and offer acceptance each carried their own private copy of the code that moves an ERC-721 or ERC-1155 into a vault, and neither confirmed the transfer worked. Both copies are deleted. Those deposits now go through the vault's own deposit routes, the same ones a direct NFT deposit already used, which check after the transfer that the vault owns the ERC-721 token, or that its ERC-1155 balance rose by exactly the offered quantity. A token that reports success without moving the NFT, or moves fewer units, is refused, so no offer or loan records an NFT its vault does not hold. The two refusals now name the token, the token id and the vault (or the units asked for and received) instead of a generic "deposit failed" message. Removing the copies also returns a few hundred bytes to the offer-creation facet, which was close to the contract size limit.
-
-Closes #3539.

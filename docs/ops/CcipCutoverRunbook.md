@@ -245,7 +245,12 @@ must be true before any real value is routed**:
    `VpfiPoolRateGovernor`.** Starting values (design §10): **capacity
    50,000 VPFI, refill ≈ 5.8 VPFI/s** (≈ 500,000 VPFI/day). The governor
    refuses to *disable* a lane's limit and range-bounds every value
-   (ET-008). `ConfigureCcip` applies these; override per chain with
+   (ET-008). `ConfigureCcip` applies these. Since #3559 it creates each lane
+   with both limits already on at these figures, checked against the
+   governor's bounds before anything broadcasts, and the governor call that
+   follows only re-asserts them, so no lane exists unlimited even for one
+   transaction (before #3559 a lane was added with its limits off and
+   limited in a second transaction). Override per chain with
    `CCIP_RATE_CAPACITY` / `CCIP_RATE_REFILL` only with a deliberate
    reason. Confirm the governor is the pool's `rateLimitAdmin`.
 
