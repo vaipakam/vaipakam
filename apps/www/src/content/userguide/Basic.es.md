@@ -1088,6 +1088,8 @@ Las recompensas son reembolsos por uso de tus préstamos dados y recibidos en es
 
 Cuando un reclamo espera por un día de recompensas, Inicio también dice qué espera ese día: los informes de otras redes antes de poder cerrarse, que las cifras de la red principal lleguen a esta red, o la financiación del día, con cuánto ha llegado ya. Los días posteriores esperan detrás, y ningún paso tuyo termina la espera; cualquiera puede ejecutar el paso que la termina. En una red sin rol de recompensas asignado, o que ha dejado la red de recompensas, ningún paso que alguien pueda ejecutar termina la espera, e Inicio lo dice. Un día cuya financiación llegó en partes con totales distintos puede cerrarse sin pagar tras un periodo de espera. Cuando el VPFI que paga un reclamo no se tiene aquí ahora, o está reservado para liquidaciones pendientes, Inicio lo dice con las cifras; una vez que el fondo de VPFI nuevo del programa se ha pagado por completo, las recompensas se pagan solo con VPFI reciclado. Mientras el protocolo está en pausa, Inicio nombra la pausa y dice que el reembolso total y parcial y añadir garantía siguen abiertos.
 
+Inicio también muestra lo que has reclamado hasta ahora en esta red y cuánto de ello se entregó a tu bóveda. Cada reclamación cuenta en el día UTC en que se pagó, sea cual sea el destino al que fue. Estos totales vienen del índice, así que Inicio indica hasta cuándo ha registrado todas las reclamaciones; si el índice no responde, el total se muestra como desconocido, nunca como cero.
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: Fechas de retirada de recompensas

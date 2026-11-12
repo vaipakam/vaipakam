@@ -1110,6 +1110,8 @@ Belohnungen sind Nutzungsrabatte für Ihr Verleihen und Leihen in diesem Netzwer
 
 Wartet eine Einlösung auf einen Belohnungstag, sagt Home auch, worauf dieser Tag wartet: auf Meldungen anderer Netzwerke, bevor er abgeschlossen werden kann, auf die Zahlen des Heimatnetzwerks in diesem Netzwerk oder auf die Finanzierung des Tages, mit dem bereits angekommenen Anteil. Spätere Tage warten dahinter, und kein Schritt von Ihnen beendet das Warten; jeder kann den Schritt ausführen, der es beendet. In einem Netzwerk ohne gesetzte Belohnungsrolle oder einem, das das Belohnungsnetzwerk verlassen hat, beendet kein Schritt, den jemand ausführen kann, das Warten, und Home sagt das. Ein Tag, dessen Finanzierung in Teilen mit unterschiedlichen Gesamtbeträgen ankam, kann nach einer Wartezeit unbezahlt geschlossen werden. Wird das VPFI, das eine Einlösung zahlt, hier gerade nicht gehalten oder ist es für laufende Abrechnungen reserviert, sagt Home das mit den Zahlen; ist der Pool des Programms an neuem VPFI vollständig ausgezahlt, werden Belohnungen nur noch aus recyceltem VPFI gezahlt. Ist das Protokoll pausiert, nennt Home die Pause und sagt, dass vollständige und teilweise Rückzahlung und das Hinzufügen von Sicherheiten möglich bleiben.
 
+Die Startseite zeigt außerdem, was Sie in diesem Netzwerk bisher beansprucht haben und wie viel davon in Ihren Tresor geliefert wurde. Jede Beanspruchung zählt an dem UTC-Tag, an dem sie ausgezahlt wurde, unabhängig vom Ziel. Diese Summen stammen aus dem Index, daher nennt die Startseite, bis wann er jede Beanspruchung erfasst hat; antwortet der Index nicht, wird die Summe als unbekannt angezeigt, nie als null.
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: Entfernungstermine für Belohnungen

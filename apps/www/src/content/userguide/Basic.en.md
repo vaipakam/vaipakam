@@ -1061,6 +1061,8 @@ Rewards are usage rebates for your lending and borrowing on this network, counte
 
 When a claim waits on a reward day, Home also says what that day waits on: reports from other networks before it can be finalised, the home network's figures reaching this network, or the day's funding, with how much of it has landed. Later days wait behind it, and no step of yours clears the wait; anyone may run the step that does. On a network with no reward role set, or one that has left the reward network, no step anyone can run clears the wait, and Home says so. A day whose funding arrived in parts stating different totals can be closed unpaid after a waiting period. When the VPFI that pays a claim is not held here now, or is reserved for pending settlements, Home says so with the figures; once the programme's pool of new VPFI is paid out in full, rewards are paid only from recycled VPFI. While the protocol is paused, Home names the pause and says that full and partial repayment and adding collateral stay open.
 
+Home also shows what you have claimed on this network so far, and how much of it was delivered to your vault. Each claim counts on the UTC day it was paid, whichever destination it went to. These totals come from the index, so Home says up to when it has recorded every claim; if the index cannot answer, the total is shown as unknown, never as zero.
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: Reward Removal Dates
