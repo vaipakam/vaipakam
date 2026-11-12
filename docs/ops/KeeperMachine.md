@@ -507,7 +507,13 @@ journalctl -u vaipakam-keeper -f
    `PREPAY_AUTO_LIST_ENABLED` (`prepayAutoList`, every minute),
    `PROTECTED_ACCOUNT_ENABLED` (`protectedAccount`, every minute; its
    Telegram LOCK step also needs `PROTECTED_LOCK_ENABLED`, and its owner
-   alerts `PROTECTED_ALERTS_ENABLED`),
+   alerts `PROTECTED_ALERTS_ENABLED`. Since #3379 Stage B2 protected mode is
+   held by each account's vault: the pass finalizes a matured change through
+   the vault's own permissionless finalizers, then has the Diamond apply its
+   side (`applyProtection`), and its Telegram LOCK goes through the vault
+   (`lockVaultFor`). Until the indexer reads the vault's events (Stage B4)
+   it finalizes only the vault changes a ledger row names, and the lock and
+   proposed-replacement alerts do not fire),
    `STANDIN_REFRESH_ENABLED` (`sanctionsStandInRefresh`, hourly at :21; the
    keeper must also be named the stand-in's refresher),
    `POSITION_UPKEEP_ENABLED` (`positionUpkeep`, hourly at :36: the daily
