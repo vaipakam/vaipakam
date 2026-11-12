@@ -15,7 +15,7 @@ import {
   applyRewardLoopLedger,
   type RewardLoopLog,
 } from '../src/rewardLoopLedger';
-import { handleLoopClosure } from '../src/rewardRoutes';
+import { handleLoopClosure, handleRewardsClaimed } from '../src/rewardRoutes';
 import { _stampIngestedBeforeTime } from '../src/chainIndexer';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
@@ -688,5 +688,82 @@ describe('robustness (Codex #1310 round 1)', () => {
       )
       .get(CHAIN) as { cum_distributed: string; backfill_done: number };
     expect(totals.cum_distributed).toBe('80');
+  });
+});
+
+describe('/rewards/claimed (RW-31)', () => {
+  type Claimed = {
+    wallet: string;
+    recordedBefore: string | null;
+    pending: string | null;
+    totals: { claimed: string; vaultDelivered: string; claimDays: number; firstClaimDay: string | null; lastClaimDay: string | null } | null;
+  };
+  async function fetchClaimed(env: Env, wallet: string): Promise<{ status: number; body: Claimed }> {
+    const res = await handleRewardsClaimed(new Request(`http://indexer.local/rewards/claimed?chainId=${CHAIN}&wallet=${wallet}`), env);
+    return { status: res.status, body: (await res.json()) as Claimed };
+  }
+  const day = (d: number) => new Date(d * 86_400_000).toISOString().slice(0, 10);
+
+  it('sums every claim the wallet was paid, venue or not, on the claim-day basis', async () => {
+    const { env } = makeHarness();
+    await applyRewardLoopLedger(
+      [
+        // Day before yesterday: 100 claimed into the vault.
+        log('InteractionRewardsClaimed', ALICE, 100n, 100n),
+        log('RewardDeliveredToVault', ALICE, 100n, 100n, { claimDayId: 1n }),
+        // Yesterday: 40 claimed to the wallet, then a held release of 5 to the vault.
+        log('InteractionRewardsClaimed', ALICE, 40n, 101n),
+        log('InteractionRewardsClaimed', ALICE, 5n, 101n, { fromDay: 0n, toDay: 0n }),
+        log('RewardDeliveredToVault', ALICE, 5n, 101n, { claimDayId: 2n }),
+        // Someone else's claim is not Alice's.
+        log('InteractionRewardsClaimed', BOB, 999n, 101n),
+      ],
+      env,
+      CHAIN,
+      ts([
+        [100n, CLOSED_TS - 86400],
+        [101n, CLOSED_TS],
+      ]),
+    );
+    await recordThroughYesterday(env);
+    const { status, body } = await fetchClaimed(env, ALICE.toUpperCase().replace('0X', '0x'));
+    expect(status).toBe(200);
+    expect(body.wallet).toBe(ALICE);
+    expect(body.pending).toBeNull();
+    expect(body.totals).toEqual({
+      claimed: '145',
+      vaultDelivered: '105',
+      claimDays: 2,
+      firstClaimDay: day(CLOSED - 1),
+      lastClaimDay: day(CLOSED),
+    });
+  });
+
+  it('a wallet that never claimed reads zero only against a recorded moment', async () => {
+    const { env } = makeHarness();
+    await applyRewardLoopLedger([log('InteractionRewardsClaimed', BOB, 1n)], env, CHAIN, ts([[100n, CLOSED_TS]]));
+    // No caught-up pass yet: unknown, never zero.
+    let r = await fetchClaimed(env, ALICE);
+    expect(r.body.pending).toBe('unrecorded');
+    expect(r.body.totals).toBeNull();
+    await recordThroughYesterday(env);
+    r = await fetchClaimed(env, ALICE);
+    expect(r.body.pending).toBeNull();
+    expect(r.body.totals).toEqual({ claimed: '0', vaultDelivered: '0', claimDays: 0, firstClaimDay: null, lastClaimDay: null });
+  });
+
+  it('withholds totals while the chain’s ledger replay has not finished', async () => {
+    const { env } = makeHarness();
+    // The watermark exists, but the one-time replay never ran on this chain.
+    await recordThroughYesterday(env);
+    const r = await fetchClaimed(env, ALICE);
+    expect(r.body.pending).toBe('replaying');
+    expect(r.body.totals).toBeNull();
+  });
+
+  it('refuses a malformed wallet', async () => {
+    const { env } = makeHarness();
+    const r = await fetchClaimed(env, '0x1234');
+    expect(r.status).toBe(400);
   });
 });

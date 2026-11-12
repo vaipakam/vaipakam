@@ -251,3 +251,107 @@ export async function handleLoopClosure(
     return jsonResponse({ error: 'loop-closure query failed' }, 500);
   }
 }
+
+/**
+ * RW-31 (#3216) — one wallet's lifetime claimed rewards on one chain.
+ *
+ * GET /rewards/claimed?chainId=&wallet=
+ *
+ * Sums the same per-(user, claim-day) rows the loop-closure metric reads:
+ * `distributed` is every `InteractionRewardsClaimed` payout (the ordinary
+ * claim and the held-balance release alike, to the wallet or the vault), and
+ * `vaultDelivered` is the part a `RewardDeliveredToVault` event records as
+ * credited to the claimant's vault. Both are on the claim-day basis, the UTC
+ * day the tokens left protocol custody, never a reward day.
+ *
+ * The totals are stated only against a recorded moment, as the loop-closure
+ * cumulative is (a missing row would otherwise read as "never claimed"):
+ * `totals` is null while no caught-up pass has stamped `recordedBefore`, or
+ * while the chain's one-time ledger replay has not finished, and `pending`
+ * says which. Every claim timestamped before `recordedBefore` is in the
+ * totals; a later one may already be.
+ */
+export async function handleRewardsClaimed(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = requestedChainId(url);
+  const refused = chainNotServed(env, chainId);
+  if (refused) return refused;
+  const wallet = (url.searchParams.get('wallet') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
+    return jsonResponse({ error: 'wallet must be a 0x-prefixed 20-byte address' }, 400);
+  }
+
+  try {
+    const [rows, totals, watermark] = await Promise.all([
+      env.DB.prepare(
+        `SELECT day_id, distributed, vault_delivered
+           FROM reward_day_user
+          WHERE chain_id = ? AND user = ?`,
+      )
+        .bind(chainId, wallet)
+        .all<{ day_id: number; distributed: string; vault_delivered: string }>(),
+      env.DB.prepare(
+        `SELECT backfill_done FROM reward_loop_totals WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .first<{ backfill_done: number }>(),
+      env.DB.prepare(
+        `SELECT last_block FROM indexer_cursor
+          WHERE chain_id = ? AND kind = ?`,
+      )
+        .bind(chainId, INGESTED_BEFORE_TIME_KIND)
+        .first<{ last_block: number }>(),
+    ]);
+    const recordedBefore =
+      watermark && Number.isFinite(Number(watermark.last_block)) && Number(watermark.last_block) > 0
+        ? Number(watermark.last_block)
+        : null;
+    const pending =
+      recordedBefore === null ? 'unrecorded' : totals?.backfill_done ? null : 'replaying';
+
+    let claimed = 0n;
+    let vaultDelivered = 0n;
+    let claimDays = 0;
+    let firstDay: number | null = null;
+    let lastDay: number | null = null;
+    for (const r of rows.results ?? []) {
+      const d = BigInt(r.distributed);
+      const v = BigInt(r.vault_delivered);
+      claimed += d;
+      vaultDelivered += v;
+      // A day counts as a claim day only when something was paid on it; a
+      // row can carry only a debit.
+      if (d > 0n) {
+        claimDays += 1;
+        firstDay = firstDay === null ? r.day_id : Math.min(firstDay, r.day_id);
+        lastDay = lastDay === null ? r.day_id : Math.max(lastDay, r.day_id);
+      }
+    }
+    const date = (day: number | null) =>
+      day === null ? null : new Date(day * DAY_SECONDS * 1000).toISOString().slice(0, 10);
+
+    return jsonResponse({
+      chainId,
+      wallet,
+      recordedBefore:
+        recordedBefore === null ? null : new Date(recordedBefore * 1000).toISOString(),
+      pending,
+      totals:
+        pending !== null
+          ? null
+          : {
+              claimed: claimed.toString(),
+              vaultDelivered: vaultDelivered.toString(),
+              claimDays,
+              firstClaimDay: date(firstDay),
+              lastClaimDay: date(lastDay),
+            },
+    });
+  } catch (err) {
+    console.error('[rewards] claimed query failed', redactedError(err));
+    return jsonResponse({ error: 'claimed query failed' }, 500);
+  }
+}
