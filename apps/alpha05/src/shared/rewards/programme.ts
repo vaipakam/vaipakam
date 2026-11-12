@@ -149,9 +149,14 @@ export type ProgrammeHeadline =
   | { kind: 'unknown' }
   /** A detached network: nothing new becomes claimable here. */
   | { kind: 'left' }
+  /** No reward role is set: `finalizeDay` needs the canonical flag, so no
+   *  reward day finalises here and nothing becomes claimable until a role
+   *  is set. Decided before the start time and the funds, which cannot
+   *  make anything claimable without it. */
+  | { kind: 'unset' }
   | { kind: 'not-started' }
   | { kind: 'starts'; at: number }
-  /** Launched on a home network (or one with no role set), and nothing is
+  /** Launched on a home network, and nothing is
    *  held to pay rewards right now: there the standing funds are the whole
    *  picture. */
   | { kind: 'unfunded' }
@@ -166,6 +171,7 @@ export type ProgrammeHeadline =
 export function programmeHeadline(r: ProgrammeRead): ProgrammeHeadline {
   if (r.role === null) return { kind: 'unknown' };
   if (r.role === 'detached') return { kind: 'left' };
+  if (r.role === 'unconfigured') return { kind: 'unset' };
   if (r.launch === null) return { kind: 'unknown' };
   if (r.launch === 0n) return { kind: 'not-started' };
   if (r.launch > BigInt(r.chainTime)) return { kind: 'starts', at: Number(r.launch) };

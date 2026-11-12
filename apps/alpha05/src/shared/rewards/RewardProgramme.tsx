@@ -73,6 +73,8 @@ export function RewardProgramme({ chain }: { chain: SupportedChain }) {
         return format('rewardsProgramme.starts', { chain: name, when: formatUtc(headline!.at) });
       case 'left':
         return format('rewardsProgramme.left', { chain: name });
+      case 'unset':
+        return format('rewardsProgramme.unset', { chain: name });
       default:
         return format('rewardsProgramme.unknown', { chain: name });
     }

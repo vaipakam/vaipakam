@@ -30,12 +30,10 @@ describe('programmeHeadline', () => {
   it('is live only when launched, in a paying role and funded', () => {
     expect(programmeHeadline(read())).toEqual({ kind: 'live' });
     expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 5n, held: 0n, noToken: false } }))).toEqual({ kind: 'live' });
-    expect(programmeHeadline(read({ role: 'unconfigured' }))).toEqual({ kind: 'live' });
   });
 
   it('says nothing is held to pay when both sources are empty on a network whose standing funds are the whole picture', () => {
     expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: true } }))).toEqual({ kind: 'unfunded' });
-    expect(programmeHeadline(read({ role: 'unconfigured', funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: false } }))).toEqual({ kind: 'unfunded' });
     // VPFI held beyond the delivered allowance or the pool cannot pay a claim.
     expect(programmeHeadline(read({ funding: { fresh: 0n, recycled: 0n, held: 50n, noToken: false } }))).toEqual({ kind: 'unfunded' });
   });
@@ -53,6 +51,12 @@ describe('programmeHeadline', () => {
 
   it('a detached network has left, whatever else reads', () => {
     expect(programmeHeadline(read({ role: 'detached', launch: null, funding: null }))).toEqual({ kind: 'left' });
+  });
+
+  it('a network with no reward role set finalises no day, so it never reads as running, whatever else reads', () => {
+    expect(programmeHeadline(read({ role: 'unconfigured' }))).toEqual({ kind: 'unset' });
+    expect(programmeHeadline(read({ role: 'unconfigured', launch: 0n, funding: null }))).toEqual({ kind: 'unset' });
+    expect(programmeHeadline(read({ role: 'unconfigured', funding: { fresh: 0n, recycled: 0n, held: 0n, noToken: false } }))).toEqual({ kind: 'unset' });
   });
 
   it('never reads as running when a deciding fact is unread', () => {

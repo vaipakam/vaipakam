@@ -6,10 +6,13 @@
  * figures (the known-global FLAG the claim checks, never a zero total), or
  * the funding a mirror waits to receive for it. This read says what that
  * gate is waiting on now. On a home network a day waits to be finalised, and
- * the finalisation's own readiness answer says why it cannot run yet. On a
+ * the finalisation's own readiness answer says why it cannot run yet. A
+ * network with no reward role set cannot finalise at all (`finalizeDay` needs
+ * the canonical flag), and that is said instead. On a
  * mirror it waits for the home network's figures to arrive, or for the day's
  * funding: not yet priced for this network, waiting on this network's own
- * report, or arriving in parts (how much of the declared whole has landed).
+ * report, or arriving in parts (how much of each component's declared whole
+ * has landed, since the day opens only once each reaches its own).
  * A day whose parts stated different totals can be closed unpaid after a
  * waiting period, and that is disclosed. Every fact is read on its own and
  * kept as unread (null) when it does not answer, so an unread fact is stated,
@@ -31,12 +34,19 @@ const REMITTANCE_LENS = RewardRemittanceLensFacetABI as Abi;
 /** `LibRewardDayReport`'s readiness reasons for finalising a day. */
 export const READINESS = { ready: 0, finalized: 1, noReport: 2, waiting: 3, listUnusable: 4 } as const;
 
-/** One day's delivery record on a mirror (`getDayDeliveryParts`). */
+/** One day's delivery record on a mirror (`getDayDeliveryParts`). The two
+ *  components are kept apart: `LibRewardCustody.noteDayDeliveryPart` opens
+ *  the day only once EACH reaches its own declared whole, and an excess in
+ *  one never covers a shortfall in the other. */
 export interface DeliveryParts {
-  /** The whole Base declared for the day, fresh plus recycled. */
-  whole: bigint;
-  /** What has landed toward it so far, fresh plus recycled. */
-  landed: bigint;
+  /** The new (fresh) VPFI Base declared for the day. */
+  wholeFresh: bigint;
+  /** The recycled VPFI Base declared for the day. */
+  wholeRecycled: bigint;
+  /** New VPFI landed toward it so far. */
+  landedFresh: bigint;
+  /** Recycled VPFI landed toward it so far. */
+  landedRecycled: bigint;
   /** How many parts have landed. */
   parts: number;
   /** A part declared a different whole. */
@@ -44,9 +54,12 @@ export interface DeliveryParts {
 }
 
 export type WaitDetail =
-  /** A home network (or one with no role set): whether the day may be
-   *  finalised now, and if not, why (`READINESS`); null when unread. */
+  /** A home network: whether the day may be finalised now, and if not, why
+   *  (`READINESS`); null when unread. */
   | { kind: 'finalize'; reason: number | null }
+  /** No reward role is set: `finalizeDay` needs the canonical flag, so no
+   *  day finalises here and no step anyone may run clears the wait. */
+  | { kind: 'unconfigured' }
   /** A mirror waiting for the home network's figures for the day. */
   | { kind: 'broadcast'; applied: boolean | null }
   /** A mirror waiting for the day's funding: whether the home network has
@@ -96,8 +109,10 @@ export async function readWaitDetail(c: PublicClient, diamond: Hex, day: bigint,
         parts === null
           ? null
           : {
-              whole: parts.wholeFresh + parts.wholeRecycled,
-              landed: parts.landedFresh + parts.landedRecycled,
+              wholeFresh: parts.wholeFresh,
+              wholeRecycled: parts.wholeRecycled,
+              landedFresh: parts.landedFresh,
+              landedRecycled: parts.landedRecycled,
               parts: Number(parts.parts),
               conflict: parts.wholeConflict,
             },
@@ -107,6 +122,7 @@ export async function readWaitDetail(c: PublicClient, diamond: Hex, day: bigint,
   const role: RewardRole | null = raw === null ? null : roleOf(Number(raw));
   if (role === null) return { kind: 'unknown' };
   if (role === 'detached') return { kind: 'detached' };
+  if (role === 'unconfigured') return { kind: 'unconfigured' };
   if (role === 'mirror') return { kind: 'broadcast', applied: await read<boolean>(REPORTER, 'getBroadcastV2Applied', [day]) };
   const ready = await read<readonly [boolean, number]>(AGGREGATOR, 'isDayReadyToFinalize', [day]);
   return { kind: 'finalize', reason: ready === null ? null : Number(ready[1]) };
@@ -132,6 +148,9 @@ export function waitLines(day: bigint, d: WaitDetail): WaitLine[] {
     case 'detached':
       // Nothing clears it, so the "anyone may run the step" line is not said.
       return [{ key: 'rewardsWait.detached', vars: v }];
+    case 'unconfigured':
+      // Only a role being set clears it, so no "anyone may run" line either.
+      return [{ key: 'rewardsWait.unconfigured', vars: v }];
     case 'finalize': {
       const key: CopyKey =
         d.reason === null
@@ -165,7 +184,17 @@ export function waitLines(day: bigint, d: WaitDetail): WaitLine[] {
       if (d.stamped) {
         if (d.parts === null) lines.push({ key: 'rewardsWait.partsUnread', vars: v });
         else if (d.parts.parts === 0) lines.push({ key: 'rewardsWait.noParts', vars: v });
-        else lines.push({ key: 'rewardsWait.parts', vars: { ...v, parts: String(d.parts.parts) }, amounts: { landed: d.parts.landed, whole: d.parts.whole } });
+        else
+          lines.push({
+            key: 'rewardsWait.parts',
+            vars: { ...v, parts: String(d.parts.parts) },
+            amounts: {
+              landedFresh: d.parts.landedFresh,
+              wholeFresh: d.parts.wholeFresh,
+              landedRecycled: d.parts.landedRecycled,
+              wholeRecycled: d.parts.wholeRecycled,
+            },
+          });
       }
       if (d.parts?.conflict) lines.push({ key: 'rewardsWait.conflict', vars: v });
       break;

@@ -2066,9 +2066,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   pays now. A mirror whose home network cannot be read keeps its
   role and states the missing reading. Every amount is formatted in the VPFI
   token read in the same snapshot. Basic shows one sentence: running only when the
-  launch has passed by the read block's own clock, the role pays here (an unconfigured network behaves as
-  a home network) and something is held to pay; otherwise running with
-  nothing held (a home network or one with no role set), running on a
+  launch has passed by the read block's own clock, the role pays here and
+  something is held to pay; a network with no reward role set says that no
+  reward day there can be finalised or claimed yet, whatever else reads
+  (`finalizeDay` needs the canonical flag); otherwise running with
+  nothing held (a home network), running on a
   mirror with no standing VPFI while VPFI sent for a day can still pay, no start date, a stated start, or left the reward network
   (detached: nothing new becomes claimable). A deciding fact that is unread
   makes the sentence unknown, never running, never zero. A global pause is
@@ -2083,16 +2085,20 @@ above. Each resolves here, so a route reviewer needs no private file:
   name (RW-28). The reason is the claim's own preview refusal; what a
   waiting day waits on is read at the preview's own block, so both describe
   one chain state. A day waiting for its global figures (the known-global
-  flag the claim checks, never a zero total) states, on a home network or
-  one with no role set, the finalisation's own readiness answer
+  flag the claim checks, never a zero total) states, on a home network,
+  the finalisation's own readiness answer
   (`isDayReadyToFinalize`: no listed report, reports within their grace
   time, an unusable expected-source list, or ready to run), on a mirror
   whether the home network's figures arrived (`getBroadcastV2Applied`), and
-  on a detached network that nothing new becomes claimable there (no step
-  clears it, so none is offered). A
+  on a detached network that nothing new becomes claimable there, and on a
+  network with no reward role set that no day can be finalised there until
+  one is set (in both, no step anyone may run clears it, so none is
+  offered). A
   day waiting for funding states whether the home network priced it here,
-  whether this network's report was sent, and the parts landed against the
-  declared whole (`getDayDeliveryState`, `getDayDeliveryParts`). The report
+  whether this network's report was sent, and the parts landed, the new and
+  the recycled VPFI each against its own declared whole, since the day opens
+  only once both are whole and an excess in one never covers the other
+  (`getDayDeliveryState`, `getDayDeliveryParts`). The report
   is named only for an armed day (from `getGovernorCommitState`'s arming
   day on): an unarmed day is funded without it and its report cannot be
   sent, and an unread arming day is stated as unread; a day whose
