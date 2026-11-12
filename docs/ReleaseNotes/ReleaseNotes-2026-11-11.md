@@ -834,7 +834,7 @@ fresh deploy.
 
 Closes #3562.
 
-> Caveat: loans open before a facet refresh carry no entry record and pay the full yield fee from then on.
+> Caveat: loans open before a facet refresh carry no entry record, so their lenders lose the hold-tier part of the discount from then on. A lender who paid the Full tariff at opening keeps that paid bump.
 
 _Committed 2026-11-11 17:41 UTC (46d9cf9b6)._
 <!-- assembled-fragment: 3562-lender-discount-entry-and-settlement.md sha256=b88084669e26472e0af705905f37cb885b7a3eab680054f9abac8fb7bb6de39c -->
