@@ -1,4 +1,4 @@
-## Tier LTV — a default and a ceiling per tier (PR #<n>)
+## Tier LTV — a default and a ceiling per tier (PR #3597)
 
 Each liquidity tier now has two numbers: a default starting loan-to-value
 (50%, 60% and 65% for tiers 1, 2 and 3) and a governance ceiling (55%, 69%
@@ -21,3 +21,5 @@ The hard maximum on any tier setting rises from 80% to 82%, so the tier-3
 ceiling can be configured at its default. The governance setter now takes a
 ceiling and a haircut per tier (the floor argument is gone), and the refresh
 no longer reports "out-of-band" rejections.
+
+Closes #3547
