@@ -1,5 +1,5 @@
 // Watch-only live review of the Rewards page (#3180; RW-01..RW-11, RW-13,
-// RW-14, RW-28, RW-43, RW-44; RB-REWARDS-PROGRAMME, RB-REWARDS-WAIT, RB-REWARDS-VPFI,
+// RW-14, RW-28, RW-31, RW-43, RW-44; RB-REWARDS-PROGRAMME, RB-REWARDS-WAIT, RB-REWARDS-VPFI,
 // RB-REWARDS-TIER, RB-REWARDS-ELSEWHERE, RB-REWARDS-SIGN; live tier, run
 // after each deploy), through the shared watch-only wallet
 // (watch-wallet.cjs). The deployed build opens Rewards for the watched
@@ -50,6 +50,18 @@ async function view(b, opts, label) {
     const pending = widget.getByTestId('rewards-pending');
     const verdict = (await pending.count()) ? `${await pending.getAttribute('data-figure')}${(await pending.getAttribute('data-why')) ? ` ${await pending.getAttribute('data-why')}` : ''}` : 'reading';
     console.log(`--- rewards [${verdict}]: ${(await widget.innerText()).replace(/\n+/g, ' · ')}`);
+    // RW-31 — the lifetime claimed line: its state (recorded, unrecorded,
+    // replaying or failed), the two figures and the index's as-of line.
+    const lifetime = widget.getByTestId('rewards-lifetime');
+    await p
+      .waitForFunction(() => document.querySelector('[data-testid="rewards-lifetime"]')?.getAttribute('data-lifetime'), null, { timeout: 90000 })
+      .catch(() => console.log('(the lifetime claimed line was still being read after 90 s)'));
+    if (await lifetime.count()) {
+      const asOf = widget.getByTestId('rewards-lifetime-asof');
+      console.log(
+        `--- lifetime [${await lifetime.getAttribute('data-lifetime')} claimed ${await lifetime.getAttribute('data-claimed')} vault ${await lifetime.getAttribute('data-vault')}]: ${await lifetime.innerText()}${(await asOf.count()) ? ` · ${await asOf.innerText()}` : ''}`,
+      );
+    }
     const wait = widget.getByTestId('rewards-wait');
     if (await wait.count()) {
       const lines = await wait.locator('[data-wait-line]').evaluateAll((els) => els.map((e) => e.getAttribute('data-wait-line')));
