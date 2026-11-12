@@ -486,8 +486,20 @@ Each setting below is one `PriceGuard.Kind` entry, changed in two steps:
   delay has passed: 7 to 14 days on a production chain (7 by default),
   zero allowed on a testnet, where a change applies at once.
 
-The guardian (the Pauser Safe) may cancel a pending change, and may stop a
-secondary source counting at once; re-enabling one waits the delay. Each
+The guardian (the Pauser Safe) may cancel a pending change. Against a
+secondary source it has two levers (#3537). It, or the owner, may **mute** a
+source at once: a muted source stops approving prices but still refuses a
+price it contradicts, so a mute can only refuse more prices. Use it against
+a source that is approving a wrong price. **Removing** a source also drops
+its refusals, so a removal waits a fixed 48 hours after it is proposed, on
+every chain, testnets included. The source is muted from the proposal on,
+anyone may execute the removal once the wait ends, and the owner or the
+guardian may cancel it first. Use it for a source that is broken and
+refusing good prices. Turning a muted or removed source back on waits the
+guard's own delay. The guard is not upgradeable, so a chain deployed before
+#3537 keeps the older single lever, an instant stop that also drops the
+source's refusals, until its next fresh deploy; on such a chain treat that
+stop as a loosening, not a containment step. Each
 bound below is the guard's, checked when a change is proposed and again
 when it is executed (`InvalidChange`), and an address entry must name a
 contract (`NotAContract`). `ConfigureOracle` proposes a chain's wiring
@@ -500,7 +512,11 @@ The guard the Diamond prices through is the protocol registry's
 `PRICE_GUARD` pointer (`getPriceGuard`), and the registry is recorded on the
 Diamond once (`initializeProtocolRegistry`, which also records the guard's
 numeraire). Pointing the registry at another guard is the registry's own
-delayed change, and the Diamond refuses to price through a guard whose
+delayed change, which for this pointer waits at least seven days, the
+guard's own floor, or the registry's delay if that is longer (#3540). The
+minimum is a constant in the registry with no testnet exception. A registry
+deployed before #3540 waits only its general delay (three days or more)
+until the next fresh deploy. And the Diamond refuses to price through a guard whose
 numeraire differs from the one it recorded (`PriceGuardNumeraireMismatch`).
 The guard's owner is `Ownable2Step` and cannot renounce; its guardian and
 delay are its own settings. A raised delay applies at once; a lowered one
@@ -595,6 +611,18 @@ Address-only.
 While set, price reads are held back while the sequencer is down and
 for a fixed one-hour grace period after it comes back up
 (`SEQUENCER_GRACE_PERIOD`, a compile-time constant).
+
+Since #3410 (PR #3551) the same feed also moves loan deadlines. A loan's
+grace end that falls inside an outage, or inside the hour after it, moves to
+the end of that hour, so no loan can be defaulted, charged a late fee for
+that time, or auto-listed until then. Repayment stays open throughout. A
+periodic-interest settlement and a swap to repay need a price, so they wait
+for the same hour. The feed is read live and nothing is recorded, so only
+the latest outage counts. This raises the cost of a wrong address: a feed
+reporting the sequencer down holds every default as well as every price,
+and a missing feed on an L2 lets defaults land on borrowers who could not
+send a transaction. The guard is not upgradeable, so this reaches a chain at
+its next fresh deploy.
 
 ### Feed registry / numeraire, anchor and ETH keys / WETH / ETH-numeraire feed / Uniswap V3 factory
 
