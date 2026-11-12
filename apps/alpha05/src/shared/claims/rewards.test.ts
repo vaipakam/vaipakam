@@ -45,8 +45,13 @@ describe('pendingFromRevert', () => {
   });
   it('names each refusal the claim itself would raise', () => {
     expect(pendingFromRevert({ errorName: 'NoInteractionRewardsToClaim', args: [] }, 9n)).toEqual({ kind: 'none' });
-    expect(pendingFromRevert({ errorName: 'InteractionDayGlobalNotFinalized', args: [7n] }, 9n)).toEqual({ kind: 'waiting', day: 7n, why: 'global' });
-    expect(pendingFromRevert({ errorName: 'InteractionDayAwaitingDelivery', args: [8n] }, 9n)).toEqual({ kind: 'waiting', day: 8n, why: 'delivery' });
+    expect(pendingFromRevert({ errorName: 'InteractionDayGlobalNotFinalized', args: [7n] }, 9n)).toEqual({ kind: 'waiting', day: 7n, why: 'global', atBlock: 9n });
+    expect(pendingFromRevert({ errorName: 'InteractionDayAwaitingDelivery', args: [8n] }, 9n)).toEqual({ kind: 'waiting', day: 8n, why: 'delivery', atBlock: 9n });
+    expect(pendingFromRevert({ errorName: 'InteractionPoolExhausted', args: [] }, 9n)).toEqual({ kind: 'short', why: 'pool-exhausted', needed: null, available: null });
+    expect(pendingFromRevert({ errorName: 'InteractionPoolReservedShortfall', args: [5n, 2n] }, 9n)).toEqual({ kind: 'short', why: 'pool-reserved', needed: 5n, available: 2n });
+    expect(pendingFromRevert({ errorName: 'RecycleBucketReservedShortfall', args: [5n, 2n] }, 9n)).toEqual({ kind: 'short', why: 'recycled-reserved', needed: 5n, available: 2n });
+    expect(pendingFromRevert({ errorName: 'InteractionRewardBackingShort', args: [5n, 2n] }, 9n)).toEqual({ kind: 'short', why: 'backing', needed: 5n, available: 2n });
+    expect(pendingFromRevert({ errorName: 'DeliveredFreshShortfall', args: [5n, 2n] }, 9n)).toEqual({ kind: 'short', why: 'backing', needed: 5n, available: 2n });
     expect(pendingFromRevert({ errorName: 'InteractionEmissionsNotStarted', args: [] }, 9n)).toEqual({ kind: 'not-started' });
     expect(pendingFromRevert({ errorName: 'VPFITokenNotSet', args: [] }, 9n)).toEqual({ kind: 'not-started' });
     expect(pendingFromRevert({ errorName: 'EnforcedPause', args: [] }, 9n)).toEqual({ kind: 'paused' });

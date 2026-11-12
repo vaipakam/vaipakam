@@ -7,7 +7,10 @@
  * closed and finalized through the protocol's permissionless entry points.
  * Then, as the lender, on the page:
  *
- *   1. before the days finalize, the claim waits and names the waiting day;
+ *   1. before the days finalize, the claim waits and names the waiting day,
+ *      with what the day waits on (the finalisation's own readiness answer,
+ *      RW-28) and that later days wait behind it; under the global pause the
+ *      claim's refusal names the pause and what stays open;
  *   2. with the claim window off, no removal date is shown;
  *   3. with a window armed and the entry's clock started, the soonest
  *      removal estimate is shown as a date;
@@ -43,6 +46,14 @@ const REWARD_POOL_FUND = 1_000_000n * 10n ** 18n;
 const CLAIM_DAYS = 30;
 const ZERO = '0x0000000000000000000000000000000000000000';
 const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)']);
+const READINESS = parseAbi(['function isDayReadyToFinalize(uint256 dayId) view returns (bool ready, uint8 reason)']);
+/** The sentence each readiness reason gives (`LibRewardDayReport`). */
+const READINESS_TEXT: Record<number, string> = {
+  0: 'can be finalised now; anyone may run that step.',
+  2: 'No network has reported reward day',
+  3: 'the others have a set time to report first.',
+  4: 'The list of networks expected to report does not let reward day',
+};
 const PREVIEW = parseAbi([
   'function simulateClaimInteractionRewards(address user, uint8 venue)',
   'error InteractionRewardsSimulation(uint256 paid, uint256 fromDay, uint256 toDay)',
@@ -116,6 +127,14 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(pending).toHaveAttribute('data-figure', 'waiting', { timeout: 60_000 });
   await expect(pending).toContainText(/Your next rewards wait on reward day \d+/);
   await expect(widget.getByTestId('claim-interaction')).toHaveCount(0);
+  // RW-28: what the day waits on, from the finalisation's own readiness
+  // answer for the day the claim names.
+  const waitingDay = BigInt((await pending.textContent())!.match(/reward day (\d+)/)![1]!);
+  const [, reason] = await sc.pub.readContract({ address: sc.diamond, abi: READINESS, functionName: 'isDayReadyToFinalize', args: [waitingDay] });
+  const wait = widget.getByTestId('rewards-wait');
+  await expect(wait).toHaveAttribute('data-wait', 'finalize');
+  await expect(wait).toContainText(READINESS_TEXT[reason]!);
+  await expect(wait).toContainText('Later days wait behind it. No step of yours clears it; anyone may run the step that does.');
   // 2. The claim window is off on this chain: no date.
   await expect(widget.getByTestId('rewards-expiry')).toHaveAttribute('data-expiry', 'dark');
   await expect(widget).toContainText('Unclaimed rewards are not removed on this network');
@@ -123,6 +142,15 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(widget).toContainText('Fee-discount tier applied to your fees now: 0');
   await expect(widget).not.toContainText('could not be read');
   await fitsWidth(page);
+
+  // The global pause: the claim's own check is refused by it, named with
+  // what stays open.
+  await sc.diamondWrite('admin', 'pause');
+  await page.reload();
+  await expect(pending).toHaveAttribute('data-figure', 'paused', { timeout: 60_000 });
+  await expect(pending).toContainText('The protocol on Base Sepolia is paused, and the claim’s own check was refused by the pause');
+  await expect(pending).toContainText('Full and partial repayment and adding collateral stay open');
+  await sc.diamondWrite('admin', 'unpause');
 
   await finalizeThrough(sc, (await sc.rewardDay()) - 1);
 

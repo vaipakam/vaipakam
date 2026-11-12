@@ -2066,9 +2066,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   pays now. A mirror whose home network cannot be read keeps its
   role and states the missing reading. Every amount is formatted in the VPFI
   token read in the same snapshot. Basic shows one sentence: running only when the
-  launch has passed by the read block's own clock, the role pays here (an unconfigured network behaves as
-  a home network) and something is held to pay; otherwise running with
-  nothing held (a home network or one with no role set), running on a
+  launch has passed by the read block's own clock, the role pays here and
+  something is held to pay; a network with no reward role set says that no
+  reward day there can be finalised or claimed yet, whatever else reads
+  (`finalizeDay` needs the canonical flag); otherwise running with
+  nothing held (a home network), running on a
   mirror with no standing VPFI while VPFI sent for a day can still pay, no start date, a stated start, or left the reward network
   (detached: nothing new becomes claimable). A deciding fact that is unread
   makes the sentence unknown, never running, never zero. A global pause is
@@ -2079,6 +2081,37 @@ above. Each resolves here, so a route reviewer needs no private file:
   card says so instead of implying it. Rewards are rebates on the wallet's
   own use, never yield (RL-6).
 
+- **RB-REWARDS-WAIT** — A reward claim that cannot run now says why, by
+  name (RW-28). The reason is the claim's own preview refusal; what a
+  waiting day waits on is read at the preview's own block, so both describe
+  one chain state. A day waiting for its global figures (the known-global
+  flag the claim checks, never a zero total) states, on a home network,
+  the finalisation's own readiness answer
+  (`isDayReadyToFinalize`: no listed report, reports within their grace
+  time, an unusable expected-source list, or ready to run), on a mirror
+  whether the home network's figures arrived (`getBroadcastV2Applied`), and
+  on a detached network that nothing new becomes claimable there, and on a
+  network with no reward role set that no day can be finalised there until
+  one is set (in both, no step anyone may run clears it, so none is
+  offered). A
+  day waiting for funding states whether the home network priced it here,
+  whether this network's report was sent, and the parts landed, the new and
+  the recycled VPFI each against its own declared whole, since the day opens
+  only once both are whole and an excess in one never covers the other
+  (`getDayDeliveryState`, `getDayDeliveryParts`). The report
+  is named only for an armed day (from `getGovernorCommitState`'s arming
+  day on): an unarmed day is funded without it and its report cannot be
+  sent, and an unread arming day is stated as unread; a day whose
+  parts declared different wholes is disclosed as one that cannot be
+  repaired and can be closed unpaid after a waiting period. Every waiting reason ends with: later days
+  wait behind it, no step of the wallet's own clears it, and anyone may run
+  the step that does. A funding refusal is named with the protocol's own
+  figures: the pool of new VPFI paid out with no recycled part in the claim
+  (it does not lift; recycled VPFI still pays later rewards), pool or
+  recycled VPFI reserved for pending settlements (needed against free), or
+  the fresh backing short (needed against available). The global pause is named with what stays
+  open (RB-SWITCH class 2), as the claim's own refusal measured it. Any
+  fact that does not answer is stated as unread, never guessed.
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
   RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
   its VPFI in its own vault and the fee-discount consent. On a network with

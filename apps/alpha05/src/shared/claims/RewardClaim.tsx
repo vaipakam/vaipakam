@@ -11,6 +11,7 @@ import { holdsFlow } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { shortAddress } from '../ui/format';
+import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import {
   REWARD_CLAIM_ABI,
   VENUE_VAULT,
@@ -47,8 +48,15 @@ export interface RewardReady {
   window?: ClaimWindow;
 }
 
+/** What a sentence needs beyond the copy: the network's name and how an
+ *  amount of the reward token is written. */
+export interface PendingContext {
+  chain: string;
+  amount: (v: bigint) => string;
+}
+
 /** The sentence for a preview that is not an exact figure. */
-export function pendingText(p: Exclude<PendingRewards, { kind: 'exact' }>, copy: Pick<CopyAccess, 'text' | 'format'>): string {
+export function pendingText(p: Exclude<PendingRewards, { kind: 'exact' }>, copy: Pick<CopyAccess, 'text' | 'format'>, ctx: PendingContext): string {
   const { text, format } = copy;
   switch (p.kind) {
     case 'none':
@@ -58,7 +66,13 @@ export function pendingText(p: Exclude<PendingRewards, { kind: 'exact' }>, copy:
     case 'not-started':
       return text('rewards.notStarted');
     case 'paused':
-      return text('rewards.paused');
+      return format('rewards.paused', { chain: ctx.chain, staysOpen: SWITCH_EFFECTS['2'].staysOpen });
+    case 'short':
+      if (p.why === 'pool-exhausted') return text('rewards.shortPoolExhausted');
+      return format(p.why === 'pool-reserved' ? 'rewards.shortPoolReserved' : p.why === 'recycled-reserved' ? 'rewards.shortRecycled' : 'rewards.shortBacking', {
+        needed: ctx.amount(p.needed ?? 0n),
+        available: ctx.amount(p.available ?? 0n),
+      });
     case 'barred':
       return text('rewards.barred');
     case 'refused':
@@ -103,6 +117,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const account = (own?.account ?? '0x') as Hex;
   const [reviewed, setReviewed] = useState<Reviewed | null>(null);
+  const claimAmount = (v: bigint) => (token ? tokenAmount(v, token, meta, format) : format('asset.baseUnits', { amount: v.toString(), token: 'VPFI' }));
 
   const tx = useTrackedTx({
     key: `claim.reward.${kind}`,
@@ -159,7 +174,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
     if (!reviewed) return { kind: 'unreadable', reason: text('flow.reading') };
     if (kind === 'interaction') {
       const now = (await own.read((c) => readPendingRewards(c, diamond, account))).value;
-      if (now.kind !== 'exact') return { kind: 'refused', refusal: { code: now.kind, reason: pendingText(now, copy), reopensAt: null, remedy: null } };
+      if (now.kind !== 'exact') return { kind: 'refused', refusal: { code: now.kind, reason: pendingText(now, copy, { chain: chain!.name, amount: claimAmount }), reopensAt: null, remedy: null } };
       if (now.amount !== reviewed.amount || now.fromDay !== reviewed.fromDay || now.toDay !== reviewed.toDay) {
         if (current()) setReviewed({ ...reviewed, amount: now.amount, fromDay: now.fromDay, toDay: now.toDay, readAt: readNow() });
         return { kind: 'changed', what: text('claim.changedAmount') };
