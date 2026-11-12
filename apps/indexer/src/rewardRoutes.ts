@@ -285,26 +285,26 @@ export async function handleRewardsClaimed(
   }
 
   try {
-    const [rows, totals, watermark] = await Promise.all([
+    // One batch is one D1 transaction, so the wallet's rows and both
+    // completeness markers come from the same snapshot. Read separately, an
+    // ingest pass could land between them: the rows read before a claim was
+    // recorded, the watermark read after it moved past that claim, and the
+    // answer would promise a total that leaves the claim out.
+    const [rowsRes, totalsRes, watermarkRes] = await env.DB.batch([
       env.DB.prepare(
         `SELECT day_id, distributed, vault_delivered
            FROM reward_day_user
           WHERE chain_id = ? AND user = ?`,
-      )
-        .bind(chainId, wallet)
-        .all<{ day_id: number; distributed: string; vault_delivered: string }>(),
-      env.DB.prepare(
-        `SELECT backfill_done FROM reward_loop_totals WHERE chain_id = ?`,
-      )
-        .bind(chainId)
-        .first<{ backfill_done: number }>(),
+      ).bind(chainId, wallet),
+      env.DB.prepare(`SELECT backfill_done FROM reward_loop_totals WHERE chain_id = ?`).bind(chainId),
       env.DB.prepare(
         `SELECT last_block FROM indexer_cursor
           WHERE chain_id = ? AND kind = ?`,
-      )
-        .bind(chainId, INGESTED_BEFORE_TIME_KIND)
-        .first<{ last_block: number }>(),
+      ).bind(chainId, INGESTED_BEFORE_TIME_KIND),
     ]);
+    const rows = (rowsRes?.results ?? []) as { day_id: number; distributed: string; vault_delivered: string }[];
+    const totals = totalsRes?.results?.[0] as { backfill_done: number } | undefined;
+    const watermark = watermarkRes?.results?.[0] as { last_block: number } | undefined;
     const recordedBefore =
       watermark && Number.isFinite(Number(watermark.last_block)) && Number(watermark.last_block) > 0
         ? Number(watermark.last_block)
@@ -317,7 +317,7 @@ export async function handleRewardsClaimed(
     let claimDays = 0;
     let firstDay: number | null = null;
     let lastDay: number | null = null;
-    for (const r of rows.results ?? []) {
+    for (const r of rows) {
       const d = BigInt(r.distributed);
       const v = BigInt(r.vault_delivered);
       claimed += d;
