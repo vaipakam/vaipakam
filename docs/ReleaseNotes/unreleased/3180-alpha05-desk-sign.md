@@ -1,9 +1,0 @@
-## Thread — alpha05 rate desk signs a new order from the ticket
-
-The new app's order ticket can now sign an order instead of posting it. A signed order costs no gas and sets nothing aside: the wallet signs the order's terms, the offer book lists it, and when someone fills it the protocol draws the stake from the signer's own vault, checking then everything it would check of a posted offer. Until it lapses the order binds the signer, and only a cancel on the chain stops it, so the ticket refuses a signed order that never lapses.
-
-The app signs only orders a fill can draw in one piece: token on both sides, one size, all or none, with no fee tariff and no price guard. A ranged or partial order could otherwise be filled in slices by the protocol's matcher. In signed mode the ticket says where the stake comes from and that the order fills whole, in place of the wallet balance and the fill choice.
-
-The review shows exactly the order the wallet then signs, built once with its nonce when the review opens. It states the order, when it lapses, that it fills whole, that nothing is set aside now, what a fill would draw from the vault, and what the vault holds free of that token now, read from the protocol. If the vault holds too little, the review names the amount to add rather than blocking, since a fill draws on the vault as it stands then. It also says the protocol checks the order only when it is filled, and that the signature works only on this network and this deployment.
-
-After one consent and one signature, the order goes to the offer book, and its answer is shown as it came: listed, refused with the book's reason, or not known. When the answer is not known, the signed order stays on this device with a button to send it again, because the book lists an order once. A listed order then appears under the wallet's signed orders on the desk. Advances #3180.

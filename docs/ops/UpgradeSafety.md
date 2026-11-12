@@ -47,6 +47,8 @@ The Storage struct lives at slot `keccak256(abi.encode(uint256(keccak256("vaipak
 | Deleted selector still referenced by external integrators | Announce selector removals 2 weeks in advance on the status page. |
 | New facet exposes a state-mutating function missing `whenNotPaused` | Lint: every `nonReentrant`/mutating external function in a new facet is reviewed for pause gating. `PauseGatingTest` must be updated. |
 | New facet exposes a state-mutating function missing `onlyRole(...)` where required | Manual review + a targeted test asserting unauthorized callers revert. |
+| A curated refresh leaves out the facet that hosts a rule the refreshed facets self-call | The refresh-together families in `CLAUDE.md` list every such set. `RedeployFacets` refuses a Diamond that does not already route each host it depends on (for example `PredatesMatchRiskBoundsHost` since #3326: the match facets read the start-of-loan risk bounds from `OfferPreviewFacet.initRiskBounds`, which that script does not carry). Never work around a refusal by cutting a subset by hand; use the all-facets refresh or a fresh deploy. |
+| A refresh changes a figure stamped on a loan when it opens | Open loans carry no stamp from the new code. Since #3562 the lender's yield-fee discount is the lower of the tier at entry and at settlement, and a loan open before the refresh has no entry record, so its lender loses the hold-tier part of the discount from then on. A lender who paid the Full tariff at opening keeps that paid bump, which does not depend on the record. Say so to lenders before such a refresh, or wait for the next fresh deploy. |
 
 ### Procedure (per cut)
 1. Draft the cut in a new script: `script/UpgradeFacets_<name>.s.sol`.
