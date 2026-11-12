@@ -110,6 +110,11 @@ That gate is what keeps bugs out of the oracle.
   token safety, support, alerts, and operational controls. The filename
   still carries the app's former `alpha02` name.
 
+- [Alpha05ConnectedApp.md](Alpha05ConnectedApp.md) — the new app's guided
+  journeys, desk and signed orders, transaction evidence, rental actions,
+  rewards, protection, and user settings. Its scope remains separate from
+  the current app until parity and an explicit cutover.
+
 - [KeeperOperations.md](KeeperOperations.md) — operational duties, independent
   activation, transaction outcomes, reward automation, and deployment adoption.
   The owner's October 27 direction places execution on a separate always-on
@@ -179,7 +184,7 @@ tab if a merge changed `contracts/src/` or `apps/` but touched no
 
 ## Baseline
 
-Except for the keeper operations spec, the proposed per-domain specs above
+Except for the keeper and vault operations specs, the proposed per-domain specs above
 do not exist yet. Authoring them **from the
 documents** — the up-to-date FunctionalSpecs docs, `DesignsAndPlans`, and
 `ReleaseNotes` (per the conflict-precedence above), **not** from the
@@ -190,7 +195,9 @@ code at that time. Until a domain's spec exists, its intended behaviour
 is described — less tidily — across the release notes and the
 `DesignsAndPlans/` docs.
 
-## Release-note consolidation: August 13 through November 4, 2026
+<a id="release-note-consolidation-august-13-through-november-4-2026"></a>
+
+## Release-note consolidation: August 13 through November 11, 2026
 
 The following source map accounts for every dated file present in the inclusive
 range. It identifies where functional decisions belong, rather than copying
@@ -229,12 +236,26 @@ independent send shares. Existing later intent, including keeper use of the
 protocol's close-out progress flag, remains in force. Tooling-only layout,
 build, test-driver, and interface-relocation details are not product rules.
 
+The November 4–11 continuation preserves the overlapping November 4 source
+and includes all seven later daily files. It reconciles per-second interest,
+armed illiquid consent, standalone position ownership and retirement, own-vault
+credits, delayed vault and price controls, offer timing and price guards,
+bounded reward claims, caps on every reward chain, closed-day returns, treasury
+floors, isolated keeper and Telegram state, sequencer recovery, and alpha05.
+Later same-day decisions supersede earlier slices: signed fills and paid tier
+delivery are available in alpha05, guarded offers receive checkpoint coverage,
+and mirrors carry the fee-linked cap. Deployment and activation caveats remain
+explicit. Later intent already present, including tier-LTV defaults and ceilings,
+is retained. Build commands, code layout, and test scripts are not copied into
+functional requirements.
+
 In this table, Platform means [ProjectDetailsREADME.md](ProjectDetailsREADME.md),
 App means [Alpha02ConnectedApp.md](Alpha02ConnectedApp.md), Website means
 [WebsiteReadme.md](WebsiteReadme.md), Tokenomics means
 [TokenomicsTechSpec.md](TokenomicsTechSpec.md), and Keeper means
 [KeeperOperations.md](KeeperOperations.md). Vault means
-[VaultOperations.md](VaultOperations.md). Internal notes identify supporting
+[VaultOperations.md](VaultOperations.md); alpha05 means
+[Alpha05ConnectedApp.md](Alpha05ConnectedApp.md). Internal notes identify supporting
 verification or tooling history, not additional product requirements.
 
 | Release source | Functional home | Decisions reconciled |
@@ -305,6 +326,13 @@ verification or tooling history, not additional product requirements.
 | [2026-11-02](../ReleaseNotes/ReleaseNotes-2026-11-02.md) | Vault; app; website; keeper | Depository assets, protected payouts and replacement, permissionless service coverage |
 | [2026-11-03](../ReleaseNotes/ReleaseNotes-2026-11-03.md) | Tokenomics; keeper; vault; app | One funded day on arrival, proof-pass retirement, all-asset adoption and disowning; unchanged backstop withdrawal intent |
 | [2026-11-04](../ReleaseNotes/ReleaseNotes-2026-11-04.md) | Platform; app; website; tokenomics; keeper; vault | Fresh testnets, proxy reads, extension UX, offline-key backups, mesh observations, protected and reward upkeep, issuer-bound returns and agreed rental days |
+| [2026-11-05](../ReleaseNotes/ReleaseNotes-2026-11-05.md) | Platform; vault; keeper; alpha05 | Per-second interest, rental fees, snapshotted escape, direct extension, LOCK races, alpha05 foundation and reward activation evidence |
+| [2026-11-06](../ReleaseNotes/ReleaseNotes-2026-11-06.md) | Platform; tokenomics; keeper; alpha05 | Whole reward days, armed pair consent, direct risk settings, protected unlink, launch funding, acknowledgement retries, guided deal review |
+| [2026-11-07](../ReleaseNotes/ReleaseNotes-2026-11-07.md) | Vault; platform; keeper; website; alpha05 | Central vault versions, public governance queue, sanctions limits, served-build controls, offer bounds, fair matching, private routing |
+| [2026-11-08](../ReleaseNotes/ReleaseNotes-2026-11-08.md) | Platform; vault; keeper; website; alpha05 | Standalone position NFTs, retirement and holder locks, moved routes, fixed refinance reviews, durable depth, adaptive sale floor, indigo palette, claims and vault UX |
+| [2026-11-09](../ReleaseNotes/ReleaseNotes-2026-11-09.md) | Platform; vault; keeper; website; alpha05 | Classified outflows, own-vault credits, independent price guard, backup automation, snapshotted discount liquidation, alerts and user controls, wallet-gated books |
+| [2026-11-10](../ReleaseNotes/ReleaseNotes-2026-11-10.md) | Platform; vault; tokenomics; keeper; alpha05 | Bounded claim work and windows, guarded offers, Base cap, deadlines and seasoning, NFT cooldowns, fixed vault endpoints, seven-day pricing, treasury room and keeper pause |
+| [2026-11-11](../ReleaseNotes/ReleaseNotes-2026-11-11.md) | Platform; vault; tokenomics; keeper; website; alpha05 | Budget-paid tier drops, private lease and Telegram state, signed-order previews and desk, largest matches, mirror caps and returns, private fallback, outage clocks, reorg coverage, treasury floors and entry-capped discounts |
 
 A source release is not a live-deployment guarantee. The October 27–28 caveat
 that the contract wave had not reached testnets was superseded by the November
