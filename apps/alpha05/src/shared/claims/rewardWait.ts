@@ -51,8 +51,11 @@ export type WaitDetail =
   | { kind: 'broadcast'; applied: boolean | null }
   /** A mirror waiting for the day's funding: whether the home network has
    *  priced the day for this network, whether this network's report for it
-   *  has been sent, and the parts that have landed (each null when unread). */
-  | { kind: 'delivery'; stamped: boolean | null; reportSent: boolean | null; parts: DeliveryParts | null }
+   *  has been sent, whether the day is one that needs that report at all
+   *  (an armed day; an unarmed day is funded without it, and its report
+   *  cannot be sent), and the parts that have landed (each null when
+   *  unread). */
+  | { kind: 'delivery'; stamped: boolean | null; reportSent: boolean | null; armed: boolean | null; parts: DeliveryParts | null }
   /** A detached network: it has left the reward network, so no
    *  finalisation or report clears the wait and nothing new becomes
    *  claimable here. */
@@ -76,14 +79,19 @@ export async function readWaitDetail(c: PublicClient, diamond: Hex, day: bigint,
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
     answerOrNull(c.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>);
   if (why === 'delivery') {
-    const [state, parts] = await Promise.all([
+    const [state, parts, commit] = await Promise.all([
       read<RawState>(REMITTANCE_LENS, 'getDayDeliveryState', [day]),
       read<RawParts>(REMITTANCE_LENS, 'getDayDeliveryParts', [day]),
+      read<readonly [bigint, bigint, bigint, bigint]>(AGGREGATOR, 'getGovernorCommitState'),
     ]);
+    // `LibCommitmentReport.isDayArmed`: a day needs this network's report
+    // only from the arming day on; 0 means nothing is armed.
+    const armedFrom = commit === null ? null : commit[0];
     return {
       kind: 'delivery',
       stamped: state === null ? null : state[1],
       reportSent: state === null ? null : state[7],
+      armed: armedFrom === null ? null : armedFrom !== 0n && day >= armedFrom,
       parts:
         parts === null
           ? null
@@ -148,7 +156,12 @@ export function waitLines(day: bigint, d: WaitDetail): WaitLine[] {
     case 'delivery': {
       if (d.stamped === null) lines.push({ key: 'rewardsWait.pricedUnread', vars: v });
       else if (!d.stamped) lines.push({ key: 'rewardsWait.priced', vars: v });
-      else if (d.reportSent === false && (d.parts === null || d.parts.parts === 0)) lines.push({ key: 'rewardsWait.report', vars: v });
+      else if (d.reportSent === false && (d.parts === null || d.parts.parts === 0)) {
+        // Only an armed day waits on this network's report; an unarmed one
+        // is funded without it, and the report cannot be sent for it.
+        if (d.armed === true) lines.push({ key: 'rewardsWait.report', vars: v });
+        else if (d.armed === null) lines.push({ key: 'rewardsWait.reportUnread', vars: v });
+      }
       if (d.stamped) {
         if (d.parts === null) lines.push({ key: 'rewardsWait.partsUnread', vars: v });
         else if (d.parts.parts === 0) lines.push({ key: 'rewardsWait.noParts', vars: v });

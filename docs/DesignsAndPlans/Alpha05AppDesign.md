@@ -2092,7 +2092,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   clears it, so none is offered). A
   day waiting for funding states whether the home network priced it here,
   whether this network's report was sent, and the parts landed against the
-  declared whole (`getDayDeliveryState`, `getDayDeliveryParts`); a day whose
+  declared whole (`getDayDeliveryState`, `getDayDeliveryParts`). The report
+  is named only for an armed day (from `getGovernorCommitState`'s arming
+  day on): an unarmed day is funded without it and its report cannot be
+  sent, and an unread arming day is stated as unread; a day whose
   parts declared different wholes is disclosed as one that cannot be
   repaired and can be closed unpaid after a waiting period. Every waiting reason ends with: later days
   wait behind it, no step of the wallet's own clears it, and anyone may run

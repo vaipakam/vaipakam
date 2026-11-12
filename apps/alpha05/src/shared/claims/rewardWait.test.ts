@@ -26,20 +26,36 @@ describe('waitLines', () => {
   });
 
   it('states a delivery wait in order: not priced, the report, then the parts landed against the whole', () => {
-    expect(keys({ kind: 'delivery', stamped: false, reportSent: false, parts: null })).toEqual(['rewardsWait.priced', 'rewardsWait.behind']);
-    expect(keys({ kind: 'delivery', stamped: null, reportSent: null, parts: null })).toEqual(['rewardsWait.pricedUnread', 'rewardsWait.behind']);
-    expect(keys({ kind: 'delivery', stamped: true, reportSent: false, parts: { whole: 0n, landed: 0n, parts: 0, conflict: false } })).toEqual([
+    expect(keys({ kind: 'delivery', stamped: false, reportSent: false, armed: true, parts: null })).toEqual(['rewardsWait.priced', 'rewardsWait.behind']);
+    expect(keys({ kind: 'delivery', stamped: null, reportSent: null, armed: null, parts: null })).toEqual(['rewardsWait.pricedUnread', 'rewardsWait.behind']);
+    expect(keys({ kind: 'delivery', stamped: true, reportSent: false, armed: true, parts: { whole: 0n, landed: 0n, parts: 0, conflict: false } })).toEqual([
       'rewardsWait.report',
       'rewardsWait.noParts',
       'rewardsWait.behind',
     ]);
-    const landed = waitLines(7n, { kind: 'delivery', stamped: true, reportSent: true, parts: { whole: 10n, landed: 4n, parts: 2, conflict: false } });
+    const landed = waitLines(7n, {
+      kind: 'delivery',
+      stamped: true,
+      reportSent: true,
+      armed: true,
+      parts: { whole: 10n, landed: 4n, parts: 2, conflict: false },
+    });
     expect(landed[0]).toEqual({ key: 'rewardsWait.parts', vars: { day: '7', parts: '2' }, amounts: { landed: 4n, whole: 10n } });
-    expect(keys({ kind: 'delivery', stamped: true, reportSent: true, parts: null })).toEqual(['rewardsWait.partsUnread', 'rewardsWait.behind']);
+    expect(keys({ kind: 'delivery', stamped: true, reportSent: true, armed: true, parts: null })).toEqual(['rewardsWait.partsUnread', 'rewardsWait.behind']);
+  });
+
+  it('names this network’s report only for an armed day, and says so when arming is unread', () => {
+    const none = { whole: 0n, landed: 0n, parts: 0, conflict: false };
+    expect(keys({ kind: 'delivery', stamped: true, reportSent: false, armed: false, parts: none })).toEqual(['rewardsWait.noParts', 'rewardsWait.behind']);
+    expect(keys({ kind: 'delivery', stamped: true, reportSent: false, armed: null, parts: none })).toEqual([
+      'rewardsWait.reportUnread',
+      'rewardsWait.noParts',
+      'rewardsWait.behind',
+    ]);
   });
 
   it('discloses that a day whose parts disagree can be closed unpaid', () => {
-    expect(keys({ kind: 'delivery', stamped: true, reportSent: true, parts: { whole: 10n, landed: 12n, parts: 3, conflict: true } })).toEqual([
+    expect(keys({ kind: 'delivery', stamped: true, reportSent: true, armed: true, parts: { whole: 10n, landed: 12n, parts: 3, conflict: true } })).toEqual([
       'rewardsWait.parts',
       'rewardsWait.conflict',
       'rewardsWait.behind',

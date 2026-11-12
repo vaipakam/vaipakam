@@ -1908,6 +1908,7 @@ export const copy = {
     priced: B('The home network has not yet set reward day {{day}}’s funding for this network.'),
     pricedUnread: B('Whether the home network has set reward day {{day}}’s funding for this network could not be read.'),
     report: B('This network’s report for reward day {{day}} is not sent yet; the home network waits for it.'),
+    reportUnread: B('Whether reward day {{day}} also waits for this network’s own report could not be read.'),
     parts: B('{{landed}} of the {{whole}} sent for reward day {{day}} has landed here, in {{parts}} parts.'),
     noParts: B('None of reward day {{day}}’s funding has landed here yet.'),
     partsUnread: B('How much of reward day {{day}}’s funding has landed here could not be read.'),
