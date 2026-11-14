@@ -90,7 +90,7 @@ test('a snapshot behind a governance change, or an unreachable index, sends the 
   await setIndexPosture('down');
   await page.reload();
   await expect(page.getByTestId('console-source')).toHaveAttribute('data-why', 'unreachable');
-  await expect(page.getByText(/The index did not answer \(.+\), so the settings were read from the chain instead\./)).toBeVisible();
+  await expect(page.getByText('The index could not be used (it refused the request), so the settings were read from the chain instead.')).toBeVisible();
 });
 
 test('a chain answer older than the snapshot is stated as unknown, with no value written', async ({ launchWallet }) => {

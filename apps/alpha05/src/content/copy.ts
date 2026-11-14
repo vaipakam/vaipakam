@@ -5272,8 +5272,14 @@ export const copy = {
       'console-source',
     ),
     noReason: B('no reason given'),
+    index: {
+      notConfigured: B('this build is not set up with an index'),
+      network: B('it did not respond'),
+      status: B('it refused the request'),
+      shape: B('it answered in a form this app cannot read'),
+    },
     why: {
-      unreachable: A('The index did not answer ({{reason}}), so the settings were read from the chain instead.'),
+      unreachable: A('The index could not be used ({{reason}}), so the settings were read from the chain instead.'),
       none: B('The index holds no snapshot for {{chain}}, so the settings were read from the chain.'),
       unlabelled: A(
         "The index could not tie the settings' names to the protocol's code, so they were read from the chain. The protocol's code may have changed since the index was built.",
@@ -5302,6 +5308,8 @@ export const copy = {
       auto: A("Paused automatically at block {{block}}, until {{until}}: {{left}} from now by this device's clock."),
       autoEnded: A("Paused automatically at block {{block}}, until {{until}}, which has passed by this device's clock."),
       manual: A('Paused by governance at block {{block}}, with no set end.'),
+      manualWithWindow: A('An automatic pause also runs until {{until}}, but the governance pause stays after it ends.'),
+      refreshFailed: A('Whether {{chain}} is paused now is unknown: the latest read failed ({{reason}}). The last read that answered was at block {{block}}.'),
       blocks: A(
         "While paused, new offers, accepts and matches, claims, withdrawals, liquidations and defaults stop. Full repayment, partial repayment and adding collateral stay open, and the paused time is added to every open loan's due date and grace end.",
       ),

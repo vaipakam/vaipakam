@@ -494,7 +494,10 @@ of RB-SWITCH is named with its class and what it blocks; one the readers
 do not publish yet is named with its state as not read, never left out.
 The global administrative pause is read live at one block, never from the
 snapshot, with what it stops, what stays open, and when an automatic pause
-could next start against the reader's clock. The page says it shows a
+could next start against the reader's clock. Whether governance's pause,
+which has no set end, is in force comes from the pause log, because it can
+run together with an automatic window; a refresh that fails while an older
+answer is held states the pause as unknown. The page says it shows a
 subset and names what it omits, says a retune never reprices an open
 loan, and lists no running total as a setting. Keeper posture waits on
 RW-78.

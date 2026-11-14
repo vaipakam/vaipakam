@@ -68,15 +68,41 @@ export interface PauseRead {
   /** The block's own time (unix seconds). */
   timestamp: number;
   paused: boolean;
+  /** Whether governance's pause, which has no set end, is in force. It can
+   *  run together with an automatic window, so `pausedUntil` alone cannot
+   *  say when a pause ends. */
+  manual: boolean;
   /** When an automatic pause window ends (unix seconds); 0 when none runs. */
   pausedUntil: bigint;
 }
 
+/** The pause log marks the interval of a governance pause in force with this
+ *  end: an automatic window is written with its own end. */
+const OPEN_END = 2n ** 64n - 1n;
+
+/**
+ * The global pause at one block. `paused` and `pausedUntil` cannot tell a
+ * governance pause from an automatic window when both run, so a pause is
+ * classified from the pause log: its last interval is open exactly while
+ * governance's pause is in force. An answer the three reads do not agree
+ * on is a failed read, never a guess.
+ */
 export async function readPauseAt(client: PublicClient, diamond: Address): Promise<PauseRead> {
   const head = await client.getBlock({ blockTag: 'latest' });
   const blockNumber = head.number;
   if (blockNumber === null) throw new Error('the chain did not name its latest block');
-  const call = (functionName: 'paused' | 'pausedUntil') => client.readContract({ address: diamond, abi: AdminFacetABI as Abi, functionName, blockNumber });
-  const [paused, pausedUntil] = await Promise.all([call('paused'), call('pausedUntil')]);
-  return { block: blockNumber, timestamp: Number(head.timestamp), paused: paused as boolean, pausedUntil: pausedUntil as bigint };
+  const read = (functionName: 'paused' | 'pausedUntil' | 'getPauseIntervals', args?: readonly unknown[]) =>
+    client.readContract({ address: diamond, abi: AdminFacetABI as Abi, functionName, args, blockNumber });
+  const [paused, pausedUntil] = (await Promise.all([read('paused'), read('pausedUntil')])) as [boolean, bigint];
+  let manual = false;
+  if (paused) {
+    // A start past the end returns no interval, only the count.
+    const [, total] = (await read('getPauseIntervals', [2n ** 256n - 1n, 0n])) as [unknown, bigint];
+    if (total === 0n) throw new Error('the protocol answered paused, but its pause log is empty');
+    const [last] = (await read('getPauseIntervals', [total - 1n, 1n])) as [readonly { end: bigint }[], bigint];
+    if (last.length !== 1) throw new Error('the pause log did not return its last interval');
+    manual = last[0].end === OPEN_END;
+    if (!manual && pausedUntil === 0n) throw new Error('the protocol answered paused, with neither a governance pause nor an automatic window');
+  }
+  return { block: blockNumber, timestamp: Number(head.timestamp), paused, manual, pausedUntil };
 }

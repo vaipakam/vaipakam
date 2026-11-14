@@ -8,9 +8,8 @@ import { readDirect, readPauseAt, type PauseRead } from '../../shared/console/di
 import { readConfigSnapshot, type SettingValues } from '../../shared/console/snapshot';
 import { ageOf, settleSettings, type ConsoleSettings } from '../../shared/console/source';
 import { SWITCHES, switchEffect, switchName, switchState, type SwitchClass } from '../../shared/console/switches';
-import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
+import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
-import { indexReason } from '../../shared/offers/OfferBook';
 import { useChainRead, useScreenChain, type ChainRead } from '../../shared/reads/chainRead';
 import { IndexerUnavailable } from '../../shared/reads/world/indexerClient';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
@@ -154,9 +153,22 @@ const WHY_KEY = {
   old: 'console.why.old',
 } as const satisfies Record<Exclude<ConsoleSettings, { source: 'snapshot' }>['why'], CopyKey>;
 
+const INDEX_REASON = {
+  'not-configured': 'console.index.notConfigured',
+  network: 'console.index.network',
+  status: 'console.index.status',
+  shape: 'console.index.shape',
+} as const satisfies Record<IndexerUnavailable['why'], CopyKey>;
+
+/** Why the index's snapshot could not be read, worded for this page: the
+ *  offer book's reasons name the offer index, which this page does not read. */
+function consoleIndexReason(e: Error, text: CopyAccess['text']): string {
+  return e instanceof IndexerUnavailable ? text(INDEX_REASON[e.why]) : e.message;
+}
+
 function WhyLine({ chain, why, indexError }: { chain: SupportedChain; why: keyof typeof WHY_KEY; indexError: Error | null }) {
   const { text, format } = useCopy();
-  const reason = indexError ? indexReason(indexError, text) : text('console.noReason');
+  const reason = indexError ? consoleIndexReason(indexError, text) : text('console.noReason');
   const line = format(WHY_KEY[why], { chain: chain.name, reason });
   return why === 'unlabelled' ? (
     <Notice tone="warn" tier="A">
@@ -192,13 +204,32 @@ function PauseSection({
         </span>
       </Notice>
     );
+  } else if (pause.error) {
+    // A refresh failed with an older answer still held: what holds now is
+    // unknown, and the older answer is not shown as current.
+    state = (
+      <Notice tone="warn" tier="A">
+        <span data-testid="console-pause" data-pause="unknown">
+          {format('console.pause.refreshFailed', { chain: chain.name, reason: pause.error, block: p.block.toString() })}
+        </span>
+      </Notice>
+    );
   } else if (!p.paused) {
     state = (
       <p className="tier-b" data-testid="console-pause" data-pause="none">
         {format('console.pause.none', { block: p.block.toString(), time: formatUtc(p.timestamp) })}
       </p>
     );
-  } else if (p.pausedUntil > 0n) {
+  } else if (p.manual) {
+    state = (
+      <Notice tone="warn" tier="A">
+        <span data-testid="console-pause" data-pause="manual">
+          {format('console.pause.manual', { block: p.block.toString() })}
+          {p.pausedUntil > 0n && <> {format('console.pause.manualWithWindow', { until: formatUtc(p.pausedUntil) })}</>}
+        </span>
+      </Notice>
+    );
+  } else {
     const until = Number(p.pausedUntil);
     state = (
       <Notice tone="warn" tier="A">
@@ -206,14 +237,6 @@ function PauseSection({
           {until > nowSec
             ? format('console.pause.auto', { block: p.block.toString(), until: formatUtc(p.pausedUntil), left: formatSpan(until - nowSec) })
             : format('console.pause.autoEnded', { block: p.block.toString(), until: formatUtc(p.pausedUntil) })}
-        </span>
-      </Notice>
-    );
-  } else {
-    state = (
-      <Notice tone="warn" tier="A">
-        <span data-testid="console-pause" data-pause="manual">
-          {format('console.pause.manual', { block: p.block.toString() })}
         </span>
       </Notice>
     );
