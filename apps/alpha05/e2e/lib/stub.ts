@@ -130,3 +130,15 @@ export async function setSignedBookReplay(orderHashes: readonly string[]): Promi
   });
   if (!res.ok) throw new Error(`stub refused signed-book replay: ${res.status}`);
 }
+
+/** RW-77 — set the settings snapshot the stand-in index answers for a chain
+ *  (`/config/:chainId`): the whole answer, as the index writes it. Reset
+ *  restores "no snapshot" on every chain. */
+export async function setConfigSnapshot(body: { chainId: number; available: boolean } & Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/config`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`stub refused config snapshot: ${res.status}`);
+}

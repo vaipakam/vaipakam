@@ -470,6 +470,35 @@ failed read and a failed re-read are each stated, never shown as an empty
 queue. The page also says that a queued change does not expire: it stays
 runnable until it is run or cancelled.
 
+### RB-CONSOLE — the protocol's settings are public, with their source
+
+One public page, reached by direct link with no wallet and never withheld
+by the Terms prompt, states the protocol's settings and switches on the
+chain the screen describes. It has no controls: every change goes through
+the governance queue, which it links. Each value is labelled by name, and
+a setting whose zero means none set is written as unset or off, never 0.
+The settings come from the index's snapshot only while it is dated, at
+most a day old by the reader's clock, not marked behind a governance
+change, and labelled (the index tied its names to the code that
+answered); otherwise from one read of the chain at one block, with the
+reason stated. A chain answer from a block before the snapshot's (or
+before the change the snapshot is behind) counts as failed, and with no
+usable answer the settings are unknown, never unset. An answer whose time
+is ahead of the reader's clock has an unknown age and is marked
+unverified; one more than a day old is flagged. When this build's ABI does
+not describe the code that answered the settings bundle, the page says
+the protocol's code has changed since the app was built and lists the
+bundle's settings as not answered. A setting that can change without an
+on-chain announcement says so when shown from the snapshot. Every switch
+of RB-SWITCH is named with its class and what it blocks; one the readers
+do not publish yet is named with its state as not read, never left out.
+The global administrative pause is read live at one block, never from the
+snapshot, with what it stops, what stays open, and when an automatic pause
+could next start against the reader's clock. The page says it shows a
+subset and names what it omits, says a retune never reprices an open
+loan, and lists no running total as a setting. Keeper posture waits on
+RW-78.
+
 ### RB-STATUS — every matrix row has a status
 
 `approved` (canonical intended behaviour), `proposed` (a departure or new

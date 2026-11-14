@@ -1627,3 +1627,15 @@ En el ticket de orden puedes elegir "Signed without gas" en lugar de publicar. F
 ### Rate desk: tus órdenes firmadas
 
 Una orden firmada es una oferta que aceptas firmándola, sin pagar gas. El libro de ofertas guarda tu firma, y nada llega a la cadena hasta que alguien la llena. Bajo el ticket de orden de un mercado, el Rate desk lista las órdenes firmadas de tu wallet en ese mercado, tal como las lista el libro de ofertas, y comprueba cada una en la cadena: abierta, parcialmente llenada por emparejamientos (el resto aún puede llenarse hasta que la canceles), llenada del todo o cancelada, detenida porque su nonce se canceló, o vencida. No se aparta nada para una orden firmada: un llenado toma el importe o la garantía de tu propio vault en ese momento, y falla si tu vault no lo cubre. Quitar una orden del libro de ofertas no la detendría, porque cualquiera que ya tenga la firma puede seguir enviándola. La única forma de detener una antes de que venza es cancelarla en la cadena, lo que cuesta gas y no devuelve nada, ya que no se retenía nada. Puedes cancelar una orden o, cuando varias de tus órdenes abiertas comparten un nonce, todas a la vez; eso también detiene cualquier otra orden que firmaste con ese nonce, en cualquier mercado. Un llenado enviado antes de tu cancelación aún puede llegar primero. Cuando la cadena reemplaza algunos bloques recientes, el libro de ofertas vuelve a comprobar tus órdenes y las deja fuera de la lista compartida hasta terminar. Esa orden se marca aquí. Su estado se sigue leyendo de la cadena y, mientras la cadena la muestre abierta, quien ya tenga su firma aún puede llenarla y tú aún puedes cancelarla.
+
+<a id="console-source"></a>
+
+### Consola del protocolo: de dónde vienen los ajustes
+
+La Consola del protocolo muestra los ajustes e interruptores del protocolo en la red que estás viendo. Es pública y de solo lectura: no necesitas cartera y nada se puede cambiar allí. La página muestra la copia guardada del índice solo mientras tiene menos de un día y no se ha quedado atrás de un cambio de gobernanza; si no, lee los ajustes directamente de la cadena y dice por qué. Si no se puede usar ninguna respuesta, los ajustes se muestran como desconocidos, nunca como sin definir ni como cero. Un cambio de ajuste nunca cambia el precio de un préstamo ya abierto.
+
+<a id="console-switches"></a>
+
+### Consola del protocolo: interruptores y la pausa global
+
+Cada interruptor aparece con su clase y lo que detiene. Los interruptores de nuevas posiciones solo detienen nuevas ofertas y préstamos. Los de ciclo de vida detienen también una función en los préstamos abiertos, mientras el reembolso, añadir garantía y los reclamos siguen abiertos. Los interruptores de keepers solo cambian quién ejecuta un paso; siempre puedes ejecutarlo tú. La pausa global se lee en vivo: mientras está activa se detienen las nuevas posiciones, los reclamos, los retiros, las liquidaciones y los impagos, pero el reembolso total y parcial y añadir garantía siguen abiertos. Un interruptor que la página aún no lee se nombra igualmente, con su estado como no leído.

@@ -1914,6 +1914,37 @@ a.btn {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
+/* RW-76 — the Protocol Console. Switches sit as cards, two across from a
+   tablet up and stacked on a phone; addresses and ids among the settings
+   are long unbroken hex, so they wrap anywhere rather than widen the page. */
+.console-switches {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+.console-switches .badge {
+  margin-inline-end: 6px;
+}
+.console-group h3 {
+  margin: 20px 0 0;
+  font-size: 1rem;
+  color: var(--text-strong);
+}
+.console .facts dd {
+  overflow-wrap: anywhere;
+}
+.console-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.875rem;
+}
+.console-unanswered {
+  margin: 8px 0;
+  padding-inline-start: 20px;
+}
 /* LN-21 / LN-22: a running loan's actions sit side by side, and stack to
    full width on a phone so each stays an easy tap. */
 .position-action-row,
