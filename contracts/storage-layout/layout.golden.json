@@ -490,7 +490,7 @@
     "L|vaipakam@164[uint8]|0|0|uint16|tierLtvCache[].ltvBps",
     "L|vaipakam@164[uint8]|0|2|uint64|tierLtvCache[].lastRefreshedAt",
     "L|vaipakam@165[uint8]@0[]|0|0|address|tierReferenceAssets[][]",
-    "L|vaipakam@166[uint8]|0|0|uint16|tierLtvParams[].floorBps",
+    "L|vaipakam@166[uint8]|0|0|uint16|tierLtvParams[].retiredFloorBps",
     "L|vaipakam@166[uint8]|0|2|uint16|tierLtvParams[].ceilBps",
     "L|vaipakam@166[uint8]|0|4|uint16|tierLtvParams[].haircutBps",
     "L|vaipakam@167[address]@0[address]@0[]|0|0|uint256|assetPairActiveLoanIds[][][]",

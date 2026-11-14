@@ -525,7 +525,8 @@ contract DepthTieredLtv is Test {
         // t1 > t2 ⇒ non-monotone.
         vm.expectRevert();
         ConfigFacet(address(diamond)).setTierMaxInitLtvBps(7000, 6000, 6500);
-        // Above the 80% ceiling ⇒ too high.
+        // Above the 82% hard ceiling (#3547) ⇒ too high; 82% itself is fine.
+        ConfigFacet(address(diamond)).setTierMaxInitLtvBps(5000, 6000, 8200);
         vm.expectRevert(
             abi.encodeWithSelector(
                 ConfigFacet.TierLtvBpsTooHigh.selector,

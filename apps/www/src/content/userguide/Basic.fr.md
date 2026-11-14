@@ -1106,6 +1106,8 @@ Les récompenses sont des remises d'usage sur vos prêts et emprunts sur ce rés
 
 Quand une réclamation attend un jour de récompenses, l'Accueil indique aussi ce que ce jour attend : les rapports d'autres réseaux avant de pouvoir être finalisé, l'arrivée des chiffres du réseau d'origine sur ce réseau, ou le financement du jour, avec la part déjà arrivée. Les jours suivants attendent derrière lui, et aucune action de votre part ne met fin à l'attente ; n'importe qui peut lancer l'étape qui y met fin. Sur un réseau sans rôle de récompenses défini, ou qui a quitté le réseau de récompenses, aucune étape que quiconque peut lancer ne met fin à l'attente, et l'Accueil le dit. Un jour dont le financement est arrivé en parties annonçant des totaux différents peut être clos sans paiement après un délai d'attente. Quand le VPFI qui paie une réclamation n'est pas détenu ici en ce moment, ou est réservé à des règlements en attente, l'Accueil le dit avec les montants ; une fois l'enveloppe de VPFI neuf du programme entièrement versée, les récompenses ne sont payées qu'à partir de VPFI recyclé. Quand le protocole est en pause, l'Accueil nomme la pause et indique que le remboursement total ou partiel et l'ajout de garantie restent ouverts.
 
+L’accueil affiche aussi ce que vous avez réclamé jusqu’ici sur ce réseau, et la part livrée dans votre coffre. Chaque réclamation compte le jour UTC où elle a été payée, quelle que soit sa destination. Ces totaux viennent de l’index : l’accueil indique jusqu’à quand il a enregistré toutes les réclamations ; si l’index ne répond pas, le total est affiché comme inconnu, jamais comme zéro.
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: Dates de retrait des récompenses

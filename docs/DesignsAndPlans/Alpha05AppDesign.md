@@ -2136,6 +2136,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   choice but says why; the re-check reads the mode again and re-shows the
   review when the destination changed. Claim everything keeps the vault for
   its reward legs and says so on its own receipt.
+- **RB-REWARDS-LIFETIME** — What a wallet has claimed over its lifetime
+  on a network, and the part delivered to its vault (RW-31), comes from the
+  index (`GET /rewards/claimed`), never from a client-side event scan. It
+  counts every claim paid to the wallet, held releases included, whichever
+  venue each chose; the vault part is what `RewardDeliveredToVault`
+  recorded, so a vault credit that fell back to the wallet is not in it.
+  Each claim counts on the UTC day it was paid (the claim day), never the
+  reward day. The figures are stated with the moment the index has recorded
+  every claim up to; while it has none, or is still replaying the chain's
+  history, the line says the total is not known yet, and an index that
+  cannot answer is stated as such, never as zero. A confirmed action of the
+  wallet's own re-reads it at once; a figure kept after a failed refresh is
+  said to be from an earlier read.
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
   RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
   its VPFI in its own vault and the fee-discount consent. On a network with

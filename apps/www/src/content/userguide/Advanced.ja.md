@@ -2043,6 +2043,8 @@ factor を示し、価格のないものは件数を示します。
 
 待機中の日がなぜ待っているかは、プレビューのブロックで読み取られます。ホームネットワークでは、`RewardAggregatorFacet.isDayReadyToFinalize(day)` が確定をまだ実行できない理由（リストにある報告がない、報告がまだ猶予時間内、予想される送信元リストが使えない）または今実行できることを示します。ミラーでは、`RewardReporterFacet.getBroadcastV2Applied(day)` がホームネットワークの数値が届いたかを示し、配送待ちでは `RewardRemittanceLensFacet.getDayDeliveryState(day)` と `getDayDeliveryParts(day)`（有効化日は `getGovernorCommitState()` で読みます。このネットワークの報告を待つのは、その日以降の日だけです） が、その日がここで価格付けされたか、このネットワークの報告が送られたか、宣言された全体に対して届いた部分を示します。部分ごとに異なる全体を宣言した日は、支払われずにスキップされうる日として開示されます。請求の資金面の拒否はプロトコルの数値とともに名前で示されます：`InteractionPoolExhausted`（新規VPFIのプールが支払い済みで、請求にリサイクル分がなく、解除されない）、`InteractionPoolReservedShortfall` と `RecycleBucketReservedShortfall`（保留中の精算のために予約）、`InteractionRewardBackingShort`（必要量と利用可能量）。`EnforcedPause` は引き続き可能なものとともに示されます。リワード上の役割が設定されていないネットワークでは `finalizeDay` を実行できない（正規フラグが必要）ため、カードは役割が設定されるまでどの日も確定できないことを伝え、手順は示しません。届いた新規VPFIと再利用VPFIは、それぞれ自身の宣言された全体と対比して示されます。その日は両方がそろって初めて開かれるためです。
 
+累計請求の行はインデクサーの `GET /rewards/claimed?chainId=&wallet=` を読みます。これは取り込みのユーザー別・請求日別の台帳から、ウォレットの `InteractionRewardsClaimed` の額（保留分の解放を含む）と `RewardDeliveredToVault` の額を、ブロックの UTC 日で集計します。追いついたパスが時点を記録していない間（`pending: unrecorded`）や、チェーンの一度きりの台帳再生の実行中（`pending: replaying`）は合計を返さず、それ以外は `recordedBefore` を示し、それより前のすべての請求が数えられています。ウォレットにフォールバックしたボールトへの入金は `RewardDeliveredToVault` を発行しないため、ボールト分には含まれません。
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: リワードの削除日

@@ -34,6 +34,7 @@ import { compileScript, runForgeScript } from '@vaipakam/anvil-harness/fixture';
 import { finalizeThrough, openLoan, repayInFull } from '@vaipakam/anvil-harness';
 import { ANVIL_URL, anvilRpc, increaseTime } from '../lib/anvil';
 import { scenario } from '../lib/chain';
+import { setIndexPosture } from '../lib/stub';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 import type { Page } from '@playwright/test';
@@ -94,7 +95,7 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('the rewards widget: a waiting day, the removal estimate, an exact claim measured in the vault, then nothing left, and a claim sent to the wallet from Advanced', async ({
+test('the rewards widget: a waiting day, the removal estimate, an exact claim measured in the vault, then nothing left, and a claim sent to the wallet from Advanced, with the lifetime claimed totals', async ({
   launchWallet,
 }) => {
   // A cold compile of the reward script, ~70 day closes and two claims.
@@ -142,6 +143,12 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(widget).toContainText('Unclaimed rewards are not removed on this network');
   // The tier line reads through the public getter (consent-gated: 0 here).
   await expect(widget).toContainText('Fee-discount tier applied to your fees now: 0');
+  // RW-31: nothing claimed yet, stated against the index's recorded moment.
+  const lifetime = widget.getByTestId('rewards-lifetime');
+  await expect(lifetime).toHaveAttribute('data-lifetime', 'recorded', { timeout: 60_000 });
+  await expect(lifetime).toHaveAttribute('data-claimed', '0');
+  await expect(lifetime).toHaveText('You have not claimed rewards on Base Sepolia yet.');
+  await expect(widget.getByTestId('rewards-lifetime-asof')).toContainText('Counts every claim the index recorded up to');
   await expect(widget).not.toContainText('could not be read');
   await fitsWidth(page);
 
@@ -193,6 +200,12 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   expect(flags.sentTransactions).toBe(sent + 1);
   expect((await vaultVpfi()) - vaultBefore).toBe(exact.amount);
   expect(await walletVpfi()).toBe(walletBefore);
+  // RW-31: the confirmed claim re-reads the lifetime totals at once; all of
+  // it was delivered to the vault.
+  await expect(lifetime).toHaveAttribute('data-claimed', exact.amount.toString(), { timeout: 30_000 });
+  await expect(lifetime).toHaveAttribute('data-vault', exact.amount.toString());
+  await expect(lifetime).toContainText('Claimed on Base Sepolia so far:');
+  await expect(widget).toContainText('Last claim paid on');
 
   // 5. On this deployment the days before the reward arm date are paid
   //    per entry in one claim, so the preview now answers that nothing is
@@ -241,4 +254,16 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(bFinish).toContainText('delivered to your wallet');
   expect((await bWallet()) - bWalletBefore).toBe(owed.amount);
   expect(await bVault()).toBe(bVaultBefore);
+  // RW-31: the wallet claim counts in the lifetime total, none of it as
+  // delivered to the vault.
+  const bLifetime = bWidget.getByTestId('rewards-lifetime');
+  await expect(bLifetime).toHaveAttribute('data-claimed', owed.amount.toString(), { timeout: 30_000 });
+  await expect(bLifetime).toHaveAttribute('data-vault', '0');
+
+  // RW-31: an index that cannot answer is stated, never read as nothing claimed.
+  await setIndexPosture('down');
+  await b.page.reload();
+  await expect(bLifetime).toHaveAttribute('data-lifetime', 'failed', { timeout: 60_000 });
+  await expect(bLifetime).toContainText('That is not the same as nothing claimed.');
+  await fitsWidth(b.page);
 });

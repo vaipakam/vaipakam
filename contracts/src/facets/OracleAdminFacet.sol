@@ -188,7 +188,8 @@ contract OracleAdminFacet is DiamondAccessControl {
      *         The aggregator (`OracleFacet.refreshTierLtvCache`) reads
      *         these assets' LTVs from each configured peer, applies
      *         per-asset + per-tier consensus, applies the tier's
-     *         haircut, bound-checks, and persists. The list itself is
+     *         haircut, and persists (the tier ceiling applies at the
+     *         read, #3547). The list itself is
      *         constitution-level: changing it doesn't auto-trigger a
      *         refresh; operators call `refreshTierLtvCache()` after
      *         updating the list to pick up the new asset universe.

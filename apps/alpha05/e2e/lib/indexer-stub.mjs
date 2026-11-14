@@ -94,6 +94,10 @@
 //    the bot handshake, the push posture and one forced answer through
 //    `POST /__stub/agent`.
 //
+//  - the indexer's `GET /rewards/claimed?chainId&wallet` (RW-31): the
+//    wallet's lifetime claimed rewards, summed from the chain's own claim and
+//    vault-delivery logs on the claim-day basis. Refused while `down`;
+//
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
 import http from 'node:http';
@@ -136,6 +140,8 @@ const ACTIVITY_TOPICS = new Map(
 const LOAN_INITIATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanInitiated'));
 const LOAN_REPAID = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanRepaid'));
 const OFFER_CREATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'OfferCreated'));
+const REWARDS_CLAIMED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'InteractionRewardsClaimed'));
+const REWARD_TO_VAULT = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'RewardDeliveredToVault'));
 const chain = createPublicClient({ transport: viemHttp(ANVIL_URL) });
 
 /** One offer in the indexer's `/offers/active` row shape (amounts as text). */
@@ -686,6 +692,55 @@ async function actorActivity(url) {
   return { status: 200, body: { chainId: CHAIN_ID, events, nextBefore: null } };
 }
 
+/** `/rewards/claimed?chainId&wallet` (RW-31): the wallet's lifetime
+ *  claimed rewards, summed from the chain's own `InteractionRewardsClaimed`
+ *  and `RewardDeliveredToVault` logs as the indexer's ledger sums them, on
+ *  the claim-day basis (the UTC day of the block). Recorded through now. */
+async function rewardsClaimed(url) {
+  const wallet = (url.searchParams.get('wallet') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return { status: 400, body: { error: 'wallet must be a 0x-prefixed 20-byte address' } };
+  const logs = await anvil('eth_getLogs', [
+    { address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[REWARDS_CLAIMED, REWARD_TO_VAULT], `0x${wallet.slice(2).padStart(64, '0')}`] },
+  ]);
+  let claimed = 0n;
+  let vaultDelivered = 0n;
+  const days = new Set();
+  const blockDay = new Map();
+  for (const l of logs) {
+    // Both events carry the amount as their first data word.
+    const amount = BigInt(`0x${l.data.slice(2 + (l.topics[0] === REWARDS_CLAIMED ? 128 : 0), 2 + (l.topics[0] === REWARDS_CLAIMED ? 192 : 64))}`);
+    if (l.topics[0] === REWARD_TO_VAULT) {
+      vaultDelivered += amount;
+      continue;
+    }
+    claimed += amount;
+    if (amount === 0n) continue;
+    if (!blockDay.has(l.blockNumber)) {
+      const block = await anvil('eth_getBlockByNumber', [l.blockNumber, false]);
+      blockDay.set(l.blockNumber, Math.floor(Number(block.timestamp) / 86_400));
+    }
+    days.add(blockDay.get(l.blockNumber));
+  }
+  const sorted = [...days].sort((a, b) => a - b);
+  const date = (d) => (d === undefined ? null : new Date(d * 86_400_000).toISOString().slice(0, 10));
+  return {
+    status: 200,
+    body: {
+      chainId: CHAIN_ID,
+      wallet,
+      recordedBefore: new Date().toISOString(),
+      pending: null,
+      totals: {
+        claimed: claimed.toString(),
+        vaultDelivered: vaultDelivered.toString(),
+        claimDays: sorted.length,
+        firstClaimDay: date(sorted[0]),
+        lastClaimDay: date(sorted[sorted.length - 1]),
+      },
+    },
+  };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -1060,6 +1115,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const r = await rateCandles(url);
+      json(res, r.status, r.body);
+      return;
+    }
+    if (url.pathname === '/rewards/claimed' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const r = await rewardsClaimed(url);
       json(res, r.status, r.body);
       return;
     }

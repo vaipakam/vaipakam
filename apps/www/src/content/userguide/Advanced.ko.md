@@ -1935,6 +1935,8 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 대기 중인 날짜가 왜 기다리는지는 미리보기의 블록에서 읽습니다. 홈 네트워크에서는 `RewardAggregatorFacet.isDayReadyToFinalize(day)`가 확정을 아직 실행할 수 없는 이유(목록에 있는 보고 없음, 보고가 아직 유예 시간 안에 있음, 사용할 수 없는 예상 출처 목록)나 지금 실행할 수 있다는 것을 알려 줍니다. 미러에서는 `RewardReporterFacet.getBroadcastV2Applied(day)`가 홈 네트워크의 수치가 도착했는지 알려 주며, 전달 대기에서는 `RewardRemittanceLensFacet.getDayDeliveryState(day)`와 `getDayDeliveryParts(day)` (활성화일은 `getGovernorCommitState()`로 읽으며, 그날 이후의 날만 이 네트워크의 보고를 기다립니다)가 그날이 여기서 가격이 정해졌는지, 이 네트워크의 보고가 전송되었는지, 선언된 전체 대비 도착한 부분을 알려 줍니다. 부분들이 서로 다른 전체를 선언한 날은 지급 없이 건너뛸 수 있는 날로 공개됩니다. 청구의 자금 거절은 프로토콜의 수치와 함께 이름으로 표시됩니다: `InteractionPoolExhausted`(새 VPFI 풀이 모두 지급되었고 청구에 재활용 부분이 없음, 해제되지 않음), `InteractionPoolReservedShortfall` 및 `RecycleBucketReservedShortfall`(대기 중인 정산을 위해 예약됨), `InteractionRewardBackingShort`(필요량 대비 가용량). `EnforcedPause`는 계속 가능한 것과 함께 표시됩니다. 리워드 역할이 설정되지 않은 네트워크에서는 `finalizeDay`를 실행할 수 없으므로(정규 플래그가 필요함), 카드는 역할이 설정될 때까지 어떤 날도 확정할 수 없다고 알리며 단계를 제시하지 않습니다. 도착한 새 VPFI와 재활용 VPFI는 각각 자신의 선언된 전체와 대비해 표시됩니다. 두 가지가 모두 채워져야 그날이 열리기 때문입니다.
 
+누적 청구 줄은 인덱서의 `GET /rewards/claimed?chainId=&wallet=`를 읽습니다. 이는 수집 과정의 사용자별·청구일별 원장에서 지갑의 `InteractionRewardsClaimed` 금액(보류분 해제 포함)과 `RewardDeliveredToVault` 금액을 블록의 UTC 날짜 기준으로 합산합니다. 최신 상태의 패스가 시점을 기록하지 않았거나(`pending: unrecorded`) 체인의 일회성 원장 재생이 진행 중이면(`pending: replaying`) 합계를 반환하지 않으며, 그렇지 않으면 `recordedBefore`를 알려 주고 그 이전의 모든 청구가 집계됩니다. 지갑으로 대체 전달된 볼트 입금은 `RewardDeliveredToVault`를 내보내지 않으므로 볼트 몫에 포함되지 않습니다.
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: 리워드 제거 날짜

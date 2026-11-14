@@ -9,6 +9,7 @@ import { WhyLink } from '../help/WhyLink';
 import { useChainRead } from '../reads/chainRead';
 import { tokenAmount, useTokenMeta } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
+import { LifetimeClaimed } from '../rewards/LifetimeClaimed';
 import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
 import { OwnStamp } from '../ui/OwnStamp';
@@ -24,9 +25,9 @@ type Hex = `0x${string}`;
  * (RB-CLAIM); the soonest removal estimate, with its final notice and its
  * incomplete-check state (RW-33); and a held balance with its state and
  * release (RW-36). The effective tier is a supporting line; the fee-discount
- * setting is its own section below. Lifetime claimed needs an index route
- * that does not exist yet (#3216), so it is not shown rather than guessed. Rewards
- * are usage rebates, never yield (RL-6).
+ * setting is its own section below. What the wallet has claimed over its
+ * lifetime comes from the index (RW-31), stated as unknown when it cannot be
+ * read. Rewards are usage rebates, never yield (RL-6).
  */
 export function RewardsWidget({ onRewards = false }: { /** On the Rewards page itself: no link to it. */ onRewards?: boolean } = {}) {
   const copy = useCopy();
@@ -247,6 +248,7 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
           screen after the balance it paid has gone to zero. */}
       {heldReady && tokenGate}
       <RewardClaim kind="held" ready={heldReady} token={token} meta={meta} />
+      <LifetimeClaimed chainId={chain.chainId} chainName={chain.name} account={account} amount={amount} />
       <p className="tier-b">{tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
       <OwnStamp reads={shown} />

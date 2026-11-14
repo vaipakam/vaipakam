@@ -1435,3 +1435,26 @@ section of CLAUDE.md records it. One part of the new intent is not built yet:
 the spec says the app shows a lender both figures and the one that applies.
 The contract exposes them (`lenderHoldDiscountView`), and neither app reads
 it yet; #3586 tracks that presentation.
+
+## Tier LTV: a default and a ceiling per tier, with no floor: a spec change made on a recorded owner decision (#3547, 2026-11-11)
+
+**The decision.** The owner decided on 2026-11-11, in the security thread's
+#3547 discussion, that each liquidity tier has two numbers: a default
+init-LTV (50%, 60% and 65% for tiers 1, 2 and 3) and a governance ceiling
+(55%, 69% and 82%). A fresh peer reading may move a tier's value down or up
+from the default, but never above the ceiling. A reading above the ceiling
+is clipped to it; a reading below the former lower bound is honoured. The
+hard maximum on any tier-LTV setting rises from 80% to 82%.
+
+**What the spec said before.** §1 described a safety box per tier (37–55%,
+55–69%, 69–82%) and required a peer reading outside it to be rejected,
+never clipped, with loans then falling back to the governance caps. The
+code matched that. This is not a divergence resolved toward the code: the
+intent itself changed, by a recorded owner decision, and the spec and the
+code changed together in the same pull request. The same change removes the
+unused 50 / 62 / 73% "library default" constants that the 2026-07-05 S18 row
+above had flagged for cleanup.
+
+**Status:** resolved. Spec §1 (tier-to-LTV mapping, governance ceilings,
+the ceiling setter, the config bundle), WebsiteReadme's admin line and the
+implementation notes' test list state the new rule.

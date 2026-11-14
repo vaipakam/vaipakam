@@ -35,6 +35,7 @@
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
  *       GET  /loans/rate-candles  GET  /loans/by-participant
  *       GET  /activity            GET  /claimables/:address
+ *       GET  /rewards/claimed
  *       GET  /claim-candidates/:address   GET /config/:chainId
  *
  * T-078 — both entry points call `resolveEnv()` first. `RPC_*` are
@@ -135,7 +136,7 @@ import {
   handleOffersByCurrentHolder,
   handleOffersPreflight,
 } from './offerRoutes';
-import { handleLoopClosure } from './rewardRoutes';
+import { handleLoopClosure, handleRewardsClaimed } from './rewardRoutes';
 import { BACKING_SNAPSHOT_COST, captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
 import {
   handleSignedOfferPost,
@@ -592,6 +593,15 @@ export default {
     if (url.pathname === '/metrics/loop-closure') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleLoopClosure(req, resolved);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /rewards/claimed ───────────────────────────────────────
+    // RW-31 (#3216) — one wallet's lifetime claimed rewards on a chain,
+    // from the same ledger rows as the loop-closure metric.
+    if (url.pathname === '/rewards/claimed') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleRewardsClaimed(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 

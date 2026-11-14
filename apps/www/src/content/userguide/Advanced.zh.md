@@ -1776,6 +1776,8 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 等待中的日期为何等待，是在预览所用的区块上读取的。在主网络上，`RewardAggregatorFacet.isDayReadyToFinalize(day)` 给出最终确定尚不能运行的原因（没有已列出的报告、报告仍在宽限时间内、预期来源列表不可用），或说明现在可以运行。在镜像网络上，`RewardReporterFacet.getBroadcastV2Applied(day)` 说明主网络的数据是否已到达；对于交付等待，`RewardRemittanceLensFacet.getDayDeliveryState(day)` 和 `getDayDeliveryParts(day)`（启用日由 `getGovernorCommitState()` 给出：只有从该日起的日期才等待本网络的报告） 给出该日是否已在此定价、本网络的报告是否已发送，以及相对于声明总额已到达的部分；各部分声明总额不同的日期会被披露为可能不予支付而跳过。领取的资金类拒绝会附上协议的数字说明：`InteractionPoolExhausted`（新 VPFI 奖励池已付完且该领取没有回收部分，不会解除）、`InteractionPoolReservedShortfall` 和 `RecycleBucketReservedShortfall`（已为待处理结算预留），以及 `InteractionRewardBackingShort`（所需与可用）。`EnforcedPause` 会附上仍然可用的操作。在未设置奖励角色的网络上，`finalizeDay` 无法运行（它需要规范标志），因此卡片会说明在设置角色之前任何日期都无法最终确定，并且不提供任何步骤。已到达的新 VPFI 和回收 VPFI 会分别对照各自声明的总额显示，因为只有两者都完整时该日才会开放。
 
+累计领取一行读取索引器的 `GET /rewards/claimed?chainId=&wallet=`，它从摄取的按用户、按领取日记账中，按区块的 UTC 日汇总钱包的 `InteractionRewardsClaimed` 金额（含暂扣余额的释放）及其 `RewardDeliveredToVault` 金额。在尚无追上的扫描记录某一时刻时（`pending: unrecorded`），或链的一次性账本重放仍在运行时（`pending: replaying`），它不返回总额；否则给出 `recordedBefore`，在此之前的每笔领取都已计入。回退到钱包的金库入账不会发出 `RewardDeliveredToVault`，因此不计入金库部分。
+
 <a id="home-rewards-expiry"></a>
 
 ### Home: 奖励移除日期

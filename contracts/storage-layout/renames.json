@@ -592,6 +592,14 @@
       "from": "cfgTierPushSpacingSec",
       "to": "retiredTierPushSpacingSec",
       "reason": "#1277: the protocol broadcast budget pays only for a tier push that lowers what a lane grants and never for a raise, so the per-lane spacing window and its setter are removed; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam@166[uint8]",
+      "slot": 0,
+      "offset": 0,
+      "from": "tierLtvParams[].floorBps",
+      "to": "tierLtvParams[].retiredFloorBps",
+      "reason": "#3547 (owner decision 2026-11-11): a peer tier-LTV reading below the old box floor is honoured, so the floor governs nothing; it is no longer written or read. Same type and position; marked retired, not repurposed."
     }
   ]
 }
