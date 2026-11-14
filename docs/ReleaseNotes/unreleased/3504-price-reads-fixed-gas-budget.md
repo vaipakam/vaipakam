@@ -1,4 +1,4 @@
-## Thread — Price reads get a fixed gas budget (PR #<n>)
+## Price reads — every guard read gets a fixed gas budget (PR #3608)
 
 Every reading the Diamond takes from the price guard now gives the guard one fixed amount of gas (500,000), whatever the transaction carries. Before the read, the reader checks that it holds enough to pass all of it on, and fails with a named reason (`PriceReadOutOfGas`) when it does not. This covers the strict price read, the status read, the secondary-source count, the sequencer health read and the sequencer-outage reading behind loan deadlines.
 
