@@ -2593,7 +2593,7 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### プロトコルコンソール：スナップショットかチェーンか
 
-コンソールはインデクサーの `GET /config/:chainId` を読みます。スナップショットを使うのは、`available` が真、`stale` が偽、`updatedAt` が設定済みで端末の時計で 86,400 秒以内（300 秒までの先行は許容）、かつ `values` があり `bundleUnreported` がない場合だけです。それ以外は最新ブロックで読みます。`getProtocolConfigBundle`（そのブロックでのセレクターの `facetAddress` が、このビルドのデプロイ記録にある `configFacet` と一致する場合だけ名前付き）、共有設定リーダーの単一値ゲッターすべて、そしてプライスガードのゲッターです。スナップショットの `sourceBlock` または `staleAtBlock` より前のブロックは失敗とみなします。`unreported` のキーは未応答として列挙します。グローバル一時停止は 1 つのブロックで読んだ `paused()` と `pausedUntil()` で、次の自動一時停止は `autoPauseAvailableAt` と `autoPauseDurationSeconds` から求めます。
+コンソールはインデクサーの `GET /config/:chainId` を読みます。スナップショットを使うのは、`available` が真、`stale` が偽、`updatedAt` が設定済みで端末の時計で 86,400 秒以内（300 秒までの先行は許容）、かつ `values` があり `bundleUnreported` がない場合だけです。それ以外は最新ブロックで読みます。`getProtocolConfigBundle`（そのブロックでのセレクターの `facetAddress` が、このビルドのデプロイ記録にある `configFacet` と一致する場合だけ名前付き）、共有設定リーダーの単一値ゲッターすべて、そしてプライスガードのゲッターです。スナップショットの `sourceBlock` または `staleAtBlock` より前のブロックは失敗とみなします。`unreported` のキーは未応答として列挙します。グローバル一時停止は 1 つのブロックで読んだ `paused()` と `pausedUntil()` で、次の自動一時停止は `autoPauseAvailableAt` と `autoPauseDurationSeconds` から求めます。`unreported` のないスナップショットは使いません。`getPauseIntervals` の最後の区間が開いている（終端が 2^64−1）とき一時停止は管理者によるものとみなし、同じブロックの `escapeOpensAt()` がエスケープルートの開く時刻を示します。
 
 <a id="console-switches"></a>
 

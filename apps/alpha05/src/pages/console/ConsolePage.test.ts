@@ -28,7 +28,7 @@ const chain: SupportedChain = {
 const NOW = 1_900_000_000;
 const ready = <T>(data: T) => ({ data, state: 'ready' as const, error: null, refetch: () => {} });
 const reading = { data: null, state: 'reading' as const, error: null, refetch: () => {} };
-const pauseNone = ready<PauseRead>({ block: 77n, timestamp: NOW - 1, paused: false, manual: false, pausedUntil: 0n });
+const pauseNone = ready<PauseRead>({ block: 77n, timestamp: NOW - 1, paused: false, manual: false, pausedUntil: 0n, escapeOpensAt: 0n });
 const html = (settings: Parameters<typeof ConsoleView>[0]['settings'], pause: Parameters<typeof ConsoleView>[0]['pause'] = pauseNone) =>
   renderToStaticMarkup(
     createElement(MemoryRouter, null, createElement(HelpProvider, null, createElement(ConsoleView, { chain, settings, pause, nowSec: NOW }))),
@@ -110,15 +110,29 @@ describe('ConsoleView', () => {
     expect(html(ready(s))).toContain('data-pause="none"');
     expect(html(ready(s))).toContain('none has frozen the protocol yet');
     expect(html(ready(s))).toContain('An automatic pause lasts 30 min');
-    const auto = html(ready(s), ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: false, pausedUntil: BigInt(NOW + 600) }));
+    const auto = html(
+      ready(s),
+      ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: false, pausedUntil: BigInt(NOW + 600), escapeOpensAt: 0n }),
+    );
     expect(auto).toContain('data-pause="auto"');
     expect(auto).toContain('10 min from now');
-    const manual = html(ready(s), ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: true, pausedUntil: 0n }));
+    const manual = html(
+      ready(s),
+      ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: true, pausedUntil: 0n, escapeOpensAt: BigInt(NOW + 7_200) }),
+    );
     expect(manual).toContain('Paused by governance at block 9, with no set end');
+    // Withdrawals are not closed for good: the escape route's time is stated.
+    expect(manual).toContain('its escape route opens and withdrawals of what is free reopen');
+    expect(
+      html(ready(s), ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: true, pausedUntil: 0n, escapeOpensAt: BigInt(NOW - 1) })),
+    ).toContain('Its escape route was open at block 9');
+    expect(html(ready(s), ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: true, pausedUntil: 0n, escapeOpensAt: 0n }))).toContain(
+      'This pause opens no escape route',
+    );
     expect(manual).not.toContain('also runs until');
     // Governance's pause during an automatic window: the window's end is not
     // when the pause ends.
-    const both = html(ready(s), ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: true, pausedUntil: BigInt(NOW + 600) }));
+    const both = html(ready(s), ready<PauseRead>({ block: 9n, timestamp: NOW, paused: true, manual: true, pausedUntil: BigInt(NOW + 600), escapeOpensAt: 0n }));
     expect(both).toContain('data-pause="manual"');
     expect(both).toContain('the governance pause stays after it ends');
     expect(both).not.toContain('from now by this device');

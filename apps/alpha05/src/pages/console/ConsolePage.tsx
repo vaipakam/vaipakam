@@ -151,6 +151,7 @@ const WHY_KEY = {
   undated: 'console.why.undated',
   future: 'console.why.future',
   old: 'console.why.old',
+  partial: 'console.why.partial',
 } as const satisfies Record<Exclude<ConsoleSettings, { source: 'snapshot' }>['why'], CopyKey>;
 
 const INDEX_REASON = {
@@ -226,6 +227,16 @@ function PauseSection({
         <span data-testid="console-pause" data-pause="manual">
           {format('console.pause.manual', { block: p.block.toString() })}
           {p.pausedUntil > 0n && <> {format('console.pause.manualWithWindow', { until: formatUtc(p.pausedUntil) })}</>}
+        </span>
+        <span data-testid="console-escape">
+          {' '}
+          {p.escapeOpensAt === 0n
+            ? text('console.pause.escapeNone')
+            : p.escapeOpensAt <= BigInt(p.timestamp)
+              ? format('console.pause.escapeOpen', { block: p.block.toString() })
+              : Number(p.escapeOpensAt) > nowSec
+                ? format('console.pause.escapeAt', { time: formatUtc(p.escapeOpensAt), left: formatSpan(Number(p.escapeOpensAt) - nowSec) })
+                : format('console.pause.escapeDue', { time: formatUtc(p.escapeOpensAt) })}
         </span>
       </Notice>
     );

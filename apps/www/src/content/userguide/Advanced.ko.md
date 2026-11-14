@@ -2485,7 +2485,7 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### 프로토콜 콘솔: 스냅샷 또는 체인
 
-콘솔은 인덱서의 `GET /config/:chainId`를 읽습니다. 스냅샷은 `available`이 참이고 `stale`이 거짓이며, `updatedAt`이 설정되어 기기 시계로 86,400초 이내(최대 300초 앞선 것은 허용)이고, `values`가 있으며 `bundleUnreported`가 없을 때만 사용합니다. 그렇지 않으면 최신 블록에서 읽습니다. `getProtocolConfigBundle`(그 블록에서 해당 셀렉터의 `facetAddress`가 이 빌드의 배포 기록이 지정한 `configFacet`과 같을 때만 이름을 붙임), 공유 설정 리더의 모든 단일 값 게터, 그리고 가격 가드의 게터입니다. 스냅샷의 `sourceBlock` 또는 `staleAtBlock`보다 낮은 블록은 실패로 간주합니다. `unreported`의 키는 응답 없음으로 나열합니다. 전역 일시 중지는 한 블록에서 읽은 `paused()`와 `pausedUntil()`이며, 다음 자동 일시 중지는 `autoPauseAvailableAt`과 `autoPauseDurationSeconds`로 정합니다.
+콘솔은 인덱서의 `GET /config/:chainId`를 읽습니다. 스냅샷은 `available`이 참이고 `stale`이 거짓이며, `updatedAt`이 설정되어 기기 시계로 86,400초 이내(최대 300초 앞선 것은 허용)이고, `values`가 있으며 `bundleUnreported`가 없을 때만 사용합니다. 그렇지 않으면 최신 블록에서 읽습니다. `getProtocolConfigBundle`(그 블록에서 해당 셀렉터의 `facetAddress`가 이 빌드의 배포 기록이 지정한 `configFacet`과 같을 때만 이름을 붙임), 공유 설정 리더의 모든 단일 값 게터, 그리고 가격 가드의 게터입니다. 스냅샷의 `sourceBlock` 또는 `staleAtBlock`보다 낮은 블록은 실패로 간주합니다. `unreported`의 키는 응답 없음으로 나열합니다. 전역 일시 중지는 한 블록에서 읽은 `paused()`와 `pausedUntil()`이며, 다음 자동 일시 중지는 `autoPauseAvailableAt`과 `autoPauseDurationSeconds`로 정합니다. `unreported`가 없는 스냅샷은 쓰지 않습니다. `getPauseIntervals`의 마지막 구간이 열려 있으면(끝이 2^64−1) 관리자 일시 중지로 보며, 이때 같은 블록의 `escapeOpensAt()`이 비상 탈출 경로가 열리는 시점을 알려 줍니다.
 
 <a id="console-switches"></a>
 

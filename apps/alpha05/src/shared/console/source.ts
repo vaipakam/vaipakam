@@ -38,7 +38,10 @@ export type SnapshotReason =
   /** The snapshot's time is ahead of this device's clock. */
   | 'future'
   /** The snapshot is older than {@link SNAPSHOT_MAX_AGE_SEC}. */
-  | 'old';
+  | 'old'
+  /** The snapshot does not list which settings went unanswered, so the
+   *  settings it leaves out could not be named as unknown. */
+  | 'partial';
 
 export type SnapshotVerdict = { use: true } | { use: false; reason: SnapshotReason };
 
@@ -51,6 +54,7 @@ export function judgeSnapshot(snap: ConfigSnapshot | null, nowSec: number): Snap
   if (snap.updatedAt <= 0) return { use: false, reason: 'undated' };
   if (snap.updatedAt > nowSec + CLOCK_SKEW_SEC) return { use: false, reason: 'future' };
   if (nowSec - snap.updatedAt > SNAPSHOT_MAX_AGE_SEC) return { use: false, reason: 'old' };
+  if (snap.unreported === null) return { use: false, reason: 'partial' };
   return { use: true };
 }
 
@@ -113,8 +117,8 @@ export async function settleSettings(opts: {
     indexError = e instanceof Error ? e : new Error(String(e));
   }
   const verdict = judgeSnapshot(snap, opts.nowSec());
-  if (verdict.use && snap?.available && snap.values) {
-    return { source: 'snapshot', values: snap.values, unreported: snap.unreported ?? [], block: snap.sourceBlock, asOf: snap.updatedAt };
+  if (verdict.use && snap?.available && snap.values && snap.unreported) {
+    return { source: 'snapshot', values: snap.values, unreported: snap.unreported, block: snap.sourceBlock, asOf: snap.updatedAt };
   }
   const why = verdict.use ? 'unlabelled' : verdict.reason;
   let direct: DirectRead;

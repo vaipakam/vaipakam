@@ -497,7 +497,11 @@ snapshot, with what it stops, what stays open, and when an automatic pause
 could next start against the reader's clock. Whether governance's pause,
 which has no set end, is in force comes from the pause log, because it can
 run together with an automatic window; a refresh that fails while an older
-answer is held states the pause as unknown. The page says it shows a
+answer is held states the pause as unknown. Under governance's pause the
+page states when its escape route reopens withdrawals of what is free, or
+that none is scheduled, since withdrawals are not closed for good. A
+snapshot that does not list the settings it left unanswered is not used,
+so a setting it omits is never dropped from the page unnamed. The page says it shows a
 subset and names what it omits, says a retune never reprices an open
 loan, and lists no running total as a setting. Keeper posture waits on
 RW-78.

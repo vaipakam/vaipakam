@@ -13,7 +13,7 @@
  * belong to other fields.
  */
 import type { Abi, Address, PublicClient } from 'viem';
-import { AdminFacetABI, DIAMOND_ABI_VIEM, PriceGuardABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, DIAMOND_ABI_VIEM, PriceGuardABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import type { DeploymentFacets } from '@vaipakam/contracts/deployments';
 import { LABELLED_GETTER_HOST, abiDescribesGetterAt, abiOutputNames, readProtocolConfigBundle, readProtocolKnobGetters } from '@vaipakam/lib/protocolKnobs';
 import type { SettingValues } from './snapshot';
@@ -74,6 +74,10 @@ export interface PauseRead {
   manual: boolean;
   /** When an automatic pause window ends (unix seconds); 0 when none runs. */
   pausedUntil: bigint;
+  /** Under governance's pause, when its escape route reopens withdrawals of
+   *  what is free in each vault (unix seconds); 0 when no route is scheduled
+   *  (no governance pause, or a protocol not yet launched). */
+  escapeOpensAt: bigint;
 }
 
 /** The pause log marks the interval of a governance pause in force with this
@@ -95,6 +99,7 @@ export async function readPauseAt(client: PublicClient, diamond: Address): Promi
     client.readContract({ address: diamond, abi: AdminFacetABI as Abi, functionName, args, blockNumber });
   const [paused, pausedUntil] = (await Promise.all([read('paused'), read('pausedUntil')])) as [boolean, bigint];
   let manual = false;
+  let escapeOpensAt = 0n;
   if (paused) {
     // A start past the end returns no interval, only the count.
     const [, total] = (await read('getPauseIntervals', [2n ** 256n - 1n, 0n])) as [unknown, bigint];
@@ -103,6 +108,9 @@ export async function readPauseAt(client: PublicClient, diamond: Address): Promi
     if (last.length !== 1) throw new Error('the pause log did not return its last interval');
     manual = last[0].end === OPEN_END;
     if (!manual && pausedUntil === 0n) throw new Error('the protocol answered paused, with neither a governance pause nor an automatic window');
+    if (manual) {
+      escapeOpensAt = (await client.readContract({ address: diamond, abi: VaultPayoutFacetABI as Abi, functionName: 'escapeOpensAt', blockNumber })) as bigint;
+    }
   }
-  return { block: blockNumber, timestamp: Number(head.timestamp), paused, manual, pausedUntil };
+  return { block: blockNumber, timestamp: Number(head.timestamp), paused, manual, pausedUntil, escapeOpensAt };
 }

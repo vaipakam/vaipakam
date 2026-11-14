@@ -120,6 +120,9 @@ test('the global pause is stated from a live read, with what it stops and what s
     await page.goto('/console');
     await expect(page.getByTestId('console-pause')).toHaveAttribute('data-pause', 'manual');
     await expect(page.getByText(/^Paused by governance at block \d+, with no set end\.$/)).toBeVisible();
+    // Withdrawals are not closed for good: the escape route is stated, read
+    // at the same block (scheduled, or none before launch).
+    await expect(page.getByTestId('console-escape')).toContainText(/escape route/);
     await expect(page.getByText('Full repayment, partial repayment and adding collateral stay open', { exact: false })).toBeVisible();
   } finally {
     await sc.diamondWrite('admin', 'unpause');

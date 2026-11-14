@@ -38,6 +38,9 @@ describe('judgeSnapshot', () => {
     expect(judgeSnapshot({ available: false }, NOW)).toEqual({ use: false, reason: 'none' });
     expect(judgeSnapshot(snap({ stale: true, updatedAt: 0 }), NOW)).toEqual({ use: false, reason: 'behind' });
     expect(judgeSnapshot(snap({ values: null }), NOW)).toEqual({ use: false, reason: 'unlabelled' });
+    // Bundle values with no list of what went unanswered: the settings it
+    // leaves out could not be named, so the chain is read instead.
+    expect(judgeSnapshot(snap({ unreported: null }), NOW)).toEqual({ use: false, reason: 'partial' });
     expect(judgeSnapshot(snap({ bundleUnreported: 'abi mismatch' }), NOW)).toEqual({ use: false, reason: 'unlabelled' });
     expect(judgeSnapshot(snap({ updatedAt: 0 }), NOW)).toEqual({ use: false, reason: 'undated' });
     expect(judgeSnapshot(snap({ updatedAt: NOW + CLOCK_SKEW_SEC + 1 }), NOW)).toEqual({ use: false, reason: 'future' });

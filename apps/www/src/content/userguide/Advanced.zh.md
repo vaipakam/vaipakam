@@ -2326,7 +2326,7 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### 协议控制台：快照还是链上
 
-控制台读取索引器的 `GET /config/:chainId`。只有当 `available` 为真、`stale` 为假、`updatedAt` 已设置且按设备时钟不超过 86,400 秒（允许超前最多 300 秒），并且存在 `values` 且没有 `bundleUnreported` 时，才使用快照。否则在最新区块读取：`getProtocolConfigBundle`（仅当该区块上其选择器的 `facetAddress` 等于本构建部署记录所列的 `configFacet` 时才带名称）、共享设置读取器的每个单值 getter，以及价格守卫的 getter。低于快照 `sourceBlock` 或 `staleAtBlock` 的区块视为失败。`unreported` 中的键列为未应答。全局暂停是在同一区块读取的 `paused()` 和 `pausedUntil()`；下一次自动暂停由 `autoPauseAvailableAt` 和 `autoPauseDurationSeconds` 得出。
+控制台读取索引器的 `GET /config/:chainId`。只有当 `available` 为真、`stale` 为假、`updatedAt` 已设置且按设备时钟不超过 86,400 秒（允许超前最多 300 秒），并且存在 `values` 且没有 `bundleUnreported` 时，才使用快照。否则在最新区块读取：`getProtocolConfigBundle`（仅当该区块上其选择器的 `facetAddress` 等于本构建部署记录所列的 `configFacet` 时才带名称）、共享设置读取器的每个单值 getter，以及价格守卫的 getter。低于快照 `sourceBlock` 或 `staleAtBlock` 的区块视为失败。`unreported` 中的键列为未应答。全局暂停是在同一区块读取的 `paused()` 和 `pausedUntil()`；下一次自动暂停由 `autoPauseAvailableAt` 和 `autoPauseDurationSeconds` 得出。不含 `unreported` 的快照不会被使用。当 `getPauseIntervals` 的最后一个区间仍开放（结束值为 2^64−1）时，暂停视为管理暂停，此时同一区块的 `escapeOpensAt()` 给出逃生通道开启的时间。
 
 <a id="console-switches"></a>
 

@@ -5268,7 +5268,7 @@ export const copy = {
     sourceChainUndated: B('Read from the chain at block {{block}}, {{time}}.'),
     sourceSummary: B('Where these settings come from.'),
     sourceWhy: C(
-      "The index keeps a snapshot of these settings and refreshes it when it sees a governance change. The page shows that snapshot only while it is dated, less than a day old, not behind a change the index has seen, and labelled by name. Otherwise it reads every setting from the chain at one block and says why. A chain answer older than the snapshot counts as failed, and with no usable answer the settings are unknown, never unset.",
+      "The index keeps a snapshot of these settings and refreshes it when it sees a governance change. The page shows that snapshot only while it is dated, less than a day old, not behind a change the index has seen, labelled by name, and complete, listing any setting the protocol did not answer. Otherwise it reads every setting from the chain at one block and says why. A chain answer older than the snapshot counts as failed, and with no usable answer the settings are unknown, never unset.",
       'console-source',
     ),
     noReason: B('no reason given'),
@@ -5288,6 +5288,7 @@ export const copy = {
       undated: B('The index’s snapshot carries no recorded time, so the settings were read from the chain.'),
       future: B('The index’s snapshot is dated ahead of this device’s clock, so the chain was read instead.'),
       old: B('The index’s snapshot is more than a day old, so the settings were read from the chain.'),
+      partial: B('The index’s snapshot holds only some of the settings, so all of them were read from the chain.'),
     },
     unknownRead: A("The settings on {{chain}} are unknown: the snapshot could not be used and the chain read failed ({{reason}}). Nothing below states a setting's value."),
     unknownBehind: A(
@@ -5309,9 +5310,13 @@ export const copy = {
       autoEnded: A("Paused automatically at block {{block}}, until {{until}}, which has passed by this device's clock."),
       manual: A('Paused by governance at block {{block}}, with no set end.'),
       manualWithWindow: A('An automatic pause also runs until {{until}}, but the governance pause stays after it ends.'),
+      escapeNone: B('This pause opens no escape route: the protocol has not launched yet.'),
+      escapeAt: A('If it still runs at {{time}}, in {{left}}, its escape route opens and withdrawals of what is free reopen.'),
+      escapeDue: B('Its escape route is due to open at {{time}}; the page is reading it again.'),
+      escapeOpen: A('Its escape route was open at block {{block}}: withdrawals of what is free in each vault go through it.'),
       refreshFailed: A('Whether {{chain}} is paused now is unknown: the latest read failed ({{reason}}). The last read that answered was at block {{block}}.'),
       blocks: A(
-        "While paused, new offers, accepts and matches, claims, withdrawals, liquidations and defaults stop. Full repayment, partial repayment and adding collateral stay open, and the paused time is added to every open loan's due date and grace end.",
+        "While paused, new offers, accepts and matches, claims, withdrawals, liquidations and defaults stop. Full repayment, partial repayment and adding collateral stay open, and the paused time is added to every open loan's due date and grace end. A governance pause that runs long opens an escape route, which reopens withdrawals of what is free in each vault.",
       ),
       nextAt: B('An automatic pause could start from {{time}}: {{left}} from now by this device’s clock.'),
       nextNever: B('An automatic pause could start at any time; none has frozen the protocol yet.'),
