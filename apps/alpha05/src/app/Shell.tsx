@@ -263,6 +263,9 @@ export function Shell() {
         <p className="tier-b">
           <Link to="/governance">{text('governance.footerLink')}</Link>
         </p>
+        <p className="tier-b">
+          <Link to="/risks">{text('keyRisks.footerLink')}</Link>
+        </p>
         <p className="tier-b">{format('shell.build', { hash: import.meta.env.VITE_BUILD_HASH ?? 'unknown', time: import.meta.env.VITE_BUILD_TIME ?? 'unknown' })}</p>
       </footer>
       <nav className="bottom-bar" aria-label="Quick access">

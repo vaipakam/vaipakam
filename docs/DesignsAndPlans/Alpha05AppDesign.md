@@ -2737,6 +2737,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   there are none; an index that does not list the offer as open yet says it
   may be catching up. The Offers list links each open token-for-token offer
   the reader created to its page with one line, "Why isn’t it matching?".
+- **RB-KEY-RISKS** — What can go wrong is said plainly, once with the
+  Terms and once in every review that opens a loan or a rental (#3661). The
+  Terms prompt shows the short key-risk list above the accept step: funds
+  can be lost and nothing is insured or reversible; what a lender receives
+  when a borrower does not repay; what a borrower can lose; that the
+  software, price feeds, tokens and networks can fail; that only the user
+  controls their wallet; and that nothing here is financial advice. Every
+  review that opens a loan (taking an offer, posting an offer or a request,
+  filling or signing a signed order) or a rental carries ONE "If things go
+  wrong" line for its side and for how that loan settles: by a sale of the
+  collateral when both legs are liquid, in kind when either leg is
+  illiquid, and stated without a settlement for a posted offer or request
+  or a signed order, which fill later: the protocol classes both legs again
+  at fill and keeps those classes on the loan. The line links to the risk page, which
+  is public, needs no wallet, is linked from the footer, and adds a
+  pegged token losing its value, a late or wrong price feed, tax and local
+  rules, and the services run by others. No extra signature is asked per
+  loan: the signed review carries the line. The list is part of the Terms
+  text from version 2, so accepting that version records it, and a change to
+  the list is a new version that every wallet accepts again.
 
 ## 3. Companion specifications
 

@@ -16,6 +16,7 @@ import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type Pos
 import { tariffConsequences, tariffRows } from './tariffReview';
 import { guardConsequences, guardRows } from './guardPost';
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
+import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -166,7 +167,16 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     text('request.loseBinding'),
   ];
 
-  return { title: text('request.title'), rows, consequences, prompts: promptCount(r), readAt: r.readAt };
+  return {
+    title: text('request.title'),
+    rows,
+    consequences,
+    // A posted request is classed again when it fills, so its settlement
+    // is not known now.
+    ifWrong: text(loanRiskKey('borrower', 'unknown')),
+    prompts: promptCount(r),
+    readAt: r.readAt,
+  };
 }
 
 /**

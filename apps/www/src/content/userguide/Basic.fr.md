@@ -1482,6 +1482,8 @@ Chaque compte commence au niveau de risque le plus bas, actifs blue-chip uniquem
 
 Lorsqu'une version des Conditions d'utilisation est en vigueur, l'app vous demande de l'accepter avant une action qui crée quelque chose de nouveau, comme activer la remise sur les frais, et nomme l'action qui l'a demandé. Elle affiche la version, une empreinte de son texte et un lien vers cette version précise, dont le texte ne change jamais. Accepter tient en une confirmation dans le wallet et ne déplace aucun fonds. Si l'app ne peut pas lire si vous avez accepté, elle le dit et vous laisse réessayer au lieu d'y voir un refus. Rembourser, réclamer, retirer vos propres actifs, annuler vos propres offres et désactiver un consentement ne sont jamais bloqués.
 
+L’invite affiche aussi une courte liste des risques principaux au-dessus de l’étape d’acceptation, pour que vous lisiez ce qui peut mal tourner avant d’accepter. Chaque récapitulatif qui ouvre un prêt ou une location ajoute une ligne, « Si les choses tournent mal », qui dit ce qui arrive à votre côté de ce prêt, avec un lien vers la page des risques principaux. Cette page est aussi dans le pied de page et ne demande aucun portefeuille.
+
 <a id="settings"></a>
 
 ### Paramètres
