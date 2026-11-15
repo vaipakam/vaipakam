@@ -113,4 +113,4 @@ Add the rate-priced source kind to the price guard with the safeguards in sectio
 
 - The first admitted tokens per chain and their bounds, as proposals under the checklist.
 - Whether the first version ships both source kinds or the rate feed alone.
-- Whether a platform-wide limit per collateral asset accompanies the first admission. That decision is open with the owner.
+- Whether the first admitted tokens start with tighter concentration thresholds (`CollateralConcentrationDesign.md`, #3685).
