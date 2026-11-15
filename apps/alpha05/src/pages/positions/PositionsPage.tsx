@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -87,6 +88,11 @@ export function PositionsPage() {
               <EndedSection read={ended} meta={meta} payoutKeys={payoutKeys} />
             </>
           )}
+          <p>
+            <Link to="/activity" data-testid="positions-activity-link">
+              {text('activity.fromHere')}
+            </Link>
+          </p>
         </>
       )}
     </main>

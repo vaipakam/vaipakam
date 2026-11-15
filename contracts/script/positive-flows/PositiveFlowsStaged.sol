@@ -222,6 +222,11 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         return _restoreValue[h];
     }
 
+    /// @dev Whether a step of this run recorded the setting `name`.
+    function _restoreRecorded(string memory name) internal view returns (bool) {
+        return _restoreListed(keccak256(bytes(name)));
+    }
+
     function _restoreListed(bytes32 h) private view returns (bool) {
         for (uint256 i = 0; i < _restoreNames.length; i++) {
             if (keccak256(bytes(_restoreNames[i])) == h) return true;

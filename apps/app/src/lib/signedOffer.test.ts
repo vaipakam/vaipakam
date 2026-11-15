@@ -22,6 +22,7 @@ import {
   signedOrderTimeWindowsOpen,
   randomSignedOfferNonce,
   signedOrderTakerRefusal,
+  signedOfferSetArg,
   signedRowToDeskRow,
   wireFromCreatePayload,
   type SignedOrderWire,
@@ -309,6 +310,22 @@ describe('signedRowToDeskRow', () => {
     ).toBeNull();
     // deadline 0 = no deadline (contract sentinel) — kept.
     expect(signedRowToDeskRow(signedRow(wire({ deadline: '0' })), CHAIN, NOW)).not.toBeNull();
+  });
+
+  it('keeps an order signed in a set with its placement, and drops one naming a broken set (#3327 part 2)', () => {
+    const set = { others: [`0x${'e'.repeat(64)}` as `0x${string}`], index: 1 };
+    expect(signedRowToDeskRow(signedRow(wire(), { set }), CHAIN, NOW)!.signed!.set).toEqual(set);
+    // An older Worker sends no `set`: the order was signed alone.
+    expect(signedRowToDeskRow(signedRow(wire()), CHAIN, NOW)!.signed!.set).toBeNull();
+    expect(
+      signedRowToDeskRow(signedRow(wire(), { set: { others: [], index: 0 } }), CHAIN, NOW),
+    ).toBeNull();
+  });
+
+  it('sends the placement, or the empty one for an order signed alone, as the fill\'s set argument', () => {
+    const others = [`0x${'e'.repeat(64)}` as `0x${string}`];
+    expect(signedOfferSetArg({ others, index: 1 })).toEqual({ others, index: 1n });
+    expect(signedOfferSetArg(null)).toEqual({ others: [], index: 0n });
   });
 });
 

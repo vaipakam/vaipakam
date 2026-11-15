@@ -232,7 +232,7 @@ const REQUIRED_TABLE_COLUMNS = {
     'asset_type', 'collateral_asset_type', 'interest_rate_bps', 'interest_rate_bps_max',
     'amount', 'amount_max', 'collateral_amount', 'collateral_amount_max',
     'fill_mode', 'expires_at', 'deadline', 'nonce',
-    'status', 'filled_amount', 'created_at', 'updated_at',
+    'status', 'filled_amount', 'created_at', 'updated_at', 'offer_set',
   ],
 };
 

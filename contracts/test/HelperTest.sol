@@ -1174,7 +1174,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
         selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -1187,6 +1187,8 @@ contract HelperTest {
         selectors[8] = SignedOfferFacet.cancelSignedOffersBelow.selector;
         selectors[9] = SignedOfferFacet.signedOfferCancelFloor.selector;
         selectors[10] = SignedOfferFacet.hashSignedOfferFill.selector;
+        // #3327 part 2 — the digest a maker signs for a set of offers.
+        selectors[11] = SignedOfferFacet.hashSignedOfferSet.selector;
     }
 
     function getLenderIntentFacetSelectors()
@@ -1194,7 +1196,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](18);
         selectors[0] = LenderIntentFacet.setLenderIntent.selector;
         selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
         selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -1211,6 +1213,8 @@ contract HelperTest {
         selectors[13] = LenderIntentFacet.getLenderIntentPriority.selector; // #2550
         selectors[14] = LenderIntentFacet.setMinIntentFillNumeraire.selector; // #2760
         selectors[15] = LenderIntentFacet.getMinIntentFillNumeraire.selector; // #2760
+        selectors[16] = LenderIntentFacet.getActiveLenderIntents.selector; // #625 WI-2a, moved off MetricsFacet (#3618)
+        selectors[17] = LenderIntentFacet.getRollableIntentLoans.selector; // #625 WI-2c, moved off MetricsFacet (#3618)
     }
 
     function getRiskAccessFacetSelectors()
@@ -1767,7 +1771,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](53);
+        selectors = new bytes4[](51);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1836,18 +1840,16 @@ contract HelperTest {
         // Used by SignedOfferMatcherTest to assert a consumed transient
         // lender slice is de-listed. Already cut in DeployDiamond.s.sol.
         selectors[44] = MetricsFacet.getUserPositionOffers.selector;
-        selectors[45] = MetricsFacet.getActiveLenderIntents.selector; // #625 WI-2a
-        selectors[46] = MetricsFacet.getRollableIntentLoans.selector; // #625 WI-2c
         // #769 — paginated position views (exercised by MetricsPositionPaginatedTest).
-        selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
-        selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
-        selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
+        selectors[45] = MetricsFacet.getUserPositionLoansPaginated.selector;
+        selectors[46] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        selectors[47] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
         // #1503 item 25 — routed in DeployDiamond since #769; the test diamond
         // lagged, surfacing when the item-25 rekey test read the buyer's
         // position through it.
-        selectors[50] = MetricsFacet.getUserPositionLoans.selector;
-        selectors[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
-        selectors[52] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
+        selectors[48] = MetricsFacet.getUserPositionLoans.selector;
+        selectors[49] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
+        selectors[50] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
         return selectors;
     }
 

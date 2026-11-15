@@ -221,7 +221,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         vm.startBroadcast(lenderKey);
         LenderIntentFacet(diamond).setLenderIntent(
             address(usdc), address(weth), MAX_EXPOSURE, INTEREST_BPS, MAX_INIT_LTV_BPS,
-            uint32(DURATION_DAYS), MIN_FILL, false, true,
+            uint32(DURATION_DAYS), MIN_FILL, false, 0, false, true,
             type(uint64).max
         );
         vm.stopBroadcast();
@@ -335,7 +335,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
 
     function _inKeeperFeed() internal view returns (bool) {
         (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
-            MetricsFacet(diamond).getActiveLenderIntents(0, type(uint256).max);
+            LenderIntentFacet(diamond).getActiveLenderIntents(0, type(uint256).max);
         require(rows.length == total, "the keeper feed should return every row in one page");
         for (uint256 i; i < rows.length; ++i) {
             if (

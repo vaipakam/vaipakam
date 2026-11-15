@@ -13,6 +13,7 @@ import { textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { assetName, exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan, formatUtc } from '../ui/format';
 import { listApprovalPrompts, listCost, listNeedsApproval, listPromptCount, type ListReview } from './listReview';
+import { rentalRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -80,6 +81,7 @@ export function listReceipt(r: ListReview, meta: TokenMetaMap | null, copy: Pick
     title: text('rentList.title'),
     rows,
     consequences,
+    ifWrong: text(rentalRiskKey('owner')),
     prompts: listPromptCount(r),
     readAt: r.readAt,
   };

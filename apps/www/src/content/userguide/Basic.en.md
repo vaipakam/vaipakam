@@ -633,6 +633,14 @@ nothing happens on-chain.
 
 The Alerts page lists the alerts the protocol's index keeps for your wallet on the network you are on, newest first. It is free and there is nothing to sign up for. An alert is written when a loan starts, is repaid in part or in full, defaults or is liquidated, nears its due date, enters or leaves its grace period, or its health falls below 1.5, 1.2 or 1.05, and when a reward entry nears or passes its claim deadline. Each alert opens the loan, whose page reads it from the chain, or Claims for a reward. The bell beside your wallet at the top counts the alerts that arrived since you last opened the page in this browser. If the index cannot be read, the page says so instead of showing an empty inbox. Telegram, push, health warnings and payment reminders are set up just below the inbox. Each alert says how things stood when it was written; open the loan to see where it stands now.
 
+<a id="activity-history"></a>
+
+### Your activity
+
+The Activity page, reached from Positions and from Alerts, lists everything on the network you are on that involved your wallet, newest first: the events on any loan you have held a position in, and the events that name your wallet, such as your offers, your vault, your settings and your rewards. Each transaction is one line, led by what happened, with the rest of that transaction folded under it. A line names its loan or offer, the wallet it is recorded for, which may not be the one that sent it, and when, and links to the transaction.
+
+An amount is shown only when the index recorded one; otherwise the line says no amount was recorded. Events in the newest blocks come first, marked not final, because a block can still change. A loan whose ending was found by a check, rather than seen as an event, says so. While the index is still reading older history, the page says older activity may be missing, and a page the index could not answer is never shown as an empty history.
+
 <a id="alerts-channels"></a>
 
 ### Telegram, push and warnings
@@ -1131,7 +1139,7 @@ One lender takes the whole amount, or nobody does. Each figure is read exactly a
 
 ### Borrow: Reviewing and Posting a Request
 
-Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
+If an open lender offer already fits your request, the app shows it first: take it now, on its own terms and inside every limit you set, or post anyway. Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
 
 <a id="borrow-nft-collateral"></a>
 
@@ -1197,7 +1205,7 @@ Lending can lose you money. If the borrower has not repaid by the end of the gra
 
 ### Lend: Posting Your Own Offer
 
-When no request fits, you can post your own lending offer for your two tokens: the exact amount you lend, the rate you ask, the term and the collateral a borrower must lock. Posting moves the amount from your wallet into your own vault, where it stays locked while the offer is open. A borrower who takes it opens the loan at once, on your terms, without asking you again: they receive the amount less their initiation fee, and their collateral is locked in their vault for you. While matching is switched on for the network, anyone may also match your offer with a borrower's request; without parts, that loan lends your whole amount at your rate, against at least the collateral you ask for. The review says whether matching is on now. You can cancel from five minutes after posting, and the amount returns to your wallet. A lapsed offer can no longer be taken; its amount stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close an offer on the current app's Offers page; the review says so before anything is locked.
+When no request fits, you can post your own lending offer for your two tokens: the exact amount you lend, the rate you ask, the term and the collateral a borrower must lock. Posting moves the amount from your wallet into your own vault, where it stays locked while the offer is open. A borrower who takes it opens the loan at once, on your terms, without asking you again: they receive the amount less their initiation fee, and their collateral is locked in their vault for you. While matching is switched on for the network, anyone may also match your offer with a borrower's request; without parts, that loan lends your whole amount at your rate, against at least the collateral you ask for. The review says whether matching is on now. You can cancel from five minutes after posting, and the amount returns to your wallet. A lapsed offer can no longer be taken; its amount stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close an offer on the current app's Offers page; the review says so before anything is locked. If an open borrow request already fits your offer, the app shows it first: fund it now, on its own terms and inside every limit you set, or post anyway.
 
 <a id="lend-offer-terms"></a>
 
@@ -1411,7 +1419,7 @@ Below your offers, the offer book lists every open offer on the network, newest 
 
 ### An offer's page
 
-Each offer has its own page, read from the chain once a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first.
+Each offer has its own page, read from the chain once a wallet is connected. It shows who posted it, the amount, what is already filled, the collateral, the term and when the offer lapses. From there you can take an open loan offer whole, through the same review and consent as Borrow and Lend: borrow from a lender's offer, or fund a borrower's request. Cancel and Clean up work there as they do on your offers. Rentals, offers with NFT collateral, sales of a running loan and early-close offers are taken in the current app for now, and the page links to it. An offer is not reserved while you review it; someone else may take or cancel it first. On an open token-for-token offer you posted, a section says why it is not matching yet: the closest open offers on the other side of the pair, and the first thing the protocol itself refuses for the closest one, such as the rate, the term or a repayment option. It can also say that a pair would match now and only waits for someone to send the match, or that nothing stands on the other side. It never promises a match, and it says that this app cannot change an open offer yet: to close a gap, cancel the offer and post a new one.
 
 <a id="offer-cancel"></a>
 
@@ -1431,6 +1439,16 @@ An offer of a token against token collateral can carry a price-move guard. While
 
 Every account starts at the lowest risk level, blue-chip assets only, and only you can raise it. A pair needs the level of its riskier token: blue-chip tokens need nothing, other liquid tokens need “Liquid assets”, and an illiquid token needs “Any asset, including illiquid ones” plus your agreement to that exact pair. When taking an offer or posting a request needs a step like this, the review says so in place and offers it as one wallet confirmation with its own receipt: what changes, which pairs it reaches, when it takes effect, and that no funds move. Raising your level, or agreeing to a pair, can wait out a period the protocol sets; for a raised level the app shows the time it takes effect, read from the chain, for an agreement it says the protocol does not publish that time yet, and it never offers the same step twice, because a second one would start the wait over. Lowering your level always takes effect at once. When the protocol publishes new risk terms, your level and agreements stop counting until you confirm them again. If you turned on strict mode, each liquid pair also needs your acknowledgement. A block that comes from the lender's own risk level is shown as theirs: nothing in your account would change it.
 
+<a id="wallet-keys"></a>
+
+### Your Wallet and Its Keys
+
+Vaipakam does not create or hold wallets. You need a self-custody wallet: an app or a device that holds the keys to your own account. No one here can see those keys, move your funds or restore your access, so if you lose the keys, you lose access to the funds. The app says this in the wallet picker, and on Home before you connect, and its footer links to a short page on keeping your keys safe. That page names no wallet brand.
+
+When you set up a wallet, it shows a recovery phrase, a list of words. Write it on paper and keep it private. Never type it into a website, store it online or share it: no one from Vaipakam will ever ask for it. Check the site address and read what your wallet shows before you approve anything. For larger amounts, a wallet whose keys stay on a separate hardware device is safer, and trying a small amount first is wise.
+
+On a computer, connect through your wallet's browser extension, or scan the picker's code with the wallet on your phone. On a phone, open the app in your wallet app's own browser, or choose Other in the picker. Without a wallet you can still read the key risks and the analytics.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt
@@ -1444,6 +1462,8 @@ confirmation and moves no funds. If the app cannot read whether you
 accepted, it says so and lets you try again instead of treating it
 as a no. Repaying, claiming, withdrawing your own assets, cancelling
 your own offers and turning a consent off are never held back.
+
+The prompt also shows a short list of key risks above the accept step, so you read what can go wrong before you accept. Every review that opens a loan or a rental adds one line, "If things go wrong", that says what happens to your side of that loan, with a link to the Key risks page. That page is also in the footer and needs no wallet.
 
 <a id="settings"></a>
 

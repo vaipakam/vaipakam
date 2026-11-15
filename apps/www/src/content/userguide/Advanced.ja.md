@@ -1327,6 +1327,14 @@ Alerts は advisory です — funds は move しません。
 
 アラートのページは、接続中のウォレットのネットワークについて、インデックスの受信箱を新しい順に50行ずつ読みます。行は、書き込まれた時点でローンのポジションを持っているウォレット宛てに書かれます。対象は、ローンの開始、一部返済と全額返済（期限前返済、借り換え、スワップ返済、担保売却による完了を含む）、デフォルトまたは清算、内部マッチによる完了、終了したことはわかっても理由をインデックスが判断できないローン、期日7日前と1日前の通知、猶予期間の開始と終了、そしてヘルスが1.5、1.2、1.05を下回ったときです。ヘルスの行はプロトコルのキーパーが書くため、キーパーが動いている間だけ、ヘルスが適用されるローンについてだけ届きます。報酬エントリーの最終通知と失効の行は、そのエントリーの所有者に届きます。行は金額ではなく指し示すものです。ローンのページがチェーンを読みます。別のネットワークやウォレット向けの応答は拒否され、読めない行は数えられ、未知の種類は名前のまま表示されます。ヘッダーの件数は、このブラウザーで既読として記録された最新の ID より大きい ID を持つ行を、インデックス自身がすべての行について数えたものです。ID は書き込み順に増えるだけなので、古いブロックで記録された行も数えられます。ページを開くと、それまでに書かれたすべての行が既読として記録されます。既読の印はこのブラウザーにだけ保存され、前にしか進みません。Telegram、プッシュ、ヘルス警告、支払いリマインダーは受信箱のすぐ下で設定します。行は履歴です。行が書かれた時点のローンまたはエントリーの状態を示し、それが今も続いているとは言いません。報酬の期限切れの行は、エントリーのプログラムへの返還が始まったことを意味し、完了したことを意味しません。
 
+<a id="activity-history"></a>
+
+### アクティビティ
+
+アクティビティのページは、インデックスの `GET /activity?wallet=` を、`block:logIndex` カーソルで1ページ50行ずつ読みます。インデックスは2つの部分から答えます。ウォレットが一度でもポジションを持ったローンのすべてのイベント(参加履歴)と、共通の参加者ルール(実行者と、種類ごとに定めた当事者)でウォレットを名指すすべてのイベントです。後者は取り込み時にイベントごとに記録され、それ以前に保存された履歴は1回限りの埋め戻しで1ページずつ記録されます。埋め戻しが保存済みの最新イベントを読み終えるまで `walletComplete` は false で、その間ページは古いアクティビティが欠けている可能性を示し、終わりを主張しません。ウォレットのフィルターは他のフィルターと組み合わせられません。
+
+最初のページには、確定前のレーン(安全なブロックより上のイベント。時刻は未取得)と、照合の読み取りで終了状態が見つかったローンも含まれ、観測した状態とブロックとともにフィードの位置に置かれます。1つの取引のイベントは1行にまとめ、記帳ではない最初のイベント(トークンの移転、承認、詳細の付随イベント、スワップの試行以外)を先頭にします。金額はインデックスの正規化された項目からのみ取り、生の引数からは取りません。参加者ルールが記録しうるすべての種類にラベルがあり、未知の種類は名前を表示します。ローンを開始した取引はローンの開始を先頭にし、受諾やマッチングはその下に置きます。行に示すウォレットは共通のアクター規則がイベントを記録した先で、取引の送信者と異なる場合があります。インデックスが枚数を記録していない複数枚トークンはその旨を示し、確認で見つかったローンの終了が読めなかったときは、一部が欠けている可能性を示して一覧の終わりを主張しません。
+
 <a id="alerts-channels"></a>
 
 ### Telegram、プッシュ、警告
@@ -2107,7 +2115,7 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 ### Borrow: リクエストの条件
 
-Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 1 (AON)、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。両方のオファーで `useFullTermInterest` が false の場合、`matchOffers` は貸し手以下の借り手の `durationDays` を認め、ローンは借り手の値を取ります（#3615）。直接の受諾ではオファー自身の値になります。
+Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 1 (AON)、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。両方のオファーで `useFullTermInterest` が false の場合、`matchOffers` は貸し手以下の借り手の `durationDays` を認め、ローンは借り手の値を取ります（#3615）。直接の受諾ではオファー自身の値になります。確認画面の前に、直接の受諾で下書きの範囲内の条件（同じ `durationDays`、`useFullTermInterest`、`allowsPartialRepay`、`periodicInterestCadence`、金額・金利・比例配分した担保が不利でない）を拘束する相手側の公開オファーが、直接受けられるものとして先に示されます（#3622）。
 
 <a id="borrow-request-review"></a>
 
@@ -2185,7 +2193,7 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 ### Lend: オファーの条件
 
-パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 1 (AON)（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。両方のオファーで `useFullTermInterest` が false の場合、`matchOffers` は貸し手以下の借り手の `durationDays` を認め、ローンは借り手の値を取ります（#3615）。直接の受諾ではオファー自身の値になります。
+パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 1 (AON)（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。両方のオファーで `useFullTermInterest` が false の場合、`matchOffers` は貸し手以下の借り手の `durationDays` を認め、ローンは借り手の値を取ります（#3615）。直接の受諾ではオファー自身の値になります。確認画面の前に、直接の受諾で下書きの範囲内の条件（同じ `durationDays`、`useFullTermInterest`、`allowsPartialRepay`、`periodicInterestCadence`、金額・金利・比例配分した担保が不利でない）を拘束する相手側の公開オファーが、直接受けられるものとして先に示されます（#3622）。
 
 <a id="rate-check"></a>
 
@@ -2397,7 +2405,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### オファーのページ
 
-`/offers/:id` は1つのブロックで `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)`、`getOfferLinkedLoanId(id)` を読みます。接続したウォレット経由で読み、ウォレットを接続する前は何も読みません。作成者がゼロなら、記録が削除された（何も成立せずに取り消された）か、書かれたことがないかのどちらかです。プロトコルはオファー数を保持しないため、ページはどちらかを述べません。ゼロ以外の紐付きローンはローン売却（借り手のオファー）またはオフセット（貸し手のオファー）を示し、借り手のオファーの `refinanceTargetLoanId` は借り換えリクエストを示します。受けるときは共有の `acceptOffer` フロー（署名済み `AcceptTerms`、正確な承認、ドライラン、計測結果）を専用のストアキーで実行し、取り消しと片付けは共有の `cancelOffer` フローで行います。レンタル、NFT担保、ローン売却、オフセットは現在のアプリにリンクします。
+`/offers/:id` は1つのブロックで `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)`、`getOfferLinkedLoanId(id)` を読みます。接続したウォレット経由で読み、ウォレットを接続する前は何も読みません。作成者がゼロなら、記録が削除された（何も成立せずに取り消された）か、書かれたことがないかのどちらかです。プロトコルはオファー数を保持しないため、ページはどちらかを述べません。ゼロ以外の紐付きローンはローン売却（借り手のオファー）またはオフセット（貸し手のオファー）を示し、借り手のオファーの `refinanceTargetLoanId` は借り換えリクエストを示します。受けるときは共有の `acceptOffer` フロー（署名済み `AcceptTerms`、正確な承認、ドライラン、計測結果）を専用のストアキーで実行し、取り消しと片付けは共有の `cancelOffer` フローで行います。レンタル、NFT担保、ローン売却、オフセットは現在のアプリにリンクします。読者が出した公開・通常・トークン対トークンのオファーについて、ページはインデクサーの `GET /offers/:id/nearest?chainId&limit=5` にペアの反対側で最も近い公開オファー（まず金利の差、次に期間の差）を尋ね、それぞれとマッチングのスイッチを同じブロックで読み、公開されている各ペアについて `OfferMatchFacet.previewMatch(lenderId, borrowerId, sender, sender)` を問い合わせます。示される差は最も近いものに対するプレビューの最初の `MatchError` で、`Ok` を返すペアは今マッチ可能と示され、マッチ済みとは示されません（#3623）。
 
 <a id="offer-cancel"></a>
 
@@ -2417,11 +2425,23 @@ ERC-20 担保に対する ERC-20 の開いているオファーでは、作成�
 
 スイッチは `getRiskAccessGateEnabled` です。フローに必要な手順はプロトコル自身の回答で決まります。受諾では、`previewCreatorBlock` が貸し手のブロックなしを示したうえで `previewOfferAcceptBlock`（1 = レベル不足、2 = ペアへの同意、3 = 厳格モードの確認、4 = かつて受諾時の確認がカバーしていた非流動ペア。2 と同じくブロックとなり、ペアへの同意で解除されます）。リクエストでは、`createOffer` のドライランの `RiskTierTooLow`、`IlliquidPairNotConsented`、`MidTierPairNotAcknowledged` です。手順は一つのブロックで、ペアの `pairRequiredRiskLevel`（オファーでは `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、`getCurrentRiskTermsVersion` に対する `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown`、`getRiskTierMutationNonce` を読み、ペアについては `isPairConsentPending` と `hasIlliquidPairConsent`、または `isMidTierAckPending` と `midTierStrictBlocked` を読みます。引き上げはペアに必要な最小レベルへの `setVaultRiskTierChecked(level, nonce, termsVersion)` で、確認後に別のレベル書き込みや条件変更があれば何も変えずに拒否されます。ペアの手順は `setIlliquidPairConsent(pair, true)` または `setMidTierPairAck(pair)` です。待機中の引き上げや保留中のペア手順は再提示しません。保留中のペア手順がいつ有効になるかを返す読み取りはないため、確認画面はその時刻を読めないと伝えます。その時刻を示すのは手順自体の完了カードだけで、明細のブロック時刻と待機期間の和から求めます。結果は明細のブロックで読み直します。
 
+<a id="wallet-keys"></a>
+
+### ウォレットとその鍵
+
+Vaipakam はウォレットを作成も保管もしません。必要なのはセルフカストディ型のウォレット、つまりご自身のアカウントの鍵を保持するアプリまたはデバイスです。ここでは誰もその鍵を見ることも、資金を動かすことも、アクセスを回復することもできません。鍵を失えば、資金へのアクセスを失います。アプリはこのことをウォレット選択画面と、接続前のホーム画面で伝え、フッターから鍵を安全に保つための短いページにリンクしています。そのページは特定のウォレットのブランドを挙げません。
+
+ウォレットを設定すると、復元フレーズ(単語のリスト)が表示されます。紙に書き留め、人に見せないでください。ウェブサイトに入力したり、オンラインに保存したり、誰かと共有したりしないでください。Vaipakam の者がそれを尋ねることは決してありません。何かを承認する前に、サイトのアドレスを確認し、ウォレットの表示を読んでください。大きな金額には、鍵が別のハードウェア機器に留まるウォレットの方が安全で、まず少額で試すのが賢明です。
+
+パソコンでは、ウォレットのブラウザ拡張機能から接続するか、スマートフォンのウォレットで選択画面のコードを読み取ります。スマートフォンでは、ウォレットアプリ内蔵のブラウザでアプリを開くか、選択画面で「Other」を選びます。ウォレットがなくても、主なリスクと分析は読めます。
+
 <a id="terms-gate"></a>
 
 ### 利用規約の確認
 
 `getCurrentTos` は、操作の対象チェーンで有効なバージョンと内容ハッシュを返します。バージョン 0 は規約なしを意味し、何も制限されません。`hasAcceptedCurrentTerms` が false のウォレットには新たなエクスポージャーの前に確認が求められ、本文が決して変わらないバージョン固定ページ `/terms/v<N>` へのリンクが示されます。同意すると `acceptTerms(version, hash)` を一度呼び出します。ウォレットを開く前に組み合わせを読み直すので、新しいバージョンは表示中のものに置き換わり、別のタブで行われた同意があれば操作はそのまま続きます。読み取りの失敗は「確認できない」であり、再試行でき、「未同意」にはなりません。退出は決して制限されません。
+
+同意の手順の上に、プロンプトは6つの主なリスクを表示します（#3661）。ローンやレンタルを開始するすべての確認画面には「問題が起きた場合」の一行が付き、側と決済方法で選ばれます。両方の資産が流動的と読める場合は売却、どちらかが非流動的と読める場合は現物、掲載したオファーやリクエスト、署名済み注文では約定時にプロトコルが資産を再分類するため、どちらの場合にも当てはまる一行です。リンク先は `/risks` で、フッターからも開ける公開ページです。この一覧はバージョン2から利用規約の本文に含まれるため、そのバージョンへの同意で記録されます。
 
 <a id="settings"></a>
 

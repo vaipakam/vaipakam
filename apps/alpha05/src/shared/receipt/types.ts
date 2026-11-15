@@ -63,6 +63,10 @@ export interface Receipt {
   rows: readonly ReceiptRow[];
   /** Every "You can lose" and every stated unknown, tier A, always shown. */
   consequences: readonly ReceiptText[];
+  /** #3661 — on a review that opens a loan or a rental: the one line that
+   *  says what happens to this side if things go wrong, shown first among
+   *  the consequences with a link to the full key-risk list. */
+  ifWrong?: ReceiptText;
   /** The wallet prompts this flow needs (RB-CLICKS: one where possible). */
   prompts: number;
   /** Prompts that may follow once the flow took effect, to put back what it

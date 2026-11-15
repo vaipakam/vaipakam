@@ -50,9 +50,11 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/recover', name: 'Recover', tier: 'advanced', rows: 'ACC/NFT adoption and disown', order: 16, built: true, nav: true, currentApp: '/recover' },
   { path: '/analytics', name: 'Analytics', tier: 'public', rows: 'metrics, transparency', order: 17, built: true, nav: true, currentApp: '/analytics' },
   { path: '/nft', name: 'Verifier', tier: 'public', rows: 'NFT position verifier', order: 18, built: false, nav: false, currentApp: '/nft' },
-  { path: '/activity', name: 'Activity', tier: 'basic', rows: 'ACC activity feed', order: 19, built: false, nav: false, currentApp: '/activity' },
+  { path: '/activity', name: 'Activity', tier: 'basic', rows: 'ACC activity feed', order: 19, built: true, nav: false, currentApp: '/activity' },
   { path: '/help', name: 'Help', tier: 'public', rows: 'help, guides, build provenance', order: 20, built: false, nav: false, currentApp: '/help' },
   { path: '/governance', name: 'Governance', tier: 'public', rows: 'queued governance changes (#3237)', order: 21, built: true, nav: false, currentApp: null },
+  { path: '/risks', name: 'Key risks', tier: 'public', rows: 'key risks (#3661)', order: 22, built: true, nav: false, currentApp: null },
+  { path: '/wallet-keys', name: 'Your wallet and its keys', tier: 'public', rows: 'self-custody wallet notice (#3671)', order: 23, built: true, nav: false, currentApp: null },
 ];
 
 /** The current app's address for the same job, with this route's params

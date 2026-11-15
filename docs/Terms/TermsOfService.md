@@ -1,7 +1,7 @@
 # Vaipakam Terms of Service
 
-**Version:** 1
-**Effective:** 2026-04-24
+**Version:** 2
+**Effective:** 2026-11-15
 
 ## What this document is
 
@@ -14,10 +14,14 @@ you are doing so under these Terms.
 ## Not a service provider
 
 Vaipakam is not a custodian, broker, bank,
-exchange, or financial adviser. The smart contracts run on public
-blockchains. You interact with them directly via your own wallet. The
-frontend at vaipakam.com is a convenience layer — the same smart
-contracts are reachable from any wallet and any other UI.
+exchange, adviser or fiduciary. The smart contracts run on public
+blockchains by themselves, and you interact with them directly from
+your own wallet. The site and the app at vaipakam.com are an
+interface to those contracts, not a party to any loan or rental:
+every loan and rental is between its own participants. No one holds
+your assets for you; they stay in your wallet or in your own vault,
+which only the contracts and you can move. The same contracts are
+reachable from any wallet and any other interface.
 
 ## No advice
 
@@ -26,24 +30,46 @@ legal, tax, or investment advice. You are responsible for evaluating
 the risks of every position you take and for your own regulatory
 compliance in whatever jurisdiction you reside in.
 
-## Risk of total loss
+## Key risks
 
-You can lose every asset you commit to a loan
-position, a rental position, or a VPFI balance. Smart contract bugs,
-oracle manipulation, liquidation cascades, bridge failures, chain
-reorganisations, and wallet compromises are all scenarios in which
-the value of an on-chain position can go to zero. Participation in
-Vaipakam implies you accept these risks.
+Read these before you use Vaipakam. The app shows the same list before
+you accept these Terms.
+
+- You can lose some or all of your funds. Nothing here is insured or
+  guaranteed, and no one can reverse a transaction.
+- If you lend: when a borrower does not repay, their collateral is
+  sold to repay you. If it cannot be sold, you receive the collateral
+  itself, in part or in full, and it may be worth less than you are
+  owed.
+- If you borrow: your collateral can be sold if its value falls or you
+  repay late, and you may lose it.
+- The software, price feeds, tokens and networks this platform relies
+  on can fail or be attacked. It is new technology.
+- You alone control your wallet. If you lose access, no one can
+  recover it.
+- This is not financial advice. Decide for yourself, and only use what
+  you can afford to lose.
+
+Also: a token meant to hold a steady value, such as a dollar token,
+can lose that value; a price feed can be wrong or late, and a sale or
+a limit can act on that price; rules and taxes differ by country and
+can change, and tax on what you do here is your own responsibility;
+and wallets, networks, swap routes and cross-chain transfers are run
+by others, outside this platform's control. Every loan and rental
+review in the app also states what happens to your side of that loan
+if things go wrong.
 
 ## Prohibited use
 
 You may not use Vaipakam:
 
+- if you are under 18, or under the age of majority where you live;
 - from a jurisdiction where accessing a non-custodial DeFi protocol
   requires registration you haven't completed, or where participation
   is prohibited outright;
 - if your wallet address is listed under any sanctions programme in
   force in the United States, European Union, or United Kingdom;
+- while hiding your location to get round any of the above;
 - to launder funds, finance terrorism, or otherwise violate any
   applicable law;
 - to attack, exploit, or probe the protocol or its infrastructure.
@@ -62,8 +88,8 @@ unless explicitly stated otherwise for a specific change.
 
 Vaipakam supports delegating "keeper" actions
 on your behalf to whitelisted addresses. A keeper you authorize can
-execute non-claim, role-scoped actions on your loans (refinance,
-repay, add-collateral, preclose). Keepers CANNOT claim funds or
+execute non-claim, role-scoped actions on your loans (repay,
+add-collateral, preclose). Keepers CANNOT claim funds or
 transfer your position NFT. You can enable or disable keeper access
 per-loan or per-offer at any time while the position is active. You
 remain responsible for any action a keeper you authorized takes.
@@ -102,23 +128,40 @@ any asset on your behalf.
 
 Governance can publish a new version of
 these Terms. When it does, the on-chain `currentTosVersion` +
-content-hash pair increments, and users must sign a new acceptance
-from their wallet before the frontend re-opens the app to them.
+content-hash pair increments, and you must accept the new version
+from your wallet before your next action that starts something new.
+Continued use alone is never taken as acceptance.
 Failure to re-sign does not affect your on-chain positions — the
 Terms gate is only a frontend gate, not a protocol gate.
 
-## No warranty
+## Provided as is
 
-The protocol and the frontend are provided "as is"
-without any warranty of fitness, merchantability, or absence of bugs.
-Every participant — including the protocol's own developers and
-governance signers — uses Vaipakam at their own risk.
+The protocol, the site and the app are provided "as is" and "as
+available", without any warranty of fitness, merchantability,
+availability, or absence of bugs. Every participant — including the
+protocol's own developers and governance signers — uses Vaipakam at
+their own risk.
 
 ## Limitation of liability
 
-To the maximum extent permitted by
-applicable law, Vaipakam and its contributors are not liable for any
-loss arising from your use of the protocol or frontend.
+To the fullest extent the law allows, no one who builds, operates or
+contributes to this software is liable for any loss from using it,
+including loss of funds or assets, loss caused by faults in the
+software, price feeds, tokens, networks or third-party services, lost
+access to a wallet, and any indirect loss such as lost profit. Where
+the law does not allow liability to be excluded, liability to any one
+user is in no case more than the fees that user paid to the platform
+in the last 12 months, and not less than $10 or more than $1,000.
+This is a ceiling on a claim, not an amount anyone is promised.
+Nothing here limits liability that the law does not allow to be
+limited.
+
+## Indemnity
+
+You agree to cover the people who build, operate or contribute to
+this software against claims, losses and costs that arise from your
+breach of these Terms, your breach of any law, or your misuse of the
+protocol, the site or the app.
 
 ## Governing convention
 

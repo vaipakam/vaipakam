@@ -859,6 +859,15 @@ dd.value-unknown > .icon {
   margin: 8px 0;
   padding-inline-start: 20px;
 }
+/* #3661 — a review's one "if things go wrong" line: set apart from the
+   list below it, read first. */
+.if-wrong {
+  margin: 12px 0 8px;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--warn);
+  background: var(--surface-sunken);
+  overflow-wrap: anywhere;
+}
 .legs {
   list-style: none;
   padding: 0;
@@ -2114,6 +2123,31 @@ a.btn {
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 20px;
+}
+/* #3677 — Activity: one card per transaction; the rest of a transaction's
+   events fold under it, and a long address or amount wraps on a phone. */
+.activity-list .activity-row p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.activity-list .activity-row p + p {
+  margin-top: 4px;
+}
+.activity-rest {
+  margin-top: 8px;
+}
+.activity-rest summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+.activity-rest ul {
+  margin: 6px 0 0;
+  padding-inline-start: 18px;
+  overflow-wrap: anywhere;
+}
+.activity-pending h3 {
+  margin-bottom: 4px;
 }
 /* #3415 — the address box and full-address display (RB-ADDRESS-GUARD):
    the whole address always shows, wrapping on a phone rather than cut. */

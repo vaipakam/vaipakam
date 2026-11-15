@@ -22,6 +22,10 @@
 //    discovers a sold position or a reserve the way it does against the
 //    real Worker. Refused with 503 while the posture is `down`, as the whole
 //    index is;
+//  - the indexer's `GET /activity?wallet=…` (#3677): every Diamond event
+//    naming the wallet, and every event on a loan it opened, with what a
+//    spec adds through `/__stub/activity` (rows with amounts, the pending
+//    lane, repaired endings, the completeness flag);
 //  - the indexer's `GET /offers/active?chainId&limit&before`, the offer
 //    book: every offer the chain's `OfferCreated` logs name, read back from
 //    the Diamond and filed `active` while the protocol reports it open or
@@ -30,6 +34,9 @@
 //    the indexer honours it (`lendingAsset`, `collateralAsset`,
 //    `durationDays`, and the opt-in `excludeExpired`, `excludeSaleVehicles`
 //    and `excludeOffsetVehicles`). Also refused while the posture is `down`;
+//  - the indexer's `GET /offers/:id/nearest?chainId&limit` (#3623): the
+//    other side's open token offers on the offer's pair, ranked as the
+//    indexer ranks them. Refused while the posture is `down`;
 //  - the indexer's `GET /offers/markets?chainId`, the rate desk's market
 //    list: the open token-against-token offers above, unexpired and without
 //    the sale and early-close vehicles, grouped by both tokens and the term,
@@ -100,6 +107,7 @@
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
+import { activityActor } from '@vaipakam/lib/activityActor';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -218,6 +226,31 @@ async function activeOffers(url) {
   return { chainId: CHAIN_ID, offers, nextBefore: offers.length === limit ? offers[offers.length - 1].offerId : null };
 }
 
+/** `/offers/:id/nearest` (#3623): the other side's open token-against-token
+ *  offers on the offer's two assets, unexpired, without the vehicles and the
+ *  offer's own wallet, closest rate range first, then closest term, newest
+ *  on a tie, as the indexer ranks them. */
+async function nearestOffers(id, url) {
+  const me = await offerRow(BigInt(id));
+  if (me === null) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'not-open' } };
+  if (!unexpired(me)) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'expired' } };
+  if (me.assetType !== 0 || me.collateralAssetType !== 0) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'not-erc20' } };
+  if (me.isSaleVehicle || me.isOffsetVehicle) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'loan-bound' } };
+  const limit = Math.min(10, Math.max(1, Number(url.searchParams.get('limit') ?? 5)));
+  const myMax = Math.max(me.interestRateBps, me.interestRateBpsMax);
+  const all = [];
+  for (const oid of await offerIds()) {
+    const row = await offerRow(oid);
+    if (row === null || !unexpired(row) || row.offerType === me.offerType) continue;
+    if (row.lendingAsset !== me.lendingAsset || row.collateralAsset !== me.collateralAsset) continue;
+    if (row.assetType !== 0 || row.collateralAssetType !== 0 || row.isSaleVehicle || row.isOffsetVehicle || row.creator === me.creator) continue;
+    const rateGapBps = Math.max(0, row.interestRateBps - myMax, me.interestRateBps - Math.max(row.interestRateBps, row.interestRateBpsMax));
+    all.push({ ...row, rateGapBps });
+  }
+  all.sort((a, b) => a.rateGapBps - b.rateGapBps || Math.abs(a.durationDays - me.durationDays) - Math.abs(b.durationDays - me.durationDays) || b.offerId - a.offerId);
+  return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: true, candidates: all.slice(0, limit), oppositeOpen: all.length } };
+}
+
 /** `/offers/markets`: the open token-against-token offers grouped into
  *  markets, deepest first, ties broken on the market's own terms. */
 async function offerMarkets() {
@@ -331,9 +364,7 @@ async function rateCandles(url) {
   const since = ranges[rangeRaw] === null ? 0 : Math.floor(Date.now() / 1000) - ranges[rangeRaw] * 86400;
   const q = new URLSearchParams({ limit: '200', lendingAsset: lending, collateralAsset: collateral, durationDays: days, excludeSaleVehicles: '1' });
   const { loans } = await recentLoans(new URL(`http://stub/loans/recent?${q.toString()}`));
-  const fills = loans
-    .filter((l) => l.assetType === 0 && l.collateralAssetType === 0 && l.startAt >= since)
-    .sort((a, b) => a.startAt - b.startAt || a.loanId - b.loanId);
+  const fills = loans.filter((l) => l.assetType === 0 && l.collateralAssetType === 0 && l.startAt >= since).sort((a, b) => a.startAt - b.startAt || a.loanId - b.loanId);
   const buckets = [];
   for (const f of fills) {
     const t = Math.floor(f.startAt / step) * step;
@@ -561,10 +592,7 @@ async function postSignedOrder(raw) {
   if (signer === null || signer.toLowerCase() !== order.signer) return { status: 400, body: { error: 'bad-signature' } };
   if (signedBook.has(orderHash)) return { status: 200, body: { chainId: CHAIN_ID, orderHash } };
   const read = (functionName, args) => chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName, args });
-  const [filled, nonceUsed] = await Promise.all([
-    read('signedOfferFilledAmount', [orderHash]),
-    read('isSignedOfferNonceUsed', [order.signer, BigInt(order.nonce)]),
-  ]);
+  const [filled, nonceUsed] = await Promise.all([read('signedOfferFilledAmount', [orderHash]), read('isSignedOfferNonceUsed', [order.signer, BigInt(order.nonce)])]);
   if (nonceUsed) return { status: 409, body: { error: 'nonce-used' } };
   const ceiling = BigInt(order.amountMax) === 0n ? BigInt(order.amount) : BigInt(order.amountMax);
   if (filled >= ceiling) return { status: 409, body: { error: 'order-consumed' } };
@@ -576,9 +604,7 @@ async function postSignedOrder(raw) {
  *  burned (signer, nonce) pairs, as the indexer's lifecycle handlers read
  *  them. */
 async function signedRetirements() {
-  const logs = await anvil('eth_getLogs', [
-    { address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[SIGNED_CANCELLED, SIGNED_NONCE_BURNED]] },
-  ]);
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[SIGNED_CANCELLED, SIGNED_NONCE_BURNED]] }]);
   const cancelled = new Set();
   const burned = new Set();
   for (const l of logs) {
@@ -674,6 +700,99 @@ async function ingestHealth() {
 
 /** `/activity` for the served kinds: every such event filed under `actor`,
  *  newest first, in one page (a test chain never needs a second). */
+/** What a spec added to `/activity?wallet=` (`/__stub/activity`), per wallet:
+ *  events the fixture cannot reach (with what they moved, which the stand-in
+ *  does not work out itself), the pending lane, repaired endings and the
+ *  index's completeness flag. */
+let walletActivityExtra = new Map();
+const blockTimes = new Map();
+
+function namesWallet(value, wallet) {
+  if (typeof value === 'string') return value.toLowerCase() === wallet;
+  if (Array.isArray(value)) return value.some((v) => namesWallet(v, wallet));
+  if (value && typeof value === 'object') return Object.values(value).some((v) => namesWallet(v, wallet));
+  return false;
+}
+
+function idOrNull(v) {
+  if (typeof v !== 'bigint' && typeof v !== 'number') return null;
+  const n = Number(v);
+  return n > 0 ? n : null;
+}
+
+/** `/activity?wallet=` (#3677): every Diamond event that names the wallet in
+ *  any argument, plus every event on a loan it opened as lender or borrower
+ *  (the fixture never moves a position), newest first on the indexer's
+ *  `block:logIndex` cursor. The actor is the shared rule's filed wallet
+ *  (`@vaipakam/lib/activityActor`), as the index files it, not the
+ *  transaction's sender. What an
+ *  event moved is left unrecorded, as the index leaves it for an event it
+ *  does not normalise; a spec adds rows that carry an amount. */
+async function walletActivity(url) {
+  const wallet = (url.searchParams.get('wallet') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return { status: 400, body: { error: 'bad-wallet' } };
+  if (['actor', 'loanId', 'offerId', 'kind'].some((k) => url.searchParams.has(k))) return { status: 400, body: { error: 'wallet-filter-alone' } };
+  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
+  const extra = walletActivityExtra.get(wallet) ?? {};
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest' }]);
+  const decoded = [];
+  const loans = new Set();
+  for (const l of logs) {
+    let ev;
+    try {
+      ev = decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
+    } catch {
+      continue;
+    }
+    decoded.push({ l, ev });
+    if (ev.eventName === 'LoanInitiated' && (String(ev.args.lender).toLowerCase() === wallet || String(ev.args.borrower).toLowerCase() === wallet)) {
+      loans.add(idOrNull(ev.args.loanId));
+    }
+  }
+  const rows = [];
+  for (const { l, ev } of decoded) {
+    const loanId = idOrNull(ev.args?.loanId);
+    if (!namesWallet(ev.args ?? {}, wallet) && !(loanId !== null && loans.has(loanId))) continue;
+    if (!blockTimes.has(l.blockNumber)) blockTimes.set(l.blockNumber, Number((await anvil('eth_getBlockByNumber', [l.blockNumber, false])).timestamp));
+    rows.push({
+      chainId: CHAIN_ID,
+      blockNumber: Number(l.blockNumber),
+      logIndex: Number(l.logIndex),
+      txHash: l.transactionHash,
+      kind: ev.eventName,
+      loanId,
+      offerId: idOrNull(ev.args?.offerId),
+      actor: activityActor(ev.eventName, Object.fromEntries(Object.entries(ev.args ?? {}).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v]))),
+      args: {},
+      blockAt: blockTimes.get(l.blockNumber),
+      asset: null,
+      assetType: null,
+      amount: null,
+      amountMax: null,
+      tokenId: null,
+      quantity: null,
+    });
+  }
+  rows.push(...(extra.events ?? []));
+  rows.sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
+  const before = url.searchParams.get('before');
+  let page = rows;
+  if (before) {
+    const [blk, li] = before.split(':').map(Number);
+    page = rows.filter((r) => r.blockNumber < blk || (r.blockNumber === blk && r.logIndex < li));
+  }
+  const more = page.length > limit;
+  page = page.slice(0, limit);
+  const last = page[page.length - 1];
+  const body = { chainId: CHAIN_ID, wallet, events: page, walletComplete: extra.walletComplete === undefined ? true : extra.walletComplete, nextBefore: more ? `${last.blockNumber}:${last.logIndex}` : null };
+  if (url.searchParams.get('repairObservations') === '1') body.repairObservations = before ? [] : extra.repairs === undefined ? [] : extra.repairs;
+  if (url.searchParams.get('pending') === '1' && !before) {
+    const head = Number(await anvil('eth_blockNumber'));
+    body.pending = extra.pending === undefined ? { events: [], finalThrough: head, throughBlock: head, latestBlock: head, readAt: Math.floor(Date.now() / 1000), complete: true } : extra.pending;
+  }
+  return { status: 200, body };
+}
+
 async function actorActivity(url) {
   const actor = (url.searchParams.get('actor') ?? '').toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(actor)) return { status: 400, body: { error: 'actor must be an address' } };
@@ -808,6 +927,7 @@ const server = http.createServer(async (req, res) => {
           '/activity (seller and reserve kinds)',
           '/offers/active',
           '/offers/markets',
+          '/offers/:id/nearest',
           '/loans/recent',
           '/loans/rate-candles',
           '/loans/by-participant',
@@ -818,6 +938,7 @@ const server = http.createServer(async (req, res) => {
           '/__stub/index-posture',
           '/__stub/unplaced',
           '/__stub/notifications',
+          '/activity?wallet=, /__stub/activity',
           '/assets/rankings, /__stub/rankings',
           '/signed-offers, /__stub/signed-offers',
           '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
@@ -833,6 +954,7 @@ const server = http.createServer(async (req, res) => {
       posture = 'live';
       unplaced = { count: 0, capped: false };
       addedNotifications = [];
+      walletActivityExtra = new Map();
       agent = freshAgent();
       rankings = new Map();
       rankingsDown = false;
@@ -907,6 +1029,24 @@ const server = http.createServer(async (req, res) => {
       const chainId = Number(url.searchParams.get('chainId'));
       const none = { listFetchedAt: null, lastRun: null };
       json(res, 200, rankings.get(chainId) ?? { chainId, sources: { cg: none, cp: none }, assets: [] });
+      return;
+    }
+    if (url.pathname === '/__stub/activity' && req.method === 'POST') {
+      // { wallet, events?, pending?, repairs?, walletComplete? } sets what
+      // `/activity?wallet=` adds for that wallet; { reset: true } clears all.
+      const body = JSON.parse(await readBody(req));
+      if (body.reset === true) {
+        walletActivityExtra = new Map();
+        json(res, 200, { reset: true });
+        return;
+      }
+      if (typeof body.wallet !== 'string') {
+        json(res, 400, { error: 'activity needs { wallet, … } or { reset: true }' });
+        return;
+      }
+      const { wallet, ...rest } = body;
+      walletActivityExtra.set(wallet.toLowerCase(), rest);
+      json(res, 200, { set: true });
       return;
     }
     if (url.pathname === '/__stub/notifications' && req.method === 'POST') {
@@ -1108,7 +1248,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 503, { error: 'e2e stand-in: index posture is down' });
         return;
       }
-      const out = await actorActivity(url);
+      const out = url.searchParams.has('wallet') ? await walletActivity(url) : await actorActivity(url);
       json(res, out.status, out.body);
       return;
     }
@@ -1118,6 +1258,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await offerMarkets());
+      return;
+    }
+    const nearestPath = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);
+    if (nearestPath && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const out = await nearestOffers(nearestPath[1], url);
+      json(res, out.status, out.body);
       return;
     }
     if (url.pathname === '/offers/active' && req.method === 'GET') {

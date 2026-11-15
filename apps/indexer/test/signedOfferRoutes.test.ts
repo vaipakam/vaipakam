@@ -34,6 +34,7 @@ import {
 } from '../src/signedOfferRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
+import { SIGNED_OFFER_SET_TYPES, placementsOf } from '@vaipakam/lib/signedOfferSet';
 import {
   SIGNED_OFFER_TYPES,
   orderHashOf,
@@ -472,7 +473,9 @@ describe('POST /signed-offers — static cadence gates (Codex #1145 r4)', () => 
 const MIGRATION_0033 =
   readFileSync(new URL('../migrations/0033_signed_offer_book.sql', import.meta.url), 'utf8') +
   '\n' +
-  readFileSync(new URL('../migrations/0089_signed_offer_replay_pending.sql', import.meta.url), 'utf8');
+  readFileSync(new URL('../migrations/0089_signed_offer_replay_pending.sql', import.meta.url), 'utf8') +
+  '\n' +
+  readFileSync(new URL('../migrations/0094_signed_offer_set.sql', import.meta.url), 'utf8');
 const LEND = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const COLL = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const DAYS = 30;
@@ -929,6 +932,96 @@ describe('POST /signed-offers — the stored row is the one a restore re-admits 
       .prepare(`SELECT * FROM signed_offers WHERE order_hash = ?`)
       .get(orderHashOf(order)) as Record<string, unknown>;
     expect(signedOfferRowProblem(row)).toBeNull();
+  });
+});
+
+describe('POST /signed-offers — an order signed as one of a set (#3327 part 2)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Two orders the maker signs with one signature, as the typed list. */
+  async function signSet(env: Env) {
+    const orders = [makeOrder({ nonce: '41' }), makeOrder({ nonce: '41', interestRateBps: '600' })];
+    const signature = await SIGNER.signTypedData({
+      domain: signedOfferDomain(CHAIN_ID, diamondFor(env)),
+      types: SIGNED_OFFER_SET_TYPES,
+      primaryType: 'SignedOfferSet',
+      message: { offers: orders.map(toTypedMessage) },
+    });
+    return { orders, signature, placements: placementsOf(orders.map(orderHashOf)) };
+  }
+
+  function postRaw(env: Env, body: unknown): Promise<Response> {
+    return handleSignedOfferPost(
+      new Request('http://indexer.test/signed-offers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+      env,
+    );
+  }
+
+  it('each order of the set lands with its placement, which the book hands back and a restore re-admits', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n });
+    const { env, db } = makeChainEnv();
+    const { orders, signature, placements } = await signSet(env);
+    for (const [i, order] of orders.entries()) {
+      const res = await postRaw(env, { chainId: CHAIN_ID, order, signature, set: placements[i] });
+      expect(res.status).toBe(201);
+      const row = db
+        .prepare(`SELECT * FROM signed_offers WHERE order_hash = ?`)
+        .get(orderHashOf(order)) as Record<string, unknown>;
+      expect(JSON.parse(row.offer_set as string)).toEqual(placements[i]);
+      expect(signedOfferRowProblem(row)).toBeNull();
+    }
+    const res = await handleSignedOffersGet(
+      new Request(
+        `http://indexer.test/signed-offers?chainId=${CHAIN_ID}&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${DAYS}`,
+      ),
+      env,
+    );
+    const body = (await res.json()) as { offers: { orderHash: string; set: unknown }[] };
+    expect(body.offers).toHaveLength(2);
+    for (const [i, order] of orders.entries()) {
+      expect(body.offers.find((o) => o.orderHash === orderHashOf(order))?.set).toEqual(placements[i]);
+    }
+  });
+
+  it('an order signed alone is served with a null set', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n });
+    const { env, db } = makeChainEnv();
+    const order = makeOrder();
+    expect((await post(env, order)).status).toBe(201);
+    const row = db.prepare(`SELECT offer_set FROM signed_offers WHERE order_hash = ?`).get(orderHashOf(order));
+    expect(row).toEqual({ offer_set: null });
+  });
+
+  it('a set signature without its placement, or with the wrong one, is a bad signature', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n });
+    const { env } = makeChainEnv();
+    const { orders, signature, placements } = await signSet(env);
+    expect((await postRaw(env, { chainId: CHAIN_ID, order: orders[0], signature })).status).toBe(400);
+    const wrongIndex = { ...placements[0], index: 1 };
+    const res = await postRaw(env, { chainId: CHAIN_ID, order: orders[0], signature, set: wrongIndex });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'bad-signature' });
+  });
+
+  it.each([
+    ['not an object', 'x', 'set-not-object'],
+    ['no others', { others: [], index: 0 }, 'set-size'],
+    ['32 others (a set of 33)', { others: Array(32).fill(`0x${'1'.repeat(64)}`), index: 0 }, 'set-size'],
+    ['an upper-case hash', { others: [`0x${'A'.repeat(64)}`], index: 0 }, 'set-hash'],
+    ['an index past the end', { others: [`0x${'1'.repeat(64)}`], index: 2 }, 'set-index'],
+    ['an extra field', { others: [`0x${'1'.repeat(64)}`], index: 0, extra: 1 }, 'set-unknown-field'],
+  ])('a malformed placement (%s) is refused before any read', async (_label, set, error) => {
+    const { env } = makeChainEnv();
+    const order = makeOrder();
+    const res = await postRaw(env, { chainId: CHAIN_ID, order, signature: `0x${'1'.repeat(130)}`, set });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error });
   });
 });
 

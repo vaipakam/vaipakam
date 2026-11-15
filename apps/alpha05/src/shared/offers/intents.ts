@@ -1,6 +1,6 @@
 /**
  * #3319 — the lenders standing ready for a pair: the protocol's own list of
- * active, funded lender intents (`MetricsFacet.getActiveLenderIntents`),
+ * active, funded lender intents (`LenderIntentFacet.getActiveLenderIntents`, on that facet since #3618),
  * read through the wallet's connection and narrowed to the pair. A standing
  * intent is not an offer the borrower can take: a matching service fills a
  * request against it when the request's terms fit the lender's limits, so
@@ -9,7 +9,7 @@
 import type { Abi, PublicClient } from 'viem';
 import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
 import type { LifecycleTerms } from '../post/postModel';
-import { CONFIG, METRICS } from './reads';
+import { CONFIG } from './reads';
 
 const INTENT = LenderIntentFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
@@ -30,6 +30,10 @@ export interface IntentSummary {
   requiresKeeperAuth: boolean;
   livePrincipal: bigint;
   availableCapital: bigint;
+  /** #3618 — the lend-until time (unix seconds; 0 = none). */
+  lendUntil: bigint;
+  /** #3619 — the intent also fills pro-rata requests. */
+  acceptsProRata: boolean;
 }
 
 /** How many intents one call reads, and how many calls one view makes. */
@@ -40,8 +44,12 @@ export interface IntentsRead {
   intents: IntentSummary[];
   /** Every active intent on the network, on every pair. */
   total: bigint;
+  /** The read block's time (unix seconds): each lender's end date is
+   *  counted from it, so the terms shown are as of this reading. */
+  at: bigint;
   /** How many of them were read: fewer than `total` when the list is longer
-   *  than this view reads, which the page states. */
+   *  than this view reads, which the page states. Counts positions read, so an
+   *  intent the feed leaves out (its lend-until time has closed) still counts. */
   scanned: number;
   /** Each network gate below, read at the same block as the list: true when
    *  it is closed, null when it could not be read. */
@@ -100,6 +108,7 @@ export function intentMatching(r: Pick<IntentsRead, 'closed' | 'pausedOwners'>):
  */
 export async function readLenderIntents(client: PublicClient, diamond: Hex): Promise<IntentsRead> {
   const blockNumber = await client.getBlockNumber();
+  const atRead = client.getBlock({ blockNumber }).then((b) => b.timestamp);
   const read = <T>(abi: Abi, functionName: string, args?: readonly unknown[]) =>
     client.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>;
   const gateKeys = Object.keys(INTENT_GATES) as IntentGate[];
@@ -117,11 +126,14 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
   let scanned = 0;
   for (let page = 0; page < INTENT_PAGES; page++) {
     const offset = BigInt(page * INTENT_PAGE);
-    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(METRICS, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
+    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
     total = all;
     intents.push(...rows);
-    scanned += rows.length;
-    if (BigInt(scanned) >= all || rows.length < INTENT_PAGE) break;
+    // Count registry positions read, not rows returned: the feed leaves out an
+    // intent whose lend-until time has closed (#3618), so a page can come back
+    // short while later pages still hold intents.
+    scanned = Number(all < offset + BigInt(INTENT_PAGE) ? all : offset + BigInt(INTENT_PAGE));
+    if (BigInt(scanned) >= all) break;
   }
   const values = await gatesRead;
   const closed = Object.fromEntries(gateKeys.map((k, i) => [k, values[i]])) as Record<IntentGate, boolean | null>;
@@ -135,7 +147,8 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
       pausedOwners = null;
     }
   }
-  return { intents, total, scanned, closed, pausedOwners };
+  const at = await atRead;
+  return { intents, total, at, scanned, closed, pausedOwners };
 }
 
 /** What lenders hold ready for one pair, from their intents on it. */
@@ -149,12 +162,29 @@ export interface StandingReady {
   largest: bigint;
   /** The lowest rate floor among them. */
   minRateBps: bigint;
-  /** The longest term and the highest loan-to-value any of them accepts. */
+  /** The longest term any of them can fill now (each lender's term limit,
+   *  shortened by its end date), and the highest loan-to-value any accepts. */
   maxDays: number;
   maxLtvBps: number;
 }
 
 const same = (a: Hex, b: Hex) => a.toLowerCase() === b.toLowerCase();
+
+const DAY = 86_400n;
+
+/**
+ * #3618 — the longest term an intent can still fill at time `at`: its own
+ * term limit, shortened by its end date when it has one. The protocol fills
+ * only a loan whose agreed end (now plus the term in whole days) falls at or
+ * before that date, so this is the same rule read at one moment; 0 when not
+ * even a one-day loan fits.
+ */
+export function intentTermDays(i: Pick<IntentSummary, 'maxDurationDays' | 'lendUntil'>, at: bigint): number {
+  if (i.lendUntil === 0n) return i.maxDurationDays;
+  if (i.lendUntil <= at) return 0;
+  const left = (i.lendUntil - at) / DAY;
+  return left < BigInt(i.maxDurationDays) ? Number(left) : i.maxDurationDays;
+}
 
 /**
  * Narrows the read to the pair; null when no lender stands ready on it. The
@@ -172,15 +202,21 @@ export function standingReady(
   intents: readonly IntentSummary[],
   lending: Hex,
   collateral: Hex,
-  opts: { exclude?: Hex | null; limited?: boolean; unavailable?: readonly string[] | null } = {},
+  at: bigint,
+  opts: { exclude?: Hex | null; limited?: boolean; unavailable?: readonly string[] | null; request?: IntentRequestTerms } = {},
 ): StandingReady | null {
-  const { exclude, limited, unavailable } = opts;
+  const { exclude, limited, unavailable, request } = opts;
   let out: StandingReady | null = null;
   for (const i of intents) {
     if (!same(i.lendingAsset, lending) || !same(i.collateralAsset, collateral)) continue;
     if (exclude && same(i.owner, exclude)) continue;
     if (limited !== undefined && i.requiresKeeperAuth !== limited) continue;
     if (unavailable?.includes(i.owner.toLowerCase())) continue;
+    // A request this lender's terms refuse (pro-rata without its opt-in) is
+    // not one it can fill.
+    if (request !== undefined && intentTermsBlock(i, request) !== null) continue;
+    const days = intentTermDays(i, at);
+    if (days === 0) continue;
     const room = i.maxExposure > i.livePrincipal ? i.maxExposure - i.livePrincipal : 0n;
     const ready = room < i.availableCapital ? room : i.availableCapital;
     // Less than the lender's smallest fill cannot be lent at all.
@@ -189,7 +225,7 @@ export function standingReady(
     out.lenders += 1;
     if (ready > out.largest) out.largest = ready;
     if (i.minRateBps < out.minRateBps) out.minRateBps = i.minRateBps;
-    if (i.maxDurationDays > out.maxDays) out.maxDays = i.maxDurationDays;
+    if (days > out.maxDays) out.maxDays = days;
     if (i.maxInitLtvBps > out.maxLtvBps) out.maxLtvBps = i.maxInitLtvBps;
   }
   return out;
@@ -205,27 +241,37 @@ export type IntentRequestBlock = 'pro-rata' | 'partial-repay' | 'prepay-listing'
 
 /**
  * One check per lifecycle term, in the order the protocol's intent fill
- * applies them: it requires the full term's interest
- * (`LenderIntentFullTermRequired`), refuses partial repayment
- * (`LenderIntentPartialRepayNotAllowed`), and then fills only a request
- * whose lifecycle terms equal the intent's fixed ones, which carry no
- * listing consent and no interest schedule (`LifecycleTermsMismatch`).
- * Keyed by the terms the protocol call carries, so a new term there is a
- * type error here until it has a check.
+ * applies them (#3619): pro-rata interest only from an intent that opted in
+ * (`LenderIntentFullTermRequired`), partial repayment only on pro-rata
+ * interest (`LenderIntentPartialRepayNotAllowed`), and then no listing
+ * consent and no interest schedule, which no intent carries
+ * (`LifecycleTermsMismatch`). Keyed by the terms the protocol call carries,
+ * so a new term there is a type error here until it has a check.
  */
-const INTENT_TERM_CHECKS: { readonly [K in keyof IntentRequestTerms]: (v: IntentRequestTerms[K]) => IntentRequestBlock | null } = {
-  useFullTermInterest: (v) => (v ? null : 'pro-rata'),
-  allowsPartialRepay: (v) => (v ? 'partial-repay' : null),
+const INTENT_TERM_CHECKS: {
+  readonly [K in keyof IntentRequestTerms]: (v: IntentRequestTerms[K], t: IntentRequestTerms, acceptsProRata: boolean) => IntentRequestBlock | null;
+} = {
+  useFullTermInterest: (v, _t, acceptsProRata) => (v || acceptsProRata ? null : 'pro-rata'),
+  allowsPartialRepay: (v, t) => (v && t.useFullTermInterest ? 'partial-repay' : null),
   allowsPrepayListing: (v) => (v ? 'prepay-listing' : null),
   periodicInterestCadence: (v) => (v !== 0 ? 'cadence' : null),
 };
 
-/** Why no standing intent can fill a request with these terms; null when
- *  the terms allow it. */
-export function intentRequestBlock(t: IntentRequestTerms): IntentRequestBlock | null {
+/** Why this intent cannot fill a request with these terms; null when its
+ *  terms allow it. */
+export function intentTermsBlock(i: Pick<IntentSummary, 'acceptsProRata'>, t: IntentRequestTerms): IntentRequestBlock | null {
   for (const key of Object.keys(INTENT_TERM_CHECKS) as (keyof IntentRequestTerms)[]) {
-    const block = (INTENT_TERM_CHECKS[key] as (v: IntentRequestTerms[typeof key]) => IntentRequestBlock | null)(t[key]);
+    const check = INTENT_TERM_CHECKS[key] as (v: IntentRequestTerms[typeof key], t: IntentRequestTerms, a: boolean) => IntentRequestBlock | null;
+    const block = check(t[key], t, i.acceptsProRata);
     if (block !== null) return block;
   }
   return null;
+}
+
+/** Why no standing intent can fill a request with these terms, whatever the
+ *  lenders opted into; null when some intent could. A pro-rata request is
+ *  not refused here: it depends on the lenders, so {@link standingReady}
+ *  with the request counts only the ones that opted in. */
+export function intentRequestBlock(t: IntentRequestTerms): IntentRequestBlock | null {
+  return intentTermsBlock({ acceptsProRata: true }, t);
 }

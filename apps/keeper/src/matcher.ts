@@ -93,7 +93,8 @@ import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 // split; `previewMatch` / `matchOffers` on OfferMatchFacet. Merge the
 // relevant facet ABIs so viem can resolve every selector against the
 // Diamond.
-// `getActiveLenderIntents` lives on MetricsFacet; `previewIntent` on
+// `getActiveLenderIntents` lives on LenderIntentFacet (moved off MetricsFacet
+// in #3618); `previewIntent` on
 // RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchIntentFacet (split out of
 // OfferMatchFacet in the #1219 host split) — added for the #625
 // WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
@@ -373,7 +374,7 @@ export async function searchIntentFill<P>(
   return best;
 }
 
-/** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
+/** One row of `LenderIntentFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
 export interface LenderIntentSummary {
   owner: Address;
   lendingAsset: Address;
@@ -386,6 +387,12 @@ export interface LenderIntentSummary {
   requiresKeeperAuth: boolean;
   livePrincipal: bigint;
   availableCapital: bigint;
+  /** #3618 — the lend-until time (unix seconds; 0 = none). The feed already
+   *  leaves out an intent whose window cannot take a one-day loan; a longer
+   *  request past it is refused by the protocol preview (`PastLendUntil`). */
+  lendUntil: bigint;
+  /** #3619 — the intent also fills pro-rata requests. */
+  acceptsProRata: boolean;
 }
 
 /** `RiskAccessFacet.previewIntent` → `LibOfferMatch.IntentPreviewResult`. */
@@ -415,7 +422,7 @@ interface IntentPreview {
 /** Pagination size for `getRollableIntentLoans`. */
 const ROLL_SCAN_PAGE = 100n;
 
-/** One row of `MetricsFacet.getRollableIntentLoans` (`RollableIntentLoan`). */
+/** One row of `LenderIntentFacet.getRollableIntentLoans` (`RollableIntentLoan`). */
 interface RollableIntentLoan {
   loanId: bigint;
   owner: Address;
@@ -872,6 +879,8 @@ function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
     requiresKeeperAuth: Boolean(raw['requiresKeeperAuth']),
     livePrincipal: BigInt(raw['livePrincipal'] as bigint | number),
     availableCapital: BigInt(raw['availableCapital'] as bigint | number),
+    lendUntil: BigInt(raw['lendUntil'] as bigint | number),
+    acceptsProRata: Boolean(raw['acceptsProRata']),
   };
 }
 
@@ -1107,8 +1116,11 @@ export function borrowerFitsIntent(intent: LenderIntentSummary, b: OfferLite): b
     b.collateralAsset.toLowerCase() !== intent.collateralAsset.toLowerCase() ||
     b.creator.toLowerCase() === intent.owner.toLowerCase() || // self-trade
     Number(b.durationDays) > intent.maxDurationDays ||
-    !b.useFullTermInterest ||
-    b.allowsPartialRepay ||
+    // The protocol's lifecycle rule (#3619, `LibIntentTerms.lifecycleVerdict`):
+    // pro-rata interest only from an intent that opted in, and partial
+    // repayment only on pro-rata interest.
+    (!b.useFullTermInterest && !intent.acceptsProRata) ||
+    (b.useFullTermInterest && b.allowsPartialRepay) ||
     intent.minRateBps > b.interestRateBpsMax // rate overlap
   );
 }

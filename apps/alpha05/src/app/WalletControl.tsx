@@ -41,16 +41,20 @@ export function WalletControl() {
     }
   };
 
-  // The label follows the wallet's own state, not the picker's: an open
-  // picker connects nothing until a wallet is chosen, so it must not read as
-  // connecting.
-  const connecting = status === 'connecting' || status === 'reconnecting';
+  // Only the resume of a session already connected reads as connecting. A
+  // connect started from the picker is shown by the picker itself, and the
+  // picker may start one before any wallet is chosen (the phone connection
+  // prepares its link as the picker opens), which can stay pending after the
+  // picker closes. So the label never follows that state, and the button is
+  // never disabled: whatever the wallet libraries are doing, pressing it
+  // reopens the picker (#3671).
+  const connecting = status === 'reconnecting';
   return (
     <div className="wallet">
       {status === 'connected' && address ? (
         <AccountPanel address={address} chainId={chainId} onSwitch={switchTo} switching={isPending} />
       ) : (
-        <button type="button" className="btn btn-primary" onClick={() => openConnect(true)} disabled={connecting}>
+        <button type="button" className="btn btn-primary" onClick={() => openConnect(true)}>
           {connecting ? text('wallet.connecting') : text('wallet.connect')}
         </button>
       )}

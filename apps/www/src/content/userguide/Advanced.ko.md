@@ -1245,6 +1245,14 @@ gas도 없습니다. Alerts는 advisory입니다 — funds를 move하지 않습�
 
 알림 페이지는 연결된 지갑의 네트워크에서 인덱스의 받은편지함을 최신순으로 한 번에 50행씩 읽습니다. 행은 기록되는 시점에 대출 포지션을 보유한 지갑 앞으로 기록됩니다. 대출 시작, 부분 및 전액 상환(조기 상환, 재융자, 스왑 상환, 담보 매각에 의한 종료 포함), 채무 불이행 또는 청산, 내부 매칭에 의한 종료, 끝난 것은 보았지만 어떻게 끝났는지 인덱스가 알 수 없는 대출, 만기 7일 전과 1일 전 알림, 유예 기간 시작과 종료, 그리고 건전성이 1.5, 1.2, 1.05 아래로 떨어진 경우입니다. 건전성 행은 프로토콜의 키퍼가 기록하므로 키퍼가 작동하는 동안에만, 건전성이 적용되는 대출에 대해서만 도착합니다. 보상 항목의 최종 알림과 만료 행은 해당 항목의 소유자에게 갑니다. 행은 금액이 아니라 가리키는 표시입니다. 대출 페이지가 체인을 읽습니다. 다른 네트워크나 지갑에 대한 응답은 거부되고, 읽을 수 없는 행은 개수로 표시되며, 알 수 없는 종류는 이름 그대로 표시됩니다. 헤더의 숫자는 이 브라우저에서 읽음으로 기록된 가장 최신 ID보다 ID가 큰 행을 인덱스가 모든 행에 대해 직접 센 값입니다. ID는 기록 순서대로만 커지므로 이전 블록으로 기록된 행도 셉니다. 페이지를 열면 그때까지 기록된 모든 행이 읽음으로 기록됩니다. 읽음 표시는 이 브라우저에만 저장되며 앞으로만 움직입니다. 텔레그램, 푸시, 건전성 경고와 상환 알림은 받은편지함 바로 아래에서 설정합니다. 행은 기록입니다. 행이 작성된 시점의 대출이나 항목 상태를 알려 줄 뿐 지금도 그렇다고 말하지 않으며, 보상 만료 행은 항목의 프로그램 반환이 시작되었다는 뜻이지 완료되었다는 뜻이 아닙니다.
 
+<a id="activity-history"></a>
+
+### 활동
+
+활동 페이지는 인덱스의 `GET /activity?wallet=`을 `block:logIndex` 커서로 페이지당 50행씩 읽습니다. 인덱스는 두 부분에서 답합니다. 지갑이 한 번이라도 포지션을 보유했던 대출의 모든 이벤트(참여 기록)와, 공통 참여자 규칙(실행자와 종류별로 나열된 당사자)에 따라 지갑을 지목하는 모든 이벤트입니다. 후자는 수집할 때 이벤트마다 기록되고, 그 전에 저장된 기록은 한 번만 실행되는 백필로 한 페이지씩 기록됩니다. 백필이 저장된 최신 이벤트를 넘어 읽기 전까지 `walletComplete`는 false이며, 그동안 페이지는 이전 활동이 빠져 있을 수 있다고 알리고 끝을 주장하지 않습니다. 지갑 필터는 다른 필터와 함께 쓸 수 없습니다.
+
+첫 페이지에는 확정 전 레인(안전한 블록 위의 이벤트, 시각은 아직 읽지 않음)과, 대조 읽기로 종료 상태가 확인된 대출도 함께 오며, 관찰된 상태와 블록과 함께 피드 위치에 놓입니다. 한 거래의 이벤트는 한 줄로, 장부 기록이 아닌 첫 이벤트(토큰 전송, 승인, 세부 정보 동반 이벤트, 스왑 시도 제외)를 앞에 둡니다. 금액은 인덱스의 정규화된 필드에서만 가져오고 원시 인수에서는 가져오지 않으며, 참여자 규칙이 기록할 수 있는 모든 종류에는 레이블이 있고 알 수 없는 종류는 이름을 표시합니다. 대출을 시작한 거래는 대출 시작을 앞에 두고 수락이나 매칭은 그 아래에 둡니다. 줄에 표시되는 지갑은 공통 행위자 규칙이 이벤트를 기록한 지갑이며, 거래를 보낸 지갑과 다를 수 있습니다. 인덱스가 수량을 기록하지 않은 다중 사본 토큰은 그렇다고 표시하고, 확인으로 찾은 대출 종료를 읽지 못하면 일부가 빠졌을 수 있다고 알리며 목록의 끝을 주장하지 않습니다.
+
 <a id="alerts-channels"></a>
 
 ### 텔레그램, 푸시, 경고
@@ -1999,7 +2007,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 요청의 조건
 
-Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. 금액은 기본 단위로 정확히 변환되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최대값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 유효)이거나, 검토를 열 때 최신 블록에서 정한 시각으로 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest` 기본값은 true, `allowsPartialRepay`는 false입니다. 두 오퍼 모두 `useFullTermInterest`가 false이면 `matchOffers`는 대출자 이하인 차입자의 `durationDays`를 허용하고, 대출은 차입자의 값을 따릅니다(#3615). 직접 수락은 오퍼 자신의 값을 따릅니다.
+Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. 금액은 기본 단위로 정확히 변환되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최대값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 유효)이거나, 검토를 열 때 최신 블록에서 정한 시각으로 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest` 기본값은 true, `allowsPartialRepay`는 false입니다. 두 오퍼 모두 `useFullTermInterest`가 false이면 `matchOffers`는 대출자 이하인 차입자의 `durationDays`를 허용하고, 대출은 차입자의 값을 따릅니다(#3615). 직접 수락은 오퍼 자신의 값을 따릅니다. 검토 전에, 직접 수락하면 초안 범위 안의 조건(같은 `durationDays`, `useFullTermInterest`, `allowsPartialRepay`, `periodicInterestCadence`; 금액, 이자율, 비례 담보가 더 나쁘지 않음)을 묶는 상대편의 열린 오퍼가 먼저 직접 수락 대상으로 제시됩니다(#3622).
 
 <a id="borrow-request-review"></a>
 
@@ -2077,7 +2085,7 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 ### Lend: 오퍼의 조건
 
-부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 1 (AON)(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다. 두 오퍼 모두 `useFullTermInterest`가 false이면 `matchOffers`는 대출자 이하인 차입자의 `durationDays`를 허용하고, 대출은 차입자의 값을 따릅니다(#3615). 직접 수락은 오퍼 자신의 값을 따릅니다.
+부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 1 (AON)(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다. 두 오퍼 모두 `useFullTermInterest`가 false이면 `matchOffers`는 대출자 이하인 차입자의 `durationDays`를 허용하고, 대출은 차입자의 값을 따릅니다(#3615). 직접 수락은 오퍼 자신의 값을 따릅니다. 검토 전에, 직접 수락하면 초안 범위 안의 조건(같은 `durationDays`, `useFullTermInterest`, `allowsPartialRepay`, `periodicInterestCadence`; 금액, 이자율, 비례 담보가 더 나쁘지 않음)을 묶는 상대편의 열린 오퍼가 먼저 직접 수락 대상으로 제시됩니다(#3622).
 
 <a id="rate-check"></a>
 
@@ -2289,7 +2297,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### 오퍼 페이지
 
-`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 연결된 지갑을 거치며, 지갑을 연결하기 전에는 아무것도 읽지 않습니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다.
+`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 연결된 지갑을 거치며, 지갑을 연결하기 전에는 아무것도 읽지 않습니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다. 독자가 올린 열린 일반 토큰 대 토큰 오퍼에 대해, 페이지는 인덱서의 `GET /offers/:id/nearest?chainId&limit=5`에 페어 반대편의 가장 가까운 열린 오퍼(먼저 이자율 차이, 다음 기간 차이)를 묻고, 각각과 매칭 스위치를 한 블록에서 읽으며, 열린 각 페어에 대해 `OfferMatchFacet.previewMatch(lenderId, borrowerId, sender, sender)`를 묻습니다. 표시되는 차이는 가장 가까운 오퍼에 대한 미리보기의 첫 `MatchError`이며, `Ok`를 돌려주는 페어는 지금 매칭 가능하다고 표시될 뿐 매칭되었다고 표시되지 않습니다(#3623).
 
 <a id="offer-cancel"></a>
 
@@ -2309,11 +2317,23 @@ ERC-20 담보에 대한 ERC-20의 열린 오퍼에서는 작성자가 오퍼 페
 
 스위치는 `getRiskAccessGateEnabled`입니다. 흐름에 필요한 단계는 프로토콜 자체의 답입니다. 수락에서는 `previewCreatorBlock`이 대출자가 차단되지 않았음을 보인 뒤 `previewOfferAcceptBlock`(1 = 등급 부족, 2 = 쌍 동의, 3 = 엄격 모드 확인, 4 = 예전에는 수락 시 확인이 대신하던 비유동 페어로, 2와 같이 차단하며 페어 동의로 해제됩니다), 요청에서는 `createOffer` 모의 실행의 `RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`입니다. 단계는 한 블록에서 쌍의 `pairRequiredRiskLevel`(오퍼는 `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion`과 비교한 `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown`, `getRiskTierMutationNonce`를 읽고, 쌍에 대해서는 `isPairConsentPending`과 `hasIlliquidPairConsent`, 또는 `isMidTierAckPending`과 `midTierStrictBlocked`를 읽습니다. 등급 올리기는 쌍에 필요한 최소 등급으로의 `setVaultRiskTierChecked(level, nonce, termsVersion)`이며, 검토 후 다른 등급 쓰기나 약관 변경이 있었다면 아무것도 바꾸지 않고 거부됩니다. 쌍 단계는 `setIlliquidPairConsent(pair, true)` 또는 `setMidTierPairAck(pair)`입니다. 대기 중인 등급 올리기나 보류 중인 쌍 단계는 다시 제시하지 않습니다. 보류 중인 쌍 단계가 언제 효력이 생기는지 돌려주는 읽기는 없으므로, 검토 화면은 그 시각을 읽을 수 없다고 알립니다. 그 시각은 단계 자체의 완료 카드만 영수증 블록 시각과 대기 기간의 합으로 보여 줍니다. 결과는 영수증 블록에서 다시 읽습니다.
 
+<a id="wallet-keys"></a>
+
+### 내 지갑과 그 키
+
+Vaipakam은 지갑을 만들거나 보관하지 않습니다. 셀프 커스터디 지갑, 즉 본인 계정의 키를 보관하는 앱이나 기기가 필요합니다. 여기서는 누구도 그 키를 보거나, 자금을 옮기거나, 접근 권한을 되찾아 줄 수 없습니다. 키를 잃으면 자금에 대한 접근도 잃습니다. 앱은 지갑 선택 화면과, 연결 전의 홈 화면에서 이를 알리며, 하단에서 키를 안전하게 지키는 방법을 다룬 짧은 페이지로 연결합니다. 그 페이지는 어떤 지갑 브랜드도 언급하지 않습니다.
+
+지갑을 설정하면 복구 문구(단어 목록)가 표시됩니다. 종이에 적어 남에게 보이지 않게 보관하세요. 웹사이트에 입력하거나, 온라인에 저장하거나, 누구와도 공유하지 마세요. Vaipakam의 누구도 이를 요구하지 않습니다. 무엇이든 승인하기 전에 사이트 주소를 확인하고 지갑이 보여 주는 내용을 읽으세요. 큰 금액에는 키가 별도의 하드웨어 기기에 머무는 지갑이 더 안전하며, 먼저 소액으로 시도해 보는 것이 좋습니다.
+
+컴퓨터에서는 지갑의 브라우저 확장 프로그램으로 연결하거나, 휴대폰의 지갑으로 선택 화면의 코드를 스캔하세요. 휴대폰에서는 지갑 앱의 자체 브라우저에서 앱을 열거나, 선택 화면에서 'Other'를 고르세요. 지갑이 없어도 주요 위험과 분석은 읽을 수 있습니다.
+
 <a id="terms-gate"></a>
 
 ### 이용약관 확인
 
 `getCurrentTos`는 작업 대상 체인에서 시행 중인 버전과 내용 해시를 돌려줍니다. 버전 0은 약관이 없다는 뜻이며 아무것도 제한되지 않습니다. `hasAcceptedCurrentTerms`가 false인 지갑은 새로운 노출 전에 확인 요청을 받고, 본문이 절대 바뀌지 않는 버전 고정 페이지 `/terms/v<N>`로 연결됩니다. 동의하면 `acceptTerms(version, hash)`를 한 번 호출합니다. 지갑을 열기 전에 이 쌍을 다시 읽으므로 더 새 버전이 표시된 것을 대체하고, 다른 탭에서 한 동의가 있으면 작업이 그대로 이어집니다. 읽기 실패는 '확인할 수 없음'이며 다시 시도할 수 있고, '미동의'가 되지 않습니다. 빠져나가는 작업은 절대 제한되지 않습니다.
+
+동의 단계 위에 안내는 여섯 가지 주요 위험을 나열합니다(#3661). 대출이나 대여를 여는 모든 검토 화면에는 쪽과 정산 방식에 따라 고른 "문제가 생기면" 한 줄이 붙습니다. 두 자산이 모두 유동적으로 읽히면 매각, 어느 하나가 비유동적으로 읽히면 현물이며, 게시한 제안이나 요청, 서명된 주문은 체결 시 프로토콜이 자산을 다시 분류하므로 어느 경우에나 맞는 한 줄을 씁니다. 이 줄은 하단에서도 연결되는 공개 페이지 `/risks`로 이어집니다. 이 목록은 버전 2부터 약관 본문에 포함되므로, 그 버전에 동의하면 함께 기록됩니다.
 
 <a id="settings"></a>
 

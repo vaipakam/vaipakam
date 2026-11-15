@@ -444,6 +444,7 @@ describe('writePendingLane', () => {
     offerId: null,
     actor: null,
     argsJson: '{}',
+    participants: null,
     asset: null,
     assetType: null,
     amount: null,

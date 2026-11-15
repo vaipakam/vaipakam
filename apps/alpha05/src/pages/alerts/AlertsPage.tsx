@@ -121,6 +121,11 @@ export function AlertsPage() {
             </button>
           )}
           {query.data !== undefined && rows.length > 0 && !query.hasNextPage && <p className="tier-b">{format('inbox.end', { chain: chain.name })}</p>}
+          <p>
+            <Link to="/activity" data-testid="alerts-activity-link">
+              {text('activity.fromHere')}
+            </Link>
+          </p>
           <WhyLink summaryKey="inbox.whySummary" detailKey="inbox.why" />
         </section>
       )}

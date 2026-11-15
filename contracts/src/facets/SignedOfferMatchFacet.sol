@@ -69,6 +69,8 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         `LibOfferMatch.previewMatch` inside `executeMatch`.
     /// @param o                   The signed offer terms.
     /// @param sig                 The signer's EIP-712 signature (EOA / 1271).
+    /// @param set                 Where `o` sits in the set its maker signed
+    ///                            (#3327 part 2); no others when signed alone.
     /// @param counterpartyOfferId The on-chain offer on the OTHER side.
     /// @param fillAmount          The principal this match fills (≤ remaining).
     /// @param auth                The offer's co-signer's authorization of this
@@ -79,6 +81,7 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     function matchSignedOffer(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
         uint256 counterpartyOfferId,
         uint256 fillAmount,
         LibSignedOffer.FillAuth calldata auth
@@ -89,7 +92,7 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert LibOfferMatchExecute.FunctionDisabled(3);
         }
         bytes32 orderHash = _vetSignedOfferForMatch(o, fillAmount, s.offers[counterpartyOfferId].creator, auth);
-        (bool ok, ) = LibSignedOffer.verify(o, sig);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
         if (!ok) revert LibSignedOffer.SignedOfferBadSignature();
 
         // CEI: record the slice consumed BEFORE the materialize + match

@@ -20,7 +20,7 @@ const CAPACITY = 22;
 function intentRow(o: `0x${string}`) {
   return {
     owner: o, lendingAsset: LEND, collateralAsset: COLL, maxExposure: 10n ** 24n, minRateBps: 0n,
-    maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false,
+    maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false, lendUntil: 0n, acceptsProRata: false,
     livePrincipal: 0n, availableCapital: 10n ** 24n,
   };
 }

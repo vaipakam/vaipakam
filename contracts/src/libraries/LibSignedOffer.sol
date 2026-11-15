@@ -138,6 +138,71 @@ library LibSignedOffer {
         ")"
     );
 
+    /// @notice #3327 part 2 — the EIP-712 type a maker signs to authorize a
+    ///         SET of offers with one signature. The offers are a typed
+    ///         array, so the wallet shows every offer's terms before signing:
+    ///         nothing is signed blind. A fill presents one offer plus the
+    ///         struct hashes of the others ({OfferSet}).
+    ///         Written as one literal so the compiler folds it to a word (a
+    ///         hash composed from a string constant is computed at run time
+    ///         and carries the whole string in the bytecode). The test suite
+    ///         pins it to `"SignedOfferSet(SignedOffer[] offers)"` followed
+    ///         by the {SIGNED_OFFER_TYPEHASH} type string.
+    bytes32 internal constant SIGNED_OFFER_SET_TYPEHASH = keccak256(
+        "SignedOfferSet(SignedOffer[] offers)"
+        "SignedOffer("
+        "uint8 offerType,"
+        "address lendingAsset,"
+        "uint256 amount,"
+        "uint256 amountMax,"
+        "uint256 interestRateBps,"
+        "uint256 interestRateBpsMax,"
+        "address collateralAsset,"
+        "uint256 collateralAmount,"
+        "uint256 collateralAmountMax,"
+        "uint256 durationDays,"
+        "uint8 assetType,"
+        "uint8 collateralAssetType,"
+        "uint256 tokenId,"
+        "uint256 quantity,"
+        "uint256 collateralTokenId,"
+        "uint256 collateralQuantity,"
+        "address prepayAsset,"
+        "bool allowsPartialRepay,"
+        "bool allowsPrepayListing,"
+        "bool allowsParallelSale,"
+        "uint64 expiresAt,"
+        "uint8 fillMode,"
+        "uint8 periodicInterestCadence,"
+        "uint256 refinanceTargetLoanId,"
+        "bool useFullTermInterest,"
+        "bool creatorFull,"
+        "uint256 creatorMaxCStar,"
+        "bool creatorAllowFullDowngrade,"
+        "uint16 maxTreasuryFeeBps,"
+        "uint16 maxLoanInitiationFeeBps,"
+        "address allowedTaker,"
+        "address coSigner,"
+        "address signer,"
+        "uint256 nonce,"
+        "uint256 deadline"
+        ")"
+    );
+
+    /// @notice #3327 part 2 — the most offers one set signature may cover.
+    ///         It bounds the calldata a fill carries (one word per other
+    ///         offer) and keeps the wallet's review readable.
+    uint256 internal constant MAX_SET_SIZE = 32;
+
+    /// @notice #3327 part 2 — where a filled offer sits in the set its
+    ///         maker signed: the struct hashes of the set's OTHER offers in
+    ///         signing order, and this offer's position among them. No
+    ///         others means the maker signed this offer alone.
+    struct OfferSet {
+        bytes32[] others;
+        uint256 index;
+    }
+
     /// @notice Permit2 witness type declaration for the wallet-backed fill
     ///         path. Permit2 prepends its own
     ///         `PermitWitnessTransferFrom(TokenPermissions permitted,address
@@ -524,16 +589,48 @@ library LibSignedOffer {
     ///         lives in the signature check (the digest folds in the
     ///         chain-bound domain separator), so a cross-chain replay fails at
     ///         signature verification regardless of the ledger key.
-    function verify(SignedOffer memory o, bytes memory signature)
+    function verify(SignedOffer memory o, bytes memory signature, OfferSet calldata set)
         internal
         view
         returns (bool ok, bytes32 orderHash)
     {
         orderHash = hashStruct(o);
+        (bool formed, bytes32 signedHash) = signedStructHash(orderHash, set);
+        if (!formed) return (false, orderHash);
         bytes32 fullDigest = keccak256(
-            abi.encodePacked("\x19\x01", domainSeparator(), orderHash)
+            abi.encodePacked("\x19\x01", domainSeparator(), signedHash)
         );
         ok = SignatureChecker.isValidSignatureNow(o.signer, fullDigest, signature);
+    }
+
+    /// @notice #3327 part 2 — the struct hash the maker signed for the offer
+    ///         whose struct hash is `orderHash`: the offer itself when `set`
+    ///         names no others, else the {SIGNED_OFFER_SET_TYPEHASH} struct
+    ///         with the offer at `set.index` among `set.others`. `formed` is
+    ///         false for a set larger than {MAX_SET_SIZE} or an index past
+    ///         its end. The fill ledger stays keyed by `orderHash`, so each
+    ///         offer of a set fills and cancels on its own.
+    function signedStructHash(bytes32 orderHash, OfferSet calldata set)
+        internal
+        pure
+        returns (bool formed, bytes32 h)
+    {
+        uint256 others = set.others.length;
+        if (others == 0) return (true, orderHash);
+        if (others >= MAX_SET_SIZE || set.index > others) return (false, bytes32(0));
+        bytes32[] memory hashes = new bytes32[](others + 1);
+        for (uint256 i; i <= others; ++i) {
+            hashes[i] = i < set.index ? set.others[i] : (i == set.index ? orderHash : set.others[i - 1]);
+        }
+        return (true, setStructHash(hashes));
+    }
+
+    /// @notice #3327 part 2 — the {SIGNED_OFFER_SET_TYPEHASH} struct hash of
+    ///         a set whose offers have struct hashes `hashes`, in signing
+    ///         order (EIP-712 hashes an array of structs as the hash of their
+    ///         concatenated struct hashes).
+    function setStructHash(bytes32[] memory hashes) internal pure returns (bytes32) {
+        return keccak256(abi.encode(SIGNED_OFFER_SET_TYPEHASH, keccak256(abi.encodePacked(hashes))));
     }
 
     /// @notice Map a `SignedOffer` to the on-chain `CreateOfferParams` used to

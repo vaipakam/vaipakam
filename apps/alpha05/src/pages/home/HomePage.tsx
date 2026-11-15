@@ -1,5 +1,6 @@
 import { useAccount } from 'wagmi';
 import { getSupportedChain } from '../../chain/chains';
+import { WalletNeeded } from '../../shared/wallet/WalletNeeded';
 import { useCopy } from '../../shared/copy/useCopy';
 import { FeeDiscountConsent } from '../../shared/consent/FeeDiscountConsent';
 import { Faucet } from './Faucet';
@@ -43,6 +44,7 @@ export function HomePage() {
         <>
           <IntentChooser />
           <p className="tier-b">{text('home.connectPrompt')}</p>
+          <WalletNeeded testId="home-wallet-needed" />
         </>
       )}
       {connected && !served && (

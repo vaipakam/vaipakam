@@ -114,6 +114,8 @@ contract LenderIntentMatchTest is SetupTest {
             MAX_DURATION,
             MIN_FILL,
             false, // requiresKeeperAuth
+            0, // lendUntil — none
+            false, // acceptsProRata
             true, // riskAndTermsConsent
             type(uint64).max
         );
@@ -216,7 +218,7 @@ contract LenderIntentMatchTest is SetupTest {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true,
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, 0, false, true,
             type(uint64).max
         );
         _fundIntent(PRINCIPAL);
@@ -297,7 +299,7 @@ contract LenderIntentMatchTest is SetupTest {
         _setIntent(MAX_EXPOSURE);
         _fundIntent(PRINCIPAL);
         (, uint256 listedBefore) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(listedBefore, 1, "funded intent is listed in the feed");
 
         address b = _newBorrower("bdep");
@@ -309,7 +311,7 @@ contract LenderIntentMatchTest is SetupTest {
 
         assertEq(_intentCapital(), 0, "fill depleted the funded capital");
         (, uint256 listedAfter) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(listedAfter, 0, "depleted intent de-listed (matchIntent re-sync)");
     }
 
@@ -556,6 +558,8 @@ contract LenderIntentMatchTest is SetupTest {
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL,
             true, // requiresKeeperAuth
+            0, // lendUntil — none
+            false, // acceptsProRata
             true, // riskAndTermsConsent
             type(uint64).max
         );
@@ -1502,7 +1506,7 @@ contract LenderIntentMatchTest is SetupTest {
         view
         returns (LibMetricsTypes.RollableIntentLoan[] memory loans, uint256 total)
     {
-        return MetricsFacet(address(diamond)).getRollableIntentLoans(0, 100);
+        return LenderIntentFacet(address(diamond)).getRollableIntentLoans(0, 100);
     }
 
     // Active → (repay) Repaid surfaces as rollable → (normal claim) de-registers.

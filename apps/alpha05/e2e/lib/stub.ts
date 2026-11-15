@@ -44,6 +44,14 @@ export async function addNotifications(recipient: string, rows: Record<string, u
   if (!res.ok) throw new Error(`stub refused notifications: ${res.status}`);
 }
 
+/** What `/activity?wallet=` adds for `wallet` (#3677): rows the fixture
+ *  cannot reach, the pending lane (`null`: not known), repaired endings and
+ *  the index's completeness flag. Cleared by the suite's reset. */
+export async function setWalletActivity(wallet: string, extra: { events?: Record<string, unknown>[]; pending?: Record<string, unknown> | null; repairs?: Record<string, unknown>[] | null; walletComplete?: boolean | null }): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/activity`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wallet, ...extra }) });
+  if (!res.ok) throw new Error(`stub refused activity: ${res.status}`);
+}
+
 /** Remove every inbox row a spec added. */
 export async function resetNotifications(): Promise<void> {
   const res = await fetch(`${STUB_ORIGIN}/__stub/notifications`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reset: true }) });

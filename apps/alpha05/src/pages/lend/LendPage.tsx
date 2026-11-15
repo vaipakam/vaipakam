@@ -20,6 +20,8 @@ import { useStoredValue } from '../../shared/tx/txStore';
 import { Notice } from '../../shared/ui/Notice';
 import { StepNav } from '../../shared/ui/StepNav';
 import { useAssetStandard } from '../../shared/nft/useStandard';
+import { TakeNowChoice } from '../../shared/post/TakeNowChoice';
+import { takeNowPicks } from '../../shared/post/takeNow';
 import { LEND_OFFER_KEY, OfferForm } from '../../shared/post/OfferForm';
 import { PostOffer } from '../../shared/post/PostOffer';
 import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/ArmTariff';
@@ -76,6 +78,9 @@ export function LendPage() {
   const [composing, setComposing] = useStoredValue<boolean>(`${LEND_OFFER_KEY}:composing`);
   const [draft, setDraft] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:draft`);
   const [pendingDraft, setPendingDraft] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:pending`);
+  /** #3622 B1: a confirmed draft that an open borrow request already fits,
+   *  waiting on the reader's choice between funding that request and posting. */
+  const [choice, setChoice] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:choice`);
   const [, setTyped] = useStoredValue<unknown>(`${LEND_OFFER_KEY}:input`);
   /** OFF-22: the Full tariff step for an offer just posted, kept apart from
    *  the offer's review so it outlives that card. */
@@ -113,7 +118,7 @@ export function LendPage() {
   const meta = useTokenMeta(assets).data;
 
   const termsOpen = termsGate.session !== null;
-  const offering = composing === true || draft !== null;
+  const offering = composing === true || draft !== null || choice !== null;
   const flowOpen = taking !== null || offering;
 
   // OFF-35: funding a request is new exposure, so an unaccepted Terms
@@ -135,12 +140,14 @@ export function LendPage() {
       termsGate.start(terms.data);
       return;
     }
-    setDraft(next);
+    openReview(next);
   };
+  // #3622 B1: an open request that already fits the offer is offered first.
+  const openReview = (next: PostDraft) => (takeNowPicks(next, view.data).length > 0 ? setChoice(next) : setDraft(next));
 
   const termsUnknown = connected && walletChain !== null && terms.state === 'failed';
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
-  const step = taking !== null || draft !== null ? 2 : ready ? 1 : 0;
+  const step = taking !== null || draft !== null || choice !== null ? 2 : ready ? 1 : 0;
   // OFF-06: an offer lends an ERC-20 against ERC-20 collateral here; what
   // each leg's contract claims is read, and an unread standard offers no
   // offer rather than a guessed one.
@@ -191,7 +198,7 @@ export function LendPage() {
           </button>
         </section>
       )}
-      {composing === true && draft === null && !termsOpen && walletChain && own && offerPair && (
+      {composing === true && draft === null && choice === null && !termsOpen && walletChain && own && offerPair && (
         <section className="borrow-section" aria-labelledby="lend-offer-form">
           <OfferForm side="lender" flowKey={LEND_OFFER_KEY} chain={walletChain} own={own} pair={offerPair} meta={meta} onReview={reviewOffer} onCancel={() => setComposing(null)} />
         </section>
@@ -206,7 +213,7 @@ export function LendPage() {
           onAccepted={() => {
             termsGate.end();
             if (pendingTake !== null) setTaking(pendingTake);
-            if (pendingDraft !== null) setDraft(pendingDraft);
+            if (pendingDraft !== null) openReview(pendingDraft);
             setPendingTake(null);
             setPendingDraft(null);
           }}
@@ -216,6 +223,28 @@ export function LendPage() {
             termsGate.end();
           }}
         />
+      )}
+      {choice !== null && draft === null && taking === null && (
+        <section className="borrow-section">
+          <TakeNowChoice
+            side="lender"
+            picks={takeNowPicks(choice, view.data)}
+            stale={view.error !== null}
+            matcherBps={view.data?.matcherBps ?? null}
+            meta={meta}
+            takeDisabled={takeDisabled}
+            onTake={(id) => {
+              setChoice(null);
+              setComposing(null);
+              take(id);
+            }}
+            onPost={() => {
+              setDraft(choice);
+              setChoice(null);
+            }}
+            onBack={() => setChoice(null)}
+          />
+        </section>
       )}
       {taking !== null && walletChain && own && (
         <section className="borrow-section" aria-labelledby="lend-review">

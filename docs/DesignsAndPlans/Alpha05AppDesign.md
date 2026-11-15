@@ -2688,6 +2688,114 @@ above. Each resolves here, so a route reviewer needs no private file:
   asked for. Full-term interest keeps the terms equal, so nothing is added
   for it. No figure changes: the review's interest figures are for the
   offer's own term.
+- **RB-TAKE-NOW** — Before a new lending offer or borrow request is
+  posted (#3622 B1), the page looks through the other side's open offers it
+  has already read for the pair. An offer is shown first only when a direct
+  accept of it stays inside every limit the reader is about to post: the
+  same pair (both legs tokens) and the same term in days, the same interest
+  mode, partial repayment and interest schedule, no prepay listing, no
+  refinance and no linked loan, the accepted amount within the reader's
+  amount range, a rate no worse than the reader's, and collateral no worse
+  than the reader's for that amount. It must also be open and takeable by
+  this wallet as it stands. A draft that opts into the Full fee tariff is
+  never offered a take, because a direct accept here never opts into it,
+  and neither is a draft that arms a price-move guard, because a direct
+  accept carries no guard.
+  Each fitting offer (at most three, in the list's own order) is shown as
+  the offer list shows it, with its own take button, which opens the
+  ordinary accept review on that offer's own terms. Beside it the page says
+  that posting waits for a taker or, while matching is on, a match with an offer whose rate range includes the reader's rate, which
+  lends at that rate (a match lends at the midpoint of where the two rate
+  ranges overlap, and a draft posts one rate). If the latest re-read of the
+  offers failed, the step says the list is from the read before. "Post anyway" opens the post
+  review the reader asked for, and "Back to the form" keeps what was typed.
+  Nothing is taken or posted from this step without a press. An offer that
+  stops fitting while the reader decides is dropped, and the step says so.
+- **RB-WHY-MATCH** — The page of an open token-for-token offer the reader
+  posted (not a sale or early-close vehicle, not a refinance request) says
+  why it is not matching (#3623). The index ranks the other side's open
+  offers on the same two assets, closest rate range first, then closest
+  term (`/offers/:id/nearest`); it leaves out lapsed offers, the vehicles and
+  the reader's own wallet, and counts every one it could rank. The page reads
+  up to five of them from the chain at one block and asks the protocol's own
+  match preview for each pair, with the reader's wallet as the one who would
+  send it. It then states one thing: that no open offer stands on the other
+  side; that matching is off on the network (or could not be read); that a
+  pair would match now, naming the offer and the rate the match would lend
+  at, and that anyone may send it; or the closest open counterparty's first
+  refusal. A refusal on rate gives both rates from the two offers' own terms
+  (the counterparty's best for the reader and the reader's own nearest
+  bound), a refusal on term gives both terms (a pro-rata lender's term is
+  "up to"), a refusal on lifecycle terms names the first option that
+  differs (interest mode, partial repayment, prepay listing, the interest
+  schedule), and any other refusal is given in the preview's own words. The
+  count of open offers on the other side is shown, and the closest offers,
+  each with its verdict, sit behind a tap. The page never promises a match,
+  and says that another taker can reach an offer first. Until this app can
+  change an open offer, a gap says the way to close it is to cancel and post
+  again. A failed index read says the closest offers are unknown, never that
+  there are none; an index that does not list the offer as open yet says it
+  may be catching up. The Offers list links each open token-for-token offer
+  the reader created to its page with one line, "Why isn’t it matching?".
+- **RB-KEY-RISKS** — What can go wrong is said plainly, once with the
+  Terms and once in every review that opens a loan or a rental (#3661). The
+  Terms prompt shows the short key-risk list above the accept step: funds
+  can be lost and nothing is insured or reversible; what a lender receives
+  when a borrower does not repay; what a borrower can lose; that the
+  software, price feeds, tokens and networks can fail; that only the user
+  controls their wallet; and that nothing here is financial advice. Every
+  review that opens a loan (taking an offer, posting an offer or a request,
+  filling or signing a signed order) or a rental carries ONE "If things go
+  wrong" line for its side and for how that loan settles: by a sale of the
+  collateral when both legs are liquid, in kind when either leg is
+  illiquid, and stated without a settlement for a posted offer or request
+  or a signed order, which fill later: the protocol classes both legs again
+  at fill and keeps those classes on the loan. The line links to the risk page, which
+  is public, needs no wallet, is linked from the footer, and adds a
+  pegged token losing its value, a late or wrong price feed, tax and local
+  rules, and the services run by others. No extra signature is asked per
+  loan: the signed review carries the line. The list is part of the Terms
+  text from version 2, so accepting that version records it, and a change to
+  the list is a new version that every wallet accepts again.
+- **RB-WALLET-KEYS** — The platform creates and holds no wallets (owner
+  decision 2026-11-15, #3662 parked), so the app says what a visitor needs
+  before anything connects (#3671). The wallet picker and Home, while no
+  wallet is connected, state that a self-custody wallet is needed, that the
+  platform never holds its keys and cannot recover them, and that losing the
+  keys loses access to the funds, linked to a public key-safety page. That
+  page needs no wallet, is linked from the footer, explains a recovery
+  phrase and how to keep it, and names no wallet brand. The connect button
+  is never disabled and reads "Connecting…" only while an earlier session
+  resumes: a connect the picker started (a phone connection prepares its
+  link as the picker opens) can stay pending after the picker closes, and
+  must never leave the visitor with a button that cannot be pressed.
+- **RB-ACTIVITY** — The Activity page (#3677) reads one wallet's history
+  from the index's own wallet filter, never by paging the whole network's feed
+  and keeping the rows that look like the wallet's. The index answers with the
+  events on any loan the wallet ever held a position in and the events that
+  name it by the shared participant rule, and says when its record of the
+  second part is still being filled from older history: the page then says
+  older activity may be missing and never claims the list is complete. Events
+  of one transaction are one line, led by the event that says what happened
+  (a loan's start before the accept or match that opened it), with the rest
+  listed under it. The wallet a line names is the one the shared actor rule
+  files the event under, said as "recorded for", never as its sender. Every kind the index can file for a wallet
+  has words (a test holds the catalog to the shared rule's kinds); a kind
+  without words is named, never hidden. A kind whose meaning turns on a
+  yes/no its event states (a step that worked or failed, a permission or
+  consent given or withdrawn, a setting on or off, a claim paid in full or
+  not, a withdrawal paid or queued) reads it from the event and says which,
+  or that it was not recorded; no line asserts one direction for both, and a
+  test holds every such kind of the contract's events to a decision. The
+  index reads a wallet's page, and its repaired endings, from that wallet's
+  own rows, so its cost follows the wallet's history, not the network's. An amount is shown only when the
+  index recorded one, otherwise the line says none was recorded, and a
+  multi-copy token's unrecorded quantity is said, never read as one; events in
+  blocks not yet final are marked so, with no time; a loan whose ending a
+  check found says what was and was not seen, and when those endings could
+  not be read the page says some may be missing and claims no end; a failed
+  read is never shown
+  as an empty history, and unreadable rows are counted.
 
 ## 3. Companion specifications
 

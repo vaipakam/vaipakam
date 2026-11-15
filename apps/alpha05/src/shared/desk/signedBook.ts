@@ -36,6 +36,7 @@ import {
   type SignedStanding,
 } from './mySignedOrders';
 import { SIGNED_LENDER, signedStakeLeft, type SignedOrderWire } from './signedOrder';
+import { placementProblem, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferWire';
 
 type Hex = `0x${string}`;
 
@@ -47,6 +48,10 @@ const SIGNATURE = /^0x[0-9a-fA-F]{130}$/;
 /** One order on the market's signed book, with the signature a fill sends. */
 export interface BookSignedOrder extends MySignedOrder {
   signature: Hex;
+  /** #3327 part 2 — where the order sits in the set its maker signed with
+   *  this one signature (the other orders' hashes and its index), which the
+   *  fill sends with it; null when it was signed alone. */
+  set: SignedOfferPlacement | null;
 }
 
 export interface MarketSignedBook {
@@ -71,7 +76,11 @@ export function bookSignedOrderFrom(row: unknown, market: SignedMarket): BookSig
   if (read === null) return null;
   const signature = (row as Record<string, unknown>).signature;
   if (typeof signature !== 'string' || !SIGNATURE.test(signature)) return null;
-  return { ...read, signature: signature.toLowerCase() as Hex };
+  // A row that names a set must name a well-formed one: the fill needs it to
+  // check the signature, so an order with a broken set is unreadable here.
+  const set = (row as Record<string, unknown>).set ?? null;
+  if (set !== null && placementProblem(set) !== null) return null;
+  return { ...read, signature: signature.toLowerCase() as Hex, set: set as SignedOfferPlacement | null };
 }
 
 /** The rate an order stands at on its side: a lender's floor rate, a
