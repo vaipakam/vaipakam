@@ -69,6 +69,9 @@ export interface PendingEventRow {
   offerId: number | null;
   actor: string | null;
   argsJson: string;
+  /** #3677 — the wallets the event concerns, inline (' 0xabc… 0xdef… '), or
+   *  null when it names nobody. */
+  participants: string | null;
   asset: string | null;
   assetType: number | null;
   amount: string | null;
@@ -118,7 +121,7 @@ export async function writePendingLane(
       .prepare(
         `INSERT INTO pending_activity_events
            (chain_id, block_number, log_index, block_hash, tx_hash, kind,
-            loan_id, offer_id, actor, args_json,
+            loan_id, offer_id, actor, args_json, participants,
             asset, asset_type, amount, amount_max, token_id, quantity)
          SELECT ?,
                 json_extract(value, '$.blockNumber'), json_extract(value, '$.logIndex'),
@@ -126,6 +129,7 @@ export async function writePendingLane(
                 json_extract(value, '$.kind'),
                 json_extract(value, '$.loanId'), json_extract(value, '$.offerId'),
                 json_extract(value, '$.actor'), json_extract(value, '$.argsJson'),
+                json_extract(value, '$.participants'),
                 json_extract(value, '$.asset'), json_extract(value, '$.assetType'),
                 json_extract(value, '$.amount'), json_extract(value, '$.amountMax'),
                 json_extract(value, '$.tokenId'), json_extract(value, '$.quantity')

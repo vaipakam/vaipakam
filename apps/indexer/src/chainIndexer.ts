@@ -160,6 +160,13 @@ import {
 } from './reorgGuard';
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
+import {
+  ensureActivityParticipantsBackfill,
+  eventParticipants,
+  inlineParticipants,
+  participantStatements,
+  runBatched,
+} from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
@@ -2261,6 +2268,9 @@ async function runChainPass(
   await ensureRewardLoopBackfill(env, chainId);
   await ensureRecycleSeriesBackfill(env, chainId);
   await ensureReportedCumulativeProjection(env, chainId);
+  // #3677 — the wallet filter's participant index, for history ingested
+  // before it existed.
+  await ensureActivityParticipantsBackfill(env, chainId);
 
   // WHAT IS BEING WITHHELD IS SAID BEFORE ANY RPC-DEPENDENT RETURN
   // (#2213 r3 `4011960607`). Quarantined rows go on suppressing reminders
@@ -7317,9 +7327,21 @@ export async function recordActivityEvents(
   const valueCtx = await loadActivityValueContext(env, chainId, logs);
 
   let inserted = 0;
+  // #3677 — each event's participants, written beside it so `/activity?wallet=`
+  // can answer for a wallet. Collected and batched after the loop.
+  const participantWrites: D1PreparedStatement[] = [];
   for (const log of logs) {
     const args = withSaleCreator(log, creatorByOfferId);
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
+    participantWrites.push(
+      ...participantStatements(
+        env.DB,
+        chainId,
+        Number(log.blockNumber),
+        log.logIndex,
+        eventParticipants(log.eventName, args as Record<string, unknown>, actor),
+      ),
+    );
     const v = activityValue(log.eventName, args as Record<string, unknown>, valueCtx);
     const argsJson = serializeArgs(args);
     const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
@@ -7351,6 +7373,7 @@ export async function recordActivityEvents(
       .run();
     if ((result.meta?.changes ?? 0) > 0) inserted++;
   }
+  await runBatched(env.DB, participantWrites);
   return inserted;
 }
 
@@ -8094,6 +8117,7 @@ async function refreshPendingLane(
         offerId,
         actor,
         argsJson: serializeArgs(args),
+        participants: inlineParticipants(eventParticipants(log.eventName, args as Record<string, unknown>, actor)),
         asset: v.asset,
         assetType: v.assetType,
         amount: v.amount,
