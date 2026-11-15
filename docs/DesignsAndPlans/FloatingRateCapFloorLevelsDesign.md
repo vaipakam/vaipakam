@@ -46,7 +46,13 @@ While the quorum is in its "previous reference holds" state, levels accrue again
 - A level may be **retired**: no new offer may name it and **no new loan may open on it**; it keeps accruing while any open loan references it (a per-level count of open loans), and stops being tracked when that count reaches zero.
 - Retirement binds at loan creation, not only at offer creation. Every path that opens a floating loan (a match, a direct accept, a signed offer's fill, an Auto-lend fill, a refinance, an obligation handover) checks in the one shared origination step that the loan's cap and floor levels are open, and refuses by name otherwise. An offer posted before its level was retired therefore waits unfillable; its preview says the level was retired, the app tells its maker, and the maker changes the level or cancels. So only open levels can gain loans, and the tracked set stays within its bound whatever offers are outstanding. The total of open and retired-but-referenced levels per side is bounded (8); adding a level beyond that is refused until one is free.
 - A level added later starts its cumulative at zero at that moment; loans opened on it snapshot from there.
-- Proposed starting lists, for the owner to confirm at configuration time, not fixed here: caps at the reference's recent average plus roughly 3, 6 and 10 percentage points rounded to whole points; floors at 0.5, 1 and 2 percent. Levels are absolute rates, not offsets, so the lists are reviewed when the market moves a long way.
+- **Starting lists (owner decision 2026-11-15), for top-tier lending assets, set per asset:**
+  - The base figure is the **30-day average of the asset's reference**, not the reading on the day the list is set, rounded to a half point. One unusual day must not fix a permanent level.
+  - **Caps:** the base plus 2, plus 5 and plus 10 percentage points. The 2-point cap is the tightest choice, for a borrower who wants near certainty and pays for it in the margin.
+  - **Floors:** the base minus 2 percentage points, never below 0.5 percent, and one low floor at 0.5 percent. Where the two would be the same figure, only one is added.
+  - These are how the fixed figures are chosen. A level, once added, is an absolute rate and does not follow the reference afterwards.
+  - **Review rule:** when the 30-day average has moved more than 2 percentage points from the base a list was set on, a fresh set is added by the same rule and the old levels are retired. Open loans keep the levels they signed. An addition must still keep every tracked floor below every tracked cap and the list within 4 of each, so a fresh set may have to wait for a retired level's last loan to close; the configuration step refuses otherwise, by name.
+  - Assets outside the top tier get no list until the owner sets one.
 
 ## 5. Matching
 
