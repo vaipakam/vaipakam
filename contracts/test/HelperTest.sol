@@ -1083,7 +1083,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         selectors[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
@@ -1092,6 +1092,8 @@ contract HelperTest {
         selectors[2] = AutoLifecycleFacet.fundExtendReserve.selector;
         selectors[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
         selectors[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #3618 follow-up — the intent lend-until bound on an extension.
+        selectors[5] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface,

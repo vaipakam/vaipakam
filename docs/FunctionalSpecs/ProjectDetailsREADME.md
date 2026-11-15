@@ -979,7 +979,15 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   deadlines by the paused time, so any of these can end a loan after the
   lend-until time. Wherever the app shows the time it says "no new loan will be
   agreed to run past this date", never that funds return by it. Protocol-run
-  intents (the backstop and the aggregator adapters) carry no end time.
+  intents (the backstop and the aggregator adapters) carry no end time. The
+  time also bounds an automatic extension: while the intent's owner still holds
+  the lender position of a loan the intent made, an in-place extension whose new
+  end would fall after the intent's current lend-until time is refused, so the
+  lender's own extension caps cannot carry the loan past it. An extension ending
+  exactly at the time is taken. Once the position is sold the buyer agreed to no
+  end time and the bound no longer applies, and clearing the time on the intent
+  lifts it. The platform states the bound for each loan so a keeper sizes an
+  extension inside it, or skips the loan when none fits.
 - **Pro-rata opt-in (#3619).** By default an intent fills only borrower requests
   on full-term interest that do not allow partial repayment. A lender may opt
   the intent into pro-rata requests as well; it then fills full-term and

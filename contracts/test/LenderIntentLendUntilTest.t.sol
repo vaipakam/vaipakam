@@ -21,6 +21,10 @@ import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 
 /**
  * @title  LenderIntentLendUntilTest
@@ -496,5 +500,103 @@ contract LenderIntentLendUntilTest is SetupTest {
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
         assertEq(_intentCapital() - capitalBefore, owed, "the roll re-commits only the claim");
         assertEq(_livePrincipal(), 0, "exposure released by the original fill, once");
+    }
+
+    // ─── #3618 follow-up — the lend-until time bounds an extension ──────
+
+    /// @dev A 20-day intent loan with both sides' auto-extend caps wide open
+    ///      (rate 0–10%, expiry 400 days) and an extension reserve, so only
+    ///      the intent's lend-until time can refuse the extension.
+    function _extendableIntentLoan(uint64 lendUntil) internal returns (uint256 loanId, address b) {
+        uint256 cp;
+        (b, cp) = _post("b-ext", PRINCIPAL, 20);
+        _setIntent(lendUntil, false);
+        _fundIntent(PRINCIPAL);
+        loanId = _fill(cp, PRINCIPAL);
+        LibTestPayout.withdrawAllFree(address(diamond), b);
+
+        uint64 farExpiry = uint64(vm.getBlockTimestamp() + 400 days);
+        vm.prank(b);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        vm.prank(lender);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+
+        ERC20Mock(mockERC20).mint(b, 50 ether);
+        vm.startPrank(b);
+        ERC20(mockERC20).approve(address(diamond), 50 ether);
+        AutoLifecycleFacet(address(diamond)).fundExtendReserve(loanId, 50 ether);
+        vm.stopPrank();
+    }
+
+    function _extend(address b, uint256 loanId, uint256 days_) internal {
+        vm.prank(b);
+        AutoLifecycleFacet(address(diamond)).extendLoanInPlace(loanId, uint16(MIN_RATE_BPS), days_);
+    }
+
+    /// @dev An extension ending exactly at the lend-until time is taken; one
+    ///      second later is refused, naming both times. The bound view
+    ///      reports the time the executor uses.
+    function test_extend_boundByLendUntil() public {
+        uint64 lendUntil = uint64(vm.getBlockTimestamp() + 30 days + SLACK);
+        (uint256 loanId, address b) = _extendableIntentLoan(lendUntil);
+        assertEq(
+            AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), lendUntil, "the view reports the bound"
+        );
+
+        uint256 snap = vm.snapshotState();
+        vm.warp(uint256(lendUntil) - 13 days + 1);
+        vm.prank(b);
+        vm.expectRevert(
+            abi.encodeWithSelector(AutoLifecycleFacet.AutoExtendPastLendUntil.selector, uint256(lendUntil) + 1, lendUntil)
+        );
+        AutoLifecycleFacet(address(diamond)).extendLoanInPlace(loanId, uint16(MIN_RATE_BPS), 13);
+        vm.revertToState(snap);
+
+        vm.warp(uint256(lendUntil) - 13 days);
+        _extend(b, loanId, 13);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 13, "extended to the end date");
+        (,, uint256 maturity,) = LoanClockFacet(address(diamond)).getLoanDeadlines(loanId);
+        assertEq(maturity, lendUntil, "ends exactly then");
+    }
+
+    /// @dev The owner's latest choice counts: clearing the lend-until time on
+    ///      the intent lifts the bound for loans it already made.
+    function test_extend_readsTheIntentLive() public {
+        uint64 lendUntil = uint64(vm.getBlockTimestamp() + 30 days + SLACK);
+        (uint256 loanId, address b) = _extendableIntentLoan(lendUntil);
+        _setIntent(0, false);
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), 0, "no end date, no bound");
+        vm.warp(uint256(lendUntil) - 13 days);
+        _extend(b, loanId, 30);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 30, "extended past the old date");
+    }
+
+    /// @dev An intent with no lend-until time leaves extensions to the caps.
+    function test_extend_noLendUntilUnbound() public {
+        (uint256 loanId, address b) = _extendableIntentLoan(0);
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), 0, "no bound");
+        (uint64 opensAt,) = AutoLifecycleFacet(address(diamond)).getAutoExtendWindow(loanId);
+        vm.warp(opensAt);
+        _extend(b, loanId, 60);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 60, "a long extension is taken");
+    }
+
+    /// @dev Once the intent's owner no longer holds the lender position the
+    ///      holder agreed to no end date, so nothing binds. The position NFT
+    ///      only moves through the sale flow; the holder is mocked here, as in
+    ///      the roll's sold-position test.
+    function test_extend_soldPositionUnbound() public {
+        uint64 lendUntil = uint64(vm.getBlockTimestamp() + 30 days + SLACK);
+        (uint256 loanId,) = _extendableIntentLoan(lendUntil);
+        uint256 tok = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        LibTestPositionNFT.mockHolder(address(diamond), tok, makeAddr("positionBuyer"));
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), 0, "a sold position is unbound");
+        vm.clearMockedCalls();
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), lendUntil, "bound again once held");
+    }
+
+    /// @dev A loan no intent made is never bound.
+    function test_extend_nonIntentLoanUnbound() public {
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(type(uint64).max), 0, "no origin");
     }
 }
