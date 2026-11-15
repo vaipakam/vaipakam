@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import type { SupportedChain } from '../../chain/chains';
-import { activityLines, type ActivityEvent, type ActivityLine, type RepairEntry } from '../../shared/activity/activity';
+import { activityLines, historyClaims, type ActivityEvent, type ActivityLine, type RepairEntry } from '../../shared/activity/activity';
 import { amountLine } from '../../shared/activity/amountLine';
 import { activityReason, kindKey, useWalletActivity } from '../../shared/activity/useWalletActivity';
 import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
@@ -41,6 +41,7 @@ export function ActivityPage() {
   const pending = pages[0]?.pending;
   const walletComplete = pages[0]?.walletComplete;
   const lines = activityLines(events, repairs);
+  const claims = historyClaims(query.data?.pages, query.hasNextPage, lines.length);
   const pendingLines = pending ? activityLines(pending.events) : [];
   const assets = [...events, ...(pending?.events ?? [])].flatMap((e) => (e.asset !== null && e.assetType === ASSET_ERC20 ? [e.asset] : []));
   const meta = useTokenMeta(assets).data ?? null;
@@ -105,7 +106,7 @@ export function ActivityPage() {
           )}
           {pendingLines.length === 0 && pending?.complete === false && <p className="tier-b">{text('activity.pendingPartial')}</p>}
 
-          {query.data !== undefined && lines.length === 0 && !query.hasNextPage && unreadable === 0 && !repairsUnknown && (
+          {claims.empty && (
             <p className="tier-b home-empty" data-testid="activity-empty">
               {format('activity.empty', { chain: chain.name })}
             </p>
@@ -122,7 +123,7 @@ export function ActivityPage() {
               {text(query.isFetchingNextPage ? 'activity.readingMore' : 'activity.more')}
             </button>
           )}
-          {query.data !== undefined && lines.length > 0 && !query.hasNextPage && walletComplete === true && !repairsUnknown && (
+          {claims.end && (
             <p className="tier-b" data-testid="activity-end">
               {format('activity.end', { chain: chain.name })}
             </p>
