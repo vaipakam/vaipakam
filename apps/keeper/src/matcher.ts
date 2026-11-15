@@ -1739,7 +1739,10 @@ export interface MatchWalkResult {
   previews: number;
   submits: number;
   lanePreviews: number;
+  /** Lane matches that landed. */
   laneSubmits: number;
+  /** Lane submissions sent, landed or not; what the lane's quota counts. */
+  laneAttempts: number;
   capacitySpent: boolean;
   /** Borrowers left in flight by an uncertain submit; the intent pass passes
    *  over them too. */
@@ -1766,6 +1769,9 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
   const laneStop = () => now() >= laneEnd;
   let previews = 0;
   let submits = 0;
+  // Submissions SENT, successful or not: a reverted or uncertain match still
+  // spends gas, so the lane's submission quota counts these (#3622 B2).
+  let attempts = 0;
   let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
   // Codex #748 r3 — borrowers left in-flight by an UNCERTAIN matchOffers submit
   // (broadcast fail / receipt timeout). Shared with the intent-fill pass so it
@@ -1812,6 +1818,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
 
     // Out of time after the preview: nothing is sent, so nothing is uncertain.
     if (now() >= deadlineMs) return { code: p.errorCode, stop: true };
+    attempts += 1;
     const ok = await io.submit(L, B, p, deadlineMs);
     if (ok) {
       submits += 1;
@@ -1852,7 +1859,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
       stop: laneStop,
       maxLive: lane.previews,
     })) {
-      if (previews >= lane.previews || submits >= lane.submits) break;
+      if (previews >= lane.previews || attempts >= lane.submits) break;
       if (laneStop()) break;
       const r = await tryPair(L, B, laneEnd);
       if (r.code !== null && r.code !== MATCH_ERR_TERMS_TOO_FRESH) {
@@ -1864,6 +1871,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
   }
   const lanePreviews = previews;
   const laneSubmits = submits;
+  const laneAttempts = attempts;
 
   // 2. The ordinary walk. #3242 part 2 — the pairs are walked round-robin
   // across pairs of CREATORS ({@link offerMatchUnits}), so one wallet's many
@@ -1885,7 +1893,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
     }
   }
 
-  return { previews, submits, lanePreviews, laneSubmits, capacitySpent, uncertainBorrowers };
+  return { previews, submits, lanePreviews, laneSubmits, laneAttempts, capacitySpent, uncertainBorrowers };
 }
 
 /** One pass over a chain's order book. */
@@ -1962,7 +1970,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
   const { uncertainBorrowers, capacitySpent } = walk;
   if (walk.lanePreviews > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} fresh lane: ${fresh.size} new or re-priced offer(s), ${walk.lanePreviews} preview(s), ${walk.laneSubmits} match(es) (caps ${lane.previews} / ${lane.submits})`,
+      `[matcher] chain=${ctx.chainId} fresh lane: ${fresh.size} new or re-priced offer(s), ${walk.lanePreviews} preview(s), ${walk.laneSubmits} match(es) of ${walk.laneAttempts} sent (caps ${lane.previews} / ${lane.submits})`,
     );
   }
 

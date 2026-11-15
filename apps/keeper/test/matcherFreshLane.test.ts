@@ -188,6 +188,25 @@ describe('runMatchWalks', () => {
     expect(r.submits).toBe(20); // the walk finished the rest
   });
 
+  it('counts failed lane submissions against the lane\'s quota', async () => {
+    // Ten independent fresh pairs whose submissions all fail: the lane sends
+    // six, its cap, and the walk takes the rest.
+    const offers: OfferLite[] = [];
+    const fresh = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      offers.push(offer(100 + i, addr(100 + i), 0, { asset: addr(0x500 + i) }));
+      offers.push(offer(200 + i, addr(200 + i), 1, { asset: addr(0x500 + i) }));
+      fresh.add(String(200 + i));
+    }
+    const ok: MatchPreview = { errorCode: 0, matchAmount: 1n, matchRateBps: 0n, reqCollateral: 0n, lenderRemainingPostMatch: 50n };
+    let sent = 0;
+    const io: MatchWalkIO = { preview: async () => ok, submit: async () => { sent += 1; return false; } };
+    const r = await runMatchWalks(walkArgs(offers, fresh, io));
+    expect(r.laneAttempts).toBe(6);
+    expect(r.laneSubmits).toBe(0);
+    expect(sent).toBe(10);
+  });
+
   it('under fresh traffic above the quota, a resting pair is reached as soon as without the lane', async () => {
     // Bucket Y: 50 x 50 creators of fresh offers every pass (2,500 units, five
     // times the lane's preview quota). Bucket X: one resting pair. A pass can
