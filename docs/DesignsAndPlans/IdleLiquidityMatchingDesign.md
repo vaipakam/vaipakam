@@ -143,9 +143,44 @@ On the lender side the two overlap, and the intent is the stronger tool (re-lend
 
 No contract change. Alternatives considered: convert every lender offer into an intent in the contract (rejected: removes direct accept of a visible lender offer and the rate-range midpoint, and does nothing for rentals, sales or the borrower side); keep two separate app flows (rejected: the user has to learn which feature they need before they can lend).
 
+## 4b. Item E — several intents per asset pair (#3626, proposed 2026-11-15, awaiting owner approval)
+
+**Question (owner, 2026-11-15):** can a rate ladder be done on intents, so that the intent is the default for lenders apart from the stated exceptions?
+
+**Answer: yes, by adding a slot number to the intent key.** Scouted first: every intent structure is keyed by the owner and the two assets (the intent record, its capital lien, its live-principal counter, the priority-routing opt-in, the registry key hash, the per-loan origin record), so one wallet holds exactly one intent per pair today. Nothing else depends on there being only one.
+
+### Rule
+
+- The key gains a small slot number (0 to 7). Each slot is a full, independent intent with its own funded capital, exposure cap, rate floor, LTV ceiling, longest term, smallest fill, lend-until date and pro-rata choice.
+- Nothing is shared between slots. A fill draws from one named slot. A roll returns the proceeds to the slot the loan was filled from, and the exposure release does the same, because the loan's origin record carries the slot.
+- The caller of the intent match names the slot. The protocol does not choose between a lender's slots, as it does not rank counterparties. Keeper policy, stated in its docs: among one lender's slots that can fill a request, take the lowest floor first, so a ladder fills from its cheapest rung up.
+- The backstop vault and the aggregator adapters use slot 0 only.
+- Moving un-lent capital between slots is a withdraw and a fund. A one-call move is a possible follow-up.
+
+### What a ladder means under midpoint pricing
+
+An intent fill is priced at the midpoint of the overlap between the lender's floor and the borrower's ceiling, not at the floor. A higher-floor slot therefore does two things: it refuses borrowers whose ceiling is below it, and it lifts the midpoint for those it fills. The app states both when a lender adds a second rate.
+
+### Changes and reach
+
+The four triple-keyed mappings, the registry key and the origin record gain the slot; every intent entry point, preview, view and event takes or states it; keeper, indexer, app and both ABI exports follow. It is a deliberate storage break, acknowledged in the storage-layout guard, and reaches a chain by fresh deploy only. The full change list and tests are on the card.
+
+### What stays an offer after this
+
+Unpriced or NFT collateral, NFT rentals, loan-purchase offers, a deal a borrower accepts directly, and exact deals (a fixed collateral amount, all-or-nothing, an offer expiry). Rate ladders leave the list.
+
+### Alternatives considered
+
+1. A rate-by-term schedule inside one intent. Rejected: covers only the term dimension, cannot cap the amount per step because capital is shared, and adds a second pricing rule to the fill check.
+2. A floor that rises with the share already lent. Rejected: covers only depth, and reads as pool-style curve pricing on a product whose rule is fixed terms the lender states.
+3. Keep one intent per pair and ladder with one-time offers. Rejected: the ladder's repaid money sits idle.
+4. Several wallets. Works today; rejected as the answer because each wallet needs its own vault, funding and protection setup.
+5. An unbounded intent id. Rejected: makes the per-pair views and the keeper's per-lender walk unbounded.
+
 ## 5. Order of work
 
 1. #3618 + #3619 (intent end date and pro-rata opt-in) — one contract PR.
+1a. Item E (#3626, once approved) — its own contract PR straight after, since it is mechanical but touches every intent entry point.
 2. Item A — contract PR (fresh deploy with the same batch).
 3. Item B1 and Item C — app and indexer (app thread). Item B2 — keeper thread.
 
