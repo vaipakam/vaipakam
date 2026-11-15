@@ -182,6 +182,7 @@ Unpriced or NFT collateral, NFT rentals, loan-purchase offers, a deal a borrower
 1. #3618 + #3619 (intent end date and pro-rata opt-in) — one contract PR.
 1a. Item E (#3626) — its own contract PR straight after, since it is mechanical but touches every intent entry point.
 2. Item A — contract PR (fresh deploy with the same batch).
+2a. #3629 (owner direction 2026-11-15) — every lender payment on an open loan is held for the position and released by the position claim, never paid to a wallet; the intent roll may then re-commit held amounts. Its own contract PR after the Auto-lend PRs; rule, scouting list and tests on the card.
 3. Item B1 and Item C — app and indexer (app thread). Item B2 — keeper thread.
 
 All contract work joins the queue for the next fresh testnet deploy.
