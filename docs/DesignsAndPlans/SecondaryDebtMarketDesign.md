@@ -53,8 +53,11 @@ One check, in the one place assets are admitted, with a named error. The positio
 An Auto-lend slot gains one consent, **buys existing loans**, separate from the instant market's takeover consent (which stays face value only).
 
 - **What may be bought:** the lender side of an active loan with interest by time, not past due, not in a fallback, with no other sale route open, nothing held for the position, outside the transfer cooldown.
-- **The as-new test** of `InstantMarketDesign.md` section 7 applies in full: the loan must be one the slot would open today (kind of loan, rate or margin at or above the slot's minimum, cap and floor, lifecycle settings, current loan-to-value, health factor, due date inside the slot's longest term and lend-until, room in the slot's exposure). A weakening loan cannot be passed on.
-- **Price:** one figure, the **price in basis points of the outstanding principal**. The buyer's slot states the highest price it pays, by rule and not by hand: par when the loan's rate equals the slot's minimum, and above or below par by the difference in interest over the remaining term, discounted at the slot's minimum rate. This is the same economics as today's rate shortfall, stated as a price and allowed in both directions. The slot may cap the premium it will ever pay (default: none above par, so by default a slot buys at par or below).
+- **The as-new test** of `InstantMarketDesign.md` section 7 applies to everything except the rate: the loan must be one the slot would open today in kind of loan, cap and floor, lifecycle settings, current loan-to-value, health factor, due date inside the slot's longest term and lend-until, and room in the slot's exposure. A weakening loan cannot be passed on. The rate is judged through the price, below: what the slot must earn is its minimum **at the price it pays**, not the loan's stated rate.
+- **Price:** one figure, the **price in basis points of the outstanding principal**, never above par. The highest price a slot pays is set by rule and not by hand:
+  - a loan whose rate (fixed) or margin (floating) is at or above the slot's minimum: par;
+  - a loan below the slot's minimum: par less the interest the slot would miss over the remaining term, so that the slot's return to the due date at that price is at least its minimum. This is today's rate shortfall, stated as a price.
+- **No premium, by design.** A slot never pays above par. Interest is owed by time and the borrower may repay at any moment, so a price above par would be paid for interest that an early repayment removes: a seller and a cooperating borrower could sell a high-rate loan at a premium and repay it at once, and the buyer would lose the premium. At or below par an early repayment can only leave the buyer better off, since the full principal comes back sooner. A lender who wants more than par for a high-rate loan uses a listing, where a buyer chooses that risk by hand and the review states it.
 - **The seller** states the lowest price they accept and a mandatory deadline, and the sale is bound to the reviewed figures exactly as the direct sale is today (seller's least net, most held balance, deadline).
 - **What moves:** the buyer's vault pays the price into the seller's vault, measured on arrival. The position moves on the same loan record through the existing lender-position migration. Interest earned to that moment follows the existing seller-claim rule. The borrower signs nothing, pays nothing, and none of their terms change. No initiation fee: no loan is opened. Any fee on the sale is the existing sale fee rule, unchanged.
 - **Who starts it:** the holder, or a keeper under the holder's mandate for this one action. A keeper never sets the price: it may only execute at or above the holder's stated floor (#3353).
@@ -86,7 +89,7 @@ The platform cannot stop or see a sale made elsewhere, and does not try. It make
 2. **Metadata** carries the same figures and a link to the check page. Metadata is a picture; the read is the authority, and the page says so.
 3. **A "check before you buy" page** in the app for any token id, without connecting a wallet: the figures, the blocks, and plain warnings. For a borrower token: "This position can become worthless if the collateral's price falls or the loan is not repaid in time. Watching it is the holder's duty." For a lender token: "If the borrower does not repay, you are paid from the collateral, which may not cover what is owed."
 4. **What a plain transfer does and does not do,** stated on that page: it splits no interest (the new holder receives everything that later arrives, so the price should include interest already earned); it runs no solvency check on the loan; seller claims recorded by earlier platform sales are paid before the holder; the fee-discount standing is the lower of the two.
-5. **Standing permissions lapse on transfer.** Anything the former holder set that lets someone else act, or lets the loan change by itself, stops when the token moves: keeper mandates, renewal and refinance limits, auto-list settings, alert subscriptions. The record's transfer count is the test, as it is for routes: a permission notes the count when it is given and is honoured only while the count is unchanged. The new holder starts with nothing switched on. (Keeper mandates: #3353. This design makes it the rule for every such setting and adds the tests.)
+5. **Standing permissions lapse on transfer.** Anything the former holder set that lets someone else act, or lets the loan change by itself, stops when the token moves: keeper mandates, renewal and refinance limits, auto-list settings, alert subscriptions. The test is a **holder epoch** kept per loan side, which only rises: it advances on every transfer of that side's token (through the record's transfer check) and on every platform step that hands the side to a new token (a lender sale's migration, a takeover, a borrower hand-over), since a new token's own transfer count starts again at zero and so cannot be the test alone. A permission notes the epoch when it is given and is honoured only while the epoch is unchanged. A side that goes away and comes back, by any route, has a higher epoch, so nothing revives. The new holder starts with nothing switched on. (Keeper mandates: #3353. This design makes it the rule for every such setting and adds the tests.)
 6. **The backing follows the token.** The borrower's collateral, or the lender's parked proceeds, consolidate to the new holder's own vault, still under the loan's lien, as the spec already requires.
 7. **A token held by a contract that cannot act** (an outside marketplace's or lending platform's custody) loses nothing: payouts wait in the position as claims and collateral stays under its lien until a holder who can act claims. The page says that nobody watches a borrower position's health while it sits there.
 
@@ -120,11 +123,11 @@ Not built now. It stacks one loan's risk on another, and it should follow a work
 | Where | Change |
 | --- | --- |
 | Asset admission | Refuse the position record's tokens (Part A). |
-| Lender intent | The "buys existing loans" consent and the premium cap. |
-| Direct sale | Accept a slot as the buyer; price rule in one library shared with the preview; both directions. |
+| Lender intent | The "buys existing loans" consent. |
+| Direct sale | Accept a slot as the buyer; price rule in one library shared with the preview; par or below. |
 | Sale-exit verdict | Covers the slot route. |
 | New view facet | `positionWorth` and its refusal list. |
-| Permissions | Every standing setting notes the transfer count and lapses when it changes. |
+| Permissions | A holder epoch per loan side, advanced on transfer and on migration; every standing setting notes it and lapses when it changes. |
 | Metadata | Figures of section 6. |
 | Keeper | A sale pass under mandate, shipped disarmed; cancels of moved routes already exist. |
 | Indexer and app | For-sale book, the price language on every sale surface, the check page, lapse notices to the new and the former holder. |
@@ -135,10 +138,10 @@ Design for a fresh deploy. Check facet sizes with the deploy-sanity suite; `posi
 ## 11. Tests
 
 1. A position token is refused as collateral, lending asset, rental asset and deposit, with the named error; one sent directly backs nothing and can be withdrawn.
-2. Sale to a slot: the as-new test each way; the price rule at par, below and above; the premium cap; the seller's floor, held ceiling and deadline; price measured on arrival; the seller claim paid first from the next interest; exposure taken; the borrower's terms unchanged; every refusal (past due, fallback, cooldown, something held, another route open, the borrower's own slot, full-term interest).
+2. Sale to a slot: the as-new test each way; the price rule at par and below, with the slot's return at the price never under its minimum; a price above par refused; an early repayment straight after a sale never leaves the buyer with less than was paid; the seller's floor, held ceiling and deadline; price measured on arrival; the seller claim paid first from the next interest; exposure taken; the borrower's terms unchanged; every refusal (past due, fallback, cooldown, something held, another route open, the borrower's own slot, full-term interest).
 3. The preview and the settlement use one computation: a quote and its fill agree to the unit.
 4. `positionWorth` equals what a claim, a repayment and a forced-sale preview would pay at that block, for both sides and every status; an unknown figure is reported as unknown.
-5. Every standing permission stops at a transfer, including a transfer away and back.
+5. Every standing permission stops at a plain transfer, at a platform sale, takeover or hand-over that mints a new token, and stays stopped when the same holder buys the position back by any route.
 6. A transfer to a contract that cannot act loses nothing; a later holder claims everything.
 7. A keeper under mandate cannot sell below the holder's floor.
 
@@ -161,7 +164,6 @@ Design for a fresh deploy. Check facet sizes with the deploy-sanity suite; `posi
 
 ## 14. Open items for the builder to raise, not decide silently
 
-- Whether the price rule's discount rate should be the slot's minimum rate or the loan's rate; the design says the slot's, since the buyer's alternative is a new loan at that rate.
-- Which existing per-loan settings are keyed by loan and not by holder today, and so need the transfer-count note.
-- Whether the sale fee rule needs a statement for a sale above par.
+- Which existing per-loan settings are keyed by loan and not by holder today, and so need the holder-epoch note; and whether routes (listings, offsets) should move from the transfer count to the same epoch.
+- For a listing sold above par by hand, the review must state that an early repayment loses the premium.
 - How a floating loan's price is stated: this design gives the margin over the reference and prices only the margin difference.
