@@ -107,7 +107,7 @@ The treasury is the `TREASURY` endpoint fixed into the vault code; there is no D
 2. Follow the procedure above: `registerVersion`, `proposeCurrentVersion`, wait `MIN_CODE_DELAY` (7 days), `executeCurrentVersion`.
 3. Verify `getTreasury()` returns the new address.
 
-The emergency route does not wait. While the Diamond is paused, the guardian's `guardianRevokeVersion(currentId, successorId)` revokes the current version and makes an already-registered successor current at once, and with it that successor's `TREASURY`. The guardian cannot register code, so it can only pick from versions the owner registered. Treat every registered, unrevoked version as a treasury that can become current immediately: check its `TREASURY()` when it is registered, and revoke any version whose treasury you would not accept.
+The emergency route does not wait. While the Diamond is paused, the guardian's `guardianRevokeVersion(currentId, successorId)` revokes the current version and makes an already-registered successor current at once, and with it that successor's `TREASURY`. The guardian cannot register code, so it can only pick from versions the owner registered, and only from those registered at least `MIN_CODE_DELAY` earlier (#3436; `versionUsableAt(id)` gives the time). A fix registered during an incident therefore waits seven days by either route, so keep a known-good earlier version registered. Treat every registered, unrevoked version as a treasury that can become current immediately: check its `TREASURY()` when it is registered, and revoke any version whose treasury you would not accept.
 
 Consequences to plan for:
 - Fees the Diamond moves itself (a payer's wallet pull, a share the Diamond already holds) go to the new treasury from the execution on.

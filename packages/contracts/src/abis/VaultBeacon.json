@@ -711,6 +711,25 @@
   },
   {
     "type": "function",
+    "name": "versionUsableAt",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "voidPending",
     "inputs": [
       {
@@ -1344,6 +1363,22 @@
     "inputs": [
       {
         "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VersionTooNew",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "usableAt",
         "type": "uint256",
         "internalType": "uint256"
       }
