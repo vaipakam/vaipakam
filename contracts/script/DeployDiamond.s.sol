@@ -2276,7 +2276,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         s[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        s[9] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
         // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
         s[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
         s[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
@@ -2286,9 +2286,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze
         // hosts (RepayPeriodicFacet + RepayFacet servicing paths, EIP-170).
-        s[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        s[14] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        s[15] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        s[16] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
         // #1132 (S10 central enforcement) — terminal-transition + both-holder
         // frozen-claimant register host (hosted here, not a separate facet, so it
         // is cut into every diamond that already cuts this mutate host).
@@ -2329,7 +2329,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -2351,6 +2351,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #625 WI-2a / WI-2c — the keeper discovery feeds, moved off MetricsFacet (#3618).
         s[16] = LenderIntentFacet.getActiveLenderIntents.selector;
         s[17] = LenderIntentFacet.getRollableIntentLoans.selector;
+        // #3629 — re-commit an open intent loan's held payments.
+        s[18] = LenderIntentFacet.recommitHeldToIntent.selector;
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -2715,7 +2717,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](13);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -2728,6 +2730,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
         s[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
         s[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        // #3629 — the mid-loan claims of held payments.
+        s[11] = ClaimFacet.claimHeldForLender.selector;
+        s[12] = ClaimFacet.claimHeldForBorrower.selector;
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {

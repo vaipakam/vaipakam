@@ -180,11 +180,19 @@ library LibMetricsTypes {
         // #3626 — the slot the loan was filled from; the roll returns to it.
         uint8 slot;
         uint256 amount;
+        // #3629 — true for an OPEN loan with payments held for the position
+        // (a `recommitHeldToIntent` candidate); false for a fully repaid loan
+        // (a `rollIntentLoan` candidate).
+        bool open;
+        // #3629 — what is held for the lender position now.
+        uint256 held;
     }
 
     function toRollableIntentLoan(
         uint256 loanId,
-        LibVaipakam.IntentOrigin memory io
+        LibVaipakam.IntentOrigin memory io,
+        bool open,
+        uint256 held
     ) internal pure returns (RollableIntentLoan memory r) {
         r = RollableIntentLoan({
             loanId: loanId,
@@ -192,7 +200,9 @@ library LibMetricsTypes {
             lendingAsset: io.lendingAsset,
             collateralAsset: io.collateralAsset,
             slot: io.slot,
-            amount: io.amount
+            amount: io.amount,
+            open: open,
+            held: held
         });
     }
 

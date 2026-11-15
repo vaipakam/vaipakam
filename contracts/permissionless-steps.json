@@ -123,6 +123,12 @@
       "class": "user",
       "why": "the lender's own standing intent"
     },
+    "LenderIntentFacet.recommitHeldToIntent(uint256)": {
+      "class": "keeper",
+      "pass": "matcher",
+      "flag": "HELD_RECOMMIT_ENABLED",
+      "evidence": "apps/keeper/src/matcher.ts"
+    },
     "LenderIntentFacet.rollIntentLoan(uint256)": {
       "class": "keeper",
       "pass": "matcher",

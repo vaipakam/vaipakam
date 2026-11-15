@@ -15,6 +15,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
@@ -470,14 +471,11 @@ contract LenderIntentLendUntilTest is SetupTest {
     ///      vault, nothing re-committed) and leaves exposure untouched; after
     ///      the final repayment the roll re-commits only what the lender claim
     ///      holds, and exposure drops by the original fill exactly once.
+    /// @dev #3629 — a partial repayment is held for the lender position in the
+    ///      owner's vault (never paid to a wallet), and the roll at full
+    ///      repayment re-commits the final claim plus everything still held.
     function test_partialRepay_admittedForOptedInProRata() public {
-        address b = _newBorrower("b-partial");
-        uint256 cp = _postBorrower(b, PRINCIPAL, 30, false, true);
-        _setIntent(0, true);
-        _fundIntent(PRINCIPAL);
-        uint256 loanId = _fill(cp, PRINCIPAL);
-        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan allows partial repay");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure out");
+        (uint256 loanId, address b) = _proRataLoan("b-partial");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
         uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
@@ -485,9 +483,11 @@ contract LenderIntentLendUntilTest is SetupTest {
         uint256 capitalBefore = _intentCapital();
         vm.prank(b);
         RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
-        assertGt(ERC20(mockERC20).balanceOf(lender) - walletBefore, 400 ether, "the slice and its interest paid to the holder");
-        assertEq(_vaultHolding(lender), vaultBefore, "nothing lands in the vault");
-        assertEq(_intentCapital(), capitalBefore, "nothing re-committed");
+        uint256 held = _lenderHeld(loanId);
+        assertGt(held, 400 ether, "the slice and its interest are held for the position");
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing paid to the wallet");
+        assertEq(_vaultHolding(lender) - vaultBefore, held, "held in the owner's vault");
+        assertEq(_intentCapital(), capitalBefore, "nothing re-committed yet");
         assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
@@ -499,8 +499,81 @@ contract LenderIntentLendUntilTest is SetupTest {
 
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
-        assertEq(_intentCapital() - capitalBefore, owed, "the roll re-commits only the claim");
+        assertEq(_intentCapital() - capitalBefore, owed + held, "the roll re-commits the claim and the held part");
+        assertEq(_lenderHeld(loanId), 0, "nothing left held");
         assertEq(_livePrincipal(), 0, "exposure released by the original fill, once");
+    }
+
+    /// @dev #3629 — the held part goes back behind the intent while the loan
+    ///      runs; the loan stays open and its exposure is unchanged.
+    function test_recommitHeldToIntent_whileOpen() public {
+        (uint256 loanId, address b) = _proRataLoan("b-recommit");
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
+        uint256 held = _lenderHeld(loanId);
+        uint256 capitalBefore = _intentCapital();
+        (LibMetricsTypes.RollableIntentLoan[] memory rows,) =
+            LenderIntentFacet(address(diamond)).getRollableIntentLoans(0, 50);
+        assertEq(rows.length, 1, "the open loan with a held payment is a candidate");
+        assertTrue(rows[0].open, "marked open");
+        assertEq(rows[0].held, held, "with what is held");
+
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+        assertEq(_intentCapital() - capitalBefore, held, "the held part is intent capital again");
+        assertEq(_lenderHeld(loanId), 0, "nothing left held");
+        assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint256(LibVaipakam.LoanStatus.Active),
+            "the loan runs on"
+        );
+
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentNothingToRoll.selector);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+    }
+
+    /// @dev #3629 — a stranger cannot re-commit the owner's held payments, and
+    ///      a cancelled intent sends them to the holder's claim instead.
+    function test_recommitHeldToIntent_refusals() public {
+        (uint256 loanId, address b) = _proRataLoan("b-recommit-refused");
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
+
+        vm.prank(b);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).cancelLenderIntent(mockERC20, mockCollateralERC20, 0);
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+
+        uint256 held = _lenderHeld(loanId);
+        uint256 vaultBefore = _vaultHolding(lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        assertEq(_lenderHeld(loanId), 0, "claimed instead");
+        assertEq(_vaultHolding(lender), vaultBefore, "the held funds were already in the holder's vault");
+        assertGt(held, 0);
+    }
+
+    function _proRataLoan(string memory name) internal returns (uint256 loanId, address b) {
+        b = _newBorrower(name);
+        uint256 cp = _postBorrower(b, PRINCIPAL, 30, false, true);
+        _setIntent(0, true);
+        _fundIntent(PRINCIPAL);
+        loanId = _fill(cp, PRINCIPAL);
+        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan allows partial repay");
+        assertEq(_livePrincipal(), PRINCIPAL, "exposure out");
+    }
+
+    function _lenderHeld(uint256 loanId) internal view returns (uint256 amount) {
+        (, , , , , , amount, ) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
     }
 
     // ─── #3618 follow-up — the lend-until time bounds an extension ──────

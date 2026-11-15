@@ -260,7 +260,7 @@ library FacetSelectors {
     ///         half-upgrade hazard.
     ///
     ///         Its SURFACE changed twice: #1503 item 28 retired the 3-argument
-    ///         `freezeOrPayActiveLenderResident` (the curated refresh still
+    ///         `holdActiveLenderResident` (the curated refresh still
     ///         Removes it wherever routed), and #1209 gave the resident and
     ///         payer entries the payout's gross and net interest. The curated
     ///         scripts refuse a Diamond from before #1209
@@ -273,10 +273,10 @@ library FacetSelectors {
         s[2] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         s[3] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
         s[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[5] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[6] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
-        s[7] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[8] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        s[5] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        s[6] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
+        s[7] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        s[8] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
         s[9] = EncumbranceMutateFacet.getTierExclusion.selector;
         s[10] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
         s[11] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -296,12 +296,12 @@ library FacetSelectors {
     }
 
     /// @notice #1503 item 28 — the RETIRED 3-argument
-    ///         `freezeOrPayActiveLenderResident` selector, for the Remove leg of
+    ///         `holdActiveLenderResident` selector, for the Remove leg of
     ///         a curated refresh against a pre-item-28 Diamond.
     /// @dev    Computed from the signature rather than referenced through the
     ///         type, because the 3-argument overload no longer exists in source.
     function retiredResidentPayoutSelector() internal pure returns (bytes4) {
-        return bytes4(keccak256("freezeOrPayActiveLenderResident(uint256,address,uint256)"));
+        return bytes4(keccak256("holdActiveLenderResident(uint256,address,uint256)"));
     }
 
     /// @notice #1980 — the RETIRED `ClaimFacet.getBorrowerLifRebate(uint256)`
@@ -610,7 +610,7 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (2).
     ///
     /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
     ///         debt, sell it, and split the proceeds lender first.
@@ -627,12 +627,11 @@ library FacetSelectors {
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = ForcedSaleFacet.sellToNeed.selector;
-        s[1] = ForcedSaleFacet.payBorrowerWallet.selector;
-        s[2] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        s[1] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
         // #3538 — the sale's own frame while the fallback is not open.
-        s[3] = ForcedSaleFacet.sellOrRefuse.selector;
+        s[2] = ForcedSaleFacet.sellOrRefuse.selector;
     }
 
     /// @notice Full external selector surface of {ForcedSalePreviewFacet} (2).

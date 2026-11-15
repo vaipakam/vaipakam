@@ -14,6 +14,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
+import {LibHeldForLender} from "../libraries/LibHeldForLender.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -116,6 +117,21 @@ contract ClaimFacet is
     /// @param amount   The surplus amount paid out.
     /// @custom:event-category state-change/claim-mutation
     event BorrowerSurplusClaimed(
+        uint256 indexed loanId,
+        address indexed claimant,
+        address asset,
+        uint256 amount
+    );
+
+    /// @notice #3629 — emitted when the lender-position holder takes what is
+    ///         held for the position on an OPEN loan ({claimHeldForLender}).
+    ///         The loan stays open; the held ledger is zero afterwards.
+    /// @param loanId   The open loan.
+    /// @param claimant The current lender-position holder (paid into its vault).
+    /// @param asset    The asset paid (the principal asset, or a rental's prepay asset).
+    /// @param amount   What reached the holder's vault.
+    /// @custom:event-category state-change/claim-mutation
+    event HeldForLenderClaimed(
         uint256 indexed loanId,
         address indexed claimant,
         address asset,
@@ -264,6 +280,67 @@ contract ClaimFacet is
             });
         }
         _claimAsLenderImpl(loanId, copied);
+    }
+
+    // ─── #3629 — mid-loan claims of held payments ────────────────────────────
+
+    /**
+     * @notice Takes what is held for the lender position of an OPEN loan: every
+     *         payment the loan made while it stayed open (a partial repayment,
+     *         a rental day, a periodic forced sale, a partial liquidation) is
+     *         held for the position and paid only through a claim (#3629).
+     * @dev    Caller must hold the lender-position NFT. Tier-1 screened; a
+     *         holder the sanctions registry holds as flagged is stamped as the
+     *         side's fail-closed claimant first, so it cannot take the funds
+     *         during an oracle outage. Pays into the holder's vault through the
+     *         vault outflow policy (a protected account's delay applies there).
+     *         The loan stays open; the final claim pays whatever is held later.
+     * @param loanId The open loan.
+     */
+    function claimHeldForLender(uint256 loanId) external nonReentrant whenNotPaused {
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoanStatus();
+        LibAuth.requireLenderNftOwner(loan);
+        _stampFrozenClaimants(loanId);
+        (uint256 amount, address asset) = LibHeldForLender.take(s, loanId, loan);
+        if (amount == 0) revert NothingToClaim();
+        LibSanctionedLock.beginMoveOut(s, loan.lender);
+        uint256 paid = LibVaultOutflow.toPositionHolder(
+            loan.lender, LibVaultOutflow.ERC20, asset, 0, amount, loanId, loan.lenderTokenId, OutflowReason.CLAIM
+        );
+        LibSanctionedLock.endMoveOut(s);
+        emit HeldForLenderClaimed(loanId, msg.sender, asset, paid);
+    }
+
+    /**
+     * @notice Takes what a forced sale or a collateral sale held for the
+     *         borrower position of an OPEN loan (the sale's extra over what it
+     *         had to cover, #3629). The terminal claim pays it too if left.
+     * @dev    Caller must hold the borrower-position NFT; screened the same way
+     *         as {claimHeldForLender}. Emits
+     *         {LibCloseoutFreeze.BorrowerHeldExtraPaid}.
+     * @param loanId The open loan.
+     */
+    function claimHeldForBorrower(uint256 loanId) external nonReentrant whenNotPaused {
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoanStatus();
+        LibAuth.requireBorrowerNftOwner(loan);
+        _stampFrozenClaimants(loanId);
+        if (LibCloseoutFreeze.payHeldBorrowerExtra(s, loanId, loan, msg.sender) == 0) revert NothingToClaim();
+    }
+
+    /// @dev Records each side's holder as its fail-closed claimant when the
+    ///      sanctions registry holds it as flagged (the registry-aware rule is
+    ///      hosted on {EncumbranceMutateFacet}; too heavy to inline here).
+    function _stampFrozenClaimants(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector, loanId),
+            bytes4(0)
+        );
     }
 
     // ─── #399 backstop v0 Role B — liquidator-of-last-resort ──────────────────
@@ -806,13 +883,7 @@ contract ClaimFacet is
         // inside this call and create the OTHER side's deferred claim too, so
         // registering both here at claim time covers them without a per-distribution
         // host call (which overflowed EIP-170).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
+        _stampFrozenClaimants(loanId);
         {
             address frozen = LibSanctionedLock.frozenClaimant(s, loanId, true);
             if (frozen != address(0)) {
@@ -1223,13 +1294,7 @@ contract ClaimFacet is
         // Routed through the cross-facet host (EIP-170-tight facet). Stamps BOTH
         // holders (design #1127 Class A) so the lender side of a claim-time
         // distribution is registered here too.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
+        _stampFrozenClaimants(loanId);
         {
             address frozen = LibSanctionedLock.frozenClaimant(s, loanId, false);
             if (frozen != address(0)) {

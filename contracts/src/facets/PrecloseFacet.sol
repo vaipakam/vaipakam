@@ -964,9 +964,9 @@ contract PrecloseFacet is
             if (rentDue > 0) {
                 // Treasury takes its cut only on the accrued (elapsed) rent,
                 // matching the ERC-20 path (the shortfall goes fully to the
-                // lender). Lender share → current lender-position holder from the
-                // prepay vault (fail-closed park if the holder is flagged),
-                // mirroring the daily deduction path.
+                // lender). The lender share moves from the prepay vault into
+                // the stored lender's vault, held for the lender position's
+                // claim (#3629), mirroring the daily deduction path.
                 (uint256 rentTreasury, uint256 rentLenderOnAccrued) =
                     LibEntitlement.splitTreasury(loan, accruedRent);
 
@@ -976,9 +976,8 @@ contract PrecloseFacet is
                 // which the quote path now prices against (Codex #1389 P2).
                 //
                 // Keyed on the CURRENT lender-NFT holder, NOT `loan.lender`: this
-                // leg deliberately forwards the catch-up rent to the current
-                // position holder (`freezeOrPayActiveLenderFromVault` resolves the
-                // holder), and rentals are excluded from the eager consolidation,
+                // catch-up rent is held for the current position holder's claim
+                // (#3629), and rentals are excluded from the eager consolidation,
                 // so the stored `loan.lender` can be stale here. Resolving the
                 // discount — or a VPFI vault debit — against a party who is not
                 // receiving the proceeds would charge the wrong account.
@@ -999,7 +998,7 @@ contract PrecloseFacet is
                 uint256 lenderTotal = (rentDue - accruedRent) + rentLenderOnAccrued;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                        EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                         loanId,
                         loan.borrower,
                         loan.prepayAsset,

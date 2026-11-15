@@ -1020,47 +1020,28 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // for terminal events (the lender NFT is still Active, the
         // claim flow runs at proper close / full liquidation / default).
         //
-        // #1383 — and BECAUSE no claim is written, the recipient here is the
-        // final word: there is no `ownerOf`-gated claim behind it to correct a
-        // stale address. This paid `loan.lender`, which the skip-not-block
-        // consolidation can leave pointing at the PREVIOUS lender — handing them
-        // the principal and interest outright, with nothing for the current
-        // holder to claim against. Every other recovery entry pairs its deposit
-        // with a `lenderClaims` write and is saved by that gate; this one is
-        // not, so it must pay the holder directly. This is misrouted principal,
-        // not a fee discount: it stands whatever is decided about whether
-        // recovered interest earns the Full bump.
+        // #3629 — the lender's part is held for the lender position: open
+        // seller claims first, then into the STORED `loan.lender`'s vault on
+        // the loan's held ledger, reserved, for whoever holds the lender token
+        // to claim (`ClaimFacet.claimHeldForLender`, or the final claim). The
+        // held balance follows the position, so a stale `loan.lender` (the
+        // skip-not-block consolidation, #1383) only names the custody vault and
+        // can no longer take the principal and interest for itself. Hosted on
+        // `EncumbranceMutateFacet` for size.
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
-        // #1383 — pay-or-freeze through the #998 S10 Class B host rather than a
-        // raw locked deposit. Same shape as `RepayPeriodicFacet`'s
-        // auto-liquidation leg: an ACTIVE loan, funds already in the Diamond, no
-        // claim record behind it. The host resolves `ownerOf` itself, pays a
-        // clean holder directly, and FREEZES fail-closed (park into the stored
-        // lender's vault + `heldForLender` + encumber + marker) for a
-        // registry-flagged one.
-        //
-        // A raw `depositLocked(ownerOf(...))` was the first attempt and is
-        // WRONG here: `getOrCreateUserVault` refuses to mint a vault for a
-        // flagged wallet (`SanctionedRecipientHasNoVault`), so a flagged holder
-        // who never opened one would revert the liquidation outright — blocking
-        // a close-out, which is exactly what Tier-2 handling exists to avoid.
-        // Paying the stale `loan.lender` instead was the original bug.
-        //
         // #2440 — a partial liquidation leaves the loan ACTIVE and books this
         // payout as received in full: the interest settled from it, the
         // principal it retires, and the accrual restart below. So, like the
         // rest of this all-or-nothing call (see the function's NatSpec), it is
-        // refused unless the lender-position holder (or the frozen holder's
-        // vault) received all of `lenderProceeds`. (The host itself refuses a
-        // short arrival at the holder's wallet; the check here covers the
-        // frozen holder's vault.) The close-out that acts on
-        // what arrived is the FULL liquidation, which stays open: a keeper
-        // turned away here calls {triggerLiquidation}.
+        // refused unless the sellers and the custody vault received all of
+        // `lenderProceeds`. The close-out that acts on what arrived is the
+        // FULL liquidation, which stays open: a keeper turned away here calls
+        // {triggerLiquidation}.
         if (lenderProceeds > 0) {
             LibDelivery.requireFull(loan.principalAsset, lenderProceeds, abi.decode(
                 LibFacet.crossFacetCallReturn(
                     abi.encodeWithSelector(
-                        EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                        EncumbranceMutateFacet.holdActiveLenderResident.selector,
                         loanId,
                         loan.principalAsset,
                         lenderProceeds,

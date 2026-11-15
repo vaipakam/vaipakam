@@ -541,7 +541,6 @@ describe('collateral sale proceeds (#2876)', () => {
         treasuryAmount: '20',
         borrower: BORROWER,
         borrowerAmount: '280',
-        borrowerHeld: false,
         ...args,
       },
       ...p,
@@ -560,9 +559,8 @@ describe('collateral sale proceeds (#2876)', () => {
     ]);
   });
 
-  it('the borrower sees their remainder, paid or held as the event says', () => {
-    expect(saleProceedsShares(rowOf(split({})), BORROWER)).toMatchObject([{ role: 'borrower', held: false }]);
-    expect(saleProceedsShares(rowOf(split({ borrowerHeld: true })), BORROWER)).toMatchObject([
+  it('the borrower sees their remainder, held for their claim (#3629)', () => {
+    expect(saleProceedsShares(rowOf(split({})), BORROWER)).toMatchObject([
       { role: 'borrower', held: true, leg: { amount: 280n } },
     ]);
   });
@@ -572,6 +570,5 @@ describe('collateral sale proceeds (#2876)', () => {
     expect(saleProceedsShares(rowOf(split({})), undefined)).toEqual([]);
     expect(saleProceedsShares(rowOf(split({ borrowerAmount: '0' })), BORROWER)).toEqual([]);
     expect(saleProceedsShares(rowOf(split({}, { assetType: null, amount: null })), LENDER)).toEqual([]);
-    expect(saleProceedsShares(rowOf(split({ borrowerHeld: undefined })), BORROWER)).toEqual([]);
   });
 });

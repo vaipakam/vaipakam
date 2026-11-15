@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -104,6 +105,11 @@ contract LenderEntryDiscountTest is SetupTest {
         vm.stopPrank();
     }
 
+    /// @dev #3629 — what is held for the lender position of `loanId`.
+    function _held(uint256 loanId) internal view returns (uint256 held) {
+        (, , , , , , held, ) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
+    }
+
     function _skip(uint256 dt) internal {
         vm.warp(vm.getBlockTimestamp() + dt);
     }
@@ -192,10 +198,11 @@ contract LenderEntryDiscountTest is SetupTest {
         assertEq(v.holdBps, 0, "so the lower of the two is none");
 
         uint256 gross = _accrual(PRINCIPAL, 10 days);
-        uint256 before = ERC20(mockERC20).balanceOf(lender);
+        uint256 before = _held(loanId);
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
-        uint256 interest = ERC20(mockERC20).balanceOf(lender) - before - PRINCIPAL / 2;
+        // #3629 — the partial repayment is held for the position.
+        uint256 interest = _held(loanId) - before - PRINCIPAL / 2;
         assertApproxEqAbs(interest, _net(loanId, gross), 2, "the lender pays the loan's whole fee");
     }
 
@@ -217,10 +224,11 @@ contract LenderEntryDiscountTest is SetupTest {
         assertEq(v.holdBps, 0, "and the lower figure applies");
 
         uint256 gross = _accrual(PRINCIPAL, 1 days);
-        uint256 before = ERC20(mockERC20).balanceOf(lender);
+        uint256 before = _held(loanId);
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
-        uint256 interest = ERC20(mockERC20).balanceOf(lender) - before - PRINCIPAL / 2;
+        // #3629 — the partial repayment is held for the position.
+        uint256 interest = _held(loanId) - before - PRINCIPAL / 2;
         assertApproxEqAbs(interest, _net(loanId, gross), 2, "the lender pays the loan's whole fee");
     }
 
@@ -236,10 +244,11 @@ contract LenderEntryDiscountTest is SetupTest {
         assertEq(v.holdBps, v.entryBps < v.nowBps ? v.entryBps : v.nowBps, "as the lower of the two");
 
         uint256 gross = _accrual(PRINCIPAL, 10 days);
-        uint256 before = ERC20(mockERC20).balanceOf(lender);
+        uint256 before = _held(loanId);
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
-        uint256 interest = ERC20(mockERC20).balanceOf(lender) - before - PRINCIPAL / 2;
+        // #3629 — the partial repayment is held for the position.
+        uint256 interest = _held(loanId) - before - PRINCIPAL / 2;
         assertGt(interest, _net(loanId, gross) + 2, "the discount reaches the lender");
     }
 

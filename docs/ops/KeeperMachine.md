@@ -493,7 +493,8 @@ journalctl -u vaipakam-keeper -f
    not armed returns at once, and its log line names the flag that held it.
 3. **Per-pass flags** are each the owner's decision: `GRACE_DEFAULT_ENABLED`
    (`graceDefault`), `PERIODIC_SETTLE_ENABLED` (`periodicSettle`, every 15
-   minutes from :05), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit`),
+   minutes from :05), `HELD_RECOMMIT_ENABLED` (the matcher's held-payment
+   re-commit step, #3629), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit`),
    `REWARD_REMIT_ACK_ENABLED` (`remitAck`; its own flag since #3100, so
    disarming remits for the pre-deploy drain leaves the acks running), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
    `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and

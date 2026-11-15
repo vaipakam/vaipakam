@@ -52,6 +52,8 @@ const DELIBERATELY_NOT_HANDLED = {
     '#1566 slice 3 — custody provenance for an intent fill: the pre-hook took the committed lot out of the borrower vault inside the fill, and the same call carries it to the taker. The loan closes through SwapToRepayIntentFilled in that transaction, which the indexer already handles, so no loans-row field changes; surfacing the pull itself is deferred',
   FallbackCustodyMoved:
     '#1566 slice 2 — custody provenance for liquidation-fallback collateral held in the borrower vault under a lien: one event per row move (entry, each settlement slice, retry pull and restore, match legs, return to the pledge) with its amount and the amount still held. Loan status still derives from the status events (LoanFallbackPending, LoanCuredFromFallback and the terminal events), so no loans-row field changes; indexer surfacing of the custody trail is deferred',
+  HeldRecommittedToIntent:
+    '#3629 — held payments of an OPEN intent loan moved back behind the owner\'s standing intent. The loan stays Active with the same principal and collateral, so no loans-row field changes; the intent\'s capital is read live (getLenderIntentCapital), and the event is surfaced through activity_events',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
   OfferPriceGuardSet:
