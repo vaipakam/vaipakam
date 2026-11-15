@@ -55,9 +55,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  *      governance has configured (USD by post-deploy default).
  */
 contract MetricsFacet {
-    using EnumerableSet for EnumerableSet.Bytes32Set;
     using EnumerableSet for EnumerableSet.AddressSet; // #1832 lifetime lending assets
-    using EnumerableSet for EnumerableSet.UintSet; // #625 WI-2c intent-loan registry
 
     uint256 private constant NUMERAIRE_SCALE = 1e18;
 
@@ -1105,100 +1103,6 @@ contract MetricsFacet {
         offers = new LibMetricsTypes.OfferSummary[](size);
         for (uint256 i = 0; i < size; i++) {
             offers[i] = LibMetricsTypes.toOfferSummary(s.offers[src[offset + i]]);
-        }
-    }
-
-    /// @notice #625 WI-2a — paginated ACTIVE lender intents: the discovery source the
-    ///         keeper's intent-fill pass pages each tick instead of indexing
-    ///         `LenderIntentSet`/`Cancelled` events. Pages the `activeIntentKeys`
-    ///         enumerable set (cancelled intents drop out), resolving each to a lean
-    ///         {LibMetricsTypes.LenderIntentSummary} — the bounds + `requiresKeeperAuth`
-    ///         (so the keeper skips an intent it isn't delegated to fill) + the two sizing
-    ///         figures: `livePrincipal` (exposure already out) and `availableCapital` (the
-    ///         un-lent, liened pool a fill draws from; a fill exceeding it reverts
-    ///         `IntentCapitalInsufficient`).
-    /// @dev    The set is swap-pop unstable across cancellations, so page over a single
-    ///         block's snapshot. O(limit) reads.
-    /// @return intents Page of active-intent summaries.
-    /// @return total   Count of active intents at this block.
-    function getActiveLenderIntents(uint256 offset, uint256 limit)
-        external
-        view
-        returns (
-            LibMetricsTypes.LenderIntentSummary[] memory intents,
-            uint256 total
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        total = s.activeIntentKeys.length();
-        if (offset >= total) {
-            return (new LibMetricsTypes.LenderIntentSummary[](0), total);
-        }
-        uint256 endExcl = offset + limit;
-        if (endExcl > total) endExcl = total;
-        uint256 size = endExcl - offset;
-        intents = new LibMetricsTypes.LenderIntentSummary[](size);
-        for (uint256 i = 0; i < size; i++) {
-            LibVaipakam.IntentKey memory key =
-                s.intentKeyTuple[s.activeIntentKeys.at(offset + i)];
-            intents[i] = LibMetricsTypes.toLenderIntentSummary(
-                key,
-                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset],
-                s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][
-                    key.collateralAsset
-                ],
-                s.lenderIntentCapital[key.owner][key.lendingAsset][
-                    key.collateralAsset
-                ]
-            );
-        }
-    }
-
-    /// @notice #625 WI-2c — paginated view of fully-repaid intent-originated
-    ///         loans a keeper can AUTO-ROLL (`LenderIntentFacet.rollIntentLoan`).
-    ///         Pages the `activeIntentLoans` registry (every live intent loan)
-    ///         and returns only those at `LoanStatus.Repaid` — the roll
-    ///         candidates — keyed off each loan's `intentOrigin` (so a sold
-    ///         lender position is still surfaced; `rollIntentLoan` then rejects
-    ///         it, and the keeper keys AUTO_ROLL auth off `owner`).
-    /// @param  offset / limit  Window over the registry. `total` is the FULL
-    ///         registry size (Active + Repaid); the keeper pages until
-    ///         `offset >= total`, accumulating the Repaid rows each page yields.
-    /// @return loans  The Repaid intent loans within `[offset, offset+limit)`.
-    /// @return total  The registry size, for pagination.
-    function getRollableIntentLoans(uint256 offset, uint256 limit)
-        external
-        view
-        returns (
-            LibMetricsTypes.RollableIntentLoan[] memory loans,
-            uint256 total
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        total = s.activeIntentLoans.length();
-        if (offset >= total) {
-            return (new LibMetricsTypes.RollableIntentLoan[](0), total);
-        }
-        uint256 endExcl = offset + limit;
-        if (endExcl > total) endExcl = total;
-        uint256 window = endExcl - offset;
-        // Filter to Repaid (the roll candidates); over-allocate to the window,
-        // then truncate to the matched count.
-        LibMetricsTypes.RollableIntentLoan[] memory buf =
-            new LibMetricsTypes.RollableIntentLoan[](window);
-        uint256 n = 0;
-        for (uint256 i = 0; i < window; i++) {
-            uint256 loanId = s.activeIntentLoans.at(offset + i);
-            if (s.loans[loanId].status == LibVaipakam.LoanStatus.Repaid) {
-                buf[n] = LibMetricsTypes.toRollableIntentLoan(
-                    loanId, s.intentOrigin[loanId]
-                );
-                n++;
-            }
-        }
-        loans = new LibMetricsTypes.RollableIntentLoan[](n);
-        for (uint256 i = 0; i < n; i++) {
-            loans[i] = buf[i];
         }
     }
 

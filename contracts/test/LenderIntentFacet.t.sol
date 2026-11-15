@@ -3,7 +3,6 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
-import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -35,17 +34,29 @@ contract LenderIntentFacetTest is SetupTest {
 
     function _set(address lendAsset, address collAsset) internal {
         vm.prank(user);
+        _setWith(
+            lendAsset, collAsset, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            MAX_DURATION_DAYS, MIN_FILL, false, true
+        );
+    }
+
+    /// @dev One call site for `setLenderIntent` with no lend-until time and no
+    ///      pro-rata opt-in, so each bounds case names only what it varies.
+    ///      The caller's `vm.prank` / `vm.expectRevert` apply to the call.
+    function _setWith(
+        address lendAsset,
+        address collAsset,
+        uint256 maxExposure,
+        uint256 minRateBps,
+        uint16 maxInitLtvBps,
+        uint32 maxDurationDays,
+        uint256 minFill,
+        bool requiresKeeperAuth,
+        bool consent
+    ) internal {
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            lendAsset,
-            collAsset,
-            MAX_EXPOSURE,
-            MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS,
-            MAX_DURATION_DAYS,
-            MIN_FILL,
-            false, // requiresKeeperAuth
-            true, // riskAndTermsConsent
-            type(uint64).max
+            lendAsset, collAsset, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays,
+            minFill, requiresKeeperAuth, 0, false, consent, type(uint64).max
         );
     }
 
@@ -64,7 +75,7 @@ contract LenderIntentFacetTest is SetupTest {
     }
 
     function _activeCount() internal view returns (uint256 total) {
-        (, total) = MetricsFacet(address(diamond)).getActiveLenderIntents(0, 100);
+        (, total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 100);
     }
 
     function test_getActiveLenderIntents_onlyFundedAreListed() public {
@@ -76,7 +87,7 @@ contract LenderIntentFacetTest is SetupTest {
         // Funding it lists it, with the bounds + sizing figures.
         _fund(mockERC20, mockCollateralERC20, 1_000 ether);
         (LibMetricsTypes.LenderIntentSummary[] memory page, uint256 total) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "funded intent listed");
         assertEq(page[0].owner, user, "owner");
         assertEq(page[0].lendingAsset, mockERC20, "lendingAsset");
@@ -140,12 +151,12 @@ contract LenderIntentFacetTest is SetupTest {
         _fund(mockCollateralERC20, mockERC20, 1_000 ether);
 
         (LibMetricsTypes.LenderIntentSummary[] memory p0, uint256 total) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 1);
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 1);
         assertEq(total, 2, "total reflects all funded-active");
         assertEq(p0.length, 1, "limit honoured");
 
         (LibMetricsTypes.LenderIntentSummary[] memory p1,) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(1, 1);
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(1, 1);
         assertEq(p1.length, 1, "second page");
         assertTrue(
             p0[0].collateralAsset != p1[0].collateralAsset,
@@ -153,7 +164,7 @@ contract LenderIntentFacetTest is SetupTest {
         );
 
         (LibMetricsTypes.LenderIntentSummary[] memory pEnd,) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(5, 10);
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(5, 10);
         assertEq(pEnd.length, 0, "offset past end is empty");
     }
 
@@ -178,10 +189,7 @@ contract LenderIntentFacetTest is SetupTest {
     function test_setLenderIntent_overwrites() public {
         _set(mockERC20, mockCollateralERC20);
         vm.prank(user);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 250 ether, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 250 ether, false, true);
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20);
         assertEq(it.maxExposure, 50_000 ether, "overwritten exposure");
@@ -216,72 +224,44 @@ contract LenderIntentFacetTest is SetupTest {
     function test_zeroAsset_reverts() public {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentZeroAddress.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            address(0), mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(address(0), mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
     }
 
     function test_zeroExposure_reverts() public {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 0, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, 0, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
     }
 
     function test_minFillAboveExposure_reverts() public {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 100 ether, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, 200 ether, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, 100 ether, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, 200 ether, false, true);
     }
 
     function test_zeroLtv_reverts() public {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            0, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, 0, MAX_DURATION_DAYS, MIN_FILL, false, true);
     }
 
     function test_ltvAbove100pct_reverts() public {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            10_001, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, 10_001, MAX_DURATION_DAYS, MIN_FILL, false, true);
     }
 
     function test_zeroDuration_reverts() public {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, 0, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, 0, MIN_FILL, false, true);
     }
 
     function test_rateAboveMax_reverts() public {
         // minRateBps above MAX_INTEREST_BPS (10_000) → unfillable; rejected.
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, 10_001,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, 10_001, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
     }
 
     function test_selfCollateralized_reverts() public {
@@ -289,11 +269,7 @@ contract LenderIntentFacetTest is SetupTest {
         // reject SelfCollateralizedOffer; rejected at registration.
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentSelfCollateralized.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
     }
 
     function test_vpfiLendingAsset_allowed() public {
@@ -303,11 +279,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(owner);
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         vm.prank(user);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
         LibVaipakam.LenderIntent memory intent =
             LenderIntentFacet(address(diamond)).getLenderIntent(
                 user, mockERC20, mockCollateralERC20
@@ -320,11 +292,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(owner);
         VPFITokenFacet(address(diamond)).setVPFIToken(mockCollateralERC20);
         vm.prank(user);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
         assertTrue(
             LenderIntentFacet(address(diamond))
                 .getLenderIntent(user, mockERC20, mockCollateralERC20).active,
@@ -336,11 +304,7 @@ contract LenderIntentFacetTest is SetupTest {
         // #393 v1-c — requiresKeeperAuth=true is now honoured (the gate ships in
         // matchIntent); registering it round-trips.
         vm.prank(user);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true, true,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true, true);
         assertTrue(
             LenderIntentFacet(address(diamond))
                 .getLenderIntent(user, mockERC20, mockCollateralERC20)
@@ -354,11 +318,7 @@ contract LenderIntentFacetTest is SetupTest {
         // offer-create).
         vm.prank(user);
         vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
-        LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, false,
-            type(uint64).max
-        );
+        _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, false);
     }
 
     // ─── 5. Kill-switch (admin-gated) ──────────────────────────────────────

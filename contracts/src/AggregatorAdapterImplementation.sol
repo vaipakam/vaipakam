@@ -31,6 +31,8 @@ interface IVaipakamIntentSurface {
         uint32 maxDurationDays,
         uint256 minFillAmount,
         bool requiresKeeperAuth,
+        uint64 lendUntil,
+        bool acceptsProRata,
         bool riskAndTermsConsent,
         uint64 validUntil
     ) external;
@@ -347,6 +349,8 @@ contract AggregatorAdapterImplementation is
             intentMaxDurationDays,
             intentMinFillAmount,
             true, // requiresKeeperAuth — only the owner (this adapter) may fill
+            0, // lendUntil — none: a protocol-run intent lends without an end date (#3618)
+            false, // acceptsProRata — full-term only, the committed-interest deal (#3619)
             true, // riskAndTermsConsent
             uint64(block.timestamp) // validUntil — in-transaction, no queue to wait in (#3412)
         );

@@ -36,7 +36,7 @@ contract LenderIntentAdmissionTest is SetupTest {
         vm.prank(user);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             lendAsset, collAsset, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
-            MAX_DURATION_DAYS, minFill, false, true,
+            MAX_DURATION_DAYS, minFill, false, 0, false, true,
             type(uint64).max
         );
     }
@@ -170,12 +170,12 @@ contract LenderIntentAdmissionTest is SetupTest {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         LenderIntentFacet(address(diamond)).fundLenderIntent(mockERC20, mockCollateralERC20, 100 ether - 1);
         vm.stopPrank();
-        (, uint256 total) = MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        (, uint256 total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 0, "under one smallest fill: not listed");
         vm.prank(user);
         LenderIntentFacet(address(diamond)).fundLenderIntent(mockERC20, mockCollateralERC20, 1);
         LibMetricsTypes.LenderIntentSummary[] memory page;
-        (page, total) = MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        (page, total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "one smallest fill funded: listed");
         assertEq(page[0].minFillAmount, 100 ether);
     }
