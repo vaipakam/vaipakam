@@ -669,24 +669,35 @@ export async function handleOfferNearest(req: Request, env: Env, offerIdRaw: str
     }
     const myMin = me.interest_rate_bps;
     const myMax = Math.max(me.interest_rate_bps, me.interest_rate_bps_max);
-    const where = `chain_id = ? AND status = 'active' AND offer_type = ?
-       AND lending_asset = ? AND collateral_asset = ?
-       AND asset_type = 0 AND collateral_asset_type = 0
-       AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-       AND lower(creator) <> lower(?)
-       AND (expires_at = 0 OR expires_at > ?)`;
+    // The two statements carry the same filter, written out in each so the
+    // schema guard prepares both against the migrated schema. The rate gap is
+    // 0 where the two ranges meet, else how far apart they sit (a range whose
+    // max reads below its min is taken as its min).
     const binds = [chainId, me.offer_type === 0 ? 1 : 0, me.lending_asset, me.collateral_asset, me.creator, now];
-    // The rate gap: 0 where the two ranges meet, else how far apart they sit
-    // (a range whose max reads below its min is taken as its min).
-    const rateGap = `MAX(0, interest_rate_bps - ?, ? - MAX(interest_rate_bps, interest_rate_bps_max))`;
     const [rows, count] = await Promise.all([
       env.DB.prepare(
-        `SELECT *, ${rateGap} AS rate_gap FROM offers WHERE ${where}
-         ORDER BY rate_gap ASC, ABS(duration_days - ?) ASC, offer_id DESC LIMIT ?`,
+        `SELECT *, MAX(0, interest_rate_bps - ?, ? - MAX(interest_rate_bps, interest_rate_bps_max)) AS rate_gap
+           FROM offers
+          WHERE chain_id = ? AND status = 'active' AND offer_type = ?
+            AND lending_asset = ? AND collateral_asset = ?
+            AND asset_type = 0 AND collateral_asset_type = 0
+            AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+            AND lower(creator) <> lower(?)
+            AND (expires_at = 0 OR expires_at > ?)
+          ORDER BY rate_gap ASC, ABS(duration_days - ?) ASC, offer_id DESC LIMIT ?`,
       )
         .bind(myMax, myMin, ...binds, me.duration_days, limit)
         .all<OfferRow & { rate_gap: number }>(),
-      env.DB.prepare(`SELECT COUNT(*) AS n FROM offers WHERE ${where}`)
+      env.DB.prepare(
+        `SELECT COUNT(*) AS n
+           FROM offers
+          WHERE chain_id = ? AND status = 'active' AND offer_type = ?
+            AND lending_asset = ? AND collateral_asset = ?
+            AND asset_type = 0 AND collateral_asset_type = 0
+            AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+            AND lower(creator) <> lower(?)
+            AND (expires_at = 0 OR expires_at > ?)`,
+      )
         .bind(...binds)
         .first<{ n: number }>(),
     ]);
