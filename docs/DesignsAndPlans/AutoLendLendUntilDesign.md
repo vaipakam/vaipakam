@@ -51,6 +51,8 @@ No fund-moving path changes. The date only refuses a fill or a roll; where a rol
 
 **Facet room (measured 2026-11-15, quick profile):** LenderIntentFacet 16,347; OfferMatchIntentFacet 22,768; RiskPreviewFacet 21,252; BackstopFacet 23,847; **MetricsFacet 24,262** (314 bytes under EIP-170). The summary struct is built in MetricsFacet, so one more field may not fit. If it does not, move the intent discovery feeds (active intents, roll candidates) to their own facet along that seam rather than trimming (standing rule: split, do not shave). Check with the deploy-sanity size test, not a clean compile.
 
+**As built (2026-11-15):** MetricsFacet came out at 24,508 bytes with the new summary fields, so the two intent discovery feeds (`getActiveLenderIntents`, `getRollableIntentLoans`) moved to `LenderIntentFacet`, which already hosts the per-owner intent list and had about 7.6 KB free, instead of a new facet. Every intent read now lives with the intent. Selectors are unchanged. The fill, the preview, the roll and the roll feed read one library (`LibIntentTerms`), so the four cannot disagree, and the roll feed skips a loan whose intent is cancelled as well as one that has ended, since the roll refuses both.
+
 **Reaches a chain by fresh deploy** (function signature, struct ABI and event all change). Join the desktop thread's contract build queue for the next fresh testnet deploy.
 
 ## 5. Off-chain changes
