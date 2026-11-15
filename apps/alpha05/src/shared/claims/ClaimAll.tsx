@@ -1,3 +1,4 @@
+import type { Log } from 'viem';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
 import { sendWrite } from '../tx/send';
@@ -43,6 +44,9 @@ import {
 import { creditedTo } from '../protection/payout';
 import { MULTICALL, readClaimAllList, readClaimAllReview } from './claimAllRead';
 import { readClaimantVault } from './claimOutcome';
+import type { WithdrawDraft } from '../vault/withdraw';
+import { ClaimWithdraw, useClaimWithdrawBusy, useClearClaimWithdraw } from './ClaimWithdraw';
+import { creditedDrafts, type ClaimMode } from './claimWithdraw';
 import { readPendingRewards, remainderAfter } from './rewards';
 
 type Hex = `0x${string}`;
@@ -109,9 +113,16 @@ export function ClaimAll({
   const diamond = chain.diamondAddress;
   const identity = reviewIdentity(own);
   const ids = payouts ? [...payouts.rows, ...payouts.unlisted].map((p) => `${p.side}:${p.loanId}`).join(',') : 'unread';
-  const list = useOwnRead(['claimAll', diamond, ids], (c) => readClaimAllList(c, diamond, own.account, payouts, copy), { enabled: payouts !== null || payoutsFailed });
+  const list = useOwnRead(['claimAll', diamond, ids], (c) => readClaimAllList(c, diamond, own.account, payouts, copy), {
+    enabled: payouts !== null || payoutsFailed,
+  });
   const [choice, setChoice] = useStoredValue<Choice>(`${CLAIM_ALL_KEY}:choice`);
   const [open, setOpen] = useStoredValue<boolean>(`${CLAIM_ALL_KEY}:open`);
+  const [, setMode] = useStoredValue<ClaimMode>(`${CLAIM_ALL_KEY}:mode`);
+  const start = (mode: ClaimMode) => {
+    setMode(mode);
+    setOpen(true);
+  };
   const entry = useTxEntry(CLAIM_ALL_KEY);
   const held = open === true || holdsFlow(entry.phase);
   const data = list.data;
@@ -191,9 +202,14 @@ export function ClaimAll({
               </p>
             ) : (
               <div className="form-actions">
-                <button type="button" className="btn btn-primary" disabled={now.length === 0} onClick={() => setOpen(true)} data-testid="claim-all-review">
+                <button type="button" className="btn btn-primary" disabled={now.length === 0} onClick={() => start('withdraw')} data-testid="claim-all-review">
                   {now.length === 0 ? text('claimAll.chooseOne') : format(now.length === 1 ? 'claimAll.actionOne' : 'claimAll.action', { n: String(now.length) })}
                 </button>
+                {now.length > 0 && (
+                  <button type="button" className="btn" onClick={() => start('keep')} data-testid="claim-all-keep">
+                    {text('claimWithdraw.actionKeep')}
+                  </button>
+                )}
               </div>
             )}
           </>
@@ -232,6 +248,13 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
   // Whether the batch credited the vault: the finish card then offers the
   // withdrawal.
   const [credited, setCredited] = useStoredValue<boolean>(`${CLAIM_ALL_KEY}:credited`);
+  // #3631: withdraw the loan payouts the batch credited to the vault, or
+  // keep them there. Rewards and the other legs stay in the vault.
+  const [modeStored, setMode] = useStoredValue<ClaimMode>(`${CLAIM_ALL_KEY}:mode`);
+  const mode: ClaimMode = modeStored ?? 'withdraw';
+  const [drafts, setDrafts] = useStoredValue<WithdrawDraft[]>(`${CLAIM_ALL_KEY}:drafts`);
+  const withdrawing = useClaimWithdrawBusy(CLAIM_ALL_KEY);
+  const clearWithdraw = useClearClaimWithdraw(CLAIM_ALL_KEY);
   const [loadError, setLoadError] = useState<string | null>(null);
   const setStep = useTxNote(CLAIM_ALL_KEY);
   const w = useWords(meta);
@@ -267,7 +290,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
       const est = await askThrough(own, (c) => c.estimateContractGas({ address: diamond, abi: MULTICALL, functionName: 'multicall', args: [required], account }));
       if (est.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(est.error).reason }));
       if (est.kind === 'unreadable') return stop(format('flow.unreadable', { reason: est.reason }));
-      setStep(format('accept.stepOf', { n: '1', total: '1', what: text('claimAll.stepSend') }));
+      setStep(format('accept.stepOf', { n: '1', total: mode === 'withdraw' && hasLoanLeg(review.send) ? '2' : '1', what: text('claimAll.stepSend') }));
       return sendWrite(config, {
         address: diamond,
         abi: MULTICALL,
@@ -282,6 +305,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
       if (!review) return [];
       const vault = await readClaimantVault(at, diamond, account);
       setCredited(vault !== null && creditedTo(receipt.logs, diamond, vault));
+      setDrafts(vault === null ? [] : loanDrafts(review.send, receipt.logs, diamond, vault));
       // A rewards claim pays a bounded run of days: whether more remains is
       // read at the claim's own block or later.
       let more: boolean | null = null;
@@ -390,6 +414,11 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
                 {b}
               </Notice>
             ))}
+            {hasLoanLeg(review.send) && (
+              <Notice tone="info" tier="A">
+                {text(mode === 'withdraw' ? 'claimWithdraw.reviewWithdrawAll' : 'claimWithdraw.reviewKeepAll')}
+              </Notice>
+            )}
             <WhyLink summaryKey="claimAll.whySummary" detailKey="claimAll.why" />
           </div>
         ),
@@ -404,6 +433,9 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
   const close = () => {
     setReview(null);
     setStep(null);
+    setDrafts(null);
+    setMode(null);
+    clearWithdraw();
     reviewOpened.current = false;
     onClose();
   };
@@ -426,10 +458,32 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={credited === true ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
+        next={credited === true && (drafts === null || drafts.length === 0) ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
+        after={() => (drafts !== null && drafts.length > 0 ? <ClaimWithdraw claimKey={CLAIM_ALL_KEY} drafts={drafts} mode={mode} chain={chain} own={own} /> : null)}
+        closeHeld={withdrawing ? text('claimWithdraw.closeHeld') : null}
         gate={gate}
         onClose={close}
       />
     </div>
+  );
+}
+
+/** Whether the batch collects any loan payout (the only legs "claim and
+ *  withdraw" withdraws). */
+function hasLoanLeg(legs: readonly ClaimAllLeg[]): boolean {
+  return legs.some((l) => l.subject.kind === 'loan');
+}
+
+/** The withdrawals the batch's loan payouts leave to make: what it credited
+ *  to the vault for those loans, per asset, measured from its logs. */
+function loanDrafts(legs: readonly ClaimAllLeg[], logs: readonly Log[], diamond: Hex, vault: Hex): WithdrawDraft[] {
+  const loans = legs.filter((l) => l.subject.kind === 'loan');
+  const refs = loans.map((l) => (l.subject.kind === 'loan' ? l.subject.loanId : 0n));
+  return creditedDrafts(
+    loans.flatMap((l) => l.payouts),
+    logs,
+    diamond,
+    vault,
+    refs,
   );
 }

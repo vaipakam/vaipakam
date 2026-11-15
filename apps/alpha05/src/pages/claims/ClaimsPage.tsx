@@ -6,7 +6,9 @@ import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { LOAN_CLAIM_KEY_PREFIX, LoanClaim, loanClaimKey, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
 import type { ClaimSide } from '../../shared/claims/loanClaim';
 import type { LoanClaimReview } from '../../shared/claims/loanClaimReview';
-import { readLoanClaimRows, type LoanClaimRow } from '../../shared/claims/loanClaimRows';
+import type { LoanClaimRow } from '../../shared/claims/loanClaimRows';
+import { useLoanClaims } from '../../shared/claims/useLoanClaims';
+import { ReadyToClaim } from '../../shared/claims/ReadyToClaim';
 import { laneLabel } from '../../shared/claims/loanClaimReceipt';
 import { RewardsWidget } from '../../shared/claims/RewardsWidget';
 import { ASSET_ERC20 } from '../../shared/claims/loanClaim';
@@ -14,15 +16,14 @@ import { useCopy } from '../../shared/copy/useCopy';
 import { claimVerdict } from '../../shared/eligibility/claim';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { assetAmount } from '../../shared/positions/assetAmount';
-import { usePositionBook } from '../../shared/positions/usePositionBook';
 import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
-import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { useTxEntries, useTxStore } from '../../shared/tx/txStore';
 import { reviewIdentity } from '../../shared/ui/ActionFlow';
 import { PayoutQueue } from '../../shared/protection/PayoutQueue';
 import { SellerClaims } from '../../shared/claims/SellerClaims';
 import { Reserves } from '../../shared/claims/Reserves';
 import { ClaimAll } from '../../shared/claims/ClaimAll';
+import { ClaimChoice } from '../../shared/claims/ClaimWithdraw';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import type { FrozenState } from '../../shared/sanctions/posture';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -58,10 +59,7 @@ export function ClaimsPage() {
   const connected = status === 'connected';
   const served = connected && getSupportedChain(chainId) !== null;
   const own = useOwnStateClient();
-  const book = usePositionBook();
-  const payouts = book.payouts.data;
-  const ids = payouts ? [...payouts.rows, ...payouts.unlisted].map((p) => `${p.side}:${p.loanId}`).join(',') : '';
-  const claims = useOwnRead(['claims', 'loans', book.diamond, ids], (c) => readLoanClaimRows(c, book.diamond, payouts!), { enabled: book.chain !== null && payouts !== null });
+  const { book, payouts, claims } = useLoanClaims();
   const rows = claims.data?.rows ?? [];
   // A collected payout leaves the list on the next read (its position token
   // is burnt), but its claim flow must stay reachable until the reader closes
@@ -83,6 +81,7 @@ export function ClaimsPage() {
       {served && book.chain && own && (
         <>
           <FrozenNotice state={frozen} />
+          <ReadyToClaim claims={claims} bookFailed={book.read.state === 'failed'} frozen={frozen} account={own.account} />
           <ClaimAll own={own} chain={book.chain} payouts={payouts} payoutsFailed={book.read.state === 'failed' && payouts === null} frozen={frozen} />
           <section className="home-section" aria-labelledby="claims-loans">
             <h2 id="claims-loans">{text('claims.loansTitle')}</h2>
@@ -180,9 +179,7 @@ function ClaimCard({
       {flow.held ? (
         <LoanClaim loanId={r.loanId} side={r.side} chain={chain} own={own} meta={meta} onClose={() => flow.setOpen(null)} />
       ) : verdict?.state === 'open' ? (
-        <button type="button" className="btn btn-primary" onClick={() => flow.setOpen(true)} data-testid={`claims-open-${r.side}-${r.loanId}`}>
-          {text('claims.collect')}
-        </button>
+        <ClaimChoice testId={`claims-open-${r.side}-${r.loanId}`} onStart={flow.start} />
       ) : verdict ? (
         <p className={verdict.state === 'unknown' ? 'tier-a' : 'tier-b'} data-code={verdict.refusals[0]?.code}>
           {verdict.state === 'unknown' ? text('loanClaim.unknown') : verdict.refusals[0]?.reason}

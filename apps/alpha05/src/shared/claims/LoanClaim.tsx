@@ -16,6 +16,9 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { creditedTo } from '../protection/payout';
+import type { WithdrawDraft } from '../vault/withdraw';
+import { ClaimWithdraw, useClaimWithdrawBusy, useClearClaimWithdraw } from './ClaimWithdraw';
+import { creditedDrafts, type ClaimMode } from './claimWithdraw';
 import { measureLoanClaim, readClaimantVault, type OutcomeText } from './claimOutcome';
 import type { ClaimSide } from './loanClaim';
 import { loanClaimReceipt } from './loanClaimReceipt';
@@ -33,11 +36,20 @@ export function loanClaimKey(loanId: bigint, side: ClaimSide): string {
 
 /** Whether one side's claim is open or in flight, so a page keeps its panel
  *  on screen until the reader closes the finish card. */
-export function useLoanClaimHeld(loanId: bigint, side: ClaimSide): { held: boolean; open: boolean; setOpen: (v: boolean | null) => void } {
+export function useLoanClaimHeld(
+  loanId: bigint,
+  side: ClaimSide,
+): { held: boolean; open: boolean; setOpen: (v: boolean | null) => void; start: (mode: ClaimMode) => void } {
   const key = loanClaimKey(loanId, side);
   const entry = useTxEntry(key);
   const [open, setOpen] = useStoredValue<boolean>(`${key}:open`);
-  return { held: open === true || holdsFlow(entry.phase), open: open === true, setOpen };
+  const [, setMode] = useStoredValue<ClaimMode>(`${key}:mode`);
+  // #3631: opened as "claim and withdraw" or "claim to my vault".
+  const start = (mode: ClaimMode) => {
+    setMode(mode);
+    setOpen(true);
+  };
+  return { held: open === true || holdsFlow(entry.phase), open: open === true, setOpen, start };
 }
 
 interface LoanClaimProps {
@@ -70,6 +82,14 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
   // Whether the claim credited the vault: the finish card then offers the
   // withdrawal.
   const [credited, setCredited] = useStoredValue<boolean>(`${flowKey}:credited`);
+  // #3631: how the reader wants the payout (withdrawn after the claim, or
+  // kept in the vault), and the withdrawals the claim left to make: what it
+  // credited to the vault, measured from its logs.
+  const [modeStored, setMode] = useStoredValue<ClaimMode>(`${flowKey}:mode`);
+  const mode: ClaimMode = modeStored ?? 'withdraw';
+  const [drafts, setDrafts] = useStoredValue<WithdrawDraft[]>(`${flowKey}:drafts`);
+  const withdrawing = useClaimWithdrawBusy(flowKey);
+  const clearWithdraw = useClearClaimWithdraw(flowKey);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const setStep = useTxNote(flowKey);
@@ -97,7 +117,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
       const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CLAIM, functionName, args: [loanId], account }));
       if (dry.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
-      setStep(format('accept.stepOf', { n: '1', total: '1', what: text('loanClaim.stepSend') }));
+      setStep(format('accept.stepOf', { n: '1', total: mode === 'withdraw' ? '2' : '1', what: text('loanClaim.stepSend') }));
       return sendWrite(config, { address: diamond, abi: CLAIM, functionName, args: [loanId], chainId: chain.chainId, account });
     },
     measure: async (receipt, at) => {
@@ -105,6 +125,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
       const vault = await readClaimantVault(at, diamond, account);
       const legs = measureLoanClaim(review, receipt.logs, diamond, account, vault, words, await readPaidIncentives(own, diamond, review, receipt.logs));
       setCredited(vault !== null && creditedTo(receipt.logs, diamond, vault));
+      setDrafts(vault === null ? [] : creditedDrafts(review.lanes, receipt.logs, diamond, vault, [review.loanId]));
       return legs;
     },
     release: async () => null,
@@ -201,6 +222,9 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
                 {b}
               </Notice>
             ))}
+            <Notice tone="info" tier="A">
+              {text(mode === 'withdraw' ? 'claimWithdraw.reviewWithdraw' : 'claimWithdraw.reviewKeep')}
+            </Notice>
             <WhyLink summaryKey="loanClaim.whySummary" detailKey="loanClaim.why" />
           </div>
         ),
@@ -215,6 +239,9 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
   const close = () => {
     setReview(null);
     setStep(null);
+    setDrafts(null);
+    setMode(null);
+    clearWithdraw();
     reviewOpened.current = false;
     onClose();
   };
@@ -237,7 +264,9 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={credited === true ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
+        next={credited === true && (drafts === null || drafts.length === 0) ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
+        after={() => (drafts !== null && drafts.length > 0 ? <ClaimWithdraw claimKey={flowKey} drafts={drafts} mode={mode} chain={chain} own={own} /> : null)}
+        closeHeld={withdrawing ? text('claimWithdraw.closeHeld') : null}
         gate={gate}
         onClose={close}
       />
