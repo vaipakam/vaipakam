@@ -487,10 +487,11 @@ export interface SafetySend {
  * its events in two receipts).
  *
  * A failure before anything landed is thrown, as before: nothing changed. A
- * failure AFTER a step landed is not thrown, because that would report an
- * action that partly took effect as one that failed outright. The tracker
- * then follows the last step that landed, and `stopped` names the step that
- * did not.
+ * failure AFTER a step landed (a send refused, or a step that reverted, the
+ * last one included) is not thrown, because that would report an action
+ * that partly took effect as one that failed outright. The tracker then
+ * follows the last step that landed, and `stopped` names the step that did
+ * not.
  */
 export async function sendSafetySteps(
   total: number,
@@ -513,12 +514,18 @@ export async function sendSafetySteps(
       if (landed.length === 0) throw e;
       return halt(i, refusalFromError(e).reason);
     }
-    if (i === total - 1) return { hash, landed, stopped: null };
+    // The last step of a one-step action, or of one whose earlier steps all
+    // failed, is followed by the tracker as the whole action. After a step
+    // landed, the last one is awaited here too (Codex #3489 r17): if it
+    // reverts, the action is partial, measured over what landed, with the
+    // reverted step stated, never reported as an action that changed nothing.
+    if (i === total - 1 && landed.length === 0) return { hash, landed, stopped: null };
     const result = await wait(hash);
     if (!result.ok) {
       if (landed.length === 0) throw new StatedRefusal({ code: 'SafetyStopped', reason: revertedReason, reopensAt: null, remedy: null });
       return halt(i, revertedReason);
     }
+    if (i === total - 1) return { hash, landed, stopped: null };
     landed.push({ hash, logs: result.logs });
   }
   throw new Error('no safety step to send');

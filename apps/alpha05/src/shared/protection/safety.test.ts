@@ -228,6 +228,20 @@ describe('sendSafetySteps and safetyLogs', () => {
     expect(measureSafety(finalize, logs, DIAMOND, copy).map((l) => l.status)).toEqual(['done', 'not-done']);
   });
 
+  it('a last step that reverts after an earlier one landed is a partial action, never one that changed nothing (Codex #3489 r17)', async () => {
+    const sent = await sendSafetySteps(
+      2,
+      async (i) => (i === 0 ? H1 : H2),
+      async (hash) => (hash === H1 ? { ok: true, logs: [lowered] } : { ok: false, logs: [] }),
+      label,
+      'reverted',
+    );
+    expect(sent.hash).toBe(H1);
+    expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 2', reason: 'reverted' });
+    const logs = safetyLogs(sent.landed, { transactionHash: H1, logs: [lowered] });
+    expect(measureSafety(finalize, logs, DIAMOND, copy).map((l) => l.status)).toEqual(['done', 'not-done']);
+  });
+
   it('a failure before anything landed is still the action failing', async () => {
     await expect(sendSafetySteps(2, async () => H1, async () => ({ ok: false, logs: [] }), label, 'reverted')).rejects.toThrow();
     await expect(
