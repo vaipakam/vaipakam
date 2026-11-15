@@ -2193,6 +2193,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 `getClaimable`(대출자 행은 이전 판매자 몫을 이미 뺀 값이며 `getSellersShareOfLenderClaim`을 함께 표시), `getBorrowerSurplusClaim`, `getLoanCollateralLien`을 읽고, 청구를 시뮬레이션합니다. 시뮬레이션은 제재 검사도 적용합니다. 목록은 포지션 토큰을 따릅니다. `getUserDashboardClaimables`는 기록된 당사자의 청구를 나열하므로, 나열된 행은 지갑이 해당 측을 보유하는 동안에만 남고, 다른 사람에게서 받은 종료된 대출 포지션은 청구를 직접 읽습니다. 완료 카드는 `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed`, `LoanSettled`와 지갑으로의 토큰 전송을 읽습니다. 보호 계정 모드의 호출자에 대해서는 `PayoutQueued`(계정 자신의 금고), `PayoutHeldInVault`(잠긴 계정 또는 가득 찬 대기열), `PaymentCreditedToVault`(다른 당사자의 금고)를 읽습니다. FallbackPending 대출에서는 대출자 청구가 청구 시점 내부 매칭을 실행해 행을 다시 쓸 수 있으므로, 완료 카드는 전송을 프로토콜 자체 기록과 비교합니다.
 
+"Claim and withdraw"는 두 개의 거래입니다. 청구는 보유자 자신의 금고에 입금합니다. 각 이동은 클래스 PositionHolder의 `VaultOutflow`로 기록되며, `to`는 보유자의 금고, `ref`는 대출 ID, `delivered`는 도착한 금액입니다. 청구가 채굴되면 앱은 청구한 대출에 대해 자산별로(NFT는 토큰 ID별로) `delivered`를 합산하고, 그 금액으로 `withdrawFromVault`를 자산마다 하나씩 엽니다. 금고 출금 자체의 읽기와 시험 실행을 그대로 쓰므로 `withdrawableNow`가 계속 한도가 되고 보호 모드는 계속 대기열에 넣습니다. 전부 받기는 대출 호출에 대해서만 같은 일을 합니다. "Ready to claim"은 청구 판정이 지금 열려 있는 각 측의 지급을 합산하며, 기다리거나 읽지 못한 측은 따로 셉니다.
+
 <a id="claim-everything"></a>
 
 ### 모두 받기: 확인하는 항목

@@ -62,7 +62,8 @@ test('Claim everything collects the payouts picked in one transaction and leaves
 
   // Loan B is left out; the batch collects loan A alone.
   await pickOnly(section, [`loan:lender:${a}`]);
-  await expect(section.getByTestId('claim-all-review')).toHaveText('Review and collect 1 payout');
+  await expect(section.getByTestId('claim-all-review')).toHaveText('Claim 1 payout and withdraw');
+  await expect(section.getByTestId('claim-all-keep')).toHaveText('Claim to my vault');
   await section.getByTestId('claim-all-review').click();
   const flow = section.getByTestId('claim-all-panel');
   const receipt = flow.locator('.receipt');
@@ -72,17 +73,21 @@ test('Claim everything collects the payouts picked in one transaction and leaves
   await expect(receipt).toContainText('Each payout runs on its own inside this one transaction');
   await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
   await expect(receipt).toContainText('Wallet prompts: 1');
+  await expect(flow).toContainText('Two steps: this batch moves each loan payout into your vault');
   await fitsWidth(page);
 
   const before = await balance();
   const walletBefore = await wallet();
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
-  const finish = flow.locator('[data-phase="measured"]');
+  const finish = flow.locator(':scope > [data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText(`Loan #${a}, lender payout: collected`);
   await expect(finish).toContainText(/credited to your vault, free to withdraw/);
-  await expect(finish.getByRole('link', { name: 'Withdraw from your vault' })).toHaveAttribute('href', '/vault');
+  // Step 2 (#3631): the withdrawal of what the batch credited, on its review;
+  // it is not sent here, so the payout stays in the vault.
+  await expect(finish.getByTestId('claim-withdraw')).toContainText('Step 2 of 2: withdraw to your wallet');
+  await expect(finish.getByTestId('vault-withdraw-panel').locator('.receipt')).toContainText(/WETH/, { timeout: 60_000 });
   expect(flags.sentTransactions).toBe(sent + 1);
   expect(await balance()).toBe(before + owedA);
   expect(await wallet()).toBe(walletBefore);
@@ -94,13 +99,14 @@ test('Claim everything collects the payouts picked in one transaction and leaves
   await expect(legA).toHaveCount(0, { timeout: 60_000 });
   await expect(legB.getByRole('checkbox')).not.toBeChecked();
 
-  // The next batch collects it.
+  // The next batch collects it, kept in the vault.
   await pickOnly(section, [`loan:lender:${b}`]);
-  await section.getByTestId('claim-all-review').click();
+  await section.getByTestId('claim-all-keep').click();
   await expect(receipt).toContainText(`Loan #${b}, lender payout`, { timeout: 60_000 });
   const mid = await balance();
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await expect(finish.getByTestId('claim-withdraw-kept')).toContainText('Kept in your vault');
   expect(await balance()).toBe(mid + owedB);
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(legB).toHaveCount(0, { timeout: 60_000 });

@@ -287,6 +287,43 @@ another party finalized between preview and signing is skipped, not fatal,
 and anything skipped stays listed to claim on its own; a failed leg never
 disappears.
 
+### RB-CLAIM-WITHDRAW — claim and withdraw as one action, stated as two steps
+
+A loan claim pays the position holder's own vault, and only a withdrawal
+takes it to the wallet (the step a protected account's delay gates). Every
+claim entry point (a payout's card on Claims, the loan page, Claim
+everything) offers the choice up front: "Claim and withdraw" leads, "Claim to
+my vault" keeps the payout there to lend or post as collateral. The review
+states which: the two steps and the second confirmation, or the choice to
+keep. Once the claim confirms, the app opens the ordinary vault withdrawal
+for exactly what the transaction's logs show the claim credited to the vault
+for the claimed loans, one asset at a time, each with its own review, dry
+run, protected-mode route and finish card; never for the amount the review
+promised. The credited assets are read from the transaction's own records,
+so a token a claim-time match paid in is found too; a credited asset whose
+standard the app cannot name is counted and left to the Vault page, never
+guessed. Kept payouts are said to be in the vault and the withdrawal is
+still offered. A withdrawal refused, failed or closed before it moved
+anything leaves the claim done and the money in the vault, said so, and is
+offered again; one that went through, was queued or could not be measured
+is never offered again, so a second confirmation cannot draw other funds.
+The withdrawals open only while the reader is connected as the network and
+account the claim ran for; otherwise that is said instead. The claim's
+finish card cannot be closed while a withdrawal it opened is out. In Claim
+everything only loan payouts are withdrawn; every other leg goes where its
+own row says, and the review says so. The wallet batching both steps into
+one confirmation is a follow-up; until then the wallet asks twice and the
+review says it will.
+
+"Ready to claim" leads Claims and Home: the per-asset total of every loan
+payout whose claim rule is open now (the same verdict its button reads),
+ERC-20 amounts summed, each NFT its own entry. A payout that waits, could
+not be read, or is a lender's on a loan in fallback (whose claim runs the
+match first, so its asset and amount are settled only then) is counted
+apart and named, never added in; an incomplete
+position walk is said to limit the total; and the total is never called
+received, since a claim pays the vault.
+
 ### RB-RAILS — three data rails
 
 | Rail | What | Source | Freshness |

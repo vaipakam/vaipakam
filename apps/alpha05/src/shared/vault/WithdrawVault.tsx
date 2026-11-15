@@ -46,7 +46,11 @@ export const WITHDRAW_KEY = 'vault.withdraw';
 
 /** The asset whose withdrawal is open (the form, or a draft under review
  *  or in flight), so the page keeps the panel on screen until it is closed. */
-export function useWithdrawHeld(flowKey: string = WITHDRAW_KEY): { subject: WithdrawSubject | null; inFlight: boolean; open: (s: WithdrawSubject | null) => void } {
+export function useWithdrawHeld(flowKey: string = WITHDRAW_KEY): {
+  subject: WithdrawSubject | null;
+  inFlight: boolean;
+  open: (s: WithdrawSubject | null) => void;
+} {
   const entry = useTxEntry(flowKey);
   const [subject, setSubject] = useStoredValue<WithdrawSubject>(`${flowKey}:subject`);
   return { subject, inFlight: holdsFlow(entry.phase), open: setSubject };
@@ -70,6 +74,10 @@ interface WithdrawProps {
    *  hosts the withdrawal (Rewards, for VPFI) never shares a draft with the
    *  Vault page's. */
   flowKey?: string;
+  /** #3631: the withdrawal a claim left to make, opened straight on its
+   *  review (what the claim credited to the vault). "Change" falls back to
+   *  the form, so the reader may still withdraw less. */
+  preset?: WithdrawDraft;
 }
 
 /**
@@ -87,10 +95,13 @@ export function WithdrawVault(props: WithdrawProps) {
   const flowKey = props.flowKey ?? WITHDRAW_KEY;
   const entry = useTxEntry(flowKey);
   const [draft, setDraft] = useStoredValue<WithdrawDraft>(`${flowKey}:draft`);
-  const current = draft !== null && draftFits(draft, props.subject) ? draft : null;
+  // A preset stands until the reader asks to change it.
+  const [presetLeft, setPresetLeft] = useStoredValue<boolean>(`${flowKey}:presetLeft`);
+  const chosen = draft ?? (props.preset !== undefined && presetLeft !== true ? props.preset : null);
+  const current = chosen !== null && draftFits(chosen, props.subject) ? chosen : null;
   if (current === null && !holdsFlow(entry.phase)) return <WithdrawForm {...props} onChosen={setDraft} />;
   if (current === null) return null;
-  return <WithdrawFlow {...props} draft={current} onChange={() => setDraft(null)} onClose={() => (setDraft(null), props.onClose())} />;
+  return <WithdrawFlow {...props} draft={current} onChange={() => (setDraft(null), setPresetLeft(true))} onClose={() => (setDraft(null), setPresetLeft(null), props.onClose())} />;
 }
 
 /** The form: the token when a collection was opened, then how much,
@@ -268,7 +279,11 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose, flowKey = WITHDRAW
     const leftLabel = format('vaultWithdraw.legLeft', { what: nft ? withdrawName(d, meta, copy) : amountText(asked?.amount ?? want) });
     if (asked === null) legs.push({ status: 'not-done', label: leftLabel, reason: text('vaultWithdraw.notRequested') });
     else if (asked.amount !== want)
-      legs.push({ status: 'not-done', label: leftLabel, reason: format('vaultWithdraw.requestedOther', { amount: exact(asked.amount), expected: exact(want) }) });
+      legs.push({
+        status: 'not-done',
+        label: leftLabel,
+        reason: format('vaultWithdraw.requestedOther', { amount: exact(asked.amount), expected: exact(want) }),
+      });
     else if (!asked.queued) legs.push({ status: 'done', label: leftLabel });
     if (asked === null) return legs;
     // What reached the wallet itself: the token's own transfer logs, from
@@ -371,7 +386,12 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose, flowKey = WITHDRAW
     if (blockers.length > 0)
       return {
         kind: 'refused',
-        refusal: { code: next.dryRun !== null && next.dryRun !== 'unread' ? next.dryRun.code : 'WithdrawBlocked', reason: blockers[0]!, reopensAt: null, remedy: null },
+        refusal: {
+          code: next.dryRun !== null && next.dryRun !== 'unread' ? next.dryRun.code : 'WithdrawBlocked',
+          reason: blockers[0]!,
+          reopensAt: null,
+          remedy: null,
+        },
       };
     return { kind: 'ok' };
   };

@@ -2034,6 +2034,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 审核页读取 `getClaimable`（出借人记录已扣除前任卖家的部分，旁边附有 `getSellersShareOfLenderClaim`）、`getBorrowerSurplusClaim` 和 `getLoanCollateralLien`，并模拟运行领取，这也会执行制裁检查。列表以头寸代币为准：`getUserDashboardClaimables` 列出登记当事人的领取，因此列出的记录只在钱包持有该方时保留；从他人处得到的、已结束贷款上的持有头寸，则直接读取其领取。完成卡片读取 `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed` 和 `LoanSettled`，以及转入钱包的代币；对处于保护账户模式的调用者，读取 `PayoutQueued`（账户自己的金库）、`PayoutHeldInVault`（账户已锁定或队列已满）或 `PaymentCreditedToVault`（其他当事人的金库）。在 FallbackPending 贷款上，出借人的领取可能在领取时执行内部撮合并改写记录，因此完成卡片会将转账与协议自己的记录进行比较。
 
+“Claim and withdraw”是两笔交易。领取会记入持有人自己的金库:每次移动都记录为 `VaultOutflow`,类别为 PositionHolder,`to` 是持有人的金库,`ref` 是贷款编号,`delivered` 是到账的金额。领取上链后,应用按资产(NFT 按代币编号)汇总所领取贷款的 `delivered`,并按该数额逐个资产打开 `withdrawFromVault`,使用金库提取本身的读取和试运行:`withdrawableNow` 仍然限制它,保护模式仍然让它排队。全部领取只对其中的贷款调用做同样的事。“Ready to claim”汇总领取判定当前为开放的每一方的款项;仍在等待或无法读取的一方单独计数。
+
 <a id="claim-everything"></a>
 
 ### 全部领取：检查哪些内容
