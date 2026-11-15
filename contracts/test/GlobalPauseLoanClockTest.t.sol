@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -590,6 +591,10 @@ contract GlobalPauseLoanClockTest is SetupTest {
             start + 30 days,
             "fixture-live: the first period settled"
         );
+        // #3629 — the settlement's interest is held for the position and
+        // reported paid when the holder claims it.
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
         (uint256 earned,, uint64 touchedAt,) = SellerClaimFacet(address(diamond)).getInterestLedger(loanId);
         assertEq(touchedAt, block.timestamp, "the payout checkpointed the ledger");
         uint256 accruedSinceStart =

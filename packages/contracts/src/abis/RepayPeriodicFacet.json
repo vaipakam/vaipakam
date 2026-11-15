@@ -187,12 +187,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerExtraHeld",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
         "name": "settler",
         "type": "address",
         "indexed": true,

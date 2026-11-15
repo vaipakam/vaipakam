@@ -167,11 +167,11 @@ contract RedeploySelectorParityTest is Test {
         for (uint256 i = 0; i < live.length; i++) {
             assertTrue(
                 live[i] != retired,
-                "the 3-arg freezeOrPayActiveLenderResident must not be in the live surface"
+                "the 3-arg holdActiveLenderResident must not be in the live surface"
             );
         }
         assertTrue(
-            retired != EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+            retired != EncumbranceMutateFacet.holdActiveLenderResident.selector,
             "retired and current resident-payout selectors must differ"
         );
     }

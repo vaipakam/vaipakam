@@ -78,7 +78,7 @@ import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
  *      the sale was sized against) routes to the current borrower-position
  *      NFT holder's WALLET — they took the slippage risk, they get the
  *      symmetric upside. (A sanctioned holder's surplus is frozen instead;
- *      see `freezeOrPayBorrowerSurplus`.)
+ *      see `holdBorrowerSurplus`.)
  *
  *      Total swap failure (every adapter reverted) reverts the whole
  *      tx — no soft-fallback in v1. Borrower can retry with better
@@ -388,13 +388,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 surplusPrincipal = outputAmount - requiredPrincipal;
         address currentBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         // #954 (§2.1) — swap-to-repay is a Tier-2 close-out that MUST complete,
-        // so the surplus is never a blocking revert. A clean holder is paid
-        // directly; a SANCTIONED holder's surplus is frozen into loan.borrower's
-        // vault (records a `borrowerSurplusClaims` row, reserves it against the
-        // stored borrower's signed-offer spend for EVERY ERC20, and tier-excludes
-        // a transferred holder's VPFI). Routed through `EncumbranceMutateFacet`
+        // so the surplus is never a blocking revert. #3629 — it is held for the
+        // borrower position whoever holds it: into loan.borrower's vault, on the
+        // `borrowerSurplusClaims` row, reserved for EVERY ERC20, for the borrower
+        // claim (a flagged holder is recorded as the fail-closed claimant).
+        // Routed through `EncumbranceMutateFacet`
         // (shared `LibCloseoutFreeze`) for the EIP-170 reason noted above.
-        _callFreezeSurplus(loanId, currentBorrowerHolder, surplusPrincipal);
+        _callHoldSurplus(loanId, currentBorrowerHolder, surplusPrincipal);
 
         // ── Claim slots ──────────────────────────────────────────────
         // The lender claim row + lender-proceeds reservation are written inside
@@ -463,7 +463,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // are recorded centrally at the `Repaid` transition below (via
         // `EncumbranceMutateFacet.terminalize`), which covers the borrower side for the
         // residual collateral case whether or not a sanctioned principal surplus
-        // was present. The `freezeOrPayBorrowerSurplus` self-register (above) and
+        // was present. The `holdBorrowerSurplus` self-register (above) and
         // this central register are idempotent + first-write-wins.
 
         // ── Position-NFT status flip → LoanRepaid ────────────────────
@@ -677,13 +677,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         (lenderExtra, newTreasury, ) = abi.decode(ret, (uint256, uint256, uint256));
     }
 
-    /// @dev #954 — crossFacetCall stub for the borrower-surplus freeze/pay
+    /// @dev #954 / #3629 — crossFacetCall stub for the borrower-surplus hold
     ///      (3-arg shape). Keeps the freeze bytecode in `EncumbranceMutateFacet`
     ///      so `swapToRepayFull` stays under the EIP-170 ceiling.
-    function _callFreezeSurplus(uint256 loanId, address holder, uint256 surplus) private {
+    function _callHoldSurplus(uint256 loanId, address holder, uint256 surplus) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector,
+                EncumbranceMutateFacet.holdBorrowerSurplus.selector,
                 loanId,
                 holder,
                 surplus

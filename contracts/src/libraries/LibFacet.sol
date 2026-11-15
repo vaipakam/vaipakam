@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibDelivery} from "./LibDelivery.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
@@ -198,6 +199,26 @@ library LibFacet {
     }
 
 
+
+    /// @dev #3629 — credits `amount` of `asset`, held by the Diamond, to
+    ///      `owner`'s OWN vault as free balance (created if `owner` has none),
+    ///      measured: the tracked and depository holdings rise by what arrived,
+    ///      and that figure is returned. The one route for a sale's proceeds to the selling
+    ///      lender (owner decision 2026-11-15: no loan step pays a wallet; the
+    ///      seller withdraws through the vault outflow policy, where a
+    ///      protected account's delay applies). `owner` has already passed the
+    ///      sale's sanctions gate, so the vault resolution needs no exemption.
+    function creditOwnVault(address asset, address owner, uint256 amount)
+        internal
+        returns (uint256 credited)
+    {
+        if (amount == 0) return 0;
+        credited = LibDelivery.pushMeasured(asset, getOrCreateVault(owner), amount);
+        // The one writer for a payment credited to a vault: the tracked
+        // holding and the depository holding rise together, so the owner's
+        // depository withdraw can take it.
+        LibProtectedAccount.creditPayment(owner, asset, 0, amount, credited);
+    }
 
     /// @dev Deposits `amount` of `asset` into the new lender's vault and
     ///      records it in `heldForLender`. No-op on zero.

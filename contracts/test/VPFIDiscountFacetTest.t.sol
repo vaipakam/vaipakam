@@ -1078,31 +1078,23 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     // ─── Collateral sale (#2876) ─────────────────────────────────────────────
 
-    /// @notice #2876 — the borrower's wallet cannot stop the sale that pays
-    ///         the lender: a refused wallet payment leaves the remainder held
-    ///         on the loan's surplus row, and `claimAsBorrower` pays it.
-    function testPrepaySaleHoldsTheRemainderWhenTheBorrowerWalletRefuses() public {
+    /// @notice #3629 — the sale's remainder is never paid to a wallet: it is
+    ///         held on the loan's surplus row, and `claimAsBorrower` pays it
+    ///         into the borrower-position holder's vault.
+    function testPrepaySaleHoldsTheRemainderForTheBorrowerClaim() public {
         uint256 loanId = _openSaleLoan();
         address executor = _setSaleExecutor();
         uint256 walletBefore = IERC20(mockERC20).balanceOf(borrower);
 
-        // Stand in for a token that refuses the borrower's address.
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(ForcedSaleFacet.payBorrowerWallet.selector),
-            "refused"
-        );
         vm.recordLogs();
         _finalizeSale(loanId, executor, 5 ether);
-        _assertRemainderEvent(loanId, borrower, 5 ether, true);
-        assertEq(IERC20(mockERC20).balanceOf(borrower), walletBefore, "the refusing wallet got nothing");
-        assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale still closed the loan");
-        vm.clearMockedCalls();
+        _assertRemainderEvent(loanId, borrower, 5 ether);
+        assertEq(IERC20(mockERC20).balanceOf(borrower), walletBefore, "no wallet payment");
+        assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale closed the loan");
 
         uint256 ownedBefore = _owned(borrower, mockERC20);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
-        // #3205 part 2 — the claim pays the borrower's vault, as free money.
         assertEq(IERC20(mockERC20).balanceOf(borrower), walletBefore, "the claim pays the vault, not the wallet");
         assertEq(
             _owned(borrower, mockERC20) - ownedBefore,
@@ -1130,14 +1122,10 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         vm.recordLogs();
         _finalizeSale(loanId, executor, 5 ether);
-        _assertRemainderEvent(loanId, borrower, 5 ether, false);
+        _assertRemainderEvent(loanId, borrower, 5 ether);
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale closed the loan");
         assertEq(IERC20(mockERC20).balanceOf(lender), lenderWalletBefore, "nothing paid to a flagged wallet");
-        assertEq(
-            IERC20(mockERC20).balanceOf(borrower) - borrowerWalletBefore,
-            5 ether,
-            "the borrower was paid the remainder"
-        );
+        assertEq(IERC20(mockERC20).balanceOf(borrower), borrowerWalletBefore, "the remainder waits for the claim");
         (address asset, uint256 owed, bool claimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(asset, mockERC20, "the lender's claim is in the lending asset");
@@ -1168,8 +1156,11 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         vm.recordLogs();
         _finalizeSale(loanId, executor, 5 ether);
-        _assertRemainderEvent(loanId, holder, 5 ether, false);
-        assertEq(IERC20(mockERC20).balanceOf(holder), 5 ether, "the clean holder was paid");
+        _assertRemainderEvent(loanId, holder, 5 ether);
+        uint256 ownedBefore = _owned(holder, mockERC20);
+        vm.prank(holder);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        assertEq(_owned(holder, mockERC20) - ownedBefore, 5 ether, "the clean holder claimed the remainder");
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale closed the loan");
     }
 
@@ -1223,28 +1214,26 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.warp(block.timestamp + 30 days);
     }
 
-    /// @dev #2876 — the sale's split event named `holder` as owed `amount`,
-    ///      held for their claim (`held`) or paid to their wallet.
+    /// @dev #2876 / #3629 — the sale's split event named `holder` as owed
+    ///      `amount`, which is always held for their claim.
     function _assertRemainderEvent(
         uint256 loanId,
         address holder,
-        uint256 amount,
-        bool held
+        uint256 amount
     ) internal {
         bytes32 topic = keccak256(
-            "CollateralSaleProceedsSplit(uint256,uint96,address,uint256,address,uint256,uint256,uint256,address,uint256,bool)"
+            "CollateralSaleProceedsSplit(uint256,uint96,address,uint256,address,uint256,uint256,uint256,address,uint256)"
         );
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length == 3 && logs[i].topics[0] == topic) {
                 assertEq(uint256(logs[i].topics[1]), loanId, "split names the loan");
-                (, , , , , , address paidHolder, uint256 paid, bool wasHeld) = abi.decode(
+                (, , , , , , address paidHolder, uint256 paid) = abi.decode(
                     logs[i].data,
-                    (address, uint256, address, uint256, uint256, uint256, address, uint256, bool)
+                    (address, uint256, address, uint256, uint256, uint256, address, uint256)
                 );
                 assertEq(paidHolder, holder, "split names the holder");
                 assertEq(paid, amount, "split names the remainder");
-                assertEq(wasHeld, held, "split says whether it was held");
                 return;
             }
         }
@@ -1587,13 +1576,15 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Repaid), "the sale repaid the loan");
         treasuryGot = IERC20(mockERC20).balanceOf(treasuryRecipient) - t0;
-        holderGot = _owned(borrower, mockERC20) - h0;
-        // The lender's leg waits for the claim, as after a repayment; the
-        // claim settles the loan (the borrower side has nothing left).
+        // Both legs wait for their claims, as after a repayment (#3629: the
+        // borrower's remainder is held too); the two claims settle the loan.
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         lenderGot = _owned(lender, mockERC20) - l0;
-        assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Settled), "the lender's claim settled it");
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        holderGot = _owned(borrower, mockERC20) - h0;
+        assertEq(_status(loanId), uint256(LibVaipakam.LoanStatus.Settled), "the two claims settled it");
     }
 
     uint256 private constant _SALE_EXTRA = 7 ether;
@@ -1649,7 +1640,7 @@ contract VPFIDiscountFacetTest is SetupTest {
             loanId, 0, mockERC20, proceeds,
             lender, pctx.lenderLeg, 0,
             pctx.treasuryLeg,
-            borrower, _SALE_EXTRA, false
+            borrower, _SALE_EXTRA
         );
         vm.prank(executor);
         PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId, proceeds);

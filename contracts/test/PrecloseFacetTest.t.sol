@@ -2668,7 +2668,7 @@ contract PrecloseFacetTest is Test {
         uint256 expLender = catchUpRent - expTreasury;       // 693e
 
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EncumbranceMutateFacet.holdActiveLenderFromVault.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
@@ -2680,7 +2680,7 @@ contract PrecloseFacetTest is Test {
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 activeLoanId,
                 borrower,
                 mockERC20,
@@ -2722,7 +2722,7 @@ contract PrecloseFacetTest is Test {
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 activeLoanId,
                 borrower,
                 mockERC20,
@@ -2807,7 +2807,7 @@ contract PrecloseFacetTest is Test {
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 activeLoanId, borrower, mockERC20, uint256(500 ether)
             )
         );
@@ -2849,7 +2849,7 @@ contract PrecloseFacetTest is Test {
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 activeLoanId, borrower, mockERC20, uint256(693 ether)
             )
         );
@@ -2891,7 +2891,7 @@ contract PrecloseFacetTest is Test {
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 activeLoanId, borrower, mockERC20, uint256(693 ether)
             )
         );
@@ -2955,7 +2955,7 @@ contract PrecloseFacetTest is Test {
 
     function _mockRentalTransferCalls() internal {
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(EncumbranceMutateFacet.holdActiveLenderFromVault.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");

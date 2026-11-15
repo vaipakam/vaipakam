@@ -147,14 +147,15 @@ contract ForcedSaleFacet is IVaipakamErrors {
     ///                          fallback entry.
     /// @param collateralSold    Collateral that reached the Diamond and was sold.
     /// @param proceeds          `P`: lending-asset proceeds that arrived.
-    /// @param lenderPaid        What the lender received (periodic: paid, or
-    ///                          held for a frozen holder; terminal: what the
-    ///                          stored lender's vault received for the claim,
-    ///                          after the ordinary treasury cut on interest).
+    /// @param lenderPaid        What the lender side received (periodic: the
+    ///                          sellers' part plus what was held for the
+    ///                          position, #3629; terminal: what the stored
+    ///                          lender's vault received for the claim, after
+    ///                          the ordinary treasury cut on interest).
     /// @param handlingFee       `F`, to the treasury.
     /// @param keeperBonus       `B`, to the caller.
-    /// @param borrowerExtra     `X` as the borrower got it.
-    /// @param borrowerExtraHeld True when `X` was held for the claim.
+    /// @param borrowerExtra     `X` as the stored borrower's vault received
+    ///                          it, held on the surplus row for the claim.
     struct ForcedSaleOutcome {
         bool sold;
         uint256 collateralSold;
@@ -163,7 +164,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 handlingFee;
         uint256 keeperBonus;
         uint256 borrowerExtra;
-        bool borrowerExtraHeld;
     }
 
     /// @notice A sale was asked to sell `quoted`, outside the range the plan
@@ -182,14 +182,15 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /// @param need              `N`.
     /// @param collateralSold    Collateral that reached the Diamond and was sold.
     /// @param proceeds          `P`: lending-asset proceeds that arrived.
-    /// @param lenderPaid        What the lender received (or what was held for
-    ///                          a frozen holder), at most `debt`.
+    /// @param lenderPaid        What the lender side received (paid to open
+    ///                          seller claims, or held for the position), at
+    ///                          most `debt`.
     /// @param handlingFee       `F`, to the treasury.
     /// @param keeperBonus       `B`, to the caller.
-    /// @param borrowerExtra     `X`, the borrower's share of the proceeds.
-    /// @param borrowerExtraHeld True when `X` was held in the borrower's vault
-    ///                          for the claim instead of paid to the holder's
-    ///                          wallet.
+    /// @param borrowerExtra     `X`, the borrower's share of the proceeds, held
+    ///                          in the stored borrower's vault on the surplus
+    ///                          row for the borrower-position holder's claim
+    ///                          (#3629: never paid to a wallet).
     /// @param collateralUnsold  Collateral the sale left in the borrower's
     ///                          vault (with the open loan, or for the claim).
     /// @param covered           Whether the sale's floor covered the need.
@@ -211,7 +212,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 handlingFee,
         uint256 keeperBonus,
         uint256 borrowerExtra,
-        bool borrowerExtraHeld,
         uint256 collateralUnsold,
         bool covered,
         address indexed keeper
@@ -292,21 +292,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
             return out;
         }
         _settle(j, out);
-    }
-
-    /**
-     * @notice Pay `amount` of `asset` to `to`'s wallet, refused unless all of
-     *         it arrived (a wallet reading is trusted only to refuse).
-     * @dev    Reached by a self-call from
-     *         {LibCloseoutFreeze.payOrHoldBorrowerExtra} (this facet's
-     *         periodic sale and `PrepayListingFacet`'s collateral sale, #2876)
-     *         so a refusal — a token that blocks the address, a short reading,
-     *         a receiving hook that reverts — unwinds this payment alone and
-     *         the extra falls through to the held route. A settlement never
-     *         depends on the borrower's wallet.
-     */
-    function payBorrowerWallet(address asset, address to, uint256 amount) external onlySelf {
-        LibDelivery.pushExact(asset, to, amount);
     }
 
     // ─── Internals: sell ────────────────────────────────────────────────
@@ -407,7 +392,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
             out.handlingFee,
             out.keeperBonus,
             out.borrowerExtra,
-            out.borrowerExtraHeld,
             j.unsold,
             j.minOut >= j.need,
             j.keeper
@@ -444,9 +428,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
     }
 
     /// @dev Periodic booking (the loan stays open): the fee to the treasury,
-    ///      the lender's interest to the current lender-position holder (paid
-    ///      inline, or held fail-closed when flagged), and the borrower's
-    ///      extra to the holder's wallet or held.
+    ///      the lender's interest held for the lender position (open seller
+    ///      claims first), and the borrower's extra held on the surplus row
+    ///      (#3629: neither is paid to a wallet).
     function _bookPeriodic(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -459,7 +443,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #1209 / #1808 — the whole payout is interest, and this slice carries
         // no treasury cut, so it is passed as both the gross and the net
         // interest: open seller claims are paid out of it first, in full.
-        out.lenderPaid = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
+        out.lenderPaid = LibCloseoutFreeze.holdActiveLenderResident(
             s,
             loanId,
             loan,
@@ -471,12 +455,14 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #2795 — credit exactly what the lender received, never more than the
         // shortfall: the extra above it is the borrower's, not prepaid interest.
         loan.interestSettled += out.lenderPaid;
-        // The owner decision of 2026-10-25: an unflagged holder is paid to
-        // their wallet; a flagged holder, or a refused payment, has the extra
-        // held for the claim at loan end.
-        (out.borrowerExtraHeld, out.borrowerExtra) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
-            s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), sp.extra
-        );
+        // #3629 (owner decision 2026-11-15) — held for the borrower position,
+        // claimable while the loan is open (`ClaimFacet.claimHeldForBorrower`)
+        // or with the borrower claim at loan end.
+        if (sp.extra > 0) {
+            out.borrowerExtra = LibCloseoutFreeze.holdBorrowerExtra(
+                s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), loan.principalAsset, sp.extra
+            );
+        }
     }
 
     /// @dev Terminal booking (the caller ends the loan): the fee and the
@@ -539,7 +525,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
             out.borrowerExtra = LibCloseoutFreeze.holdBorrowerExtra(
                 s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), loan.principalAsset, sp.extra
             );
-            out.borrowerExtraHeld = true;
         }
     }
 

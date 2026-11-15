@@ -19,6 +19,7 @@ import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibHeldForLender} from "../libraries/LibHeldForLender.sol";
 import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
@@ -113,6 +114,26 @@ contract LenderIntentFacet is
         uint8 slot,
         uint256 amount,
         uint256 remainingCapital
+    );
+
+    /// @notice #3629 — held payments of an OPEN intent loan were re-committed
+    ///         behind the owner's standing intent ({recommitHeldToIntent}).
+    /// @param owner           The intent owner (and lender-position holder).
+    /// @param roller          Who ran the step (the owner or its keeper).
+    /// @param loanId          The open loan; it keeps running.
+    /// @param collateralAsset The intent's collateral asset (the lending asset is the loan's principal asset).
+    /// @param slot            The intent's slot on the pair.
+    /// @param amount          What was re-committed.
+    /// @param newCapital      The intent's committed capital afterwards.
+    /// @custom:event-category state-change/loan-mutation
+    event HeldRecommittedToIntent(
+        address indexed owner,
+        address indexed roller,
+        uint256 indexed loanId,
+        address collateralAsset,
+        uint8 slot,
+        uint256 amount,
+        uint256 newCapital
     );
 
     /// @notice A repaid intent loan was AUTO-ROLLED (#393 v1-d.2): its proceeds
@@ -736,11 +757,6 @@ contract LenderIntentFacet is
         if (LibPositionNFT.ownerOf(loan.lenderTokenId) != io.owner) {
             revert LenderIntentPositionTransferred();
         }
-        // #623 Codex round-1 P1 — a loan carrying preclose / transfer-obligation
-        // HELD proceeds (`heldForLender`) has a SECOND lender payout the normal
-        // claim makes but this roll doesn't. Rather than strand it (the NFT is
-        // about to burn), reject the loan to the normal claim path.
-        if (s.heldForLender[loanId] != 0) revert LenderIntentLoanNotRollable();
         // #1209 — a position sold and bought back carries seller claims on this
         // claim row; the normal claim splits it with them first. The roll
         // would compound their interest into the owner's intent, so refuse.
@@ -804,14 +820,18 @@ contract LenderIntentFacet is
         ) {
             revert LenderIntentNothingToRoll();
         }
-        // Compound: principal + interest, as the repayment recorded it. That is
-        // what the lender claim still holds, never the original fill: a
-        // partial repayment (#3619, an opted-in pro-rata loan) was paid to the
-        // position holder directly and shrank `loan.principal`, so the final
-        // repayment's claim carries only the remainder. The repay deposit was
-        // measured and refused unless it arrived in full, and the free-balance
-        // check below confirms the vault still holds it.
-        uint256 rolledAmount = claim.amount;
+        // Compound: principal + interest, as the repayment recorded it, PLUS
+        // everything held for the position while the loan was open (#3629: a
+        // partial repayment, #3619, or a preclose top-up is held in the owner's
+        // vault for the position, never paid to a wallet). The claim alone is
+        // never the original fill: a partial repayment shrank `loan.principal`,
+        // so the final repayment's claim carries only the remainder, and the
+        // rest is the held part. `LibHeldForLender.take` settles the held
+        // records (reservation, parked interest, fail-closed marker) the same
+        // way the mid-loan claim does; the free-balance check below confirms
+        // the vault still holds both parts.
+        (uint256 heldAmount, ) = LibHeldForLender.take(s, loanId, loan);
+        uint256 rolledAmount = claim.amount + heldAmount;
 
         // #623 Codex round-2 P2 — assert the proceeds are STILL FREE in the
         // owner's vault before consuming the claim. They normally sit free (the
@@ -896,6 +916,70 @@ contract LenderIntentFacet is
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
             emit LoanSettled(loanId);
         }
+    }
+
+    /// @notice #3629 — re-commit what is held for an OPEN intent loan's lender
+    ///         position (a partial repayment, a rental day, a periodic sale's
+    ///         proceeds) behind the originating owner's standing intent, so it
+    ///         can be lent again while the loan runs, the open-loan counterpart
+    ///         of {rollIntentLoan}.
+    /// @dev    Callable by the originating intent owner, or a keeper the owner
+    ///         authorized for `KEEPER_ACTION_AUTO_ROLL`. Guards mirror the roll:
+    ///         the loan is Active, the stored lender AND the position holder are
+    ///         still the owner, the intent is active with its window open, no
+    ///         seller claims ride the loan, VPFI is not the lending asset, and
+    ///         neither asset is paused. The held funds already sit in the
+    ///         owner's vault; {LibHeldForLender.take} settles their records and
+    ///         the lien re-commits them. The loan's live-principal exposure is
+    ///         unchanged: it is released when the loan ends.
+    /// @param  loanId The open intent loan whose held payments to re-commit.
+    function recommitHeldToIntent(uint256 loanId) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
+        if (io.owner == address(0)) revert LenderIntentLoanNotRollable();
+        LibVaipakam._assertNotSanctioned(io.owner);
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert LenderIntentLoanNotRollable();
+        if (loan.lender != io.owner || LibPositionNFT.ownerOf(loan.lenderTokenId) != io.owner) {
+            revert LenderIntentPositionTransferred();
+        }
+        if (s.sellerInterestClaims[loanId].length != 0) revert LenderIntentLoanNotRollable();
+        if (io.lendingAsset == s.vpfiToken) revert LenderIntentVpfiRollUnsupported();
+        LibVaipakam.LenderIntent storage intent =
+            s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset][io.slot];
+        if (!intent.active) revert LenderIntentLoanNotRollable();
+        if (!LibIntentTerms.windowOpen(intent)) revert LenderIntentEnded();
+        LibFacet.requireAssetNotPaused(io.lendingAsset);
+        LibFacet.requireAssetNotPaused(io.collateralAsset);
+        if (LibAuth.requireKeeperForPrincipal(
+            LibVaipakam.KEEPER_ACTION_AUTO_ROLL, io.owner
+        )) LibServiceCapacity.chargeKeeper();
+        else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeKeeper();
+
+        (uint256 amount, address asset) = LibHeldForLender.take(s, loanId, loan);
+        if (amount == 0 || asset != io.lendingAsset) revert LenderIntentNothingToRoll();
+        // The held funds must still be free in the owner's vault once their
+        // reservation is released, else the lien would back nothing.
+        if (
+            LibEncumbrance.freeBalance(
+                io.owner, asset, 0, LibVaipakam.trackedHolding(io.owner, asset, 0)
+            ) < amount
+        ) revert LenderIntentLoanNotRollable();
+        LibEncumbrance.lienIntentCapital(io.owner, asset, io.collateralAsset, io.slot, amount);
+        LibVaipakam.syncIntentRegistry(io.owner, asset, io.collateralAsset, io.slot);
+        // Value left the position: a position token moved after this reads
+        // the change (the cooldown rule a payout also stamps).
+        LibPositionNFT.markLoanValueOut(loanId);
+        emit HeldRecommittedToIntent(
+            io.owner,
+            msg.sender,
+            loanId,
+            io.collateralAsset,
+            io.slot,
+            amount,
+            s.lenderIntentCapital[io.owner][asset][io.collateralAsset][io.slot]
+        );
     }
 
     /// @notice Read a standing intent. `active == false` ⇒ none / cancelled.
@@ -1008,18 +1092,21 @@ contract LenderIntentFacet is
         }
     }
 
-    /// @notice #625 WI-2c — paginated view (on this facet since #3618) of fully-repaid intent-originated
-    ///         loans a keeper can AUTO-ROLL (`LenderIntentFacet.rollIntentLoan`).
+    /// @notice #625 WI-2c — paginated view (on this facet since #3618) of the
+    ///         intent-originated loans a keeper can act on for the owner:
+    ///         fully-repaid loans to AUTO-ROLL (`rollIntentLoan`, `open = false`)
+    ///         and, since #3629, open loans with payments held for the lender
+    ///         position to re-commit (`recommitHeldToIntent`, `open = true`).
     ///         Pages the `activeIntentLoans` registry (every live intent loan)
-    ///         and returns only those at `LoanStatus.Repaid` whose intent can
-    ///         still take a roll (active, and inside its lend-until time,
-    ///         #3618) — the roll candidates — keyed off each loan's `intentOrigin` (so a sold
-    ///         lender position is still surfaced; `rollIntentLoan` then rejects
-    ///         it, and the keeper keys AUTO_ROLL auth off `owner`).
+    ///         and keeps only rows whose intent can still take capital (active,
+    ///         and inside its lend-until time, #3618), keyed off each loan's
+    ///         `intentOrigin` (so a sold lender position is still surfaced; the
+    ///         step then rejects it, and the keeper keys AUTO_ROLL auth off
+    ///         `owner`).
     /// @param  offset / limit  Window over the registry. `total` is the FULL
-    ///         registry size (Active + Repaid); the keeper pages until
-    ///         `offset >= total`, accumulating the Repaid rows each page yields.
-    /// @return loans  The Repaid intent loans within `[offset, offset+limit)`.
+    ///         registry size; the keeper pages until `offset >= total`,
+    ///         accumulating the rows each page yields.
+    /// @return loans  The candidates within `[offset, offset+limit)`.
     /// @return total  The registry size, for pagination.
     function getRollableIntentLoans(uint256 offset, uint256 limit)
         external
@@ -1044,7 +1131,10 @@ contract LenderIntentFacet is
         uint256 n = 0;
         for (uint256 i = 0; i < window; i++) {
             uint256 loanId = s.activeIntentLoans.at(offset + i);
-            if (s.loans[loanId].status != LibVaipakam.LoanStatus.Repaid) continue;
+            LibVaipakam.LoanStatus st = s.loans[loanId].status;
+            uint256 held = s.heldForLender[loanId];
+            bool open = st == LibVaipakam.LoanStatus.Active;
+            if (open ? held == 0 : st != LibVaipakam.LoanStatus.Repaid) continue;
             LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
             // #3618 — skip a loan whose intent can no longer take the roll
             // (cancelled, or its lend-until time leaves no room for another
@@ -1053,7 +1143,7 @@ contract LenderIntentFacet is
             LibVaipakam.LenderIntent storage intent =
                 s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset][io.slot];
             if (!intent.active || !LibIntentTerms.windowOpen(intent)) continue;
-            buf[n] = LibMetricsTypes.toRollableIntentLoan(loanId, io);
+            buf[n] = LibMetricsTypes.toRollableIntentLoan(loanId, io, open, held);
             n++;
         }
         loans = new LibMetricsTypes.RollableIntentLoan[](n);

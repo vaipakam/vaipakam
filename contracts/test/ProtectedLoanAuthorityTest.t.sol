@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -172,6 +173,11 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         uint256 arrived = ERC20(mockERC20).balanceOf(lenderVault) - vaultBefore;
         assertGt(arrived, PRINCIPAL / 2 - 1, "principal and interest reached the vault");
         assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing paid to the wallet");
+        // #3629 — the payment is held for the lender position; the holder's
+        // claim makes it the lender's own holding.
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "the claim pays no wallet either");
         assertEq(
             VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0) - heldBefore,
             arrived,

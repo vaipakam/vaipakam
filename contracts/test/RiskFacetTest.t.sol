@@ -4155,9 +4155,9 @@ contract RiskFacetTest is Test {
 
         // Learn the lender payout from an uncharged run, then rewind.
         uint256 snap = vm.snapshotState();
-        uint256 lender0 = IERC20(mockERC20).balanceOf(lender);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
-        uint256 payout = IERC20(mockERC20).balanceOf(lender) - lender0;
+        // #3629 — the payout is held for the position in the lender's vault.
+        uint256 payout = _heldForLender(loanId);
         assertGt(payout, 0, "fixture: the partial pays the lender");
         vm.revertToState(snap);
 
@@ -5554,25 +5554,25 @@ contract RiskFacetTest is Test {
         );
 
         // ── the property ──────────────────────────────────────────────────
-        // Paid to the holder's WALLET, not a vault: on the clean branch
-        // `freezeOrPayActiveLenderResident` does a direct `safeTransfer`, the
-        // same as `RepayPeriodicFacet`'s auto-liquidation leg on this identical
-        // shape (Active loan, funds resident in the Diamond, no claim record).
-        // Only the FROZEN branch vaults, and it vaults to the STORED lender
-        // deliberately, parking + encumbering rather than paying.
-        assertGt(
-            IERC20(mockERC20).balanceOf(newHolder),
-            0,
-            "current holder received the recovered lender share"
-        );
+        // #3629 — the share is held for the POSITION in the stored lender's
+        // vault (custody), and only the current holder can claim it; the
+        // stored lender cannot take it.
+        uint256 held = _heldForLender(loanId);
+        assertGt(held, 0, "the recovered lender share is held for the position");
+        assertEq(IERC20(mockERC20).balanceOf(newHolder), 0, "nothing reaches a wallet");
 
-        storedVault =
-            VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
-        assertEq(
-            storedVault == address(0) ? 0 : IERC20(mockERC20).balanceOf(storedVault),
-            storedBefore,
-            "stored lender received NOTHING"
-        );
+        vm.prank(storedLender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+
+        // This suite stubs the vault outflow (nothing physically moves), so
+        // the claim is checked through its event and the cleared ledger.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ClaimFacet.HeldForLenderClaimed(loanId, newHolder, mockERC20, held);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        assertEq(_heldForLender(loanId), 0, "the current holder took the whole share");
+        storedBefore;
 
         vm.clearMockedCalls();
     }
@@ -5580,7 +5580,7 @@ contract RiskFacetTest is Test {
     /// @dev #1955 — run ONE partial liquidation on an existing loan, optionally
     ///      stamping the lender `Full` first, and return what the treasury took
     ///      and what the lender received. The lender's share lands in their
-    ///      WALLET: `freezeOrPayActiveLenderResident`'s clean branch is a direct
+    ///      WALLET: `holdActiveLenderResident`'s clean branch is a direct
     ///      transfer (only the frozen branch vaults, and it vaults to the STORED
     ///      lender deliberately).
     function _partialAndMeasure(
@@ -5607,7 +5607,10 @@ contract RiskFacetTest is Test {
             );
         }
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
-        uint256 lBefore = IERC20(mockERC20).balanceOf(lenderAddr);
+        // #3629 — the lender share is held for the position (the holder
+        // claims it), so the lender side is measured as the held amount.
+        lenderAddr;
+        uint256 lBefore = _heldForLender(loanId);
         if (stampFull) {
             _expectResolverKeyedOnHolder(loanId);
         }
@@ -5615,7 +5618,12 @@ contract RiskFacetTest is Test {
             loanId, 2_000, defaultAdapterCalls()
         );
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
-        toLender = IERC20(mockERC20).balanceOf(lenderAddr) - lBefore;
+        toLender = _heldForLender(loanId) - lBefore;
+    }
+
+    /// @dev #3629 — what is held for the lender position of `loanId`.
+    function _heldForLender(uint256 loanId) private view returns (uint256 held) {
+        (, , , , , , held, ) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
     }
 
     /// @notice #1955 — the Full stamp reaches the interest a PARTIAL liquidation
@@ -5650,7 +5658,7 @@ contract RiskFacetTest is Test {
         // Partial liquidation is the ONE recovery entry that pays the holder
         // DIRECTLY: it writes no `lenderClaims` row, so there is no
         // `ownerOf`-gated claim behind the deposit to correct a stale address,
-        // and `freezeOrPayActiveLenderResident` resolves the resident itself
+        // and `holdActiveLenderResident` resolves the resident itself
         // (RiskFacet:1239-1257). The measured party therefore has to be the
         // HOLDER — measuring `lenderAddr` here reported a zero lender delta
         // against a real treasury reduction, which is the misrouted-principal
