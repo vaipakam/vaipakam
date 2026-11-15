@@ -127,6 +127,8 @@ library LibProtectedAccount {
     error PayoutNotDue(uint256 id, uint256 releaseAt);
     error RowNotQueued(uint256 id);
     error CosignRequired(uint256 id);
+    /// @notice A signer may not co-sign a payout addressed to itself.
+    error CannotCosignOwnPayout(uint256 id);
     error TooManySigners();
     error TooManyAllowlisted();
     error TooManyPendingRows();

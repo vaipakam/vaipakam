@@ -150,6 +150,10 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         LibVaipakam.PendingPayout storage p = s.pendingPayouts[id];
         if (p.state != LibProtectedAccount.ROW_QUEUED) revert LibProtectedAccount.RowNotQueued(id);
         if (!LibProtectedAccount.isSigner(p.user, msg.sender)) revert LibProtectedAccount.NotSigner(p.user, msg.sender);
+        // A co-signature is a second key approving a payout to someone else:
+        // a signer never co-signs a payout to itself, whichever order made it
+        // both a signer and a destination.
+        if (p.recipient == msg.sender) revert LibProtectedAccount.CannotCosignOwnPayout(id);
         p.cosigned = true;
         emit PayoutCosigned(p.user, id, msg.sender);
     }

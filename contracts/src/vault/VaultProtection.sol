@@ -194,9 +194,9 @@ contract VaultProtection {
     /// @dev Codex #3489 r5 — a replaced account's protection is permanent.
     error RetiredAccount();
     error CannotCancelOwnRemoval(address signer);
-    /// @notice The best-effort platform application ran out of gas: the
-    ///         transaction was sent with too little gas for it, so it is
-    ///         refused rather than landing a lock without its platform side.
+    /// @notice The platform application ran out of gas: the transaction was
+    ///         sent with too little gas for it, so the vault's change is
+    ///         refused rather than landing without its platform side.
     error PlatformApplyOutOfGas();
 
     constructor() {
@@ -312,16 +312,13 @@ contract VaultProtection {
                 revert PendingRowsExist();
             }
         }
-        // Codex #3489 r12 — an unlock or a switch-off applies its platform
-        // side in its own transaction, best effort like a lock: it never
-        // blocks the vault's own change. An unlock's application also settles
-        // any lock the platform had not applied (the rows and switch-off
-        // from before it cancelled) before a request after the unlock can
-        // exist. Should it fail, a later application still spares the
-        // payouts and the co-sign switch-off asked after the unlock (they
-        // carry the current lock number); a code-pin or NFT-unlock request
-        // made in between would be voided and must be asked again.
-        if (unlocked || disabled) _applyPlatform(false);
+        // Codex #3489 r12 and the owner's security review — an unlock or a
+        // switch-off applies its platform side in its own transaction, and
+        // lands only with it ({_applyPlatform}). An unlock's application
+        // also settles any lock the platform had not applied (the rows and
+        // switch-off from before it cancelled) before a request after the
+        // unlock can exist.
+        if (unlocked || disabled) _applyPlatform();
     }
 
     function _noOpenRows() private view returns (bool) {
@@ -358,6 +355,9 @@ contract VaultProtection {
         }
         e.readyAt = _later(l);
         e.epoch = l.epoch;
+        // A new request is confirmed afresh (owner review of #3489): a mark
+        // left from an earlier, cancelled or voided request does not carry.
+        e.verified = false;
         emit AllowlistAddRequested(destination, e.readyAt, auth.key);
     }
 
@@ -368,6 +368,7 @@ contract VaultProtection {
         P.Entry storage e = l.allow[destination];
         if (e.active || e.readyAt == 0 || e.epoch != l.epoch) revert NotRequested();
         e.readyAt = 0;
+        e.verified = false;
         _remove(l.pendingAllow[l.epoch], destination);
         emit AllowlistAddCancelled(destination, auth.key);
     }
@@ -412,7 +413,10 @@ contract VaultProtection {
         if (account != self.vaultCreationOwner() || diamond != self.vaultDiamond()) revert BadDestination(auth.key);
         address destination = auth.key;
         P.Entry storage e = l.allow[destination];
-        if (!e.active && e.readyAt == 0) revert BadDestination(destination);
+        // An active entry, or an addition pending in the current epoch (a
+        // cancelled one, or one a lock, a replacement or a switch-off voided,
+        // cannot be verified).
+        if (!e.active && (e.readyAt == 0 || e.epoch != l.epoch)) revert BadDestination(destination);
         _authorize(auth, PURPOSE_VERIFY, keccak256(abi.encode(VERIFY_TYPEHASH, account, diamond, _nonce(destination, PURPOSE_VERIFY), auth.expiry)));
         e.verified = true;
         emit DestinationVerified(destination);
@@ -541,10 +545,10 @@ contract VaultProtection {
         emit VaultLocked(auth.key);
         // Codex #3489 r9 — the lock's platform side lands with it: the Diamond's
         // permissionless application cancels the queued payouts and the
-        // platform-held pending changes and holds the position NFTs. Best
-        // effort: a failed application never blocks a lock, and every queued
+        // platform-held pending changes and holds the position NFTs. Strict
+        // (owner security review): a lock never lands without it. Every queued
         // row and pending switch-off also carries the lock count it predates.
-        _applyPlatform(false);
+        _applyPlatform();
     }
 
     /// @notice The platform locks the vault (its keeper relaying a LOCK the
@@ -657,7 +661,7 @@ contract VaultProtection {
         // the replacement does not land: the retired wallet's positions are
         // held and its rows cancelled in this transaction, so there is no
         // window in which it can move them. (A finalizer anyone may retry.)
-        _applyPlatform(true);
+        _applyPlatform();
     }
 
     // ─── Nonces ─────────────────────────────────────────────────────────
@@ -671,30 +675,31 @@ contract VaultProtection {
 
     // ─── Internals ──────────────────────────────────────────────────────
 
+    /// @dev The Diamond's refusal when its record already matches the vault
+    ///      (`LibProtectedAccount.ChangeNotRequested()`): nothing to apply.
+    bytes4 private constant CHANGE_NOT_REQUESTED = bytes4(keccak256("ChangeNotRequested()"));
+
     /// @dev Apply this vault's posture on the platform side, through the
     ///      Diamond's permissionless `applyProtection` (the queued payouts
     ///      cancelled, the platform-held pending changes voided, the position
-    ///      NFTs held). `strict`: a failed application reverts the caller (a
-    ///      replacement must never land without it); otherwise best effort (a
-    ///      lock must never be blocked; its rows and pending switch-off also
-    ///      carry the lock count they predate).
-    function _applyPlatform(bool strict) private {
+    ///      NFTs held), in the same transaction as the vault's own change. It
+    ///      is STRICT (owner security review of #3489): a lock, an unlock, a
+    ///      switch-off and a replacement each change the posture the platform
+    ///      applies, so any refusal reverts the vault's change with it (the
+    ///      Diamond's reentrancy guard included); an out-of-gas failure, which
+    ///      carries no data, reverts as {PlatformApplyOutOfGas} so a gas
+    ///      estimate funds the application. The one tolerated answer is
+    ///      "nothing to apply" (the platform already matches the vault, as for
+    ///      a switch-off the platform never saw switched on).
+    function _applyPlatform() private {
         IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
         IProtectionApply diamondApply = IProtectionApply(self.vaultDiamond());
-        address account = self.vaultCreationOwner();
-        if (strict) {
-            diamondApply.applyProtection(account);
-        } else {
-            // A failure is tolerated, but not one caused by the gas the
-            // transaction was given (#3489): under EIP-150 a gas limit just
-            // big enough for the lock starves the inner call while the lock
-            // still lands, and `eth_estimateGas` finds exactly that limit.
-            // Every refusal the application can raise carries an error
-            // (nothing changed, the guard held, a pause); running out of gas
-            // anywhere in it bubbles up with no data. So an empty failure
-            // reverts the lock, and the estimate funds the application.
-            try diamondApply.applyProtection(account) {} catch (bytes memory reason) {
-                if (reason.length == 0) revert PlatformApplyOutOfGas();
+        try diamondApply.applyProtection(self.vaultCreationOwner()) {}
+        catch (bytes memory reason) {
+            if (reason.length == 0) revert PlatformApplyOutOfGas();
+            if (reason.length == 4 && bytes4(reason) == CHANGE_NOT_REQUESTED) return;
+            assembly ("memory-safe") {
+                revert(add(reason, 0x20), mload(reason))
             }
         }
     }

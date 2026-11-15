@@ -566,7 +566,8 @@ function AccountView({
                       {p.release}
                     </button>
                   ) : null}
-                  {signer && needsCosign(row, record) && !row.cosigned ? (
+                  {/* A signer never co-signs a payout to itself (the contract refuses it). */}
+                  {signer && needsCosign(row, record) && !row.cosigned && row.recipient.toLowerCase() !== address?.toLowerCase() ? (
                     <button
                       type="button"
                       className="btn btn-secondary"

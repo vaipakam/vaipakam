@@ -1160,6 +1160,7 @@ export const copy = {
     notManager: B('Only the account’s manager wallet or one of its secondary signers can cancel this payout.'),
     notSigner: B('Only one of the account’s secondary signers can approve this payout.'),
     alreadyCosigned: B('A secondary signer has already approved this payout.'),
+    ownPayout: B('This payout goes to your own wallet, so another secondary signer must approve it.'),
     cosignNotRequired: B('This account does not require a signer’s approval, so none is needed.'),
     dryRunUnread: A('The protocol’s dry run of this action could not be run just now, so your wallet is not opened yet.'),
     changedRow: B('This queued payout'),

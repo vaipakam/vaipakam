@@ -665,6 +665,27 @@ contract ProtectedVaultTest is Test {
         assertEq(token.balanceOf(user), 995 ether);
     }
 
+    /// @dev A signer that is also a payout destination cannot co-sign a payout
+    ///      to itself: the co-signature is a second key approving a payout to
+    ///      someone else.
+    function testASignerCannotCosignAPayoutToItself() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        _addSigner(s2);
+        P.allow(address(diamond), user, user, s1, DELAY);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        uint256 id = _queue(1 ether, s1);
+        vm.prank(s1);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CannotCosignOwnPayout.selector, id));
+        _pay().cosignPayout(id);
+        // Another signer may.
+        vm.prank(s2);
+        _pay().cosignPayout(id);
+        assertTrue(_pay().getPendingPayout(id).cosigned, "co-signed by the other signer");
+    }
+
     /// @dev #3415 — a payout to an allowlisted destination that has not
     ///      verified itself needs a secondary signer's co-sign whenever the
     ///      account has signers, though the account's own co-sign setting is
@@ -1595,127 +1616,72 @@ contract ProtectedVaultTest is Test {
         assertEq(_pay().getPendingPayout(id).state, 3, "and the platform side landed with it");
     }
 
-    /// @dev Codex #3489 r9 — even when the lock's application fails, a co-sign
-    ///      switch-off requested before the lock can never finalize.
-    function testAPreLockCosignOffCannotFinalizeAfterAnUnappliedLock() public {
-        _enable();
-        _addSigner(s1);
-        vm.prank(user);
-        _prot().setRequireCosign(user, true);
-        vm.prank(user);
-        _prot().setRequireCosign(user, false);
-        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
-        vm.mockCallRevert(
-            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
-        );
-        vm.prank(user);
-        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
-        vm.clearMockedCalls();
-        vm.prank(user);
-        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
-        vm.warp(vm.getBlockTimestamp() + DELAY);
-        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
-        (,, uint64 offAt) = _prot().getProtection(user);
-        assertEq(offAt, 0, "reads as none pending");
-        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
-        _prot().finalizeSettingChanges(user);
-        (, bool on,) = _prot().getProtection(user);
-        assertTrue(on, "co-signing stays on");
-    }
-
-    /// @dev Codex #3489 r8 — a lock cancels every row queued before it, even
-    ///      when nobody applies it: after the vault's unlock, a pre-lock row
-    ///      is cancelled by its release, never paid.
-    function testAnUnappliedLockStillCancelsEarlierRows() public {
+    /// @dev Owner security review of #3489 — a lock never lands without its
+    ///      platform side: any refusal of the application (here, the shape of
+    ///      the Diamond's reentrancy guard) reverts the lock with it, and the
+    ///      queued payout stays queued under an unlocked vault.
+    function testALockIsRefusedWhenItsPlatformSideIsRefused() public {
         _deposit20(10 ether);
         _enable();
         uint256 id = _queue(1 ether, user);
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
-        // Lock and unlock through the vault only, with the lock's own platform
-        // application forced to fail: the platform never applies.
+        bytes memory refusal = abi.encodeWithSignature("ReentrancyGuardReentrantCall()");
         vm.mockCallRevert(
-            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), refusal
         );
+        vm.prank(user);
+        vm.expectRevert(refusal);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.clearMockedCalls();
+        (, bool locked,,,,,) = v.protectionState();
+        assertFalse(locked, "the lock did not land");
+        assertEq(_pay().getPendingPayout(id).state, 1, "the row is untouched");
+        // With the platform healthy, the same lock lands with its side.
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled with the lock");
+    }
+
+    /// @dev Owner security review of #3489 — an unlock never lands without
+    ///      its platform side either.
+    function testAnUnlockIsRefusedWhenItsPlatformSideIsRefused() public {
+        _enable();
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
         vm.warp(vm.getBlockTimestamp() + DELAY);
-        // The unlock's own application fails too.
+        bytes memory refusal = abi.encodeWithSignature("ReentrancyGuardReentrantCall()");
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), refusal
+        );
+        vm.expectRevert(refusal);
         v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
         vm.clearMockedCalls();
         (, bool locked,,,,,) = v.protectionState();
-        assertFalse(locked, "fixture: unlocked in the vault");
-        assertTrue(_pay().payoutReleaseCancels(id), "the release would cancel it");
-        assertFalse(_pay().payoutNeedsCosign(id), "a row the release cancels needs no co-sign");
-        uint256 before = token.balanceOf(user);
-        _pay().releasePayout(id);
-        assertEq(token.balanceOf(user), before, "nothing paid");
-        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled by the release");
-        // A row queued after the unlock is paid normally, even when the old
-        // lock is applied late (Codex #3489 r12): the application spares it.
-        uint256 id2 = _queue(1 ether, user);
-        assertFalse(_pay().payoutReleaseCancels(id2), "a post-unlock row is payable");
-        _prot().applyProtection(user);
-        assertEq(_pay().getPendingPayout(id2).state, 1, "the late application kept the post-unlock row");
-        vm.warp(vm.getBlockTimestamp() + DELAY);
-        _pay().releasePayout(id2);
-        assertEq(token.balanceOf(user) - before, 1 ether, "a post-unlock row pays");
-    }
-
-    /// @dev Codex #3489 r12 — an unlock applies its platform side in its own
-    ///      transaction, settling a lock the platform never applied: the
-    ///      pre-lock row is cancelled at the unlock, before any post-unlock
-    ///      request can exist.
-    function testAnUnlockSettlesAnUnappliedLockInItsOwnTransaction() public {
-        _deposit20(10 ether);
-        _enable();
-        uint256 id = _queue(1 ether, user);
-        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
-        vm.mockCallRevert(
-            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
-        );
-        vm.prank(user);
-        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
-        vm.clearMockedCalls();
-        assertEq(_pay().getPendingPayout(id).state, 1, "fixture: the lock's application failed");
-        vm.prank(user);
-        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
-        vm.warp(vm.getBlockTimestamp() + DELAY);
+        assertTrue(locked, "still locked");
         v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
-        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled at the unlock");
-        // Nothing is left to apply: the unlock's own application did it all.
+        (, locked,,,,,) = v.protectionState();
+        assertFalse(locked, "unlocked with its platform side");
         vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
         _prot().applyProtection(user);
     }
 
-    /// @dev Codex #3489 r12 — a co-sign switch-off asked after an unlock is
-    ///      not voided by a late application of the lock before it.
-    function testALateLockApplicationKeepsAPostUnlockCosignOff() public {
+    /// @dev The one answer the application may give without reverting the
+    ///      vault's change: nothing to apply (the platform already matches).
+    function testNothingToApplyDoesNotBlockTheVaultsChange() public {
         _enable();
-        _addSigner(s1);
-        vm.prank(user);
-        _prot().setRequireCosign(user, true);
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.mockCallRevert(
-            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
+            address(diamond),
+            abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user),
+            abi.encodeWithSelector(LibProtectedAccount.ChangeNotRequested.selector)
         );
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
-        vm.prank(user);
-        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
-        vm.warp(vm.getBlockTimestamp() + DELAY);
-        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
-        vm.clearMockedCalls();
-        vm.prank(user);
-        _prot().setRequireCosign(user, false);
-        _prot().applyProtection(user);
-        (,, uint64 offAt) = _prot().getProtection(user);
-        assertTrue(offAt != 0, "the post-unlock switch-off survives");
-        vm.warp(vm.getBlockTimestamp() + DELAY);
-        _prot().finalizeSettingChanges(user);
-        (, bool on,) = _prot().getProtection(user);
-        assertFalse(on, "and applies when due");
+        (, bool locked,,,,,) = v.protectionState();
+        assertTrue(locked, "the lock landed");
     }
 
     /// @dev Codex #3489 r7 — neither of the account's own wallets may become

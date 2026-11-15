@@ -292,6 +292,8 @@ export function queueVerdict(action: QueueAction, q: AccountQueue, row: QueueRow
   if (p.state !== ROW_QUEUED) return refuse('RowNotQueued', text('queue.notQueued'));
   if (signer === null) return unread();
   if (!signer) return refuse('NotSigner', text('queue.notSigner'));
+  // A signer never co-signs a payout to itself (the contract refuses it).
+  if (same(p.recipient, viewer)) return refuse('CannotCosignOwnPayout', text('queue.ownPayout'));
   if (p.cosigned) return refuse('AlreadyCosigned', text('queue.alreadyCosigned'));
   if (q.mode === null) return unread();
   if (!rowNeedsCosign(p, q.mode)) return refuse('CosignNotRequired', text('queue.cosignNotRequired'));

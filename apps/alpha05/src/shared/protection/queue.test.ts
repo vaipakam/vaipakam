@@ -117,6 +117,8 @@ describe('queue rules', () => {
     expect(code(queueVerdict('cosign', queue(), row({ needsCosign: true }), SIGNER, NOW, copy))).toBe('open');
     expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row(), OWNER, NOW, copy))).toBe('NotSigner');
     expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row({ cosigned: true }), SIGNER, NOW, copy))).toBe('AlreadyCosigned');
+    // A signer never co-signs a payout to itself.
+    expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row({ recipient: SIGNER }), SIGNER, NOW, copy))).toBe('CannotCosignOwnPayout');
     expect(code(queueVerdict('cosign', queue(), row(), SIGNER, NOW, copy))).toBe('CosignNotRequired');
     expect(code(queueVerdict('cosign', queue({ signers: null }), row(), SIGNER, NOW, copy))).toBe('unknown');
     expect(holdsRole('cosign', queue(), OWNER)).toBe(false);

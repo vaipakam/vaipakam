@@ -297,6 +297,26 @@ contract DeployDiamond is Script, ArtifactRootBase {
         priceGuard = PriceGuardDeployment.deploy(admin, feedRegistry, _priceGuardInputs);
     }
 
+    /// @dev Owner security review of #3489 — a vault tells a genuine vault
+    ///      from a look-alike by address: the CREATE2 address its creation
+    ///      owner derives under the beacon's `PROXY_INIT_CODE_HASH`. That
+    ///      holds only while the factory deploys the same BeaconProxy code the
+    ///      beacon hashed. So the deploy has the Diamond create one probe vault
+    ///      in a simulated state (after `vm.stopBroadcast()`, between a
+    ///      snapshot and its revert, so nothing reaches the chain) and requires
+    ///      the address it lands at to be the derived one.
+    function _requireVaultAddressDerivation(address diamond_) internal {
+        address probe = address(uint160(uint256(keccak256("vaipakam.deploy.vault-derivation-probe"))));
+        uint256 snap = vm.snapshotState();
+        address created = VaultFactoryFacet(diamond_).getOrCreateUserVault(probe);
+        address derived = VaipakamVaultImplementation(created).vaultAddressOf(probe);
+        vm.revertToState(snap);
+        require(
+            created == derived,
+            "DeployDiamond: a vault's CREATE2 address does not match the beacon's derivation"
+        );
+    }
+
     function runWith(
         address admin,
         address treasury,
@@ -1275,6 +1295,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         }
 
         vm.stopBroadcast();
+
+        // ── Step 6z: vault address derivation (owner review of #3489) ───
+        // Off the broadcast, so nothing reaches the chain.
+        _requireVaultAddressDerivation(diamond);
 
         // ── Step 7: Persist deployment artifact ─────────────────────────
         // Write the Diamond + vault-impl addresses to

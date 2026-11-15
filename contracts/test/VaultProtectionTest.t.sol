@@ -218,6 +218,30 @@ contract VaultProtectionTest is SetupTest {
         assertTrue(vault.allowEntry(dest).verified, "the destination's own call verifies it");
     }
 
+    /// @dev Owner security review of #3489 — a verification belongs to one
+    ///      request: a cancelled request cannot be verified, its mark does not
+    ///      carry to a new request, and a request a lock voided cannot be
+    ///      verified either.
+    function test_aVerificationBelongsToItsOwnRequest() public {
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));
+        P.verify(address(diamond), acct, dest);
+        assertTrue(vault.allowEntry(dest).verified, "fixture: verified");
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.cancelAllowlisted, (dest, P.direct(acct))));
+        assertFalse(vault.allowEntry(dest).verified, "a cancel clears the mark");
+        vm.prank(dest);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), P.direct(dest))));
+        // A new request starts unverified.
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));
+        assertFalse(vault.allowEntry(dest).verified, "a new request is confirmed afresh");
+        // A lock voids the pending request: it can no longer be verified.
+        vm.prank(acct);
+        vault.protect(abi.encodeCall(VaultProtection.lock, (P.direct(acct))));
+        vm.prank(dest);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), P.direct(dest))));
+    }
+
     // ─── Lock (#3423) ───────────────────────────────────────────────────
 
     function test_aSignedLockIsRelayedByAnyone_andHoldsOwnerOutflows() public {
