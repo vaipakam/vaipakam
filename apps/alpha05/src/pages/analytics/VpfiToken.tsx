@@ -108,7 +108,10 @@ function TokenFacts({ chain, t, homeName, recorded }: { chain: SupportedChain; t
     if (!f.ok) return unread(f);
     // The token's own decimals, never assumed: unread decimals show base units.
     if (!t.decimals.ok) return format('analytics.vpfi.baseUnits', { amount: f.value.toString() });
-    return `${formatFigureText(f.value, t.decimals.value)} ${t.symbol.ok ? t.symbol.value : 'VPFI'}`;
+    // The token's own symbol, never assumed: an unread symbol says so.
+    return t.symbol.ok
+      ? `${formatFigureText(f.value, t.decimals.value)} ${t.symbol.value}`
+      : format('analytics.vpfi.symbolUnread', { amount: formatFigureText(f.value, t.decimals.value) });
   };
   const who = (f: Fact<Hex>) => {
     if (!f.ok) return unread(f);
@@ -117,7 +120,13 @@ function TokenFacts({ chain, t, homeName, recorded }: { chain: SupportedChain; t
   };
   const h = t.homeFacts;
   const left = h ? mintable(h, t.supply) : null;
-  const ownerIsTimelock = t.owner.ok && holderOf(t.owner.value, chain) === 'timelock';
+  // Whether a minter change must wait on the timelock is said only from an
+  // owner that was read; an unread owner says that instead.
+  const mintKey = !t.owner.ok
+    ? 'analytics.vpfi.mintOwnerUnread'
+    : holderOf(t.owner.value, chain) === 'timelock'
+      ? 'analytics.vpfi.mintGoverned'
+      : 'analytics.vpfi.mintOwner';
   return (
     <>
       {t.paused.ok ? (
@@ -170,7 +179,7 @@ function TokenFacts({ chain, t, homeName, recorded }: { chain: SupportedChain; t
             ? format('analytics.vpfi.bridgedNote', { chain: chain.name, home: homeName ?? text('analytics.vpfi.homeUnnamed') })
             : format('analytics.vpfi.homeUnread', { chain: chain.name })}
       </p>
-      {h && <p className="tier-a">{text(ownerIsTimelock ? 'analytics.vpfi.mintGoverned' : 'analytics.vpfi.mintOwner')}</p>}
+      {h && <p className="tier-a">{text(mintKey)}</p>}
       {h && h.cap.ok && h.cap.value !== PUBLISHED_CAP && (
         <Notice tone="warn" tier="A">
           {text('analytics.vpfi.capDiffers')}

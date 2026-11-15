@@ -95,16 +95,24 @@ export function AnalyticsView({
   );
 }
 
-/** The reference currency's name for a figure, or the stated lack of one. */
+/** The reference currency's name for a figure: its name, the stated lack of
+ *  one when the protocol answered with none, or the stated failure when the
+ *  name could not be read (never conflated with "not set"). */
 function useUnit(f: ProtocolFigures) {
   const { text, format } = useCopy();
-  const symbol = f.symbol.ok ? f.symbol.value : null;
-  return {
-    unit: symbol ?? text('analytics.unitUnnamed'),
-    // Significant digits below one, "≈" when any digit was dropped, so a
-    // small real amount never reads as zero (RB-FUNDS).
-    value: (v: bigint) => (symbol === null ? format('analytics.valueUnnamed', { value: formatFigureText(v, 18) }) : `${formatFigureText(v, 18)} ${symbol}`),
-  };
+  // Significant digits below one, "≈" when any digit was dropped, so a
+  // small real amount never reads as zero (RB-FUNDS).
+  if (!f.symbol.ok) {
+    return {
+      unit: format('analytics.unitUnread', { reason: f.symbol.reason }),
+      value: (v: bigint) => format('analytics.valueUnread', { value: formatFigureText(v, 18) }),
+    };
+  }
+  const symbol = f.symbol.value;
+  if (symbol === null) {
+    return { unit: text('analytics.unitUnnamed'), value: (v: bigint) => format('analytics.valueUnnamed', { value: formatFigureText(v, 18) }) };
+  }
+  return { unit: symbol, value: (v: bigint) => `${formatFigureText(v, 18)} ${symbol}` };
 }
 
 function Figures({ chain, f, rereadError, nowSec }: { chain: SupportedChain; f: ProtocolFigures; rereadError: string | null; nowSec: number }) {

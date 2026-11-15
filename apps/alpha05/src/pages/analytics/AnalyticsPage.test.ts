@@ -198,6 +198,14 @@ describe('AnalyticsView', () => {
     expect(out).toContain('reference currency not named');
   });
 
+  it('says the reference currency’s name could not be read, never that it is unset', () => {
+    const out = html(figures({ symbol: { ok: false, reason: 'rpc down' } }));
+    expect(out).toContain('whose name could not be read (rpc down)');
+    expect(out).toContain('reference currency name not read');
+    expect(out).not.toContain('not named');
+    expect(out).not.toContain('is not set');
+  });
+
   it('shows the home network’s cap, mintable figure and minter, and the undecided reserve', () => {
     const token = '0x00000000000000000000000000000000000000F1' as Hex;
     const out = html(
@@ -265,6 +273,34 @@ describe('AnalyticsView', () => {
     expect(out).toContain('The cap belongs to');
     expect(out).not.toContain('data-testid="analytics-vpfi-cap"');
     expect(out).toContain('VPFI transfers are paused on Anvil.');
+  });
+
+  it('never assumes the symbol or the owner of the token when they were not read', () => {
+    const token = '0x00000000000000000000000000000000000000F1' as Hex;
+    const out = html(
+      figures({
+        vpfi: {
+          ok: true,
+          value: {
+            kind: 'token',
+            facts: {
+              token,
+              home: true,
+              name: { ok: true, value: 'VPFI' },
+              symbol: { ok: false, reason: 'timeout' },
+              decimals: { ok: true, value: 18 },
+              supply: { ok: true, value: 5n * E18 },
+              owner: { ok: false, reason: 'timeout' },
+              paused: { ok: true, value: false },
+              homeFacts: { cap: { ok: true, value: 230_000_000n * E18 }, initialMint: { ok: true, value: 5n * E18 }, minter: { ok: true, value: DIAMOND } },
+            },
+          },
+        },
+      }),
+    );
+    expect(out).toContain('5 (token symbol not read)');
+    expect(out).toContain('The owner could not be read, so this page cannot say whether such a change must wait.');
+    expect(out).not.toContain('is not the governance timelock');
   });
 
   it('says a network has no VPFI token, or that it could not be read', () => {

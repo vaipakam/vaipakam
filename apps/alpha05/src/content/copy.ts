@@ -5622,6 +5622,8 @@ export const copy = {
     unread: B('Not read: {{reason}}'),
     unitUnnamed: B('the reference currency, whose name is not set'),
     valueUnnamed: B('{{value}} (reference currency not named)'),
+    unitUnread: A('the reference currency, whose name could not be read ({{reason}})'),
+    valueUnread: B('{{value}} (reference currency name not read)'),
     rate: B('{{rate}}%'),
     noLoansYet: B('None yet: no loan has opened'),
     activityTitle: B('Activity'),
@@ -5722,6 +5724,8 @@ export const copy = {
       mintGoverned: A(
         'Only the minter can mint, and only the token’s owner can change the minter. The owner is the governance timelock, so a change of minter waits out its delay.',
       ),
+      mintOwnerUnread: A('Only the minter can mint, and only the token’s owner can change the minter. The owner could not be read, so this page cannot say whether such a change must wait.'),
+      symbolUnread: B('{{amount}} (token symbol not read)'),
       mintOwner: A(
         'Only the minter can mint, and only the token’s owner can change the minter. The owner shown is not the governance timelock this app’s record names, so this page cannot say such a change must wait.',
       ),
