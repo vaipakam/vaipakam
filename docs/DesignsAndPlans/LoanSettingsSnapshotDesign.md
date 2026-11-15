@@ -55,6 +55,14 @@ opened".
      holding a retired part moves to the current value of that part.
    - **Consent.** Both parties of a loan may move it to the current set.
 
+5. **What sits behind an address in a set follows the same rule.** A set
+   names contracts (a guard, adapters, an executor). Any setting inside such
+   a contract that governance can change and that a loan's price or sale
+   depends on is either versioned like the guard's config, or changeable
+   only as a stop. Anything else is a new contract and so a new set. The
+   build checks each named contract for owner-settable state against this
+   rule.
+
 A read that has no loan (an offer preview, the offer book's value floor, a
 compliance value, a treasury conversion, a buyback) uses the current set.
 
@@ -192,6 +200,11 @@ makes it current. The old list is never edited.
 - The vault outflow check for "is this a swap adapter" asks the loan's route
   set when the outflow belongs to a loan, and the current route set
   otherwise.
+- **Targets inside an adapter.** An aggregator adapter keeps a list of the
+  swap targets it may call. Removing a target is a stop: instant, and it
+  only refuses. Adding a target is not allowed on a deployed adapter; a new
+  target is a new adapter and therefore a new route set, which reaches new
+  loans only.
 - A loan whose route set has no enabled adapter keeps today's behaviour
   (`NoEnabledSwapRoute`). The cure is an announced retirement of that route
   set.
@@ -365,6 +378,7 @@ fallback custody or past default cannot be moved.
 - Consent: both sides, exact set number, refused in fallback custody and
   after default; every holder on a divided loan.
 - Try-list indexes stay stable for a loan across a reorder.
+- A deployed adapter accepts no new swap target; removing one is instant.
 - The vault refuses a guard or a conduit outside its code's accepted list
   and holds no per-loan settings.
 - The pre-deploy check fails on an unlisted "current" caller.
