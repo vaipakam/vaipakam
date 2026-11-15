@@ -35,11 +35,33 @@ successor, however new. It now requires the successor to have been registered
 at least `MIN_CODE_DELAY` earlier. The one rule (`_requireSeasoned`) is checked
 wherever code becomes current: the executed proposal and both revoke routes.
 
+## Symbolic proofs (Halmos)
+
+`contracts/test/formal/VaultBeaconHalmos.sol` states the same properties as
+Halmos `check_` functions, run with `bash contracts/script/halmos-beacon.sh`
+(owner approved installing Halmos, 2026-11-15). Each check takes one arbitrary
+call to the beacon: any function, any arguments, any sender, any later time,
+paused or not. It starts from a state chosen so the property can bite: fresh
+and seasoned versions registered, a proposal pending (1b, 5), a version already
+revoked (6). Halmos then proves the property for every such call, not a
+sample. All seven pass. With the guardian's new check removed, Halmos finds
+the counterexample at once: the guardian, at the same moment, while paused.
+
+Its first run reported an ownership loss through `acceptOwnership` by
+`address(0)` while no transfer was pending. No transaction can have that
+sender, so the checks assume a non-zero sender.
+
 ## What it does not cover
 
-It is a fuzzing campaign: it shows these properties hold on the sequences it
-generated, not on all of them. A symbolic prover would give that stronger
-result. Halmos runs these same Foundry tests symbolically, so the suite is
-written to be reusable for that. Installing a prover in this environment needs
-the owner's approval, so that pass has not been run. Hand both the suite and
-this note to the external audit (#892).
+- The Halmos checks prove one call from each chosen state; sequences of calls
+  are covered by the fuzz suite, not proved. Halmos's invariant mode could
+  extend the proofs to short sequences.
+- Halmos treats signature recovery abstractly. Property 3 is therefore proved
+  as "a pin moves only in a call that consumes exactly one nonce", which
+  every signed path does. That a signature is checked correctly relies on
+  OpenZeppelin's `SignatureChecker`, which is outside these proofs.
+- The script copies the beacon into a small project of its own, because Halmos
+  builds the project it runs in and this repository's build is the full,
+  test-inclusive compile. It does not run in CI.
+
+Hand the suite, the proofs and this note to the external audit (#892).
