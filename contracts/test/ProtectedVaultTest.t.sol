@@ -1477,6 +1477,53 @@ contract ProtectedVaultTest is Test {
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
     }
 
+    /// @dev Codex #3489 r9 — a vault lock lands its platform side with it: a
+    ///      pending co-sign switch-off is voided by the lock's own application.
+    function testAVaultLockAppliesItsPlatformSide() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        vm.prank(user);
+        _prot().setRequireCosign(user, false);
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        (,, uint64 offAt) = _prot().getProtection(user);
+        assertEq(offAt, 0, "the switch-off died with the lock");
+        assertEq(_pay().getPendingPayout(id).state, 3, "the queued row was cancelled at once");
+    }
+
+    /// @dev Codex #3489 r9 — even when the lock's application fails, a co-sign
+    ///      switch-off requested before the lock can never finalize.
+    function testAPreLockCosignOffCannotFinalizeAfterAnUnappliedLock() public {
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        vm.prank(user);
+        _prot().setRequireCosign(user, false);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
+        );
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.clearMockedCalls();
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        (,, uint64 offAt) = _prot().getProtection(user);
+        assertEq(offAt, 0, "reads as none pending");
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeSettingChanges(user);
+        (, bool on,) = _prot().getProtection(user);
+        assertTrue(on, "co-signing stays on");
+    }
+
     /// @dev Codex #3489 r8 — a lock cancels every row queued before it, even
     ///      when nobody applies it: after the vault's unlock, a pre-lock row
     ///      is cancelled by its release, never paid.
@@ -1485,9 +1532,14 @@ contract ProtectedVaultTest is Test {
         _enable();
         uint256 id = _queue(1 ether, user);
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
-        // Lock and unlock through the vault only; the platform never applies.
+        // Lock and unlock through the vault only, with the lock's own platform
+        // application forced to fail: the platform never applies.
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
+        );
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.clearMockedCalls();
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
         vm.warp(vm.getBlockTimestamp() + DELAY);

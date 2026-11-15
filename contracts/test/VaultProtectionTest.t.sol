@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestProtection as P} from "./helpers/LibTestProtection.sol";
@@ -246,7 +247,9 @@ contract VaultProtectionTest is SetupTest {
         );
         vault.transferOut(o);
 
-        // The platform applies it; the acct's unlock waits the delay.
+        // The lock applied its platform side in the same transaction (Codex
+        // #3489 r9), so there is nothing left to apply; the unlock waits the delay.
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
         ProtectedAccountFacet(address(diamond)).applyProtection(acct);
         P.requestUnlock(address(diamond), acct, acct);
         vm.warp(block.timestamp + DELAY);

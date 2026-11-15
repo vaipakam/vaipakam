@@ -1389,6 +1389,7 @@
     "L|vaipakam@661[address]|3|0|address|protectedAccount[].controller",
     "L|vaipakam@661[address]|3|20|uint64|protectedAccount[].retiredPendingUnpinAt",
     "L|vaipakam@661[address]|4|0|uint64|protectedAccount[].lockCountApplied",
+    "L|vaipakam@661[address]|4|8|uint64|protectedAccount[].cosignOffLockGen",
     "L|vaipakam@662[address]@0[]|0|0|bytes32|protectedSigners[]._inner._values[]",
     "L|vaipakam@662[address]@1[bytes32]|0|0|uint256|protectedSigners[]._inner._positions[]",
     "L|vaipakam@663[address]@0[address]|0|0|uint64|protectedSignerChange[][].addAt",

@@ -86,7 +86,8 @@ describe('safetySteps', () => {
       { to: 'diamond', functionName: 'applyProtection', args: [ME] },
     ]);
     expect(safetySteps('enable', ME, null, { delaySeconds: 3 * DAY, protectNfts: false }).map((x) => x.functionName)).toEqual(['getOrCreateUserVault', 'protect', 'applyProtection']);
-    expect(safetySteps('lock', ME, VAULT, null)).toMatchObject([protect('lock', [auth]), { to: 'diamond', functionName: 'applyProtection', args: [ME] }]);
+    // One transaction: the vault's lock applies its own platform side (#3489 r9).
+    expect(safetySteps('lock', ME, VAULT, null)).toEqual([expect.objectContaining(protect('lock', [auth]))]);
     expect(safetySteps('unlock', ME, VAULT, null)).toMatchObject([protect('requestUnlock', [auth])]);
     expect(safetySteps('finalize', ME, VAULT, null, ['cosignOff'])).toMatchObject([{ to: 'diamond', functionName: 'finalizeSettingChanges', args: [ME] }]);
     expect(safetySteps('finalize', ME, VAULT, null, ['unlock']).map((x) => x.functionName)).toEqual(['protect', 'applyProtection']);

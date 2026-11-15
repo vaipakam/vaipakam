@@ -16,6 +16,12 @@ interface IProtectedVaultSelf {
 /// @dev The one platform read the protection code makes: the account's queued
 ///      payout rows, which a switch-off waits for (they move into the vault
 ///      with the liens in Stage B3).
+/// @dev The Diamond's permissionless application of a vault's protected
+///      posture ({ProtectedAccountFacet.applyProtection}).
+interface IProtectionApply {
+    function applyProtection(address account) external;
+}
+
 interface IPayoutRowsView {
     function getPendingPayoutIds(address account) external view returns (uint256[] memory);
 }
@@ -512,6 +518,13 @@ contract VaultProtection {
             _clearProposal(l);
         }
         emit VaultLocked(auth.key);
+        // Codex #3489 r9 — the lock's platform side lands with it: the Diamond's
+        // permissionless application cancels the queued payouts and the
+        // platform-held pending changes and holds the position NFTs. Best
+        // effort: a failed application never blocks a lock, and every queued
+        // row and pending switch-off also carries the lock count it predates.
+        IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
+        try IProtectionApply(self.vaultDiamond()).applyProtection(self.vaultCreationOwner()) {} catch {}
     }
 
     /// @notice The platform locks the vault (its keeper relaying a LOCK the

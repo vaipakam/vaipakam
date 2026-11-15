@@ -214,6 +214,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         }
         _requireLoosenable(account, c);
         a.pendingCosignOffAt = uint64(block.timestamp) + c.delay;
+        a.cosignOffLockGen = c.lockCount;
         emit SettingChangeRequested(account, CHANGE_COSIGN_OFF, 0, a.pendingCosignOffAt);
     }
 
@@ -239,9 +240,12 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice Apply a matured co-sign switch-off. Permissionless.
     function finalizeSettingChanges(address account) external nonReentrant whenNotPaused {
         LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[account];
-        if (a.pendingCosignOffAt == 0) revert LibProtectedAccount.ChangeNotRequested();
+        LibProtectedAccount.Core memory c = LibProtectedAccount.core(account);
+        // A lock taken after the request voids it, whether or not the platform
+        // applied that lock (Codex #3489 r9): an unlock never revives it.
+        if (a.pendingCosignOffAt == 0 || c.lockCount > a.cosignOffLockGen) revert LibProtectedAccount.ChangeNotRequested();
         if (block.timestamp < a.pendingCosignOffAt) revert LibProtectedAccount.ChangeNotMatured(a.pendingCosignOffAt);
-        _requireLoosenable(account, LibProtectedAccount.core(account));
+        _requireLoosenable(account, c);
         a.requireCosign = false;
         a.pendingCosignOffAt = 0;
         emit CosignRequirementSet(account, false);
@@ -262,7 +266,13 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         // The co-sign setting as it binds: it never binds an account with no
         // signer, even before `applyProtection` clears the stored flag
         // (Codex #3489 r2).
-        return (s.userVaipakamVaults[account], LibProtectedAccount.cosignSettingInForce(account), a.pendingCosignOffAt);
+        // A switch-off a later lock voided reads as none pending (r9).
+        uint64 pending = a.pendingCosignOffAt;
+        address vault = s.userVaipakamVaults[account];
+        if (pending != 0 && vault != address(0) && LibProtectedAccount.core(account).lockCount > a.cosignOffLockGen) {
+            pending = 0;
+        }
+        return (vault, LibProtectedAccount.cosignSettingInForce(account), pending);
     }
 
     /// @notice Whether a listing `seller` authored may pay `recipient`

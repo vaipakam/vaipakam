@@ -8391,6 +8391,10 @@ library LibVaipakam {
         ///      (rows cancelled, pending changes voided, NFTs held) were last
         ///      applied. Appended.
         uint64 lockCountApplied;
+        /// @dev Codex #3489 r9 — the vault lock count when the pending co-sign
+        ///      switch-off was requested. A later lock, applied or not, voids
+        ///      it. Appended.
+        uint64 cosignOffLockGen;
     }
 
     /// @notice Protected account mode — a pending change to one signer.

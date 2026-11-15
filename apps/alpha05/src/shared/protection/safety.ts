@@ -12,9 +12,10 @@
  *   `lockPositionNfts(account)` when NFT protection is chosen, then
  *   `applyProtection(account)`. The delay must sit inside the protocol's
  *   bounds.
- * - `lock`: the vault's `lock`, then `applyProtection(account)`: it cancels
- *   every queued payout (their assets stay in the vault), stops new payouts
- *   and new positions, and drops every pending change.
+ * - `lock`: the vault's `lock`, which applies the platform side in the same
+ *   transaction: it cancels every queued payout (their assets stay in the
+ *   vault), stops new payouts and new positions, and drops every pending
+ *   change.
  * - `unlock`: the vault's `requestUnlock`. Refused during a new primary's
  *   cool-down. The unlock takes effect only after the account's delay,
  *   through `finalize`.
@@ -279,7 +280,8 @@ export function safetySteps(action: SafetyAction, account: Hex, vault: Hex | nul
       apply,
     ];
   }
-  if (action === 'lock') return [vaultStep(SAFETY_FUNCTION.lock, [auth]), apply];
+  // A lock applies its own platform side in the same transaction (#3489 r9).
+  if (action === 'lock') return [vaultStep(SAFETY_FUNCTION.lock, [auth])];
   if (action === 'unlock') return [vaultStep(SAFETY_FUNCTION.unlock, [auth])];
   const vaultDue = due.some((d) => d === 'lowerDelay' || d === 'unlock' || d === 'disable');
   return [

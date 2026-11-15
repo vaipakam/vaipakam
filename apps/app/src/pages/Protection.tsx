@@ -65,8 +65,9 @@ const DAY = 86_400;
  * each write is the vault's `protect(bytes)` carrying one VaultProtection call,
  * authorized directly by the connected wallet (`directAuth`), and sent to the
  * ACCOUNT's vault whoever sends it (the owner, a signer, a nominee). A write
- * that changes the posture (a lock, a switch-on, a completed move) is followed
- * by the Diamond's `applyProtection(account)`, which applies the platform side.
+ * that changes the posture (a switch-on, a completed move) is followed by the
+ * Diamond's `applyProtection(account)`, which applies the platform side; a
+ * lock applies its own platform side in the same transaction (Codex #3489 r9).
  */
 function useProtectionWrites(account: `0x${string}` | undefined, vault: `0x${string}` | null) {
   const { address } = useActiveChain();
@@ -508,7 +509,7 @@ function AccountView({
         <section className="card">
           <h2 className="card-title">{p.lockTitle}</h2>
           <p>{signerMayLockOver ? p.lockOverBody : p.lockBody}</p>
-          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => ptx('lock', [], true)}>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => ptx('lock', [])}>
             {asSigner ? p.lockAccount : p.lockNow}
           </button>
         </section>
