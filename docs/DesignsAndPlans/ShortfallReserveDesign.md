@@ -74,10 +74,12 @@ Per lending asset, in weekly rounds.
 
 1. **Record.** When an eligible loan's lender claim finalises with a principal shortfall, the settlement writes a shortfall record: loan, asset, shortfall amount, the round it falls in, and the payee (the lender-position holder that made the terminal claim). No transaction of the lender's is needed, and no caller can add or alter a record.
 2. **Size.** Each record's eligible amount is `shortfall × share`, where the share is 50% (governance-bounded 25 to 75%), then capped per loan and per payee per round by per-asset caps.
-3. **Round budget.** When a round closes, its budget is 10% of the asset's reserve balance at that moment (bounded 5 to 20%).
+3. **Round budget.** A round is closed by a transaction anyone may send once its week has ended (keeper-backed), and rounds close strictly in order. Closing computes the budget as 10% (bounded 5 to 20%) of the asset's **uncommitted** balance, which is the reserve balance minus everything earmarked for earlier rounds not yet paid, and earmarks the lesser of that budget and the round's eligible total. Earmarked funds belong to that round until they are paid or released.
 4. **Share out.** If the round's eligible amounts fit the budget they are paid in full; otherwise each is paid in proportion. Being first gains nothing, and one bad week cannot empty the reserve.
 5. **Delay.** Payouts become claimable 7 days after the round closes. In that time the guardian may **cancel** a record (the amount stays in the reserve, an event states the reason). The guardian can never add a record, raise an amount or name a payee.
 6. **Pay.** After the delay anyone may settle the round (keeper-backed, ships disarmed). Each payout goes into the payee's own vault through the vault outflow policy, in the lending asset, from that asset's reserve balance only. A flagged payee's amount is held for them under the existing close-out freeze rule, not redirected.
+
+Because every closed round holds its own earmark, a late close or a late settlement changes nothing: no later round is sized against funds an earlier one was allotted, and rounds may be settled in any order. A cancelled record releases its part of the earmark back to the uncommitted balance. Conversions (section 8) and an extraordinary distribution (4.4) may spend the uncommitted balance only.
 
 A shortfall is paid once, from one round. Nothing carries forward to a later round: an underpaid round stays underpaid, which is what makes the reserve impossible to drain by repetition.
 
@@ -122,7 +124,7 @@ A shortfall is paid once, from one round. Nothing carries forward to a later rou
 | Indexer and app | Reserve page, record state on closed loans, wording per section 9. |
 | Permissionless-steps ledger | Row for round settlement. |
 
-Tests: eligibility each way; principal-only measurement; share, caps and proportional rounds; no carry-forward; delay and cancel; a flagged payee is held; the fee split on every fee path; no record can be written by a caller; settings changes do not reach a closed round; a pair acting together always nets a loss; reserve never pays an asset from another asset's balance.
+Tests: eligibility each way; principal-only measurement; share, caps and proportional rounds; no carry-forward; many rounds closed late and settled out of order each pay exactly their earmark and the earmarks never exceed the balance; a conversion or extraordinary distribution cannot touch earmarked funds; delay and cancel (the earmark is released); a flagged payee is held; the fee split on every fee path; no record can be written by a caller; settings changes do not reach a closed round; a pair acting together always nets a loss; reserve never pays an asset from another asset's balance.
 
 ## 11. Open decisions for the owner
 
