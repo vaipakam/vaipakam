@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -104,7 +105,7 @@ contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessC
     );
     /// @notice Payroll requires Diamond-as-treasury mode — funding draws
     ///         from `treasuryBalances`, which is only meaningful when
-    ///         `s.treasury == address(this)`.
+    ///         the vault code names the Diamond as the treasury (#3569).
     error PayrollTreasuryNotDiamond();
 
     // ─── Admin: create / fund / rate / pause ─────────────────────────────
@@ -161,7 +162,7 @@ contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessC
     {
         if (amount == 0) revert ZeroFundAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.treasury != address(this)) revert PayrollTreasuryNotDiamond();
+        if (!LibTreasury.isDiamond()) revert PayrollTreasuryNotDiamond();
         LibVaipakam.PayrollStream storage st = _stream(s, streamId);
 
         uint256 available = s.treasuryBalances[st.asset];

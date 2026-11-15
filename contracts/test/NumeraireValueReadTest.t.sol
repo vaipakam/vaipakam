@@ -28,7 +28,7 @@ contract NumeraireValueReadProbeFacet {
     }
 
     function probeRecordFee(address asset, uint256 amount) external {
-        LibFacet.recordTreasuryAccrual(asset, amount);
+        LibFacet.recordTreasuryAccrual(asset, amount, address(this));
     }
 
     function probeFeeLogLength() external view returns (uint256) {

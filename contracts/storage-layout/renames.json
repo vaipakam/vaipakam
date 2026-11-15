@@ -600,6 +600,14 @@
       "from": "tierLtvParams[].floorBps",
       "to": "tierLtvParams[].retiredFloorBps",
       "reason": "#3547 (owner decision 2026-11-11): a peer tier-LTV reading below the old box floor is honoured, so the floor governs nothing; it is no longer written or read. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 4,
+      "offset": 0,
+      "from": "treasury",
+      "to": "retiredTreasury",
+      "reason": "#3569 (owner decision 2026-11-12, \"Vault code only\"): the treasury is the vault code's immutable TREASURY, read through the vault beacon, so the Diamond-side copy and its setter are retired and the slot is no longer written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

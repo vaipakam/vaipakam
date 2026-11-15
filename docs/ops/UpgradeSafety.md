@@ -100,6 +100,18 @@ A vault runs its owner's **pinned** version while that version is not revoked, o
 7. Verify: `VaultBeacon.implementation()` (from a non-vault caller) and `resolvedVersionOf(vault)` for a sample of vaults.
 8. To withdraw a bad version: `proposeRevoke(id, successorId)` then `executeRevoke()` after the delay; in an emergency, while paused, the guardian's `guardianRevokeVersion`.
 
+### Moving the treasury (#3569)
+The treasury is the `TREASURY` endpoint fixed into the vault code; there is no Diamond-side copy and no `setTreasury`. `AdminFacet.getTreasury()` reports the current vault code's treasury. Moving it is a vault code change and nothing else:
+
+1. Build and deploy a `VaipakamVaultImplementation` whose `TREASURY` is the new address (a zero treasury is refused by name, `TreasuryUnset`, on every fee).
+2. Follow the procedure above: `registerVersion`, `proposeCurrentVersion`, wait `MIN_CODE_DELAY` (7 days), `executeCurrentVersion`.
+3. Verify `getTreasury()` returns the new address.
+
+Consequences to plan for:
+- Fees the Diamond moves itself (a payer's wallet pull, a share the Diamond already holds) go to the new treasury from the execution on.
+- A fee drawn from a vault goes to the treasury named by **that vault's own code**. A vault pinned to an older version keeps paying the older treasury until its owner unpins, or until that version is revoked. To end that, revoke the old version with successor 0 (`proposeRevoke(id, 0)` then `executeRevoke()`); its pinned vaults then run the current code.
+- `treasuryBalances` counts only fees that actually reached the Diamond, and the Diamond-as-treasury operations (treasury convert, payroll funding, backstop seed and withdraw) work only while the current vault code names the Diamond. Moving the treasury off the Diamond turns them off; drain what the Diamond holds first.
+
 ---
 
 ## Pre-flight checklist (applies to both upgrade surfaces)

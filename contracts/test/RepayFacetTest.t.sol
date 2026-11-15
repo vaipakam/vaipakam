@@ -349,7 +349,6 @@ contract RepayFacetTest is Test {
         LibTestPositionNFT.install(address(diamond), address(this));
         LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         // vm.prank(address(diamond));
-        // LibVaipakam.setTreasury(owner);
 
         // Mock balances
         deal(mockERC20, lender, 1e18);

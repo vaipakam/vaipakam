@@ -86,6 +86,12 @@ cast call $DIAMOND "paused()(bool)" --rpc-url $BASE_SEPOLIA_RPC_URL          # �
 cast call $DIAMOND "getTreasury()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL  # → $TREASURY_ADDRESS
 ```
 
+The treasury is fixed into the vault code at deploy (#3569): `DeployDiamond`
+builds the vault implementation with `TREASURY_ADDRESS`, refuses a zero one,
+and itself checks that `getTreasury()` reads it back once the beacon is set.
+There is no treasury setter to run afterwards; the `cast call` above only
+re-reads what the deploy already enforced.
+
 The deploy leaves the Diamond **paused** (#945). `paused()` returning `true`
 here is the healthy result, not a failure: do not unpause it by hand. It is
 unpaused only by the `launch` phase (§10.9), after the configure phases have
@@ -606,7 +612,7 @@ cast send $BASE_SEPOLIA_DIAMOND_ADDRESS "closeDay()" \
 
 ## 11.5. Hand over admin to timelock (one-way)
 
-Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `AdminFacet.setTreasury`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay.
+Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay. (There is no `AdminFacet.setTreasury` since #3569: the treasury moves only by new vault code on the `VaultBeacon`, see [UpgradeSafety.md](UpgradeSafety.md), "Moving the treasury".)
 
 Populate `.env`: `TIMELOCK_PROPOSER` (governance multi-sig address), `PAUSER_ADDRESS` (the Pauser multi-sig; it becomes the Timelock's independent canceller), `EMERGENCY_REVOKER_ADDRESS` (the governance multi-sig), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h).
 

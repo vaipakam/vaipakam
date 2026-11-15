@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibTreasury} from "./LibTreasury.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
@@ -977,7 +978,7 @@ library LibRewardCustody {
         }
     }
 
-    /// @dev When the configured treasury is this Diamond, an ERC-20 delivered
+    /// @dev When the current vault code names this Diamond as the treasury (#3569), an ERC-20 delivered
     ///      to it must be CREDITED to the treasury's tracked balance (Codex
     ///      #2158 post-cap P2): `TreasuryFacet.claimTreasuryFees` releases
     ///      only `treasuryBalances[asset]`, so an uncredited receipt would sit
@@ -990,7 +991,7 @@ library LibRewardCustody {
         address asset,
         uint256 amount
     ) internal {
-        if (amount == 0 || s.treasury != address(this)) return;
+        if (amount == 0 || !LibTreasury.isDiamond()) return;
         s.treasuryBalances[asset] += amount;
     }
 

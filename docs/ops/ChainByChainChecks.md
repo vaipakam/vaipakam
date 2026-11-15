@@ -66,7 +66,7 @@ The cron below reads this file, so any deploy must update it atomically with the
 | Check | Call | Expected |
 |---|---|---|
 | Not paused | `AdminFacet.paused()` | false (steady state) |
-| Treasury set to multisig | `AdminFacet.getTreasury()` | matches `treasury` in addresses.json |
+| Treasury set to multisig | `AdminFacet.getTreasury()` (the current vault code's `TREASURY`, #3569) | matches `treasury` in addresses.json. There is no setter: a mismatch means the vault code was built wrong or a newer version became current, and is fixed only by new vault code on the `VaultBeacon` |
 | Phase 7a swap-adapter chain populated | `AdminFacet.getSwapAdapters()` | length ≥ 1; production target is 4 (ZeroEx, OneInch, UniV3, Balancer V2). A length-0 chain reverts every liquidation. |
 
 ---

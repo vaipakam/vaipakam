@@ -1083,9 +1083,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardCustodyFacet(diamond).stampRewardCustodyCutover();
         console.log("Reward custody complete-cut record stamped.");
 
-        // 5b. Set treasury address
-        AdminFacet(diamond).setTreasury(treasury);
-        console.log("Treasury set:", treasury);
+        // 5b. #3569 — no treasury setter: the treasury is the vault code's
+        // immutable TREASURY, fixed when the vault implementation is built
+        // below (5d) from `treasury`, and read by the Diamond through the
+        // vault beacon. The deploy checks that read once the beacon is set.
+        //     The retired setter refused a zero treasury; the deploy keeps
+        //     that refusal, since nothing could move a zero treasury later
+        //     short of new vault code.
+        require(treasury != address(0), "DeployDiamond: the treasury is the zero address");
 
         // 5c. #3205 — the PositionNFT core (before the vault code, which reads
         // it as an immutable; #3205 part 2): the ownership record of every
@@ -1108,10 +1113,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `admin` (the Timelock takes it at handover), guardian `admin` until
         // the handover moves it to the Pauser Safe, and the minimum delay.
         //
-        // #3205 part 2 seeds, at construction (the only write that does not
-        // wait), every endpoint this deploy already knows: TREASURY = the
-        // treasury set in 5b, which every vault's treasury-class outflow pays
-        // and nothing else. The swap adapters, the 1inch order protocol, the
+        // It seeds, at construction (the only write that does not wait),
+        // every pointer this deploy already knows. The treasury is not one
+        // (#3569): every vault's treasury-class outflow pays only its own
+        // code's TREASURY. The swap adapters, the 1inch order protocol, the
         // listing conduits and the backstop are configured after this step,
         // so each joins through the registry's delayed add; the launch
         // readiness check (`vault registry seeded`) refuses until each the
@@ -1124,7 +1129,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // the chain's feed registry, the guard's feed source, is created here
         // too; the later DeployFeedRegistry step reuses it and sets a
         // testnet's delay.
-        _deployProtocolRegistry(admin, treasury);
+        _deployProtocolRegistry(admin);
         console.log("Protocol registry:", protocolRegistry);
 
         // 5c-iii. #3272 part 2 — the Diamond records the registry, once, and
@@ -1167,6 +1172,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         );
         VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
         console.log("Vault beacon:", vaultBeacon);
+        require(
+            AdminFacet(diamond).getTreasury() == treasury,
+            "DeployDiamond: the Diamond does not read the vault code's treasury"
+        );
+        console.log("Treasury (the vault code's):", treasury);
 
         // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
         //     CONSTRUCTED BY THE DIAMOND ITSELF and bound once, here, while
@@ -1608,14 +1618,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         }
     }
 
-    function _deployProtocolRegistry(address admin, address treasury) internal {
+    function _deployProtocolRegistry(address admin) internal {
         _deployPriceGuard(admin);
-        bytes32[] memory keys = new bytes32[](2);
-        address[] memory values = new address[](2);
-        keys[0] = RegistryKeys.TREASURY;
-        values[0] = treasury;
-        keys[1] = RegistryKeys.PRICE_GUARD;
-        values[1] = priceGuard;
+        // #3569 — the treasury is not a registry pointer: it is the vault
+        // code's immutable TREASURY, written nowhere else.
+        bytes32[] memory keys = new bytes32[](1);
+        address[] memory values = new address[](1);
+        keys[0] = RegistryKeys.PRICE_GUARD;
+        values[0] = priceGuard;
         protocolRegistry = ArtifactDeploy.deploy(
             type(ProtocolRegistry).name,
             abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
@@ -1629,10 +1639,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
                 "DeployDiamond: a seeded registry pointer does not read back"
             );
         }
-        require(
-            IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.TREASURY) == treasury,
-            "DeployDiamond: the protocol registry does not name the treasury"
-        );
         require(
             IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.PRICE_GUARD) == priceGuard,
             "DeployDiamond: the protocol registry does not name the price guard"
@@ -1698,68 +1704,67 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](48);
-        s[0] = AdminFacet.setTreasury.selector;
-        s[1] = AdminFacet.getTreasury.selector;
-        s[2] = AdminFacet.setZeroExProxy.selector;
-        s[3] = AdminFacet.setallowanceTarget.selector;
-        s[4] = AdminFacet.pause.selector;
-        s[5] = AdminFacet.unpause.selector;
-        s[6] = AdminFacet.paused.selector;
-        s[7] = AdminFacet.setKYCEnforcement.selector;
-        s[8] = AdminFacet.isKYCEnforcementEnabled.selector;
-        s[9] = AdminFacet.pauseAsset.selector;
-        s[10] = AdminFacet.unpauseAsset.selector;
-        s[11] = AdminFacet.isAssetPaused.selector;
-        s[12] = AdminFacet.addSwapAdapter.selector;
-        s[13] = AdminFacet.removeSwapAdapter.selector;
-        s[14] = AdminFacet.reorderSwapAdapters.selector;
-        s[15] = AdminFacet.getSwapAdapters.selector;
-        s[16] = AdminFacet.setPancakeswapV3Factory.selector;
-        s[17] = AdminFacet.getPancakeswapV3Factory.selector;
-        s[18] = AdminFacet.setSushiswapV3Factory.selector;
-        s[19] = AdminFacet.getSushiswapV3Factory.selector;
+        s = new bytes4[](47);
+        s[0] = AdminFacet.getTreasury.selector;
+        s[1] = AdminFacet.setZeroExProxy.selector;
+        s[2] = AdminFacet.setallowanceTarget.selector;
+        s[3] = AdminFacet.pause.selector;
+        s[4] = AdminFacet.unpause.selector;
+        s[5] = AdminFacet.paused.selector;
+        s[6] = AdminFacet.setKYCEnforcement.selector;
+        s[7] = AdminFacet.isKYCEnforcementEnabled.selector;
+        s[8] = AdminFacet.pauseAsset.selector;
+        s[9] = AdminFacet.unpauseAsset.selector;
+        s[10] = AdminFacet.isAssetPaused.selector;
+        s[11] = AdminFacet.addSwapAdapter.selector;
+        s[12] = AdminFacet.removeSwapAdapter.selector;
+        s[13] = AdminFacet.reorderSwapAdapters.selector;
+        s[14] = AdminFacet.getSwapAdapters.selector;
+        s[15] = AdminFacet.setPancakeswapV3Factory.selector;
+        s[16] = AdminFacet.getPancakeswapV3Factory.selector;
+        s[17] = AdminFacet.setSushiswapV3Factory.selector;
+        s[18] = AdminFacet.getSushiswapV3Factory.selector;
         // Auto-pause primitive (Phase 1 follow-up): WATCHER_ROLE-gated
         // entry that freezes the protocol for
         // `cfgAutoPauseDurationSeconds` while humans investigate. Plus
         // a `pausedUntil` view for the frontend countdown.
-        s[20] = AdminFacet.autoPause.selector;
-        s[21] = AdminFacet.pausedUntil.selector;
+        s[19] = AdminFacet.autoPause.selector;
+        s[20] = AdminFacet.pausedUntil.selector;
         // T-092 (#508) — auto-lifecycle admin kill switches.
-        s[22] = AdminFacet.setAutoLendEnabled.selector;
-        s[23] = AdminFacet.setAutoRefinanceEnabled.selector;
-        s[24] = AdminFacet.setAutoExtendEnabled.selector;
+        s[21] = AdminFacet.setAutoLendEnabled.selector;
+        s[22] = AdminFacet.setAutoRefinanceEnabled.selector;
+        s[23] = AdminFacet.setAutoExtendEnabled.selector;
         // Codex round-1 P2 — getters.
-        s[25] = AdminFacet.getAutoLendEnabled.selector;
-        s[26] = AdminFacet.getAutoRefinanceEnabled.selector;
-        s[27] = AdminFacet.getAutoExtendEnabled.selector;
+        s[24] = AdminFacet.getAutoLendEnabled.selector;
+        s[25] = AdminFacet.getAutoRefinanceEnabled.selector;
+        s[26] = AdminFacet.getAutoExtendEnabled.selector;
         // #633 — per-venue swap-adapter pause + feature kill-switches.
-        s[28] = AdminFacet.setSwapAdapterDisabled.selector;
-        s[29] = AdminFacet.isSwapAdapterDisabled.selector;
-        s[30] = AdminFacet.setAggregatorAdaptersPaused.selector;
-        s[31] = AdminFacet.setKeepersPaused.selector;
-        s[32] = AdminFacet.setPeerLtvReadsPaused.selector;
-        s[33] = AdminFacet.keepersPaused.selector;
+        s[27] = AdminFacet.setSwapAdapterDisabled.selector;
+        s[28] = AdminFacet.isSwapAdapterDisabled.selector;
+        s[29] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        s[30] = AdminFacet.setKeepersPaused.selector;
+        s[31] = AdminFacet.setPeerLtvReadsPaused.selector;
+        s[32] = AdminFacet.keepersPaused.selector;
         // #395 — graduated partial-liquidation sizing (Approach A).
-        s[34] = AdminFacet.setPartialLiquidationSizing.selector;
-        s[35] = AdminFacet.getPartialLiquidationSizing.selector;
-        s[36] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
-        s[37] = AdminFacet.unpauseIfPauseEpoch.selector;
+        s[33] = AdminFacet.setPartialLiquidationSizing.selector;
+        s[34] = AdminFacet.getPartialLiquidationSizing.selector;
+        s[35] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        s[36] = AdminFacet.unpauseIfPauseEpoch.selector;
         // #945 — the gated first unpause (the launch).
-        s[38] = AdminFacet.launch.selector;
+        s[37] = AdminFacet.launch.selector;
         // #668 / #935 — the pause-interval log the loan clock reads.
-        s[39] = AdminFacet.pausedSecondsAt.selector;
-        s[40] = AdminFacet.getPauseIntervals.selector;
+        s[38] = AdminFacet.pausedSecondsAt.selector;
+        s[39] = AdminFacet.getPauseIntervals.selector;
         // #2744 — the cooldown between auto-pause windows.
-        s[41] = AdminFacet.autoPauseCooldownSeconds.selector;
-        s[42] = AdminFacet.autoPauseAvailableAt.selector;
-        s[43] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        s[40] = AdminFacet.autoPauseCooldownSeconds.selector;
+        s[41] = AdminFacet.autoPauseAvailableAt.selector;
+        s[42] = AdminFacet.setAutoPauseCooldownSeconds.selector;
         // #1637 — reads for the two kill switches.
-        s[44] = AdminFacet.aggregatorAdaptersPaused.selector;
-        s[45] = AdminFacet.peerLtvReadsPaused.selector;
+        s[43] = AdminFacet.aggregatorAdaptersPaused.selector;
+        s[44] = AdminFacet.peerLtvReadsPaused.selector;
         // #3173 — the bounded escape period.
-        s[46] = AdminFacet.setEscapeGraceSeconds.selector;
-        s[47] = AdminFacet.getEscapeGraceSeconds.selector;
+        s[45] = AdminFacet.setEscapeGraceSeconds.selector;
+        s[46] = AdminFacet.getEscapeGraceSeconds.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {

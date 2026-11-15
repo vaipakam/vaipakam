@@ -316,12 +316,15 @@ library LibLaunchReadiness {
     ///      its CODE. One that differs from the Diamond's own setting would
     ///      refuse every fee, backstop payment, swap-to-repay fill or listing
     ///      fill, each with a named error but only once a user tried. So the
-    ///      launch refuses first: the vault code's treasury must be the
-    ///      Diamond's, its backstop the Diamond's backstop vault, its order
+    ///      launch refuses first: its backstop must be the Diamond's
+    ///      backstop vault, its order
     ///      protocol the Diamond's 1inch protocol, and, once a listing
     ///      executor is configured, its Seaport the executor's and its conduit
     ///      one the executor allows. Its conduit key must resolve, through its
-    ///      Seaport's conduit controller, to its conduit.
+    ///      Seaport's conduit controller, to its conduit. The treasury is not
+    ///      compared: since #3569 the Diamond's treasury IS the vault code's
+    ///      `TREASURY`, so there is no second copy to disagree; the code must
+    ///      still be readable, and "treasury set" checks it is not zero.
     function _vaultEndpoints(address diamond) private view returns (Check memory c) {
         c.label = "vault endpoints match";
         ILaunchReadableDiamond d = ILaunchReadableDiamond(diamond);
@@ -338,18 +341,8 @@ library LibLaunchReadiness {
             return c;
         }
         ILaunchVaultCode v = ILaunchVaultCode(impl);
-        try v.TREASURY() returns (address vt) {
+        try v.TREASURY() returns (address) {
             c.checkable = true;
-            try d.getTreasury() returns (address t) {
-                if (t == address(0) || vt != t) {
-                    c.detail = "the vault code's TREASURY is not the Diamond's treasury";
-                    return c;
-                }
-            } catch {
-                c.checkable = false;
-                c.detail = "getTreasury() unreadable";
-                return c;
-            }
         } catch {
             c.detail = "the vault code fixes no endpoints (TREASURY() unreadable)";
             return c;
@@ -392,7 +385,7 @@ library LibLaunchReadiness {
             }
         } catch {}
         c.met = true;
-        c.detail = "the vault code's treasury, backstop, order protocol, price guard, Seaport and conduit match the Diamond's";
+        c.detail = "the vault code's backstop, order protocol, price guard, Seaport and conduit match the Diamond's";
     }
 
     /// @dev #3431 — whether the vault code's conduit key resolves, through

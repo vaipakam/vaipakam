@@ -49,9 +49,11 @@ After a normal deploy, the deployer EOA holds:
 - ERC-173 ownership (LibDiamond owner) — controls `diamondCut` (facet
   swaps) and the implementation slot for the per-user vault proxies
 
-A leaked deployer key on this surface is a turnkey takeover: rotate
-treasury, replace 0x proxy with an attacker-controlled drainer,
-upgrade the vault implementation to one that reads private keys.
+A leaked deployer key on this surface is a turnkey takeover: replace
+0x proxy with an attacker-controlled drainer, or register and propose
+vault code that names an attacker's treasury or reads private keys
+(since #3569 the treasury lives only in the vault code, so moving it is
+a `VaultBeacon` change behind the 7-day `MIN_CODE_DELAY`, not a setter).
 The fix is two layers:
 
 1. **Multisig** (Safe) — N-of-M threshold so no single key can act

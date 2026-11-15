@@ -513,7 +513,7 @@ true on a settlement path, and it cost real time in #1503.
 | **SaleExitVerdictFacet** | The ONE rule for whether a lender may exit by sale now (#1841): `saleExitVerdict(loanId, caller)` returns, per route (direct sale, listing), every refusal as the ABI-encoded custom error the entry raises plus the earliest time it can lift (`reopensAt`, 0 = needs a decision or never). Both entries open with a self-call to `requireSaleExitOpen`, which reverts with the first refusal, so the app's exit chooser and the entries cannot drift. It covers the loan- and caller-level checks only, not the buy offer a direct sale consumes, the listing's inputs or a keeper's capacity. **Refreshed together with both early-withdrawal facets** (see the family below) |
 | **SwapToRepayFacet** / **SwapToRepayPartialFacet** | Borrower swap-to-repay: collateral swapped into the principal asset and applied to the loan in one transaction. `SwapToRepayFacet` hosts the FULL close-out (`swapToRepayFull`) and its sizing preview (`previewSwapToRepayFull`). `swapToRepayPartial` is **NOT here** — #2416 moved it to `SwapToRepayPartialFacet`, so a grep of the first facet for the partial route comes back empty. Split because `SwapToRepayFacet` had reached 73 bytes under EIP-170, less than any guard costs, so every queued change to either route was undeployable (the #1780 / #1835 condition again). Same storage, same Diamond, same selector and call surface; only the runtime bytecode is separate. **The two must be refreshed together** — `RefreshAllFacetsInPlace` carries both, and refreshing one alone leaves the other route on pre-split code |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
-| **TreasuryFacet**          | Treasury operations (45 functions — claims, buyback intents, remittance absorption, asset conversion, the reward and keeper budgets). It deploys nothing into external yield venues: the productive treasury reserve was retired while prelive (#962 #963 #486 #487). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
+| **TreasuryFacet**          | Treasury operations (45 functions — claims, buyback intents, remittance absorption, asset conversion, the reward and keeper budgets). It deploys nothing into external yield venues: the productive treasury reserve was retired while prelive (#962 #963 #486 #487). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` for a fee that actually reached the Diamond, and the Diamond-as-treasury operations need the CURRENT vault code's `TREASURY` to name the Diamond (#3569: the vault code is the only treasury), so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
 
 Two of them do carry a genuine *future-scope* note in their own headers, which
 is what the retired line probably grew out of: TreasuryFacet's "expand for
@@ -592,15 +592,13 @@ one, grep the tests for `_buildCuts` / their own `FacetCut[]` lists, not only
 `HelperTest` and `SetupTest`.
 
 **Change a test Diamond's treasury with `LibTestVaultBeacon.setTreasury(diamond,
-treasury)`, never with `AdminFacet.setTreasury`** (#3431). The vault code
-fixes its treasury as an immutable, so a raw setter call leaves every vault
-refusing fee and treasury movements to the new address
-(`OutflowDestinationRefused`), usually in a test far from the call. The helper
-sets the treasury and moves the vault code's treasury endpoint with it; before
-the beacon is installed it only sets the treasury, and `LibTestVaultBeacon.install`
-then reads it. `contracts/script/check-test-treasury-sync.sh` refuses a raw
-call under `test/` (CI job `test treasury sync guard`); the setter's own
-suites are listed in it with their reasons.
+treasury)`** (#3431, #3569). There is no `AdminFacet.setTreasury` any more:
+the treasury is the vault code's immutable `TREASURY`, and `getTreasury()`
+reads the current vault code's. The helper etches new vault code naming the
+new treasury, so it needs the beacon installed first
+(`LibTestVaultBeacon.install`) and refuses otherwise. The
+`check-test-treasury-sync.sh` guard and its CI job are retired with the
+setter.
 
 **Stub the vault withdrawal with `MockVaultWithdraw.deliversAll(diamond)`,
 never with a selector-wide `abi.encode(true)` mock** (#2440).

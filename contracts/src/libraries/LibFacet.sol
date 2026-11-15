@@ -20,11 +20,6 @@ import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 library LibFacet {
     using SafeERC20 for IERC20;
 
-    /// @dev Returns the current treasury address from shared storage.
-    function getTreasury() internal view returns (address) {
-        return LibVaipakam.storageSlot().treasury;
-    }
-
     /// @dev Reserve-pause guard. Reverts AssetPaused(asset)
     ///      iff governance has paused this asset through
     ///      {AdminFacet.pauseAsset}. `address(0)` is treated as "no
@@ -48,9 +43,10 @@ library LibFacet {
     /// @dev Moves `amount` of `asset` the Diamond holds (a treasury share of
     ///      proceeds) to the configured treasury and records the accrual of
     ///      what ARRIVED. Uses {recordTreasuryAccrual} so `treasuryBalances`
-    ///      only grows when the funds stay at the Diamond (i.e.
-    ///      `s.treasury == address(this)`). When treasury is external, the
-    ///      tokens physically leave the Diamond and no IOU should remain.
+    ///      only grows when the funds stay at the Diamond (the current vault
+    ///      code names the Diamond as the treasury, #3569). When treasury is
+    ///      external, the tokens physically leave the Diamond and no IOU
+    ///      should remain.
     ///      No-op on zero.
     ///
     ///      #2440 — hosted on TreasuryFeeFacet (`collectFeeFromDiamond`),
@@ -84,14 +80,17 @@ library LibFacet {
     ///      IOU held at the Diamond) and funnels the analytics log via
     ///      {accrueTreasuryFee} so MetricsFacet windows stay truthful.
     ///
-    ///      Rule: `treasuryBalances[asset]` only increases when the
-    ///      configured treasury is the Diamond itself. External-treasury
-    ///      deployments leave nothing at the Diamond to sweep.
-    ///      No-op on zero.
-    function recordTreasuryAccrual(address asset, uint256 amount) internal {
+    ///      Rule: `treasuryBalances[asset]` only increases when the fee
+    ///      went to the Diamond itself (`to == address(this)`). `to` is the
+    ///      treasury the fee was actually sent to (#3569): the current vault
+    ///      code's for a fee the Diamond moves, and the paying vault's own
+    ///      code's for a vault fee, so a vault pinned to code naming another
+    ///      treasury is never counted as held here. External-treasury fees
+    ///      leave nothing at the Diamond to sweep. No-op on zero.
+    function recordTreasuryAccrual(address asset, uint256 amount, address to) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.treasury == address(this)) {
+        if (to == address(this)) {
             s.treasuryBalances[asset] += amount;
         }
         // AnalyticalGettersDesign §3.2 / D5 — per-asset day-bucket

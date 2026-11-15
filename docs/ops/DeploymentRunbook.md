@@ -1529,7 +1529,7 @@ If any check fails → **do not broadcast**.
 - `diamondLoupe.facetAddresses()` returns 30 non-zero facets (DiamondCutFacet + 29 cut in).
 - `OwnershipFacet.owner()` == `ADMIN_ADDRESS` (handover complete).
 - `AccessControlFacet.hasRole(DEFAULT_ADMIN_ROLE, ADMIN_ADDRESS)` == `true` and the deployer holds zero roles.
-- `AdminFacet.getTreasury()` == `TREASURY_ADDRESS`.
+- `AdminFacet.getTreasury()` == `TREASURY_ADDRESS`. Since #3569 the deploy enforces this itself: `DeployDiamond` refuses a zero `TREASURY_ADDRESS`, builds the vault code with it, and reverts unless `getTreasury()` (the current vault code's `TREASURY`) reads it back once the beacon is set. There is no treasury setter; this line is a re-read, and moving the treasury later is a vault code change (see [UpgradeSafety.md](UpgradeSafety.md), "Moving the treasury").
 - `VaultFactoryFacet.getVaipakamVaultImplementationAddress()` != `0x0`.
 - `RewardReporterFacet.getRewardReporterConfig()` returns `rewardMessenger == 0x0` and `baseChainId == 0` — wiring happens in §3b. `localChainId` is **not** zero on a fresh Diamond: it is read from the chain itself (`block.chainid`) and equals the chain you deployed on from the first block. `isCanonicalRewardChain` is `false`, and `rewardGraceSeconds` reports the facet's built-in 4h default rather than zero.
 

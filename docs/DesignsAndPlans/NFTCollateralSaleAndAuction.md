@@ -768,6 +768,8 @@ Mitigation: the dapp watches `Transfer(lenderNftId)` events on the lender-positi
 
 **(D) Treasury rotation invalidates the recipient binding.** Same mechanism as (C) but for the treasury address. The shipped executor re-derives `pctx.treasury` LIVE from `s.treasury` at fill time, and `AdminFacet.setTreasury` emits `TreasurySet`. A governance rotation between sign and fill produces a `WrongTreasuryRecipient` revert in the zone callback. Dapp mitigation: subscribe to `TreasurySet` events on the diamond and surface a re-sign banner on all live listings — symmetric to (C)'s lender-NFT-rotation watcher. Governance rotation of the treasury is rare in normal operation but possible during e.g. multisig key rotation; flagged here so dapp authors don't omit the watcher because they assume rotations never happen.
 
+> **#3569 (2026-11-12):** `AdminFacet.setTreasury` and `TreasurySet` no longer exist. The treasury is the `TREASURY` of the current vault code, and it moves only when new vault code becomes current on the `VaultBeacon` (`registerVersion`, `proposeCurrentVersion`, then `executeCurrentVersion` at least `MIN_CODE_DELAY`, 7 days, later). The hazard above stands with a different signal: watch the beacon's `CurrentVaultVersionProposed` / `CurrentVaultVersionSet` events, not `TreasurySet`. The seven-day wait gives a listing time to be re-signed.
+
 **(E) Conduit revocation breaks the signed order at fill time (Codex P2 line 674).** The shipped executor re-checks `approvedConduits[ctx.conduit]` in both ERC-1271 (`isOrderValid`) AND in the zone callback (`validateOrder`). If governance removes the borrower's chosen conduit from the allow-list during a multi-day Dutch / English listing, every signed order referring to that conduit becomes unfillable — Seaport reverts on the ERC-1271 sign-time path, and a `Seaport.validate()` pre-registration would still trip the zone's conduit re-check at fill time. The protocol's safety holds (no under-payment; the unfillable state is a clean stop); the UX cost is the borrower discovering the listing went dead and paying gas to re-list with a still-approved conduit. **Dapp mitigation: subscribe to `ConduitApproved(address)` / `ConduitRevoked(address)` events on the `CollateralListingExecutor`** (Round 5.1 errata — Codex P2 line 707: the original "ApprovedConduitSet on the diamond" wording in the design draft was wrong on both counts; the allow-list lives on the executor singleton, NOT in `LibVaipakam.Storage` on the diamond, and the executor emits a pair of revocation events, not a single set event). Post a banner whenever a conduit referenced by the borrower's live listings gets revoked.
 
 **(F) Executor rotation orphans the signed Seaport zone (Codex P2 line 674).** The signed Seaport order is permanently zoned to whichever `CollateralListingExecutor` address was current at sign time. The diamond's `executorFinalizePrepaySale` callback accepts ONLY from `s.collateralListingExecutor` — i.e., the current executor. If governance rotates the executor (`PrepayListingFacet.setCollateralListingExecutor`) during a borrower's live auction, three outcomes:
@@ -3833,7 +3835,9 @@ against on the implementation PR:
   match time (the executor's fill-time recipient check rejects).
   The borrower retains cancel rights throughout grace; off-chain
   keepers can watch `Transfer` events on the lender-token + the
-  governance `TreasuryRotated` event to surface the drift and
+  governance `TreasuryRotated` event (since #3569, 2026-11-12: the
+  `VaultBeacon`'s `CurrentVaultVersionSet`, the only way the treasury
+  moves) to surface the drift and
   trigger borrower-side or operator-side cancel. v1 does NOT add
   an on-chain rotation gate for this case — that would require
   persisting recorded recipients on the executor (schema change),

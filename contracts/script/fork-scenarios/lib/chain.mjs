@@ -42,7 +42,8 @@ export const DIAMOND = deployment.diamond;
 export const MOCKS = deployment.testnetMocks ?? {};
 /** The chain's WETH as the deployment records it — the quote side of the faucet v3 pools. */
 export const WETH = deployment.weth;
-// The treasury is MUTABLE (`AdminFacet.setTreasury`), so the artifact's value
+// The treasury moves with new vault code (#3569: it is the vault code's
+// immutable TREASURY, read through the vault beacon), so the artifact's value
 // is only what it was at deploy. Every accounting row reads the fee recipient
 // the fork's Diamond reports NOW; the artifact value is kept for comparison.
 export const ARTIFACT_TREASURY = deployment.treasury;

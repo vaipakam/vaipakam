@@ -15,14 +15,14 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title AdminFacetTest
- * @notice Tests AdminFacet: setTreasury, setZeroExProxy, setallowanceTarget, getTreasury.
+ * @notice Tests AdminFacet: setZeroExProxy, setallowanceTarget, getTreasury (the vault
+ *         code's since #3569; the retired setter is not routed).
  *         Covers access control (owner-only) and zero-address validation.
  */
 contract AdminFacetTest is Test {
     VaipakamDiamond diamond;
     address owner;
     address nonOwner;
-    address treasury;
     address zeroExProxy;
     address allowanceTarget;
 
@@ -34,7 +34,6 @@ contract AdminFacetTest is Test {
     function setUp() public {
         owner = address(this);
         nonOwner = makeAddr("nonOwner");
-        treasury = makeAddr("treasury");
         zeroExProxy = makeAddr("zeroExProxy");
         allowanceTarget = makeAddr("allowanceTarget");
 
@@ -60,42 +59,20 @@ contract AdminFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
     }
 
-    // ─── setTreasury ──────────────────────────────────────────────────────────
+    // ─── Treasury (#3569) ─────────────────────────────────────────────────────
 
-    function testSetTreasurySuccess() public {
-        vm.expectEmit(true, false, false, false);
-        emit AdminFacet.TreasurySet(treasury);
-        AdminFacet(address(diamond)).setTreasury(treasury);
-        assertEq(AdminFacet(address(diamond)).getTreasury(), treasury);
-    }
-
-    function testSetTreasuryRevertsZeroAddress() public {
-        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
-        AdminFacet(address(diamond)).setTreasury(address(0));
-    }
-
-    function testSetTreasuryRevertsNonOwner() public {
-        vm.prank(nonOwner);
-        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, nonOwner, LibAccessControl.ADMIN_ROLE));
-        AdminFacet(address(diamond)).setTreasury(treasury);
-    }
-
-    function testSetTreasuryUpdatesValue() public {
-        AdminFacet(address(diamond)).setTreasury(treasury);
-        address newTreasury = makeAddr("newTreasury");
-        AdminFacet(address(diamond)).setTreasury(newTreasury);
-        assertEq(AdminFacet(address(diamond)).getTreasury(), newTreasury);
-    }
-
-    // ─── getTreasury ──────────────────────────────────────────────────────────
-
-    function testGetTreasuryReturnsZeroBeforeSet() public view {
+    /// @notice The treasury is the vault code's: with no vault beacon the
+    ///         Diamond has none to report.
+    function testGetTreasuryIsZeroWithoutVaultCode() public view {
         assertEq(AdminFacet(address(diamond)).getTreasury(), address(0));
     }
 
-    function testGetTreasuryReturnsSetValue() public {
-        AdminFacet(address(diamond)).setTreasury(treasury);
-        assertEq(AdminFacet(address(diamond)).getTreasury(), treasury);
+    /// @notice The retired setter is gone from the Diamond's routes.
+    function testRetiredSetTreasuryIsNotRouted() public {
+        (bool ok, bytes memory ret) =
+            address(diamond).call(abi.encodeWithSignature("setTreasury(address)", makeAddr("treasury")));
+        assertFalse(ok);
+        assertEq(bytes4(ret), VaipakamDiamond.FunctionDoesNotExist.selector);
     }
 
     // ─── setZeroExProxy ───────────────────────────────────────────────────────
@@ -169,14 +146,6 @@ contract AdminFacetTest is Test {
 
     function testPausedReturnsFalseByDefault() public view {
         assertFalse(AdminFacet(address(diamond)).paused());
-    }
-
-    // ─── Fuzz ─────────────────────────────────────────────────────────────────
-
-    function testFuzzSetTreasuryNonZero(address addr) public {
-        vm.assume(addr != address(0));
-        AdminFacet(address(diamond)).setTreasury(addr);
-        assertEq(AdminFacet(address(diamond)).getTreasury(), addr);
     }
 
     // ─── #1637 kill-switch getters ────────────────────────────────────────────

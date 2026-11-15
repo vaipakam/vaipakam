@@ -6,6 +6,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -277,7 +278,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         if (!s.lenderIntent[vault][lend][coll].active) {
             revert BackstopIntentInactive();
         }
@@ -326,7 +327,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         uint256 returned = BackstopVaultImplementation(vault)
             .withdrawIdleToDiamond(lend, coll, amount);
         // Diamond-side record. #2440 — `returned` is what reached the Diamond
@@ -508,8 +509,8 @@ contract BackstopFacet is
     ///      Diamond's own `nonReentrant` `claimAsLenderWithRetry` (the real guard);
     ///      the `treasuryBalances` credit happens after that returns.
     ///
-    ///      Requires Diamond-as-treasury (like seed/withdraw). If governance moved
-    ///      `treasury` away from the Diamond, we MUST revert rather than forward
+    ///      Requires Diamond-as-treasury (like seed/withdraw). If new vault code moved
+    ///      the treasury away from the Diamond (#3569), we MUST revert rather than forward
     ///      the recovered tokens to the Diamond and skip the credit — that would
     ///      strand them as untracked raw Diamond balance `TreasuryFacet` can't
     ///      reach. Reverting keeps the loan claimable once treasury is the Diamond
@@ -526,7 +527,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         if (s.loans[loanId].lender != vault) revert NotBackstopLoan();
         (
             address principalAsset,
@@ -564,7 +565,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         amount = BackstopVaultImplementation(vault).sweepToken(
             token,
             address(this)
@@ -606,7 +607,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFINotConfigured();
         amount = BackstopVaultImplementation(vault)
@@ -718,7 +719,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         if (principal == s.vpfiToken) revert VpfiLendingUnsupported();
         LibFacet.requireAssetNotPaused(principal);
         LibFacet.requireAssetNotPaused(collateral);
@@ -753,7 +754,7 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        _requireDiamondTreasury();
         uint256 bucket = s.backstopAbsorbCash[principal][collateral];
         if (amount > bucket) revert TreasuryInsufficient();
         s.backstopAbsorbCash[principal][collateral] = bucket - amount;
@@ -762,8 +763,9 @@ contract BackstopFacet is
         // bucket gave up `amount`, and a token's own charge on the move is the
         // treasury's, never drawn from the Diamond's other holdings.
         // #3205 part 2 — the treasury class (the Diamond is the treasury here).
-        uint256 received = LibVaultOutflow.toTreasury(vault, principal, amount, 0, OutflowReason.BACKSTOP);
-        LibFacet.recordTreasuryAccrual(principal, received);
+        (uint256 received, address treasury) =
+            LibVaultOutflow.toTreasury(vault, principal, amount, 0, OutflowReason.BACKSTOP);
+        LibFacet.recordTreasuryAccrual(principal, received, treasury);
         emit BackstopAbsorbWithdrawn(principal, collateral, received);
     }
 
@@ -773,9 +775,9 @@ contract BackstopFacet is
     ///         per §5.1 moving unsold collateral is not a realized-cash return.
     /// @dev VAULT_ADMIN. Withdraws from the backstop vault's tracked balance.
     ///      #3205 part 2 (decided default 2026-11-08) — the destination is the
-    ///      treasury the registry names, never an address the caller picks: a
-    ///      VAULT_ADMIN key can move warehoused collateral only to the
-    ///      Timelock-governed treasury.
+    ///      treasury the vault code names (#3569), never an address the caller
+    ///      picks: a VAULT_ADMIN key can move warehoused collateral only to
+    ///      that treasury, which moves only with new vault code.
     function sweepBackstopAbsorbCollateral(
         address collateral,
         uint256 amount
@@ -794,9 +796,10 @@ contract BackstopFacet is
         s.backstopWarehousedCollateral[collateral] = warehoused - amount;
         // #2440 — what the treasury received; the accrual books that (it
         // credits `treasuryBalances` only in Diamond-as-treasury mode).
-        uint256 received = LibVaultOutflow.toTreasury(vault, collateral, amount, 0, OutflowReason.BACKSTOP);
-        LibFacet.recordTreasuryAccrual(collateral, received);
-        emit BackstopAbsorbCollateralSwept(collateral, LibFacet.getTreasury(), amount);
+        (uint256 received, address treasury) =
+            LibVaultOutflow.toTreasury(vault, collateral, amount, 0, OutflowReason.BACKSTOP);
+        LibFacet.recordTreasuryAccrual(collateral, received, treasury);
+        emit BackstopAbsorbCollateralSwept(collateral, treasury, amount);
     }
 
     /// @notice Release `realizedPrincipal` of absorb exposure for a pair — the
@@ -841,5 +844,12 @@ contract BackstopFacet is
         cash = s.backstopAbsorbCash[principal][collateral];
         exposure = s.backstopAbsorbExposure[principal][collateral];
         cap = s.backstopAbsorbCap[principal][collateral];
+    }
+
+    /// @dev The Diamond-as-treasury operations act on treasury funds the
+    ///      Diamond holds, so they need the current vault code to name the
+    ///      Diamond as the treasury (#3569).
+    function _requireDiamondTreasury() private view {
+        if (!LibTreasury.isDiamond()) revert TreasuryNotDiamond();
     }
 }

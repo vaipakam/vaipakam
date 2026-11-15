@@ -31,7 +31,6 @@ import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {RewardRemitDestinationFacet} from "../../src/facets/RewardRemitDestinationFacet.sol";
-import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title  MeshLedgerInvariant
@@ -189,7 +188,6 @@ contract MeshLedgerInvariant is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
 
         VPFIToken impl = new VPFIToken();
         ERC1967Proxy proxy = new ERC1967Proxy(
