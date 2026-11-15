@@ -491,7 +491,8 @@ export interface SafetySend {
  * last one included) is not thrown, because that would report an action
  * that partly took effect as one that failed outright. The tracker then
  * follows the last step that landed, and `stopped` names the step that did
- * not.
+ * not. A step whose receipt cannot be read is followed by the tracker
+ * itself, and no later step is sent.
  */
 export async function sendSafetySteps(
   total: number,
@@ -499,6 +500,7 @@ export async function sendSafetySteps(
   wait: (hash: Hex) => Promise<{ ok: boolean; logs: readonly Log[] }>,
   label: (i: number) => string,
   revertedReason: string,
+  unreadReason: string,
 ): Promise<SafetySend> {
   const landed: LandedStep[] = [];
   const halt = (i: number, reason: string): SafetySend => ({
@@ -520,7 +522,16 @@ export async function sendSafetySteps(
     // reverts, the action is partial, measured over what landed, with the
     // reverted step stated, never reported as an action that changed nothing.
     if (i === total - 1 && landed.length === 0) return { hash, landed, stopped: null };
-    const result = await wait(hash);
+    // A receipt that cannot be read (a timeout, an RPC error) is not a
+    // failure (Codex #3489 r18): the step may still land. No later step is
+    // sent; the tracker follows this step's own hash, which it can resume,
+    // and measures it with every step that landed before it.
+    let result: { ok: boolean; logs: readonly Log[] };
+    try {
+      result = await wait(hash);
+    } catch {
+      return { hash, landed, stopped: i < total - 1 ? { status: 'not-done', label: label(i + 1), reason: unreadReason } : null };
+    }
     if (!result.ok) {
       if (landed.length === 0) throw new StatedRefusal({ code: 'SafetyStopped', reason: revertedReason, reopensAt: null, remedy: null });
       return halt(i, revertedReason);

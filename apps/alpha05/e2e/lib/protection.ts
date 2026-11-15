@@ -2,8 +2,8 @@
  * #3379 B2 — protected mode through the account's vault, for the specs that
  * set it up through the protocol's public entry points: the vault's
  * `protect(bytes)` runs a `VaultProtection` write authorized directly by the
- * sending wallet, and the Diamond's `applyProtection(account)` then applies
- * the platform side of a posture change.
+ * sending wallet. A posture change applies the Diamond's side in the same
+ * transaction (#3489 r16), so no separate `applyProtection` is sent.
  */
 import fs from 'node:fs';
 import { encodeFunctionData, type Abi } from 'viem';
@@ -54,7 +54,6 @@ export async function enableProtection(sc: ScenarioChain, who: Party, delaySecon
   const account = sc.address(who);
   await vaultOf(sc, account, true);
   await protect(sc, who, account, 'enable', [delaySeconds]);
-  await sc.diamondWrite(who, 'applyProtection', [account]);
 }
 
 /** The account's protected record as its vault holds it. */

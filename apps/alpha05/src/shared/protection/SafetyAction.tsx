@@ -111,6 +111,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
         },
         what,
         text('flow.reverted'),
+        text('safety.receiptUnread'),
       );
       sentRef.current = sent;
       return sent.hash;

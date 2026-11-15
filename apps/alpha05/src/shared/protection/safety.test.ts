@@ -201,7 +201,7 @@ describe('sendSafetySteps and safetyLogs', () => {
   const label = (i: number) => `step ${i + 1}`;
 
   it('measures the vault step and the Diamond step together', async () => {
-    const sent = await sendSafetySteps(2, async (i) => (i === 0 ? H1 : H2), async () => ({ ok: true, logs: [lowered] }), label, 'reverted');
+    const sent = await sendSafetySteps(2, async (i) => (i === 0 ? H1 : H2), async () => ({ ok: true, logs: [lowered] }), label, 'reverted', 'unread');
     expect(sent).toMatchObject({ hash: H2, stopped: null });
     const legs = measureSafety(finalize, safetyLogs(sent.landed, { transactionHash: H2, logs: [cosignOff] }), DIAMOND, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
@@ -219,6 +219,7 @@ describe('sendSafetySteps and safetyLogs', () => {
       async () => ({ ok: true, logs: [lowered] }),
       label,
       'reverted',
+      'unread',
     );
     expect(sent.hash).toBe(H1);
     expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 2' });
@@ -235,6 +236,7 @@ describe('sendSafetySteps and safetyLogs', () => {
       async (hash) => (hash === H1 ? { ok: true, logs: [lowered] } : { ok: false, logs: [] }),
       label,
       'reverted',
+      'unread',
     );
     expect(sent.hash).toBe(H1);
     expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 2', reason: 'reverted' });
@@ -242,12 +244,34 @@ describe('sendSafetySteps and safetyLogs', () => {
     expect(measureSafety(finalize, logs, DIAMOND, copy).map((l) => l.status)).toEqual(['done', 'not-done']);
   });
 
+  it('a receipt that cannot be read is followed, not failed, and no later step is sent (Codex #3489 r18)', async () => {
+    let sentCount = 0;
+    const sent = await sendSafetySteps(
+      3,
+      async (i) => {
+        sentCount++;
+        return i === 0 ? H1 : H2;
+      },
+      async (hash) => {
+        if (hash === H2) throw new Error('timed out');
+        return { ok: true, logs: [lowered] };
+      },
+      label,
+      'reverted',
+      'unread',
+    );
+    expect(sentCount).toBe(2);
+    expect(sent.hash).toBe(H2);
+    expect(sent.landed.map((l) => l.hash)).toEqual([H1]);
+    expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 3', reason: 'unread' });
+  });
+
   it('a failure before anything landed is still the action failing', async () => {
-    await expect(sendSafetySteps(2, async () => H1, async () => ({ ok: false, logs: [] }), label, 'reverted')).rejects.toThrow();
+    await expect(sendSafetySteps(2, async () => H1, async () => ({ ok: false, logs: [] }), label, 'reverted', 'unread')).rejects.toThrow();
     await expect(
       sendSafetySteps(2, async () => {
         throw new Error('refused');
-      }, async () => ({ ok: true, logs: [] }), label, 'reverted'),
+      }, async () => ({ ok: true, logs: [] }), label, 'reverted', 'unread'),
     ).rejects.toThrow('refused');
   });
 });

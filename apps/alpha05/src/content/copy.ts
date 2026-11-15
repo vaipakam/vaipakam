@@ -1556,6 +1556,7 @@ export const copy = {
     legEnabled: B('Protected mode is on: payouts to your wallet wait {{delay}}.'),
     enabledOther: A('The protocol recorded a different delay from the one reviewed.'),
     lockNotRecorded: A('The transaction records no lock of this account.'),
+    receiptUnread: A('Not sent: the step before it was submitted, but its receipt could not be read yet. This card follows that transaction; send this step again once it has landed.'),
     legPlatform: B('The platform’s side: holding your position NFTs and cancelling queued payouts'),
     platformPending: A('Your vault records the change and enforces it already. The platform has not applied its own side yet; anyone may submit that step, and it changes nothing in your vault.'),
     legLocked: B('Your account is locked.'),
