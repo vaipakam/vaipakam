@@ -74,11 +74,15 @@ A top-up is the user's own collateral, returned with the rest when the loan is r
 
 Offered on a loan with a periodic interest cadence.
 
+Scouting found no interest-only payment entry today: the only manual payment on an open loan is the partial repayment, which also repays principal, needs the lender to have allowed partial repayment, and refuses a zero principal amount. So this instruction needs its own step, and it is shared, not a copy:
+
+- **An interest-only payment step**, one helper used by this executor (and available to a later manual "pay this period's interest" entry). It takes an amount of interest only, never principal; pays the lender through the interest ledger, with sellers' claims first where a sale left one; sends the treasury its share by the loan's stamped rate through the fee host; and credits the amount to the period through the periodic library's one crediting function. It does not depend on the loan allowing partial principal repayment.
+
 Execution, callable by anyone once the period's end is reached:
 
-- Pays the period's unpaid interest from the payment reserve to the lender through the existing interest-payment path, with the same treasury share, the same ledger entries and the same events as a payment the borrower makes by hand.
-- If the reserve covers only part, it pays that part. The periodic settlement then sells collateral for the remainder only, as it already does after a partial voluntary payment.
-- When the period is fully paid, the same call stamps the period closed through the settlement's free path.
+- Pays the period's unpaid interest from the payment reserve through that step. If the reserve covers only part, it pays that part. The periodic settlement later sells collateral for the remainder only, as it already does when the period is part paid.
+- When the payment brings the period to fully paid, the crediting function closes the period in the same transaction through the library's inline checkpoint, which is allowed at the period's end. It does not call the permissionless settlement entry, whose timing gate opens only after the period's grace and would refuse.
+- The amount is the period's shortfall as the periodic library computes it, capped by the reserve; the caller supplies no number.
 
 ### 4.3 Repay at the due date
 
@@ -115,7 +119,8 @@ Per the platform rule, every permissionless step is keeper-backed: one new keepe
 | Reserve record and its one writer | The extension reserve becomes the payment reserve; a collateral reserve is added beside it. Fund, withdraw and view take the reserve kind. |
 | New facet for the instructions | Settings, the three executors, the views. Its own facet from the start; the repay, periodic and collateral facets are all near the size limit. |
 | Collateral top-up | A vault-internal move from the collateral reserve to the loan's lien, reached only from executor 4.1. It reuses the lien bookkeeping of the manual add-collateral path, not a copy. |
-| Interest payment and full repayment | The existing paths gain a payer source of "the holder's payment reserve", reached only from executors 4.2 and 4.3 by self-call. The amounts, splits and events are the existing ones. |
+| Interest payment | A new shared interest-only payment step (4.2): lender through the interest ledger, treasury share through the fee host, credit and inline period close through the periodic library. Reached from executor 4.2 by self-call, paying from the holder's payment reserve. |
+| Full repayment | The existing repayment path gains a payer source of "the holder's payment reserve", reached only from executor 4.3 by self-call. The amounts, splits and events are the existing ones. |
 | Automatic extension | Draws its charge from the payment reserve as today. |
 | Loan settings | Executors read prices and health through the loan's stamped settings (#3437). |
 | Pre-deploy checks | Rows in the permissionless-steps ledger; storage-layout guard `write`; facet sizes with the deploy-sanity suite. |
@@ -126,7 +131,7 @@ The swap mode of #1206 (sell part of the pledged collateral to pay down the debt
 
 1. Reserve: fund, withdraw, both kinds; refusals; encumbrance (an offer, an intent, a claim or a payout cannot take reserved balance); the reserve survives repayment, default and liquidation and is withdrawable after each.
 2. Top-up: trigger and target bounds; amount equals the least needed, clamped by the reserve; the collateral reserve is absent from the health factor before the move and present after; interval; illiquid loan refused at setting.
-3. Interest: full and partial payment from the reserve; the following settlement sells only the remainder; identical splits and ledger entries to a manual payment.
+3. Interest: full and partial payment from the reserve; a full payment at the period's end closes the period in the same transaction, before grace ends; after a partial payment the settlement sells only the remainder; no principal moves; it works on a loan that does not allow partial principal repayment; lender, seller-claim and treasury amounts match the same interest paid by any other route.
 4. Repayment: at the configured time, at the due date, inside grace with the late fee; short reserve does nothing; identical outcome to a manual repayment; the one-plan rule against extension and refinance limits.
 5. Position transfer: the old holder's instruction is skipped; the old holder withdraws; the new holder's reserve and setting work.
 6. Skips: each reason in 4.4 emits and changes nothing.
