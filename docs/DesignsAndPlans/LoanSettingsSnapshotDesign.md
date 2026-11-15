@@ -42,8 +42,8 @@ opened".
    collateral listing.
 3. A governance change makes a new set. New loans take it. Open loans do not.
 4. Four things can still reach an open loan, and nothing else:
-   - **Stop.** A secondary source can be muted and an adapter disabled at
-     once. A stop only refuses more; it never adds and never accepts a price
+   - **Stop.** A secondary source can be muted, an adapter disabled and a
+     conduit's approval on a listing executor revoked at once. A stop only refuses more; it never adds and never accepts a price
      that was refused. This exists today and stays as it is.
    - **Dead-source removal.** Removing a secondary source also drops its
      refusals, so it is not a stop. It keeps its own cancellable 48-hour
@@ -218,6 +218,15 @@ has ended; `syncLoanSettings` cancels a live auto-listing first, through its
 original executor, and a borrower's own listing is left to run or be
 cancelled by the borrower.
 
+**Conduit approvals on an executor.** An executor keeps its own list of
+approved conduits. Revoking one is a stop (section 2): it is instant, it
+blocks new listings through that conduit and invalidates live orders on it,
+and it adds nothing. Approving a conduit again waits the same delay as a
+marketplace change. A marketplace whose conduit has been revoked can no
+longer list, and the cure is an announced retirement of that marketplace.
+Nothing else on an executor that a listing depends on may change in place;
+a different setting is a new executor and so a new marketplace.
+
 The vault refuses a conduit its code does not list as accepted. The code
 carries the conduit new listings use and, beside it, any earlier one still in
 use by open loans. The vault holds no marketplace record per loan. A vault
@@ -296,14 +305,16 @@ fallback custody or past default cannot be moved.
 - **Liquidity tier and pool depth.** They describe today's market, not a
   governance choice. A loan's sale must respect the depth that exists now.
 - **Hourly and daily price checkpoints, and the calm test.** One series per
-  asset, written at the newest price version. The calm test measures market
-  movement, so both of its ends are read on the same settings: the
-  checkpoints and the "now" price it compares them with are both taken at
-  the newest price version, for every loan. A loan's own price version is
-  never compared with a checkpoint written under another one, so a settings
-  change by itself cannot read as a price move. The coverage test beside it
-  (collateral against debt) and the sale's minimum output use the loan's own
-  set.
+  asset, written at the price version that is newest when the slot is
+  written, and each slot records that version. The calm test measures market
+  movement, so each comparison has both ends on the same settings: the "now"
+  price is read at the version the checkpoint was written under, for every
+  loan. In the hours after a price version changes, the earlier slots are
+  therefore still compared at their own version, which the guard keeps
+  answering. A slot whose version the guard has since retired counts as not
+  calm. A settings change by itself therefore never reads as a price move.
+  The coverage test beside it (collateral against debt) and the sale's
+  minimum output use the loan's own set.
 - **Numeric risk thresholds already stamped per loan** (the treasury fee at
   origination, for example) are unchanged by this design.
 
@@ -329,7 +340,10 @@ fallback custody or past default cannot be moved.
 - A mute or a disable reaches every set at once; a re-enable waits the
   delay. A removal's refusals count until its 48 hours have passed.
 - A feed rebinding alone gives the next loan a new set.
-- The calm test reads both ends at the newest price version.
+- The calm test reads "now" at each checkpoint's own price version, also in
+  the hours after a version change; a slot on a retired version is not calm.
+- Revoking a conduit on an executor stops listings at once; approving it
+  again waits the delay.
 - A source added after a loan opened is never consulted for it.
 - Retirement: not before 7 days, cancellable, lists differences, never the
   current value; a loan holding the part moves on its next action or by
