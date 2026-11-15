@@ -50,7 +50,7 @@ A listed set is identified on-chain by a root. The contract checks only that the
 What the platform does so a lender does not sign blind:
 
 - **The list is published.** For up to 256 ids the full list is written in the offer's creation event. For a larger set the offer stores the hash of the list file, the app and indexer keep the file, and anyone can recompute the root from it. An offer whose list file is not available is shown as "list not published" and hidden from the default book.
-- **The count is on the offer.** A set said to hold 40 ids cannot quietly hold 4,000.
+- **The count is stated, and checked off-chain against the list.** A root does not reveal how many ids are under it, and the contract does not enforce the count; it stores the count and the list hash as the lender gave them. The check is made where the list is: before the lender signs or posts, the app recomputes the root from the list and compares the number of distinct ids, the list's hash and the root with the offer; the indexer does the same before an offer enters the book, and an offer that fails any of the three is shown as "list does not match" and kept out of the default book. The review states that the count is the app's check of the published list and not something the contract enforces.
 - **The label is a description, not a check.** The contract does not know whether the listed ids have the trait. The app says so beside the label: "The platform checks that a token is in the lender's list. It does not check the list against the trait." The app builds trait lists from the collection's public metadata and shows the lender the ids before they sign or post; the Console offers an independent recompute of any offer's root from its list.
 - **Who carries the risk.** A wrong list can only hurt the lender who posted it. A borrower's position is the same whatever the list holds: their own token, the stated amount, the stated terms.
 
@@ -58,8 +58,10 @@ The typed-list decision for signed offer sets (#3327 part 2) was made so a walle
 
 ## 6. Signed offers
 
-The signed offer carries the same fields: the set kind, the bounds or the root with its count and list hash, the hash of the exclusion list, and the number of loans. The per-offer fill ledger counts fills, so a signed collection offer cannot be filled more times than it states, and the existing cancels (by nonce, by offer, by the co-signer's refusal) stop it.
+The signed offer carries the same fields: the set kind, the bounds or the root with its count and list hash, the hash of the exclusion list, and the number of loans. It also carries a signed **start time**. The per-offer fill ledger counts fills, so a signed collection offer cannot be filled more times than it states, and the existing cancels (by nonce, by offer, by the co-signer's refusal) stop it.
 
+- **The lifetime is measured from the signed start time, not from the fill.** A signed offer exists on-chain only when it is filled, so a limit checked at the fill would let an offer signed long ago be held back and used in its last days. For a set kind, a fill requires the start time to be in the past, and the offer's expiry and signature deadline to be no later than the start time plus the maximum expiry. An offer withheld for months is simply expired.
+- **A signed offer reserves nothing.** As with every signed offer today, the funds are checked in the lender's vault at each fill; nothing is set aside when it is signed, because nothing on-chain exists yet. A signed collection offer for several loans is therefore a statement of how many the lender is willing to fund, not a guarantee that the funds are there: a fill that finds the free balance short is refused and changes nothing, and several signed offers may point at the same funds. The lender's review and the book say so ("not reserved; filled while funds are free"), and the book shows the lender's free balance beside the offer. A lender who wants every loan guaranteed posts the on-chain form, which reserves principal for all of them (section 3).
 - A vault-backed signed offer may state any number of loans up to a governed maximum.
 - A wallet-backed signed offer (funds pulled by a single-use permit) states one loan, as wallet-backed fills are single-offer today.
 - A signed collection offer may sit inside a typed-list offer set like any other signed offer.
@@ -85,13 +87,13 @@ The accept and create facets are near the size limit; the membership library is 
 ## 9. Tests
 
 1. Each set kind: a token inside is accepted, one outside is refused; range bounds inclusive; exclusion wins over inclusion.
-2. Listed set: valid proof, wrong proof, proof for another root, depth limit; the count and list hash are stored as given.
+2. Listed set: valid proof, wrong proof, proof for another root, depth limit; the count and list hash are stored as given and not enforced on-chain. App and indexer: a list whose distinct-id count, hash or recomputed root differs from the offer is flagged and kept out of the default book.
 3. Fills: exactly the stated number succeed, the next is refused; each loan carries its own token and consent; the reserved principal falls by one loan per fill.
 4. Cancel, expiry and lowering the count release exactly the unused principal; no fill after expiry.
 5. A token already under a lien, and a platform position token, are refused for every kind.
 6. A match of a borrower's single-token offer with a set offer; previews agree with execution on every path.
 7. ERC-1155: the fixed quantity per fill.
-8. Signed: the hash covers every new field; the fill ledger stops at the stated count; cancel by nonce; a wallet-backed offer with more than one loan is refused; inside a typed-list set.
+8. Signed: the hash covers every new field, the start time included; a fill before the start time, and one whose expiry or deadline is past start plus the maximum, is refused, including an offer first submitted long after signing; a fill with the vault short is refused and a later one with funds succeeds; the fill ledger stops at the stated count; cancel by nonce; a wallet-backed offer with more than one loan is refused; inside a typed-list set.
 9. The acceptance-terms binding names the actual token and refuses a different one.
 10. Risk-access gate and illiquid consent per fill, both sides.
 
