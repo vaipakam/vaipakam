@@ -1,6 +1,6 @@
 /**
  * #3319 — the lenders standing ready for a pair: the protocol's own list of
- * active, funded lender intents (`MetricsFacet.getActiveLenderIntents`),
+ * active, funded lender intents (`LenderIntentFacet.getActiveLenderIntents`, on that facet since #3618),
  * read through the wallet's connection and narrowed to the pair. A standing
  * intent is not an offer the borrower can take: a matching service fills a
  * request against it when the request's terms fit the lender's limits, so
@@ -9,7 +9,7 @@
 import type { Abi, PublicClient } from 'viem';
 import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
 import type { LifecycleTerms } from '../post/postModel';
-import { CONFIG, METRICS } from './reads';
+import { CONFIG } from './reads';
 
 const INTENT = LenderIntentFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
@@ -30,6 +30,10 @@ export interface IntentSummary {
   requiresKeeperAuth: boolean;
   livePrincipal: bigint;
   availableCapital: bigint;
+  /** #3618 — the lend-until time (unix seconds; 0 = none). */
+  lendUntil: bigint;
+  /** #3619 — the intent also fills pro-rata requests. */
+  acceptsProRata: boolean;
 }
 
 /** How many intents one call reads, and how many calls one view makes. */
@@ -117,7 +121,7 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
   let scanned = 0;
   for (let page = 0; page < INTENT_PAGES; page++) {
     const offset = BigInt(page * INTENT_PAGE);
-    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(METRICS, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
+    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
     total = all;
     intents.push(...rows);
     scanned += rows.length;

@@ -81,7 +81,8 @@ import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 // split; `previewMatch` / `matchOffers` on OfferMatchFacet. Merge the
 // relevant facet ABIs so viem can resolve every selector against the
 // Diamond.
-// `getActiveLenderIntents` lives on MetricsFacet; `previewIntent` on
+// `getActiveLenderIntents` lives on LenderIntentFacet (moved off MetricsFacet
+// in #3618); `previewIntent` on
 // RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchIntentFacet (split out of
 // OfferMatchFacet in the #1219 host split) — added for the #625
 // WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
@@ -352,7 +353,7 @@ export async function searchIntentFill<P>(
   return best;
 }
 
-/** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
+/** One row of `LenderIntentFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
 export interface LenderIntentSummary {
   owner: Address;
   lendingAsset: Address;
@@ -394,7 +395,7 @@ interface IntentPreview {
 /** Pagination size for `getRollableIntentLoans`. */
 const ROLL_SCAN_PAGE = 100n;
 
-/** One row of `MetricsFacet.getRollableIntentLoans` (`RollableIntentLoan`). */
+/** One row of `LenderIntentFacet.getRollableIntentLoans` (`RollableIntentLoan`). */
 interface RollableIntentLoan {
   loanId: bigint;
   owner: Address;

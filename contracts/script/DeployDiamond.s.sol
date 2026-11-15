@@ -2321,7 +2321,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](18);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -2340,6 +2340,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2760 — the floor on an intent's smallest fill, and its view.
         s[14] = LenderIntentFacet.setMinIntentFillNumeraire.selector;
         s[15] = LenderIntentFacet.getMinIntentFillNumeraire.selector;
+        // #625 WI-2a / WI-2c — the keeper discovery feeds, moved off MetricsFacet (#3618).
+        s[16] = LenderIntentFacet.getActiveLenderIntents.selector;
+        s[17] = LenderIntentFacet.getRollableIntentLoans.selector;
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -4188,7 +4191,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](53);
+        s = new bytes4[](51);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -4275,19 +4278,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[43] = MetricsFacet.getOfferPrincipalLien.selector;
         s[44] = MetricsFacet.getEncumbered.selector;
         s[45] = MetricsFacet.getFreeBalance.selector;
-        s[46] = MetricsFacet.getActiveLenderIntents.selector; // #625 WI-2a
-        s[47] = MetricsFacet.getRollableIntentLoans.selector; // #625 WI-2c
         // #769 — paginated forms of the §8b position views, so a wallet griefed
         // with a huge position-NFT inventory can't make the unbounded
         // balanceOf-loop `eth_call` revert and break the holder's reads.
-        s[48] = MetricsFacet.getUserPositionLoansPaginated.selector;
-        s[49] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        s[46] = MetricsFacet.getUserPositionLoansPaginated.selector;
+        s[47] = MetricsFacet.getUserPositionOffersPaginated.selector;
         // #955 (#921 item 4) — single-offer canonical lifecycle state, so a
         // Scenario-A consumed-by-sale terminal is visible to integrators without
         // the `ownerOf`-liveness heuristic.
-        s[50] = MetricsFacet.getOfferState.selector;
-        s[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
-        s[52] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
+        s[48] = MetricsFacet.getOfferState.selector;
+        s[49] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
+        s[50] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

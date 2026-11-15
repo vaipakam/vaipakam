@@ -22,6 +22,8 @@ function intent(over: Partial<IntentSummary> = {}): IntentSummary {
     requiresKeeperAuth: false,
     livePrincipal: 0n,
     availableCapital: 2n * E18,
+    lendUntil: 0n,
+    acceptsProRata: false,
     ...over,
   };
 }

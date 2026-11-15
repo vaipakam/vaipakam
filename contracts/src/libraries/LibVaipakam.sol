@@ -1547,6 +1547,16 @@ library LibVaipakam {
         // `setLenderIntent`. A fill is refused until
         // `LibTiming.minTermsAgeSec()` has passed since. Appended.
         uint64 termsSetAt;
+        // #3618 — the lend-until time (unix seconds; 0 = none). No loan is
+        // agreed whose maturity at origination falls after it, and a repaid
+        // loan rolls back behind the intent only while a day-long loan still
+        // fits ({LibIntentTerms}). Bounds AGREED maturity only. Appended.
+        uint64 lendUntil;
+        // #3619 — the lender's opt-in to pro-rata requests (default false =
+        // full-term, full-repay requests only). On, the intent also fills
+        // pro-rata requests, including ones allowing partial repayment
+        // ({LibIntentTerms.lifecycleVerdict}). Appended.
+        bool acceptsProRata;
     }
 
     /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset) triple that keys a

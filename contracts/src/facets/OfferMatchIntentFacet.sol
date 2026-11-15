@@ -17,6 +17,7 @@ import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
+import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 
 /**
  * @title  OfferMatchIntentFacet
@@ -63,17 +64,22 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
     error LenderIntentExposureExceeded();
     /// @notice The counterparty offer's term exceeds the intent's `maxDurationDays`.
     error LenderIntentDurationTooLong();
-    /// @notice The counterparty offer disables the full-term-interest floor
-    ///         (`useFullTermInterest == false`). An intent loan must carry the
-    ///         floor so a borrower can't escape the lender's committed interest
-    ///         by repaying / preclosing early (the synthesis E3 election). The
-    ///         solver must pick a counterparty that honours it.
+    /// @notice #3618 — the loan would be agreed to mature after the intent's
+    ///         lend-until time. `maturity` is the loan's agreed maturity (now +
+    ///         the counterparty's term); `lendUntil` is the intent's bound.
+    error LenderIntentPastLendUntil(uint256 maturity, uint256 lendUntil);
+    /// @notice The counterparty offer is pro-rata (`useFullTermInterest ==
+    ///         false`) and the intent has not opted in (`acceptsProRata`,
+    ///         #3619). Without the opt-in an intent loan carries the full-term
+    ///         floor, so a borrower can't escape the lender's committed interest
+    ///         by repaying / preclosing early (the synthesis E3 election).
     error LenderIntentFullTermRequired();
     /// @notice The counterparty offer allows partial repayment
-    ///         (`allowsPartialRepay == true`), which charges only pro-rata
-    ///         interest on the repaid slice and so escapes the committed-interest
-    ///         economics the full-term floor protects. The standing intent has no
-    ///         opt-in for it, so an intent fill must be full-repay-only.
+    ///         (`allowsPartialRepay == true`) on terms the intent does not
+    ///         admit: a full-term request (a partial repay charges only accrued
+    ///         interest on the repaid slice, escaping the committed interest),
+    ///         or any request when the intent has not opted in to pro-rata
+    ///         (#3619).
     error LenderIntentPartialRepayNotAllowed();
     /// @notice The init-LTV-cap collateral floor is unresolvable (missing oracle
     ///         price / illiquid collateral), so the intent's LTV ceiling can't be
@@ -146,21 +152,37 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         if (s.offers[counterpartyOfferId].durationDays > intent.maxDurationDays) {
             revert LenderIntentDurationTooLong();
         }
-        // The loan inherits the accepted (borrower) offer's `useFullTermInterest`
-        // (LoanFacet snapshots it from `counterpartyOfferId`). An intent loan must
-        // carry the full-term floor so a borrower can't post an in-bounds offer
-        // that disables it and then repay/preclose early below the lender's
-        // committed interest (synthesis E3). Require the counterparty honour it.
-        if (!s.offers[counterpartyOfferId].useFullTermInterest) {
-            revert LenderIntentFullTermRequired();
+        // #3618 — the loan's agreed maturity must fall inside the intent's
+        // lend-until time (no bound when it is 0). The window shrinks as time
+        // passes, with no state change.
+        {
+            (bool fits, uint256 maturity) = LibIntentTerms.fitsLendUntil(
+                intent, s.offers[counterpartyOfferId].durationDays
+            );
+            if (!fits) revert LenderIntentPastLendUntil(maturity, intent.lendUntil);
         }
-        // Likewise reject partial-repay: `repayPartial` charges only pro-rata
-        // interest on the repaid slice, escaping the committed-interest economics
-        // the full-term floor protects. The intent has no opt-in, so an intent
-        // fill is full-repay-only (keeps `loan.principal` == the reserved fill,
-        // and the exposure accounting exact).
-        if (s.offers[counterpartyOfferId].allowsPartialRepay) {
-            revert LenderIntentPartialRepayNotAllowed();
+        // The loan inherits the accepted (borrower) offer's lifecycle terms
+        // (LoanFacet snapshots them from `counterpartyOfferId`). The one rule
+        // ({LibIntentTerms.lifecycleVerdict}, #3619): without the intent's
+        // pro-rata opt-in the request must be full-term and full-repay, so a
+        // borrower can't repay/preclose early below the lender's committed
+        // interest (synthesis E3); with it, a pro-rata request is admitted,
+        // with or without partial repayment. A full-term request that allows
+        // partial repayment is refused either way. Partial repayment keeps the
+        // exposure accounting conservative: the original fill is released once,
+        // at the terminal close.
+        {
+            LibIntentTerms.Lifecycle verdict = LibIntentTerms.lifecycleVerdict(
+                intent.acceptsProRata,
+                s.offers[counterpartyOfferId].useFullTermInterest,
+                s.offers[counterpartyOfferId].allowsPartialRepay
+            );
+            if (verdict == LibIntentTerms.Lifecycle.FullTermRequired) {
+                revert LenderIntentFullTermRequired();
+            }
+            if (verdict == LibIntentTerms.Lifecycle.PartialRepayNotAllowed) {
+                revert LenderIntentPartialRepayNotAllowed();
+            }
         }
         // Derive the collateral the intent's init-LTV ceiling requires for this
         // fill. The materialized lender offer demands it; `previewMatch` enforces
@@ -198,7 +220,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
                 fillAmount,
                 reqColl,
                 intent.minRateBps,
-                s.offers[counterpartyOfferId].durationDays
+                s.offers[counterpartyOfferId]
             ),
             lender
         );
@@ -266,8 +288,8 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 fillAmount,
         uint256 reqColl,
         uint256 minRateBps,
-        uint256 durationDays
-    ) private pure returns (LibVaipakam.CreateOfferParams memory p) {
+        LibVaipakam.Offer storage cp
+    ) private view returns (LibVaipakam.CreateOfferParams memory p) {
         p.offerType = LibVaipakam.OfferType.Lender;
         p.lendingAsset = lendingAsset;
         p.amount = fillAmount;
@@ -277,22 +299,23 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         p.collateralAsset = collateralAsset;
         p.collateralAmount = reqColl; // init-LTV-cap requirement
         p.collateralAmountMax = reqColl;
-        p.durationDays = durationDays; // == counterparty term (≤ maxDuration)
+        p.durationDays = cp.durationDays; // == counterparty term (≤ maxDuration, inside lendUntil)
         p.assetType = LibVaipakam.AssetType.ERC20;
         p.collateralAssetType = LibVaipakam.AssetType.ERC20;
         p.prepayAsset = lendingAsset; // unused for ERC20 lend; non-zero placeholder
         p.creatorRiskAndTermsConsent = true; // consent captured at setLenderIntent
         p.fillMode = LibVaipakam.FillMode.Partial;
         p.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.None;
-        // #2727 — the slice carries the lifecycle terms the lender intent
-        // stands for: full-term interest, no partial repay, no prepay listing
-        // (the default), no periodic cadence. The loan copies its terms from
-        // the borrower offer, and the match admits only a pair whose terms
-        // agree (`LifecycleTermsMismatch`), so a borrower offer with any other
-        // terms is never filled from an intent. `matchIntent`'s own
-        // `LenderIntentFullTermRequired` / `LenderIntentPartialRepayNotAllowed`
-        // guards run first and name the two most common cases.
-        p.useFullTermInterest = true;
+        // #2727 / #3619 — the slice carries the borrower request's interest
+        // mode and repayment shape, which `matchIntent` has already checked
+        // against the intent ({LibIntentTerms.lifecycleVerdict}): full-term
+        // and full-repay, or (opted-in intent only) pro-rata with or without
+        // partial repay. No prepay listing (the default) and no periodic
+        // cadence: the match admits only a pair whose terms agree
+        // (`LifecycleTermsMismatch`), so a borrower offer with either is never
+        // filled from an intent.
+        p.useFullTermInterest = cp.useFullTermInterest;
+        p.allowsPartialRepay = cp.allowsPartialRepay;
     }
 
     /// @dev Materialize an intent slice as an on-chain offer with `creator =

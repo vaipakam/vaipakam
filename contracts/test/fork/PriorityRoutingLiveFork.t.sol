@@ -277,7 +277,7 @@ contract PriorityRoutingLiveFork is Test {
         _kyc(who);
         ERC20Mock(lendAsset).mint(who, 10 * PRINCIPAL);
         vm.startPrank(who);
-        d.setLenderIntent(lendAsset, collAsset, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, true, type(uint64).max);
+        d.setLenderIntent(lendAsset, collAsset, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, 0, false, true, type(uint64).max);
         ERC20Mock(lendAsset).approve(address(d), 5 * PRINCIPAL);
         d.fundLenderIntent(lendAsset, collAsset, 5 * PRINCIPAL);
         vm.stopPrank();
