@@ -2987,3 +2987,15 @@ The Console reads the indexer's `GET /config/:chainId`. It uses the snapshot onl
 ### Protocol Console: Which Switches Are Read
 
 Read from the settings: `partialFillEnabled`, `lenderIntentEnabled`, `autoLendEnabled` and `periodicInterestEnabled` (class 1a), `autoExtendEnabled` and `autoRefinanceEnabled` (class 1b), and `keepersPaused` (class 4). Named but not read in this version: the full fee tariff, the solver capacity limit, internal-match and discounted liquidation, the collateral-sale listing, the backstop opt-in, the keeper reward, the risk-access gate, the fee-discount price source, the reward custody cutover and the reward claim horizon. Values come from effective getters, so a default applies where governance set none; a zero rate model, address, symbol or id is written as unset, a zero dust floor as off, an empty grace schedule as the built-in default, and an `autoPauseAvailableAt` of zero as never. A setting the index cannot hear change is marked when shown from the snapshot.
+
+<a id="recover-adopt"></a>
+
+### Recover: How an Adoption Is Checked and Signed
+
+The figure is `untrackedHolding(user, asset, tokenId)` (token 0 for an ERC-20), read at one block with `vaultBannedSource`, the wallet's own screen, its protection mode, `paused()`, `getSanctionsOracle()`, `adoptionAckTextHash()` and `adoptionNonce`. The standard is the one the contract claims through ERC-165. The wallet signs EIP-712 typed data on the domain `Vaipakam Vault Adoption`, version `1`: `AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`, where `ackTextHash` is the keccak-256 of the declaration's exact bytes; the app asks for no signature when the protocol binds a different hash. `adoptUntracked` then checks, in order: the caller's sanctions screen, that a replacement has not retired the wallet, the deadline, that the signature recovers to the caller (so a contract account cannot adopt), a vault, the amount against the uncounted figure, and the declared source against the screen, refusing when no screen is set or it cannot answer. A flagged source emits `VaultBannedFromAdoption` and sets `vaultBannedSource` without reverting; otherwise `UntrackedAdopted` records the credit. The finish card reads the outcome from those events in the receipt.
+
+<a id="recover-disown"></a>
+
+### Recover: How a Disowning Is Recorded
+
+`disownUntracked(kind, asset, tokenId)` needs only a vault and an uncounted figure above zero. It has no pause check, no sanctions screen and no manager check, so a replaced wallet and a barred vault can still use it, and it takes no signature. It emits `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, and the finish card reads the recorded amount from that event in the receipt.

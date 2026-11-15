@@ -1620,3 +1620,15 @@ The Protocol Console lists the protocol's settings and switches on the network y
 ### Protocol Console: Switches and the Global Pause
 
 Each switch is listed with its class and what it stops. New-position switches stop new offers and loans only. Lifecycle switches stop one feature on open loans too, while repayment, adding collateral and claims stay open. Keeper switches only change who runs a step; you can always run it yourself. The global pause is read live: while it is on, new positions, claims, withdrawals, liquidations and defaults stop, but full and partial repayment and adding collateral stay open. A switch the page does not read yet is still named, with its state shown as not read. A long administrative pause opens an escape route that returns what is free in your vault, and the Console says when it opens.
+
+<a id="recover-adopt"></a>
+
+### Recover: Adopting an Asset Sent Straight to Your Vault
+
+Your vault counts only what reaches it through the protocol: a deposit, a loan, a claim. A token or NFT sent straight to your vault's address, from a wallet or an exchange, sits there uncounted, so you cannot withdraw it. The Recover page shows the protocol's own figure for what sits uncounted. If you sent it yourself, adopt it: you name the address it came from, read the declaration and type CONFIRM, then sign it and send the adoption. Nothing moves; the asset is counted as yours and leaves only through an ordinary withdrawal. The protocol screens the source again when it confirms. If the sanctions screen flags it, nothing is credited and your vault is barred until that address is de-listed, so the app never sends an adoption for a source the screen already flags. Adopting is closed while the protocol is paused, for a replaced wallet and for a contract account. Never adopt what someone else sent you.
+
+<a id="recover-disown"></a>
+
+### Recover: Disowning an Asset
+
+If something reached your vault that you do not claim, disown it. Disowning records on the chain, for anyone to see, that you do not claim it. It moves and credits nothing, and the asset stays in your vault, uncounted. It asks no declaration, signature or sanctions screen, and it stays open while the protocol is paused, for a replaced wallet and for a vault an earlier adoption barred.

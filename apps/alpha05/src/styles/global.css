@@ -2322,3 +2322,14 @@ a.btn {
   border-bottom: 1px solid var(--border);
   color: var(--text-body);
 }
+
+/* RB-RECOVER: the adoption's declaration, quoted word for word. */
+.recover-ack {
+  margin: 0.5rem 0 1rem;
+  padding: 0.75rem 1rem;
+  border-inline-start: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}

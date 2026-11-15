@@ -1474,6 +1474,25 @@ above. Each resolves here, so a route reviewer needs no private file:
   If the pause, the route or, under an open route, the mode is unread, no
   entry point is chosen and nothing is sent. The finish card reads
   `EscapeWithdrawal` and the token's own transfer to the wallet.
+- **RB-RECOVER** — an asset sent straight to the connected wallet's vault
+  (ACC-25, ACC-26, ACC-27, NFT-33) is found on the Recover page by its
+  contract and, for an NFT, its token id; its standard is the one the
+  contract claims, never chosen. The page states the protocol's own
+  `untrackedHolding` figure, never a balance difference, and an unread
+  figure is said to be unread, never zero. What stops adopting is stated
+  in the order the protocol checks it (a retired wallet, a contract
+  account, a barred vault, the wallet's own screen, no screen set, the
+  pause, a declaration the protocol binds that differs from the app's),
+  with each unread fact stated as unread. Adopting names the source,
+  shows the declaration word for word, takes a typed CONFIRM, and signs
+  the protocol's own EIP-712 type; a source the screen flags or cannot
+  answer for is never sent, because sending would bar the vault or revert.
+  Disowning asks no declaration, signature or screen and stays open to a
+  replaced wallet, a barred vault and a pause. A barred vault states its
+  declared source. Both finish cards read `UntrackedAdopted`,
+  `VaultBannedFromAdoption` or `UntrackedDisowned` for this account and
+  asset. While the protocol is paused the page states the escape route
+  (LN-57) and links the Vault page, which carries it.
 - **RB-ADDRESS-GUARD** — every address a user enters to receive funds or
   control (#3415) goes through one address box. It shows the address in
   full, with the first and last digits set apart and never shortened. It

@@ -2600,3 +2600,15 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 ### プロトコルコンソール：読み取るスイッチ
 
 設定から読むもの：`partialFillEnabled`、`lenderIntentEnabled`、`autoLendEnabled`、`periodicInterestEnabled`（クラス 1a）、`autoExtendEnabled`、`autoRefinanceEnabled`（クラス 1b）、`keepersPaused`（クラス 4）。このバージョンでは名前のみで読まないもの：フル手数料タリフ、ソルバーの容量制限、内部マッチング清算と割引清算、担保売却のリスティング、バックストップへの参加、キーパー報酬、リスクアクセスゲート、手数料割引の価格ソース、報酬保管の切り替え、報酬請求の期限。値は実効値のゲッターから得るため、ガバナンスが設定していない箇所には既定値が適用されます。ゼロの金利モデル、アドレス、シンボル、ID は未設定、ゼロのダスト下限はオフ、空の猶予スケジュールは組み込みの既定、ゼロの `autoPauseAvailableAt` は「なし」と表示します。インデックスが変更を検知できない設定は、スナップショットから表示する際に注記されます。
+
+<a id="recover-adopt"></a>
+
+### リカバー：引き受けの確認と署名の仕組み
+
+数値は `untrackedHolding(user, asset, tokenId)`（ERC-20 ではトークン 0）で、`vaultBannedSource`、ウォレット自身の審査、保護モード、`paused()`、`getSanctionsOracle()`、`adoptionAckTextHash()`、`adoptionNonce` と同じブロックで読み取ります。規格はコントラクトが ERC-165 で示すものです。ウォレットはドメイン `Vaipakam Vault Adoption`、バージョン `1` の EIP-712 型付きデータに署名します：`AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`。`ackTextHash` は宣言文の正確なバイト列の keccak-256 で、プロトコルが別のハッシュを固定している場合、アプリは署名を求めません。続いて `adoptUntracked` が順に確認します：呼び出し元の制裁審査、置き換えでウォレットが退役していないこと、期限、署名が呼び出し元に一致すること（そのためコントラクトアカウントは引き受けできません）、ボールトの有無、数えられていない数値に対する数量、審査に対する申告元。審査が未設定または応答できない場合は拒否します。指摘された送金元は revert せずに `VaultBannedFromAdoption` を発行して `vaultBannedSource` を設定し、それ以外は `UntrackedAdopted` が計上を記録します。完了カードはレシート内のこれらのイベントから結果を読み取ります。
+
+<a id="recover-disown"></a>
+
+### リカバー：放棄の記録方法
+
+`disownUntracked(kind, asset, tokenId)` に必要なのはボールトと 0 を超える未計上の数値だけです。一時停止・制裁審査・管理者の確認はなく、置き換えられたウォレットや停止されたボールトでも使え、署名も不要です。`UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)` を発行し、完了カードはレシート内のこのイベントから記録された数量を読み取ります。

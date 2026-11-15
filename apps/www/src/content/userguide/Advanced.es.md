@@ -2779,3 +2779,15 @@ La Consola lee `GET /config/:chainId` del indexador. Usa la instantánea solo cu
 ### Consola del protocolo: qué interruptores se leen
 
 Se leen de los ajustes: `partialFillEnabled`, `lenderIntentEnabled`, `autoLendEnabled` y `periodicInterestEnabled` (clase 1a), `autoExtendEnabled` y `autoRefinanceEnabled` (clase 1b), y `keepersPaused` (clase 4). Se nombran pero no se leen en esta versión: la tarifa completa, el límite de capacidad del solver, la liquidación por emparejamiento interno y con descuento, la venta de garantía en lista, la adhesión al respaldo, la recompensa de keepers, la puerta de acceso por riesgo, la fuente de precio del descuento, el traspaso de custodia de recompensas y el horizonte de reclamo. Los valores vienen de getters efectivos, así que rige un valor por defecto donde la gobernanza no fijó ninguno; un modelo de tasa, dirección, símbolo o id en cero se escribe sin definir, un umbral de polvo en cero como desactivado, un calendario de gracia vacío como el predeterminado, y un `autoPauseAvailableAt` en cero como nunca. Un ajuste cuyo cambio el índice no oye se marca al mostrarse desde la instantánea.
+
+<a id="recover-adopt"></a>
+
+### Recuperar: cómo se comprueba y firma una adopción
+
+La cifra es `untrackedHolding(user, asset, tokenId)` (token 0 para un ERC-20), leída en un mismo bloque junto con `vaultBannedSource`, el filtro de la propia cartera, su modo de protección, `paused()`, `getSanctionsOracle()`, `adoptionAckTextHash()` y `adoptionNonce`. El estándar es el que el contrato declara por ERC-165. La cartera firma datos tipados EIP-712 en el dominio `Vaipakam Vault Adoption`, versión `1`: `AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`, donde `ackTextHash` es el keccak-256 de los bytes exactos de la declaración; la app no pide firma si el protocolo fija otro hash. Después `adoptUntracked` comprueba, en orden: el filtro de sanciones del llamante, que un reemplazo no haya retirado la cartera, el plazo, que la firma corresponda al llamante (así una cuenta de contrato no puede adoptar), una bóveda, la cantidad frente a la cifra sin contar, y el origen declarado frente al filtro, rechazando si no hay filtro o no puede responder. Un origen marcado emite `VaultBannedFromAdoption` y fija `vaultBannedSource` sin revertir; si no, `UntrackedAdopted` registra el abono. La tarjeta final lee el resultado de esos eventos en el recibo.
+
+<a id="recover-disown"></a>
+
+### Recuperar: cómo se registra una renuncia
+
+`disownUntracked(kind, asset, tokenId)` solo necesita una bóveda y una cifra sin contar mayor que cero. No tiene comprobación de pausa, filtro de sanciones ni comprobación de gestor, así que una cartera reemplazada y una bóveda bloqueada pueden usarlo, y no requiere firma. Emite `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, y la tarjeta final lee la cantidad registrada de ese evento en el recibo.

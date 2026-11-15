@@ -329,7 +329,11 @@ function HoldingCard({
   const name = nft ? format('asset.nftToken', { asset: assetName(r.asset, meta), id: r.tokenId.toString() }) : assetName(r.asset, meta);
   const isVpfi = vpfi !== null && !nft && r.asset.toLowerCase() === vpfi.toLowerCase();
   const rewards = pageHandoff('/rewards');
-  const recover = pageHandoff('/recover');
+  // The link fills in the asset only (ACC-24): Recover reads everything
+  // else itself, and the reader chooses there whether to adopt or disown.
+  const recoverPage = pageHandoff('/recover');
+  const recover: ReturnType<typeof pageHandoff> =
+    recoverPage.kind === 'here' ? { kind: 'here', to: `/recover?asset=${r.asset}${nft ? `&id=${r.tokenId.toString()}` : ''}` } : recoverPage;
   const key = `${r.standard}:${r.asset.toLowerCase()}:${r.tokenId.toString()}`;
   return (
     <li className="card" data-vault-row={key}>
