@@ -195,6 +195,8 @@ describe('editChanged', () => {
     const a = review(o, t);
     expect(editChanged(a, a, copy)).toBeNull();
     expect(editChanged(a, review(record({ amountFilled: 10n }), t), copy)).toBe('offerEdit.changedOffer');
+    expect(editChanged(a, review(record({ backstopEligibleAfter: 5n }), t), copy)).toBe('offerEdit.changedOffer');
+    expect(editChanged(a, review(o, t, {}, { minTermsAgeSec: 999n }), copy)).toBe('offerEdit.changedOffer');
     expect(editChanged(a, review(o, t, {}, { paused: true }), copy)).toBe('offerEdit.changedPause');
     expect(editChanged(a, review(o, t, { balance: 1n }), copy)).toBe('repay.changedFunds');
     expect(editChanged(a, review(o, t, { dryRun: 'unread' }), copy)).toBe('offerEdit.changedVerdict');

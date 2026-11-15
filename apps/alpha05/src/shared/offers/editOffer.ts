@@ -380,6 +380,13 @@ export async function readEditReview(own: OwnStateClient, diamond: Hex, offerId:
 }
 
 const termsKey = (t: EditTerms) => [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax].join(',');
+// Every field of the offer, so any change the receipt could state (its terms,
+// what is filled, its backstop opt-in, its expiry) reopens the review.
+const recordKey = (o: EditOfferRecord) =>
+  (Object.keys(o) as (keyof EditOfferRecord)[])
+    .sort()
+    .map((k) => `${k}=${String(o[k]).toLowerCase()}`)
+    .join(',');
 const verdict = (d: EditReview['dryRun']) => (d === null ? 'ok' : typeof d === 'string' ? d : 'refused');
 
 /** What a re-read found changed, in words, or null. */
@@ -387,12 +394,9 @@ export function editChanged(a: EditReview, b: EditReview, copy: Pick<CopyAccess,
   const { text } = copy;
   const ao = a.facts.offer;
   const bo = b.facts.offer;
-  if (
-    a.facts.state !== b.facts.state ||
-    (ao === null) !== (bo === null) ||
-    (ao && bo && (termsKey(currentTerms(ao)) !== termsKey(currentTerms(bo)) || ao.amountFilled !== bo.amountFilled))
-  )
-    return text('offerEdit.changedOffer');
+  if (a.facts.state !== b.facts.state || (ao === null) !== (bo === null) || (ao && bo && recordKey(ao) !== recordKey(bo))) return text('offerEdit.changedOffer');
+  // The receipt states the fill wait the change restarts; a link blocks it.
+  if (a.facts.minTermsAgeSec !== b.facts.minTermsAgeSec || a.facts.linkedLoanId !== b.facts.linkedLoanId) return text('offerEdit.changedOffer');
   if (routeChanged({ route: a.route, protection: a.facts.protection }, { route: b.route, protection: b.facts.protection })) return text('queue.changedAccount');
   if (a.facts.paused !== b.facts.paused) return text('offerEdit.changedPause');
   if (a.balance !== b.balance || a.allowance !== b.allowance || a.approvalSteps !== b.approvalSteps) return text('repay.changedFunds');
