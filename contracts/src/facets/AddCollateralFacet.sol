@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -231,17 +232,19 @@ contract AddCollateralFacet is DiamondReentrancyGuard, IVaipakamErrors {
             bytes4(0)
         );
 
-        // Calculate new HF and LTV for event emission (best-effort; failures don't revert)
+        // Calculate new HF and LTV for event emission and the cure check
+        // below (best-effort: a refused read leaves the figure at zero, but a
+        // read that ran short of gas reverts by name, #3504).
         uint256 newHf;
         uint256 newLtv;
-        (bool success, bytes memory result) = address(this).staticcall(
+        (bool success, bytes memory result) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
         );
         if (success && result.length > 0) {
             newHf = abi.decode(result, (uint256));
         }
 
-        (success, result) = address(this).staticcall(
+        (success, result) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId)
         );
         if (success && result.length > 0) {

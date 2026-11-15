@@ -10,6 +10,9 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /**
  * @title PriceReadGasBudgetTest
@@ -180,6 +183,44 @@ contract PriceReadGasBudgetTest is SetupTest {
         _assertOutOfGas(ok, ret);
         (ok,) = address(diamond).staticcall{gas: AMPLE_GAS}(abi.encodeCall(LoanClockFacet.getLoanDeadlines, (LOAN)));
         assertTrue(ok);
+    }
+
+    // ─── A best-effort read of a figure built on a price ────────────────
+
+    /// @dev Adding collateral reads the new health factor and LTV for its
+    ///      event and its fallback cure, and carries on when a read is
+    ///      refused. Under a limit that covers the top-up but not the read,
+    ///      the read used to be skipped and the event reported a health
+    ///      factor of zero; it now reverts by name and nothing is added.
+    function test_addCollateral_shortForTheHealthRead_revertsByName() public {
+        _createLoan();
+        uint256 before = LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount;
+        vm.prank(borrower);
+        (bool ok, bytes memory ret) = address(diamond).call{gas: 700_000}(
+            abi.encodeCall(AddCollateralFacet.addCollateral, (LOAN, 100 ether))
+        );
+        _assertOutOfGas(ok, ret);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount, before);
+    }
+
+    function test_addCollateral_enoughGas_reportsTheHealthFactor() public {
+        _createLoan();
+        vm.recordLogs();
+        vm.prank(borrower);
+        (bool ok,) = address(diamond).call{gas: AMPLE_GAS}(
+            abi.encodeCall(AddCollateralFacet.addCollateral, (LOAN, 100 ether))
+        );
+        assertTrue(ok);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != AddCollateralFacet.CollateralAdded.selector) continue;
+            (,, uint256 newHf, uint256 newLtv) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+            assertGt(newHf, 0, "health factor read");
+            assertGt(newLtv, 0, "LTV read");
+            seen = true;
+        }
+        assertTrue(seen, "CollateralAdded emitted");
     }
 
     function _createLoan() internal {
