@@ -87,6 +87,12 @@ describe('AnalyticsView', () => {
     expect(out).not.toContain(' ago.');
   });
 
+  it('calls even a slightly future block of unknown age, never "0 s ago"', () => {
+    const out = html(figures({ block: { number: 1000n, timestamp: BigInt(NOW + 60) } }));
+    expect(out).toContain('how old these figures are is unknown');
+    expect(out).not.toContain('0 s ago');
+  });
+
   it('says there is no rate before any loan, rather than 0%', () => {
     const out = html(figures());
     expect(out).toContain('None yet: no loan has opened');
@@ -104,8 +110,34 @@ describe('AnalyticsView', () => {
     });
     const out = html(f);
     expect(out).toContain('8.25%');
-    expect(out).toContain('0% of loans opened');
     expect(out).toContain('Not read: upstream timeout');
+  });
+
+  it('shows no default rate, and says why', () => {
+    const out = html(figures());
+    expect(out).not.toContain('data-testid="analytics-default-rate"');
+    expect(out).toContain('also counts loans settled after an ordinary repayment');
+  });
+
+  it('keeps a figure under one cent instead of showing 0.00', () => {
+    const out = html(
+      figures({
+        stats: {
+          ok: true,
+          value: {
+            users: 1n,
+            activeLoans: 0n,
+            activeOffers: 0n,
+            loansOpened: 1n,
+            volumeLent: 10n ** 15n,
+            interestPaid: 0n,
+            defaultRateBps: 0n,
+            averageRateBps: 0n,
+          },
+        },
+      }),
+    );
+    expect(out).toContain('0.001 USD');
   });
 
   it('names the assets a lifetime total leaves out, and keeps recoveries out of interest', () => {
@@ -143,22 +175,22 @@ describe('AnalyticsView', () => {
     const out = html(f);
     expect(out).toContain('Amount lent, valued now leaves out ODD, which the protocol cannot value now.');
     expect(out).toContain('Cannot be valued now');
-    expect(out).toContain('100.00 USD');
+    expect(out).toContain('100 USD');
     expect(out).toContain('is a recovery, not interest, and is not counted');
   });
 
-  it('discloses an outside treasury and shows no held balance for it', () => {
+  it('names an outside treasury and still shows what the protocol contract holds', () => {
     const out = html(figures());
-    expect(out).toContain('Fees go straight to the treasury at');
-    expect(out).toContain('The protocol contract keeps none of them');
-    expect(out).not.toContain('data-testid="analytics-held"');
-  });
-
-  it('shows a held balance only when the protocol contract keeps the fees', () => {
-    const out = html(figures({ custody: { ok: true, value: { kind: 'diamond', address: DIAMOND } } }));
-    expect(out).toContain('The protocol contract keeps the fees itself');
+    expect(out).toContain('Current vault code sends fees to the treasury at');
+    expect(out).toContain('A vault still on older code pays the treasury its own code names');
     expect(out).toContain('data-testid="analytics-held"');
     expect(out).toContain('This counts only assets that appear on open loans.');
+  });
+
+  it('says when the protocol contract itself is the treasury', () => {
+    const out = html(figures({ custody: { ok: true, value: { kind: 'diamond', address: DIAMOND } } }));
+    expect(out).toContain('Current vault code sends fees to the protocol contract itself, at');
+    expect(out).toContain('data-testid="analytics-held"');
   });
 
   it('says the reference currency is unnamed instead of guessing it', () => {

@@ -1517,9 +1517,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   default is not interest, and the page says so. Fees are valued when each
   was collected, with their caveats beside them (an unvaluable fee counts
   as nothing; the day and week windows are a lower bound past the scan
-  limit). The treasury is named and linked, its custody is disclosed, and
-  a held fee balance appears only when the protocol contract keeps the
-  fees itself. A treasury that differs from the deployment record is
+  limit). Every figure is written with its significant digits, so an
+  amount under one cent is never shown as 0.00. No default rate is shown:
+  the protocol's counter for it also counts loans settled after an
+  ordinary repayment (#3616), and the page says so instead. The treasury
+  current vault code pays is named and linked, and the fees the protocol
+  contract holds are always shown with why (a vault on older code pays its
+  own code's treasury, and fees that reached the contract stay there),
+  counting only assets of open loans. A treasury that differs from the deployment record is
   flagged. The page says nothing comes from the indexer database, shows
   no price, return, buyback or chart across networks, and states the
   treasury is not invested to earn a return.

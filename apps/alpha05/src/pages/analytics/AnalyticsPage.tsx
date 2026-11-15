@@ -17,15 +17,12 @@ import { WhyLink } from '../../shared/help/WhyLink';
 import { useChainRead, useScreenChain, type ChainRead } from '../../shared/reads/chainRead';
 import { assetName, tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import { FormField } from '../../shared/ui/FormField';
-import { formatAge, formatBps, formatScaled, formatUtc, shortAddress } from '../../shared/ui/format';
+import { formatAge, formatBps, formatFigureText, formatUtc, shortAddress } from '../../shared/ui/format';
 import { Notice } from '../../shared/ui/Notice';
 import { useNow } from '../../shared/ui/useNow';
 import { VpfiToken } from './VpfiToken';
 
 type Hex = `0x${string}`;
-
-/** A block time this far ahead of the device clock is not trusted as an age. */
-const CLOCK_SKEW_SEC = 300;
 
 /**
  * Analytics (RW-74, RW-75; RB-ANALYTICS). A public page: no wallet, nobody's
@@ -104,14 +101,17 @@ function useUnit(f: ProtocolFigures) {
   const symbol = f.symbol.ok ? f.symbol.value : null;
   return {
     unit: symbol ?? text('analytics.unitUnnamed'),
-    value: (v: bigint) => (symbol === null ? format('analytics.valueUnnamed', { value: formatScaled(v) }) : `${formatScaled(v)} ${symbol}`),
+    // Significant digits below one, "≈" when any digit was dropped, so a
+    // small real amount never reads as zero (RB-FUNDS).
+    value: (v: bigint) => (symbol === null ? format('analytics.valueUnnamed', { value: formatFigureText(v, 18) }) : `${formatFigureText(v, 18)} ${symbol}`),
   };
 }
 
 function Figures({ chain, f, rereadError, nowSec }: { chain: SupportedChain; f: ProtocolFigures; rereadError: string | null; nowSec: number }) {
   const { text, format } = useCopy();
   const at = Number(f.block.timestamp);
-  const known = at > 0 && at <= nowSec + CLOCK_SKEW_SEC;
+  // A block time ahead of the device clock, by any margin, is an unknown age.
+  const known = at > 0 && at <= nowSec;
   const paused = f.health.ok && f.health.value.paused;
   return (
     <>
@@ -193,11 +193,11 @@ function Activity({ f }: { f: ProtocolFigures }) {
         <Row label={text('analytics.averageRate')} testId="analytics-average-rate">
           {s ? rate(s.averageRateBps, 'analytics.rate') : unread(f.stats)}
         </Row>
-        <Row label={text('analytics.defaultRate')} testId="analytics-default-rate">
-          {s ? rate(s.defaultRateBps, 'analytics.rateOfLoans') : unread(f.stats)}
-        </Row>
       </dl>
       <p className="tier-b">{text('analytics.usersWhat')}</p>
+      <p className="tier-a" data-testid="analytics-no-default-rate">
+        {text('analytics.noDefaultRate')}
+      </p>
     </section>
   );
 }
@@ -362,31 +362,31 @@ function FeesAndTreasury({ chain, f }: { chain: SupportedChain; f: ProtocolFigur
         <p className="tier-a" data-testid="analytics-custody">
           {format('analytics.custodyUnset', { chain: chain.name })}
         </p>
-      ) : custody.kind === 'external' ? (
-        <p className="tier-a" data-testid="analytics-custody">
-          {text('analytics.custodyExternalLead')} {link(custody.address)}. {text('analytics.custodyExternal')}
-        </p>
       ) : (
-        <>
-          <p className="tier-a" data-testid="analytics-custody">
-            {text('analytics.custodyDiamondLead')} {link(custody.address)}.
-          </p>
-          <dl className="facts" data-testid="analytics-held">
-            <Row label={text('analytics.held')} testId="analytics-held-value">
-              {t ? value(t.heldOnOpenLoanAssets) : unread(f.treasury)}
-            </Row>
-            <Row label={text('analytics.lastConversion')}>
-              {f.convert.ok
-                ? f.convert.value.lastConversionAt === 0n
-                  ? text('analytics.neverConverted')
-                  : formatUtc(f.convert.value.lastConversionAt)
-                : unread(f.convert)}
-            </Row>
-            <Row label={text('analytics.conversionTargets')}>{f.convert.ok ? String(f.convert.value.targets.length) : unread(f.convert)}</Row>
-          </dl>
-          <p className="tier-a">{text('analytics.heldNote')}</p>
-        </>
+        <p className="tier-a" data-testid="analytics-custody">
+          {text(custody.kind === 'external' ? 'analytics.custodyExternalLead' : 'analytics.custodyDiamondLead')} {link(custody.address)}.
+        </p>
       )}
+      {/* Whatever the current code names, a vault on older code pays the
+          treasury its own code names, and fees that reached the protocol
+          contract earlier stay there: the held figure is always shown. */}
+      <p className="tier-a" data-testid="analytics-held-why">
+        {text('analytics.heldWhy')}
+      </p>
+      <dl className="facts" data-testid="analytics-held">
+        <Row label={text('analytics.held')} testId="analytics-held-value">
+          {t ? value(t.heldOnOpenLoanAssets) : unread(f.treasury)}
+        </Row>
+        <Row label={text('analytics.lastConversion')}>
+          {f.convert.ok
+            ? f.convert.value.lastConversionAt === 0n
+              ? text('analytics.neverConverted')
+              : formatUtc(f.convert.value.lastConversionAt)
+            : unread(f.convert)}
+        </Row>
+        <Row label={text('analytics.conversionTargets')}>{f.convert.ok ? String(f.convert.value.targets.length) : unread(f.convert)}</Row>
+      </dl>
+      <p className="tier-a">{text('analytics.heldNote')}</p>
       {custody !== null && custody.kind !== 'unset' && record !== null && record.toLowerCase() !== custody.address.toLowerCase() && (
         <Notice tone="warn" tier="A">
           <span data-testid="analytics-record-differs">{format('analytics.recordDiffers', { record })}</span>

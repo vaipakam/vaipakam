@@ -12,6 +12,7 @@ import { openLoan } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
 import { expect, test } from '../lib/wallet';
+import { formatFigureText } from '../../src/shared/ui/format';
 
 async function noOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -31,15 +32,20 @@ test('with no loan yet the page reads the chain at one block and says there is n
 
   await expect(page.getByTestId('analytics-loans-opened')).toHaveText('0');
   await expect(page.getByTestId('analytics-average-rate')).toHaveText('None yet: no loan has opened');
-  await expect(page.getByTestId('analytics-default-rate')).toHaveText('None yet: no loan has opened');
+  // No default rate is shown: the protocol's counter also counts ordinary
+  // settlement, and the page says so instead.
+  await expect(page.getByTestId('analytics-default-rate')).toHaveCount(0);
+  await expect(page.getByTestId('analytics-no-default-rate')).toContainText('cannot tell a default from a normal close');
   await expect(page.getByTestId('analytics-utilization')).toHaveText('None: no priced collateral on open loans');
   await expect(page.getByTestId('analytics-no-assets')).toBeVisible();
 
   // The fee rates are the protocol's own settings, read live.
   const share = await sc.read<bigint>('getTreasuryFeeBps');
   await expect(page.getByTestId('analytics-treasury-share')).toHaveText(`${Number(share) / 100}%`);
-  // The custody of fees is stated, whichever it is.
-  await expect(page.getByTestId('analytics-custody')).toHaveText(/Fees go straight to the treasury at|keeps the fees itself|No treasury is set/);
+  // The treasury current vault code pays is stated, and what the protocol
+  // contract holds is shown whichever it is.
+  await expect(page.getByTestId('analytics-custody')).toHaveText(/Current vault code sends fees to|No treasury is set/);
+  await expect(page.getByTestId('analytics-held')).toBeVisible();
 
   // RW-60: the fixture sets no VPFI token, and the page says so rather than
   // showing a supply of zero. The home and bridged facts are held by the
@@ -63,13 +69,13 @@ test('an opened loan moves the counters, and each figure matches the protocol at
   await expect(page.getByTestId('analytics-loans-opened')).toHaveText('1');
   await expect(page.getByTestId('analytics-open-loans')).toHaveText('1');
   await expect(page.getByTestId('analytics-average-rate')).toHaveText('5%');
-  await expect(page.getByTestId('analytics-default-rate')).toHaveText('0% of loans opened');
+  await expect(page.getByTestId('analytics-default-rate')).toHaveCount(0);
 
   // The page's lifetime figure is the protocol's own (nothing has moved
   // since the loan opened, so the head the spec reads is the page's block).
   const stats = await sc.read<readonly bigint[]>('getProtocolStats');
-  const cents = (v: bigint) => `${(v / 10n ** 18n).toLocaleString('en-US')}.${((v % 10n ** 18n) / 10n ** 16n).toString().padStart(2, '0')}`;
-  await expect(page.getByTestId('analytics-lifetime-lent')).toHaveText(new RegExp(`^${cents(stats[4]!).replace('.', '\\.')} `));
+  const lent = formatFigureText(stats[4]!, 18).replace(/[.*+?^$()|[\]\\]/g, '\\$&');
+  await expect(page.getByTestId('analytics-lifetime-lent')).toHaveText(new RegExp(`^${lent} `));
 
   const assets = page.getByTestId('analytics-asset');
   await expect(assets).toHaveCount(1);

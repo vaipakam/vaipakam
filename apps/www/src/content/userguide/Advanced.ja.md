@@ -2617,13 +2617,13 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### アナリティクス：数値の読み取り方
 
-ページは最新のブロックを取り、そのブロック番号ですべての Diamond のビューを読みます：`getProtocolStats`、`getProtocolTVL`、`getProtocolHealth`、`getGlobalCounts`（掲載オファー数は `totalOffersCreated`）、資産ごとの `getLifetimeLendingTotals` を伴う `getLifetimeLendingAssets`、そして `getNumeraireSymbol` です。デプロイの最初のブロックはデプロイ記録から取ります。各グループは個別に確定するため、失敗したビューはその場所で示されます。ページは各資産の累計元本と利息を同じブロックで `getNumeraireValue(asset, amount, false)` により評価します。これはプロトコルの合計と同じ丸めなので、評価された部分は `totalVolumeLentNumeraire` と `totalInterestPaidNumeraire` に一致します。評価がリバートする資産は除外として名前が示されます。`defaultRateBps` は Defaulted または Settled に入ったローンを `totalLoansEverCreated` で割ったもので、ローンがなければ率は表示されません。`getProtocolTVL` の3つ目の値は NFT 担保の未完了ローンの件数で、価値ではありません。利息は借り手の支払いごとに記録される `lifetimeInterestPaid` で、貸し手による担保の回収は含まれません。
+ページは最新のブロックを取り、そのブロック番号ですべての Diamond のビューを読みます：`getProtocolStats`、`getProtocolTVL`、`getProtocolHealth`、`getGlobalCounts`（掲載オファー数は `totalOffersCreated`）、資産ごとの `getLifetimeLendingTotals` を伴う `getLifetimeLendingAssets`、そして `getNumeraireSymbol` です。デプロイの最初のブロックはデプロイ記録から取ります。各グループは個別に確定するため、失敗したビューはその場所で示されます。ページは各資産の累計元本と利息を同じブロックで `getNumeraireValue(asset, amount, false)` により評価します。これはプロトコルの合計と同じ丸めなので、評価された部分は `totalVolumeLentNumeraire` と `totalInterestPaidNumeraire` に一致します。評価がリバートする資産は除外として名前が示されます。`defaultRateBps` は表示しません。そのカウンター `terminalBadOrSettledCount` はローンが Defaulted または Settled に入ると増え、通常の返済に続く請求でも Settled に達するため、債務不履行と通常の終了を分けられないからです。`getProtocolTVL` の3つ目の値は NFT 担保の未完了ローンの件数で、価値ではありません。利息は借り手の支払いごとに記録される `lifetimeInterestPaid` で、貸し手による担保の回収は含まれません。
 
 <a id="analytics-fees"></a>
 
 ### アナリティクス：手数料と保管の読み取り方
 
-手数料率は `getTreasuryFeeBps` と `getLoanInitiationFeeBps` です。手数料の数値は `getTreasuryMetrics` で、開始以来の合計は `feeLedgerTotal`、1日と1週間の数値は手数料台帳を末尾から最大 `MAX_FEE_EVENTS_ITER`（10,000）件まで走査するため、それを超えると下限になります。各台帳項目には、ベストエフォートのルールによる計上時点の基準通貨での価値が記録され、評価できなかった場合は 0 です。トレジャリーは `getTreasury`、現在のボールトコードが指すアドレスで、ページは保管先を示すためにそれを Diamond と比較します。Diamond と一致する場合にのみ `recordTreasuryAccrual` が `treasuryBalances` に計上するため、その場合にのみページは保有額を表示します。これは `getTreasuryMetrics` が未完了ローンの資産だけについて合計したもので、`getTreasuryConvertConfig` の最終変換と目標も併せて示します。デプロイ記録と異なるトレジャリーは警告されます。
+手数料率は `getTreasuryFeeBps` と `getLoanInitiationFeeBps` です。手数料の数値は `getTreasuryMetrics` で、開始以来の合計は `feeLedgerTotal`、1日と1週間の数値は手数料台帳を末尾から最大 `MAX_FEE_EVENTS_ITER`（10,000）件まで走査するため、それを超えると下限になります。各台帳項目には、ベストエフォートのルールによる計上時点の基準通貨での価値が記録され、評価できなかった場合は 0 です。表示されるトレジャリーは `getTreasury`、現在のボールトコードが指すアドレスです。ボールトから徴収された手数料はそのボールト自身のコードが指すトレジャリーへ送られ、`recordTreasuryAccrual` は手数料が Diamond に届くたびに `treasuryBalances` に計上するため、古いコードに固定されたボールトや以前の設定によって、`getTreasury` が何を示していても手数料がそこに保有されることがあります。そのためページは常に `getTreasuryMetrics` の保有額を、未完了ローンの資産だけについて合計した値として、`getTreasuryConvertConfig` の最終変換と目標とともに表示します。デプロイ記録と異なるトレジャリーは警告されます。
 
 <a id="analytics-vpfi"></a>
 

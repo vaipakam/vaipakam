@@ -42,7 +42,9 @@ export const copy = {
       "The app reads your positions, vault and claims through your wallet's own connection to the network first, and through the read-only proxy only when the wallet offers none, so your own state costs you nothing and is never read from the index. The address and network shown are the ones every figure on this page belongs to.",
       'wallet',
     ),
-    unsupported: A('Your wallet is on a network this app does not serve, so nothing of yours is shown and no action is offered until it moves. Supported: {{chains}}.'),
+    unsupported: A(
+      'Your wallet is on a network this app does not serve, so nothing of yours is shown and no action is offered until it moves. Supported: {{chains}}.',
+    ),
     switchTo: B('Switch to {{chain}}'),
     switchFailed: A('The wallet did not switch: {{reason}}'),
     panel: B('Your wallet'),
@@ -107,7 +109,9 @@ export const copy = {
     partialUnknown: A(
       'Partly done: some parts are confirmed on the chain; the rest could not be read back, so they are counted neither as landed nor as failed. Each is listed below.',
     ),
-    partialMixed: A('Partly done: some parts are confirmed on the chain, some did not land, and some could not be read back. Each is listed below with what is known.'),
+    partialMixed: A(
+      'Partly done: some parts are confirmed on the chain, some did not land, and some could not be read back. Each is listed below with what is known.',
+    ),
     notDone: A('Not done: nothing changed on the chain. Each part is listed below with its reason.'),
     unknown: A('Outcome unknown: the transaction was included but its effect could not be read back. Nothing is assumed.'),
     legDone: B('done'),
@@ -161,7 +165,9 @@ export const copy = {
     firstRunDismiss: B('Got it'),
     firstRunDismissAll: B('Hide these'),
     statusRunning: B('Protocol status on {{chain}}: running.'),
-    statusPaused: A('The protocol on {{chain}} is paused: new positions, claims, withdrawals, liquidations, defaults and keeper settlement steps are stopped. {{staysOpen}}'),
+    statusPaused: A(
+      'The protocol on {{chain}} is paused: new positions, claims, withdrawals, liquidations, defaults and keeper settlement steps are stopped. {{staysOpen}}',
+    ),
     statusPausedUntil: B('An automatic pause window runs until {{when}}; an administrator pause, if any, outlasts it.'),
     statusKeepers: A('The keeper service on {{chain}} is paused. {{staysOpen}}'),
     statusUnknown: A("The protocol's status on {{chain}} could not be read ({{reason}}), so this page cannot say whether it is paused."),
@@ -228,12 +234,16 @@ export const copy = {
     rentalDue: B('The rental is due to close {{when}}.'),
     interestNext: B('Next interest payment due {{when}}.'),
     interestCheckpointsOff: B('Periodic interest settlement is switched off here, so no collateral is sold at a checkpoint.'),
-    interestSoonBorrower: A('An interest payment of {{amount}} is due {{when}}, in {{left}}; if it is still unpaid when its grace period ends, collateral can be sold to pay it.'),
+    interestSoonBorrower: A(
+      'An interest payment of {{amount}} is due {{when}}, in {{left}}; if it is still unpaid when its grace period ends, collateral can be sold to pay it.',
+    ),
     interestSoonLender: B('An interest payment of {{amount}} is due to you {{when}}, in {{left}}.'),
     interestInGraceBorrower: A('An interest payment of {{amount}} was due {{due}}. Pay it before {{graceEnd}}, or collateral can be sold to pay it.'),
     interestInGraceLender: B('An interest payment of {{amount}} was due {{due}}; its grace period ends {{graceEnd}}.'),
     interestOverdueBorrower: A('An interest payment of {{amount}} was not met by {{when}}: collateral can now be sold to pay it, and the loan stays open.'),
-    interestOverdueLender: A('An interest payment of {{amount}} was not met by {{when}}: collateral can now be sold to pay it. The loan page shows your options.'),
+    interestOverdueLender: A(
+      'An interest payment of {{amount}} was not met by {{when}}: collateral can now be sold to pay it. The loan page shows your options.',
+    ),
     loanDueSoonRenter: A('The rental is due to close {{when}}, in {{left}}; after that, a late fee applies.'),
     loanDueSoonOwner: B('The rental is due to close {{when}}, in {{left}}.'),
     loanInGraceRenter: A(
@@ -269,7 +279,9 @@ export const copy = {
     exposureUnknown: A(
       'Of the loans that could be valued: {{lent}} lent and {{borrowed}} borrowed, in {{unit}}. Loans that could not be valued, and could change which side is larger: {{count}}.',
     ),
-    exposurePartial: A('Only part of your positions could be walked, so which side is larger is not stated. Of those read: {{lent}} lent and {{borrowed}} borrowed, in {{unit}}.'),
+    exposurePartial: A(
+      'Only part of your positions could be walked, so which side is larger is not stated. Of those read: {{lent}} lent and {{borrowed}} borrowed, in {{unit}}.',
+    ),
     exposureUnvalued: B('Loans that could not be valued, left out of these totals: {{count}}.'),
     exposureWhy: C(
       "The two sides are compared by the value of each loan's principal in the protocol's numeraire at current prices: a debt rounded up and a loan you made rounded down. A loan in an asset with no price, or an NFT, cannot be valued and is counted instead. The larger side is named only when the loans left out could not change the answer.",
@@ -334,8 +346,12 @@ export const copy = {
     datesUnknown: A('The dates could not be read, so they are shown as unknown.'),
     defaultable: A('The grace period is over: anyone may now start the default.'),
     defaultRefusedPaused: A('The grace period is over, but the protocol is paused, so no default can start until it resumes.'),
-    defaultRefusedSequencer: A('The grace period is over, but this network’s sequencer is down or recovering, so no default can start until it is healthy again.'),
-    defaultRefused: A('The grace period is over, but the protocol refuses a default for now: the lender does not meet a check this network requires to start one.'),
+    defaultRefusedSequencer: A(
+      'The grace period is over, but this network’s sequencer is down or recovering, so no default can start until it is healthy again.',
+    ),
+    defaultRefused: A(
+      'The grace period is over, but the protocol refuses a default for now: the lender does not meet a check this network requires to start one.',
+    ),
     termsTitle: B('Terms'),
     termsNow: B('As they stand now: a partial repayment, a collateral move or a borrower handover can change them.'),
     termsNowRental: B('As they stand now: a borrower handover can change the collateral.'),
@@ -507,7 +523,9 @@ export const copy = {
     ),
     losePutBack: A('Whatever the repayment does not use of the approval is put back to {{amount}} afterwards.'),
     loseThirdParty: A('Paying gives you no right to the collateral: only the holder of borrower position #{{id}} can collect it.'),
-    refinanceStays: A('Refinance request offer #{{id}} on this loan ends with the repayment but stays posted: its creator cancels it to take back what it holds.'),
+    refinanceStays: A(
+      'Refinance request offer #{{id}} on this loan ends with the repayment but stays posted: its creator cancels it to take back what it holds.',
+    ),
     refinanceUnread: A('Whether this loan has a refinance request could not be read; a request never holds a full repayment.'),
     cure: A('This loan is in fallback: repaying in full cancels it, and the collateral returns to the borrower side.'),
     loseBalance: A('Your wallet holds {{amount}}: enough now, but it may fall short if it confirms later.'),
@@ -546,8 +564,12 @@ export const copy = {
     notBorrower: B('Only the holder of the borrower position can pay part of this loan.'),
     notAllowed: B('This loan’s terms do not allow paying part of it; that was fixed when it opened.'),
     refinanceLive: A('A refinance request on this loan is live, and the protocol refuses a part payment until it is accepted or cancelled.'),
-    refinanceLiveBoth: A('A refinance request on this loan is live, and the protocol refuses a part payment or taking back collateral until it is accepted or cancelled.'),
-    offsetLive: A('An offset offer on the borrower position is live and was made for the loan as it stands, so paying part waits until it is accepted or cancelled.'),
+    refinanceLiveBoth: A(
+      'A refinance request on this loan is live, and the protocol refuses a part payment or taking back collateral until it is accepted or cancelled.',
+    ),
+    offsetLive: A(
+      'An offset offer on the borrower position is live and was made for the loan as it stands, so paying part waits until it is accepted or cancelled.',
+    ),
     changedPeriod: B('The interest period'),
     formTitle: B('How much of the principal to pay'),
     amountLabel: B('Principal to pay ({{symbol}})'),
@@ -641,7 +663,9 @@ export const copy = {
     heldRecordedUnread: A(
       'In the vault of {{vault}}, the borrower this loan records, locked to it. Who holds the borrower position now could not be read, so whether that is your vault is not known.',
     ),
-    canLose: A('Collateral you add can be lost with the rest: if the loan is liquidated or defaults, it is used toward the debt like the collateral already held.'),
+    canLose: A(
+      'Collateral you add can be lost with the rest: if the loan is liquidated or defaults, it is used toward the debt like the collateral already held.',
+    ),
     rowHfNow: B('Health factor now'),
     rowLtvNow: B('Loan-to-value now'),
     approvalCovers: B('Your approval already covers the {{amount}} it takes'),
@@ -702,7 +726,9 @@ export const copy = {
     to: B('Your wallet, from your vault'),
     rowMax: B('Most you can take back now'),
     closer: A('Taking back collateral lowers the loan’s health factor and raises its loan-to-value, so it moves closer to liquidation.'),
-    limitMoves: A('The protocol checks its limits again when this confirms. If prices move first and the amount no longer fits, it is refused and nothing moves.'),
+    limitMoves: A(
+      'The protocol checks its limits again when this confirms. If prices move first and the amount no longer fits, it is refused and nothing moves.',
+    ),
     afterFigures: A('The finish card shows the protocol’s own health factor and loan-to-value after it.'),
     pauseHolds: A('If the protocol pauses before this confirms, it is refused and nothing moves.'),
     whySummary: B('What taking back collateral does, and its limit'),
@@ -739,7 +765,9 @@ export const copy = {
     cosignNote: A(
       'Your account also requires a secondary signer to approve each release. Once the delay passes, this reaches your wallet only after one of your secondary signers approves it; the protocol checks this when the payout is released.',
     ),
-    heldNote: A('Your protected account is locked, so the protocol keeps this payout in your vault. It is yours, and you can withdraw it once the account is unlocked.'),
+    heldNote: A(
+      'Your protected account is locked, so the protocol keeps this payout in your vault. It is yours, and you can withdraw it once the account is unlocked.',
+    ),
     vaultNote: A(
       'Protected mode is on for your account, so the protocol pays this into your vault rather than your wallet. It leaves only through your own withdrawal and its delay.',
     ),
@@ -783,8 +811,12 @@ export const copy = {
     revertedLabel: B('This transaction'),
     reverted: B('The network refused it when it ran (it reverted), so it changed nothing.'),
     revertOutOfGas: A('It used all {{gas}} gas the wallet allowed for it, so it most likely ran out of gas.'),
-    revertRefused: A('Replayed on the state just before its block: {{reason}} A transaction earlier in the same block, or the block’s own later time, can change that, so this is the likely reason, not a certain one.'),
-    revertReplayPasses: A('Replayed on the state just before its block, it goes through, so something changed by its block: a transaction earlier in the same block, or the block’s later time (an offer or a deadline that ran out by then). Which one cannot be told from here.'),
+    revertRefused: A(
+      'Replayed on the state just before its block: {{reason}} A transaction earlier in the same block, or the block’s own later time, can change that, so this is the likely reason, not a certain one.',
+    ),
+    revertReplayPasses: A(
+      'Replayed on the state just before its block, it goes through, so something changed by its block: a transaction earlier in the same block, or the block’s later time (an offer or a deadline that ran out by then). Which one cannot be told from here.',
+    ),
     revertUnread: A('Why it was refused could not be read: {{reason}}'),
     transaction: B('Transaction:'),
     receiptUnknown: A('Sent, but its receipt could not be read ({{reason}}). It may still go through, so nothing new is offered until it is checked.'),
@@ -916,20 +948,38 @@ export const copy = {
     pendingDays: B('Reward days {{from}} to {{to}}.'),
     pendingEntries: B('Paid from your reward entries, loan by loan, so no day range is named.'),
     pendingZeroEntries: A('A claim made now pays nothing, but it settles reward entries that paid you nothing, so later rewards can be paid.'),
-    pendingZero: A('A claim made now pays nothing, but it moves your claim past reward days {{from}} to {{to}}, which paid you nothing, so the days after them can be paid.'),
-    pendingZeroWindow: A('A claim made now pays nothing. Your reward entries are read {{size}} at a time, and the part it would read (entries {{from}} to {{to}} of {{total}}) has nothing to pay yet. Claiming only moves on to the next part, so a later claim can reach the rest, and it still costs a network fee.'),
+    pendingZero: A(
+      'A claim made now pays nothing, but it moves your claim past reward days {{from}} to {{to}}, which paid you nothing, so the days after them can be paid.',
+    ),
+    pendingZeroWindow: A(
+      'A claim made now pays nothing. Your reward entries are read {{size}} at a time, and the part it would read (entries {{from}} to {{to}} of {{total}}) has nothing to pay yet. Claiming only moves on to the next part, so a later claim can reach the rest, and it still costs a network fee.',
+    ),
     pendingWindow: B('This claim reads reward entries {{from}} to {{to}} of {{total}}; later claims can pay more.'),
     pendingLower: A('Ready to claim: at least {{amount}}. The exact figure could not be worked out ({{reason}}), so claiming is not offered until it can.'),
-    pendingUnknown: A('What you can claim could not be worked out ({{reason}}), and the lower bound could not be read either. That is not the same as nothing.'),
+    pendingUnknown: A(
+      'What you can claim could not be worked out ({{reason}}), and the lower bound could not be read either. That is not the same as nothing.',
+    ),
     none: B('No rewards available to claim on this chain.'),
-    waitingGlobal: A('Your next rewards wait on reward day {{day}}, whose figures across networks have not been finalised yet. Nothing can be claimed until they are.'),
+    waitingGlobal: A(
+      'Your next rewards wait on reward day {{day}}, whose figures across networks have not been finalised yet. Nothing can be claimed until they are.',
+    ),
     waitingDelivery: A('Your next rewards wait on reward day {{day}}, whose funding has not reached this network yet. Nothing can be claimed until it does.'),
     notStarted: B('Rewards have not started on this network yet.'),
-    paused: A('The protocol on {{chain}} is paused, and the claim’s own check was refused by the pause, so rewards cannot be claimed until it resumes. {{staysOpen}} Nothing you have earned is lost by waiting.'),
-    shortPoolExhausted: A('The reward programme’s pool of new VPFI has been paid out in full, and this claim has no recycled VPFI to pay from instead, so it cannot pay. Recycled VPFI can still pay later rewards.'),
-    shortPoolReserved: A('This claim needs {{needed}} from the reward programme’s pool, and {{available}} of it is free now; the rest is reserved for pending reward settlements. The claim waits until one of them completes or is undone.'),
-    shortRecycled: A('This claim needs {{needed}} of recycled VPFI, and {{available}} of it is free now; the rest is reserved for pending reward settlements. The claim waits until one of them completes or is undone.'),
-    shortBacking: A('This claim needs {{needed}} held here to pay it, and {{available}} is available now. It can be claimed once enough VPFI for rewards lands here; no step of yours changes that.'),
+    paused: A(
+      'The protocol on {{chain}} is paused, and the claim’s own check was refused by the pause, so rewards cannot be claimed until it resumes. {{staysOpen}} Nothing you have earned is lost by waiting.',
+    ),
+    shortPoolExhausted: A(
+      'The reward programme’s pool of new VPFI has been paid out in full, and this claim has no recycled VPFI to pay from instead, so it cannot pay. Recycled VPFI can still pay later rewards.',
+    ),
+    shortPoolReserved: A(
+      'This claim needs {{needed}} from the reward programme’s pool, and {{available}} of it is free now; the rest is reserved for pending reward settlements. The claim waits until one of them completes or is undone.',
+    ),
+    shortRecycled: A(
+      'This claim needs {{needed}} of recycled VPFI, and {{available}} of it is free now; the rest is reserved for pending reward settlements. The claim waits until one of them completes or is undone.',
+    ),
+    shortBacking: A(
+      'This claim needs {{needed}} held here to pay it, and {{available}} is available now. It can be claimed once enough VPFI for rewards lands here; no step of yours changes that.',
+    ),
     barred: A('This wallet is flagged by the sanctions screen, so rewards cannot be claimed while it is. Reward earned before the flag is held for it, below.'),
     refused: A('A claim made now would be refused ({{code}}), so claiming is not offered.'),
     claim: B('Claim'),
@@ -965,7 +1015,9 @@ export const copy = {
     expiryHow: B('Removal dates are estimates; claiming before one always keeps the reward.'),
     heldTitle: B('Held rewards'),
     heldHow: B('Held rewards are released only once this wallet is read as no longer flagged.'),
-    heldHolding: A('{{amount}} is held for this wallet because the sanctions screen flags it. It is locked, not lost: it is released once the wallet is no longer flagged.'),
+    heldHolding: A(
+      '{{amount}} is held for this wallet because the sanctions screen flags it. It is locked, not lost: it is released once the wallet is no longer flagged.',
+    ),
     heldConfirmed: A('While the flag is confirmed, rewards earned are forfeited for good, and VPFI in your vault cannot be moved.'),
     heldReady: A('{{amount}} held while this wallet was flagged is now ready to claim.'),
     heldFailed: A('Whether rewards are held for this wallet could not be read ({{reason}}).'),
@@ -986,7 +1038,7 @@ export const copy = {
     lifetimeKept: B('The figures above are from an earlier read; the latest failed ({{reason}}).'),
     lifetimeHow: B('Claims count on the UTC day they were paid, whichever destination each claim chose.'),
     lifetimeWhy: C(
-      'What you have claimed is the sum of every reward claim paid to this wallet on this network, held-reward releases included, whether each went to your wallet or your vault. The part delivered to your vault is what the protocol recorded as credited there; a claim that fell back to your wallet is not in it. Each claim counts on the UTC day the VPFI was paid, not the reward day it was earned on. The figures come from the index, which reads the network\'s claim events, so the screen says up to when it has recorded them; a claim made since may not be counted yet. If the index cannot answer, the total is shown as unknown, never as zero.',
+      "What you have claimed is the sum of every reward claim paid to this wallet on this network, held-reward releases included, whether each went to your wallet or your vault. The part delivered to your vault is what the protocol recorded as credited there; a claim that fell back to your wallet is not in it. Each claim counts on the UTC day the VPFI was paid, not the reward day it was earned on. The figures come from the index, which reads the network's claim events, so the screen says up to when it has recorded them; a claim made since may not be counted yet. If the index cannot answer, the total is shown as unknown, never as zero.",
       'home-rewards',
     ),
     tier: B('Fee-discount tier applied to your fees now: {{tier}} (0 while the setting below is off).'),
@@ -1042,7 +1094,9 @@ export const copy = {
     noticeOutage: A(
       'The sanctions screen cannot be read right now, and this wallet was confirmed flagged before. A payout frozen for it stays locked until the screen can show the wallet de-listed, and a payment due to it in this time is parked the same way, since the protocol still treats it as flagged. An outage alone never freezes a wallet never confirmed flagged.',
     ),
-    noticeUnknown: A('Whether the sanctions screen flags this wallet could not be read, so nothing here is shown as frozen or as free of it. Each claim’s dry run still decides.'),
+    noticeUnknown: A(
+      'Whether the sanctions screen flags this wallet could not be read, so nothing here is shown as frozen or as free of it. Each claim’s dry run still decides.',
+    ),
     claimFlagged: A(
       'Frozen, awaiting de-listing: the sanctions screen flags this wallet, so nothing can be collected now. It stays locked, not lost, and is released once the wallet is de-listed.',
     ),
@@ -1056,7 +1110,9 @@ export const copy = {
       '{{amount}} the loan already paid is held for the lender position, reserved in the lender vault this loan records until the lender’s claim pays it. A payment made while the holder was flagged by the sanctions screen waits here, as can an amount an early close set aside.',
     ),
     reservedUnread: A('Whether this loan already holds anything for the lender position, out of payments it made, could not be read. It is not shown as none.'),
-    openForSurplus: A('This loan has not settled yet: a surplus from its close is still held for the borrower position, one of the payouts left to collect before it settles.'),
+    openForSurplus: A(
+      'This loan has not settled yet: a surplus from its close is still held for the borrower position, one of the payouts left to collect before it settles.',
+    ),
     whySummary: B('Why a payout can be frozen'),
     why: C(
       'When the sanctions screen flags a wallet, the protocol does not take what it is owed and does not stop a loan from closing. A repayment, a default or a liquidation still completes, and the other party receives what its side recovers, which in a default or liquidation can be less than it is owed. The flagged wallet’s share is parked in a vault, locked. It is released once the wallet is de-listed. Release is fail-closed: once the protocol has recorded a wallet as frozen on a loan, the payout moves only when the screen can be read and shows that wallet de-listed, whoever holds the position by then. An outage alone never freezes anyone: for a wallet never confirmed flagged, a payout made while the screen could not be read is not frozen. A wallet already confirmed flagged is still treated as flagged then, so a payment due to it during the outage is parked too. Payments a running loan makes to a flagged lender position wait in the loan’s lender vault, reserved for it, until the loan’s claim.',
@@ -1131,15 +1187,21 @@ export const copy = {
     changedAccount: B('The account’s protected mode'),
     allowUnread: A('Whether this payout’s destination is still allowed could not be read. If it is not, releasing it cancels it instead.'),
     releasePays: A('Releasing pays {{what}} from the account’s vault to {{destination}}. A release always pays the destination the payout recorded.'),
-    releaseCancels: A('This payout’s destination is no longer allowed, so releasing it cancels it: nothing is paid, and {{what}} stays in the vault, free to withdraw again.'),
+    releaseCancels: A(
+      'This payout’s destination is no longer allowed, so releasing it cancels it: nothing is paid, and {{what}} stays in the vault, free to withdraw again.',
+    ),
     pauseNote: A('If the protocol pauses before this confirms, it is refused and the payout stays queued.'),
     escapeNote: A('The protocol is paused, but its escape route is open, so queued payouts keep releasing.'),
-    cancelNote: A('Cancelling stops this payout: nothing is paid, and {{what}} stays in the vault, free to withdraw again. A new withdrawal waits the full delay.'),
+    cancelNote: A(
+      'Cancelling stops this payout: nothing is paid, and {{what}} stays in the vault, free to withdraw again. A new withdrawal waits the full delay.',
+    ),
     cosignNote: A('Approving lets this payout be released once its delay has passed. Nothing moves now.'),
     legReleased: B('{{what}} paid to {{destination}}'),
     deliveredOther: A('The protocol measured {{amount}} delivered, not the {{expected}} queued.'),
     legCancelledInstead: B('Cancelled instead of paid: {{what}} stays in the vault'),
-    paidUnexpected: A('The review said this release would cancel the payout, but its destination was allowed again before it ran, so the protocol paid it out of the vault.'),
+    paidUnexpected: A(
+      'The review said this release would cancel the payout, but its destination was allowed again before it ran, so the protocol paid it out of the vault.',
+    ),
     cancelledUnexpected: A('The review expected a payment, but the protocol cancelled this payout because its destination is no longer allowed.'),
     notReleased: A('The transaction’s logs show no release of this payout.'),
     legCancelled: B('Payout cancelled: {{what}} stays in the vault'),
@@ -1179,7 +1241,9 @@ export const copy = {
       },
       rewards: {
         unread: A('Your interaction rewards could not be read, so they are left out.'),
-        partial: A('The part of your reward entries the next claim reads has nothing to pay yet, so rewards are left out. Claiming them on their own moves on to the next part.'),
+        partial: A(
+          'The part of your reward entries the next claim reads has nothing to pay yet, so rewards are left out. Claiming them on their own moves on to the next part.',
+        ),
       },
       held: {
         unread: A('Whether rewards are held for you could not be read, so they are left out.'),
@@ -1241,7 +1305,9 @@ export const copy = {
   reserve: {
     sectionTitle: B('Extension reserves'),
     reading: B('Looking for loans you set a reserve aside for…'),
-    discoveryFailed: A('The loans you set a reserve aside for could not be listed ({{reason}}), so none is shown as holding one or as empty. Look one up by its number below.'),
+    discoveryFailed: A(
+      'The loans you set a reserve aside for could not be listed ({{reason}}), so none is shown as holding one or as empty. Look one up by its number below.',
+    ),
     discoveryStale: A(
       'The loans you set a reserve aside for could not be listed again ({{reason}}). Shown below is the last list, so a reserve you set aside since may be missing, and none is shown as empty. Look one up by its number below.',
     ),
@@ -1409,7 +1475,9 @@ export const copy = {
     enableWaitsUnread: A('Every payout from your vault to this wallet waits the chosen delay, and you can cancel it while it waits.'),
     enableInbound: A('A payment to this wallet from anyone else’s vault is paid into your vault instead, so it too leaves only through your delay.'),
     enableNeverOthers: A('It never delays what you owe others: repaying a loan and paying a counterparty work as before.'),
-    enableNftsOn: A('Your position NFTs are then locked to this wallet, and a lender position you hold cannot be sold while they are; unlocking them waits your delay.'),
+    enableNftsOn: A(
+      'Your position NFTs are then locked to this wallet, and a lender position you hold cannot be sold while they are; unlocking them waits your delay.',
+    ),
     enableNftsOff: A('Position NFT protection stays off; you can turn it on later at once.'),
     enableLoosen: A('Turning it on, or making it stricter, is immediate. A shorter delay or switching it off waits out the delay.'),
     enableLock: A('Once it is on, you can lock the account at once from this card if your wallet is at risk.'),
@@ -1551,7 +1619,9 @@ export const copy = {
   },
   prove: {
     title: B('Prove you control this address'),
-    lead: A('{{account}} asks this wallet, {{destination}}, to sign that it controls it, so it can receive payouts on {{chain}}. Signing moves nothing and costs nothing.'),
+    lead: A(
+      '{{account}} asks this wallet, {{destination}}, to sign that it controls it, so it can receive payouts on {{chain}}. Signing moves nothing and costs nothing.',
+    ),
     badLink: A('This link is damaged or incomplete, so there is nothing to sign. Ask for a new link.'),
     expired: A('This request lapsed on {{at}}. Ask for a new link.'),
     connectThat: A('Connect the wallet {{destination}} to sign. The wallet connected now is a different one.'),
@@ -1600,12 +1670,16 @@ export const copy = {
     rowWindow: B('Apply it by'),
     rowCancels: B('Payouts it cancels'),
     afterDelay: B('{{delay}} after this is recorded'),
-    addWaits: A('Nothing changes now. The address becomes usable only after your delay of {{delay}}, and only once someone applies it within the following {{delay}}.'),
+    addWaits: A(
+      'Nothing changes now. The address becomes usable only after your delay of {{delay}}, and only once someone applies it within the following {{delay}}.',
+    ),
     addCancel: A('You or a secondary signer can cancel the request at any time before it is applied.'),
     addStill: A('Once active, a payout to it still waits your delay, as every protected payout does.'),
     addAgain: A('Asking again for an address that is already waiting restarts its wait.'),
     addVoided: A('Locking the account, replacing your main wallet or switching protected mode off cancels the request.'),
-    addExchange: A('This is the {{exchange}} deposit address you saved unverified. If it is wrong, anything sent to it is lost; your exchange may not credit a deposit from your vault; and the exchange may reassign it.'),
+    addExchange: A(
+      'This is the {{exchange}} deposit address you saved unverified. If it is wrong, anything sent to it is lost; your exchange may not credit a deposit from your vault; and the exchange may reassign it.',
+    ),
     cancelWhat: A('The request ends now; the address does not become a destination. You can ask again later, which starts a new wait.'),
     applyWhat: A('From now on a protected payout may go to this address, after your delay.'),
     removeWhat: A('The address stops being a destination at once.'),
@@ -1694,9 +1768,13 @@ export const copy = {
     rowLeavesFrom: B('Leaves from'),
     rowRemovable: B('Removable since'),
     rowCosignOffFrom: B('Switches off from'),
-    addWaits: A('Nothing changes now. The wallet becomes a signer only after your delay of {{delay}}, and only if it is made active within the following {{delay}}.'),
+    addWaits: A(
+      'Nothing changes now. The wallet becomes a signer only after your delay of {{delay}}, and only if it is made active within the following {{delay}}.',
+    ),
     addAccept: A('It must also accept from its own key; send it the link this page shows.'),
-    powers: A('A signer can cancel a waiting change, lock the account, cancel or co-sign a queued payout, remove a destination, and with the other signers approve replacing your main wallet.'),
+    powers: A(
+      'A signer can cancel a waiting change, lock the account, cancel or co-sign a queued payout, remove a destination, and with the other signers approve replacing your main wallet.',
+    ),
     limits: A('A signer cannot move anything out of the vault, open a position, or add a destination or signer.'),
     addCancel: A('You, an active signer or the asked wallet can cancel the request before it is made active.'),
     acceptWhat: A('You agree to be a signer for this account. Nothing moves; the account still makes you a signer only after its delay.'),
@@ -1818,9 +1896,7 @@ export const copy = {
     contractAccount: A('This wallet is a contract account, which cannot sign the declaration an adoption needs. It can still disown.'),
     banUnread: A('Whether an earlier adoption barred this vault could not be read, so adopting is not offered yet.'),
     barred: A('An earlier adoption’s source is flagged, so this vault is barred from adopting until it is de-listed.'),
-    banScreenUnread: A(
-      'The sanctions screen cannot say now whether the source an earlier adoption declared is still flagged, so adopting is not offered yet.',
-    ),
+    banScreenUnread: A('The sanctions screen cannot say now whether the source an earlier adoption declared is still flagged, so adopting is not offered yet.'),
     flagged: A('The sanctions screen flags this wallet, so it cannot adopt.'),
     selfScreenUnread: A('The sanctions screen could not be read for this wallet, so adopting is not offered yet.'),
     screenUnset: A('This network has no sanctions screen set, and the protocol refuses an adoption it cannot screen.'),
@@ -1907,7 +1983,9 @@ export const copy = {
     openProtected: A(
       'The protocol is paused, and its escape route is open: your withdrawals still wait your account’s delay in the payout queue, and due payouts can be released.',
     ),
-    openModeUnread: A('The protocol is paused, and its escape route is open, but whether your account runs protected mode could not be read, so no withdrawal can be sent yet.'),
+    openModeUnread: A(
+      'The protocol is paused, and its escape route is open, but whether your account runs protected mode could not be read, so no withdrawal can be sent yet.',
+    ),
     stillOpen: B('Full and partial repayment and adding collateral stay open during a pause.'),
     whySummary: B('What the escape route is'),
     why: C(
@@ -1925,7 +2003,7 @@ export const copy = {
     title: B('VPFI in your vault'),
     lead: B('VPFI counted in your own vault sets your fee-discount tier. You deposit and withdraw it here.'),
     why: C(
-      "VPFI you deposit goes into your own vault, which only your wallet controls, and the protocol counts it. Only VPFI in your vault on VPFI’s home network sets your fee-discount tier; other networks apply a copy of the tier worked out there, so VPFI in your vault on them does not change it. Your tier is worked out from the VPFI you have held without a break: it is zero until your current holding has lasted a minimum number of days; it then follows an average of your daily holdings that weights recent days more; and it never exceeds the lowest tier you held on any day of your current holding, looking back at most 30 days, so a brief top-up does not lift it. The tier changes your fees only while your fee-discount consent, below, is on. VPFI sent to your vault directly, without a deposit, is not counted and never raises your tier; the Vault page shows it and how to adopt it. VPFI in your vault is not collateral and backs no loan; only VPFI you pledge to a loan is held, and held VPFI cannot be withdrawn until that loan releases it. Withdrawing all your counted VPFI restarts your holding time from your next deposit. Your VPFI is obtained elsewhere: the protocol sells none, quotes no price for it and pays nothing for holding it.",
+      'VPFI you deposit goes into your own vault, which only your wallet controls, and the protocol counts it. Only VPFI in your vault on VPFI’s home network sets your fee-discount tier; other networks apply a copy of the tier worked out there, so VPFI in your vault on them does not change it. Your tier is worked out from the VPFI you have held without a break: it is zero until your current holding has lasted a minimum number of days; it then follows an average of your daily holdings that weights recent days more; and it never exceeds the lowest tier you held on any day of your current holding, looking back at most 30 days, so a brief top-up does not lift it. The tier changes your fees only while your fee-discount consent, below, is on. VPFI sent to your vault directly, without a deposit, is not counted and never raises your tier; the Vault page shows it and how to adopt it. VPFI in your vault is not collateral and backs no loan; only VPFI you pledge to a loan is held, and held VPFI cannot be withdrawn until that loan releases it. Withdrawing all your counted VPFI restarts your holding time from your next deposit. Your VPFI is obtained elsewhere: the protocol sells none, quotes no price for it and pays nothing for holding it.',
       'rewards-vpfi',
     ),
     reading: B('Reading your VPFI on this network…'),
@@ -1954,18 +2032,26 @@ export const copy = {
     closedHeld: B('Nothing to withdraw now: all your counted VPFI is held for loans, offers, claims or payouts.'),
     changedConsent: B('Your fee-discount consent'),
     changedHome: B('Whether this network sets your tier'),
-    away: A('On this network VPFI in your vault does not set your fee-discount tier. Your tier is worked out on VPFI’s home network, and this network applies a copy of it.'),
+    away: A(
+      'On this network VPFI in your vault does not set your fee-discount tier. Your tier is worked out on VPFI’s home network, and this network applies a copy of it.',
+    ),
     elsewhere: B('A higher tier reaches your other networks only once sent; see your tier on other networks below.'),
     homeUnread: A('Whether VPFI in your vault on this network sets your fee-discount tier could not be read.'),
-    depositAway: A('On this network deposited VPFI does not count toward your fee-discount tier: only VPFI in your vault on VPFI’s home network does. It pledges nothing and backs no loan.'),
+    depositAway: A(
+      'On this network deposited VPFI does not count toward your fee-discount tier: only VPFI in your vault on VPFI’s home network does. It pledges nothing and backs no loan.',
+    ),
     withdrawAway: A('On this network your vault VPFI does not set your fee-discount tier, so this withdrawal does not change it.'),
     depositTier: A('Deposited VPFI counts toward your fee-discount tier under the holding rules. It pledges nothing and backs no loan.'),
     consentOn: B('Your fee-discount consent is on, so your tier applies to your fees.'),
     consentOff: A('Your fee-discount consent is off: holding VPFI changes none of your fees until you turn it on.'),
     consentUnread: A('Your fee-discount consent could not be read, so whether your tier applies is not shown.'),
-    withdrawTier: A('Your fee-discount tier is worked out again from the VPFI that stays counted. On loans you lend, each settlement’s discount follows that tier.'),
+    withdrawTier: A(
+      'Your fee-discount tier is worked out again from the VPFI that stays counted. On loans you lend, each settlement’s discount follows that tier.',
+    ),
     withdrawEmpties: A('This takes your counted VPFI to zero, so your holding time starts again from your next deposit.'),
-    withdrawQueuedTier: A('This withdrawal waits in your payout queue. Your counted VPFI and your tier stay as they are until it is released, and a cancelled one changes neither.'),
+    withdrawQueuedTier: A(
+      'This withdrawal waits in your payout queue. Your counted VPFI and your tier stay as they are until it is released, and a cancelled one changes neither.',
+    ),
     withdrawQueuedEmpties: A('If it is released, it takes your counted VPFI to zero, so your holding time starts again from your next deposit.'),
     withdrawRouteUnread: A('Whether this withdrawal is paid now or queued could not be read, so when it changes your tier is not shown.'),
     withdrawTrackedUnread: A('Your counted VPFI could not be read, so the effect on your tier is not shown.'),
@@ -1975,7 +2061,7 @@ export const copy = {
     title: B('Your fee-discount tier'),
     lead: B('The discount your fees get now, as the protocol applies it.'),
     why: C(
-      "Your tier is what the protocol applies when it charges a fee, read from the protocol itself, never worked out by this app. It is zero while your fee-discount consent is off; the card then says which tier would apply with it on. On VPFI’s home network it comes from the VPFI counted in your vault there, under three holding rules, each with its own look-back. First, it is zero until your current holding has lasted a minimum number of days without falling to zero; adding to it does not restart that count, and withdrawing all of it does. Second, it follows a weighted average of your daily holdings over a recent window of your current holding, in which the latest days weigh more. Third, it never exceeds the lowest tier you held on any day of a separate look-back over your current holding, including dips within a day, with its own maximum length; so a brief top-up does not lift it. When these rules hold your tier below what your counted VPFI alone would give, the card names the rule, from the protocol’s own explanation; Advanced shows each rule’s figure for you and this network’s settings for the rules. On other networks the tier is a copy sent from the home network; it applies until a new one arrives or it lapses. The protocol sends a copy that lowers your discount at its own cost; one that raises it goes only when someone pays its message fee, which the section below offers. A tier can lag VPFI moved by your offers and loans until the protocol next records your holding. The discount is never more than half a fee. Nothing here pays you for holding VPFI.",
+      'Your tier is what the protocol applies when it charges a fee, read from the protocol itself, never worked out by this app. It is zero while your fee-discount consent is off; the card then says which tier would apply with it on. On VPFI’s home network it comes from the VPFI counted in your vault there, under three holding rules, each with its own look-back. First, it is zero until your current holding has lasted a minimum number of days without falling to zero; adding to it does not restart that count, and withdrawing all of it does. Second, it follows a weighted average of your daily holdings over a recent window of your current holding, in which the latest days weigh more. Third, it never exceeds the lowest tier you held on any day of a separate look-back over your current holding, including dips within a day, with its own maximum length; so a brief top-up does not lift it. When these rules hold your tier below what your counted VPFI alone would give, the card names the rule, from the protocol’s own explanation; Advanced shows each rule’s figure for you and this network’s settings for the rules. On other networks the tier is a copy sent from the home network; it applies until a new one arrives or it lapses. The protocol sends a copy that lowers your discount at its own cost; one that raises it goes only when someone pays its message fee, which the section below offers. A tier can lag VPFI moved by your offers and loans until the protocol next records your holding. The discount is never more than half a fee. Nothing here pays you for holding VPFI.',
       'rewards-tier',
     ),
     reading: B('Reading your tier…'),
@@ -1985,11 +2071,15 @@ export const copy = {
     zero: B('Tier 0 applies now: your fees get no holding discount.'),
     applies: B('Tier {{tier}} applies now: {{discount}}% off your fees.'),
     heldDown: A('Your counted VPFI reaches tier {{counted}}, but the holding rules hold it at tier {{tier}} for now.'),
-    heldNoHolding: A('Your counted VPFI reaches tier {{counted}}, but the protocol has not yet recorded the start of your current holding, so tier {{tier}} applies until it next records your holding.'),
+    heldNoHolding: A(
+      'Your counted VPFI reaches tier {{counted}}, but the protocol has not yet recorded the start of your current holding, so tier {{tier}} applies until it next records your holding.',
+    ),
     heldYoung: A(
       'Your counted VPFI reaches tier {{counted}}, but your current holding began {{since}}, and no tier applies until it has lasted the minimum holding period without falling to zero, on {{ends}}. From then the other holding rules decide it.',
     ),
-    heldAverage: A('Your counted VPFI reaches tier {{counted}}, but the weighted average of your holding over the recent window is in tier {{average}}, so tier {{tier}} applies.'),
+    heldAverage: A(
+      'Your counted VPFI reaches tier {{counted}}, but the weighted average of your holding over the recent window is in tier {{average}}, so tier {{tier}} applies.',
+    ),
     heldDip: A(
       'Your counted VPFI reaches tier {{counted}}, but during the look-back over your current holding it fell to tier {{lowest}}, and a tier never exceeds the lowest one held then, so tier {{tier}} applies.',
     ),
@@ -2013,7 +2103,9 @@ export const copy = {
     resultValue: B('Tier {{tier}}, {{discount}}% off, with your fee discount on'),
     rulesUnread: B('This network’s settings for the holding rules could not be read.'),
     copy: A('This network applies the tier sent from VPFI’s home network: tier {{tier}}, {{discount}}% off your fees.'),
-    copyNone: A('No tier applies on this network now: none was sent from VPFI’s home network, the one sent has lapsed, or it was sent under an older tier table.'),
+    copyNone: A(
+      'No tier applies on this network now: none was sent from VPFI’s home network, the one sent has lapsed, or it was sent under an older tier table.',
+    ),
     tableTitle: B('Tiers on this network'),
     tableLead: B('Each tier’s discount and your fees with it, from this network’s live settings.'),
     tableWhy: C(
@@ -2053,7 +2145,9 @@ export const copy = {
     parts: B('{{landedFresh}} of {{wholeFresh}} new and {{landedRecycled}} of {{wholeRecycled}} recycled VPFI landed, in {{parts}} parts; both must complete.'),
     noParts: B('None of reward day {{day}}’s funding has landed here yet.'),
     partsUnread: B('How much of reward day {{day}}’s funding has landed here could not be read.'),
-    conflict: A('Parts of reward day {{day}}’s funding stated different totals. That cannot be repaired: after a waiting period the day can be closed unpaid, and its rewards are then not paid.'),
+    conflict: A(
+      'Parts of reward day {{day}}’s funding stated different totals. That cannot be repaired: after a waiting period the day can be closed unpaid, and its rewards are then not paid.',
+    ),
     unconfigured: A('No reward role is set on this network, so reward day {{day}} cannot be finalised here. Only the protocol’s administrator can set one.'),
     detached: A('This network has left the reward network, so reward day {{day}} is not finalised here and nothing new becomes claimable.'),
     failed: B('Why reward day {{day}} is waiting could not be read ({{reason}}).'),
@@ -2063,15 +2157,19 @@ export const copy = {
     title: B('Reward programme on {{chain}}'),
     lead: B('Whether your activity on this network earns rewards now, and what pays them.'),
     why: C(
-      "The reward programme pays rebates in VPFI on your own lending and borrowing activity, counted per day. It runs on a network once its start time has passed and the network holds a reward role. VPFI’s home network counts the rewards and funds them itself; every other network reports its activity there and is funded from there. A claim pays only from VPFI already held for rewards on the network: VPFI delivered for the programme, and VPFI recycled from fees the protocol has already received, each net of what pending settlements have reserved. On a network funded from the home network, a claim can also draw on VPFI sent with a particular day’s rewards; that VPFI is held per day, so this card does not count it. When none of these holds anything, a claim cannot pay what you earned until VPFI is held again; the claim figure on this page always shows what a claim pays now. A network that has left the reward network makes nothing new claimable, and one retired for good sends its leftover reward VPFI back to the home network. While the protocol is paused, reward claims and withdrawals stop; full and partial repayment and adding collateral stay open. This page does not read whether the daily close that makes a day’s rewards claimable is being run; anyone may run it. Rewards are a rebate on your own use of the protocol, never a return on holding VPFI.",
+      'The reward programme pays rebates in VPFI on your own lending and borrowing activity, counted per day. It runs on a network once its start time has passed and the network holds a reward role. VPFI’s home network counts the rewards and funds them itself; every other network reports its activity there and is funded from there. A claim pays only from VPFI already held for rewards on the network: VPFI delivered for the programme, and VPFI recycled from fees the protocol has already received, each net of what pending settlements have reserved. On a network funded from the home network, a claim can also draw on VPFI sent with a particular day’s rewards; that VPFI is held per day, so this card does not count it. When none of these holds anything, a claim cannot pay what you earned until VPFI is held again; the claim figure on this page always shows what a claim pays now. A network that has left the reward network makes nothing new claimable, and one retired for good sends its leftover reward VPFI back to the home network. While the protocol is paused, reward claims and withdrawals stop; full and partial repayment and adding collateral stay open. This page does not read whether the daily close that makes a day’s rewards claimable is being run; anyone may run it. Rewards are a rebate on your own use of the protocol, never a return on holding VPFI.',
       'rewards-programme',
     ),
     reading: B('Reading the reward programme’s status…'),
     failed: A('The reward programme’s status could not be read: {{reason}}.'),
     live: A('The reward programme runs on {{chain}}: your activity here earns rewards, and VPFI is held to pay them.'),
     unfunded: A('The reward programme runs on {{chain}}, but no VPFI is held here to pay rewards right now.'),
-    perDay: A('The reward programme runs on {{chain}}. No standing VPFI from {{base}} is held here now; VPFI sent for a particular day can still pay that day’s rewards.'),
-    perDayHomeUnknown: A('The reward programme runs on {{chain}}. No standing VPFI from VPFI’s home network is held here now; VPFI sent for a particular day can still pay that day’s rewards.'),
+    perDay: A(
+      'The reward programme runs on {{chain}}. No standing VPFI from {{base}} is held here now; VPFI sent for a particular day can still pay that day’s rewards.',
+    ),
+    perDayHomeUnknown: A(
+      'The reward programme runs on {{chain}}. No standing VPFI from VPFI’s home network is held here now; VPFI sent for a particular day can still pay that day’s rewards.',
+    ),
     notStarted: A('The reward programme has no start date on {{chain}}, so activity here earns no rewards.'),
     starts: A('The reward programme starts on {{chain}} at {{when}}; activity before then earns no rewards.'),
     left: A('{{chain}} has left the reward network: nothing new becomes claimable here.'),
@@ -2112,7 +2210,7 @@ export const copy = {
     title: B('Your tier on other networks'),
     lead: B('What this network last sent each other network of your tier, and sending your tier now.'),
     why: C(
-      "Your fee-discount tier is worked out on VPFI’s home network. Every other network the protocol serves keeps a copy, sent to it as a cross-network message, and applies that copy to your fees there. The protocol pays for a message only when it lowers the discount another network grants, so a discount never outlives the VPFI behind it. A higher tier, a first discount, or a tier under a new tier table goes only when someone pays its message fee. Until then the other network keeps the copy it last received; a copy from an older tier table counts there as no discount, and every copy lapses at the end sent with it, or earlier once it is older than the other network’s own maximum age for a copy (60 days unless that network set another). The record for sending is the tier last recorded on the home network. Your tier there moves with time as your holding ages, and only a step on the home network records a new one, so this section offers to update the record when it is behind the tier the protocol applies now. A change to the tier table also needs a new record, and the app cannot read the table’s version, so updating is offered whenever you want it. Sending pays the fee of every network still owed your record, in the protocol’s order, including one the protocol would have paid for; the wallet sends the quoted fees plus a margin, and whatever the messages do not use comes back in the same transaction. A fee is paid per network, and a later fall in your tier sends a new copy at the protocol’s cost. Nothing here pays you for holding VPFI.",
+      'Your fee-discount tier is worked out on VPFI’s home network. Every other network the protocol serves keeps a copy, sent to it as a cross-network message, and applies that copy to your fees there. The protocol pays for a message only when it lowers the discount another network grants, so a discount never outlives the VPFI behind it. A higher tier, a first discount, or a tier under a new tier table goes only when someone pays its message fee. Until then the other network keeps the copy it last received; a copy from an older tier table counts there as no discount, and every copy lapses at the end sent with it, or earlier once it is older than the other network’s own maximum age for a copy (60 days unless that network set another). The record for sending is the tier last recorded on the home network. Your tier there moves with time as your holding ages, and only a step on the home network records a new one, so this section offers to update the record when it is behind the tier the protocol applies now. A change to the tier table also needs a new record, and the app cannot read the table’s version, so updating is offered whenever you want it. Sending pays the fee of every network still owed your record, in the protocol’s order, including one the protocol would have paid for; the wallet sends the quoted fees plus a margin, and whatever the messages do not use comes back in the same transaction. A fee is paid per network, and a later fall in your tier sends a new copy at the protocol’s cost. Nothing here pays you for holding VPFI.',
       'rewards-tier-elsewhere',
     ),
     reading: B('Reading your tier on other networks…'),
@@ -2132,7 +2230,9 @@ export const copy = {
     noMessenger: B('No messenger is set up here, so your tier is neither recorded for sending nor sent.'),
     listUnreadable: A('The list of networks this one sends to could not be read, so whether any is owed your tier is not stated.'),
     laneHolds: B('Last sent tier {{tier}}, {{discount}}% off, at {{sent}}.'),
-    lanesSentOnly: A('These are the copies this network sent. Whether each has arrived and applies there is read on that network, not here. Each network also stops counting a copy once it is older than its own maximum age (60 days unless that network set another), which can end it before the end the message carries.'),
+    lanesSentOnly: A(
+      'These are the copies this network sent. Whether each has arrived and applies there is read on that network, not here. Each network also stops counting a copy once it is older than its own maximum age (60 days unless that network set another), which can end it before the end the message carries.',
+    ),
     laneNothing: B('Nothing has been sent to this network yet.'),
     laneCurrent: B('What was last sent matches the record; nothing more is owed from here.'),
     laneUnsentSettled: B('Your record grants no discount there, so nothing is owed from here.'),
@@ -2148,7 +2248,9 @@ export const copy = {
     send: B('Send to other networks'),
     sendHint: B('About {{fee}} {{symbol}} in fees; unused value comes back.'),
     sendAfterUpdate: B('Update the record first, so a send carries your tier now.'),
-    updateUnrouted: A('This network’s contracts do not offer updating the record from here, so only a VPFI deposit or withdrawal records your tier now; a send waits until the record matches it.'),
+    updateUnrouted: A(
+      'This network’s contracts do not offer updating the record from here, so only a VPFI deposit or withdrawal records your tier now; a send waits until the record matches it.',
+    ),
     sendUnquoted: A('A fee could not be quoted for every owed network, so no send is offered.'),
     paused: A('The protocol is paused, so neither updating nor sending is open now.'),
     postureUnknown: A('Whether the protocol is paused could not be read ({{reason}}), so no step is offered.'),
@@ -2173,7 +2275,9 @@ export const copy = {
     rowBack: B('Comes back'),
     backValue: B('Whatever the messages do not use, in the same transaction.'),
     loseFee: A('Each fee pays one message and is not refunded once sent, even if your tier there falls again later.'),
-    loseRise: A('If fees rise before your send lands, the networks are paid in the protocol’s order from the whole amount, so an earlier one can use up the margin and leave a later one owed; only what is left comes back.'),
+    loseRise: A(
+      'If fees rise before your send lands, the networks are paid in the protocol’s order from the whole amount, so an earlier one can use up the margin and leave a later one owed; only what is left comes back.',
+    ),
     legSent: B('Sent to {{chain}}'),
     legSettled: B('{{chain}}: nothing was sent; your record already matched what it holds.'),
     legOwed: B('{{chain}} is still owed your tier.'),
@@ -2219,14 +2323,18 @@ export const copy = {
     routeUnread: A(
       'The protocol is paused, and whether its escape route is open, or whether your account runs protected mode, could not be read, so no withdrawal can be sent yet.',
     ),
-    pauseUnread: A('Whether the protocol is paused, or its escape route open, could not be read; the protocol’s own check decides when the withdrawal confirms.'),
+    pauseUnread: A(
+      'Whether the protocol is paused, or its escape route open, could not be read; the protocol’s own check decides when the withdrawal confirms.',
+    ),
     freeUnread: A('The protocol’s figure for what is free could not be read; its own check decides when the withdrawal confirms.'),
     dryRunUnread: A('The protocol’s own check of this withdrawal could not be run now; it runs again before your wallet opens.'),
     noApproval: B('Nothing leaves your wallet, and no approval is asked.'),
     noVault: A('This wallet has no vault, so there is nothing to withdraw.'),
     retired: A('A replacement retired this wallet, so it can no longer withdraw. The wallet that replaced it manages this vault now.'),
     flagged: A('The sanctions screen flags this wallet, and the protocol pays no withdrawal to a flagged wallet.'),
-    paused: A('The protocol is paused, and a withdrawal is closed until it resumes or its escape route opens. Full and partial repayment and adding collateral stay open.'),
+    paused: A(
+      'The protocol is paused, and a withdrawal is closed until it resumes or its escape route opens. Full and partial repayment and adding collateral stay open.',
+    ),
     locked: A('Your protected account is locked, so nothing can be withdrawn until it is unlocked, and unlocking waits out its delay.'),
     nothingFree: A('Nothing of this is free to withdraw now: positions hold all of it.'),
     overFree: A('Only {{free}} is free to withdraw now.'),
@@ -2506,7 +2614,9 @@ export const copy = {
     termsNewer: A('A Terms version you have not accepted is now in force, so nothing was sent. Close this and agree again to read and accept it first.'),
     legAgreed: B('Agreement recorded: up to {{cap}} VPFI per loan side.'),
     legWithdrawn: B('Agreement withdrawn: no new fee can be charged to you.'),
-    noRecordBills: A('This deployment has no agreement record, and it can still charge the fee. Whether a fee would be charged to you cannot be checked or stopped from here.'),
+    noRecordBills: A(
+      'This deployment has no agreement record, and it can still charge the fee. Whether a fee would be charged to you cannot be checked or stopped from here.',
+    ),
     noRecordNoBill: B('This deployment has no agreement record and no way to charge the fee, so none can be charged.'),
     routingChecking: B('Checking what this deployment offers…'),
     whySummary: B('How paid push alerts are charged'),
@@ -2580,7 +2690,9 @@ export const copy = {
     dataErasedSignedOut: B('Your wallet was disconnected.'),
     dataErasedKept: B('{{count}} wallet marker(s) were written back so no wallet reconnects by itself; connecting again removes them.'),
     dataErasedStillConnected: A('A wallet connection did not end. Disconnect in your wallet app.'),
-    dataReportUnsaved: A('This browser would not keep the report through a reload, so the page did not reload and the report is shown here. Reload to see every preference reset; the report will not survive it.'),
+    dataReportUnsaved: A(
+      'This browser would not keep the report through a reload, so the page did not reload and the report is shown here. Reload to see every preference reset; the report will not survive it.',
+    ),
     dataReloadNow: B('Reload now'),
     dataErasedDatabasesUnknown: B('This browser could not list its databases, so none were removed by name.'),
     dataRefused: A('Not removed: {{what}} {{name}} ({{reason}}).'),
@@ -2589,7 +2701,9 @@ export const copy = {
     dataWhat_database: B('database'),
     dataWhat_cache: B('saved app files'),
     dataWhat_cookie: B('cookie'),
-    dataMarkerRefused: A('The marker that keeps your wallet disconnected could not be written back ({{reason}}), so a wallet may reconnect by itself after the reload. Disconnect in your wallet app.'),
+    dataMarkerRefused: A(
+      'The marker that keeps your wallet disconnected could not be written back ({{reason}}), so a wallet may reconnect by itself after the reload. Disconnect in your wallet app.',
+    ),
     dataWhySummary: B('What is counted, downloaded and erased'),
     dataWhy: C(
       'The app runs on its own address, so everything this site keeps belongs to it: the app’s own records (your settings, the alerts you have seen, your alert channels record, your last token pair, closed first-run cards), the wallet connection’s session records written by the wallet libraries, items for this tab only, wallet databases, and saved copies of this version’s app files. The download carries the app’s own records; the wallet connection’s records are session material, counted but not copied. Erasing disconnects your wallet first, then removes all of it and the language cookie shared with the other Vaipakam sites (saved app files come back as you use the app), writes back only the wallet libraries’ markers that keep a wallet disconnected, and reloads the page. Another tab of this site may keep a database open; the report then names it. What is on chain, what the alert service stores, the marketing site and your wallet app are out of reach from here.',
@@ -2688,8 +2802,12 @@ export const copy = {
     yours: B('Yours'),
     middle: B('Middle rate {{rate}}%: the midpoint of the best two rates, worked out here, not reported by the protocol.'),
     noMiddle: B('No middle rate: one side of this ladder is empty.'),
-    crossed: A('The highest borrower rate is at or above the lowest lender rate, so the two sides overlap. Each offer still carries its own collateral and terms, which its page checks on the chain.'),
-    counted: A('The index counts {{counted}} offers in this market, signed orders included, and this ladder lists the {{listed}} posted on the chain; signed orders are listed below it.'),
+    crossed: A(
+      'The highest borrower rate is at or above the lowest lender rate, so the two sides overlap. Each offer still carries its own collateral and terms, which its page checks on the chain.',
+    ),
+    counted: A(
+      'The index counts {{counted}} offers in this market, signed orders included, and this ladder lists the {{listed}} posted on the chain; signed orders are listed below it.',
+    ),
     more: A('This market has more open offers than the ladder reads ({{read}}), so its steps may be incomplete.'),
     ladderUnread: A('{{count}} offers in this market could not be read here, so the ladder leaves them out.'),
     leftOut: B('Left out of the ladder: {{list}}.'),
@@ -2721,7 +2839,9 @@ export const copy = {
     tapeMore: A('This market has older loans than the {{count}} newest shown here.'),
     tapeUnread: A('{{count}} loans the index returned could not be read here, so the list leaves them out.'),
     unplaced: A('{{count}} loans on this token pair have terms the index has not confirmed, so they are in no term’s market and not shown here.'),
-    unplacedCapped: A('More than {{count}} loans on this token pair have terms the index has not confirmed, so they are in no term’s market and not shown here.'),
+    unplacedCapped: A(
+      'More than {{count}} loans on this token pair have terms the index has not confirmed, so they are in no term’s market and not shown here.',
+    ),
     tapeReading: B('Reading this market’s loans…'),
     tapeFailed: A('This market’s loans could not be read, so nothing here means no loans: {{reason}}'),
     tapeFailedCached: A('The latest read of this market’s loans failed, so this list may be out of date: {{reason}}'),
@@ -2764,7 +2884,9 @@ export const copy = {
     loanBorrowed: B('Loan #{{id}}: you borrowed {{amount}} at {{rate}}% a year.'),
     loanManage: B('Manage loan #{{id}}'),
     historyTitle: B('Your desk history'),
-    historyLead: A('Every token loan against token collateral you have held a side of, newest first. The status is the index’s record, which can trail the chain; a loan’s own page reads the chain.'),
+    historyLead: A(
+      'Every token loan against token collateral you have held a side of, newest first. The status is the index’s record, which can trail the chain; a loan’s own page reads the chain.',
+    ),
     historyReading: B('Reading your history from the index…'),
     historyFailed: A('Your history could not be read from the index ({{reason}}), so nothing here means no loans.'),
     historyFailedCached: A('Your history could not be re-read from the index ({{reason}}). This is the last list it returned.'),
@@ -2868,12 +2990,16 @@ export const copy = {
       'Nothing is set aside for a signed order, and nothing reaches the chain until someone fills it. The only way to stop one before it lapses is a cancel on the chain: taking it off the offer book alone would not stop a fill, since anyone holding the signature can still send it.',
     ),
     reading: B('Reading your signed orders from the offer book…'),
-    failed: A('Your signed orders could not be read from the offer book ({{reason}}). Each still lapses at its own time, and any you hold can still be filled until then.'),
+    failed: A(
+      'Your signed orders could not be read from the offer book ({{reason}}). Each still lapses at its own time, and any you hold can still be filled until then.',
+    ),
     failedCached: A('The offer book did not answer the latest read ({{reason}}); the list below is the last one it gave.'),
     none: B('The offer book lists no signed orders of yours on this market.'),
     unreadRows: A('The offer book returned {{count}} rows this app could not read as your orders on this market; they are not shown.'),
     truncated: A('The offer book returned only part of your signed orders on this market; some are not shown here.'),
-    replayPending: A('The chain replaced some recent blocks, so the offer book is re-checking this order against it and leaves it out of the shared book until then.'),
+    replayPending: A(
+      'The chain replaced some recent blocks, so the offer book is re-checking this order against it and leaves it out of the shared book until then.',
+    ),
     replayOpen: A('Its standing above is read from the chain: anyone already holding the signature can still fill it, and you can still cancel it.'),
     standingFailed: A('Where the chain stands on these orders could not be read ({{reason}}), so no cancel is offered yet.'),
     standingStale: A(
@@ -3067,7 +3193,9 @@ export const copy = {
     rowMoves: B('Moves'),
     movesNothing: B('Nothing: a signed order sets nothing aside, so a cancel returns nothing. You pay gas.'),
     onlyWay: A('This is the only way to stop a signed order before it lapses; taking it off the offer book alone would not.'),
-    race: A('A fill already sent can land before this cancel: whichever the chain includes first wins. If the fill wins, the loan opens and this cancel changes nothing.'),
+    race: A(
+      'A fill already sent can land before this cancel: whichever the chain includes first wins. If the fill wins, the loan opens and this cancel changes nothing.',
+    ),
     nonceReach: A('It also stops orders signed with this nonce that this page does not list: on other markets, or kept off this offer book.'),
     stake: A('A fill would have drawn {{amount}} from your own vault; after this cancel, none can.'),
     stakeLeft: A(
@@ -3101,9 +3229,13 @@ export const copy = {
     nowNothing: B('Nothing. Signing costs no gas and moves nothing.'),
     rowAtFill: B('At a fill, from your own vault'),
     rowFree: B('Free in your vault now'),
-    checksAtFill: A('The protocol checks this order only when someone fills it, against its rules, the prices and your vault at that moment. A fill that fails moves nothing.'),
+    checksAtFill: A(
+      'The protocol checks this order only when someone fills it, against its rules, the prices and your vault at that moment. A fill that fails moves nothing.',
+    ),
     network: A('The signature can be filled only on this network, through this deployment of the protocol.'),
-    short: A('Your vault holds less of it free than a fill needs, so a fill now would fail. Add {{missing}} to your vault before one comes; signing sets nothing aside meanwhile.'),
+    short: A(
+      'Your vault holds less of it free than a fill needs, so a fill now would fail. Add {{missing}} to your vault before one comes; signing sets nothing aside meanwhile.',
+    ),
     reading: B('Reading your vault and the chain’s clock…'),
     noBook: A('This app has no offer book to list on, so a signed order cannot be listed from here.'),
     identityMoved: A('Your wallet or network changed since this review opened. Edit the ticket to review it again.'),
@@ -3253,7 +3385,9 @@ export const copy = {
     setCalm: A('A fill is also refused while the pair is not calm against the last two hourly price checks, or while a price or a check is missing.'),
     setRecorded: A('The level is the oracle price when this transaction lands, not the price shown now.'),
     setGap: A('The offer has no guard now, so a fill can still happen until this lands.'),
-    setUnknownNow: A('Whether the offer has a guard now could not be read: this sets the guard either way, replacing any current one, and a fill may still happen until it lands.'),
+    setUnknownNow: A(
+      'Whether the offer has a guard now could not be read: this sets the guard either way, replacing any current one, and a fill may still happen until it lands.',
+    ),
     setReplaces: A('This replaces the current guard and records the level again from the prices when it lands.'),
     setCheckpoints: A('Until the hourly price checks cover this pair, no one can fill the offer.'),
     setOnlyRefuses: A('It only refuses fills: it changes no term of the offer, and you can change or remove it while the offer is open.'),
@@ -3306,10 +3440,18 @@ export const copy = {
     toCreatorHeld: B('The creator’s vault, held while their protected account is locked ({{address}})'),
     refundNone: B('Nothing: the offer is filled to its limit.'),
     measuredLinked: A('This offer is tied to a running loan, which decides what it releases; the finish card shows what moved.'),
-    measuredLinkUnread: A('Whether this offer is tied to a running loan could not be read, so what it returns is not sized here; the finish card shows what moved.'),
-    measuredCarryOver: A('This refinance request keeps its collateral in the loan it would replace, so cancelling it returns none; the finish card shows anything that moved.'),
-    measuredBuffer: A('This rental request was posted before its buffer rate was recorded, so the protocol uses its current rate; the finish card shows what moved.'),
-    cleanupNotYours: A('You did not create this offer. Anyone may clean up an expired offer, and what it returns goes to its creator, {{address}}, never to you.'),
+    measuredLinkUnread: A(
+      'Whether this offer is tied to a running loan could not be read, so what it returns is not sized here; the finish card shows what moved.',
+    ),
+    measuredCarryOver: A(
+      'This refinance request keeps its collateral in the loan it would replace, so cancelling it returns none; the finish card shows anything that moved.',
+    ),
+    measuredBuffer: A(
+      'This rental request was posted before its buffer rate was recorded, so the protocol uses its current rate; the finish card shows what moved.',
+    ),
+    cleanupNotYours: A(
+      'You did not create this offer. Anyone may clean up an expired offer, and what it returns goes to its creator, {{address}}, never to you.',
+    ),
     cleanupExpired: A('This offer expired, so cancelling it only returns what it still locks; nobody can accept it now.'),
     partFilled: A('Part of this offer was already filled. Those loans stay as they are; only the unfilled rest is cancelled and returned.'),
     fromVault: A('What returns leaves the creator’s vault, where the offer kept it locked.'),
@@ -3358,7 +3500,9 @@ export const copy = {
     unread: B('Whether your wallet has approved Permit2 for VPFI could not be read, so signing is not offered.'),
     row: B('Instead of an approval'),
     approval: B('You sign a one-time transfer of exactly {{amount}}, valid for {{lapse}}.'),
-    after: A('The signature lets the protocol take exactly this amount once, into your own vault, and only in a transaction this wallet sends. Unused, it lapses after {{lapse}}.'),
+    after: A(
+      'The signature lets the protocol take exactly this amount once, into your own vault, and only in a transaction this wallet sends. Unused, it lapses after {{lapse}}.',
+    ),
     kept: B('Your wallet’s own approval for Permit2 over VPFI is left as it is.'),
     changed: B('Whether signing is still offered'),
     gone: A('Signing is no longer offered for this deposit, so nothing was signed or sent. Review it again.'),
@@ -3522,7 +3666,9 @@ export const copy = {
     paused: A('The protocol is paused, and a pause stops every claim until it resumes. Your payout stays recorded for you.'),
     running: B('This loan is still running, so there is nothing to collect yet.'),
     settled: B('This loan is settled: both payouts have been collected.'),
-    fallbackWaits: A('This loan is in fallback. The borrower’s payout waits until the lender collects, which ends the fallback, or until the borrower cures the loan.'),
+    fallbackWaits: A(
+      'This loan is in fallback. The borrower’s payout waits until the lender collects, which ends the fallback, or until the borrower cures the loan.',
+    ),
     already: B('This payout has already been collected.'),
     nothing: B('The protocol records nothing to collect on this side.'),
     notLender: B('Only the holder of the lender position can collect this payout.'),
@@ -3576,10 +3722,14 @@ export const copy = {
   trust: {
     reading: B('Reading the public market rankings…'),
     noIndex: B('This build has no index to read the rankings from.'),
-    failed: A('The public market rankings could not be read ({{reason}}), so {{asset}} has no tier here. Check its contract address yourself before you use it.'),
+    failed: A(
+      'The public market rankings could not be read ({{reason}}), so {{asset}} has no tier here. Check its contract address yourself before you use it.',
+    ),
     test: B('{{asset}} is a test token on this network: it has no market value.'),
     testNetwork: B('{{chain}} is a test network: its tokens have no market value and no public ranking.'),
-    noList: A('No public market ranking is stored for {{chain}} yet, so {{asset}} has no tier. Use it at your own risk and check its contract address yourself.'),
+    noList: A(
+      'No public market ranking is stored for {{chain}} yet, so {{asset}} has no tier. Use it at your own risk and check its contract address yourself.',
+    ),
     blueChip: B('{{asset}} is a blue chip: #{{rank}} by market value on {{chain}}, and the protocol prices it.'),
     ranked: B('{{asset}} is in the {{tier}} by market value on {{chain}}, at #{{rank}}.'),
     pricedUnread: B('Whether the protocol prices it could not be read, so it is not called a blue chip.'),
@@ -3596,7 +3746,9 @@ export const copy = {
     unverified: A(
       'Unverified: the two public lists disagree on where {{symbol}} is on {{chain}}. One names this address, {{address}}; the other names {{other}}. Check the address with the token’s own project before you use it.',
     ),
-    copy: A('Possible copy: {{asset}} shares the name or symbol of {{ranked}}, ranked #{{rank}} at a different address, {{address}}. Check the address before you use it.'),
+    copy: A(
+      'Possible copy: {{asset}} shares the name or symbol of {{ranked}}, ranked #{{rank}} at a different address, {{address}}. Check the address before you use it.',
+    ),
     unranked: A('{{asset}} is not in the top 500 by market value on {{chain}}. Use it at your own risk and check its contract address yourself.'),
     why: C(
       'The tier comes from two public lists of tokens ranked by market value, which the protocol’s keeper fetches once a day and the index stores. A token is matched by its contract address on this network, never by its name or symbol, since anyone can give a token any name. Where both lists rank a token, the better rank counts. A blue chip is in the top 20 and has a price feed the protocol holds for that exact address; then come the top 100, 200, 300 and 500. A token outside the top 500 is used at your own risk. A token that shares a ranked token’s name or symbol at another address is labelled a possible copy, and when the two lists name different addresses for one symbol, the token is shown as unverified. The date of the rankings is shown, and a refresh that failed is said. The tier is a guide only: what the protocol does with a token, whether it is priced and liquid, is its own answer, shown beside it, and a tier never changes it.',
@@ -3707,12 +3859,18 @@ export const copy = {
       'The protocol has paused every keeper on this network, its matching service included, so no fill is expected until they resume. A lender can still fill a request from its own standing offer, and anyone can for a lender that has not limited who fills it.',
     ),
     standingHalted: A('The protocol is paused on this network, so no request is posted or filled against standing lenders until it resumes.'),
-    standingOff: A('Matching against standing lenders is switched off on this network, so no request is filled against them now; a request waits for a lender to take it.'),
+    standingOff: A(
+      'Matching against standing lenders is switched off on this network, so no request is filled against them now; a request waits for a lender to take it.',
+    ),
     standingStale: A('The latest re-read failed ({{reason}}); these lenders are from the read before and may have changed.'),
     standingTerms: B('They fill only requests with full-term interest, no partial repayment and no interest schedule.'),
-    standingBlockedProRata: A('This request charges interest only for the time used, so no standing lender can fill it; they require the full term’s interest.'),
+    standingBlockedProRata: A(
+      'This request charges interest only for the time used, so no standing lender can fill it; they require the full term’s interest.',
+    ),
     standingBlockedPartial: A('This request allows partial repayment, so no standing lender can fill it; they take full repayment only.'),
-    standingBlockedListing: A('This request lets you list the collateral for sale while the loan is open, so no standing lender can fill it; they lend without that permission.'),
+    standingBlockedListing: A(
+      'This request lets you list the collateral for sale while the loan is open, so no standing lender can fill it; they lend without that permission.',
+    ),
     standingBlockedCadence: A('This request pays interest on a schedule, so no standing lender can fill it; they lend with interest paid at repayment only.'),
     standingLimits: B('Their limits reach {{days}} days and {{ltv}}% loan-to-value at most.'),
     standingPart: B('Read from the first {{shown}} of {{total}} standing lenders on this network.'),
@@ -3881,7 +4039,9 @@ export const copy = {
       PriceGuardRefused: A(
         "The borrower put a price-move guard on this request, and it refuses a fill now: the price has moved past the borrower's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
       ),
-      TermsTooFresh: A('This request was posted or changed a few seconds ago, and a request can be funded only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
+      TermsTooFresh: A(
+        'This request was posted or changed a few seconds ago, and a request can be funded only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
+      ),
       Unrecognised: A('The protocol refused this request with a code this build cannot name.'),
     },
     signWhy: C(
@@ -4013,7 +4173,9 @@ export const copy = {
     ),
     loseTariffOffRefuse: A('The Full fee tariff is switched off on this network now, so while that holds every loan this offer opens is refused.'),
     loseTariffUnpricedRefuse: A('The protocol cannot price the lending asset now, so while that holds every loan this offer opens is refused.'),
-    loseTariffIlliquidRefuse: A('The lending asset is not liquid now, and the tariff needs a liquid one, so while that holds every loan this offer opens is refused.'),
+    loseTariffIlliquidRefuse: A(
+      'The lending asset is not liquid now, and the tariff needs a liquid one, so while that holds every loan this offer opens is refused.',
+    ),
     loseTariffCeilingAllRefuse: A(
       "Your most per loan, {{ceiling}}, is below today's tariff for the smallest loan, {{tariff}}, so at today's figures every loan this offer opens is refused.",
     ),
@@ -4044,9 +4206,13 @@ export const copy = {
     ),
     tariffReadAgain: B('Read the offer again'),
     tariffReadingBack: B('Reading the offer…'),
-    tariffReadNotYet: A('Read at {{time}}: offer #{{id}} does not carry this tariff choice. A transaction still pending can still set it, so read again later.'),
+    tariffReadNotYet: A(
+      'Read at {{time}}: offer #{{id}} does not carry this tariff choice. A transaction still pending can still set it, so read again later.',
+    ),
     tariffReadNotSet: A('Read at {{time}}: offer #{{id}} does not carry this tariff choice, so loans from it open without it.'),
-    tariffReadTaken: A('Read at {{time}}: offer #{{id}} has been taken in full or closed and does not carry this tariff choice, so its loans did not open under it.'),
+    tariffReadTaken: A(
+      'Read at {{time}}: offer #{{id}} has been taken in full or closed and does not carry this tariff choice, so its loans did not open under it.',
+    ),
     tariffReadFailed: A('The offer could not be read ({{reason}}). Nothing is assumed; try again.'),
     tariffReadSwitch: A('Switch back to the network and wallet that posted offer #{{id}} to read it.'),
     tariffSkipped: A(
@@ -4077,7 +4243,9 @@ export const copy = {
       'This app cannot follow or cancel an offer yet, and no other page for it could be found. The protocol still lets you cancel it from five minutes after posting.',
     ),
     loseOpen: A('The offer never lapses: it stays takeable until a borrower takes it or you cancel it.'),
-    loseLapse: A('When the offer lapses it can no longer be taken, but the amount stays in your vault until you, or anyone, closes it; it then returns only to your wallet.'),
+    loseLapse: A(
+      'When the offer lapses it can no longer be taken, but the amount stays in your vault until you, or anyone, closes it; it then returns only to your wallet.',
+    ),
     loseTaken: A('A borrower who takes the offer opens the loan at once, on these terms, without asking you again.'),
     loseMatch: A(
       "Matching is switched on for this network now, so anyone may also match your offer with a borrower's request: that loan lends your whole amount at your rate, against at least the collateral you ask for.",
@@ -4096,7 +4264,9 @@ export const copy = {
     stepSend: B('post the offer.'),
     dryRunRefused: A('The dry run after the approval was refused, so the offer was not posted. {{reason}}'),
     stoppedAfterApproval: A('The offer was not posted. {{reason}}'),
-    termsNewer: A('A Terms version you have not accepted is now in force, so nothing was sent. Close this and review the offer again to read and accept it first.'),
+    termsNewer: A(
+      'A Terms version you have not accepted is now in force, so nothing was sent. Close this and review the offer again to read and accept it first.',
+    ),
     legOffer: B('Offer #{{id}} posted and open for borrowers'),
     legNoOffer: B('Offer posted'),
     noOffer: B('This transaction recorded no new offer from your wallet.'),
@@ -4182,7 +4352,9 @@ export const copy = {
     ),
     loseLocked: A('Your collateral stays locked in your vault until the loan is repaid or settled.'),
     loseFullTerm: A("You agree to pay the full term's interest even if you repay early."),
-    loseFullTermPartial: A('You agree to the full-term interest floor: a partial repayment lowers the future interest on what it repays, and the floor still applies to the rest.'),
+    loseFullTermPartial: A(
+      'You agree to the full-term interest floor: a partial repayment lowers the future interest on what it repays, and the floor still applies to the rest.',
+    ),
     loseProRata: A('Interest accrues only for the time the loan is open.'),
     loseCadence: A('Interest is due {{cadence}}: if a period is not paid by its grace end, part of your collateral is sold to pay it.'),
     losePause: A(
@@ -4241,7 +4413,9 @@ export const copy = {
       PriceGuardRefused: A(
         "The lender put a price-move guard on this offer, and it refuses a fill now: the price has moved past the lender's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
       ),
-      TermsTooFresh: A('This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
+      TermsTooFresh: A(
+        'This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
+      ),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
       // OFF-60 — a signed order's own refusals, reported only by the
       // protocol's preview of a signed order's fill (#3552).
@@ -4251,7 +4425,9 @@ export const copy = {
       SignedOfferConsumed: A('This order was already filled, partly matched or cancelled on the chain, so it cannot be filled whole.'),
       SignedOfferBadSignature: A('The maker’s signature does not match this order, so the protocol will not fill it.'),
       SignedOfferUnsupportedShape: A('A signed order can be filled only as a loan of one token against another, with no refinance, and this order is not one.'),
-      SignedOfferMakerShort: A('The maker’s vault does not hold free what this fill would draw from it, so a fill now would fail. It may succeed once the maker adds funds.'),
+      SignedOfferMakerShort: A(
+        'The maker’s vault does not hold free what this fill would draw from it, so a fill now would fail. It may succeed once the maker adds funds.',
+      ),
       SignedOfferBelowMinimumValue: A('This order’s amount is below the protocol’s minimum loan value now, so it cannot be filled.'),
     },
     changedOffer: B('The offer'),
@@ -4264,7 +4440,9 @@ export const copy = {
     stepSend: B('send the acceptance.'),
     dryRunRefused: A('The dry run with your signature was refused, so the acceptance was not sent. {{reason}}'),
     stoppedAfterApproval: A('The acceptance was not sent. {{reason}}'),
-    termsNewer: A('A Terms version you have not accepted is now in force, so nothing was signed or sent. Close this and take the offer again to read and accept it first.'),
+    termsNewer: A(
+      'A Terms version you have not accepted is now in force, so nothing was signed or sent. Close this and take the offer again to read and accept it first.',
+    ),
     legLoan: B('Loan #{{id}} opened with you as the borrower'),
     legNoLoan: B('Loan opened from offer #{{id}}'),
     noLoan: B('This transaction recorded no new loan from this offer.'),
@@ -4324,7 +4502,9 @@ export const copy = {
     durationNone: A('No term this app offers is open on this network now, so a request cannot be posted here.'),
     expiryLabel: B('Request stays open'),
     expiryNeverOption: B('Until taken or cancelled'),
-    expiryNeverNote: A('An offer that never lapses keeps its rate as the market moves, so it can be taken at a rate you would no longer choose. Cancel it if rates change.'),
+    expiryNeverNote: A(
+      'An offer that never lapses keeps its rate as the market moves, so it can be taken at a rate you would no longer choose. Cancel it if rates change.',
+    ),
     expiry1d: B('1 day'),
     expiry7d: B('7 days'),
     expiry30d: B('30 days'),
@@ -4424,7 +4604,9 @@ export const copy = {
       'The fill mode cannot be changed after posting; to change it, cancel the request and post a new one. The protocol lets you change the amounts, the rate and the collateral while the request is open, never below what matches have already used, but this app does not offer that yet, so for now a change means cancelling and posting again.',
     ),
     blockCeiling: A("The amount asks for more than your collateral supports at today's prices: at most {{ceiling}}. Lower the amount, or lock more."),
-    blockCeilingRange: A("The largest amount asks for more than your collateral supports at today's prices: at most {{ceiling}}. Lower the largest amount, or lock more."),
+    blockCeilingRange: A(
+      "The largest amount asks for more than your collateral supports at today's prices: at most {{ceiling}}. Lower the largest amount, or lock more.",
+    ),
     advancedTitle: B('Advanced options'),
     advancedSetNote: A('Advanced options set for this request still apply: {{list}}. Switch to Advanced to change them, or clear them here.'),
     advancedList: B('{{a}} and {{b}}'),
@@ -4531,7 +4713,9 @@ export const copy = {
     loseTariffUnpricedOpen: A('The protocol cannot price the lending asset now, so while that holds every loan opens without the tariff.'),
     loseTariffUnpricedRefuse: A('The protocol cannot price the lending asset now, so while that holds every loan this request opens is refused.'),
     loseTariffIlliquidOpen: A('The lending asset is not liquid now, and the tariff needs a liquid one, so while that holds every loan opens without it.'),
-    loseTariffIlliquidRefuse: A('The lending asset is not liquid now, and the tariff needs a liquid one, so while that holds every loan this request opens is refused.'),
+    loseTariffIlliquidRefuse: A(
+      'The lending asset is not liquid now, and the tariff needs a liquid one, so while that holds every loan this request opens is refused.',
+    ),
     loseTariffCeilingAllOpen: A(
       "Your most per loan, {{ceiling}}, is below today's tariff for the smallest loan, {{tariff}}, so at today's figures every loan opens without the tariff.",
     ),
@@ -4541,7 +4725,9 @@ export const copy = {
     loseTariffCeilingSomeOpen: A(
       "Your most per loan, {{ceiling}}, is below today's tariff for the largest loan, {{tariff}}, so at today's figures a larger loan opens without the tariff.",
     ),
-    loseTariffCeilingSomeRefuse: A("Your most per loan, {{ceiling}}, is below today's tariff for the largest loan, {{tariff}}, so at today's figures a larger loan is refused."),
+    loseTariffCeilingSomeRefuse: A(
+      "Your most per loan, {{ceiling}}, is below today's tariff for the largest loan, {{tariff}}, so at today's figures a larger loan is refused.",
+    ),
     loseTariffVaultOpen: A(
       'Your vault has {{free}} free now, less than the {{needed}} the largest loan would take; until you add VPFI, a loan whose tariff is more than that opens without it.',
     ),
@@ -4572,7 +4758,9 @@ export const copy = {
     loseTariffArmGap: A(
       'Until this transaction is confirmed, a lender who takes the request opens a loan without the tariff; once a lender has taken it, the protocol refuses this transaction.',
     ),
-    loseTariffChecked: A('Setting the tariff moves no VPFI now. Each loan is checked when it opens: the switch, the price, your most per loan and the free VPFI in your vault.'),
+    loseTariffChecked: A(
+      'Setting the tariff moves no VPFI now. Each loan is checked when it opens: the switch, the price, your most per loan and the free VPFI in your vault.',
+    ),
     tariffLeg: B('Full fee tariff set on request #{{id}}'),
     tariffLegMissing: A('The request does not show the tariff as chosen after this transaction, so loans from it may open without it.'),
     tariffNotCreator: A('This wallet did not post the request, so it cannot set the tariff on it.'),
@@ -4587,7 +4775,9 @@ export const copy = {
     ),
     tariffReadAgain: B('Read the request again'),
     tariffReadingBack: B('Reading the request…'),
-    tariffReadNotYet: A('Read at {{time}}: request #{{id}} does not carry this tariff choice. A transaction still pending can still set it, so read again later.'),
+    tariffReadNotYet: A(
+      'Read at {{time}}: request #{{id}} does not carry this tariff choice. A transaction still pending can still set it, so read again later.',
+    ),
     tariffReadNotSet: A('Read at {{time}}: request #{{id}} does not carry this tariff choice, so loans from it open without it.'),
     tariffReadTaken: A('Read at {{time}}: a lender has taken request #{{id}} and it does not carry this tariff choice, so that loan did not open under it.'),
     tariffReadFailed: A('The request could not be read ({{reason}}). Nothing is assumed; try again.'),
@@ -4614,7 +4804,9 @@ export const copy = {
     blockSchedule: A('The protocol refuses this interest schedule: {{reason}} Choose another schedule.'),
     rangeReceiveSummary: B("Taken directly: you receive {{receive}} at today's fee and owe {{owe}} at due. Largest match: {{largest}}."),
     summaryScheduled: B("If taken now: you receive {{receive}} at today's fee; all interest plus principal totals {{owe}}."),
-    rangeReceiveSummaryScheduled: B("Taken directly: you receive {{receive}} at today's fee; principal plus all interest comes to {{owe}}. Largest match: {{largest}}."),
+    rangeReceiveSummaryScheduled: B(
+      "Taken directly: you receive {{receive}} at today's fee; principal plus all interest comes to {{owe}}. Largest match: {{largest}}.",
+    ),
     approvalNeeded: B('Exactly {{amount}}, used up by posting'),
     approvalZeroFirst: B('First set to 0, as this token requires, then exactly {{amount}}, used up by posting'),
     approvalToken: B('{{token}} only, never the rest of the collection; cleared when it moves into your vault'),
@@ -4625,7 +4817,9 @@ export const copy = {
       'Your collateral moves into your vault now and stays locked while the request is open. You can cancel it from five minutes after posting, and the collateral returns to your wallet.',
     ),
     loseOpen: A('The request never lapses: it stays takeable until a lender takes it or you cancel it.'),
-    loseLapse: A('When the request lapses it can no longer be taken, but the collateral stays in your vault until you, or anyone, closes it; it then returns only to your wallet.'),
+    loseLapse: A(
+      'When the request lapses it can no longer be taken, but the collateral stays in your vault until you, or anyone, closes it; it then returns only to your wallet.',
+    ),
     loseTaken: A('A lender who takes the request opens the loan at once, on these terms, without asking you again.'),
     loseBinding: A('Posting records a binding offer: any lender may take it on these terms while it is open.'),
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this request locks.'),
@@ -4640,7 +4834,9 @@ export const copy = {
     stepSend: B('post the request.'),
     dryRunRefused: A('The dry run after the approval was refused, so the request was not posted. {{reason}}'),
     stoppedAfterApproval: A('The request was not posted. {{reason}}'),
-    termsNewer: A('A Terms version you have not accepted is now in force, so nothing was sent. Close this and review the request again to read and accept it first.'),
+    termsNewer: A(
+      'A Terms version you have not accepted is now in force, so nothing was sent. Close this and review the request again to read and accept it first.',
+    ),
     legOffer: B('Request #{{id}} posted and open for lenders'),
     legNoOffer: B('Request posted'),
     noOffer: B('This transaction recorded no new request from your wallet.'),
@@ -4713,7 +4909,9 @@ export const copy = {
     blockState: A('This NFT can no longer be rented here: {{state}}'),
     blockLinked: A('This listing says it is tied to loan #{{id}}, which a rental never is, so it is not rented here.'),
     blockDistrusted: A('The protocol does not trust the price of {{asset}} right now, so new rentals on it are closed. Your open positions are not affected.'),
-    blockCreatorGate: A("The owner's own risk setting no longer covers this rental, so it cannot be rented until the owner changes it. Nothing in your account would change that."),
+    blockCreatorGate: A(
+      "The owner's own risk setting no longer covers this rental, so it cannot be rented until the owner changes it. Nothing in your account would change that.",
+    ),
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this rental takes up front.'),
     changedListing: B('The listing'),
     changedPreview: B("The protocol's answer for this rental"),
@@ -4806,12 +5004,16 @@ export const copy = {
       Unrecognised: A('The protocol refused this request with a code this build cannot name.'),
     },
     loseHeld: A('The rent and buffer stay in your own vault while the request is open. You cannot withdraw them until you cancel it or it ends.'),
-    loseCancel: A('While no owner has taken it, you can cancel the request from its page after its first five minutes, and the rent and buffer come back to your wallet.'),
+    loseCancel: A(
+      'While no owner has taken it, you can cancel the request from its page after its first five minutes, and the rent and buffer come back to your wallet.',
+    ),
     loseOpen: A('The request never lapses: it stays open until an owner takes it or you cancel it.'),
-    loseLapse: A('When the request lapses no owner can take it, but the rent and buffer stay in your vault until you, or anyone, closes it; they then return only to your wallet.'),
+    loseLapse: A(
+      'When the request lapses no owner can take it, but the rent and buffer stay in your vault until you, or anyone, closes it; they then return only to your wallet.',
+    ),
     loseStart: A('An owner who takes the request starts the rental at once, with no further step from you, on exactly these terms.'),
     loseBufferRace: A(
-      "The protocol takes the buffer setting in force when your request lands, and the request keeps it from then on. The app re-reads it just before sending, but governance could still change it in between. A higher buffer is then refused where your wallet approves exactly this amount, and taken where an earlier approval of yours already covers it. A lower one costs you less. The outcome states what moved.",
+      'The protocol takes the buffer setting in force when your request lands, and the request keeps it from then on. The app re-reads it just before sending, but governance could still change it in between. A higher buffer is then refused where your wallet approves exactly this amount, and taken where an earlier approval of yours already covers it. A lower one costs you less. The outcome states what moved.',
     ),
     dryRunRefused: A('The protocol would refuse the request now: {{reason}}'),
     stoppedAfterApproval: A('The request was not sent: {{reason}}'),
@@ -4849,7 +5051,9 @@ export const copy = {
     },
     blockState: A('This request can no longer be taken here: {{state}}'),
     blockLinked: A('This request says it is tied to loan #{{id}}, which a rental never is, so it is not taken here.'),
-    blockCreatorGate: A("The renter's own risk setting no longer covers this rental, so it cannot be taken until the renter changes it. Nothing in your account would change that."),
+    blockCreatorGate: A(
+      "The renter's own risk setting no longer covers this rental, so it cannot be taken until the renter changes it. Nothing in your account would change that.",
+    ),
     blockNotHeld: A('NFT #{{id}} is held by another wallet, so this wallet cannot rent it out.'),
     blockUnits: A('This wallet holds {{have}} of token #{{id}}, short of the {{need}} this request asks for.'),
     changedRequest: B('The request'),
@@ -4866,7 +5070,9 @@ export const copy = {
     positions: B('You receive the owner position NFT; the renter holds the renter position NFT'),
     approvalOperator: B('Every {{collection}} token you hold, for this rental only; one more wallet step takes it back after'),
     loseHeld: A('The NFT moves into your own vault and stays there until the rental ends. You cannot withdraw it while the rental is open.'),
-    loseBufferToday: A("This request recorded no buffer of its own, so the protocol applies today's setting when the rental starts, which governance can change."),
+    loseBufferToday: A(
+      "This request recorded no buffer of its own, so the protocol applies today's setting when the rental starts, which governance can change.",
+    ),
     loseOperator: A('Your wallet lets the protocol move every {{collection}} token you hold until the step that takes it back confirms.'),
     signWhy: C(
       'Renting out starts with a signature over every term the rental will carry: the renter, the NFT, the daily fee, the term, the rent rule, the payment token, your consent, and a deadline thirty minutes ahead. The protocol checks the signature against the request as stored, so a page that showed you one figure and asked you to sign another could not get through. Signing costs nothing and moves nothing. If your wallet needs to let the protocol move the NFT, that is the next prompt, for that one token (for a multi-token collection, the whole collection for this rental only, taken back in one more step afterwards). The app then runs the acceptance as a dry run with your signature, and only sends it if the protocol would accept it. If anything stops it after an approval, the app asks your wallet to put the approval back, and says if that did not happen.',
@@ -4930,12 +5136,18 @@ export const copy = {
     rowExpiry: B('Listing open until'),
     approvalToken: B('{{token}} only, never the rest of the collection; cleared when it moves into your vault'),
     approvalOperator: B('Every {{collection}} token you hold, for this listing only; one more wallet step takes it back after posting'),
-    loseHeld: A('The NFT stays in your own vault while the listing is open and while it is rented. You cannot withdraw it until the listing or the rental ends.'),
+    loseHeld: A(
+      'The NFT stays in your own vault while the listing is open and while it is rented. You cannot withdraw it until the listing or the rental ends.',
+    ),
     loseCancel: A('While nobody has rented it, you can cancel the listing from its page after its first five minutes, and the NFT comes back to you.'),
     loseOpen: A('The listing never lapses: it stays open until a renter takes it or you cancel it.'),
-    loseLapse: A('When the listing lapses it can no longer be rented, but the NFT stays in your vault until you, or anyone, closes the listing; it then returns only to your wallet.'),
+    loseLapse: A(
+      'When the listing lapses it can no longer be rented, but the NFT stays in your vault until you, or anyone, closes the listing; it then returns only to your wallet.',
+    ),
     loseUse: A('Once rented, the renter holds the right to use the NFT until the rental ends; you keep ownership, but cannot take that right back early.'),
-    loseNoAutoClose: A('Once every agreed day has been settled, which anyone may do, the rental closes by itself and the renter can claim the buffer back. Until then the renter can close it, or after the grace period anyone can close it as a default.'),
+    loseNoAutoClose: A(
+      'Once every agreed day has been settled, which anyone may do, the rental closes by itself and the renter can claim the buffer back. Until then the renter can close it, or after the grace period anyone can close it as a default.',
+    ),
     loseOperator: A('Your wallet lets the protocol move every {{collection}} token you hold until the step that takes it back confirms.'),
     blockDistrusted: A('The protocol does not trust the price of {{asset}} right now, so new rentals paid in it are closed.'),
     blockNoToken: A('No NFT #{{id}} exists in this collection. Check the token number.'),
@@ -4977,7 +5189,9 @@ export const copy = {
     notRunning: B('This rental is not running, so there is nothing to close.'),
     notRenter: B('Only the renter can close a rental; the owner is paid as days settle and at its end.'),
     unread: A('What closing depends on could not be read, so closing is not offered yet.'),
-    pastGrace: A('The grace period ended at {{time}}, so the protocol no longer accepts a close. The rental now ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first.'),
+    pastGrace: A(
+      'The grace period ended at {{time}}, so the protocol no longer accepts a close. The rental now ends when its remaining days are settled one at a time, which anyone may do, or as a default, whichever comes first.',
+    ),
     shortPrepay: A('The rent and buffer in your vault cannot cover the rent and late fee owed now, so the protocol would refuse this close.'),
     endsNote: B('A rental ends when the renter closes it, by itself once every day settles, or by default.'),
     rowWallet: B('From your wallet'),
@@ -5007,11 +5221,17 @@ export const copy = {
     loseClaim: A('What comes back to you stays in your own vault as a claim until you collect it on the Claims page.'),
     loseDayCount: A('Rent is counted when the close lands: a day that begins before then is paid as a whole day.'),
     loseFullTerm: A('This rental is full term, so every agreed day not yet settled is paid, however early you close.'),
-    loseLate: A('The term has ended, so a late fee is taken from your buffer: 1% of the whole rent, plus 0.5% a day late, at most 5% and never more than the buffer.'),
+    loseLate: A(
+      'The term has ended, so a late fee is taken from your buffer: 1% of the whole rent, plus 0.5% a day late, at most 5% and never more than the buffer.',
+    ),
     loseLateLater: A('Closing after the term ends costs a late fee from your buffer, rising each day late.'),
-    loseGraceEnd: A('The grace period ends at {{time}}. A close that lands after it is refused; the rental then ends when its remaining days are settled one at a time, or as a default, whichever comes first.'),
+    loseGraceEnd: A(
+      'The grace period ends at {{time}}. A close that lands after it is refused; the rental then ends when its remaining days are settled one at a time, or as a default, whichever comes first.',
+    ),
     loseShortBy: A('If the close lands by {{time}} the prepayment no longer covers it, and the protocol refuses it.'),
-    loseNoLimit: A('The figures for {{time}} are not a deadline or a limit. The close is counted when it lands, so if it lands later, more rent or a higher late fee can be taken and less comes back to you.'),
+    loseNoLimit: A(
+      'The figures for {{time}} are not a deadline or a limit. The close is counted when it lands, so if it lands later, more rent or a higher late fee can be taken and less comes back to you.',
+    ),
     dryRunRefused: A('The protocol would refuse this close now: {{reason}}'),
     stepSend: B('close the rental.'),
     legClosed: B('Rental #{{id}} closed'),
@@ -5047,7 +5267,9 @@ export const copy = {
     effectNow: B('It takes effect as soon as the transaction is confirmed.'),
     effectLater: A('It takes effect about {{span}} after it is recorded, so around {{when}}. Until then this pair stays closed to you.'),
     waitTier: A('Your risk level “{{level}}” is recorded and takes effect at {{when}}. Until then this pair stays closed to you.'),
-    waitPairUnknown: A("Your step for this pair is recorded but still in the protocol's waiting period. This app cannot read when that period ends, so check back later."),
+    waitPairUnknown: A(
+      "Your step for this pair is recorded but still in the protocol's waiting period. This app cannot read when that period ends, so check back later.",
+    ),
     met: B('Your risk access now covers this pair; the review is checking again.'),
     raise: B('Raise my risk level'),
     reaffirm: B('Confirm my risk level again'),
@@ -5077,7 +5299,9 @@ export const copy = {
     movesNone: B('None: this only records a setting'),
     rowLower: B('Lowering it later'),
     lowerAnyTime: B('Any time, taking effect at once'),
-    loseTier: A('Once it is in effect, offers and requests on any pair up to this level are open to you, not only this one. Each still shows its own risks before you sign.'),
+    loseTier: A(
+      'Once it is in effect, offers and requests on any pair up to this level are open to you, not only this one. Each still shows its own risks before you sign.',
+    ),
     loseTerms: A('If the protocol publishes new risk terms, this stops counting until you confirm it again.'),
     loseConsent: A(
       'An illiquid asset has no price the protocol trusts, so a loan on this pair has no price-based liquidation: on default the lender receives the collateral as it is.',
@@ -5177,12 +5401,8 @@ export const copy = {
     stateOff: A('Keeper access is off: no keeper can act for this wallet on this network.'),
     noneApproved: B('No keeper is approved.'),
     countApproved: B('{{count}} of at most {{max}} keepers approved.'),
-    inertAlone: A(
-      'A keeper acts only while access is on and it holds the action; a step on a loan also needs that loan or offer to name the keeper.',
-    ),
-    accountWideNote: A(
-      'Some of these actions reach your whole account: no loan or offer has to name the keeper, so it can take them as soon as access is on.',
-    ),
+    inertAlone: A('A keeper acts only while access is on and it holds the action; a step on a loan also needs that loan or offer to name the keeper.'),
+    accountWideNote: A('Some of these actions reach your whole account: no loan or offer has to name the keeper, so it can take them as soon as access is on.'),
     scopeLoan: B('only on loans and offers that name it'),
     scopeAccount: B('across your account'),
     neverFunds: A('A keeper never receives your funds and cannot claim, withdraw or transfer anything; you can take any permission back at any time.'),
@@ -5265,7 +5485,9 @@ export const copy = {
     basicPointer: B('To change your risk level or strict mode, switch to Advanced mode.'),
     helpBlueChip: B('This network’s main assets, and those the protocol’s own checks find most traded. Every wallet starts here.'),
     helpLiquid: B('Adds assets with a trusted price and enough trading, so a loan can be liquidated at that price.'),
-    helpAny: A('Adds NFTs and assets with no price the protocol trusts: on default the lender receives the collateral as it is. Each such pair also needs your agreement.'),
+    helpAny: A(
+      'Adds NFTs and assets with no price the protocol trusts: on default the lender receives the collateral as it is. Each such pair also needs your agreement.',
+    ),
     chooseRaise: B('Raise to this level'),
     chooseLower: B('Lower to this level'),
     isCurrent: B('This is your level now.'),
@@ -5285,10 +5507,14 @@ export const copy = {
     strictTurnsOff: B('Off'),
     scopeAccount: B('This wallet on {{chain}}, for new offers and requests'),
     strictOffLater: B('Strict mode keeps applying for about {{span}} after it is recorded, until around {{when}}'),
-    lowerLose: A('Offers and requests on pairs above this level close to you at once, and your own open ones on those pairs cannot be taken. Loans you already have are not affected.'),
+    lowerLose: A(
+      'Offers and requests on pairs above this level close to you at once, and your own open ones on those pairs cannot be taken. Loans you already have are not affected.',
+    ),
     replacesChoice: A('This replaces your choice of “{{held}}”, which was still waiting.'),
     gateOffSaved: A('This network does not enforce risk levels right now, so this is saved and counts only if the check is switched on.'),
-    strictOnLose: A('Each liquid pair then needs your acknowledgement before you create or take an offer on it; each one can wait out the protocol’s period first.'),
+    strictOnLose: A(
+      'Each liquid pair then needs your acknowledgement before you create or take an offer on it; each one can wait out the protocol’s period first.',
+    ),
     strictOnOffLater: B('You can turn it off later; it keeps applying for the protocol’s waiting period.'),
     strictOffLose: A('Liquid pairs open to you without a per-pair acknowledgement once the waiting period ends.'),
     legStrictOn: B('Strict mode on'),
@@ -5344,8 +5570,12 @@ export const copy = {
     notHeld: A('Your wallet no longer holds the NFT, so there was no approval to put back.'),
     restored: A('The NFT approval was put back to what it was.'),
     restoreChanged: A('The NFT approval was not put back: something else changed it since. Check it in your wallet.'),
-    restorePending: A('Whether the NFT approval was put back could not be read (transaction {{hash}}). Check it in your wallet and clear it there if it is still set.'),
-    restoreNotLanded: A('The NFT approval was not put back: the reset did not land. It still lets the protocol move this one NFT; you can clear it from your wallet.'),
+    restorePending: A(
+      'Whether the NFT approval was put back could not be read (transaction {{hash}}). Check it in your wallet and clear it there if it is still set.',
+    ),
+    restoreNotLanded: A(
+      'The NFT approval was not put back: the reset did not land. It still lets the protocol move this one NFT; you can clear it from your wallet.',
+    ),
     restoreFailed: A('The NFT approval was not put back ({{reason}}). It may still let the protocol move this one NFT; check it in your wallet.'),
     legBack: B('NFT approval put back, since the transaction did not go through'),
   },
@@ -5385,7 +5615,7 @@ export const copy = {
     sourceChainUndated: B('Read from the chain at block {{block}}, {{time}}.'),
     sourceSummary: B('Where these settings come from.'),
     sourceWhy: C(
-      "The index keeps a snapshot of these settings and refreshes it when it sees a governance change. The page shows that snapshot only while it is dated, less than a day old, not behind a change the index has seen, labelled by name, and complete, listing any setting the protocol did not answer. Otherwise it reads every setting from the chain at one block and says why. A chain answer older than the snapshot counts as failed, and with no usable answer the settings are unknown, never unset.",
+      'The index keeps a snapshot of these settings and refreshes it when it sees a governance change. The page shows that snapshot only while it is dated, less than a day old, not behind a change the index has seen, labelled by name, and complete, listing any setting the protocol did not answer. Otherwise it reads every setting from the chain at one block and says why. A chain answer older than the snapshot counts as failed, and with no usable answer the settings are unknown, never unset.',
       'console-source',
     ),
     noReason: B('no reason given'),
@@ -5407,7 +5637,9 @@ export const copy = {
       old: B('The index’s snapshot is more than a day old, so the settings were read from the chain.'),
       partial: B('The index’s snapshot holds only some of the settings, so all of them were read from the chain.'),
     },
-    unknownRead: A("The settings on {{chain}} are unknown: the snapshot could not be used and the chain read failed ({{reason}}). Nothing below states a setting's value."),
+    unknownRead: A(
+      "The settings on {{chain}} are unknown: the snapshot could not be used and the chain read failed ({{reason}}). Nothing below states a setting's value.",
+    ),
     unknownBehind: A(
       "The settings on {{chain}} are unknown: the chain answered from block {{direct}}, older than the snapshot's block {{snapshot}}, so it could miss a change. Nothing below states a setting's value.",
     ),
@@ -5470,7 +5702,10 @@ export const copy = {
       ),
     },
     switch: {
-      partialFill: { name: B('Partial-fill matching'), effect: B('Off: the order matcher is closed and an accepted offer fills once. Open loans are unaffected.') },
+      partialFill: {
+        name: B('Partial-fill matching'),
+        effect: B('Off: the order matcher is closed and an accepted offer fills once. Open loans are unaffected.'),
+      },
       lenderIntent: { name: B('Lender intents'), effect: B('Off: no lender intent is filled. Open loans are unaffected.') },
       autoLend: { name: B('Automatic lending'), effect: B('Off: no one can turn automatic lending on. Open loans are unaffected.') },
       periodicInterest: { name: B('Periodic interest'), effect: B('Off: new loans cannot carry a periodic interest schedule.') },
@@ -5616,14 +5851,13 @@ export const copy = {
     ),
     whySummary: B('Each figure is read at the block above; a figure that failed says so.'),
     why: C(
-      'Every figure on this page is read from the protocol contract on the chosen network, all at one block, so the parts and their totals describe the same moment. A figure that could not be read says so in its place and is never shown as zero. A rate with nothing to divide by, such as the default rate before any loan has opened, says there is none yet. Values in the reference currency use the protocol’s own valuation rule, the one it uses for loan-to-value; an asset it cannot value counts as nothing in a total, and the page names that asset. The counters start with this deployment.',
+      'Every figure on this page is read from the protocol contract on the chosen network, all at one block, so the parts and their totals describe the same moment. A figure that could not be read says so in its place and is never shown as zero. A rate with nothing to divide by, such as the average rate before any loan has opened, says there is none yet. Values in the reference currency use the protocol’s own valuation rule, the one it uses for loan-to-value; an asset it cannot value counts as nothing in a total, and the page names that asset. The counters start with this deployment.',
       'analytics-figures',
     ),
     unread: B('Not read: {{reason}}'),
     unitUnnamed: B('the reference currency, whose name is not set'),
     valueUnnamed: B('{{value}} (reference currency not named)'),
     rate: B('{{rate}}%'),
-    rateOfLoans: B('{{rate}}% of loans opened'),
     noLoansYet: B('None yet: no loan has opened'),
     activityTitle: B('Activity'),
     openLoans: B('Open loans'),
@@ -5633,7 +5867,9 @@ export const copy = {
     users: B('Wallets that took part'),
     usersWhat: B('Wallets that took part have lent, borrowed or posted an offer.'),
     averageRate: B('Average agreed rate'),
-    defaultRate: B('Ended in default or liquidation'),
+    noDefaultRate: A(
+      'No default rate is shown: the protocol’s counter for it also counts loans settled after an ordinary repayment, so it cannot tell a default from a normal close.',
+    ),
     openTitle: B('Value on open loans'),
     openValuedNow: A('Valued now in {{unit}} by the protocol’s own rule. An asset it cannot value counts as nothing here.'),
     lockedTotal: B('Total'),
@@ -5672,16 +5908,18 @@ export const copy = {
     feesWindowCap: B('The 24-hour and 7-day figures scan at most the newest {{limit}} fees.'),
     feesWhySummary: B('Past that many fees, those two figures are a lower bound.'),
     feesWhy: C(
-      'Each fee is recorded with its value in the reference currency at the moment it was collected, so a later price change does not move it. A fee in an asset the protocol could not value then is recorded at nothing, though the fee itself was still taken. The total since the start keeps a running sum of every record. The 24-hour and 7-day figures add up records from the newest back, and stop after a fixed number, so if more fees than that fell in the window, the figure shown is less than the real one. The treasury is the address the protocol sends fees to; when that is an outside account, the protocol contract keeps no fee balance at all.',
+      'Each fee is recorded with its value in the reference currency at the moment it was collected, so a later price change does not move it. A fee in an asset the protocol could not value then is recorded at nothing, though the fee itself was still taken. The total since the start keeps a running sum of every record. The 24-hour and 7-day figures add up records from the newest back, and stop after a fixed number, so if more fees than that fell in the window, the figure shown is less than the real one. The treasury shown is the one current vault code pays; a vault still on older code pays the treasury its own code names, and fees that reached the protocol contract stay there, which is why the page always shows what the contract holds.',
       'analytics-fees',
     ),
     treasuryTitle: B('Treasury'),
-    custodyExternalLead: A('Fees go straight to the treasury at'),
-    custodyExternal: A('The protocol contract keeps none of them, so it holds no fee balance.'),
-    custodyDiamondLead: A('The protocol contract keeps the fees itself, at'),
+    custodyExternalLead: A('Current vault code sends fees to the treasury at'),
+    custodyDiamondLead: A('Current vault code sends fees to the protocol contract itself, at'),
+    heldWhy: A(
+      'A vault still on older code pays the treasury its own code names, and fees that reached the protocol contract earlier stay there, so the contract can hold fees whatever the treasury above is.',
+    ),
     custodyUnset: A('No treasury is set on {{chain}}, so the protocol has nowhere to send fees.'),
     custodyUnread: A('Where the protocol sends fees could not be read ({{reason}}).'),
-    held: B('Fees held, in assets of open loans'),
+    held: B('Fees held at the protocol contract, in assets of open loans'),
     heldNote: A('This counts only assets that appear on open loans. Fees held in any other asset are not in it.'),
     lastConversion: B('Held fees last converted'),
     neverConverted: B('Never'),
@@ -5716,7 +5954,9 @@ export const copy = {
       ),
       homeUnnamed: B('the home network'),
       homeUnread: A('Whether {{chain}} is VPFI’s home network could not be read, so no cap is shown for it.'),
-      mintGoverned: A('Only the minter can mint, and only the token’s owner can change the minter. The owner is the governance timelock, so a change of minter waits out its delay.'),
+      mintGoverned: A(
+        'Only the minter can mint, and only the token’s owner can change the minter. The owner is the governance timelock, so a change of minter waits out its delay.',
+      ),
       mintOwner: A(
         'Only the minter can mint, and only the token’s owner can change the minter. The owner shown is not the governance timelock this app’s record names, so this page cannot say such a change must wait.',
       ),
@@ -5753,7 +5993,9 @@ export const copy = {
         rewardsLabel: B('Platform interaction rewards'),
         rewards: A('30% · 69,000,000 VPFI · rewards for using the platform'),
         reserveLabel: B('Reserve'),
-        reserve: A('24% · 55,200,000 VPFI · undecided: governance has not chosen whether to hold it, burn it to lower the cap, or reallocate it, and none is minted until then'),
+        reserve: A(
+          '24% · 55,200,000 VPFI · undecided: governance has not chosen whether to hold it, burn it to lower the cap, or reallocate it, and none is minted until then',
+        ),
         totalLabel: B('Total'),
         total: A('100% · 230,000,000 VPFI'),
       },
@@ -5818,7 +6060,9 @@ export const copy = {
       pause: A('Pauses {{target}}.'),
       unpause: A('Unpauses {{target}}.'),
       ownership: A('Names {{owner}} as the new owner of {{target}}. Where ownership moves in two steps, it moves only when that address accepts.'),
-      ownershipZero: A('Calls the ownership handover of {{target}} with the zero address. Where ownership moves in two steps, this cancels a pending handover.'),
+      ownershipZero: A(
+        'Calls the ownership handover of {{target}} with the zero address. Where ownership moves in two steps, this cancels a pending handover.',
+      ),
       upgrade: A('Replaces the code of {{target}} with the code at {{address}}.'),
       call: B('Calls {{fn}} on {{target}}.'),
       transfer: A('Sends the amount below to {{target}}, with no call.'),
