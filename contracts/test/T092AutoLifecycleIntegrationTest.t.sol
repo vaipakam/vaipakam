@@ -299,6 +299,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: LOAN_PRINCIPAL,
@@ -339,6 +340,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 rateBps
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mockERC20,
             amount: LOAN_PRINCIPAL,
@@ -834,6 +836,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: LOAN_PRINCIPAL,
@@ -1212,6 +1215,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         return OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: LOAN_PRINCIPAL,

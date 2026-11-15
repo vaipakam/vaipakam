@@ -134,6 +134,11 @@
             "internalType": "bool"
           },
           {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
@@ -532,6 +537,11 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "creatorFull",
@@ -968,6 +978,11 @@
             "internalType": "bool"
           },
           {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
@@ -1169,6 +1184,11 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "creatorFull",
@@ -1479,6 +1499,11 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "creatorFull",

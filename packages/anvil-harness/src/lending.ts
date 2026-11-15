@@ -137,6 +137,7 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
       useFullTermInterest: t.fullTermInterest ?? false,
+      lifecycleFlex: 0, // #3621
     },
     validUntil,
   ]);
@@ -199,6 +200,7 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
+      lifecycleFlex: 0, // #3621
     },
     validUntil,
   ]);

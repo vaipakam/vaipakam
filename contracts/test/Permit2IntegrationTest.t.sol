@@ -325,6 +325,7 @@ contract Permit2IntegrationTest is SetupTest {
     {
         return
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: principal,

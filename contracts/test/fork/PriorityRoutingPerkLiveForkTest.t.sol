@@ -259,6 +259,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
         vm.prank(borrower);
         offerId = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: weth,
                 amount: PRINCIPAL,

@@ -331,6 +331,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
@@ -422,6 +423,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
@@ -516,6 +518,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
                 amount: PRINCIPAL,

@@ -570,6 +570,7 @@
     "L|vaipakam@19[uint256]|23|9|uint16|offers[].rentalBufferBpsAtCreate",
     "L|vaipakam@19[uint256]|24|0|uint256|offers[].creatorMaxCStar",
     "L|vaipakam@19[uint256]|25|0|uint64|offers[].termsSetAt",
+    "L|vaipakam@19[uint256]|25|8|uint8|offers[].lifecycleFlex",
     "L|vaipakam@19[uint256]|2|0|address|offers[].lendingAsset",
     "L|vaipakam@19[uint256]|3|0|uint256|offers[].amount",
     "L|vaipakam@19[uint256]|4|0|uint256|offers[].interestRateBps",

@@ -237,6 +237,7 @@ contract BaseSepoliaPartialFlows is Script {
         nft721.approve(diamond, nftTokenId);
         uint256 offerE = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(usdc),
                 amount: LOAN_AMOUNT,
@@ -296,6 +297,7 @@ contract BaseSepoliaPartialFlows is Script {
         nft721.approve(diamond, rentTokenId);
         uint256 offerF = OfferCreateFacet(diamond).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft721),
                 amount: DAILY_FEE,
@@ -368,6 +370,7 @@ contract BaseSepoliaPartialFlows is Script {
 
     function _lenderOfferParams() internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: address(usdc),
             amount: LOAN_AMOUNT,
@@ -399,6 +402,7 @@ contract BaseSepoliaPartialFlows is Script {
 
     function _borrowerOfferParams() internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: address(usdc),
             amount: LOAN_AMOUNT,

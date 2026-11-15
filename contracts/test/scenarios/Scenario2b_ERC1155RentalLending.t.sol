@@ -362,6 +362,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNft1155),
                 amount: DAILY_FEE,

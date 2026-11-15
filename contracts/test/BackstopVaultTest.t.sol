@@ -198,6 +198,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -596,6 +597,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -657,6 +659,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockCollateralERC20,
                 amount: PRINCIPAL,

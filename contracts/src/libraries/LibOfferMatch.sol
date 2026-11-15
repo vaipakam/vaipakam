@@ -827,13 +827,22 @@ library LibOfferMatch {
         return !L.useFullTermInterest && !B.useFullTermInterest && bTerm < L.durationDays;
     }
 
+    /// @dev #3621 — partial repayment and the prepay listing agree when the
+    ///      two offers name the same value OR the lender offer marks the
+    ///      option "either" ({LibVaipakam.Offer.lifecycleFlex}); the loan then
+    ///      takes the borrower offer's value, as it does for every lifecycle
+    ///      term. The interest mode, the cadence and an NFT loan's rental-fee
+    ///      asset stay exact.
     function _lifecycleTermsAgree(
         LibVaipakam.Offer memory L,
         LibVaipakam.Offer storage B
     ) private view returns (bool) {
+        uint8 flex = L.lifecycleFlex;
         return L.useFullTermInterest == B.useFullTermInterest
-            && L.allowsPartialRepay == B.allowsPartialRepay
-            && L.allowsPrepayListing == B.allowsPrepayListing
+            && (L.allowsPartialRepay == B.allowsPartialRepay
+                || flex & LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY != 0)
+            && (L.allowsPrepayListing == B.allowsPrepayListing
+                || flex & LibVaipakam.LIFECYCLE_FLEX_PREPAY_LISTING != 0)
             && L.periodicInterestCadence == B.periodicInterestCadence
             && (B.assetType == LibVaipakam.AssetType.ERC20 || L.prepayAsset == B.prepayAsset);
     }

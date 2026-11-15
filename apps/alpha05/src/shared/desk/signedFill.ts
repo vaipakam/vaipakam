@@ -75,6 +75,7 @@ export function storedOfferFromSigned(o: SignedOrderWire): StoredOffer {
     refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
     parallelSaleOrderHash: ZERO_HASH,
     periodicInterestCadence: Number(o.periodicInterestCadence),
+    lifecycleFlex: Number(o.lifecycleFlex),
     expiresAt: BigInt(o.expiresAt),
     accepted: false,
     creatorFull: o.creatorFull,

@@ -446,6 +446,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -666,6 +667,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: otherToken,
                 amount: PRINCIPAL,
@@ -709,6 +711,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 longOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -750,6 +753,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 lowCollOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -791,6 +795,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 wrongAmtOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL / 2,
@@ -833,6 +838,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         uint256 selfOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -877,6 +883,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -980,6 +987,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1023,6 +1031,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1095,6 +1104,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1203,6 +1213,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1324,6 +1335,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 partialOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1373,6 +1385,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 highRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1423,6 +1436,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 lowRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1476,6 +1490,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2116,6 +2131,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 badCollOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2159,6 +2175,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2205,6 +2222,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2285,6 +2303,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2340,6 +2359,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2398,6 +2418,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2464,6 +2485,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2539,6 +2561,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -2630,6 +2653,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: perDay,
@@ -2924,6 +2948,7 @@ contract PrecloseFacetTest is Test {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mockERC20,
             amount: amount,
@@ -2997,6 +3022,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3052,6 +3078,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 badOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3096,6 +3123,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3148,6 +3176,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3368,6 +3397,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3418,6 +3448,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3483,6 +3514,7 @@ contract PrecloseFacetTest is Test {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,

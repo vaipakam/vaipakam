@@ -62,6 +62,7 @@ function payload(p: Partial<CreateOfferPayload> = {}): CreateOfferPayload {
     allowsPrepayListing: false,
     refinanceTargetLoanId: 0n,
     useFullTermInterest: false,
+    lifecycleFlex: 0,
     ...p,
   };
 }

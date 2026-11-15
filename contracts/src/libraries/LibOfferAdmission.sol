@@ -57,6 +57,12 @@ library LibOfferAdmission {
     ///         is `cap`. Cancelling one (an expired one too: an expired offer
     ///         stays open until cancelled) makes room.
     error TooManyOpenOffers(uint256 open, uint256 cap);
+    /// @notice #3621 — an "either" mark was set on an offer that cannot carry
+    ///         one: a borrower offer, an NFT rental, or an offer the protocol
+    ///         posts on a user's behalf (a lender-sale vehicle, an offset).
+    error LifecycleFlexNotAllowed();
+    /// @notice #3621 — `flex` sets a bit outside the defined "either" marks.
+    error LifecycleFlexUnknownBits(uint8 flex);
 
     /// @notice Reverts with the first bound `offer`, just written by a
     ///         creation through `route`, breaks; returns when it is admitted.
@@ -72,6 +78,22 @@ library LibOfferAdmission {
             uint256 cap = LibVaipakam.cfgMaxOpenOffersPerWallet();
             if (open >= cap) revert TooManyOpenOffers(open, cap);
         }
+    }
+
+    /// @notice #3621 — the rule for a lender's "either" marks
+    ///         ({LibVaipakam.Offer.lifecycleFlex}). Only an ERC-20 lender offer
+    ///         a user posts or signs may carry them, and only the defined bits.
+    ///         Runs on every route, so a signed offer turned into an on-chain
+    ///         one is held to it too.
+    function enforceLifecycleFlex(LibVaipakam.Offer storage offer, Route route) internal view {
+        uint8 flex = offer.lifecycleFlex;
+        if (flex == 0) return;
+        if (flex & ~LibVaipakam.LIFECYCLE_FLEX_MASK != 0) revert LifecycleFlexUnknownBits(flex);
+        if (
+            route == Route.OnBehalf
+                || offer.offerType != LibVaipakam.OfferType.Lender
+                || offer.assetType != LibVaipakam.AssetType.ERC20
+        ) revert LifecycleFlexNotAllowed();
     }
 
     /// @notice Reverts {OfferBelowMinimumValue} when a liquid ERC-20

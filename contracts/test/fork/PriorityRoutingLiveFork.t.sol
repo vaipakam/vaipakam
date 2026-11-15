@@ -291,6 +291,7 @@ contract PriorityRoutingLiveFork is Test {
         ERC20Mock(collAsset).approve(address(d), type(uint256).max);
         offerId = d.createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: lendAsset,
                 amount: PRINCIPAL,

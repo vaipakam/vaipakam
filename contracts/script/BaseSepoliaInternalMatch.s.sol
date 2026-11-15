@@ -630,6 +630,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lendAsset,
             amount: amount,

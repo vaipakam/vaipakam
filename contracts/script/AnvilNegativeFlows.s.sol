@@ -382,6 +382,7 @@ contract AnvilNegativeFlows is Script {
 
     function _lenderOfferStandard() internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: address(usdc),
             amount: LOAN_AMOUNT,

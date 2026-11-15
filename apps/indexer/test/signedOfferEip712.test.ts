@@ -69,6 +69,7 @@ const CONTRACT_TYPE_STRING =
   'uint8 periodicInterestCadence,' +
   'uint256 refinanceTargetLoanId,' +
   'bool useFullTermInterest,' +
+  'uint8 lifecycleFlex,' +
   'bool creatorFull,' +
   'uint256 creatorMaxCStar,' +
   'bool creatorAllowFullDowngrade,' +
@@ -129,6 +130,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -153,7 +155,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(35);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(36);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {
@@ -326,7 +328,7 @@ describe('validateOrder — the POST shape gate', () => {
     expect('order' in out && out.order.maxTreasuryFeeBps).toBe('0');
   });
 
-  it('rejects a missing / extra field (exact 35-key contract)', () => {
+  it('rejects a missing / extra field (exact 36-key contract)', () => {
     const missing = makeOrder() as unknown as Record<string, unknown>;
     delete missing.nonce;
     expectError(missing, 'order-field-count');

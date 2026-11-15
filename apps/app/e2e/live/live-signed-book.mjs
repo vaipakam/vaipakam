@@ -412,6 +412,8 @@ function wireToStruct(o) {
     periodicInterestCadence: Number(o.periodicInterestCadence),
     refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
     useFullTermInterest: o.useFullTermInterest,
+    // #3621 — the lender's "either" bits are part of the signed struct.
+    lifecycleFlex: Number(o.lifecycleFlex ?? 0),
     // #1949 — the maker's Full tariff opt-in is part of the signed struct.
     creatorFull: o.creatorFull,
     creatorMaxCStar: BigInt(o.creatorMaxCStar),

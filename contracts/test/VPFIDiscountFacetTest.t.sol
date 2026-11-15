@@ -453,6 +453,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockNft721,
             amount: 10,
@@ -1270,6 +1271,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         return
             OfferCreateFacet(address(diamond)).createOffer(
                 LibVaipakam.CreateOfferParams({
+                    lifecycleFlex: 0,
                     offerType: LibVaipakam.OfferType.Lender,
                     lendingAsset: mockERC20,
                     amount: amount,

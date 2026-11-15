@@ -125,6 +125,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(lender);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -347,6 +348,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(lender);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10 ether, // rental fee
@@ -936,6 +938,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(borrower);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,

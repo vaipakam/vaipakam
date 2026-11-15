@@ -42,6 +42,7 @@ contract AssetLtvCeilingTest is SetupTest {
 
     function _params(uint256 collateral) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,

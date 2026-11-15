@@ -651,6 +651,13 @@ contract OfferPreviewFacet {
             params.assetType != LibVaipakam.AssetType.ERC20
                 || params.collateralAssetType != LibVaipakam.AssetType.ERC20
                 || params.refinanceTargetLoanId != 0
+                // #3621 — the lender's "either" marks: only a lender may carry
+                // them, and only the known bits. The fill refuses the rest at
+                // `OfferBookFacet.openOfferOnBook` (`LifecycleFlexNotAllowed` /
+                // `LifecycleFlexUnknownBits`); this view names it as a shape
+                // the signed path cannot take.
+                || (params.lifecycleFlex != 0 && params.offerType != LibVaipakam.OfferType.Lender)
+                || (params.lifecycleFlex & ~LibVaipakam.LIFECYCLE_FLEX_MASK) != 0
         ) return OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape;
         // `OfferCreateFacet._createOfferSetup`'s live gates, at their place in
         // the fill: before the stake is read. Either can change after the

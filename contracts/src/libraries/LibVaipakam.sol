@@ -103,6 +103,13 @@ library LibVaipakam {
     ///      clamp keeps a high hold-tier from crossing 50% after the bump.
     uint256 constant FULL_MODE_FEE_DISCOUNT_BONUS_BPS = 1000;
     uint256 constant BASIS_POINTS = 10000;
+
+    /// @notice #3621 — {Offer.lifecycleFlex} bits: a lender offer marks an
+    ///         option "either" (it takes both borrower settings in a match).
+    uint8 constant LIFECYCLE_FLEX_PARTIAL_REPAY = 1;
+    uint8 constant LIFECYCLE_FLEX_PREPAY_LISTING = 2;
+    /// @notice Every defined {Offer.lifecycleFlex} bit; any other is refused.
+    uint8 constant LIFECYCLE_FLEX_MASK = 3;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
     uint256 constant HF_LIQUIDATION_THRESHOLD = 1e18; // HF < 1 for liquidation
     uint256 constant SECONDS_PER_YEAR = 365 days;
@@ -1822,6 +1829,9 @@ library LibVaipakam {
         // unreachable dead code, so `settlementInterest` always
         // returned pro-rata regardless of intent.
         bool useFullTermInterest;
+        // #3621 — lender-only "either" marks for the partial-repay and
+        // prepay-listing options ({Offer.lifecycleFlex}). 0 = both exact.
+        uint8 lifecycleFlex;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -2085,6 +2095,16 @@ library LibVaipakam {
         // filled. Written only through `LibTiming.stampOfferTerms`.
         // Appended — append-only.
         uint64 termsSetAt;
+        // #3621 — a LENDER offer's "either" marks for lifecycle options the
+        // borrower offer decides: bit 0 (`LIFECYCLE_FLEX_PARTIAL_REPAY`) = the
+        // lender also takes a borrower offer whose partial-repay setting
+        // differs from its own; bit 1 (`LIFECYCLE_FLEX_PREPAY_LISTING`) = the
+        // same for the prepay listing. Read only by the match rule
+        // (`LibOfferMatch`); the loan still copies the borrower offer, and a
+        // direct accept takes the stored values. 0 on every borrower offer,
+        // sale vehicle and NFT rental (refused at posting). Immutable after
+        // creation (no edit changes it). Appended.
+        uint8 lifecycleFlex;
     }
 
     /**

@@ -134,6 +134,11 @@
             "internalType": "bool"
           },
           {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
