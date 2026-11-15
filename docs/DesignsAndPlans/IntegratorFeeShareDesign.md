@@ -52,7 +52,8 @@ A refinance and a roll open new loans with their own fee, and are credited by th
 ## 6. Payment
 
 - The share is paid when the fee is collected, in the lending asset, by the one fee host that already divides the fee. Order: the treasury floor, the matcher's share as today, the integrator's share, the rest to the reserve.
-- It is delivered into the **integrator's own vault** on the platform, not pushed to an outside address. The vault is the platform's code and cannot refuse a transfer, so an integrator can never cause an accept to fail. The integrator withdraws through the ordinary vault payout, which carries the sanctions gate and the outflow policy.
+- It is delivered into the **integrator's own vault** on the platform, not pushed to an outside address. The integrator withdraws through the ordinary vault payout, which carries the sanctions gate and the outflow policy.
+- **The delivery can never fail the loan.** The vault's own code cannot refuse a transfer, but the token can: an issuer may block the vault's address. So the delivery is one isolated step that is allowed to fail alone. If it fails for any reason, or delivers less than was sent, that step is undone and the whole share goes to the reserve in the same transaction, with an event naming the integrator, the amount and that it was redirected. The loan opens either way.
 - If the integrator is flagged at the moment of payment, the share goes to the reserve.
 - One event states the loan, the integrator, the asset and the amount. The loan-opened review in the app and the public analytics show it.
 
@@ -82,7 +83,7 @@ The accept facets are close to the size limit; the share is computed in the fee 
 1. With and without an integrator the borrower pays the same fee; the treasury receives the same floor.
 2. The share at the default rate, a per-integrator rate, the ceiling; a discounted fee; a fee at the floor.
 3. Naming: direct accept, a borrower offer filled by accept and by a match, an Auto-lend fill; a lender-side or matcher-supplied tag is ignored.
-4. An unregistered, removed or flagged integrator: the loan opens and the share goes to the reserve.
+4. An unregistered, removed or flagged integrator: the loan opens and the share goes to the reserve. The same when the token refuses the transfer to the integrator's vault or delivers short: the loan opens, the reserve receives the share, the event says so.
 5. An extension pays no integrator share.
 6. The payment lands in the integrator's vault and leaves only through the ordinary payout.
 7. A rate change does not affect a loan already open.
