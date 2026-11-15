@@ -74,7 +74,7 @@ export function repairObservationToJson(row: RepairObservationRow): Record<strin
 export function repairObservationsPage(
   db: D1Database,
   chainId: number,
-  opts: { loanId?: number; before?: { block: number; logIndex: number } },
+  opts: { loanId?: number; before?: { block: number; logIndex: number }; wallet?: string },
   limit: number,
 ): D1PreparedStatement {
   const beforeBlock = opts.before?.block ?? null;
@@ -89,8 +89,10 @@ export function repairObservationsPage(
         WHERE chain_id = ?1 AND repair_observed_block IS NOT NULL
           AND (?2 IS NULL OR loan_id = ?2)
           AND (?3 IS NULL OR repair_observed_block < ?3 OR (repair_observed_block = ?3 AND loan_id < ?4))
+          -- #3677: one wallet's loans (every loan it ever held a position in).
+          AND (?6 IS NULL OR loan_id IN (SELECT lp.loan_id FROM loan_participants lp WHERE lp.chain_id = ?1 AND lp.wallet = ?6))
         ORDER BY repair_observed_block DESC, loan_id DESC
         LIMIT ?5`,
     )
-    .bind(chainId, opts.loanId ?? null, beforeBlock, loanBound, limit);
+    .bind(chainId, opts.loanId ?? null, beforeBlock, loanBound, limit, opts.wallet ?? null);
 }
