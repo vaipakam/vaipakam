@@ -334,3 +334,31 @@ export function activityLines(events: readonly ActivityEvent[], repairs: readonl
   }
   return lines;
 }
+
+/** What the page may claim about the end of the history it shows. */
+export interface HistoryClaims {
+  /** "No activity yet": only when the whole history is known and empty, the
+   *  newest blocks were read in full and hold nothing, and no row was
+   *  unreadable. */
+  empty: boolean;
+  /** "That is all the activity the index holds": only when the whole final
+   *  history is known and some of it is shown. */
+  end: boolean;
+}
+
+/**
+ * The one rule for those two claims. The final history is whole only when
+ * every page is loaded, the index's participant record is complete
+ * (`walletComplete === true`) and every page's loan endings were read; while
+ * any of that is unknown or partial, neither claim is made, and the page's
+ * own notices say what may be missing.
+ */
+export function historyClaims(pages: readonly ActivityPage[] | undefined, hasNextPage: boolean, lineCount: number): HistoryClaims {
+  if (pages === undefined || pages.length === 0 || hasNextPage) return { empty: false, end: false };
+  const first = pages[0]!;
+  const whole = first.walletComplete === true && pages.every((p) => p.repairsKnown);
+  if (!whole) return { empty: false, end: false };
+  const unreadable = pages.reduce((n, p) => n + p.unreadable, 0);
+  const pendingEmpty = first.pending !== null && first.pending !== undefined && first.pending.complete && first.pending.events.length === 0;
+  return { empty: lineCount === 0 && unreadable === 0 && pendingEmpty, end: lineCount > 0 };
+}

@@ -3,7 +3,7 @@ import { participantKinds } from '@vaipakam/lib/activityParticipants';
 import { refScopedKinds } from '@vaipakam/lib/activityRefs';
 import { copyEntry, type CopyAccess, type CopyKey } from '../copy/useCopy';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
-import { activityLines, parseActivityEvent, parseRepairEntry, readActivityPage, type ActivityEvent } from './activity';
+import { activityLines, historyClaims, parseActivityEvent, parseRepairEntry, readActivityPage, type ActivityEvent, type ActivityPage } from './activity';
 import { amountLine } from './amountLine';
 import { kindKey, namedKinds } from './useWalletActivity';
 
@@ -199,5 +199,37 @@ describe('amountLine', () => {
     const meta = { [TOKEN]: { symbol: 'USDC', decimals: 6 } };
     expect(amountLine(ev({ asset: TOKEN, assetType: 2, tokenId: 4n, quantity: null }), meta, copy)).toBe('NFT #4 of USDC, number of copies not recorded');
     expect(amountLine(ev({ asset: TOKEN, assetType: 2, tokenId: 4n, quantity: 1n }), meta, copy)).toBe('NFT #4 of USDC × 1');
+  });
+});
+
+describe('historyClaims', () => {
+  const lane = { events: [], complete: true, readAt: 1 };
+  const page = (over: Partial<ActivityPage> = {}): ActivityPage => ({
+    events: [],
+    repairs: [],
+    repairsKnown: true,
+    pending: lane,
+    walletComplete: true,
+    nextBefore: null,
+    unreadable: 0,
+    ...over,
+  });
+
+  it('says the history is empty only when all of it is known and nothing is pending', () => {
+    expect(historyClaims([page()], false, 0)).toEqual({ empty: true, end: false });
+    expect(historyClaims([page()], false, 3)).toEqual({ empty: false, end: true });
+  });
+
+  it('claims neither while older history, loan endings or the newest blocks may be missing', () => {
+    const none = { empty: false, end: false };
+    expect(historyClaims([page({ walletComplete: false })], false, 0)).toEqual(none);
+    expect(historyClaims([page({ walletComplete: null })], false, 2)).toEqual(none);
+    expect(historyClaims([page({ repairsKnown: false })], false, 2)).toEqual(none);
+    expect(historyClaims([page()], true, 2)).toEqual(none);
+    expect(historyClaims(undefined, false, 0)).toEqual(none);
+    expect(historyClaims([page({ pending: null })], false, 0).empty).toBe(false);
+    expect(historyClaims([page({ pending: { ...lane, complete: false } })], false, 0).empty).toBe(false);
+    expect(historyClaims([page({ pending: { ...lane, events: [ev({ final: false })] } })], false, 0).empty).toBe(false);
+    expect(historyClaims([page({ unreadable: 1 })], false, 0).empty).toBe(false);
   });
 });
