@@ -15,7 +15,7 @@ import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
-import { measureSafety, readSafetyReview, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, stepCall, type SafetyAction, type SafetyDraft, type SafetyReview, type SafetySend } from './safety';
+import { landedBeforeOutcome, measureSafety, readSafetyReview, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, stepCall, type SafetyAction, type SafetyDraft, type SafetyReview, type SafetySend } from './safety';
 import { safetyReceipt } from './safetyReceipt';
 
 /** The store key the card's safety action keeps its state under: one at a
@@ -122,6 +122,9 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
       const legs = measureSafety(review, safetyLogs(sent?.landed ?? [], receipt), diamond, copy);
       return sent?.stopped ? [...legs, sent.stopped] : legs;
     },
+    // A followed step that reverted changed nothing, but the steps before it
+    // did (Codex #3489 r19): the tracker reads them on that ending too.
+    landedBefore: async () => (review ? landedBeforeOutcome(review, sentRef.current, diamond, copy) : []),
     release: async () => null,
   });
 

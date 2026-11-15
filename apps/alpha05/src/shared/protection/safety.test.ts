@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
 import { ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
-import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
+import { dueChanges, landedBeforeOutcome, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
 
 type Hex = `0x${string}`;
@@ -264,6 +264,26 @@ describe('sendSafetySteps and safetyLogs', () => {
     expect(sent.hash).toBe(H2);
     expect(sent.landed.map((l) => l.hash)).toEqual([H1]);
     expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 3', reason: 'unread' });
+  });
+
+  it('a followed step that reverts still reports the steps that landed before it (Codex #3489 r19)', async () => {
+    const sent = await sendSafetySteps(
+      3,
+      async (i) => (i === 0 ? H1 : H2),
+      async (hash) => {
+        if (hash === H2) throw new Error('timed out');
+        return { ok: true, logs: [lowered] };
+      },
+      label,
+      'reverted',
+      'unread',
+    );
+    // The tracker later reads H2 as reverted: the earlier step is measured.
+    const legs = landedBeforeOutcome(finalize, sent, DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'not-done', 'not-done']);
+    expect(legs[2]).toMatchObject({ label: 'step 3', reason: 'unread' });
+    expect(landedBeforeOutcome(finalize, null, DIAMOND, copy)).toEqual([]);
+    expect(landedBeforeOutcome(finalize, { hash: H1, landed: [], stopped: null }, DIAMOND, copy)).toEqual([]);
   });
 
   it('a failure before anything landed is still the action failing', async () => {

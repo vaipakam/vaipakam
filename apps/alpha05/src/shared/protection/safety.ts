@@ -549,3 +549,16 @@ export function safetyLogs(landed: readonly LandedStep[], receipt: { transaction
   const followed = receipt.transactionHash.toLowerCase();
   return [...landed.filter((s) => s.hash.toLowerCase() !== followed).flatMap((s) => s.logs), ...receipt.logs];
 }
+
+/** The outcome of an action's steps that landed BEFORE the receipt the
+ *  tracker followed (Codex #3489 r19), for when that receipt reverted: the
+ *  reverted step changed nothing, but these did. Empty when no earlier step
+ *  landed. */
+export function landedBeforeOutcome(r: SafetyReview, sent: SafetySend | null, diamond: Hex, copy: Copy): LegOutcome[] {
+  if (sent === null) return [];
+  const followed = sent.hash.toLowerCase();
+  const earlier = sent.landed.filter((s) => s.hash.toLowerCase() !== followed);
+  if (earlier.length === 0) return [];
+  const legs = measureSafety(r, earlier.flatMap((s) => s.logs), diamond, copy);
+  return sent.stopped ? [...legs, sent.stopped] : legs;
+}
