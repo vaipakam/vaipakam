@@ -27,7 +27,7 @@
 import {
   hashStruct,
   hashTypedData,
-  recoverTypedDataAddress,
+  recoverAddress,
   type Address,
   type Hex,
   type TypedDataDomain,
@@ -37,6 +37,7 @@ import {
   SIGNED_OFFER_FIELD_NAMES,
   type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
+import { signedDigest, type SignedOfferDomain, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
 
 /** The 35-field SignedOffer typed-data description — struct order EXACTLY as
  *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64).
@@ -56,7 +57,7 @@ export { SIGNED_OFFER_FIELD_NAMES, type SignedOrderWire };
 export function signedOfferDomain(
   chainId: number,
   diamond: Address,
-): TypedDataDomain {
+): SignedOfferDomain {
   return {
     name: 'Vaipakam SignedOffer',
     version: '1',
@@ -136,8 +137,10 @@ export function signedOfferDigest(
 }
 
 /**
- * Verify that `signature` recovers `order.signer` over the order's full
- * EIP-712 digest for this (chainId, diamond) domain.
+ * Verify that `signature` recovers `order.signer` over the digest the maker
+ * signed for this (chainId, diamond) domain: the order's own when it was
+ * signed alone (`placement` null), else the digest of the set it sits in
+ * (#3327 part 2, `@vaipakam/lib/signedOfferSet`).
  *
  * **EOA-only (v1 limitation).** The contract accepts BOTH ECDSA and ERC-1271
  * contract signatures (OZ `SignatureChecker` in `LibSignedOffer.verify`), but
@@ -154,13 +157,11 @@ export async function verifySignedOfferSignature(
   signature: Hex,
   chainId: number,
   diamond: Address,
+  placement: SignedOfferPlacement | null = null,
 ): Promise<boolean> {
   try {
-    const recovered = await recoverTypedDataAddress({
-      domain: signedOfferDomain(chainId, diamond),
-      types: SIGNED_OFFER_TYPES,
-      primaryType: 'SignedOffer',
-      message: toTypedMessage(order),
+    const recovered = await recoverAddress({
+      hash: signedDigest(orderHashOf(order), placement, signedOfferDomain(chainId, diamond)),
       signature,
     });
     return recovered.toLowerCase() === order.signer.toLowerCase();

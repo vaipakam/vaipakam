@@ -198,7 +198,7 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,uint256,uint256,struct:LibSignedOffer.FillAuth)": {
+    "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,uint256,uint256,struct:LibSignedOffer.FillAuth)": {
       "class": "alternative",
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
       "why": "matches an off-chain signed offer the matcher does not index; on-chain offers are matched by matchOffers"
@@ -829,7 +829,7 @@
       "class": "user",
       "why": "the operator's own deposit"
     },
-    "SignedOfferFacet.acceptSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibAcceptTerms.AcceptTerms,bytes,struct:LibSignedOffer.FillAuth)": {
+    "SignedOfferFacet.acceptSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,struct:LibAcceptTerms.AcceptTerms,bytes,struct:LibSignedOffer.FillAuth)": {
       "class": "user",
       "why": "the acceptor takes a signed offer for itself"
     },

@@ -1173,7 +1173,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
         selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -1186,6 +1186,8 @@ contract HelperTest {
         selectors[8] = SignedOfferFacet.cancelSignedOffersBelow.selector;
         selectors[9] = SignedOfferFacet.signedOfferCancelFloor.selector;
         selectors[10] = SignedOfferFacet.hashSignedOfferFill.selector;
+        // #3327 part 2 — the digest a maker signs for a set of offers.
+        selectors[11] = SignedOfferFacet.hashSignedOfferSet.selector;
     }
 
     function getLenderIntentFacetSelectors()

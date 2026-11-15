@@ -46,6 +46,7 @@ import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
+import { canonicalPlacementJson, placementProblem, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
 
 /** A signed offer: the order struct and its signature, which for a smart
  *  account (ERC-6492) can run to a few kilobytes (#2756). */
@@ -523,9 +524,13 @@ function validateOrder(
  * POST /signed-offers
  *
  * Body: `{ chainId: number, order: <35-field SignedOffer wire object>,
- *          signature: 0x-hex }` — every uint as a decimal string, addresses
- * 0x-40-hex, bools as booleans (the same shape GET returns and takers replay
- * on-chain).
+ *          signature: 0x-hex, set?: { others: 0x-hash[], index: number } }` —
+ * every uint as a decimal string, addresses 0x-40-hex, bools as booleans (the
+ * same shape GET returns and takers replay on-chain). `set` is present only
+ * for an order its maker signed as one of a set (#3327 part 2): the other
+ * orders' struct hashes in signing order and this order's index, which the
+ * signature check and a taker's fill both need. Each order of a set is
+ * posted on its own, with its own placement and the same signature.
  *
  * Acceptance pipeline (each step's rationale inline):
  *   1. per-IP rate limit (no-op when the binding isn't provisioned),
@@ -600,6 +605,17 @@ export async function handleSignedOfferPost(
   }
   const order = validated.order;
 
+  // #3327 part 2 — an order the maker signed as one of a set carries its
+  // placement: the other orders' struct hashes in signing order and its own
+  // index. Absent (or null) means it was signed alone.
+  let placement: SignedOfferPlacement | null = null;
+  if (b.set !== undefined && b.set !== null) {
+    const problem = placementProblem(b.set);
+    if (problem !== null) return jsonResponse({ error: problem }, 400);
+    const raw = b.set as { others: string[]; index: number };
+    placement = { others: raw.others as Hex[], index: raw.index };
+  }
+
   // Recompute the EIP-712 struct hash (= the ledger key) and verify the
   // signature recovers order.signer — all local computation via viem, with
   // the domain {name:'Vaipakam SignedOffer', version:'1', chainId,
@@ -617,6 +633,7 @@ export async function handleSignedOfferPost(
     signature,
     chainId,
     chain.diamond as Address,
+    placement,
   );
   if (!sigOk) {
     return jsonResponse({ error: 'bad-signature' }, 400);
@@ -795,8 +812,8 @@ export async function handleSignedOfferPost(
          interest_rate_bps, interest_rate_bps_max,
          amount, amount_max, collateral_amount, collateral_amount_max,
          fill_mode, expires_at, deadline, nonce,
-         status, filled_amount, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+         status, filled_amount, created_at, updated_at, offer_set)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -825,6 +842,7 @@ export async function handleSignedOfferPost(
         initialFilledAmount,
         now,
         now,
+        placement === null ? null : canonicalPlacementJson(placement),
       )
       .run();
     // #1270 — gasless posts never cross the chain scan, so the POST
@@ -879,6 +897,9 @@ interface SignedOfferRow {
   deadline: number;
   /** #3411 — set while a reorg rebuild re-reads the order's state (migration 0089). */
   replay_pending_through: number | null;
+  /** #3327 part 2 — the order's placement in the set its maker signed, as
+   *  JSON; null when it was signed alone (migration 0094). */
+  offer_set: string | null;
 }
 
 /** Hard response cap PER SIDE, and the capped slice is PRICE-RELEVANT,
@@ -975,7 +996,7 @@ export async function handleSignedOffersGet(
     const sideQuery = (offerType: 0 | 1, orderBy: string) =>
       env.DB.prepare(
         `SELECT order_hash, signer, order_json, signature, status,
-                filled_amount, expires_at, deadline, replay_pending_through
+                filled_amount, expires_at, deadline, replay_pending_through, offer_set
            FROM signed_offers
           WHERE chain_id = ? AND status = 'active'
             ${signer !== null ? '' : 'AND replay_pending_through IS NULL'}
@@ -1052,6 +1073,9 @@ export async function handleSignedOffersGet(
       signer: r.signer,
       order: JSON.parse(r.order_json) as unknown,
       signature: r.signature,
+      // #3327 part 2 — where the order sits in the set its maker signed;
+      // null when signed alone. A taker replays it into the fill.
+      set: r.offer_set === null || r.offer_set === undefined ? null : (JSON.parse(r.offer_set) as unknown),
       status: r.status,
       filledAmount: r.filled_amount,
       expiresAt: r.expires_at,

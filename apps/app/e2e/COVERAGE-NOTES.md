@@ -1979,3 +1979,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No spec posts an order that names a taker or a co-signer, because neither app can sign one yet; the contract suite (`SignedOfferBook.t.sol`, `SignedOfferMatcher.t.sol`) drives both, and the follow-up issues for a co-signing service and a taker-binding control carry the app side.
 
+
+
+<a id="cov-signed-offer-sets-3327"></a>
+
+**Journey.** A maker can sign up to 32 orders with one signature, as a readable typed list. Each order of such a set is posted to the book on its own, with its placement (the other orders' hashes and its index); the book serves that placement with the order. The connected app's fill sends it as the fill's set argument, and an order signed alone sends the empty placement. A book row that names a malformed set is dropped from the ladder rather than offered as a fill that would fail.
+
+**Tier.** Unit in `src/lib/signedOffer.test.ts` for the placement read in `signedRowToDeskRow` and for `signedOfferSetArg`. CI-Anvil through the existing signed-book specs, whose fills now carry the set argument against the part 2 contracts. The indexer's set ingest is pinned in `apps/indexer/test/signedOfferRoutes.test.ts` against real migrated SQLite.
+
+**Gap.** No spec fills an order signed in a set, because neither app signs a set yet; the contract suite (`SignedOfferBook.t.sol`, `SignedOfferMatcher.t.sol`) and the indexer test drive set signatures, and the follow-up issue for a ladder-signing screen (#3653) carries the app side.

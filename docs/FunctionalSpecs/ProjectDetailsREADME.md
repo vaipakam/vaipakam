@@ -855,6 +855,24 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   signature itself, so an offer signed before this change cannot be filled
   after it; the book removes such offers.
 
+  **One signature over a set of offers (#3327).** A maker who quotes several
+  offers at once (a ladder of rates or sizes) may sign them together, up to
+  32 offers in one signature. What the wallet shows for that signature is the
+  readable list of every offer's terms, never an opaque digest, so the maker
+  sees exactly what they authorise. Signing together changes nothing else:
+  each offer keeps its own identity, its own fill record, its own deadline,
+  expiry and protections, and is filled, matched, previewed and cancelled on
+  its own. A fill of one offer of a set carries the other offers' identities
+  and its place in the list, which is what lets the signature be checked; a
+  fill that misstates either is refused as an invalid signature. Offers of a
+  set share one nonce by convention, so cancelling that nonce stops the whole
+  set in one step, while cancelling one offer by its own identity leaves the
+  rest standing. The wallet-backed fill (a fill paid straight from the maker's
+  wallet) takes only an offer signed alone. The off-chain book accepts each
+  offer of a set on its own, checks the signature against the set it names,
+  keeps that placement with the offer, and serves it with the order so any
+  taker can fill it.
+
 ### Standing lending intents (v1)
 
 - A lender may register a **standing lending intent** for an ERC-20 asset-pair:
