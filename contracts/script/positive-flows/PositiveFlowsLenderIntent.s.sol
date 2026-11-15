@@ -121,7 +121,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         // listed for the owner, out of the keeper feed, and closed to new
         // capital.
         vm.startBroadcast(lenderKey);
-        LenderIntentFacet(diamond).cancelLenderIntent(address(usdc), address(weth));
+        LenderIntentFacet(diamond).cancelLenderIntent(address(usdc), address(weth), 0);
         vm.stopBroadcast();
         _requireOwnerRow(false, MAX_EXPOSURE - LOAN_AMOUNT, LOAN_AMOUNT,
             "PF-071: a paused intent should stay listed with its reserved capital");
@@ -129,7 +129,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         _requireRefused(
             lender,
             abi.encodeWithSelector(
-                LenderIntentFacet.fundLenderIntent.selector, address(usdc), address(weth), LOAN_AMOUNT
+                LenderIntentFacet.fundLenderIntent.selector, address(usdc), address(weth), uint8(0), LOAN_AMOUNT
             ),
             abi.encodeWithSelector(LenderIntentFacet.LenderIntentNotActive.selector),
             "PF-071: a paused intent should refuse new capital (LenderIntentNotActive)"
@@ -141,7 +141,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         uint256 walletBefore = usdc.balanceOf(lender);
         vm.startBroadcast(lenderKey);
         LenderIntentFacet(diamond).withdrawLenderIntentCapital(
-            lender, address(usdc), address(weth), MAX_EXPOSURE - LOAN_AMOUNT
+            lender, address(usdc), address(weth), 0, MAX_EXPOSURE - LOAN_AMOUNT
         );
         vm.stopBroadcast();
         require(
@@ -197,8 +197,8 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
 
         // Wind down: pause, withdraw everything, and the borrower claims.
         vm.startBroadcast(lenderKey);
-        LenderIntentFacet(diamond).cancelLenderIntent(address(usdc), address(weth));
-        LenderIntentFacet(diamond).withdrawLenderIntentCapital(lender, address(usdc), address(weth), proceeds);
+        LenderIntentFacet(diamond).cancelLenderIntent(address(usdc), address(weth), 0);
+        LenderIntentFacet(diamond).withdrawLenderIntentCapital(lender, address(usdc), address(weth), 0, proceeds);
         vm.stopBroadcast();
         require(usdc.balanceOf(lender) - walletBefore == proceeds, "PF-074: the rolled capital should be withdrawable");
         vm.startBroadcast(borrowerKey);
@@ -220,13 +220,13 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
     function _setIntent() internal {
         vm.startBroadcast(lenderKey);
         LenderIntentFacet(diamond).setLenderIntent(
-            address(usdc), address(weth), MAX_EXPOSURE, INTEREST_BPS, MAX_INIT_LTV_BPS,
+            address(usdc), address(weth), 0, MAX_EXPOSURE, INTEREST_BPS, MAX_INIT_LTV_BPS,
             uint32(DURATION_DAYS), MIN_FILL, false, 0, false, true,
             type(uint64).max
         );
         vm.stopBroadcast();
         LibVaipakam.LenderIntent memory intent =
-            LenderIntentFacet(diamond).getLenderIntent(lender, address(usdc), address(weth));
+            LenderIntentFacet(diamond).getLenderIntent(lender, address(usdc), address(weth), 0);
         require(
             intent.active && intent.maxExposure == MAX_EXPOSURE && intent.minRateBps == INTEREST_BPS
                 && intent.maxInitLtvBps == MAX_INIT_LTV_BPS && intent.minFillAmount == MIN_FILL,
@@ -239,7 +239,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         uint256 capitalBefore = _intentCapital();
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, amount);
-        LenderIntentFacet(diamond).fundLenderIntent(address(usdc), address(weth), amount);
+        LenderIntentFacet(diamond).fundLenderIntent(address(usdc), address(weth), 0, amount);
         vm.stopBroadcast();
         require(walletBefore - usdc.balanceOf(lender) == amount, "PF-070: funding should pull exactly the amount");
         require(_intentCapital() == capitalBefore + amount, "PF-070: funding should add to the intent's capital");
@@ -270,12 +270,12 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         uint256 capitalBefore = _intentCapital();
         uint256 liveBefore = _livePrincipal();
         LibOfferMatch.IntentPreviewResult memory preview = RiskPreviewFacet(diamond).previewIntent(
-            newLender, newLender, lender, address(usdc), address(weth), requestId, amount
+            newLender, newLender, lender, address(usdc), address(weth), 0, requestId, amount
         );
         require(preview.ok, "PF-073: the fill should preview clear");
 
         vm.startBroadcast(newLenderKey);
-        loanId = OfferMatchIntentFacet(diamond).matchIntent(lender, address(usdc), address(weth), requestId, amount);
+        loanId = OfferMatchIntentFacet(diamond).matchIntent(lender, address(usdc), address(weth), 0, requestId, amount);
         vm.stopBroadcast();
 
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
@@ -298,11 +298,11 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
     }
 
     function _intentCapital() internal view returns (uint256) {
-        return LenderIntentFacet(diamond).getLenderIntentCapital(lender, address(usdc), address(weth));
+        return LenderIntentFacet(diamond).getLenderIntentCapital(lender, address(usdc), address(weth), 0);
     }
 
     function _livePrincipal() internal view returns (uint256) {
-        return LenderIntentFacet(diamond).getLenderIntentLivePrincipal(lender, address(usdc), address(weth));
+        return LenderIntentFacet(diamond).getLenderIntentLivePrincipal(lender, address(usdc), address(weth), 0);
     }
 
     /// @dev Requires the owner view to list the module's intent with exactly

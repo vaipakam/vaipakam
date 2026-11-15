@@ -8,6 +8,7 @@ import { fairPairs, pairSpaceFrom } from '../src/fairPairs';
 import {
   MAX_PREVIEW_CALLS_PER_TICK,
   intentFillUnits,
+  groupIntentLadders,
   offerMatchUnits,
   runIntentFillPass,
   type LenderIntentSummary,
@@ -177,7 +178,7 @@ describe('offerMatchUnits — one wallet\'s offers cannot crowd out a genuine ma
 });
 
 describe('intentFillUnits', () => {
-  const intent = (o: `0x${string}`) => ({ owner: o, lendingAsset: LEND, collateralAsset: COLL }) as LenderIntentSummary;
+  const intent = (o: `0x${string}`) => ({ owner: o, lendingAsset: LEND, collateralAsset: COLL, slot: 0, minRateBps: 0n }) as LenderIntentSummary;
 
   it('gives every intent a candidate from every borrower creator in round 0', () => {
     const spam = Array.from({ length: 3000 }, (_, i) => offer(1000 + i, SPAMMER, 1));
@@ -189,11 +190,33 @@ describe('intentFillUnits', () => {
   });
 });
 
+describe('groupIntentLadders (#3626)', () => {
+  const rung = (o: `0x${string}`, slot: number, minRateBps: bigint) =>
+    ({ owner: o, lendingAsset: LEND, collateralAsset: COLL, slot, minRateBps }) as LenderIntentSummary;
+
+  it("holds one lender's slots on a pair together, lowest floor first, ties to the lower slot", () => {
+    const a = addr(0xa);
+    const b = addr(0xb);
+    const ladders = groupIntentLadders([rung(a, 2, 600n), rung(b, 0, 100n), rung(a, 0, 200n), rung(a, 1, 200n)]);
+    expect(ladders.map((l) => l.map((i) => [i.owner, i.slot]))).toEqual([
+      [[a, 0], [a, 1], [a, 2]],
+      [[b, 0]],
+    ]);
+  });
+
+  it('gives a lender with several slots one unit per borrower creator, not one per slot', () => {
+    const a = addr(0xa);
+    const units = [...intentFillUnits([rung(a, 0, 100n), rung(a, 1, 500n)], [offer(2, HONEST, 1)], 0)];
+    expect(units).toHaveLength(1);
+    expect(units[0].as.map((i) => i.slot)).toEqual([0, 1]);
+  });
+});
+
 describe('runIntentFillPass — the honest borrower is filled with the last previews of a run', () => {
   it('fills the honest borrower although 50 refused spam offers are ahead of it in the book', async () => {
     const owner = addr(0xa);
     const intentRow = {
-      owner, lendingAsset: LEND, collateralAsset: COLL, maxExposure: 10n ** 24n, minRateBps: 0n,
+      owner, lendingAsset: LEND, collateralAsset: COLL, slot: 0, maxExposure: 10n ** 24n, minRateBps: 0n,
       maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false, lendUntil: 0n, acceptsProRata: false,
       livePrincipal: 0n, availableCapital: 10n ** 24n,
     };
@@ -208,7 +231,7 @@ describe('runIntentFillPass — the honest borrower is filled with the last prev
             return [[intentRow].slice(Number(offset), Number(offset + limit)), 1n];
           }
           case 'previewIntent': {
-            const id = req.args[5] as bigint;
+            const id = req.args[6] as bigint;
             // A borrower-specific refusal (BelowMinFill) for every spam offer.
             const e = id >= 1000n ? 9 : 0;
             return {

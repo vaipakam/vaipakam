@@ -119,7 +119,7 @@
       "class": "user",
       "why": "the user accepts the terms for itself"
     },
-    "LenderIntentFacet.cancelLenderIntent(address,address)": {
+    "LenderIntentFacet.cancelLenderIntent(address,address,uint8)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
@@ -129,11 +129,11 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,uint64,bool,bool,uint64)": {
+    "LenderIntentFacet.setLenderIntent(address,address,uint8,uint256,uint256,uint16,uint32,uint256,bool,uint64,bool,bool,uint64)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
-    "LenderIntentFacet.setLenderIntentPriority(address,address,bool)": {
+    "LenderIntentFacet.setLenderIntentPriority(address,address,uint8,bool)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
@@ -203,7 +203,7 @@
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
       "why": "matches an off-chain signed offer the matcher does not index; on-chain offers are matched by matchOffers"
     },
-    "OfferMatchIntentFacet.matchIntent(address,address,address,uint256,uint256)": {
+    "OfferMatchIntentFacet.matchIntent(address,address,address,uint8,uint256,uint256)": {
       "class": "keeper",
       "pass": "matcher",
       "flag": "KEEPER_ENABLED",

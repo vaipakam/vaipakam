@@ -860,6 +860,7 @@ library LibOfferMatch {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) internal view returns (IntentPreviewResult memory res) {
@@ -884,7 +885,7 @@ library LibOfferMatch {
         ) return _intentFail(res, IntentError.AggregatorPaused);
 
         LibVaipakam.LenderIntent memory intent =
-            s.lenderIntent[lender][lendingAsset][collateralAsset];
+            s.lenderIntent[lender][lendingAsset][collateralAsset][slot];
         if (!intent.active) return _intentFail(res, IntentError.Inactive);
         if (!LibTiming.termsAged(intent.termsSetAt)) {
             return _intentFail(res, IntentError.TermsTooFresh);
@@ -900,7 +901,7 @@ library LibOfferMatch {
         }
 
         uint256 live =
-            s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset];
+            s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot];
         if (live + fillAmount > intent.maxExposure) {
             return _intentFail(res, IntentError.ExposureExceeded);
         }
@@ -936,7 +937,7 @@ library LibOfferMatch {
         // reverts `IntentCapitalInsufficient` when the fill exceeds funded
         // capital — the hard funding guard (distinct from `maxExposure`).
         uint256 capital =
-            s.lenderIntentCapital[lender][lendingAsset][collateralAsset];
+            s.lenderIntentCapital[lender][lendingAsset][collateralAsset][slot];
         res.availableCapital = capital;
         if (fillAmount > capital) {
             return _intentFail(res, IntentError.CapitalInsufficient);

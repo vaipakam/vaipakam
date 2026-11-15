@@ -87,7 +87,7 @@ RISK_PREVIEW_SELECTORS=(
   0x012c433a  # assertObligationTransferAllowed
   0x978e1471  # acceptMidTierAckPair
   0x314efc12  # previewCreatorBlock
-  0x1835a83c  # previewIntent  (#2459 r4: gained the route's initiator; was 0xa7aaae7f)
+  0x51e43cd9  # previewIntent  (#3626: gained the intent slot; was 0x1835a83c, before #2459 r4 0xa7aaae7f)
   0x2c87c1a3  # saleAdmission
   0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
   0x1a3370e0  # getSaleListingBounds    (#2672)

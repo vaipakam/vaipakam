@@ -92,6 +92,9 @@ library LibMetricsTypes {
         address owner;
         address lendingAsset;
         address collateralAsset;
+        // #3626 — which of the owner's intents on the pair this row is; a fill
+        // names it to `matchIntent`.
+        uint8 slot;
         uint256 maxExposure;
         uint256 minRateBps;
         uint16 maxInitLtvBps;
@@ -117,6 +120,7 @@ library LibMetricsTypes {
             owner: key.owner,
             lendingAsset: key.lendingAsset,
             collateralAsset: key.collateralAsset,
+            slot: key.slot,
             maxExposure: i.maxExposure,
             minRateBps: i.minRateBps,
             maxInitLtvBps: i.maxInitLtvBps,
@@ -173,6 +177,8 @@ library LibMetricsTypes {
         address owner;
         address lendingAsset;
         address collateralAsset;
+        // #3626 — the slot the loan was filled from; the roll returns to it.
+        uint8 slot;
         uint256 amount;
     }
 
@@ -185,6 +191,7 @@ library LibMetricsTypes {
             owner: io.owner,
             lendingAsset: io.lendingAsset,
             collateralAsset: io.collateralAsset,
+            slot: io.slot,
             amount: io.amount
         });
     }

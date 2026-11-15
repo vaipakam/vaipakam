@@ -41,7 +41,7 @@ library LibPriorityRouting {
     ///         `setLenderIntent`, and the clear on `cancelLenderIntent`.
     /// @custom:event-category informational/config
     event LenderIntentPrioritySet(
-        address indexed owner, address indexed lendingAsset, address indexed collateralAsset, bool enabled
+        address indexed owner, address indexed lendingAsset, address indexed collateralAsset, uint8 slot, bool enabled
     );
 
     /// @notice The priority-routing effect was ARMED: the first priced, counted
@@ -57,6 +57,7 @@ library LibPriorityRouting {
         address indexed owner,
         address indexed lendingAsset,
         address indexed collateralAsset,
+        uint8 slot,
         uint256 loanId,
         address solver,
         uint256 creditsLeft
@@ -85,12 +86,14 @@ library LibPriorityRouting {
     ///         credit — i.e. a capacity refusal on its fill would be lifted. Only
     ///         once the effect is armed: id-1 credits from before #2550 were bought
     ///         for no effect and must not acquire one (Codex #2563 r5).
-    function covers(LibVaipakam.Storage storage s, address owner, address lendingAsset, address collateralAsset)
-        internal
-        view
-        returns (bool)
-    {
-        return s.priorityRoutingPerkArmed && s.lenderIntentPriority[owner][lendingAsset][collateralAsset]
+    function covers(
+        LibVaipakam.Storage storage s,
+        address owner,
+        address lendingAsset,
+        address collateralAsset,
+        uint8 slot
+    ) internal view returns (bool) {
+        return s.priorityRoutingPerkArmed && s.lenderIntentPriority[owner][lendingAsset][collateralAsset][slot]
             && s.perkCredits[owner][PERK_ID] != 0;
     }
 
@@ -116,10 +119,11 @@ library LibPriorityRouting {
         address owner,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         bool enabled
     ) internal {
-        s.lenderIntentPriority[owner][lendingAsset][collateralAsset] = enabled;
-        emit LenderIntentPrioritySet(owner, lendingAsset, collateralAsset, enabled);
+        s.lenderIntentPriority[owner][lendingAsset][collateralAsset][slot] = enabled;
+        emit LenderIntentPrioritySet(owner, lendingAsset, collateralAsset, slot, enabled);
     }
 
     /// @notice The fill's LAST step, in place of `LibServiceCapacity.chargeSolver()`:
@@ -137,10 +141,11 @@ library LibPriorityRouting {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 loanId
     ) internal {
         if (
-            !covers(s, lender, lendingAsset, collateralAsset)
+            !covers(s, lender, lendingAsset, collateralAsset, slot)
                 || LibServiceCapacity.fillCovered(s, msg.sender, LibServiceCapacity.peekChargedOuter(s, msg.sender))
         ) {
             LibServiceCapacity.chargeSolver();
@@ -151,7 +156,7 @@ library LibPriorityRouting {
             IVaipakamErrors.PerkCreditConsumeFailed.selector
         );
         emit IntentPriorityFill(
-            lender, lendingAsset, collateralAsset, loanId, msg.sender, s.perkCredits[lender][PERK_ID]
+            lender, lendingAsset, collateralAsset, slot, loanId, msg.sender, s.perkCredits[lender][PERK_ID]
         );
     }
 }

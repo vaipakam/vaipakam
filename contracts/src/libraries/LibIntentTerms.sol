@@ -110,7 +110,7 @@ library LibIntentTerms {
         address owner = io.owner;
         if (owner == address(0) || loan.lender != owner) return 0;
         if (LibPositionNFT.ownerOf(loan.lenderTokenId) != owner) return 0;
-        return s.lenderIntent[owner][io.lendingAsset][io.collateralAsset].lendUntil;
+        return s.lenderIntent[owner][io.lendingAsset][io.collateralAsset][io.slot].lendUntil;
     }
 
     /// @notice Whether the intent admits the borrower request's interest mode

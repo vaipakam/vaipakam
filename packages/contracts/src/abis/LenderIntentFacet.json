@@ -12,6 +12,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -30,6 +35,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "amount",
@@ -75,6 +85,11 @@
             "name": "collateralAsset",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "maxExposure",
@@ -154,6 +169,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [
@@ -235,6 +255,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [
@@ -264,6 +289,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [
@@ -293,6 +323,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "solver",
@@ -374,6 +409,11 @@
                 "name": "collateralAsset",
                 "type": "address",
                 "internalType": "address"
+              },
+              {
+                "name": "slot",
+                "type": "uint8",
+                "internalType": "uint8"
               },
               {
                 "name": "maxExposure",
@@ -497,6 +537,11 @@
             "internalType": "address"
           },
           {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "amount",
             "type": "uint256",
             "internalType": "uint256"
@@ -563,6 +608,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "maxExposure",
@@ -646,6 +696,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "enabled",
         "type": "bool",
         "internalType": "bool"
@@ -685,6 +740,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "amount",
@@ -730,6 +790,12 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "rolledAmount",
         "type": "uint256",
         "indexed": false,
@@ -765,6 +831,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -790,6 +862,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       },
       {
         "name": "amount",
@@ -842,6 +920,12 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -879,6 +963,12 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "enabled",
         "type": "bool",
         "indexed": false,
@@ -908,6 +998,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       },
       {
         "name": "maxExposure",
@@ -1132,6 +1228,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "requested",
         "type": "uint256",
         "internalType": "uint256"
@@ -1225,6 +1326,17 @@
     "type": "error",
     "name": "LenderIntentSelfCollateralized",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentSlotOutOfRange",
+    "inputs": [
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

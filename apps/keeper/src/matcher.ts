@@ -379,6 +379,9 @@ export interface LenderIntentSummary {
   owner: Address;
   lendingAsset: Address;
   collateralAsset: Address;
+  /** #3626 — which of the owner's intents on the pair (0-7). Every intent
+   *  read and fill names it. */
+  slot: number;
   maxExposure: bigint;
   minRateBps: bigint;
   maxInitLtvBps: number;
@@ -632,21 +635,53 @@ export function* offerMatchUnits(
 }
 
 /**
- * The intent fill's units (#3242 part 2): one per intent and borrower creator,
- * holding that intent against that creator's borrower offers. Walked by
- * {@link fairPairs} like the offer match, so a wallet with many borrower
- * offers gets one candidate per intent per round, the same as a wallet with
- * one. Round 0 starts at a point in the intent × creator space that moves with
- * the run, like {@link offerMatchUnits}. Lazy.
+ * One lender's intents on one pair (#3626: up to eight slots), cheapest
+ * floor first. The protocol fills from whichever slot the caller names and
+ * never ranks a lender's slots; the keeper's policy is that a ladder fills
+ * from its lowest rung up, so a borrower both rungs could serve takes the
+ * lower-floor slot and the higher one stays for borrowers who pay more. Ties
+ * go to the lower slot number. The groups keep the order the first slot of
+ * each appears in `intents`.
+ */
+export function groupIntentLadders(
+  intents: readonly LenderIntentSummary[],
+): LenderIntentSummary[][] {
+  const ladders = new Map<string, LenderIntentSummary[]>();
+  for (const i of intents) {
+    const key = `${i.owner.toLowerCase()}|${i.lendingAsset.toLowerCase()}|${i.collateralAsset.toLowerCase()}`;
+    let rungs = ladders.get(key);
+    if (!rungs) {
+      rungs = [];
+      ladders.set(key, rungs);
+    }
+    rungs.push(i);
+  }
+  const out = [...ladders.values()];
+  for (const rungs of out) {
+    rungs.sort((a, b) => (a.minRateBps === b.minRateBps ? a.slot - b.slot : a.minRateBps < b.minRateBps ? -1 : 1));
+  }
+  return out;
+}
+
+/**
+ * The intent fill's units (#3242 part 2): one per lender ladder (#3626, see
+ * {@link groupIntentLadders}) and borrower creator, holding that lender's
+ * slots on the pair, lowest floor first, against that creator's borrower
+ * offers. Walked by {@link fairPairs} like the offer match, so a wallet with
+ * many borrower offers gets one candidate per ladder per round, the same as a
+ * wallet with one, and a lender with several slots gets no more turns than a
+ * lender with one. Round 0 starts at a point in the ladder × creator space
+ * that moves with the run, like {@link offerMatchUnits}. Lazy.
  */
 export function* intentFillUnits(
   intents: readonly LenderIntentSummary[],
   borrowers: readonly OfferLite[],
   run: number,
 ): Generator<FairUnit<LenderIntentSummary, OfferLite>> {
+  const ladders = groupIntentLadders(intents);
   const groups = [...groupByCreator(borrowers).values()];
-  for (const [, i, j] of pairSpaceFrom([[intents.length, groups.length]], walkStart(run, intents.length * groups.length))) {
-    yield { as: [intents[i]], bs: groups[j] };
+  for (const [, i, j] of pairSpaceFrom([[ladders.length, groups.length]], walkStart(run, ladders.length * groups.length))) {
+    yield { as: ladders[i], bs: groups[j] };
   }
 }
 
@@ -706,7 +741,7 @@ export function previewMatchRequest(
 export function previewIntentRequest(
   diamond: Address,
   solver: Address,
-  intent: { owner: Address; lendingAsset: Address; collateralAsset: Address },
+  intent: { owner: Address; lendingAsset: Address; collateralAsset: Address; slot: number },
   borrowerId: bigint,
   fillAmount: bigint,
 ) {
@@ -720,6 +755,7 @@ export function previewIntentRequest(
       intent.owner,
       intent.lendingAsset,
       intent.collateralAsset,
+      intent.slot,
       borrowerId,
       fillAmount,
     ] as const,
@@ -871,6 +907,7 @@ function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
     owner: raw['owner'] as Address,
     lendingAsset: raw['lendingAsset'] as Address,
     collateralAsset: raw['collateralAsset'] as Address,
+    slot: Number(raw['slot']),
     maxExposure: BigInt(raw['maxExposure'] as bigint | number),
     minRateBps: BigInt(raw['minRateBps'] as bigint | number),
     maxInitLtvBps: Number(raw['maxInitLtvBps']),
@@ -992,6 +1029,7 @@ async function submitIntentFill(
         intent.owner,
         intent.lendingAsset,
         intent.collateralAsset,
+        intent.slot,
         borrowerId,
         fillAmount,
       ],
@@ -1010,7 +1048,7 @@ async function submitIntentFill(
       }
     } else {
       reportSendError(
-        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)}`,
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)}`,
         err,
         `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
@@ -1026,19 +1064,19 @@ async function submitIntentFill(
     });
     if (receipt.status !== 'success') {
       console.log(
-        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
       );
       return null;
     }
     creditSpent = receiptSpentPriorityCredit(receipt.logs ?? [], ctx.diamond);
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
+      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return null;
   }
   console.log(
-    `[matcher] chain=${ctx.chainId} intent-filled lender=${intent.owner} borrower=${Number(borrowerId)} tx=${hash} amount=${fillAmount.toString()} rateBps=${Number(preview.matchRateBps)}${creditSpent ? ' on a priority credit' : ''}`,
+    `[matcher] chain=${ctx.chainId} intent-filled lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)} tx=${hash} amount=${fillAmount.toString()} rateBps=${Number(preview.matchRateBps)}${creditSpent ? ' on a priority credit' : ''}`,
   );
   return { creditSpent };
 }
@@ -1080,7 +1118,7 @@ export type PriorityState = 'capacity' | 'credit' | 'blocked';
  */
 export async function priorityState(
   ctx: Pick<KeeperContext, 'client' | 'diamond' | 'chainId'>,
-  intent: Pick<LenderIntentSummary, 'owner' | 'lendingAsset' | 'collateralAsset'>,
+  intent: Pick<LenderIntentSummary, 'owner' | 'lendingAsset' | 'collateralAsset' | 'slot'>,
   solver: Address,
 ): Promise<PriorityState> {
   try {
@@ -1088,7 +1126,7 @@ export async function priorityState(
       address: ctx.diamond,
       abi: MATCHER_ABI,
       functionName: 'getLenderIntentPriority',
-      args: [intent.owner, intent.lendingAsset, intent.collateralAsset, solver, solver],
+      args: [intent.owner, intent.lendingAsset, intent.collateralAsset, intent.slot, solver, solver],
     })) as readonly [boolean, bigint, boolean, boolean];
     if (r[2] === true) return 'capacity';
     return r[3] === true ? 'credit' : 'blocked';

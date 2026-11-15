@@ -65,7 +65,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
 
     bytes32 internal constant T_ARMED = keccak256("PriorityRoutingPerkArmed(uint256)");
     bytes32 internal constant T_PRIORITY_FILL =
-        keccak256("IntentPriorityFill(address,address,address,uint256,address,uint256)");
+        keccak256("IntentPriorityFill(address,address,address,uint8,uint256,address,uint256)");
     bytes32 internal constant T_CREDIT_CONSUMED = keccak256("PerkCreditConsumed(address,uint256,uint256)");
     bytes32 internal constant T_CAPACITY_SPENT = keccak256("CapacitySpent(uint8,address,uint256,uint256)");
 
@@ -234,13 +234,13 @@ contract PriorityRoutingPerkLiveForkTest is Test {
         assertEq(vaultBefore - _vaultVpfi(flagged), price, "paid exactly the price from the vault");
 
         vm.prank(flagged);
-        LenderIntentFacet(diamond).setLenderIntentPriority(weth, collateral, true);
+        LenderIntentFacet(diamond).setLenderIntentPriority(weth, collateral, 0, true);
     }
 
     function _openIntent(address lender) internal {
         vm.prank(lender);
         LenderIntentFacet(diamond).setLenderIntent(
-            weth, collateral, 10 * PRINCIPAL, RATE_BPS, MAX_INIT_LTV_BPS, DURATION_DAYS, PRINCIPAL / 10, false, 0, false, true,
+            weth, collateral, 0, 10 * PRINCIPAL, RATE_BPS, MAX_INIT_LTV_BPS, DURATION_DAYS, PRINCIPAL / 10, false, 0, false, true,
             type(uint64).max
         );
         uint256 fund = 4 * PRINCIPAL;
@@ -248,7 +248,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
         vm.prank(lender);
         IERC20(weth).approve(diamond, fund);
         vm.prank(lender);
-        LenderIntentFacet(diamond).fundLenderIntent(weth, collateral, fund);
+        LenderIntentFacet(diamond).fundLenderIntent(weth, collateral, 0, fund);
     }
 
     function _postBorrowerOffer() internal returns (uint256 offerId) {
@@ -292,7 +292,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
 
     function _fill(address lender, uint256 counterpartyOfferId) internal returns (uint256 loanId) {
         vm.prank(solver);
-        loanId = OfferMatchIntentFacet(diamond).matchIntent(lender, weth, collateral, counterpartyOfferId, PRINCIPAL);
+        loanId = OfferMatchIntentFacet(diamond).matchIntent(lender, weth, collateral, 0, counterpartyOfferId, PRINCIPAL);
     }
 
     /// @dev Spend the solver's remaining actions through the Diamond-gated charge
@@ -338,7 +338,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
         string memory tag
     ) internal view {
         (bool e, uint256 c, bool cc, bool cu) =
-            LenderIntentFacet(diamond).getLenderIntentPriority(owner, weth, collateral, solver, tx.origin);
+            LenderIntentFacet(diamond).getLenderIntentPriority(owner, weth, collateral, 0, solver, tx.origin);
         assertEq(e, enabled, string.concat(tag, ": enabled"));
         assertEq(c, credits, string.concat(tag, ": credits"));
         assertEq(cc, capacityCovers, string.concat(tag, ": capacityCovers"));
@@ -360,7 +360,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
             assertEq(address(uint160(uint256(logs[i].topics[1]))), flagged, "IntentPriorityFill: owner");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), weth, "IntentPriorityFill: lendingAsset");
             assertEq(address(uint160(uint256(logs[i].topics[3]))), collateral, "IntentPriorityFill: collateralAsset");
-            (uint256 lid, address slv, uint256 left) = abi.decode(logs[i].data, (uint256, address, uint256));
+            (, uint256 lid, address slv, uint256 left) = abi.decode(logs[i].data, (uint8, uint256, address, uint256));
             assertEq(lid, loanId, "IntentPriorityFill: loanId");
             assertEq(slv, solver, "IntentPriorityFill: solver");
             assertEq(left, 0, "IntentPriorityFill: creditsLeft");

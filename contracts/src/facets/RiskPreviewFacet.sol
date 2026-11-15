@@ -305,7 +305,8 @@ contract RiskPreviewFacet {
     ///         `eth_call`'s originator need not be. For a solver that sends its own
     ///         transaction, the solver.
     /// @param  lender  Intent owner (slice creator).
-    /// @param  lendingAsset / collateralAsset  Intent key.
+    /// @param  lendingAsset / collateralAsset / slot  Intent key (#3626: the slot
+    ///         the fill would draw from).
     /// @param  counterpartyOfferId  The stored borrower offer to fill against.
     /// @param  fillAmount  Principal the solver intends to lend this fill.
     function previewIntent(
@@ -314,6 +315,7 @@ contract RiskPreviewFacet {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external view returns (LibOfferMatch.IntentPreviewResult memory res) {
@@ -322,6 +324,7 @@ contract RiskPreviewFacet {
             lender,
             lendingAsset,
             collateralAsset,
+            slot,
             counterpartyOfferId,
             fillAmount
         );
@@ -478,7 +481,7 @@ contract RiskPreviewFacet {
         // clear case applies (`spendsPriorityCredit`), so the one pre-check tells a
         // solver whether the fill charges its capacity or spends the owner's credit.
         if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
-            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset)) {
+            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset, slot)) {
                 res.spendsPriorityCredit = true;
             } else {
                 res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
