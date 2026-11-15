@@ -45,7 +45,7 @@ interface IDiamondForProof {
     function getPerkEntitlement(address, uint256) external view returns (bool, uint64, uint256);
     // LenderIntentFacet
     function setLenderIntentEnabled(bool) external;
-    function setLenderIntent(address, address, uint256, uint256, uint16, uint32, uint256, bool, bool, uint64) external;
+    function setLenderIntent(address, address, uint256, uint256, uint16, uint32, uint256, bool, uint64, bool, bool, uint64) external;
     function fundLenderIntent(address, address, uint256) external;
     function setLenderIntentPriority(address, address, bool) external;
     function getLenderIntentPriority(address, address, address, address, address)

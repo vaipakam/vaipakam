@@ -1,4 +1,4 @@
-## Thread — Auto-lend end date and pro-rata opt-in (PR #<n>)
+## Thread — Auto-lend end date and pro-rata opt-in (PR #3644)
 
 A standing lender intent (Auto-lend) can now carry two more lender choices, set
 in the same call that sets its other bounds and stated in its set event, its

@@ -213,7 +213,7 @@ test('a lender that chooses its fillers is stated apart, without a likely fill',
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   // requiresKeeperAuth: only the lender or a filler it authorized may fill.
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), true, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), true, 0n, false, true, await txDeadline(sc)]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
