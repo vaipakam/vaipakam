@@ -2150,6 +2150,16 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 开关是 `getRiskAccessGateEnabled`。一个流程需要哪一步，由协议自身的回答决定：接受报价时，在 `previewCreatorBlock` 显示贷方未被阻挡之后，看 `previewOfferAcceptBlock`（1 = 等级过低，2 = 交易对同意，3 = 严格模式确认，4 = 过去由接受时的确认覆盖的非流动交易对；它与 2 一样构成阻止，交易对同意可解除）；发布请求时，看 `createOffer` 模拟执行返回的 `RiskTierTooLow`、`IlliquidPairNotConsented` 或 `MidTierPairNotAcknowledged`。该步骤在同一区块内读取交易对的 `pairRequiredRiskLevel`（报价则用 `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、对照 `getCurrentRiskTermsVersion` 的 `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown` 和 `getRiskTierMutationNonce`，对交易对则读取 `isPairConsentPending` 与 `hasIlliquidPairConsent`，或 `isMidTierAckPending` 与 `midTierStrictBlocked`。提高等级使用 `setVaultRiskTierChecked(level, nonce, termsVersion)`，提高到该交易对所需的最低等级；若审核之后有其他等级写入或条款变更，交易会被拒绝且不改变任何内容。交易对步骤是 `setIlliquidPairConsent(pair, true)` 或 `setMidTierPairAck(pair)`。仍在等待中的等级提高或仍待生效的交易对步骤不会再次提供。没有任何读取接口返回待生效交易对步骤的生效时间，因此审核界面会说明无法读取该时间；只有该步骤本身的完成卡片会给出它，即收据所在区块时间加等待期。结果在收据所在区块读回。
 
+<a id="wallet-keys"></a>
+
+### 你的钱包及其密钥
+
+Vaipakam 不创建也不保管钱包。你需要一个自托管钱包:一个保管你自己账户密钥的应用或设备。这里没有任何人能看到这些密钥、动用你的资金或恢复你的访问权限;如果丢失密钥,你就会失去对资金的访问权。应用会在钱包选择界面以及连接前的首页说明这一点,页脚还链接到一个关于如何保管好密钥的简短页面。该页面不推荐任何钱包品牌。
+
+设置钱包时,它会显示一个恢复短语,即一组单词。请把它写在纸上并妥善保密。绝不要在任何网站上输入它、在线保存它或与任何人分享:Vaipakam 的任何人都不会向你索要它。在批准任何操作之前,请核对网站地址并阅读钱包显示的内容。对于较大的金额,密钥保存在独立硬件设备上的钱包更安全,建议先用小额试一试。
+
+在电脑上,请通过钱包的浏览器扩展连接,或用手机上的钱包扫描选择界面中的二维码。在手机上,请在钱包应用自带的浏览器中打开本应用,或在选择界面中选择“Other”。没有钱包时,你仍可以阅读主要风险和数据分析。
+
 <a id="terms-gate"></a>
 
 ### 服务条款确认

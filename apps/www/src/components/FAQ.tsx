@@ -63,7 +63,7 @@ const FAQS: FaqEntry[] = [
     id: "basics-wallet",
     category: "basics",
     searchText:
-      "wallet metamask rabby coinbase connect signing key seed phrase account browse browse-only read-only",
+      "wallet self-custody metamask rabby coinbase connect signing key keys seed recovery phrase lost account browse browse-only read-only",
     renderA: () => (
       <>
         <p>
@@ -73,6 +73,12 @@ const FAQS: FaqEntry[] = [
           <Trans
             i18nKey="faq.entries.basics-wallet.a2"
             components={{ em: <em /> }}
+          />
+        </p>
+        <p>
+          <Trans
+            i18nKey="faq.entries.basics-wallet.a3"
+            components={{ guide: <Link to="/help/basic#wallet-keys" /> }}
           />
         </p>
       </>

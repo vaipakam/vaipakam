@@ -14,6 +14,7 @@ import { RecoverPage } from '../pages/recover/RecoverPage';
 import { RentPage } from '../pages/rent/RentPage';
 import { RewardsPage } from '../pages/rewards/RewardsPage';
 import { RisksPage } from '../pages/risks/RisksPage';
+import { WalletKeysPage } from '../pages/walletKeys/WalletKeysPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
 import { VaultPage } from '../pages/vault/VaultPage';
 
@@ -51,4 +52,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/recover': RecoverPage,
   '/analytics': AnalyticsPage,
   '/risks': RisksPage,
+  '/wallet-keys': WalletKeysPage,
 };

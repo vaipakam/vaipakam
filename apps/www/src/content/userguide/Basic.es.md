@@ -1458,6 +1458,16 @@ Una oferta de un token contra garantía en token puede llevar una protección an
 
 Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y solo tú puedes subirlo. Un par necesita el nivel de su token más arriesgado: los tokens blue-chip no necesitan nada, otros tokens líquidos necesitan «Activos líquidos» y un token ilíquido necesita «Cualquier activo, incluidos los ilíquidos» más tu acuerdo con ese par exacto. Cuando aceptar una oferta o publicar una solicitud necesita un paso así, la revisión lo dice en el mismo lugar y lo ofrece como una sola confirmación en la billetera con su propio recibo: qué cambia, a qué pares alcanza, cuándo entra en vigor y que no se mueven fondos. Subir tu nivel, o aceptar un par, puede esperar un periodo que fija el protocolo; para un nivel subido la app muestra la hora en que entra en vigor, leída de la cadena; para un acuerdo dice que el protocolo aún no publica esa hora; y nunca ofrece el mismo paso dos veces, porque un segundo reiniciaría la espera. Bajar tu nivel siempre surte efecto al instante. Cuando el protocolo publica nuevos términos de riesgo, tu nivel y tus acuerdos dejan de contar hasta que los confirmes de nuevo. Si activaste el modo estricto, cada par líquido también necesita tu reconocimiento. Un bloqueo que viene del nivel de riesgo del prestamista se muestra como suyo: nada en tu cuenta lo cambiaría.
 
+<a id="wallet-keys"></a>
+
+### Tu billetera y sus claves
+
+Vaipakam no crea ni guarda billeteras. Necesitas una billetera de autocustodia: una aplicación o un dispositivo que guarda las claves de tu propia cuenta. Nadie aquí puede ver esas claves, mover tus fondos ni recuperar tu acceso, así que si pierdes las claves, pierdes el acceso a los fondos. La aplicación lo dice en el selector de billetera y en Inicio antes de conectar, y su pie de página enlaza una página breve sobre cómo mantener tus claves a salvo. Esa página no nombra ninguna marca de billetera.
+
+Al configurar una billetera, esta muestra una frase de recuperación, una lista de palabras. Escríbela en papel y mantenla en privado. Nunca la escribas en un sitio web, la guardes en línea ni la compartas: nadie de Vaipakam te la pedirá nunca. Comprueba la dirección del sitio y lee lo que muestra tu billetera antes de aprobar nada. Para cantidades grandes es más seguro usar una billetera cuyas claves se quedan en un dispositivo físico aparte, y conviene probar primero con una cantidad pequeña.
+
+En un ordenador, conecta mediante la extensión de navegador de tu billetera, o escanea el código del selector con la billetera de tu teléfono. En un teléfono, abre la aplicación en el navegador propio de tu billetera, o elige «Other» en el selector. Sin billetera puedes seguir leyendo los riesgos clave y las analíticas.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

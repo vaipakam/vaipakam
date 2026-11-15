@@ -1431,6 +1431,16 @@ An offer of a token against token collateral can carry a price-move guard. While
 
 Every account starts at the lowest risk level, blue-chip assets only, and only you can raise it. A pair needs the level of its riskier token: blue-chip tokens need nothing, other liquid tokens need “Liquid assets”, and an illiquid token needs “Any asset, including illiquid ones” plus your agreement to that exact pair. When taking an offer or posting a request needs a step like this, the review says so in place and offers it as one wallet confirmation with its own receipt: what changes, which pairs it reaches, when it takes effect, and that no funds move. Raising your level, or agreeing to a pair, can wait out a period the protocol sets; for a raised level the app shows the time it takes effect, read from the chain, for an agreement it says the protocol does not publish that time yet, and it never offers the same step twice, because a second one would start the wait over. Lowering your level always takes effect at once. When the protocol publishes new risk terms, your level and agreements stop counting until you confirm them again. If you turned on strict mode, each liquid pair also needs your acknowledgement. A block that comes from the lender's own risk level is shown as theirs: nothing in your account would change it.
 
+<a id="wallet-keys"></a>
+
+### Your Wallet and Its Keys
+
+Vaipakam does not create or hold wallets. You need a self-custody wallet: an app or a device that holds the keys to your own account. No one here can see those keys, move your funds or restore your access, so if you lose the keys, you lose access to the funds. The app says this in the wallet picker, and on Home before you connect, and its footer links to a short page on keeping your keys safe. That page names no wallet brand.
+
+When you set up a wallet, it shows a recovery phrase, a list of words. Write it on paper and keep it private. Never type it into a website, store it online or share it: no one from Vaipakam will ever ask for it. Check the site address and read what your wallet shows before you approve anything. For larger amounts, a wallet whose keys stay on a separate hardware device is safer, and trying a small amount first is wise.
+
+On a computer, connect through your wallet's browser extension, or scan the picker's code with the wallet on your phone. On a phone, open the app in your wallet app's own browser, or choose Other in the picker. Without a wallet you can still read the key risks and the analytics.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

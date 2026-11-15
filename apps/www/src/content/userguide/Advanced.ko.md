@@ -2309,6 +2309,16 @@ ERC-20 담보에 대한 ERC-20의 열린 오퍼에서는 작성자가 오퍼 페
 
 스위치는 `getRiskAccessGateEnabled`입니다. 흐름에 필요한 단계는 프로토콜 자체의 답입니다. 수락에서는 `previewCreatorBlock`이 대출자가 차단되지 않았음을 보인 뒤 `previewOfferAcceptBlock`(1 = 등급 부족, 2 = 쌍 동의, 3 = 엄격 모드 확인, 4 = 예전에는 수락 시 확인이 대신하던 비유동 페어로, 2와 같이 차단하며 페어 동의로 해제됩니다), 요청에서는 `createOffer` 모의 실행의 `RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`입니다. 단계는 한 블록에서 쌍의 `pairRequiredRiskLevel`(오퍼는 `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion`과 비교한 `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown`, `getRiskTierMutationNonce`를 읽고, 쌍에 대해서는 `isPairConsentPending`과 `hasIlliquidPairConsent`, 또는 `isMidTierAckPending`과 `midTierStrictBlocked`를 읽습니다. 등급 올리기는 쌍에 필요한 최소 등급으로의 `setVaultRiskTierChecked(level, nonce, termsVersion)`이며, 검토 후 다른 등급 쓰기나 약관 변경이 있었다면 아무것도 바꾸지 않고 거부됩니다. 쌍 단계는 `setIlliquidPairConsent(pair, true)` 또는 `setMidTierPairAck(pair)`입니다. 대기 중인 등급 올리기나 보류 중인 쌍 단계는 다시 제시하지 않습니다. 보류 중인 쌍 단계가 언제 효력이 생기는지 돌려주는 읽기는 없으므로, 검토 화면은 그 시각을 읽을 수 없다고 알립니다. 그 시각은 단계 자체의 완료 카드만 영수증 블록 시각과 대기 기간의 합으로 보여 줍니다. 결과는 영수증 블록에서 다시 읽습니다.
 
+<a id="wallet-keys"></a>
+
+### 내 지갑과 그 키
+
+Vaipakam은 지갑을 만들거나 보관하지 않습니다. 셀프 커스터디 지갑, 즉 본인 계정의 키를 보관하는 앱이나 기기가 필요합니다. 여기서는 누구도 그 키를 보거나, 자금을 옮기거나, 접근 권한을 되찾아 줄 수 없습니다. 키를 잃으면 자금에 대한 접근도 잃습니다. 앱은 지갑 선택 화면과, 연결 전의 홈 화면에서 이를 알리며, 하단에서 키를 안전하게 지키는 방법을 다룬 짧은 페이지로 연결합니다. 그 페이지는 어떤 지갑 브랜드도 언급하지 않습니다.
+
+지갑을 설정하면 복구 문구(단어 목록)가 표시됩니다. 종이에 적어 남에게 보이지 않게 보관하세요. 웹사이트에 입력하거나, 온라인에 저장하거나, 누구와도 공유하지 마세요. Vaipakam의 누구도 이를 요구하지 않습니다. 무엇이든 승인하기 전에 사이트 주소를 확인하고 지갑이 보여 주는 내용을 읽으세요. 큰 금액에는 키가 별도의 하드웨어 기기에 머무는 지갑이 더 안전하며, 먼저 소액으로 시도해 보는 것이 좋습니다.
+
+컴퓨터에서는 지갑의 브라우저 확장 프로그램으로 연결하거나, 휴대폰의 지갑으로 선택 화면의 코드를 스캔하세요. 휴대폰에서는 지갑 앱의 자체 브라우저에서 앱을 열거나, 선택 화면에서 'Other'를 고르세요. 지갑이 없어도 주요 위험과 분석은 읽을 수 있습니다.
+
 <a id="terms-gate"></a>
 
 ### 이용약관 확인

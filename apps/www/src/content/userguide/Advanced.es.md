@@ -2596,6 +2596,16 @@ En una oferta abierta de un ERC-20 contra garantía ERC-20, el creador puede fij
 
 El interruptor es `getRiskAccessGateEnabled`. Qué paso necesita un flujo es la propia respuesta del protocolo: para una aceptación, `previewOfferAcceptBlock` (1 = nivel demasiado bajo, 2 = acuerdo con el par, 3 = reconocimiento del modo estricto, 4 = el par ilíquido que antes cubría el reconocimiento de la aceptación; bloquea como 2 y un consentimiento al par lo despeja) una vez que `previewCreatorBlock` muestra que el prestamista no está bloqueado; para una solicitud, `RiskTierTooLow`, `IlliquidPairNotConsented` o `MidTierPairNotAcknowledged` de la simulación de `createOffer`. El paso lee en un solo bloque `pairRequiredRiskLevel` para el par (`acceptMidTierAckPair` para una oferta), `getVaultRiskTier`, `getEffectiveRiskTier`, `getVaultRiskTierVersion` frente a `getCurrentRiskTermsVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` y `getRiskTierMutationNonce`, y para un par `isPairConsentPending` con `hasIlliquidPairConsent`, o `isMidTierAckPending` con `midTierStrictBlocked`. Una subida es `setVaultRiskTierChecked(level, nonce, termsVersion)` al nivel mínimo que necesita el par, así que se rechaza sin cambiar nada si otra escritura de nivel o un cambio de términos llegó después de la revisión. Un paso de par es `setIlliquidPairConsent(pair, true)` o `setMidTierPairAck(pair)`. Una subida aún en espera, o un paso de par aún pendiente, no se ofrece de nuevo. Ninguna lectura devuelve cuándo entra en vigor un paso de par pendiente, así que la revisión dice que no puede leer esa hora; solo la tarjeta final del propio paso la da, a partir de la hora del bloque del recibo más la espera. El resultado se lee en el bloque del recibo.
 
+<a id="wallet-keys"></a>
+
+### Tu billetera y sus claves
+
+Vaipakam no crea ni guarda billeteras. Necesitas una billetera de autocustodia: una aplicación o un dispositivo que guarda las claves de tu propia cuenta. Nadie aquí puede ver esas claves, mover tus fondos ni recuperar tu acceso, así que si pierdes las claves, pierdes el acceso a los fondos. La aplicación lo dice en el selector de billetera y en Inicio antes de conectar, y su pie de página enlaza una página breve sobre cómo mantener tus claves a salvo. Esa página no nombra ninguna marca de billetera.
+
+Al configurar una billetera, esta muestra una frase de recuperación, una lista de palabras. Escríbela en papel y mantenla en privado. Nunca la escribas en un sitio web, la guardes en línea ni la compartas: nadie de Vaipakam te la pedirá nunca. Comprueba la dirección del sitio y lee lo que muestra tu billetera antes de aprobar nada. Para cantidades grandes es más seguro usar una billetera cuyas claves se quedan en un dispositivo físico aparte, y conviene probar primero con una cantidad pequeña.
+
+En un ordenador, conecta mediante la extensión de navegador de tu billetera, o escanea el código del selector con la billetera de tu teléfono. En un teléfono, abre la aplicación en el navegador propio de tu billetera, o elige «Other» en el selector. Sin billetera puedes seguir leyendo los riesgos clave y las analíticas.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

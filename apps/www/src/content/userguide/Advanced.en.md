@@ -2795,6 +2795,16 @@ On an open offer of an ERC-20 against ERC-20 collateral, the creator can set, ch
 
 The gate is `getRiskAccessGateEnabled`. Which step a flow needs is the protocol's own answer: for an acceptance, `previewOfferAcceptBlock` (1 = level too low, 2 = pair consent, 3 = strict-mode acknowledgement, 4 = the illiquid pair the acceptance's acknowledgement once covered; it blocks like 2 and a pair consent clears it) once `previewCreatorBlock` shows the lender is not blocked; for a request, the `createOffer` dry run's `RiskTierTooLow`, `IlliquidPairNotConsented` or `MidTierPairNotAcknowledged`. The step reads in one block `pairRequiredRiskLevel` for the pair (`acceptMidTierAckPair` for an offer), `getVaultRiskTier`, `getEffectiveRiskTier`, `getVaultRiskTierVersion` against `getCurrentRiskTermsVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` and `getRiskTierMutationNonce`, and for a pair `isPairConsentPending` with `hasIlliquidPairConsent`, or `isMidTierAckPending` with `midTierStrictBlocked`. A raise is `setVaultRiskTierChecked(level, nonce, termsVersion)` to the least level the pair needs, so it is refused, changing nothing, if another tier write or a terms change landed after the review. A pair step is `setIlliquidPairConsent(pair, true)` or `setMidTierPairAck(pair)`. A raise still cooling down, or a pair step still pending, is not offered again. No read returns when a pending pair step takes effect, so the review says it cannot read that time; only the step's own finish card gives it, from the receipt block's time plus the cooldown. The outcome is read back at the receipt's block.
 
+<a id="wallet-keys"></a>
+
+### Your Wallet and Its Keys
+
+Vaipakam does not create or hold wallets. You need a self-custody wallet: an app or a device that holds the keys to your own account. No one here can see those keys, move your funds or restore your access, so if you lose the keys, you lose access to the funds. The app says this in the wallet picker, and on Home before you connect, and its footer links to a short page on keeping your keys safe. That page names no wallet brand.
+
+When you set up a wallet, it shows a recovery phrase, a list of words. Write it on paper and keep it private. Never type it into a website, store it online or share it: no one from Vaipakam will ever ask for it. Check the site address and read what your wallet shows before you approve anything. For larger amounts, a wallet whose keys stay on a separate hardware device is safer, and trying a small amount first is wise.
+
+On a computer, connect through your wallet's browser extension, or scan the picker's code with the wallet on your phone. On a phone, open the app in your wallet app's own browser, or choose Other in the picker. Without a wallet you can still read the key risks and the analytics.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

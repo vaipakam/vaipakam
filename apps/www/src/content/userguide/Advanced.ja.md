@@ -2417,6 +2417,16 @@ ERC-20 担保に対する ERC-20 の開いているオファーでは、作成�
 
 スイッチは `getRiskAccessGateEnabled` です。フローに必要な手順はプロトコル自身の回答で決まります。受諾では、`previewCreatorBlock` が貸し手のブロックなしを示したうえで `previewOfferAcceptBlock`（1 = レベル不足、2 = ペアへの同意、3 = 厳格モードの確認、4 = かつて受諾時の確認がカバーしていた非流動ペア。2 と同じくブロックとなり、ペアへの同意で解除されます）。リクエストでは、`createOffer` のドライランの `RiskTierTooLow`、`IlliquidPairNotConsented`、`MidTierPairNotAcknowledged` です。手順は一つのブロックで、ペアの `pairRequiredRiskLevel`（オファーでは `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、`getCurrentRiskTermsVersion` に対する `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown`、`getRiskTierMutationNonce` を読み、ペアについては `isPairConsentPending` と `hasIlliquidPairConsent`、または `isMidTierAckPending` と `midTierStrictBlocked` を読みます。引き上げはペアに必要な最小レベルへの `setVaultRiskTierChecked(level, nonce, termsVersion)` で、確認後に別のレベル書き込みや条件変更があれば何も変えずに拒否されます。ペアの手順は `setIlliquidPairConsent(pair, true)` または `setMidTierPairAck(pair)` です。待機中の引き上げや保留中のペア手順は再提示しません。保留中のペア手順がいつ有効になるかを返す読み取りはないため、確認画面はその時刻を読めないと伝えます。その時刻を示すのは手順自体の完了カードだけで、明細のブロック時刻と待機期間の和から求めます。結果は明細のブロックで読み直します。
 
+<a id="wallet-keys"></a>
+
+### ウォレットとその鍵
+
+Vaipakam はウォレットを作成も保管もしません。必要なのはセルフカストディ型のウォレット、つまりご自身のアカウントの鍵を保持するアプリまたはデバイスです。ここでは誰もその鍵を見ることも、資金を動かすことも、アクセスを回復することもできません。鍵を失えば、資金へのアクセスを失います。アプリはこのことをウォレット選択画面と、接続前のホーム画面で伝え、フッターから鍵を安全に保つための短いページにリンクしています。そのページは特定のウォレットのブランドを挙げません。
+
+ウォレットを設定すると、復元フレーズ(単語のリスト)が表示されます。紙に書き留め、人に見せないでください。ウェブサイトに入力したり、オンラインに保存したり、誰かと共有したりしないでください。Vaipakam の者がそれを尋ねることは決してありません。何かを承認する前に、サイトのアドレスを確認し、ウォレットの表示を読んでください。大きな金額には、鍵が別のハードウェア機器に留まるウォレットの方が安全で、まず少額で試すのが賢明です。
+
+パソコンでは、ウォレットのブラウザ拡張機能から接続するか、スマートフォンのウォレットで選択画面のコードを読み取ります。スマートフォンでは、ウォレットアプリ内蔵のブラウザでアプリを開くか、選択画面で「Other」を選びます。ウォレットがなくても、主なリスクと分析は読めます。
+
 <a id="terms-gate"></a>
 
 ### 利用規約の確認

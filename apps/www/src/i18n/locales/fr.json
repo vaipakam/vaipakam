@@ -258,8 +258,9 @@
       },
       "basics-wallet": {
         "q": "Faut-il un portefeuille crypto, et qu'est-ce que c'est ?",
-        "a1": "Un portefeuille (MetaMask, Rabby, Coinbase Wallet et similaires) est l'application qui détient la clé privée contrôlant les actifs on-chain. C'est à la fois un identifiant de connexion et un stylo de signature — c'est ainsi que Vaipakam s'assure qu'une transaction provient bien du titulaire du compte.",
-        "a2": "Un portefeuille n'est nécessaire que pour <em>agir</em> sur une position (créer une offre, accepter un prêt, rembourser, réclamer). Consulter le tableau de bord et lire les détails d'un prêt fonctionne sans portefeuille. Vaipakam ne voit ni ne stocke jamais les clés privées — le portefeuille reste entièrement dans le navigateur ou l'extension."
+        "a1": "Un portefeuille est l'application ou l'appareil qui détient les clés privées contrôlant un compte sur la chaîne. C'est à la fois un identifiant et un stylo de signature — c'est ainsi que Vaipakam sait qu'une transaction vient vraiment du titulaire du compte. Vaipakam nécessite un portefeuille en autoconservation, dont seul le propriétaire détient les clés ; Vaipakam ne crée de portefeuille pour personne.",
+        "a2": "Un portefeuille n'est nécessaire que pour <em>agir</em> sur une position (créer une offre, accepter un prêt, rembourser, réclamer). Les analyses et les risques clés se lisent sans portefeuille. Vaipakam ne voit, ne stocke ni ne récupère jamais de clés privées : si les clés ou la phrase de récupération sont perdues, personne ne peut rétablir l'accès aux fonds.",
+        "a3": "Le guide explique <guide>comment garder en sécurité les clés d'un portefeuille</guide>, sans recommander aucun portefeuille."
       },
       "basics-collateral": {
         "q": "Pourquoi emprunter exige-t-il une « garantie » ?",
