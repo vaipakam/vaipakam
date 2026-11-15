@@ -164,8 +164,9 @@ import {
   ensureActivityParticipantsBackfill,
   eventParticipants,
   inlineParticipants,
-  participantStatements,
-  runBatched,
+  participantRows,
+  writeParticipants,
+  type ParticipantRow,
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
@@ -7329,14 +7330,12 @@ export async function recordActivityEvents(
   let inserted = 0;
   // #3677 — each event's participants, written beside it so `/activity?wallet=`
   // can answer for a wallet. Collected and batched after the loop.
-  const participantWrites: D1PreparedStatement[] = [];
+  const participantWrites: ParticipantRow[] = [];
   for (const log of logs) {
     const args = withSaleCreator(log, creatorByOfferId);
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
     participantWrites.push(
-      ...participantStatements(
-        env.DB,
-        chainId,
+      ...participantRows(
         Number(log.blockNumber),
         log.logIndex,
         eventParticipants(log.eventName, args as Record<string, unknown>, actor),
@@ -7373,7 +7372,7 @@ export async function recordActivityEvents(
       .run();
     if ((result.meta?.changes ?? 0) > 0) inserted++;
   }
-  await runBatched(env.DB, participantWrites);
+  await writeParticipants(env.DB, chainId, participantWrites);
   return inserted;
 }
 

@@ -18,7 +18,8 @@ type Hex = `0x${string}`;
  * first, from the index's own wallet filter. One line per transaction, led by
  * the event that says what happened and listing the rest under it; each line
  * names its loan or offer, what it moved when the index recorded that, who
- * sent it, when, and the transaction itself. Events in the newest blocks come
+ * it is recorded for (the event's filed wallet, not necessarily its
+ * sender), when, and the transaction itself. Events in the newest blocks come
  * first, marked not final. A loan whose ending a check found, rather than an
  * event, says what was and was not seen. The page says when the index is
  * still reading older history, so the list is never presented as complete
@@ -34,6 +35,9 @@ export function ActivityPage() {
   const events = pages.flatMap((p) => p.events);
   const repairs = pages.flatMap((p) => p.repairs);
   const unreadable = pages.reduce((n, p) => n + p.unreadable, 0);
+  // Endings a check found could not be read for some page: the list may be
+  // missing a loan's ending, so it claims neither emptiness nor an end.
+  const repairsUnknown = pages.some((p) => !p.repairsKnown);
   const pending = pages[0]?.pending;
   const walletComplete = pages[0]?.walletComplete;
   const lines = activityLines(events, repairs);
@@ -71,6 +75,11 @@ export function ActivityPage() {
               {text('activity.completeUnknown')}
             </p>
           )}
+          {repairsUnknown && (
+            <p className="tier-a" data-testid="activity-repairs-unknown">
+              {text('activity.repairsUnknown')}
+            </p>
+          )}
           {unreadable > 0 && (
             <p className="tier-a" data-testid="activity-unreadable">
               {format('activity.unreadable', { count: String(unreadable) })}
@@ -96,7 +105,7 @@ export function ActivityPage() {
           )}
           {pendingLines.length === 0 && pending?.complete === false && <p className="tier-b">{text('activity.pendingPartial')}</p>}
 
-          {query.data !== undefined && lines.length === 0 && !query.hasNextPage && unreadable === 0 && (
+          {query.data !== undefined && lines.length === 0 && !query.hasNextPage && unreadable === 0 && !repairsUnknown && (
             <p className="tier-b home-empty" data-testid="activity-empty">
               {format('activity.empty', { chain: chain.name })}
             </p>
@@ -113,7 +122,7 @@ export function ActivityPage() {
               {text(query.isFetchingNextPage ? 'activity.readingMore' : 'activity.more')}
             </button>
           )}
-          {query.data !== undefined && lines.length > 0 && !query.hasNextPage && walletComplete === true && (
+          {query.data !== undefined && lines.length > 0 && !query.hasNextPage && walletComplete === true && !repairsUnknown && (
             <p className="tier-b" data-testid="activity-end">
               {format('activity.end', { chain: chain.name })}
             </p>

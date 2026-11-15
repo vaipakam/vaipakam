@@ -49,6 +49,7 @@ test('the wallet’s history lists its loan’s events per transaction, with wha
     events: [
       row({ blockNumber: 1, logIndex: 3, kind: 'ExtendReserveFunded', loanId: Number(loanId), asset: token, assetType: 0, amount: '1500000000000000000' }),
       row({ blockNumber: 1, logIndex: 2, kind: 'SomethingNew', txHash: `0x${'d'.repeat(64)}` }),
+      row({ blockNumber: 1, logIndex: 0, kind: 'CollateralAdded', txHash: `0x${'b'.repeat(64)}`, asset: token, assetType: 2, tokenId: '5' }),
       row({ blockNumber: 1, logIndex: 1, kind: 'Transfer', amount: 'not a number', txHash: `0x${'c'.repeat(64)}` }),
     ],
     pending: {
@@ -82,16 +83,18 @@ test('the wallet’s history lists its loan’s events per transaction, with wha
   await expect(rows.locator('> li[data-kind="LoanInitiatedDetails"]')).toHaveCount(0);
   const repaid = rows.locator('[data-kind="LoanRepaid"]');
   await expect(repaid).toContainText('A loan was repaid.');
-  // The repayment was the borrower's transaction, not this wallet's.
-  await expect(repaid).toContainText(/By 0x/);
+  // The repayment is filed under its repayer, the borrower, not this wallet.
+  await expect(repaid).toContainText(/Recorded for 0x/);
   await expect(repaid).toContainText('No amount recorded.');
 
   // An amount the index recorded is shown with its token; one it did not is said.
   const funded = rows.locator('[data-kind="ExtendReserveFunded"]');
   await expect(funded).toContainText('Funds were added to an extension reserve.');
   await expect(funded).toContainText('1.5');
-  await expect(funded).toContainText('By you');
+  await expect(funded).toContainText('Recorded for you');
   await expect(rows.locator('[data-kind="SomethingNew"]')).toContainText('An event this app has no words for yet (SomethingNew).');
+  // A multi-copy token whose quantity the index did not record says so.
+  await expect(rows.locator('[data-kind="CollateralAdded"]')).toContainText('number of copies not recorded');
   await expect(page.getByTestId('activity-unreadable')).toHaveText('1 rows could not be read and are not shown.');
 
   // A check found loan #77's ending: it says what was and was not seen.
@@ -124,6 +127,13 @@ test('a history the index has finished ends by saying so, and one it cannot read
   await expect(page.getByTestId('activity-end')).toContainText('That is all the activity the index holds');
   await expect(page.getByTestId('activity-incomplete')).toHaveCount(0);
   await fitsWidth(page);
+
+  // Loan endings the index could not read: the page says some may be missing and claims no end.
+  await setWalletActivity(sc.address('borrower').toLowerCase(), { repairs: null });
+  await page.reload();
+  await connectWallet(page);
+  await expect(page.getByTestId('activity-repairs-unknown')).toContainText('some loan endings may be missing', { timeout: 30_000 });
+  await expect(page.getByTestId('activity-end')).toHaveCount(0);
 
   await setIndexPosture('down');
   await page.reload();

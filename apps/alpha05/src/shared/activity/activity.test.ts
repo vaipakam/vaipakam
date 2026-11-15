@@ -124,6 +124,11 @@ describe('readActivityPage', () => {
     expect((await readActivityPage(client(answer([], { walletComplete: null })), 84532, WALLET)).walletComplete).toBeNull();
   });
 
+  it('keeps a loan-ending read the index could not make as unknown, never as none', async () => {
+    expect((await readActivityPage(client(answer([], { repairObservations: null })), 84532, WALLET)).repairsKnown).toBe(false);
+    expect((await readActivityPage(client(answer([], { repairObservations: [] })), 84532, WALLET)).repairsKnown).toBe(true);
+  });
+
   it('reads the pending lane, and says it does not know when the index does not', async () => {
     const lane = { events: [raw({ blockNumber: 99, blockAt: null })], complete: false, readAt: 5, finalThrough: 90, throughBlock: 99, latestBlock: 99 };
     const page = await readActivityPage(client(answer([], { pending: lane })), 84532, WALLET);
@@ -188,5 +193,11 @@ describe('amountLine', () => {
     expect(amountLine(ev({ asset: TOKEN, assetType: 0, amountMax: 2_000_000n }), meta, copy)).toMatch(/^Up to /);
     expect(amountLine(ev({ asset: TOKEN, assetType: 1, tokenId: 4n }), meta, copy)).toBe('NFT #4 of USDC');
     expect(amountLine(ev(), meta, copy)).toBe('No amount recorded.');
+  });
+
+  it('says when a multi-copy token’s quantity was not recorded, never reading it as one copy', () => {
+    const meta = { [TOKEN]: { symbol: 'USDC', decimals: 6 } };
+    expect(amountLine(ev({ asset: TOKEN, assetType: 2, tokenId: 4n, quantity: null }), meta, copy)).toBe('NFT #4 of USDC, number of copies not recorded');
+    expect(amountLine(ev({ asset: TOKEN, assetType: 2, tokenId: 4n, quantity: 1n }), meta, copy)).toBe('NFT #4 of USDC × 1');
   });
 });
