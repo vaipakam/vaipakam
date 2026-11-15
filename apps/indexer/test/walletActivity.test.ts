@@ -10,6 +10,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { handleActivity } from '../src/loanRoutes';
+import { walletRepairObservationsPage } from '../src/repairObservations';
 import {
   PARTICIPANT_BACKFILL_PAGE,
   PARTICIPANT_BACKFILL_ROWS,
@@ -152,6 +153,17 @@ describe('/activity?wallet=', () => {
     expect(events.every((d) => d.startsWith('SEARCH'))).toBe(true);
     expect(events.filter((d) => d.includes('(chain_id=? AND block_number=? AND log_index=?)'))).toHaveLength(2);
     expect(events.filter((d) => d.includes('(chain_id=? AND loan_id=?)'))).toHaveLength(1);
+  });
+
+  it('reads the repaired endings of the wallet’s own loans only, each loan by its key', () => {
+    const h = db();
+    let sql = '';
+    const capture = { prepare: (q: string) => ((sql = q), { bind: () => ({}) }) } as unknown as D1Database;
+    walletRepairObservationsPage(capture, BASE, ME, undefined, 50);
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(BASE, ME, null, 0, 50) as Array<{ detail: string }>).map((r) => r.detail);
+    const loans = plan.filter((d) => /^(SCAN|SEARCH) l\b/.test(d));
+    expect(loans).toHaveLength(1);
+    expect(loans[0]).toMatch(/^SEARCH l USING .*\(chain_id=\? AND loan_id=\?\)/);
   });
 
   it('refuses a wallet filter combined with another filter, and a malformed wallet', async () => {

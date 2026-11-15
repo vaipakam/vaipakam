@@ -46,10 +46,10 @@ export interface ActivityEvent {
   amountMax: bigint | null;
   tokenId: bigint | null;
   quantity: bigint | null;
-  /** For a kind whose event states whether the step worked (see
-   *  {@link OUTCOME_ARGS}): true when it did, false when it did not. null for
-   *  every other kind, and when the event's arguments do not say. */
-  succeeded: boolean | null;
+  /** For a kind whose meaning turns on a yes/no its event states (see
+   *  {@link STATED_ARGS}): that value. null for every other kind, and when
+   *  the event's arguments do not say. */
+  stated: boolean | null;
   /** False for an event in a block that may still be replaced. */
   final: boolean;
 }
@@ -118,17 +118,37 @@ function addressOrNull(v: unknown): Hex | null | undefined {
 }
 
 /**
- * The kinds whose event carries the step's outcome, and the argument that
- * holds it. A line for one of these never reads as done when it failed: it
- * says which, or that the outcome was not recorded.
+ * The kinds whose meaning turns on a yes/no the event states, and the
+ * argument that holds it: whether a step worked, whether a permission or a
+ * consent was given or withdrawn, whether a setting went on or off, whether a
+ * claim was paid in full, whether a withdrawal was paid or queued. Such a
+ * line says which, from the event itself, or that it was not recorded; it
+ * never asserts one direction for both. Every named kind with a yes/no
+ * argument is either here or listed, with its reason, as one whose line
+ * holds either way (the test holds both lists to the contract's events).
  */
-export const OUTCOME_ARGS: Readonly<Record<string, string>> = {
+export const STATED_ARGS: Readonly<Record<string, string>> = {
+  AutoLendConsentChanged: 'enabled',
+  AutoOptInOnNewLoanChanged: 'enabled',
   ClaimRetryExecuted: 'succeeded',
+  CosignRequirementSet: 'on',
+  IlliquidPairConsentSet: 'consent',
+  KeeperAccessUpdated: 'enabled',
+  LenderBackstopOptInSet: 'optedIn',
+  LenderIntentPrioritySet: 'enabled',
+  LoanKeeperEnabled: 'enabled',
+  OfferKeeperEnabled: 'enabled',
+  ProtectNftsSet: 'on',
+  RiskStrictModeSet: 'enabled',
+  SellerInterestClaimClosed: 'fullyPaid',
+  SwapAdapterAttempted: 'success',
+  VPFIDiscountConsentChanged: 'enabled',
+  VaultWithdrawRequested: 'queued',
 };
 
-/** The outcome an event's arguments state for its kind, or null. */
-function outcomeOf(kind: string, args: unknown): boolean | null {
-  const name = OUTCOME_ARGS[kind];
+/** The yes/no an event's arguments state for its kind, or null. */
+function statedOf(kind: string, args: unknown): boolean | null {
+  const name = STATED_ARGS[kind];
   if (name === undefined || typeof args !== 'object' || args === null) return null;
   const v = (args as Record<string, unknown>)[name];
   return typeof v === 'boolean' ? v : null;
@@ -183,7 +203,7 @@ export function parseActivityEvent(raw: unknown, final: boolean): ActivityEvent 
     amountMax,
     tokenId,
     quantity,
-    succeeded: outcomeOf(r.kind, r.args),
+    stated: statedOf(r.kind, r.args),
     final,
   };
 }

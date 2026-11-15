@@ -45,6 +45,7 @@ import {
   repairObservationPosition,
   repairObservationsPage,
   repairObservationToJson,
+  walletRepairObservationsPage,
 } from './repairObservations';
 import {
   CANDLE_INTERVALS,
@@ -847,7 +848,7 @@ async function handleWalletActivity(
     let observations: RepairObservationRow[] | null = [];
     if (wantObservations) {
       try {
-        const r = await repairObservationsPage(env.DB, chainId, { before, wallet }, limit).all<RepairObservationRow>();
+        const r = await walletRepairObservationsPage(env.DB, chainId, wallet, before, limit).all<RepairObservationRow>();
         observations = r.results ?? [];
       } catch (err) {
         console.warn('[loanRoutes] wallet activity: repaired-loan endings not read; served as unknown', redactedError(err));

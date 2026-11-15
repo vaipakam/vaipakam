@@ -183,7 +183,7 @@ function Line({ line, chain, account, meta, copy }: { line: ActivityLine; chain:
 }
 
 function eventLine(e: ActivityEvent, { text, format }: CopyAccess): string {
-  if (e.succeeded !== null) return text(`activity.outcomes.${e.kind}.${e.succeeded ? 'succeeded' : 'failed'}` as CopyKey);
+  if (e.stated !== null) return text(`activity.stated.${e.kind}.${e.stated ? 'yes' : 'no'}` as CopyKey);
   const key = kindKey(e.kind);
   return key === null ? format('activity.unknownKind', { kind: e.kind }) : text(key);
 }

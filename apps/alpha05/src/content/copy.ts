@@ -2413,10 +2413,70 @@ export const copy = {
     repaired: B('Loan #{{id}} had ended ({{status}}) by block {{block}}, found by a check.'),
     repairedWhen: B('When and how it ended was not seen; the check read it at {{time}}.'),
     repairedNoTime: B('When and how it ended was not seen.'),
-    outcomes: {
+    stated: {
+      AutoLendConsentChanged: {
+        yes: B('Auto-lend consent was given.'),
+        no: B('Auto-lend consent was withdrawn.'),
+      },
+      AutoOptInOnNewLoanChanged: {
+        yes: B('The automation default for new loans was switched on.'),
+        no: B('The automation default for new loans was switched off.'),
+      },
       ClaimRetryExecuted: {
-        succeeded: B('A retried sale of a loan’s collateral went through; the proceeds go to the parties.'),
-        failed: B('A retried sale of a loan’s collateral did not go through; the collateral is settled as it is.'),
+        yes: B('A retried sale of a loan’s collateral went through; the proceeds go to the parties.'),
+        no: B('A retried sale of a loan’s collateral did not go through; the collateral is settled as it is.'),
+      },
+      CosignRequirementSet: {
+        yes: B('A co-signer is now required for outflows.'),
+        no: B('A co-signer is no longer required for outflows.'),
+      },
+      IlliquidPairConsentSet: {
+        yes: B('Consent to an illiquid asset pair was given.'),
+        no: B('Consent to an illiquid asset pair was withdrawn.'),
+      },
+      KeeperAccessUpdated: {
+        yes: B('Keeper access was switched on.'),
+        no: B('Keeper access was switched off.'),
+      },
+      LenderBackstopOptInSet: {
+        yes: B('The lender opted in to the backstop’s cash exit.'),
+        no: B('The lender opted out of the backstop’s cash exit.'),
+      },
+      LenderIntentPrioritySet: {
+        yes: B('Priority routing was switched on for an auto-lend standing order.'),
+        no: B('Priority routing was switched off for an auto-lend standing order.'),
+      },
+      LoanKeeperEnabled: {
+        yes: B('A keeper was permitted on a loan.'),
+        no: B('A keeper’s permission on a loan was withdrawn.'),
+      },
+      OfferKeeperEnabled: {
+        yes: B('A keeper was permitted on an offer.'),
+        no: B('A keeper’s permission on an offer was withdrawn.'),
+      },
+      ProtectNftsSet: {
+        yes: B('NFT protection was switched on.'),
+        no: B('NFT protection was switched off.'),
+      },
+      RiskStrictModeSet: {
+        yes: B('Strict risk mode was switched on.'),
+        no: B('Strict risk mode was switched off.'),
+      },
+      SellerInterestClaimClosed: {
+        yes: B('A seller’s interest claim was closed, paid in full.'),
+        no: B('A seller’s interest claim was closed with part of it unpaid; the loan owes nothing more for it.'),
+      },
+      SwapAdapterAttempted: {
+        yes: B('A sale route was tried and went through.'),
+        no: B('A sale route was tried and failed.'),
+      },
+      VPFIDiscountConsentChanged: {
+        yes: B('Consent to VPFI fee discounts was given.'),
+        no: B('Consent to VPFI fee discounts was withdrawn.'),
+      },
+      VaultWithdrawRequested: {
+        yes: B('A vault withdrawal was requested and queued for the protection delay.'),
+        no: B('A vault withdrawal was requested and paid at once.'),
       },
     },
     status: {
@@ -2467,7 +2527,7 @@ export const copy = {
       FeeEntitlementStamped: B('A fee entitlement was recorded.'),
       ForcedSaleSettled: B('A forced sale of collateral was settled.'),
       HFLiquidationTriggered: B('A loan was liquidated because its health fell below 1.'),
-      IlliquidPairConsentSet: B('Consent to an illiquid asset pair was recorded.'),
+      IlliquidPairConsentSet: B('Consent to an illiquid asset pair changed.'),
       IntentLoanRolled: B('A repaid auto-lend loan returned its proceeds to the standing order, ready to lend again.'),
       IntentMatched: B('An auto-lend standing order was matched.'),
       IntentPriorityFill: B('An auto-lend standing order was filled first, by priority.'),
@@ -2495,7 +2555,7 @@ export const copy = {
       LoanFallbackPending: B('A loan went into fallback after a failed sale.'),
       LoanInitiated: B('A loan started.'),
       LoanInitiatedDetails: B('A new loan’s terms were recorded.'),
-      LoanKeeperEnabled: B('A keeper was permitted on a loan.'),
+      LoanKeeperEnabled: B('A keeper’s permission on a loan changed.'),
       LoanObligationTransferred: B('The borrower’s obligation passed to a new borrower.'),
       LoanPartiallyLiquidated: B('Part of a loan was liquidated.'),
       LoanPreclosedDirect: B('The borrower closed a loan early.'),
@@ -2521,7 +2581,7 @@ export const copy = {
       OfferCreated: B('An offer was posted.'),
       OfferCreatedDetails: B('A new offer’s terms were recorded.'),
       OfferCreatorFullTariffSet: B('An offer’s fee tariff choice was recorded.'),
-      OfferKeeperEnabled: B('A keeper was permitted on an offer.'),
+      OfferKeeperEnabled: B('A keeper’s permission on an offer changed.'),
       OfferMatched: B('Two offers were matched into a loan.'),
       OfferModified: B('An offer was changed.'),
       OfferPriceGuardSet: B('An offer’s price-move guard was set.'),
@@ -2582,7 +2642,7 @@ export const copy = {
       RewardSanctionsHeldReleased: B('Rewards held apart by screening were released.'),
       RiskStrictModeSet: B('Strict risk mode changed.'),
       SanctionedProceedsLocked: B('Proceeds were locked by screening.'),
-      SellerInterestClaimClosed: B('A seller’s interest claim was closed.'),
+      SellerInterestClaimClosed: B('A seller’s interest claim was closed; whether it was paid in full was not recorded.'),
       SellerInterestClaimRecorded: B('Interest earned before a sale was recorded for the seller.'),
       SellerInterestPaid: B('Interest owed to a seller was paid.'),
       SellerInterestWithdrawn: B('A seller withdrew interest owed from before a sale.'),

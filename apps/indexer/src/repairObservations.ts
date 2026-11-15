@@ -74,14 +74,11 @@ export function repairObservationToJson(row: RepairObservationRow): Record<strin
 export function repairObservationsPage(
   db: D1Database,
   chainId: number,
-  opts: { loanId?: number; before?: { block: number; logIndex: number }; wallet?: string },
+  opts: { loanId?: number; before?: { block: number; logIndex: number } },
   limit: number,
 ): D1PreparedStatement {
   const beforeBlock = opts.before?.block ?? null;
-  const loanBound =
-    opts.before && opts.before.logIndex > REPAIR_OBSERVATION_LOG_INDEX_BASE
-      ? opts.before.logIndex - REPAIR_OBSERVATION_LOG_INDEX_BASE
-      : 0;
+  const loanBound = cursorLoanBound(opts.before);
   return db
     .prepare(
       `SELECT chain_id, loan_id, repair_observed_status, repair_observed_block, repair_observed_at
@@ -89,10 +86,41 @@ export function repairObservationsPage(
         WHERE chain_id = ?1 AND repair_observed_block IS NOT NULL
           AND (?2 IS NULL OR loan_id = ?2)
           AND (?3 IS NULL OR repair_observed_block < ?3 OR (repair_observed_block = ?3 AND loan_id < ?4))
-          -- #3677: one wallet's loans (every loan it ever held a position in).
-          AND (?6 IS NULL OR loan_id IN (SELECT lp.loan_id FROM loan_participants lp WHERE lp.chain_id = ?1 AND lp.wallet = ?6))
         ORDER BY repair_observed_block DESC, loan_id DESC
         LIMIT ?5`,
     )
-    .bind(chainId, opts.loanId ?? null, beforeBlock, loanBound, limit, opts.wallet ?? null);
+    .bind(chainId, opts.loanId ?? null, beforeBlock, loanBound, limit);
+}
+
+/** The loan bound at a cursor's own block; see {@link repairObservationsPage}. */
+function cursorLoanBound(before: { block: number; logIndex: number } | undefined): number {
+  return before && before.logIndex > REPAIR_OBSERVATION_LOG_INDEX_BASE ? before.logIndex - REPAIR_OBSERVATION_LOG_INDEX_BASE : 0;
+}
+
+/**
+ * #3677 — the same page for one wallet's loans (every loan it ever held a
+ * position in), with the same cursor rule. Driven from the WALLET's rows,
+ * never the chain's endings: its loan ids on `idx_loan_participants_wallet`,
+ * then each loan row by its primary key (a `CROSS JOIN`, which SQLite never
+ * reorders), so the cost follows the wallet's loans, not every repaired
+ * loan on the chain.
+ */
+export function walletRepairObservationsPage(
+  db: D1Database,
+  chainId: number,
+  wallet: string,
+  before: { block: number; logIndex: number } | undefined,
+  limit: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `SELECT l.chain_id, l.loan_id, l.repair_observed_status, l.repair_observed_block, l.repair_observed_at
+         FROM (SELECT DISTINCT lp.loan_id FROM loan_participants lp WHERE lp.chain_id = ?1 AND lp.wallet = ?2) wl
+        CROSS JOIN loans l ON l.chain_id = ?1 AND l.loan_id = wl.loan_id
+        WHERE l.repair_observed_block IS NOT NULL
+          AND (?3 IS NULL OR l.repair_observed_block < ?3 OR (l.repair_observed_block = ?3 AND l.loan_id < ?4))
+        ORDER BY l.repair_observed_block DESC, l.loan_id DESC
+        LIMIT ?5`,
+    )
+    .bind(chainId, wallet, before?.block ?? null, cursorLoanBound(before), limit);
 }

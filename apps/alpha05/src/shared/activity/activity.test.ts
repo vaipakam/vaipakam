@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { DIAMOND_ABI } from '@vaipakam/contracts/abis';
 import { participantKinds } from '@vaipakam/lib/activityParticipants';
 import { refScopedKinds } from '@vaipakam/lib/activityRefs';
 import { copyEntry, type CopyAccess, type CopyKey } from '../copy/useCopy';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
-import { OUTCOME_ARGS, activityLines, historyClaims, parseActivityEvent, parseRepairEntry, readActivityPage, type ActivityEvent, type ActivityPage } from './activity';
+import { STATED_ARGS, activityLines, historyClaims, parseActivityEvent, parseRepairEntry, readActivityPage, type ActivityEvent, type ActivityPage } from './activity';
 import { amountLine } from './amountLine';
 import { kindKey, namedKinds } from './useWalletActivity';
 
@@ -89,22 +90,64 @@ describe('parseActivityEvent', () => {
   });
 });
 
-describe('outcome kinds', () => {
-  it('reads whether the step worked from the event’s own argument, and only for a kind that states it', () => {
-    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5', succeeded: true, proceeds: '10' } }), true)?.succeeded).toBe(true);
-    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5', succeeded: false, proceeds: '0' } }), true)?.succeeded).toBe(false);
-    // Not stated, or not a boolean: unknown, never a success.
-    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5' } }), true)?.succeeded).toBeNull();
-    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { succeeded: 'true' } }), true)?.succeeded).toBeNull();
-    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: null }), true)?.succeeded).toBeNull();
-    expect(parseActivityEvent(raw({ kind: 'LoanRepaid', args: { succeeded: true } }), true)?.succeeded).toBeNull();
+/**
+ * Kinds with a yes/no argument whose line holds whichever way it is set, and
+ * why. Every other named kind with one must be in STATED_ARGS.
+ */
+type AbiItem = { type: string; name?: string; inputs?: ReadonlyArray<{ name: string; type: string }> };
+
+const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
+  AutoExtendBorrowerCapsChanged: 'says the limits changed, not which way',
+  AutoExtendLenderCapsChanged: 'says the limits changed, not which way',
+  AutoRefinanceCapsChanged: 'says the limits changed, not which way',
+  BorrowerFundsClaimed: 'the flag is whether both sides have now claimed',
+  CollateralConsolidated: 'the flag names the side',
+  CollateralSaleProceedsSplit: 'the flag is whether part is held for the borrower',
+  DefaultAutoRefinanceCapsChanged: 'says the limits changed, not which way',
+  ForcedSaleSettled: 'the flags are what the sale held and covered, shown with its rows',
+  LenderFundsClaimed: 'the flag is whether both sides have now claimed',
+  LenderIntentSet: 'the flags are order terms',
+  LoanDefaulted: 'the flag is a consent record, not the outcome',
+  LoanFallbackPending: 'the flag is a consent record, not the outcome',
+  NotificationFeeBilled: 'the flag names the side',
+  OfferAccepted: 'the flag is a sale-vehicle detail',
+  OfferCreatorFullTariffSet: 'says the choice was recorded, not which',
+  OfferMatched: 'the flag names which side accepted',
+  OwedAtDefaultRecorded: 'the flag names the route',
+  PeriodicInterestAutoLiquidated: 'the flag is whether part is held for the borrower',
+  PrepaySaleListingSynced: 'says the listing was brought up to date',
+  PrepaySaleOfferSynced: 'says the offer was brought up to date',
+  ProtectedModeEnabled: 'the flag is a setting inside a mode that was switched on',
+  TierExclusionUpdated: 'the flag names the side',
+};
+
+describe('kinds whose meaning turns on a yes/no', () => {
+  it('reads the yes/no from the event’s own argument, and only for a kind that states one', () => {
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5', succeeded: true, proceeds: '10' } }), true)?.stated).toBe(true);
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5', succeeded: false, proceeds: '0' } }), true)?.stated).toBe(false);
+    expect(parseActivityEvent(raw({ kind: 'LoanKeeperEnabled', args: { enabled: false } }), true)?.stated).toBe(false);
+    // Not stated, or not a boolean: unknown, never a direction.
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5' } }), true)?.stated).toBeNull();
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { succeeded: 'true' } }), true)?.stated).toBeNull();
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: null }), true)?.stated).toBeNull();
+    expect(parseActivityEvent(raw({ kind: 'LoanRepaid', args: { succeeded: true } }), true)?.stated).toBeNull();
   });
 
-  it('has words for each outcome of every outcome kind, and its plain line does not claim one', () => {
-    for (const kind of Object.keys(OUTCOME_ARGS)) {
+  it('names the contract’s own argument, with words for each answer', () => {
+    const events = new Map((DIAMOND_ABI as readonly AbiItem[]).filter((x) => x.type === 'event').map((x) => [x.name, x]));
+    for (const [kind, arg] of Object.entries(STATED_ARGS)) {
       expect(namedKinds().has(kind)).toBe(true);
-      for (const o of ['succeeded', 'failed']) expect(copyEntry(`activity.outcomes.${kind}.${o}` as CopyKey)).toBeTruthy();
+      expect(events.get(kind)?.inputs?.find((i) => i.name === arg)?.type).toBe('bool');
+      for (const o of ['yes', 'no']) expect(copyEntry(`activity.stated.${kind}.${o}` as CopyKey)).toBeTruthy();
     }
+  });
+
+  it('leaves no named kind with a yes/no argument undecided', () => {
+    const undecided = (DIAMOND_ABI as readonly AbiItem[])
+      .filter((x) => x.type === 'event' && namedKinds().has(x.name ?? '') && x.inputs?.some((i) => i.type === 'bool'))
+      .map((x) => x.name!)
+      .filter((k) => !(k in STATED_ARGS) && !(k in NEUTRAL_FLAGS));
+    expect(undecided).toEqual([]);
   });
 });
 
