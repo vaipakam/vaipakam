@@ -2860,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "पोज़िशन ट्रांसफ़र पर रिवॉर्ड प्रविष्टि विभाजित हुई",
         "LenderEntryStamped": "पोज़िशन लेते समय ऋणदाता की छूट दर्ज हुई",
         "Transfer": "Transfer",
-        "Approval": "Approval"
+        "Approval": "Approval",
+        "SignedOfferCancelFloorRaised": "पुराने हस्ताक्षरित ऑफ़र रद्द किए गए"
       },
       "unavailableFallback": "आपके current loans और rentals हमेशा available हैं",
       "positionsLink": "My positions"

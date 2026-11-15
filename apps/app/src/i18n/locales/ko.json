@@ -2860,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "포지션 이전 시 리워드 항목이 분할됨",
         "LenderEntryStamped": "포지션 인수 시 대출자 할인이 기록됨",
         "Transfer": "전송",
-        "Approval": "승인"
+        "Approval": "승인",
+        "SignedOfferCancelFloorRaised": "이전 서명 제안 취소됨"
       },
       "unavailableFallback": "현재 대출과 임대는 항상 다음에서 확인할 수 있습니다",
       "positionsLink": "내 포지션"

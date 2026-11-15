@@ -2860,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "قُسِّم قيد المكافأة عند نقل المركز",
         "LenderEntryStamped": "سُجِّل خصم المُقرض عند تولّي المركز",
         "Transfer": "تحويل",
-        "Approval": "موافقة"
+        "Approval": "موافقة",
+        "SignedOfferCancelFloorRaised": "أُلغيت العروض الموقّعة الأقدم"
       },
       "unavailableFallback": "قروضك وعمليات تأجيرك الحالية متاحة دائمًا في",
       "positionsLink": "مراكزي"

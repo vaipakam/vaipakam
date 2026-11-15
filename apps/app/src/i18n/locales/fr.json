@@ -2860,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "Entrée de récompense scindée lors d’un transfert de position",
         "LenderEntryStamped": "Remise du prêteur enregistrée à la prise de la position",
         "Transfer": "Transfert",
-        "Approval": "Approbation"
+        "Approval": "Approbation",
+        "SignedOfferCancelFloorRaised": "Anciennes offres signées annulées"
       },
       "unavailableFallback": "Vos prêts et locations actuels sont toujours disponibles dans",
       "positionsLink": "Mes positions"

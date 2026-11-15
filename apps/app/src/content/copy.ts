@@ -6819,6 +6819,7 @@ const copySource = {
       SignedOfferMatched: 'Signed offers matched',
       SignedOfferCancelled: 'Signed offer cancelled',
       SignedOfferNonceBurned: 'Signed offer voided',
+      SignedOfferCancelFloorRaised: 'Older signed offers cancelled',
       InteractionRewardsClaimed: 'Rewards claimed',
       RewardDeliveredToVault: 'Rewards delivered to your vault',
       VPFIDepositedToVault: 'VPFI deposited to vault',

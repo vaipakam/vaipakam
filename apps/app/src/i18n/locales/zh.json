@@ -2860,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "仓位转让时奖励条目已拆分",
         "LenderEntryStamped": "接手仓位时已记录出借人折扣",
         "Transfer": "转账",
-        "Approval": "授权"
+        "Approval": "授权",
+        "SignedOfferCancelFloorRaised": "较早的签名报价已取消"
       },
       "unavailableFallback": "您的当前贷款和租赁始终可在这里查看",
       "positionsLink": "我的持仓"
