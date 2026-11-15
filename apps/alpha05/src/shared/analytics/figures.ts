@@ -168,7 +168,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
           return { asset, principalLent, interestPaid, lentValue, interestValue };
         }),
       ),
-      readTokenMeta(c, list),
+      readTokenMeta(c, list, blockNumber),
     ]);
     return { rows, meta };
   };

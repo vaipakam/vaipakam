@@ -105,8 +105,7 @@ describe('readProtocolFigures', () => {
       ['value', 'value'],
       ['refused', 'refused'],
     ]);
-    // Every Diamond read named the same block (the token reads carry none).
-    const diamondBlocks = blocks.filter((b) => b !== undefined);
-    expect(new Set(diamondBlocks)).toEqual(new Set([1000n]));
+    // Every read, the token metadata included, named the same block.
+    expect(new Set(blocks)).toEqual(new Set([1000n]));
   });
 });
