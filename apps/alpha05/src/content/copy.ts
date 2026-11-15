@@ -3956,6 +3956,9 @@ export const copy = {
     interestLabel: B('Interest if the borrower repays early'),
     fullTermOption: B("Full term: the borrower owes the whole term's interest"),
     partialOption: B('Let the borrower repay part early'),
+    proRataNote: A(
+      'With pro-rata interest, the term you set is the longest you lend for. A match can pair your offer with a pro-rata request for that term or a shorter one, and that loan runs for exactly the term the borrower asked for. A borrower who takes your offer directly gets your whole term.',
+    ),
     optionsSummary: B('Full-term interest keeps what you earn; the defaults are the common choice.'),
     optionsWhy: C(
       "Full-term interest means the borrower owes the whole term's interest even if they repay early, so an early repayment does not lower what you earn; pro-rata interest pays you only for the time the loan is open. Allowing partial repayments lets the borrower repay part of the loan early; with full-term interest, a partial repayment lowers the future interest on what it repays, and the full-term floor still applies to the rest. Each choice is fixed in the offer and binds the loan it opens.",
@@ -4122,6 +4125,9 @@ export const copy = {
     ),
     loseMatchUnread: A(
       'Whether matching is switched on for this network could not be read. While it is on, anyone may match your offer with a request, lending your whole amount at your rate against at least the collateral you ask for.',
+    ),
+    loseProRataTerm: A(
+      'With pro-rata interest, {{days}} days is the longest you lend for: a match can pair this offer with a pro-rata request for a shorter term, and that loan runs, and earns you interest, only for the term the borrower asked for.',
     ),
     loseBinding: A('Posting records a binding offer: any borrower may take it on these terms while it is open.'),
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this offer locks.'),
@@ -4370,6 +4376,7 @@ export const copy = {
     interestLabel: B('Interest if you repay early'),
     fullTermOption: B("Full term: the whole term's interest is owed"),
     proRataOption: B('Pro-rata: only for the time the loan is open'),
+    proRataNote: A('With pro-rata interest, a match can also pair your request with a lender’s pro-rata offer for a longer term. Your loan always runs for exactly the term you ask for.'),
     partialOption: B('Allow partial repayments'),
     optionsSummary: B('Most lenders look for full-term interest; the defaults are the common choice.'),
     optionsWhy: C(
@@ -4446,6 +4453,7 @@ export const copy = {
     loseMatchKeepsRest: A(
       'Collateral a match does not lock stays with the request for later matches and comes back to your wallet only when the request closes or you cancel it, not after each match.',
     ),
+    proRataTermMatch: A('A match can pair this request with a lender’s pro-rata offer for a longer term; your loan still runs for exactly {{days}} days.'),
     loseDirectOver: A(
       "At today's prices a lender cannot take this directly: {{floor}} supports at most {{ceiling}}, less than the smallest amount. Only a match that locks more of your collateral can fill it.",
     ),

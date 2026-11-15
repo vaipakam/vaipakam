@@ -184,9 +184,15 @@ test('an offer the wallet cannot fund is blocked in place, changing it keeps wha
   await page.getByTestId('request-amount').fill(asked);
   await page.getByTestId('request-collateral').fill('900000');
   await page.getByTestId('request-rate').fill('4');
+  // Pro-rata (#3615): the term becomes the longest the lender lends for.
+  await expect(page.getByTestId('request-prorata-term')).toHaveCount(0);
+  await page.getByTestId('request-prorata').check();
+  await expect(page.getByTestId('request-prorata-term')).toContainText('the term you set is the longest you lend for');
+  await expect(page.getByTestId('request-prorata-term')).toContainText('A borrower who takes your offer directly gets your whole term.');
   await page.getByTestId('request-review').click();
   const flow = page.locator('.post-request');
   await expect(flow).toContainText('this offer locks', { timeout: 60_000 });
+  await expect(flow.locator('.receipt')).toContainText(/With pro-rata interest, \d+ days is the longest you lend for/);
   await expect(flow.getByTestId('request-consent')).toHaveCount(0);
   await expect(flow.getByRole('button', { name: 'Confirm in wallet' })).toBeDisabled();
   expect(flags.sentTransactions).toBe(0);
