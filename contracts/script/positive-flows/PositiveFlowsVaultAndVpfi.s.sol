@@ -3,13 +3,8 @@ pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
-import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
-import {Vm} from "forge-std/Vm.sol";
+import {PositiveFlowsStaged} from "./PositiveFlowsStaged.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
-import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
-import {LibAcceptTestSigner} from "../../test/helpers/LibAcceptTestSigner.sol";
-import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
-import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
@@ -17,6 +12,7 @@ import {VaultDepositoryFacet} from "../../src/facets/VaultDepositoryFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
 import {ERC20Mock} from "../../test/mocks/ERC20Mock.sol";
+import {MockSanctionsList} from "../../test/mocks/MockSanctionsList.sol";
 
 /**
  * @title PositiveFlowsVaultAndVpfi
@@ -24,11 +20,44 @@ import {ERC20Mock} from "../../test/mocks/ERC20Mock.sol";
  *         sanctioned-source ban on recovery, disown, and VPFI deposit with
  *         fee-discount consent, a HoldOnly loan and a free-balance withdraw.
  *
+ *         Staged (#3574). The recovery scenarios take one step each. PF-250
+ *         takes two: the first wires a mock VPFI token on the Diamond,
+ *         deposits and consents, and posts the lender's offer; the second,
+ *         once the deposit has been held the Diamond's minimum staking
+ *         period plus a day (`getTwaConfig().minStakedDays`), opens the
+ *         loan, closes it, withdraws free VPFI and puts the Diamond's VPFI
+ *         configuration back. Every setting a scenario changes is recorded
+ *         to put back (PF-281's flagged source, and PF-250's VPFI token,
+ *         discount rate, ETH reference asset and the borrower's consent),
+ *         so `unwind()` restores what an abandoned run left changed, and
+ *         `finish()` refuses while any is. `run()` is the simulation and
+ *         `stage()` the broadcastable run ({PositiveFlowsStaged},
+ *         `script/positive-flows/run-staged.sh`).
+ *
  *         Moved from the retired `AnvilNewPositiveFlows` suite, whose `N`
  *         labels the comments below still use in places; {PositiveFlowsBase}
  *         maps them to the flow ids. Fixture, runner and ids: {PositiveFlowsBase}.
  */
-contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
+contract PositiveFlowsVaultAndVpfi is PositiveFlowsStaged {
+    /// @dev Values PF-250's first step leaves for its second.
+    string private constant OFFER = "offer";
+    string private constant VPFI_MOCK = "vpfiMock";
+
+    /// @dev Settings to put back, recorded before the step that changes them.
+    /// @dev PF-281's flagged source: put back means the oracle no longer flags it.
+    string private constant STRAY_SOURCE_FLAG = "straySourceFlag";
+    /// @dev The Diamond's VPFI token before PF-250. A Diamond with none is
+    ///      not recorded: the setter refuses the zero address, so the mock
+    ///      stays wired there, as it always has on a fresh Anvil Diamond.
+    string private constant VPFI_TOKEN = "vpfiToken";
+    /// @dev The discount rate before PF-250 (wei per VPFI; 0 = disabled).
+    string private constant VPFI_DISCOUNT_RATE = "vpfiDiscountRate";
+    /// @dev The discount's ETH reference asset before PF-250.
+    string private constant VPFI_ETH_REF_ASSET = "vpfiEthRefAsset";
+    /// @dev The borrower, recorded only when it had not consented before
+    ///      PF-250: put back means its consent is off again.
+    string private constant VPFI_CONSENT = "vpfiConsent";
+
     function moduleName() public pure override returns (string memory) {
         return "PositiveFlowsVaultAndVpfi";
     }
@@ -45,24 +74,76 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
             "PF-250, PF-252, PF-251");
     }
 
-    function _runScenario(uint256 index) internal override {
-        if (index == 0) _recoveryHappyPath();
-        else if (index == 1) _recoverySanctionedBan();
-        else if (index == 2) _disown();
-        else if (index == 3) _vpfiDepositDiscountWithdraw();
-        else revert("PositiveFlowsVaultAndVpfi: no scenario at index");
+    /// @dev PF-250 sets up and posts, then fills; the others take one step.
+    function _stepCount(uint256 index) internal pure override returns (uint256) {
+        return index == 3 ? 2 : 1;
+    }
+
+    function _runStep(uint256 index, uint256 step) internal override {
+        if (index == 0) return _recoveryHappyPath();
+        if (index == 1) return _recoverySanctionedBan();
+        if (index == 2) return _disown();
+        if (index == 3) {
+            if (step == 0) return _vpfiDepositAndPost();
+            // PF-250 is one sequence: the withdraw draws on the deposit, and
+            // the Diamond's VPFI configuration is restored only after both.
+            vpfi = ERC20Mock(address(uint160(_kept(VPFI_MOCK))));
+            _vpfiLoanUnderDiscount(_kept(OFFER));
+            _withdrawVpfi();
+            return _restoreVpfiConfig();
+        }
+        revert("PositiveFlowsVaultAndVpfi: no scenario at index");
+    }
+
+    // ─── Settings to put back ─────────────────────────────────────────────
+
+    function _stillToRestore(string memory name, uint256 value) internal view override returns (bool) {
+        address a = address(uint160(value));
+        if (_eq(name, STRAY_SOURCE_FLAG)) return ProfileFacet(diamond).isSanctionedAddress(a);
+        if (_eq(name, VPFI_TOKEN)) return VPFITokenFacet(diamond).getVPFIToken() != a;
+        if (_eq(name, VPFI_DISCOUNT_RATE)) {
+            (uint256 rate,) = VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
+            return rate != value;
+        }
+        if (_eq(name, VPFI_ETH_REF_ASSET)) {
+            (, address ref) = VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
+            return ref != a;
+        }
+        if (_eq(name, VPFI_CONSENT)) return VPFIDiscountFacet(diamond).getVPFIDiscountConsent(a);
+        return super._stillToRestore(name, value);
+    }
+
+    function _restore(string memory name, uint256 value) internal override {
+        address a = address(uint160(value));
+        if (_eq(name, STRAY_SOURCE_FLAG)) {
+            // The oracle the Diamond reads is the fixture's mock, which anyone
+            // may set; read from the Diamond so unwind needs only the chain.
+            vm.startBroadcast(deployerKey);
+            MockSanctionsList(ProfileFacet(diamond).getSanctionsOracle()).setFlagged(a, false);
+            vm.stopBroadcast();
+            return;
+        }
+        if (_eq(name, VPFI_CONSENT)) {
+            // Recorded only for the borrower, PF-250's only consenting party.
+            require(a == borrower, "PositiveFlowsVaultAndVpfi: consent recorded for an unknown wallet");
+            vm.startBroadcast(borrowerKey);
+            VPFIDiscountFacet(diamond).setVPFIDiscountConsent(false);
+            vm.stopBroadcast();
+            return;
+        }
+        if (_eq(name, VPFI_TOKEN) || _eq(name, VPFI_DISCOUNT_RATE) || _eq(name, VPFI_ETH_REF_ASSET)) {
+            vm.startBroadcast(adminKey);
+            if (_eq(name, VPFI_TOKEN)) VPFITokenFacet(diamond).setVPFIToken(a);
+            else if (_eq(name, VPFI_DISCOUNT_RATE)) VPFIDiscountFacet(diamond).setVPFIDiscountRate(value);
+            else VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(a);
+            vm.stopBroadcast();
+            return;
+        }
+        super._restore(name, value);
     }
 
     /// @dev The mock VPFI token PF-250 wires on the Diamond for its run.
     ERC20Mock internal vpfi;
-
-    /// @dev PF-250 is one sequence: the withdraw draws on the deposit, and
-    ///      the Diamond's VPFI configuration is restored only after both.
-    function _vpfiDepositDiscountWithdraw() internal {
-        _vpfiDepositDiscount();
-        _withdrawVpfi();
-        _restoreVpfiConfig();
-    }
 
     // ─── PF-280: Adopting an untracked asset (happy path) ─────────────────────
 
@@ -128,6 +209,7 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         address userVault = VaultFactoryFacet(diamond).getOrCreateUserVault(user);
         vm.stopBroadcast();
 
+        _toRestore(STRAY_SOURCE_FLAG, uint256(uint160(strayer)));
         vm.startBroadcast(deployerKey);
         usdc.mint(userVault, 25e6);
         sanctions.setFlagged(strayer, true);
@@ -188,8 +270,9 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
     ///        3. Borrower approves diamond, deposits 2,000 VPFI to vault
     ///           via `depositVPFIToVault`, then opts in via
     ///           `setVPFIDiscountConsent(true)`.
-    ///        4. Lender + borrower take a normal loan. The borrower's
-    ///           hold-tier discount, when one resolves, is applied
+    ///        4. Lender + borrower take a normal loan, a step later, once the
+    ///           holding has lasted the minimum staking period. The
+    ///           borrower's hold-tier discount, when one resolves, is applied
     ///           DIRECTLY to the lending-asset LIF at acceptance; no VPFI
     ///           leaves the borrower's vault for the LIF.
     ///        5. Borrower repays and both sides claim.
@@ -200,35 +283,27 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
     ///      removed in #1980). This drive never sets `isCanonicalVpfiChain`,
     ///      so the effective tier reads zero here; the discount arithmetic
     ///      itself is covered by the focused unit tests, not by this drive.
-    // ─── VPFI-config snapshot (taken when PF-250 starts, restored at its end) ───
-    //
-    // PF-250's deposit, discount and withdraw steps need the mock VPFI token
-    // wired on the Diamond throughout, so the Diamond's own VPFI config is
-    // snapshotted before the first step and restored by
-    // `_restoreVpfiConfig` after the last. On a fresh Anvil Diamond every
-    // saved slot is zero/false and the restore collapses to no-ops; on a
-    // rehearsal Diamond the saved token, rate and reference asset are put
-    // back so the chain's own VPFI configuration is in place after the run.
-    address private _savedVpfiToken;
-    uint256 private _savedVpfiRate;
-    address private _savedVpfiEthRefAsset;
-    bool private _savedVpfiBorrowerConsent;
-    bool private _vpfiSnapshotTaken;
-
-    function _vpfiDepositDiscount() internal {
-        // Snapshot — see _restoreVpfiConfig() called after PF-250 withdraw.
-        _savedVpfiToken = VPFITokenFacet(diamond).getVPFIToken();
-        (_savedVpfiRate, _savedVpfiEthRefAsset) =
-            VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
-        _savedVpfiBorrowerConsent =
-            VPFIDiscountFacet(diamond).getVPFIDiscountConsent(borrower);
-        _vpfiSnapshotTaken = true;
+    ///
+    ///      The Diamond's VPFI token, discount rate, reference asset and the
+    ///      borrower's consent are recorded before they change and put back
+    ///      after the withdraw ({_restoreVpfiConfig}); on a fresh Anvil
+    ///      Diamond they start unset and the mock token stays wired.
+    function _vpfiDepositAndPost() internal {
+        address savedToken = VPFITokenFacet(diamond).getVPFIToken();
+        (uint256 savedRate, address savedRef) = VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
+        if (savedToken != address(0)) _toRestore(VPFI_TOKEN, uint256(uint160(savedToken)));
+        _toRestore(VPFI_DISCOUNT_RATE, savedRate);
+        _toRestore(VPFI_ETH_REF_ASSET, uint256(uint160(savedRef)));
+        if (!VPFIDiscountFacet(diamond).getVPFIDiscountConsent(borrower)) {
+            _toRestore(VPFI_CONSENT, uint256(uint160(borrower)));
+        }
 
         // Step 1: deploy VPFI mock + admin wires it.
         vm.startBroadcast(deployerKey);
         vpfi = new ERC20Mock("Vaipakam VPFI", "VPFI", 18);
         vpfi.mint(borrower, 5_000e18);
         vm.stopBroadcast();
+        _keep(VPFI_MOCK, uint256(uint160(address(vpfi))));
         console.log("VPFI deployed:", address(vpfi));
 
         vm.startBroadcast(adminKey);
@@ -253,24 +328,22 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         vm.stopBroadcast();
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
 
-        // Clear the min-history gate so the drive runs the accept with a
-        // holding that has lasted the minimum period (default three days).
-        vm.warp(block.timestamp + 4 days);
+        // The lender's offer for the next step, which runs once the holding
+        // has lasted the Diamond's minimum staking period, plus a day.
+        _keep(OFFER, _createLenderOffer(lenderKey));
+        _nextStepNotBefore(
+            block.timestamp + (uint256(VPFIDiscountFacet(diamond).getTwaConfig().minStakedDays) + 1) * 1 days
+        );
+    }
 
+    /// @dev Steps 4 and 5: open the loan on `offerId`, close it, and show the
+    ///      borrower's vault VPFI did not move.
+    function _vpfiLoanUnderDiscount(uint256 offerId) internal {
         address borrowerVault = VaultFactoryFacet(diamond).getUserVaultAddress(borrower);
         uint256 vaultVpfiBefore = vpfi.balanceOf(borrowerVault);
 
         // Step 4: take a loan.
-        vm.startBroadcast(lenderKey);
-        usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
-        vm.stopBroadcast();
-        LibAcceptTerms.AcceptTerms memory _t9 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
-        bytes memory _sig9 = LibAcceptTestSigner.sign(diamond, _t9, borrowerKey);
-        vm.startBroadcast(borrowerKey);
-        weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t9, _sig9);
-        vm.stopBroadcast();
+        uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated under HoldOnly borrower LIF:", loanId);
         require(
             vpfi.balanceOf(borrowerVault) == vaultVpfiBefore,
@@ -296,36 +369,15 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         );
     }
 
-    /// @dev Restore the VPFI-discount config to its state before PF-250.
-    ///      Called by `_vpfiDepositDiscountWithdraw` after the withdraw step,
-    ///      because every step before it needs the mock VPFI wired on the
-    ///      Diamond. On a fresh Anvil Diamond every saved slot is zero/false
-    ///      and the restore is a sequence of no-ops; on a rehearsal Diamond
-    ///      the saved token, rate and reference asset are re-applied.
-    ///
-    ///      `setVPFIToken(0x0)` reverts `InvalidAddress`, so the
-    ///      token restore is guarded by a non-zero check — on a
-    ///      throwaway anvil chain we simply leave the mock VPFI
-    ///      wired (no canonical exists to point at anyway), which
-    ///      is fine since anvil state doesn't survive the run.
-    ///      `setVPFIDiscountRate(0)` and `setVPFIDiscountETHPriceAsset(0)`
-    ///      accept zero (intentional "disable" semantics), so they
-    ///      can be restored unconditionally.
+    /// @dev Puts back the VPFI settings PF-250's first step recorded, each
+    ///      only when the chain still shows it changed: the same rule as
+    ///      `unwind()`, so a restore never sends a no-op the setter refuses.
     function _restoreVpfiConfig() internal {
-        if (!_vpfiSnapshotTaken) return;
-        vm.startBroadcast(adminKey);
-        if (_savedVpfiToken != address(0)) {
-            VPFITokenFacet(diamond).setVPFIToken(_savedVpfiToken);
-        }
-        VPFIDiscountFacet(diamond).setVPFIDiscountRate(_savedVpfiRate);
-        VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(
-            _savedVpfiEthRefAsset
-        );
-        vm.stopBroadcast();
-        if (!_savedVpfiBorrowerConsent) {
-            vm.startBroadcast(borrowerKey);
-            VPFIDiscountFacet(diamond).setVPFIDiscountConsent(false);
-            vm.stopBroadcast();
+        string[4] memory names = [VPFI_TOKEN, VPFI_DISCOUNT_RATE, VPFI_ETH_REF_ASSET, VPFI_CONSENT];
+        for (uint256 i = 0; i < names.length; i++) {
+            if (!_restoreRecorded(names[i])) continue;
+            uint256 value = _restoreValueOf(names[i]);
+            if (_stillToRestore(names[i], value)) _restore(names[i], value);
         }
         console.log("VPFI config from before PF-250 restored.");
     }
