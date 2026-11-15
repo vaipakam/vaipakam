@@ -1019,10 +1019,12 @@ each item is checked:
       address.
 - [ ] `PositiveFlows.s.sol` (a simulation), the staged positive-flow
       modules through `script/positive-flows/run-staged.sh` and
-      `PartialFlows.s.sol` green on every chain. The partial flows and the
-      timed module are not staged yet (#3574), so any that fill an offer
-      they posted stop under `--broadcast` with `TermsAgeNeedsStagedRun`
-      before sending anything.
+      `PartialFlows.s.sol` green on every chain. The partial flows are not
+      staged yet (#3574), so any that fill an offer they posted stop under
+      `--broadcast` with `TermsAgeNeedsStagedRun` before sending anything.
+      On a live chain, `run-staged.sh PositiveFlowsTimed` waits out the
+      cancel cooldowns and then stops with exit code 75 before PF-116's
+      month-long wait; run it again once the time it prints has passed.
       Capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/` (a private, git-ignored
       folder, #2764: the logs stay off GitHub). The positive flows run
@@ -1906,23 +1908,20 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # (contracts/deployments/<chain>/positive-flows-staged-<module>.json). A stage
 # runs only on top of a stage that landed whole: if a broadcast stops part-way,
 # the next stage refuses and names the record to remove for a fresh run.
+# PositiveFlowsTimed's steps wait longer (the five-minute cancel cooldown, a
+# periodic checkpoint a month after its loan opens, #3574); on Anvil the
+# runner steps the clock for those too. Its PF-116 changes the
+# periodic-interest switch, a swap adapter and the finer-cadence threshold
+# across a wait, and the record lists them under `restore_`: if that run is
+# abandoned, put them back with
+#   forge script script/positive-flows/PositiveFlowsTimed.s.sol --sig "unwind()" \
+#     --rpc-url http://localhost:8545 --broadcast
+# before removing the record.
 # One module at a time, since each checks its actors' nonces:
 for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsLenderIntent \
-         PositiveFlowsPositionHolder; do
-  ionice -c 2 -n 0 bash script/positive-flows/run-staged.sh "$m" || break
+         PositiveFlowsPositionHolder PositiveFlowsTimed; do
+  bash script/positive-flows/run-staged.sh "$m" || break
 done
-
-# Positive, timed — the flows whose second step must wait (offer cancel after
-# the cancel cooldown, a due periodic-interest checkpoint). The runner above
-# SKIPs them; this runs their open stage, steps the Anvil clock past the time
-# the open stage records, runs their settle stage, and then the read-only
-# finish stage that removes the open-run record once the chain shows nothing
-# it names is still open (Anvil only). If a broadcast stops part-way the
-# record stays; run the script's settle() and then finish() again.
-# KNOWN BROKEN until #3574: the open stage also opens PF-116's loan by filling
-# an offer it just posted, so it stops with `TermsAgeNeedsStagedRun` before
-# anything is sent. Expect that refusal; nothing is left on the chain:
-ionice -c 2 -n 0 bash script/positive-flows/run-timed.sh
 
 # Partial — 7 UI-testable midpoint states (offer states, partial repay,
 # collateral doubled, keeper enabled, refinance offer posted, stray token,
