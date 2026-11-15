@@ -1915,8 +1915,21 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
   // #3622 B2 — the fresh lane's offers and caps for this pass.
   const nowSec = Math.floor(Date.now() / 1000);
   const tracker = freshLaneTracker(ctx.chainId);
+  // The terms-age read is skipped when nothing changed recently, and bounded
+  // by the read cutoff otherwise (the default stands in past it), so it never
+  // spends the walk's time.
   const fresh =
-    share > 0 ? tracker.select(offers, nowSec, await readMinTermsAgeSec(ctx)) : new Set<string>();
+    share > 0 && FreshLaneTracker.anyRecent(offers, nowSec)
+      ? tracker.select(
+          offers,
+          nowSec,
+          await beforeDeadline(
+            readMinTermsAgeSec(ctx),
+            Math.min(readCutoffMs(ctx.notAfterMs), tickStart + PER_CHAIN_WALL_TIME_BUDGET_MS),
+            DEFAULT_MIN_TERMS_AGE_SEC,
+          ),
+        )
+      : new Set<string>();
   const lane = freshLaneBudget(share, {
     previews: MAX_PREVIEW_CALLS_PER_TICK,
     submits: MAX_SUBMITS_PER_TICK,

@@ -119,6 +119,12 @@ export class FreshLaneTracker {
     return fresh;
   }
 
+  /** Whether any offer's terms changed within the look-back: the lane has
+   *  nothing to select otherwise, so the caller can skip the terms-age read. */
+  static anyRecent(offers: readonly OfferLite[], nowSec: number): boolean {
+    return offers.some((o) => nowSec - termsChangedAt(o) <= FRESH_LOOKBACK_SEC);
+  }
+
   /** Records that the offer entered the lane for its current terms. */
   markEntered(o: OfferLite, nowSec: number): void {
     this.entries.set(o.id.toString(), { changedAt: termsChangedAt(o), enteredAt: nowSec });

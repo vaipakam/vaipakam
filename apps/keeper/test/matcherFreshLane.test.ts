@@ -124,6 +124,11 @@ describe('FreshLaneTracker', () => {
     expect(t.select([later], now + FRESH_COOL_OFF_SEC + 60, 5).has('1')).toBe(true);
   });
 
+  it('says when no offer changed recently, so the terms-age read can be skipped', () => {
+    expect(FreshLaneTracker.anyRecent([offer(1, L, 0, { createdAt: now - 7200 })], now)).toBe(false);
+    expect(FreshLaneTracker.anyRecent([offer(1, L, 0, { createdAt: now - 7200, termsSetAt: now - 60 })], now)).toBe(true);
+  });
+
   it('forgets entries once neither rule can use them', () => {
     const t = new FreshLaneTracker();
     t.markEntered(offer(1, L, 0, { createdAt: now }), now);
