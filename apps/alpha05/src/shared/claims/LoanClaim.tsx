@@ -34,6 +34,14 @@ export function loanClaimKey(loanId: bigint, side: ClaimSide): string {
   return `${LOAN_CLAIM_KEY_PREFIX}${side}.${loanId.toString()}`;
 }
 
+/** The claim a store key names, or null when it names anything else: a
+ *  claim's own follow-on steps (its withdrawals, #3631) keep entries under
+ *  the claim's key as a prefix, and are not claims. */
+export function parseLoanClaimKey(key: string): { loanId: bigint; side: ClaimSide } | null {
+  const m = /^claim\.loan\.(lender|borrower)\.(\d+)$/.exec(key);
+  return m === null ? null : { side: m[1] as ClaimSide, loanId: BigInt(m[2]) };
+}
+
 /** Whether one side's claim is open or in flight, so a page keeps its panel
  *  on screen until the reader closes the finish card. */
 export function useLoanClaimHeld(

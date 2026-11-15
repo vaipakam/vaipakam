@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import { creditedDrafts, paidAssets, readyToClaim, standardOf } from './claimWithdraw';
 import type { ClaimLane } from './loanClaim';
+import { loanClaimKey, parseLoanClaimKey } from './LoanClaim';
 
 type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
@@ -108,5 +109,12 @@ describe('claim and withdraw (#3631)', () => {
     ]);
     expect(sum.totals.filter((t) => t.assetType === 1)).toHaveLength(2);
     expect(sum.totals.find((t) => t.assetType === 2)?.amount).toBe(5n);
+  });
+
+  it('reads a claim from its own key, never from a withdrawal kept under it', () => {
+    const key = loanClaimKey(12n, 'borrower');
+    expect(parseLoanClaimKey(key)).toEqual({ loanId: 12n, side: 'borrower' });
+    expect(parseLoanClaimKey(`${key}:withdraw:0`)).toBeNull();
+    expect(parseLoanClaimKey('claim.seller.3')).toBeNull();
   });
 });

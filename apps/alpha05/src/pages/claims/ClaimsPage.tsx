@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
-import { LOAN_CLAIM_KEY_PREFIX, LoanClaim, loanClaimKey, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
+import { LoanClaim, parseLoanClaimKey, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
 import type { ClaimSide } from '../../shared/claims/loanClaim';
 import type { LoanClaimReview } from '../../shared/claims/loanClaimReview';
 import type { LoanClaimRow } from '../../shared/claims/loanClaimRows';
@@ -196,10 +196,11 @@ function useHeldClaims(identity: string | null): { loanId: bigint; side: ClaimSi
   const entries = useTxEntries();
   if (identity === null) return [];
   return entries.flatMap(([key]) => {
+    const claim = parseLoanClaimKey(key);
+    if (claim === null) return [];
     const review = store.value<LoanClaimReview>(`${key}:review`);
-    if (!key.startsWith(LOAN_CLAIM_KEY_PREFIX) || !review || review.identity !== identity) return [];
-    if (loanClaimKey(review.loanId, review.side) !== key) return [];
-    return [{ loanId: review.loanId, side: review.side }];
+    if (!review || review.identity !== identity || review.loanId !== claim.loanId || review.side !== claim.side) return [];
+    return [claim];
   });
 }
 
