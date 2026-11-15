@@ -155,6 +155,14 @@ of" read below it. The Diamond reads that floor; it keeps no second record
 of which versions are retired. A new guard has its own versions and its own
 floor, so versions are never compared across guards.
 
+A price version has two parts, the guard's own epoch and its feed
+registry's epoch, and the guard can be pointed at a new registry whose epochs
+count from its own start. So the floor records the registry it was set
+against: a read is refused when its guard epoch is below the floor's, or when
+the guard's registry at that epoch is the floor's registry and its registry
+epoch is below the floor's. A version on a later registry is newer than the
+floor by construction.
+
 ### The vault's own check
 
 A vault names the price guard in its code and checks outcomes itself (#3431,
