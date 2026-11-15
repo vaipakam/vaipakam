@@ -450,22 +450,8 @@ library LibOfferMatch {
                 r.errorCode = MatchError.RefinanceTagged;
                 return r;
             }
-            // #595 round-2 — for NFT carry-over collateral, the asset-continuity
-            // check below only compares the collection address + asset type, but
-            // `LoanFacet` copies the BORROWER offer's carried token into the new
-            // loan. Require the lender offer to demand the SAME token identity
-            // (tokenId + quantity), else a lender wanting token A could be
-            // matched to a refinance carrying token B from the same collection,
-            // delivering different collateral than the lender's offer specified.
-            if (B.collateralAssetType != LibVaipakam.AssetType.ERC20) {
-                if (
-                    L.collateralTokenId != B.collateralTokenId ||
-                    L.collateralQuantity != B.collateralQuantity
-                ) {
-                    r.errorCode = MatchError.AssetMismatch;
-                    return r;
-                }
-            }
+            // #595 round-2 — the carried NFT's identity is held by the
+            // token-identity rule below, which binds every match.
             borrowerCarryOver = true;
         }
 
@@ -511,6 +497,22 @@ library LibOfferMatch {
             || L.collateralAssetType != B.collateralAssetType
         ) {
             r.errorCode = MatchError.AssetTypeMismatch;
+            return r;
+        }
+        // The loan carries the BORROWER offer's token ids (the match accepts
+        // it), so an NFT leg must name the same token and quantity on both
+        // offers. Without this a lender offer for token A filled against a
+        // borrower offer for token B of the same collection: different
+        // collateral than the lender offered (or, for a rental, a different
+        // token than the lender listed).
+        if (
+            (L.assetType != LibVaipakam.AssetType.ERC20
+                && (L.tokenId != B.tokenId || L.quantity != B.quantity))
+                || (L.collateralAssetType != LibVaipakam.AssetType.ERC20
+                    && (L.collateralTokenId != B.collateralTokenId
+                        || L.collateralQuantity != B.collateralQuantity))
+        ) {
+            r.errorCode = MatchError.AssetMismatch;
             return r;
         }
         // #3615 — the loan runs the BORROWER offer's term (a match accepts
