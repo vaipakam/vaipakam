@@ -459,7 +459,7 @@ const SIGNED_OFFER_COLUMNS = [
   'asset_type', 'collateral_asset_type', 'interest_rate_bps', 'interest_rate_bps_max',
   'amount', 'amount_max', 'collateral_amount', 'collateral_amount_max',
   'fill_mode', 'expires_at', 'deadline', 'nonce',
-  'status', 'filled_amount', 'created_at', 'updated_at',
+  'status', 'filled_amount', 'created_at', 'updated_at', 'offer_set',
 ];
 /** A well-formed order in wire form, and the row the indexer route stores
  *  for it (the shared rule, packages/lib/src/signedOfferWire.mjs). */
@@ -484,7 +484,7 @@ function signedOfferRow(over = {}, order = signedOrder()) {
     chain_id: 84532, order_hash: `0x${'b'.repeat(64)}`,
     order_json: canonicalOrderJson(order), signature: `0x${'D'.repeat(130)}`,
     ...signedOfferColumns(order),
-    status: 'filled', filled_amount: '1000', created_at: 10, updated_at: 20,
+    status: 'filled', filled_amount: '1000', created_at: 10, updated_at: 20, offer_set: null,
     ...over,
   };
 }
@@ -495,7 +495,7 @@ test('signed_offers: the signed order is restored, its lifecycle is reset for th
   ]));
   assert.equal(batch.imported, 2);
   // Every row goes in as an unfilled live offer; the order and signature verbatim.
-  assert.equal((batch.sql.match(/'active', '0', 10, 20\);/g) ?? []).length, 2);
+  assert.equal((batch.sql.match(/'active', '0', 10, 20, NULL\);/g) ?? []).length, 2);
   assert.doesNotMatch(batch.sql, /'filled'|'cancelled'|'1000', 10|'400'/);
   assert.match(batch.sql, new RegExp(`'0x${'D'.repeat(130)}'`));
   // Shapes the route writes, and nothing else.
@@ -538,6 +538,17 @@ test('signed_offers: only an order a taker can replay, in the form the route sto
   assert.throws(() => restore(signedOfferRow({ amount: '9999' })), /amount is "9999" but the order says "1000"/);
   assert.throws(() => restore(signedOfferRow({ signer: `0x${'d'.repeat(40)}` })), /signer is .* but the order says/);
   assert.throws(() => restore(signedOfferRow({ duration_days: '30' })), /duration_days is "30" but the order says 30/);
+  // #3327 part 2: a set order's placement, in the canonical form the route
+  // writes, or nothing; anything else is a set offer no taker can fill.
+  const placement = JSON.stringify({ others: [`0x${'e'.repeat(64)}`], index: 1 });
+  assert.match(restore(signedOfferRow({ offer_set: placement })), new RegExp(`'${placement.replace(/[[\]{}]/g, '\\$&')}'`));
+  assert.throws(() => restore(signedOfferRow({ offer_set: 'nope' })), /offer_set is not JSON/);
+  assert.throws(() => restore(signedOfferRow({ offer_set: '{"others":[],"index":0}' })), /offer_set is not a placement \(set-size\)/);
+  assert.throws(
+    () => restore(signedOfferRow({ offer_set: JSON.stringify({ index: 1, others: [`0x${'e'.repeat(64)}`] }) })),
+    /offer_set is not in canonical form/,
+  );
+  assert.throws(() => restore(signedOfferRow({ offer_set: 7 })), /offer_set is not text/);
   // The fixture itself is the route's form.
   assert.match(restore(signedOfferRow()), /VALUES/);
 });
