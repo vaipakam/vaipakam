@@ -55,7 +55,7 @@ contract LenderIntentFacetTest is SetupTest {
         bool consent
     ) internal {
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            lendAsset, collAsset, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays,
+            lendAsset, collAsset, 0, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays,
             minFill, requiresKeeperAuth, 0, false, consent, type(uint64).max
         );
     }
@@ -70,7 +70,7 @@ contract LenderIntentFacetTest is SetupTest {
         ERC20(lendAsset).approve(address(diamond), amount);
         vm.prank(user);
         LenderIntentFacet(address(diamond)).fundLenderIntent(
-            lendAsset, collAsset, amount
+            lendAsset, collAsset, 0, amount
         );
     }
 
@@ -124,14 +124,14 @@ contract LenderIntentFacetTest is SetupTest {
         // Cancel one → de-lists.
         vm.prank(user);
         LenderIntentFacet(address(diamond)).cancelLenderIntent(
-            mockERC20, mockCollateralERC20
+            mockERC20, mockCollateralERC20, 0
         );
         assertEq(_activeCount(), 1, "cancelled intent de-listed");
 
         // Withdraw the other's capital to 0 → de-lists (depleted, still active).
         vm.prank(user);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
-            user, mockCollateralERC20, mockERC20, 2_000 ether
+            user, mockCollateralERC20, mockERC20, 0, 2_000 ether
         );
         assertEq(_activeCount(), 0, "depleted intent de-listed");
 
@@ -174,7 +174,7 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
 
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
-            .getLenderIntent(user, mockERC20, mockCollateralERC20);
+            .getLenderIntent(user, mockERC20, mockCollateralERC20, 0);
         assertTrue(it.active, "active");
         assertEq(it.maxExposure, MAX_EXPOSURE, "maxExposure");
         assertEq(it.minRateBps, MIN_RATE_BPS, "minRateBps");
@@ -191,7 +191,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(user);
         _setWith(mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 250 ether, false, true);
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
-            .getLenderIntent(user, mockERC20, mockCollateralERC20);
+            .getLenderIntent(user, mockERC20, mockCollateralERC20, 0);
         assertEq(it.maxExposure, 50_000 ether, "overwritten exposure");
         assertEq(it.minRateBps, 500, "overwritten rate");
         assertEq(it.maxInitLtvBps, 5000, "overwritten ltv");
@@ -204,10 +204,10 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
         vm.prank(user);
         LenderIntentFacet(address(diamond)).cancelLenderIntent(
-            mockERC20, mockCollateralERC20
+            mockERC20, mockCollateralERC20, 0
         );
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
-            .getLenderIntent(user, mockERC20, mockCollateralERC20);
+            .getLenderIntent(user, mockERC20, mockCollateralERC20, 0);
         assertFalse(it.active, "cancelled => inactive");
     }
 
@@ -215,7 +215,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(user);
         vm.expectRevert(LenderIntentFacet.LenderIntentNotActive.selector);
         LenderIntentFacet(address(diamond)).cancelLenderIntent(
-            mockERC20, mockCollateralERC20
+            mockERC20, mockCollateralERC20, 0
         );
     }
 
@@ -282,7 +282,7 @@ contract LenderIntentFacetTest is SetupTest {
         _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
         LibVaipakam.LenderIntent memory intent =
             LenderIntentFacet(address(diamond)).getLenderIntent(
-                user, mockERC20, mockCollateralERC20
+                user, mockERC20, mockCollateralERC20, 0
             );
         assertTrue(intent.active, "VPFI-lending intent registered");
     }
@@ -295,7 +295,7 @@ contract LenderIntentFacetTest is SetupTest {
         _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
         assertTrue(
             LenderIntentFacet(address(diamond))
-                .getLenderIntent(user, mockERC20, mockCollateralERC20).active,
+                .getLenderIntent(user, mockERC20, mockCollateralERC20, 0).active,
             "VPFI-collateral intent registers"
         );
     }
@@ -307,7 +307,7 @@ contract LenderIntentFacetTest is SetupTest {
         _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true, true);
         assertTrue(
             LenderIntentFacet(address(diamond))
-                .getLenderIntent(user, mockERC20, mockCollateralERC20)
+                .getLenderIntent(user, mockERC20, mockCollateralERC20, 0)
                 .requiresKeeperAuth,
             "requiresKeeperAuth stored"
         );
@@ -350,7 +350,7 @@ contract LenderIntentFacetTest is SetupTest {
         // A different collateral asset is a distinct intent slot.
         assertFalse(
             LenderIntentFacet(address(diamond))
-                .getLenderIntent(user, mockERC20, mockERC20).active,
+                .getLenderIntent(user, mockERC20, mockERC20, 0).active,
             "distinct pair untouched"
         );
     }

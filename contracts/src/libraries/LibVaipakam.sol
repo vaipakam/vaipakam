@@ -1528,8 +1528,10 @@ library LibVaipakam {
     ///         intent owner), so every downstream claim / VPFI / KYC / sanctions
     ///         site is unchanged — the vault is NOT the lender. See
     ///         docs/DesignsAndPlans/LenderIntentVaultV1Design.md §1.
-    /// @dev    ERC-20-on-ERC-20 only (v1). One intent per (owner, lendingAsset,
-    ///         collateralAsset) — keyed by `lenderIntent[owner][lendingAsset][collateralAsset]`.
+    /// @dev    ERC-20-on-ERC-20 only (v1). Up to {MAX_INTENT_SLOTS} intents per
+    ///         (owner, lendingAsset, collateralAsset), one per slot (#3626) —
+    ///         keyed by `lenderIntent[owner][lendingAsset][collateralAsset][slot]`.
+    ///         Each slot is a full, independent intent: nothing is shared.
     ///         Bounds are a HARD band a solver's concrete `matchIntent` terms
     ///         must fall within; the protocol HF/LTV init gate still applies on
     ///         top. Reservation of in-flight principal reuses the encumbrance
@@ -1559,25 +1561,38 @@ library LibVaipakam {
         bool acceptsProRata;
     }
 
-    /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset) triple that keys a
+    /// @notice #3626 — how many standing intents one owner may hold on one
+    ///         (lendingAsset, collateralAsset) pair: slots `0 … MAX_INTENT_SLOTS − 1`.
+    ///         Enough for a rate ladder, and bounded so the per-pair views and the
+    ///         keeper's per-lender walk stay bounded. Protocol-run intents (the
+    ///         backstop vault, the aggregator adapters) use slot 0 only.
+    uint8 internal constant MAX_INTENT_SLOTS = 8;
+
+    /// @notice #3626 — the one slot protocol-run intents use (the backstop vault
+    ///         and the aggregator adapters).
+    uint8 internal constant PROTOCOL_INTENT_SLOT = 0;
+
+    /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset, slot) key of a
     ///      `LenderIntent`, stored so the `activeIntentKeys` enumerable set can be resolved
-    ///      back to a concrete intent by `getActiveLenderIntents`.
+    ///      back to a concrete intent by `getActiveLenderIntents`. `slot` (#3626) appended.
     struct IntentKey {
         address owner;
         address lendingAsset;
         address collateralAsset;
+        uint8 slot;
     }
 
     /// @dev #625 WI-2a — canonical key hash for the active-intent registry. The ONE place
-    ///      the (owner, lend, coll) → bytes32 mapping is defined, so the maintenance sites
-    ///      (`setLenderIntent` add / `cancelLenderIntent` remove) and the read view can
-    ///      never disagree on the key.
+    ///      the (owner, lend, coll, slot) → bytes32 mapping is defined, so the maintenance
+    ///      sites (`setLenderIntent` add / `cancelLenderIntent` remove) and the read view
+    ///      can never disagree on the key.
     function intentKeyHash(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(owner, lendingAsset, collateralAsset));
+        return keccak256(abi.encode(owner, lendingAsset, collateralAsset, slot));
     }
 
     /// @dev #625 WI-2a — keep the active-intent discovery registry
@@ -1595,14 +1610,15 @@ library LibVaipakam {
     function syncIntentRegistry(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) internal {
         Storage storage s = storageSlot();
         LenderIntent storage intent =
-            s.lenderIntent[owner][lendingAsset][collateralAsset];
-        bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset);
+            s.lenderIntent[owner][lendingAsset][collateralAsset][slot];
+        bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset, slot);
         uint256 capital =
-            s.lenderIntentCapital[owner][lendingAsset][collateralAsset];
+            s.lenderIntentCapital[owner][lendingAsset][collateralAsset][slot];
 
         // #755 — per-OWNER registry: list while the intent EXISTS for the
         // lender to manage in the dapp — `active` OR carrying reserved capital
@@ -1616,7 +1632,8 @@ library LibVaipakam {
                 s.intentKeyTuple[ik] = IntentKey({
                     owner: owner,
                     lendingAsset: lendingAsset,
-                    collateralAsset: collateralAsset
+                    collateralAsset: collateralAsset,
+                    slot: slot
                 });
             }
         } else {
@@ -4925,21 +4942,22 @@ library LibVaipakam {
         // in the same call; a non-zero value at rest is a bug.
         address signedOfferAcceptor;
         // #393 v1 — LenderIntentVault. APPEND-ONLY.
-        // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
-        // standing lending terms for that asset-pair (one per pair in v1).
+        // `lenderIntent[owner][lendingAsset][collateralAsset][slot]` — the owner's
+        // standing lending terms for that asset-pair, one per slot (#3626: up to
+        // MAX_INTENT_SLOTS per pair; the slot level is the innermost key).
         // The exposure-counter (`maxExposure` enforcement) + per-loan origin
         // marker land with the v1-b fill path that writes them — keyed by the
         // FULL intent (owner, lend, coll) and storing the ORIGINATING owner per
         // loan (loan.lender is mutated on a lender-position sale, so it can't be
         // the close-time decrement key — Codex #618 P2). Not scaffolded here.
-        mapping(address => mapping(address => mapping(address => LenderIntent)))
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => LenderIntent))))
             lenderIntent;
         // #393 v1-b — aggregate LIVE principal currently out in loans originated
         // from `owner`'s intent on the `(lendingAsset, collateralAsset)` pair.
-        // Keyed by the FULL intent so two intents sharing a lending asset but
-        // different collateral never share a cap. Incremented at `matchIntent`,
-        // decremented once at the loan's terminal close.
-        mapping(address => mapping(address => mapping(address => uint256)))
+        // Keyed by the FULL intent (slot included, #3626) so two intents never
+        // share a cap. Incremented at `matchIntent`, decremented once at the
+        // loan's terminal close.
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => uint256))))
             lenderIntentLivePrincipal;
         // #393 v1-b — per-loan ORIGINATING intent key, so the terminal-close
         // decrement releases the right (owner, lend, coll) counter even after a
@@ -4954,12 +4972,11 @@ library LibVaipakam {
         // withdraw door. `fundLenderIntent` adds; `matchIntent` releases each
         // fill slice (→ free, consumed by the existing materialize path);
         // `withdrawLenderIntentCapital` releases the remainder back to the
-        // wallet (the cancel-offer pattern). Keyed by the FULL intent so two
-        // intents sharing a lending asset but different collateral never share
-        // a capital pool. Repaid proceeds NEVER land here — they return as a
+        // wallet (the cancel-offer pattern). Keyed by the FULL intent (slot
+        // included, #3626) so two intents never share capital. Repaid proceeds NEVER land here — they return as a
         // separate free-balance + Position-NFT claim — so the exit door can
         // never double-spend them.
-        mapping(address => mapping(address => mapping(address => uint256)))
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => uint256))))
             lenderIntentCapital;
         // #398 v1.5 — ERC-4626 aggregator-adapter factory state. Mirrors the
         // per-user vault version machinery user vaults had before #3204 (one
@@ -7820,7 +7837,7 @@ library LibVaipakam {
         ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
         ///      that struct's getter ABI is unchanged. Appended — append-only.
         mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeePrepaid;
-        /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset`,
+        /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset → slot`,
         ///      the `lenderIntent` key), whether its owner opted it into priority
         ///      routing: a fill the solver's capacity would refuse may then spend
         ///      one of the owner's priority credits instead. Written ONLY through
@@ -7828,7 +7845,7 @@ library LibVaipakam {
         ///      false by every `setLenderIntent` (a replacement intent never
         ///      inherits an old opt-in), cleared by `cancelLenderIntent`, toggled by
         ///      the owner on a live intent. Appended — append-only.
-        mapping(address => mapping(address => mapping(address => bool))) lenderIntentPriority;
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => bool)))) lenderIntentPriority;
         /// @dev #2559 (Codex #2563 r5) — set ONCE, by this version's
         ///      `PerkFacet.setPerkConfig`, on the first priced counted write of the
         ///      priority-routing perk (id 1): the explicit arming of its effect. A
@@ -9811,6 +9828,9 @@ library LibVaipakam {
         address lendingAsset;
         address collateralAsset;
         uint256 amount;
+        // #3626 — the slot the loan was filled from: the roll returns the
+        // proceeds there and the exposure release decrements that slot.
+        uint8 slot;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.

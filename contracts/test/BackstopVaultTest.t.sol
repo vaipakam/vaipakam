@@ -112,11 +112,11 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(poker);
         BackstopFacet(address(diamond)).backstopFill(offerId1); // the poker's one free action
         LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
-            vault, poker, vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+            vault, poker, vault, mockERC20, mockCollateralERC20, 0, offerId2, PRINCIPAL
         );
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "the exhausted poker is named");
         r = RiskPreviewFacet(address(diamond)).previewIntent(
-            vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+            vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, 0, offerId2, PRINCIPAL
         );
         assertTrue(r.ok, "a fresh initiator's free action covers the same fill");
         vm.prank(poker);

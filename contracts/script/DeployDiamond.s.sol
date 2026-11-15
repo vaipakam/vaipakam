@@ -2223,7 +2223,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         extension reserve. The consent and caps setters and readers
     ///         moved to {AutoLifecycleSettingsFacet} in #3410.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
@@ -2232,6 +2232,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[2] = AutoLifecycleFacet.fundExtendReserve.selector;
         s[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
         s[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #3618 follow-up — the intent lend-until bound on an extension.
+        s[5] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface:

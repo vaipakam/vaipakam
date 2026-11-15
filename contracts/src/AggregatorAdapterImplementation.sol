@@ -25,6 +25,7 @@ interface IVaipakamIntentSurface {
     function setLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 maxExposure,
         uint256 minRateBps,
         uint16 maxInitLtvBps,
@@ -37,12 +38,13 @@ interface IVaipakamIntentSurface {
         uint64 validUntil
     ) external;
 
-    function cancelLenderIntent(address lendingAsset, address collateralAsset)
+    function cancelLenderIntent(address lendingAsset, address collateralAsset, uint8 slot)
         external;
 
     function fundLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external;
 
@@ -50,19 +52,22 @@ interface IVaipakamIntentSurface {
         address account,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external;
 
     function getLenderIntentCapital(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) external view returns (uint256);
 
     function getLenderIntentLivePrincipal(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) external view returns (uint256);
 
     function isSanctionedAddress(address who) external view returns (bool);
@@ -78,6 +83,7 @@ interface IVaipakamIntentSurface {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external returns (uint256 loanId);
@@ -87,7 +93,8 @@ interface IVaipakamIntentSurface {
     function getLenderIntent(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) external view returns (LibVaipakam.LenderIntent memory);
 
     function getLoanDetails(uint256 loanId)
@@ -343,6 +350,7 @@ contract AggregatorAdapterImplementation is
         IVaipakamIntentSurface(diamondAddress).setLenderIntent(
             lendingAsset,
             collateralAsset_,
+            LibVaipakam.PROTOCOL_INTENT_SLOT, // #3626 — a protocol-run intent uses slot 0 only
             intentMaxExposure,
             intentMinRateBps,
             intentMaxInitLtvBps,
@@ -373,11 +381,12 @@ contract AggregatorAdapterImplementation is
     function totalAssets() public view override returns (uint256) {
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
         address lend = asset();
-        uint256 idle = d.getLenderIntentCapital(address(this), lend, collateralAsset);
+        uint256 idle = d.getLenderIntentCapital(address(this), lend, collateralAsset, LibVaipakam.PROTOCOL_INTENT_SLOT);
         uint256 live = d.getLenderIntentLivePrincipal(
             address(this),
             lend,
-            collateralAsset
+            collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT
         );
         uint256 riskAdjustedLive =
             (live * (BASIS_POINTS - haircutBps)) / BASIS_POINTS;
@@ -390,7 +399,8 @@ contract AggregatorAdapterImplementation is
             IVaipakamIntentSurface(diamond).getLenderIntentCapital(
                 address(this),
                 asset(),
-                collateralAsset
+                collateralAsset,
+                LibVaipakam.PROTOCOL_INTENT_SLOT
             );
     }
 
@@ -476,6 +486,7 @@ contract AggregatorAdapterImplementation is
         IVaipakamIntentSurface(diamond).fundLenderIntent(
             lend,
             collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             assets
         );
     }
@@ -513,6 +524,7 @@ contract AggregatorAdapterImplementation is
             address(this),
             asset(),
             collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             assets
         );
         super._withdraw(caller, receiver, owner, assets, shares);
@@ -613,6 +625,7 @@ contract AggregatorAdapterImplementation is
             address(this),
             lend,
             collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             counterpartyOfferId,
             fillAmount
         );
@@ -622,6 +635,7 @@ contract AggregatorAdapterImplementation is
             IVaipakamIntentSurface(diamond).fundLenderIntent(
                 lend,
                 collateralAsset,
+                LibVaipakam.PROTOCOL_INTENT_SLOT,
                 kickback
             );
         }
@@ -652,7 +666,8 @@ contract AggregatorAdapterImplementation is
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
         IVaipakamIntentSurface(diamond).cancelLenderIntent(
             asset(),
-            collateralAsset
+            collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT
         );
         emit IntentWoundDown(authorizedPrincipal);
     }
@@ -714,6 +729,7 @@ contract AggregatorAdapterImplementation is
                     IVaipakamIntentSurface(diamond).fundLenderIntent(
                         lend,
                         collateralAsset,
+                        LibVaipakam.PROTOCOL_INTENT_SLOT,
                         recovered
                     )
                 {} catch {
@@ -846,7 +862,7 @@ contract AggregatorAdapterImplementation is
         // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
         // reverts), so advertise 0.
         if (d.isSanctionedAddress(authorizedPrincipal)) return false;
-        if (!d.getLenderIntent(address(this), asset(), collateralAsset).active) {
+        if (!d.getLenderIntent(address(this), asset(), collateralAsset, LibVaipakam.PROTOCOL_INTENT_SLOT).active) {
             return false;
         }
         if (d.isAssetPaused(asset()) || d.isAssetPaused(collateralAsset)) {

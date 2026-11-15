@@ -45,15 +45,15 @@ interface IDiamondForProof {
     function getPerkEntitlement(address, uint256) external view returns (bool, uint64, uint256);
     // LenderIntentFacet
     function setLenderIntentEnabled(bool) external;
-    function setLenderIntent(address, address, uint256, uint256, uint16, uint32, uint256, bool, uint64, bool, bool, uint64) external;
-    function fundLenderIntent(address, address, uint256) external;
-    function setLenderIntentPriority(address, address, bool) external;
-    function getLenderIntentPriority(address, address, address, address, address)
+    function setLenderIntent(address, address, uint8, uint256, uint256, uint16, uint32, uint256, bool, uint64, bool, bool, uint64) external;
+    function fundLenderIntent(address, address, uint8, uint256) external;
+    function setLenderIntentPriority(address, address, uint8, bool) external;
+    function getLenderIntentPriority(address, address, address, uint8, address, address)
         external
         view
         returns (bool, uint256, bool, bool);
     // OfferMatchIntentFacet / OfferCreateFacet / RiskFacet / VPFIDiscountFacet / Admin
-    function matchIntent(address, address, address, uint256, uint256) external returns (uint256);
+    function matchIntent(address, address, address, uint8, uint256, uint256) external returns (uint256);
     function createOffer(LibVaipakam.CreateOfferParams calldata, uint64) external returns (uint256);
     function updateRiskParams(address, uint256, uint256) external;
     function depositVPFIToVault(uint256) external;
@@ -67,7 +67,7 @@ interface IDiamondForProof {
     function getUserVaultAddress(address) external view returns (address);
     function getRecycleBucket() external view returns (uint256);
     function getPerkSpendCumulative() external view returns (uint256);
-    function previewIntent(address, address, address, address, address, uint256, uint256)
+    function previewIntent(address, address, address, address, address, uint8, uint256, uint256)
         external
         view
         returns (IntentPreview memory);
@@ -130,12 +130,12 @@ contract PriorityRoutingLiveFork is Test {
     uint32 internal constant MAX_DURATION = 7;
 
     bytes32 internal constant T_PRIORITY_FILL =
-        keccak256("IntentPriorityFill(address,address,address,uint256,address,uint256)");
+        keccak256("IntentPriorityFill(address,address,address,uint8,uint256,address,uint256)");
     bytes32 internal constant T_CREDIT_CONSUMED = keccak256("PerkCreditConsumed(address,uint256,uint256)");
     bytes32 internal constant T_CAPACITY_SPENT = keccak256("CapacitySpent(uint8,address,uint256,uint256)");
     bytes32 internal constant T_FREE_TIER_SPENT = keccak256("CapacityFreeTierSpent(uint8,address,uint256,uint256)");
     bytes32 internal constant T_PERK_ARMED = keccak256("PriorityRoutingPerkArmed(uint256)");
-    bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,bool)");
+    bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,uint8,bool)");
     bytes32 internal constant T_PERK_PURCHASED = keccak256("PerkPurchased(address,uint256,uint256,uint256,uint64,uint256)");
 
     uint8 internal constant CAPACITY_EXHAUSTED = 22; // LibOfferMatch.IntentError.CapacityExhausted
@@ -257,7 +257,7 @@ contract PriorityRoutingLiveFork is Test {
     }
 
     function _preview(address who, uint256 offerId) internal view returns (IntentPreview memory) {
-        return d.previewIntent(solver, solver, who, lendAsset, collAsset, offerId, PRINCIPAL);
+        return d.previewIntent(solver, solver, who, lendAsset, collAsset, 0, offerId, PRINCIPAL);
     }
 
     function _mockOracle(address asset) internal {
@@ -277,9 +277,9 @@ contract PriorityRoutingLiveFork is Test {
         _kyc(who);
         ERC20Mock(lendAsset).mint(who, 10 * PRINCIPAL);
         vm.startPrank(who);
-        d.setLenderIntent(lendAsset, collAsset, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, 0, false, true, type(uint64).max);
+        d.setLenderIntent(lendAsset, collAsset, 0, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, 0, false, true, type(uint64).max);
         ERC20Mock(lendAsset).approve(address(d), 5 * PRINCIPAL);
-        d.fundLenderIntent(lendAsset, collAsset, 5 * PRINCIPAL);
+        d.fundLenderIntent(lendAsset, collAsset, 0, 5 * PRINCIPAL);
         vm.stopPrank();
     }
 
@@ -347,7 +347,7 @@ contract PriorityRoutingLiveFork is Test {
         bool unlocks,
         string memory tag
     ) internal view {
-        (bool e, uint256 c, bool cv, bool u) = d.getLenderIntentPriority(who, lendAsset, collAsset, solver, solver);
+        (bool e, uint256 c, bool cv, bool u) = d.getLenderIntentPriority(who, lendAsset, collAsset, 0, solver, solver);
         assertEq(e, enabled, string.concat(tag, ": priority view enabled"));
         assertEq(c, credits, string.concat(tag, ": priority view credits"));
         assertEq(cv, covers, string.concat(tag, ": priority view capacityCovers"));
@@ -441,7 +441,7 @@ contract PriorityRoutingLiveFork is Test {
         _assertPriority(plain, false, 1, true, false, "control bought");
         vm.recordLogs();
         vm.prank(flagged);
-        d.setLenderIntentPriority(lendAsset, collAsset, true);
+        d.setLenderIntentPriority(lendAsset, collAsset, 0, true);
         _assertOptIn(vm.getRecordedLogs());
         _assertPriority(flagged, true, 2, true, false, "opted in, capacity covers");
 
@@ -487,14 +487,14 @@ contract PriorityRoutingLiveFork is Test {
         _assertRefusedPreview(_preview(flagged, cp3), "zero credits");
         vm.prank(solver);
         vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
-        d.matchIntent(flagged, lendAsset, collAsset, cp3, PRINCIPAL);
+        d.matchIntent(flagged, lendAsset, collAsset, 0, cp3, PRINCIPAL);
 
         // 5. The unflagged intent — holding a credit, not opted in — is refused
         //    for capacity at the same moment, and its credit stays unspent.
         _assertPriority(plain, false, 1, false, false, "control at the refusal");
         vm.prank(solver);
         vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
-        d.matchIntent(plain, lendAsset, collAsset, cp2, PRINCIPAL);
+        d.matchIntent(plain, lendAsset, collAsset, 0, cp2, PRINCIPAL);
         assertEq(_credits(plain), 1, "the control's credit was not spent");
     }
 
@@ -505,7 +505,7 @@ contract PriorityRoutingLiveFork is Test {
         LibVaipakam.CapacityBucket memory bucketBefore = d.getCapacityBucket(SOLVER, solver);
         vm.recordLogs();
         vm.prank(solver);
-        uint256 loanId = d.matchIntent(flagged, lendAsset, collAsset, offerId, PRINCIPAL);
+        uint256 loanId = d.matchIntent(flagged, lendAsset, collAsset, 0, offerId, PRINCIPAL);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertGt(loanId, 0, "the flagged fill landed");
         _assertLoan(loanId, makeAddr(borrowerName));
@@ -532,7 +532,7 @@ contract PriorityRoutingLiveFork is Test {
         LibVaipakam.CapacityBucket memory b0 = d.getCapacityBucket(SOLVER, solver);
         vm.recordLogs();
         vm.prank(solver);
-        uint256 loan0 = d.matchIntent(flagged, lendAsset, collAsset, cp0, PRINCIPAL);
+        uint256 loan0 = d.matchIntent(flagged, lendAsset, collAsset, 0, cp0, PRINCIPAL);
         Vm.Log[] memory l0 = vm.getRecordedLogs();
         assertGt(loan0, 0, "covered: filled");
         assertEq(_credits(flagged), 2, "covered: the credits are untouched");
@@ -599,7 +599,8 @@ contract PriorityRoutingLiveFork is Test {
             assertEq(address(uint160(uint256(logs[i].topics[1]))), flagged, "opt-in: owner");
             assertEq(address(uint160(uint256(logs[i].topics[2]))), lendAsset, "opt-in: lendingAsset");
             assertEq(address(uint160(uint256(logs[i].topics[3]))), collAsset, "opt-in: collateralAsset");
-            assertTrue(abi.decode(logs[i].data, (bool)), "opt-in: enabled");
+            (, bool en) = abi.decode(logs[i].data, (uint8, bool));
+            assertTrue(en, "opt-in: enabled");
         }
     }
 
@@ -612,7 +613,7 @@ contract PriorityRoutingLiveFork is Test {
                 assertEq(address(uint160(uint256(logs[i].topics[1]))), flagged, "fill: owner");
                 assertEq(address(uint160(uint256(logs[i].topics[2]))), lendAsset, "fill: lendingAsset");
                 assertEq(address(uint160(uint256(logs[i].topics[3]))), collAsset, "fill: collateralAsset");
-                (uint256 lid, address slv, uint256 left_) = abi.decode(logs[i].data, (uint256, address, uint256));
+                (, uint256 lid, address slv, uint256 left_) = abi.decode(logs[i].data, (uint8, uint256, address, uint256));
                 assertEq(lid, loanId, "fill: loanId");
                 assertEq(slv, solver, "fill: solver");
                 assertEq(left_, left, "fill: creditsLeft");

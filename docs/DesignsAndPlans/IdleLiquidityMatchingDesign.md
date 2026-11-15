@@ -165,6 +165,14 @@ An intent fill is priced at the midpoint of the rate overlap, not at the lender'
 
 The four triple-keyed mappings, the registry key and the origin record gain the slot; every intent entry point, preview, view and event takes or states it; keeper, indexer, app and both ABI exports follow. It is a deliberate storage break, acknowledged in the storage-layout guard, and reaches a chain by fresh deploy only. The full change list and tests are on the card.
 
+### As built (2026-11-15)
+
+- The slot is a `uint8` that follows the collateral asset in every intent entry point, preview, view and event (`setLenderIntent`, `cancelLenderIntent`, `fundLenderIntent`, `withdrawLenderIntentCapital`, `setLenderIntentPriority` and their reads; `matchIntent` and `previewIntent`; `LenderIntentSet` and the other intent events, `IntentMatched`, `IntentLoanRolled`, `IntentPriorityFill`, `LenderIntentPrioritySet`). A slot of 8 or more is refused by name (`LenderIntentSlotOutOfRange`).
+- The four per-pair mappings gain an innermost slot key; the registry key, its tuple and the loan's origin record carry the slot at their tails. The feeds (`getActiveLenderIntents`, `getRollableIntentLoans`, `getLenderIntentsByOwner`) state each row's slot.
+- The backstop vault and the aggregator adapters pass the named constant for slot 0.
+- The reference keeper groups one lender's slots on a pair into one unit of its fair walk, lowest floor first (ties to the lower slot), so a lender with several slots gets no more turns than a lender with one. The new app labels each standing offer's un-lent capital by its number in Claim everything, and counts a lender with several intents on a pair once in the "lenders ready" figure.
+- Storage break acknowledged in `breaks.ack.json`; fresh deploy only.
+
 ### What stays an offer after this
 
 Unpriced or NFT collateral, NFT rentals, loan-purchase offers, a deal a borrower accepts directly, and exact deals (a fixed collateral amount, all-or-nothing, an offer expiry). Rate ladders leave the list.

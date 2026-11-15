@@ -8,6 +8,7 @@ import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
+import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -141,6 +142,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         intersection of `borrower.maxNewExpiry` and
     ///         `lender.maxNewExpiry`.
     error AutoExtendExpiryExceedsCap();
+    /// @notice #3618 follow-up — the loan was made by a standing lender intent
+    ///         whose owner still holds the lender position, and the new end
+    ///         falls after that intent's lend-until time
+    ///         ({LibIntentTerms.extensionBound}).
+    /// @param newEnd    The end the extension would give the loan.
+    /// @param lendUntil The intent's lend-until time.
+    error AutoExtendPastLendUntil(uint256 newEnd, uint64 lendUntil);
     /// @notice T-092 Phase 3 — `newDurationDays` is zero or exceeds the
     ///         protocol's `cfgMaxOfferDurationDays` ceiling. Mirrors
     ///         the duration bound `OfferCreateFacet` enforces on
@@ -259,6 +267,19 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         }
         (uint256 o, uint256 c) = _extendWindow(loan);
         return (uint64(o), uint64(c));
+    }
+
+    /// @notice #3618 follow-up — the latest new end an extension may give
+    ///         `loanId` because of the lend-until time of the intent that made
+    ///         it, or 0 when none binds (not an intent loan, no lend-until
+    ///         time, or the intent's owner no longer holds the lender
+    ///         position). `extendLoanInPlace` refuses a later end with
+    ///         {AutoExtendPastLendUntil}; a keeper folds this into the caps'
+    ///         expiry bound when it sizes an extension.
+    /// @param  loanId The loan.
+    /// @return lendUntil The bound, or 0.
+    function getAutoExtendLendUntil(uint256 loanId) external view returns (uint64 lendUntil) {
+        return LibIntentTerms.extensionBound(LibVaipakam.storageSlot().loans[loanId]);
     }
 
     /// @dev The one statement of the extension window (#2738), read by the
@@ -618,6 +639,16 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             : borrowerCaps.maxNewExpiry;
         if (expiryCap != 0 && newEndTimeUint > uint256(expiryCap)) {
             revert AutoExtendExpiryExceedsCap();
+        }
+        // #3618 follow-up — an intent's lend-until time bounds an extension
+        // too, while the intent's owner still holds the lender position: the
+        // owner's caps alone could otherwise carry an intent loan past the
+        // date the money was lent until. The one rule is in LibIntentTerms.
+        {
+            uint64 lendUntil = LibIntentTerms.extensionBound(loan);
+            if (lendUntil != 0 && newEndTimeUint > lendUntil) {
+                revert AutoExtendPastLendUntil(newEndTimeUint, lendUntil);
+            }
         }
         // Codex round-4 P2 — refuse to SHORTEN the loan. Without
         // this, a compromised keeper could pass `newDurationDays = 1`

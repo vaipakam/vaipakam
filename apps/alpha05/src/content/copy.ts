@@ -1230,7 +1230,9 @@ export const copy = {
     loanBorrower: B('Loan #{{id}}, borrower payout'),
     rewards: B('Interaction rewards'),
     held: B('Rewards held for you'),
-    intent: B('Un-lent capital of your standing offer, {{lend}} against {{collateral}}'),
+    // #3626: a wallet may hold up to eight standing offers on one pair, so the
+    // label names which one (numbered from 1).
+    intent: B('Un-lent capital of your standing offer {{n}}, {{lend}} against {{collateral}}'),
     vpfi: B('Free VPFI in your vault'),
     payroll: B('Payroll stream #{{id}}'),
     rowPays: B('Pays you'),

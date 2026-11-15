@@ -72,6 +72,7 @@ library LibEncumbrance {
         address owner,
         address lend,
         address coll,
+        uint8 slot,
         uint256 requested,
         uint256 available
     );
@@ -654,11 +655,12 @@ library LibEncumbrance {
         address owner,
         address lend,
         address coll,
+        uint8 slot,
         uint256 amount
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.lenderIntentCapital[owner][lend][coll] += amount;
+        s.lenderIntentCapital[owner][lend][coll][slot] += amount;
         s.encumbered[owner][lend][0] += amount;
     }
 
@@ -676,16 +678,17 @@ library LibEncumbrance {
         address owner,
         address lend,
         address coll,
+        uint8 slot,
         uint256 amount
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 liened = s.lenderIntentCapital[owner][lend][coll];
+        uint256 liened = s.lenderIntentCapital[owner][lend][coll][slot];
         if (amount > liened) {
-            revert IntentCapitalInsufficient(owner, lend, coll, amount, liened);
+            revert IntentCapitalInsufficient(owner, lend, coll, slot, amount, liened);
         }
         unchecked {
-            s.lenderIntentCapital[owner][lend][coll] = liened - amount;
+            s.lenderIntentCapital[owner][lend][coll][slot] = liened - amount;
         }
         _decrementAggregate(owner, lend, 0, amount);
     }
