@@ -92,7 +92,7 @@ describe('request terms every intent fill requires', () => {
 describe('reading the intents', () => {
   /** A client whose gates read as given (open unless named), with an
    *  optional list and a set of aggregator owners. */
-  const gated = (gates: Partial<Record<string, boolean | Error>>, rows: IntentSummary[] = [], aggregators: string[] | Error = []) => {
+  const gated = (gates: Partial<Record<string, boolean | Error>>, rows: IntentSummary[] = [], aggregators: string[] | Error = [], listed: (r: IntentSummary) => boolean = () => true) => {
     const open: Record<string, boolean> = {
       paused: false,
       getPartialFillEnabled: true,
@@ -107,7 +107,7 @@ describe('reading the intents', () => {
         blocks.push(blockNumber);
         if (functionName === 'getActiveLenderIntents') {
           const [o, n] = args as [bigint, bigint];
-          return [rows.slice(Number(o), Number(o + n)), BigInt(rows.length)];
+          return [rows.slice(Number(o), Number(o + n)).filter(listed), BigInt(rows.length)];
         }
         if (functionName === 'isAggregatorAdapter') {
           if (aggregators instanceof Error) throw aggregators;
@@ -131,6 +131,18 @@ describe('reading the intents', () => {
     expect(blocks).toHaveLength(7);
     expect(new Set(blocks)).toEqual(new Set([77n]));
     expect(intentMatching(r)).toBe('on');
+  });
+
+  it('keeps paging past a short page the feed trimmed (closed lend-until windows)', async () => {
+    const closed = intent({ lendUntil: 1n });
+    const live = intent({ owner: '0x2222222222222222222222222222222222222222' });
+    const all = [...Array.from({ length: INTENT_PAGE }, (_, i) => (i === 0 ? closed : intent())), live];
+    const { client } = gated({}, all, [], (r) => r !== closed);
+    const r = await readLenderIntents(client, WETH);
+    expect(r.intents).toContain(live);
+    expect(r.intents).not.toContain(closed);
+    expect(r.scanned).toBe(all.length);
+    expect(r.total).toBe(BigInt(all.length));
   });
 
   it('says halted, off, paused or unknown from the gates, in the protocol’s order', async () => {

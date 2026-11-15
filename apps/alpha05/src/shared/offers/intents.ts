@@ -45,7 +45,8 @@ export interface IntentsRead {
   /** Every active intent on the network, on every pair. */
   total: bigint;
   /** How many of them were read: fewer than `total` when the list is longer
-   *  than this view reads, which the page states. */
+   *  than this view reads, which the page states. Counts positions read, so an
+   *  intent the feed leaves out (its lend-until time has closed) still counts. */
   scanned: number;
   /** Each network gate below, read at the same block as the list: true when
    *  it is closed, null when it could not be read. */
@@ -124,8 +125,11 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
     const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
     total = all;
     intents.push(...rows);
-    scanned += rows.length;
-    if (BigInt(scanned) >= all || rows.length < INTENT_PAGE) break;
+    // Count registry positions read, not rows returned: the feed leaves out an
+    // intent whose lend-until time has closed (#3618), so a page can come back
+    // short while later pages still hold intents.
+    scanned = Number(all < offset + BigInt(INTENT_PAGE) ? all : offset + BigInt(INTENT_PAGE));
+    if (BigInt(scanned) >= all) break;
   }
   const values = await gatesRead;
   const closed = Object.fromEntries(gateKeys.map((k, i) => [k, values[i]])) as Record<IntentGate, boolean | null>;

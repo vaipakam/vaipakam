@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibTiming} from "./LibTiming.sol";
 
 /**
  * @title  LibIntentTerms
@@ -66,18 +67,26 @@ library LibIntentTerms {
         fits = intent.lendUntil == 0 || maturity <= intent.lendUntil;
     }
 
-    /// @notice Whether a repaid loan may still be rolled back behind the
-    ///         intent: true with no lend-until time, otherwise only while the
-    ///         shortest loan (one day) could still be agreed inside it.
-    function admitsRoll(LibVaipakam.LenderIntent storage intent) internal view returns (bool) {
+    /// @notice Whether the intent's lend-until time still leaves room for a
+    ///         new loan: true with no lend-until time, otherwise only while the
+    ///         shortest loan (one day) could still be agreed inside it. Read by
+    ///         the roll (a repaid loan rolls back behind the intent only while
+    ///         this holds), the roll feed and the fill feed (an intent whose
+    ///         window is closed can fill nothing, so neither feed lists it).
+    function windowOpen(LibVaipakam.LenderIntent storage intent) internal view returns (bool) {
         uint64 until = intent.lendUntil;
         return until == 0 || block.timestamp + MIN_LEND_WINDOW <= until;
     }
 
-    /// @notice Whether a lend-until time is acceptable when the intent is set:
-    ///         none (0), or at least {MIN_LEND_WINDOW} ahead.
+    /// @notice Whether a lend-until time is acceptable when the intent is set
+    ///         now: none (0), or late enough that a one-day loan still fits
+    ///         once the new terms may be filled. Every set restarts the terms
+    ///         age (`LibTiming.minTermsAgeSec`), so the window is measured from
+    ///         the moment the terms become fillable, not from now; otherwise a
+    ///         minimal window set under a long terms age could never fill.
     function validLendUntil(uint64 lendUntil) internal view returns (bool) {
-        return lendUntil == 0 || uint256(lendUntil) >= block.timestamp + MIN_LEND_WINDOW;
+        return lendUntil == 0
+            || uint256(lendUntil) >= LibTiming.termsReadyAt(uint64(block.timestamp)) + MIN_LEND_WINDOW;
     }
 
     /// @notice Whether the intent admits the borrower request's interest mode

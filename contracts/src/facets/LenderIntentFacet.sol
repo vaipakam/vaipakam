@@ -273,7 +273,8 @@ contract LenderIntentFacet is
         // below the protocol interest ceiling so a materialized offer can
         // actually clear `createOffer` (which rejects rates > MAX_INTEREST_BPS).
         // `minRateBps == 0` is permitted (a 0% floor = "any rate"). A
-        // lend-until time is none or at least one day ahead (#3618).
+        // lend-until time is none, or leaves a one-day loan once the new terms
+        // may be filled (#3618, `LibIntentTerms.validLendUntil`).
         if (
             maxExposure == 0
                 || minFillAmount == 0
@@ -754,7 +755,7 @@ contract LenderIntentFacet is
         // #3618 — honour the intent's lend-until time: once no further loan
         // could be agreed inside it, the roll is refused and the proceeds take
         // the normal claim back to the lender's vault.
-        if (!LibIntentTerms.admitsRoll(intent)) revert LenderIntentEnded();
+        if (!LibIntentTerms.windowOpen(intent)) revert LenderIntentEnded();
         // #623 Codex round-3 P2 — honour per-asset pauses (block-new / allow-exit),
         // mirroring `fundLenderIntent`. The roll is a NEW standing-capital
         // commitment, so a paused leg must route the lender to the normal claim
@@ -928,8 +929,11 @@ contract LenderIntentFacet is
     ///         `IntentCapitalInsufficient`).
     /// @dev    The set is swap-pop unstable across cancellations, so page over a single
     ///         block's snapshot. O(limit) reads.
-    /// @return intents Page of active-intent summaries.
-    /// @return total   Count of active intents at this block.
+    /// @return intents Page of active-intent summaries, leaving out any whose
+    ///                 lend-until time can no longer take a one-day loan (#3618),
+    ///                 so a page may hold fewer than `limit` rows mid-list.
+    /// @return total   Count of active intents at this block (the registry,
+    ///                 including any left out above); page by this, not by rows.
     function getActiveLenderIntents(uint256 offset, uint256 limit)
         external
         view
@@ -946,13 +950,24 @@ contract LenderIntentFacet is
         uint256 endExcl = offset + limit;
         if (endExcl > total) endExcl = total;
         uint256 size = endExcl - offset;
-        intents = new LibMetricsTypes.LenderIntentSummary[](size);
+        // #3618 — skip an intent whose lend-until time leaves no room for a
+        // new loan: every fill would refuse `LenderIntentPastLendUntil`, so
+        // listing it only sends keepers to price fills that cannot land. Its
+        // capital stays withdrawable and its live loans settle as before.
+        // Over-allocate to the page, then truncate to the listed count
+        // (`total` still counts the whole registry, so pagination is unchanged).
+        LibMetricsTypes.LenderIntentSummary[] memory buf =
+            new LibMetricsTypes.LenderIntentSummary[](size);
+        uint256 n = 0;
         for (uint256 i = 0; i < size; i++) {
             LibVaipakam.IntentKey memory key =
                 s.intentKeyTuple[s.activeIntentKeys.at(offset + i)];
-            intents[i] = LibMetricsTypes.toLenderIntentSummary(
+            LibVaipakam.LenderIntent storage intent =
+                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset];
+            if (!LibIntentTerms.windowOpen(intent)) continue;
+            buf[n++] = LibMetricsTypes.toLenderIntentSummary(
                 key,
-                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset],
+                intent,
                 s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][
                     key.collateralAsset
                 ],
@@ -960,6 +975,10 @@ contract LenderIntentFacet is
                     key.collateralAsset
                 ]
             );
+        }
+        intents = new LibMetricsTypes.LenderIntentSummary[](n);
+        for (uint256 i = 0; i < n; i++) {
+            intents[i] = buf[i];
         }
     }
 
@@ -1007,7 +1026,7 @@ contract LenderIntentFacet is
             // the normal claim.
             LibVaipakam.LenderIntent storage intent =
                 s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset];
-            if (!intent.active || !LibIntentTerms.admitsRoll(intent)) continue;
+            if (!intent.active || !LibIntentTerms.windowOpen(intent)) continue;
             buf[n] = LibMetricsTypes.toRollableIntentLoan(loanId, io);
             n++;
         }

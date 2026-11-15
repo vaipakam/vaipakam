@@ -922,9 +922,13 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   loan could still be agreed inside the window; after that the roll is refused
   and the loan settles through the normal lender claim, so the money returns to
   the lender's vault rather than sitting behind an intent that can no longer lend
-  it. The time must be none or at least one day ahead when the intent is set,
-  and changing it is a change of terms, so the minimum terms age applies again
-  before the next fill. When the time passes nothing moves by itself: the intent
+  it. The time must be none, or late enough that a one-day loan still fits once
+  the newly set terms may be filled: every set of the intent restarts the
+  minimum terms age before the next fill, so the one-day minimum is counted from
+  the end of that wait, not from the moment of setting. Once less than a one-day
+  loan fits, the keeper discovery feed no longer lists the intent (it can fill
+  nothing), while the registry count is unchanged so paging still covers every
+  registered intent. When the time passes nothing moves by itself: the intent
   stays stored, its un-lent capital stays reserved behind it until the lender
   withdraws it (open at any time) or sets a new date, and open loans are
   untouched. The time bounds **agreed** maturity only, never when the money comes

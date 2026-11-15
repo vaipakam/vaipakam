@@ -291,6 +291,28 @@ contract LenderIntentLendUntilTest is SetupTest {
         assertEq(_livePrincipal(), 0, "exposure released once");
     }
 
+    /// @dev The fill feed lists an intent only while its window can still take
+    ///      a one-day loan; the registry count is unchanged, so paging holds.
+    function test_fillFeedDropsClosedWindow() public {
+        uint256 start = vm.getBlockTimestamp();
+        _setIntent(uint64(start + 2 days + SLACK), false);
+        _fundIntent(PRINCIPAL);
+        (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
+            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        assertEq(total, 1, "registered");
+        assertEq(rows.length, 1, "listed while open");
+        assertEq(rows[0].lendUntil, uint64(start + 2 days + SLACK), "summary carries the date");
+
+        vm.warp(start + 1 days + SLACK);
+        (rows,) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        assertEq(rows.length, 1, "exactly one day left still lists");
+
+        vm.warp(start + 1 days + SLACK + 1);
+        (rows, total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        assertEq(total, 1, "still registered, capital withdrawable");
+        assertEq(rows.length, 0, "a closed window is not listed");
+    }
+
     /// @dev A date less than a day ahead is refused; re-setting the date is a
     ///      re-set of the terms, so the terms-age wait starts again.
     function test_setRules_minimumWindowAndTermsAge() public {
@@ -300,7 +322,22 @@ contract LenderIntentLendUntilTest is SetupTest {
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
             MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days - 1), false, true, type(uint64).max
         );
-        // Exactly one day ahead is accepted.
+        // The window is measured from when the new terms may be filled: one
+        // day from now is too short while the terms-age wait runs, one day
+        // from the end of that wait is the minimum.
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setMinTermsAgeSec(60);
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 59), false, true, type(uint64).max
+        );
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 60), false, true, type(uint64).max
+        );
         (, uint256 cp) = _post("b-age", PRINCIPAL, 1);
         _setIntent(uint64(vm.getBlockTimestamp() + 1 days + SLACK), false);
         _fundIntent(PRINCIPAL);

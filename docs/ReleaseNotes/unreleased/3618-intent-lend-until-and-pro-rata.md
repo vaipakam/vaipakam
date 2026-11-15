@@ -9,8 +9,10 @@ an end time. A fill is admitted only when the loan's agreed maturity (now plus
 the borrower's term) falls at or before it, so as the window runs down only
 shorter loans fit. A repaid loan is rolled back behind the intent only while a
 one-day loan could still fit; after that the roll is refused and the proceeds
-take the normal lender claim back to the lender's vault. Nothing moves when the
-time passes: un-lent capital stays reserved until the lender withdraws it or sets
+take the normal lender claim back to the lender's vault, and the keeper
+discovery feed stops listing the intent, since it can fill nothing more. The end
+time must leave room for a one-day loan counted from when the newly set terms
+may first be filled. Nothing moves when the time passes: un-lent capital stays reserved until the lender withdraws it or sets
 a new date. The time bounds agreed maturity only. Late repayment in grace, a
 default and a protocol pause can all end a loan after it, so the app must never
 say funds return by that date.
@@ -24,8 +26,8 @@ original fill until the loan closes. A later roll re-commits only what the final
 repayment measured into the vault, never the original fill. The backstop and the
 aggregator adapters keep both choices off.
 
-One shared rule (a new library) decides fills, previews, rolls and the roll feed,
-so the four cannot disagree; the preview gains a "past lend-until" reason. No
+One shared rule (a new library) decides fills, previews, rolls and both feeds,
+so they cannot disagree; the preview gains a "past lend-until" reason. No
 fund-moving path changed: the new rules only refuse a fill or a roll. The two
 keeper discovery feeds moved from the metrics facet, which had reached its size
 limit, to the lender-intent facet beside the per-owner intent list; their
