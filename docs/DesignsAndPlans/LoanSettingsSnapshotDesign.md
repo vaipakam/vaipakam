@@ -95,6 +95,11 @@ The guard keeps every price entry point it has today and adds an "as of
 epoch" form of each. The current form is the "as of the newest epoch" form,
 so there is one pricing path, not two.
 
+The guard has limited room under the contract size limit. If the epoch
+forms and the history do not fit, the history reads move to a separate
+reader contract the guard calls, split along the read and write seam, not
+trimmed to fit.
+
 How history is stored is the builder's choice within one requirement: a read
 at the newest epoch must cost about what it costs today. Changes are rare, so
 a short per-entry history (epoch, value) with a fast path for "one entry" is
@@ -105,6 +110,14 @@ What is not versioned, on purpose:
 - **The stop state of a secondary source** (counted, muted, removed). A stop
   applies to every epoch at once. Re-enabling a source waits the delay, as
   today, and only restores a source the epoch already named.
+  The two stops differ, and the difference is stated here on purpose. A mute
+  only refuses more: the source's agreement stops counting and its
+  disagreement still refuses. A removal also drops the source's refusals, so
+  it loosens the quorum, and it waits 48 hours (#3537), not the guard's full
+  delay. A removal still reaches every open loan: it is the cure for a dead
+  source, and a dead source that keeps refusing would block every close-out
+  that needs a price. The removal proposal is announced to both parties of
+  every open loan the same way a succession is (section 7).
 - **The sequencer check and the peg constants.** They are code, not config.
 
 A source that an epoch did not name is never consulted for a loan on that
@@ -128,8 +141,10 @@ the vault stamps the guard address and the guard's current epoch into the
 lien row when the lien is created, reading both itself. A later check for
 that lien accepts a price read either at the stamp or at the vault's current
 constant and newest epoch. Both were announced under a 7-day delay, so a
-faulty Diamond can choose only between two legitimate readings. The security
-thread owns this part with #3268.
+faulty Diamond can choose only between two legitimate readings. The vault
+does not check prices yet, so this lands on top of the vault's price checks
+(#3268) and the lien checks (#3379), in the same lien-creation path those
+checks read, and shares one lien row shape with the payee lien of #3669.
 
 ## 5. Swap routes
 
