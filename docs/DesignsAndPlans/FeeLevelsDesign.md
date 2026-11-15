@@ -1,6 +1,6 @@
 # Fee levels: interest share at 5%, initiation fee by term — design
 
-**Status:** owner direction, 2026-11-15. Replaces the fee levels frozen in #1352 (0.2% flat initiation fee, 2% of interest). Reaches a chain by fresh deploy, before mainnet.
+**Status:** owner direction, 2026-11-15. Card #3649. Replaces the fee levels frozen in #1352 (0.2% flat initiation fee, 2% of interest). Reaches a chain by fresh deploy, before mainnet.
 **Related:** `ShortfallReserveDesign.md` (#3641: the treasury floor and the reserve's part of these two fees), the fee-discount rules in the tokenomics spec.
 
 ## 1. Why
