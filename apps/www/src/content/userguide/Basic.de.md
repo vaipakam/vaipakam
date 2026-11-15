@@ -1649,3 +1649,27 @@ Im Order-Ticket können Sie statt des Einstellens "Signed without gas" wählen. 
 ### Rate desk: Ihre signierten Orders
 
 Eine signierte Order ist ein Angebot, dem Sie durch eine Signatur zustimmen, ohne Gas zu zahlen. Das Orderbuch bewahrt Ihre Signatur auf, und nichts erreicht die Chain, bis jemand sie füllt. Unter dem Order-Ticket eines Marktes listet der Rate desk die signierten Orders Ihrer Wallet in diesem Markt so, wie das Orderbuch sie führt, und prüft jede auf der Chain: offen, durch Matches teilweise gefüllt (der Rest kann bis zu Ihrer Stornierung noch gefüllt werden), vollständig gefüllt oder storniert, gestoppt, weil ihre Nonce storniert wurde, oder abgelaufen. Für eine signierte Order wird nichts zurückgelegt: Eine Füllung zieht den Betrag oder die Sicherheit in diesem Moment aus Ihrem eigenen Vault und scheitert, wenn Ihr Vault ihn nicht deckt. Eine Order aus dem Orderbuch zu entfernen, würde sie nicht stoppen, denn wer die Signatur schon hat, kann sie weiterhin senden. Der einzige Weg, eine Order vor ihrem Ablauf zu stoppen, ist die Stornierung auf der Chain; sie kostet Gas und gibt nichts zurück, weil nichts gehalten wurde. Sie können eine Order stornieren oder, wenn mehrere Ihrer offenen Orders eine Nonce teilen, alle auf einmal; das stoppt auch jede andere Order, die Sie mit dieser Nonce signiert haben, in jedem Markt. Eine Füllung, die vor Ihrer Stornierung gesendet wurde, kann trotzdem zuerst ankommen. Ersetzt die Chain einige jüngste Blöcke, prüft das Orderbuch Ihre Orders neu und lässt sie bis dahin aus der gemeinsamen Liste weg. Eine solche Order wird hier markiert. Ihr Stand wird weiter von der Chain gelesen, und solange die Chain sie als offen zeigt, kann sie jeder mit ihrer Signatur weiterhin füllen und Sie können sie weiterhin stornieren.
+
+<a id="console-source"></a>
+
+### Protokollkonsole: woher die Einstellungen stammen
+
+Die Protokollkonsole listet die Einstellungen und Schalter des Protokolls im Netzwerk auf, das Sie gerade ansehen. Sie ist öffentlich und nur lesbar: Sie brauchen keine Wallet, und dort lässt sich nichts ändern. Die Seite zeigt die gespeicherte Kopie des Index nur, solange sie weniger als einen Tag alt ist und hinter keiner Governance-Änderung zurückliegt; sonst liest sie die Einstellungen direkt aus der Chain und sagt, warum. Ist keine Antwort verwendbar, werden die Einstellungen als unbekannt angezeigt, nie als nicht gesetzt oder null. Eine geänderte Einstellung ändert nie den Preis eines bereits offenen Kredits.
+
+<a id="console-switches"></a>
+
+### Protokollkonsole: Schalter und die globale Pause
+
+Jeder Schalter steht mit seiner Klasse und dem, was er stoppt, in der Liste. Schalter für neue Positionen stoppen nur neue Angebote und Kredite. Lebenszyklus-Schalter stoppen eine Funktion auch bei offenen Krediten, während Rückzahlung, Nachschießen von Sicherheiten und Beanspruchungen offen bleiben. Keeper-Schalter ändern nur, wer einen Schritt ausführt; Sie können ihn immer selbst ausführen. Die globale Pause wird live gelesen: Solange sie gilt, stoppen neue Positionen, Beanspruchungen, Auszahlungen, Liquidationen und Ausfälle, aber vollständige und teilweise Rückzahlung und das Nachschießen von Sicherheiten bleiben offen. Ein Schalter, den die Seite noch nicht liest, wird trotzdem genannt, mit dem Zustand „nicht gelesen“. Eine lange administrative Pause öffnet einen Notausgang, der zurückgibt, was in Ihrem Tresor frei ist, und die Konsole sagt, wann er öffnet.
+
+<a id="recover-adopt"></a>
+
+### Wiederherstellen: ein direkt an Ihren Tresor gesendetes Asset übernehmen
+
+Ihr Tresor zählt nur, was über das Protokoll hineinkommt: eine Einzahlung, ein Darlehen, eine Forderung. Ein Token oder NFT, das direkt an die Adresse Ihres Tresors gesendet wurde, von einer Wallet oder einer Börse, liegt dort ungezählt, und Sie können es nicht abheben. Die Seite Wiederherstellen zeigt die eigene Zahl des Protokolls für das Ungezählte. Wenn Sie es selbst gesendet haben, übernehmen Sie es: Sie nennen die Herkunftsadresse, lesen die Erklärung und tippen CONFIRM, dann signieren Sie sie und senden die Übernahme. Nichts bewegt sich; das Asset zählt als Ihres und verlässt den Tresor nur durch eine normale Abhebung. Das Protokoll prüft die Herkunft bei der Bestätigung erneut. Markiert die Sanktionsprüfung sie, wird nichts gutgeschrieben und Ihr Tresor bleibt gesperrt, bis die Adresse von der Liste genommen ist; deshalb sendet die App nie eine Übernahme für eine bereits markierte Herkunft. Übernehmen ist geschlossen, solange das Protokoll pausiert, für eine ersetzte Wallet und für ein Vertragskonto. Übernehmen Sie nie, was Ihnen jemand anderes gesendet hat.
+
+<a id="recover-disown"></a>
+
+### Wiederherstellen: ein Asset zurückweisen
+
+Ist etwas in Ihrem Tresor angekommen, das Sie nicht beanspruchen, weisen Sie es zurück. Das Zurückweisen hält auf der Chain für alle sichtbar fest, dass Sie es nicht beanspruchen. Es bewegt und schreibt nichts gut, und das Asset bleibt ungezählt in Ihrem Tresor. Es verlangt keine Erklärung, keine Signatur und keine Sanktionsprüfung und bleibt offen, solange das Protokoll pausiert, für eine ersetzte Wallet und für einen durch eine frühere Übernahme gesperrten Tresor.

@@ -233,6 +233,12 @@ including people who never will.
   The indexer's configuration snapshot refreshes on these announcements.
   An older deployment without a relevant announcement can lag until its
   scheduled refresh; the console discloses that limitation beside the value.
+- A few settings change without the Diamond announcing it, and the console
+  says so beside each one rather than implying its snapshot is current. The
+  treasury is one (#3569): it is held only in the vault code, so it moves
+  when new vault code becomes current, which the vault version registry
+  announces and the Diamond does not. Its snapshot picks up a move at the
+  next scheduled refresh and can show the previous treasury until then.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance

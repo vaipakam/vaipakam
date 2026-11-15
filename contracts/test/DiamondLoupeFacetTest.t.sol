@@ -170,8 +170,8 @@ contract DiamondLoupeFacetTest is Test {
     // ─── facetAddress() ───────────────────────────────────────────────────────
 
     function testFacetAddressForKnownSelector() public view {
-        // AdminFacet.setTreasury.selector should map to adminFacet
-        address facet = ILoupe(address(diamond)).facetAddress(AdminFacet.setTreasury.selector);
+        // AdminFacet.getTreasury.selector should map to adminFacet
+        address facet = ILoupe(address(diamond)).facetAddress(AdminFacet.getTreasury.selector);
         assertEq(facet, address(adminFacet));
     }
 
@@ -273,9 +273,9 @@ contract DiamondLoupeFacetTest is Test {
         _makeRootAdmin(newOwner);
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
 
-        // newOwner can now set treasury (has ADMIN_ROLE)
+        // newOwner can now call an ADMIN_ROLE setter
         vm.prank(newOwner);
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroExProxy"));
     }
 
     function testOldOwnerCannotActAfterTransfer() public {
@@ -285,8 +285,8 @@ contract DiamondLoupeFacetTest is Test {
         // Old owner revokes their own ADMIN_ROLE (they still have DEFAULT_ADMIN_ROLE which is the admin for ADMIN_ROLE)
         AccessControlFacet(address(diamond)).revokeRole(LibAccessControl.ADMIN_ROLE, owner);
 
-        // original owner can no longer call setTreasury
+        // original owner can no longer call an ADMIN_ROLE setter
         vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, owner, LibAccessControl.ADMIN_ROLE));
-        AdminFacet(address(diamond)).setTreasury(makeAddr("treasury"));
+        AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroExProxy"));
     }
 }

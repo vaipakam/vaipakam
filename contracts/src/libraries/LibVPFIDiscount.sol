@@ -728,8 +728,9 @@ library LibVPFIDiscount {
             uint256 tracked = prevTracked < vaultBal ? prevTracked : vaultBal;
             if (LibEncumbrance.freeBalance(lender, vpfi, 0, tracked) < vpfiRequired) return (false, 0);
         }
-        uint256 arrived = LibVaultOutflow.toTreasury(lender, vpfi, vpfiRequired, loan.id, OutflowReason.FEE);
-        LibFacet.recordTreasuryAccrual(vpfi, arrived);
+        (uint256 arrived, address treasury) =
+            LibVaultOutflow.toTreasury(lender, vpfi, vpfiRequired, loan.id, OutflowReason.FEE);
+        LibFacet.recordTreasuryAccrual(vpfi, arrived, treasury);
         return (true, vpfiRequired);
     }
 

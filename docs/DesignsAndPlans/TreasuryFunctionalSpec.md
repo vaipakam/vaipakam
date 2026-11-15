@@ -43,6 +43,18 @@ out and `treasuryBalances` is not populated. **The convert function and
 the payroll streams require Diamond-as-treasury mode** — they act only
 on funds inside the Diamond.
 
+> **#3569 (2026-11-12):** `s.treasury` is no longer the treasury, and
+> `AdminFacet.setTreasury` is removed. The treasury is the `TREASURY`
+> endpoint of the vault code; `AdminFacet.getTreasury()` reads the current
+> version's. Diamond-as-treasury mode now means **the current vault code
+> names the Diamond**, and that is what `convertTreasuryAsset`, payroll
+> funding and the backstop seed and withdraw check. `recordTreasuryAccrual`
+> counts a fee only when it actually reached the Diamond: a fee drawn from a
+> vault goes to the treasury that vault's own code names, so a vault pinned
+> to an older version can still pay an older treasury. A fee with no
+> treasury set is refused (`TreasuryUnset`). Read `s.treasury == address(this)`
+> below (and in §8) with that meaning.
+
 The T-051 chokepoint counter (`protocolTrackedVaultBalance`) keeps
 protocol-tracked balances distinct from unsolicited dust; the convert
 function reads `treasuryBalances` (clean), never raw `balanceOf`.

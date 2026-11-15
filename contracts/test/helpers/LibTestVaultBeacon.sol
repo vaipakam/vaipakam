@@ -18,12 +18,6 @@ interface IEndpointReads {
     function getCollateralListingExecutor() external view returns (address);
 }
 
-/// @dev The one setter {setTreasury} wraps (AdminFacet's), by interface so
-///      this library does not pull the facet into every suite's compile.
-interface ITreasurySetter {
-    function setTreasury(address treasury) external;
-}
-
 interface IExecutorSeaport {
     function seaport() external view returns (address);
 }
@@ -47,8 +41,8 @@ library LibTestVaultBeacon {
     /// @dev #3205 part 2 / #3431 — the vault code fixes the PositionNFT core
     ///      and its endpoints as immutables, so both exist before it: the core
     ///      is installed here (idempotently) and the endpoints start with the
-    ///      treasury the Diamond is configured with (the Diamond itself, the
-    ///      test convention, when none is set yet) and nothing else set.
+    ///      Diamond itself as the treasury (the test convention; a suite moves
+    ///      it with {setTreasury}) and nothing else set.
     ///      A suite that configures more calls {sync} (live Diamond reads) or
     ///      {setEndpoints} afterwards. #3272 part 2 — the Diamond records a
     ///      protocol registry and prices through the guard it names
@@ -87,15 +81,14 @@ library LibTestVaultBeacon {
         vm.etch(impl, fresh.code);
     }
 
-    /// @notice TEST CONVENIENCE — bring the vault code's treasury, backstop,
-    ///         1inch order protocol and Seaport to what `diamond` is
-    ///         configured with now (each read only where the Diamond routes
-    ///         it); the conduit, its key and the price guard are kept.
+    /// @notice TEST CONVENIENCE — bring the vault code's backstop, 1inch
+    ///         order protocol and Seaport to what `diamond` is configured with
+    ///         now (each read only where the Diamond routes it); the treasury,
+    ///         the conduit, its key and the price guard are kept. The treasury
+    ///         has no Diamond-side copy to sync from (#3569): {setTreasury}
+    ///         moves it.
     function sync(address diamond) internal {
         VaultOutflowTypes.VaultEndpoints memory e = endpointsOf(diamond);
-        try IEndpointReads(diamond).getTreasury() returns (address t) {
-            e.treasury = t;
-        } catch {}
         try IEndpointReads(diamond).getBackstopVault() returns (address b) {
             e.backstop = b;
         } catch {}
@@ -112,27 +105,23 @@ library LibTestVaultBeacon {
         setEndpoints(diamond, e);
     }
 
-    /// @notice The ONE way a test changes a Diamond's treasury: set it, and
-    ///         bring the vault code's treasury endpoint with it. The vault
-    ///         code fixes its treasury as an immutable (#3431), so a raw
-    ///         `setTreasury` leaves every vault refusing fee and treasury
-    ///         movements to the new address (`OutflowDestinationRefused`).
-    ///         `check-test-treasury-sync.sh` refuses a raw call under `test/`.
-    /// @dev    The setter is the first external call made here, so a
-    ///         `vm.prank` placed just before this call applies to it, and a
-    ///         `vm.expectRevert` placed before it expects the setter's revert
-    ///         (the endpoint is then brought to the treasury still in force).
-    ///         Before {install} has run there is no vault code to update;
-    ///         {install} then reads the treasury set here. Only the treasury
-    ///         endpoint moves: the others are left as they are ({sync} brings
-    ///         them all).
+    /// @notice TEST CONVENIENCE — move a Diamond's treasury. Since #3569
+    ///         the treasury is ONLY the vault code's immutable `TREASURY`,
+    ///         which the Diamond reads through the beacon, so this etches
+    ///         vault code naming `treasury` over the current implementation
+    ///         ({setEndpoints}); every vault and the Diamond then read it at
+    ///         once. On a chain the same move is new vault code through the
+    ///         beacon's delay. Only the treasury endpoint moves.
+    /// @dev    There is no treasury before the vault code exists, so this
+    ///         needs {install} first; {install} starts the treasury at the
+    ///         Diamond itself, the test convention.
     function setTreasury(address diamond, address treasury) internal {
-        ITreasurySetter(diamond).setTreasury(treasury);
-        if (_beaconOf(diamond) == address(0)) return;
+        require(
+            _beaconOf(diamond) != address(0),
+            "LibTestVaultBeacon: install the vault beacon before setting a treasury"
+        );
         VaultOutflowTypes.VaultEndpoints memory e = endpointsOf(diamond);
-        // Read back rather than trust the argument: under `vm.expectRevert`
-        // the setter's revert is absorbed and the treasury did not change.
-        e.treasury = _configuredTreasury(diamond);
+        e.treasury = treasury;
         setEndpoints(diamond, e);
     }
 
@@ -144,8 +133,9 @@ library LibTestVaultBeacon {
         setEndpoints(diamond, e);
     }
 
-    /// @dev The Diamond's configured treasury, or the Diamond itself when none
-    ///      is set or the Diamond does not route the read.
+    /// @dev The treasury the Diamond reads (the current vault code's), or the
+    ///      Diamond itself when there is none yet or the Diamond does not
+    ///      route the read — the test convention for a fresh install.
     function _configuredTreasury(address diamond) private view returns (address) {
         try IEndpointReads(diamond).getTreasury() returns (address t) {
             if (t != address(0)) return t;

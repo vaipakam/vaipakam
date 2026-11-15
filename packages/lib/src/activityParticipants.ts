@@ -360,7 +360,6 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'ServiceCapacityEscrowBound',
       'SushiswapV3FactorySet',
       'TierReferenceAssetsSet',
-      'TreasurySet',
       'UniswapV3FactorySet',
       'Unpaused',
       // #3204 — the VaultBeacon new vaults point at, set once at deploy.

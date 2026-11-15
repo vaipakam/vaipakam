@@ -14,6 +14,10 @@ const ORIENTATION: Readonly<Record<string, { what: CopyKey; guided: readonly { t
       { to: '/lend', label: 'orientation.lend' },
     ],
   },
+  '/recover': {
+    what: 'orientation.recover',
+    guided: [{ to: '/vault', label: 'orientation.vault' }],
+  },
 };
 
 const DISMISSED_KEY = 'alpha05.orientation.dismissed';

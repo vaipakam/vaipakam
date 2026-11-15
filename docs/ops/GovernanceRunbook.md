@@ -607,7 +607,7 @@ even for the gap between the deploy and the handover.
    are still the ones `handover-gate` proved (if any role changed hands, or
    the Timelock executed any call, since, re-run `handover-gate`). It
    broadcasts nothing. The requirements:
-   - a treasury;
+   - a treasury (`getTreasury()`, the current vault code's `TREASURY`, non-zero);
    - a sanctions oracle that answers `isSanctioned`;
    - the declared WETH, an 18-decimal token contract, which the Diamond's
      own oracle prices from the ETH reference feed right now;
@@ -2960,7 +2960,7 @@ the design just being a code reference.
 
 | Question | Answer |
 |---|---|
-| Where do operating fees accumulate? | Diamond as treasury (`s.treasury == address(this)`); per-token in `treasuryBalances[asset]`. |
+| Where do operating fees accumulate? | Diamond as treasury (since #3569: the current vault code's `TREASURY` names the Diamond); per-token in `treasuryBalances[asset]`, counting only fees that actually reached the Diamond. Mainnet's planned topology is an external multisig instead. |
 | When are accumulated fees converted? | Aggregated, threshold-or-time-triggered. NOT per-tx. |
 | What do they convert to? | A fully governance-configurable target-allocation list of `(asset, %)` entries (`s.treasuryConvertTargets`) — no hardcoded reserve set. |
 | Does any cut auto-route to a "founder address"? | **No.** This is the load-bearing design choice. |
@@ -3139,7 +3139,8 @@ which is the single lever for **add / remove / reweight** a reserve
 asset and validates `Σ bps == 10000` on every write (1–8 entries, no
 zero address, no duplicates). Eligibility (USD-value OR max-interval)
 is unchanged; thresholds via `setTreasuryConvertThresholds`. Requires
-Diamond-as-treasury mode. **Governance op:** to change the reserve
+Diamond-as-treasury mode (the CURRENT vault code's treasury is the
+Diamond, #3569). **Governance op:** to change the reserve
 mix, submit the complete new `(asset, bps)` list to
 `setTreasuryConvertTargets`.
 
@@ -3187,9 +3188,12 @@ enforces the gate (`CONFIRM_TGE_FUNDING=YES`).
 - [`../DesignsAndPlans/TreasuryAndFounderDistribution.md`](../DesignsAndPlans/TreasuryAndFounderDistribution.md) §12 — as-built design record.
 - [`../internal/Tokenomics.md`](../internal/Tokenomics.md) for
   the genesis VPFI allocation breakdown (when it lands).
-- The protocol's existing `s.treasury` field, configurable via
-  `AdminFacet.setTreasury`, defaults to the Diamond itself for
-  this design.
+- The treasury is the `TREASURY` endpoint of the vault code (#3569;
+  the old `s.treasury` field and `AdminFacet.setTreasury` are gone).
+  Diamond-as-treasury means the current vault code names the Diamond.
+  Moving it is a vault code change on the `VaultBeacon`, owned by the
+  Timelock — see [UpgradeSafety.md](UpgradeSafety.md), "Moving the
+  treasury (#3569)".
 - T-051's `protocolTrackedVaultBalance` counter (per-user) +
   `treasuryBalances` (per-token treasury accrual) are the two
   ledgers that keep operating-fee accounting separate from

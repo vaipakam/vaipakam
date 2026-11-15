@@ -14,10 +14,10 @@ library RegistryKeys {
     ///         through, on the Diamond and in every vault (#3272).
     bytes32 internal constant PRICE_GUARD = keccak256("vaipakam.registry.priceGuard");
 
-    /// @notice Pointer: the protocol treasury, the one address a vault's
-    ///         treasury-class outflow may pay (#3205 part 2, §3.6). Must equal
-    ///         the Diamond's treasury; the launch refuses otherwise.
-    bytes32 internal constant TREASURY = keccak256("vaipakam.registry.treasury");
+    // #3569 — the TREASURY pointer is retired. The treasury is written in
+    // one place only, the vault code's immutable `TREASURY` (#3431), which
+    // the Diamond reads through `LibTreasury`; a registry copy could only
+    // disagree with it.
 
     /// @notice Pointer: the backstop vault's owner account, whose vault a
     ///         backstop-class outflow pays (#3205 part 2).

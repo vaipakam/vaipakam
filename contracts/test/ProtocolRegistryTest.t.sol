@@ -25,7 +25,7 @@ contract ProtocolRegistryTest is Test {
 
     /// @dev A pointer with no minimum of its own, so it waits the registry
     ///      delay. The price guard's own minimum is tested on its own below.
-    bytes32 internal constant KEY = RegistryKeys.TREASURY;
+    bytes32 internal constant KEY = keccak256("vaipakam.registry.test.pointer");
     bytes32 internal constant SET = keccak256("vaipakam.registry.test.adapters");
 
     uint256 internal constant DELAY = 3 days;
@@ -351,12 +351,12 @@ contract ProtocolRegistryTest is Test {
     function test_MinDelayFor_PriceGuardIsSevenDays_OthersTheRegistryFloor() public view {
         assertEq(reg.PRICE_GUARD_MIN_DELAY(), 7 days);
         assertEq(reg.minDelayFor(RegistryKeys.PRICE_GUARD), reg.PRICE_GUARD_MIN_DELAY());
-        assertEq(reg.minDelayFor(RegistryKeys.TREASURY), reg.MIN_DELAY());
+        assertEq(reg.minDelayFor(KEY), reg.MIN_DELAY());
         assertEq(reg.minDelayFor(RegistryKeys.BACKSTOP), reg.MIN_DELAY());
         assertEq(reg.minDelayFor(RegistryKeys.SWAP_ADAPTERS), reg.MIN_DELAY());
         assertEq(reg.minDelayFor(RegistryKeys.CONDUITS), reg.MIN_DELAY());
         assertEq(reg.waitFor(RegistryKeys.PRICE_GUARD), 7 days);
-        assertEq(reg.waitFor(RegistryKeys.TREASURY), DELAY);
+        assertEq(reg.waitFor(KEY), DELAY);
     }
 
     function test_PriceGuardPointer_CannotExecuteBeforeSevenDays() public {

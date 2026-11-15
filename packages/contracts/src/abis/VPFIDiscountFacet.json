@@ -5099,6 +5099,11 @@
   },
   {
     "type": "error",
+    "name": "TreasuryUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnauthorizedCrossFacetCall",
     "inputs": []
   },

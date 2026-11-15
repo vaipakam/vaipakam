@@ -8,6 +8,7 @@ import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -516,7 +517,9 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         // accrual and the lender slice the caller books never name tokens
         // that a fee-charging collateral kept back.
         toTreasury =
-            _moveOut(s, loanId, borrower, c, toTreasury, LibFallbackCustody.Move.ToTreasury, s.treasury);
+            _moveOut(
+                s, loanId, borrower, c, toTreasury, LibFallbackCustody.Move.ToTreasury, LibTreasury.ofUserVault(borrower)
+            );
         toLenderSlice =
             _moveOut(s, loanId, borrower, c, toLenderSlice, lenderMove, lenderSliceOwner);
         if (retainedForBorrower > 0) {
@@ -669,9 +672,9 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         LibEncumbrance.decrementCollateralLien(loanId, amount);
         if (move == LibFallbackCustody.Move.ToTreasury) {
             LibSanctionedLock.beginMoveOut(s, borrower);
-            arrived = LibVaultOutflow.toTreasury(borrower, asset, amount, loanId, OutflowReason.FEE);
+            (arrived,) = LibVaultOutflow.toTreasury(borrower, asset, amount, loanId, OutflowReason.FEE);
             LibSanctionedLock.endMoveOut(s);
-            LibFacet.recordTreasuryAccrual(asset, arrived);
+            LibFacet.recordTreasuryAccrual(asset, arrived, to);
         } else if (move == LibFallbackCustody.Move.RetryPulled) {
             arrived = LibSanctionedLock.pullToDiamond(s, borrower, asset, amount, loanId, OutflowReason.SWAP);
         } else {

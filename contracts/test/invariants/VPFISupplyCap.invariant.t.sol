@@ -14,7 +14,6 @@ import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
-import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 
 /**
  * @title VPFISupplyCapInvariant
@@ -85,7 +84,6 @@ contract VPFISupplyCapInvariant is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
 
         // ── VPFI token proxy ────────────────────────────────────────────
         VPFIToken impl = new VPFIToken();
