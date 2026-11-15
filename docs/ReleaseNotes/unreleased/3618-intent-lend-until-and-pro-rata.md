@@ -37,4 +37,6 @@ this reaches a chain by fresh deploy. Design:
 
 Closes #3618. Closes #3619.
 
-> Caveat: the keeper's pre-filter and the app's setup form are follow-ups in their own threads; until the keeper learns the pro-rata rule, its pre-filter still skips pro-rata requests before any preview.
+The keeper's intent pre-filter applies the same pro-rata rule, so the matching service tries a pro-rata request against an opted-in intent. The borrower page's standing lenders count each lender's end date and pro-rata opt-in.
+
+> Caveat: the lender's setup form for the two choices is a follow-up in its own thread.

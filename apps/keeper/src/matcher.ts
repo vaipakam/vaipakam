@@ -387,6 +387,12 @@ export interface LenderIntentSummary {
   requiresKeeperAuth: boolean;
   livePrincipal: bigint;
   availableCapital: bigint;
+  /** #3618 — the lend-until time (unix seconds; 0 = none). The feed already
+   *  leaves out an intent whose window cannot take a one-day loan; a longer
+   *  request past it is refused by the protocol preview (`PastLendUntil`). */
+  lendUntil: bigint;
+  /** #3619 — the intent also fills pro-rata requests. */
+  acceptsProRata: boolean;
 }
 
 /** `RiskAccessFacet.previewIntent` → `LibOfferMatch.IntentPreviewResult`. */
@@ -873,6 +879,8 @@ function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
     requiresKeeperAuth: Boolean(raw['requiresKeeperAuth']),
     livePrincipal: BigInt(raw['livePrincipal'] as bigint | number),
     availableCapital: BigInt(raw['availableCapital'] as bigint | number),
+    lendUntil: BigInt(raw['lendUntil'] as bigint | number),
+    acceptsProRata: Boolean(raw['acceptsProRata']),
   };
 }
 
@@ -1108,8 +1116,11 @@ export function borrowerFitsIntent(intent: LenderIntentSummary, b: OfferLite): b
     b.collateralAsset.toLowerCase() !== intent.collateralAsset.toLowerCase() ||
     b.creator.toLowerCase() === intent.owner.toLowerCase() || // self-trade
     Number(b.durationDays) > intent.maxDurationDays ||
-    !b.useFullTermInterest ||
-    b.allowsPartialRepay ||
+    // The protocol's lifecycle rule (#3619, `LibIntentTerms.lifecycleVerdict`):
+    // pro-rata interest only from an intent that opted in, and partial
+    // repayment only on pro-rata interest.
+    (!b.useFullTermInterest && !intent.acceptsProRata) ||
+    (b.useFullTermInterest && b.allowsPartialRepay) ||
     intent.minRateBps > b.interestRateBpsMax // rate overlap
   );
 }
