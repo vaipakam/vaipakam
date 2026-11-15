@@ -34,7 +34,7 @@ What carries over: nobody sound promises payment; the automatic designs pay only
 ### 4.1 Paid automatically (measured by the protocol itself)
 
 1. **A forced sale that recovered less than the principal.** A health-factor liquidation, a time-based default or a periodic-interest sale that sold everything and still left principal unpaid.
-2. **A priced in-kind fallback where the lender took all the collateral and it was worth less than the principal**, valued by the price guard at the lender's claim.
+2. **A priced in-kind fallback where the lender took all the collateral and it was worth less than the principal**, valued by the price guard when the fallback is entered.
 
 In both, the measured loss is **principal only**: unpaid interest, late fees and the fallback charge are not counted.
 
