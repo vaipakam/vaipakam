@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
@@ -131,7 +132,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             revert AmountTooHigh();
 
         // Check liquidity: Must be liquid
-        (bool liqSuccess, bytes memory liqResult) = address(this).staticcall(
+        (bool liqSuccess, bytes memory liqResult) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidity.selector,
                 loan.collateralAsset
@@ -255,7 +256,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         ) return 0;
 
         // Illiquid: 0
-        (bool success, bytes memory result) = address(this).staticcall(
+        (bool success, bytes memory result) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(
                 OracleFacet.checkLiquidity.selector,
                 loan.collateralAsset

@@ -9,7 +9,7 @@ import {LibFacet} from "./LibFacet.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../facets/VPFIDiscountAccumulatorFacet.sol";
 
@@ -981,26 +981,18 @@ library LibVPFIDiscount {
 
         uint256 lendPrice;
         uint8 lendFeedDec;
-        try OracleFacet(address(this)).getAssetPrice(feeAsset) returns (
-            uint256 p,
-            uint8 d
-        ) {
-            lendPrice = p;
-            lendFeedDec = d;
-        } catch {
-            return (false, 0);
+        {
+            bool priced;
+            (priced, lendPrice, lendFeedDec) = LibPriceRead.tryAssetPrice(feeAsset);
+            if (!priced) return (false, 0);
         }
 
         uint256 ethPrice;
         uint8 ethFeedDec;
-        try OracleFacet(address(this)).getAssetPrice(ethRefAsset) returns (
-            uint256 p,
-            uint8 d
-        ) {
-            ethPrice = p;
-            ethFeedDec = d;
-        } catch {
-            return (false, 0);
+        {
+            bool priced;
+            (priced, ethPrice, ethFeedDec) = LibPriceRead.tryAssetPrice(ethRefAsset);
+            if (!priced) return (false, 0);
         }
 
         if (lendPrice == 0 || ethPrice == 0) return (false, 0);

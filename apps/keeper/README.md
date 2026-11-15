@@ -136,14 +136,9 @@ Config-owned var — its value is committed in `wrangler.jsonc`'s `vars`, so eve
 |---|---|
 | `KEEPER_RUNNER_ID` | This copy's name for the one-runner lease (#2503). Every tick claims the lease first and declines while another copy holds it; unset declines every tick. The Worker's is `cloudflare-worker` in `wrangler.jsonc`; a machine's defaults to `host:<host name>`. See `docs/ops/KeeperMachine.md` §2. |
 
-`TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
-note above: this config **declares** it, so every deploy uploads the declared
-value and a dashboard edit is overwritten rather than preserved. Note though
-that setting it here changes nothing observable — as §"What the kill-switch
-does and does not stop" records below, no keeper code reads it; the Telegram
-deep link that uses the handle is built by `apps/agent` from its own binding.
-It is a legacy config-owned value, kept because the declaration is what makes
-the overwrite behaviour visible, not because the keeper needs it.
+The keeper has no Telegram bot settings at all: `TG_BOT_USERNAME`, once
+declared here though no keeper code read it, was removed with the rest of the
+user bot (#1722). The bot handle is the agent's.
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 
@@ -196,8 +191,7 @@ complete and reversible.
 
 **The var hazard is handled by the deploy script, not by this config being
 small** (Codex #1924 r7). An earlier revision said the hazard was "resolved"
-because `TG_BOT_USERNAME` is the only var declared here and `apps/keeper`
-never reads it. That reasoning was backwards: a bare `wrangler deploy`
+because the only var then declared here was one `apps/keeper` never read. That reasoning was backwards: a bare `wrangler deploy`
 deletes every var **not** in the config before applying the ones that are, and
 what is not in the config is exactly the dashboard-managed tuning the keeper
 *does* read — `HF_SCALE`, the `LIQ_CONFIDENCE_*` and `LIQ_TIER3_*`
@@ -247,8 +241,7 @@ are gone. What that gives up is listed by name in the header of
 `scripts/check-keep-vars.mjs`.
 
 Keeping vars costs nothing here: the only var this config declares is
-`TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
-nowhere in the Worker.
+`KEEPER_RUNNER_ID`, which the config owns on purpose.
 
 
 **Three other passes also run ungated** — `watcher`, `preGraceWatcher` and

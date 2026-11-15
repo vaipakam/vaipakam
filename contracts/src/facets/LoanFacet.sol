@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -475,12 +476,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         d.treasuryFeeBpsAtInit = loan.treasuryFeeBpsAtInit;
         d.loanInitiationFeeBpsAtInit = loan.loanInitiationFeeBpsAtInit;
 
-        // Best-effort HF — staticcall returns 0 on illiquid (no oracle).
-        (bool ok, bytes memory ret) = address(this).staticcall(
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
-        );
-        if (ok && ret.length > 0) {
-            d.healthFactorAtInit = abi.decode(ret, (uint256));
+        // Best-effort HF, read only for a loan with both legs liquid (the
+        // health factor refuses any other, so 0 stays the illiquid answer
+        // without asking). A read that ran short of gas reverts by name
+        // instead of reporting 0 (#3504).
+        if (
+            loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid
+        ) {
+            (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
+                abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
+            );
+            if (ok && ret.length > 0) {
+                d.healthFactorAtInit = abi.decode(ret, (uint256));
+            }
         }
 
         emit LoanInitiatedDetails(loanId, loan.lender, loan.borrower, d);
@@ -1218,8 +1227,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // `getEffectiveLiquidityTier` into their oracle surface.
             // Failure ⇒ treat as tier 0 (unclassified); the
             // `cfgTierLiquidationLtvBps(0)` helper returns the
-            // conservative Tier-3 default anyway.
-            (bool ok, bytes memory ret) = address(this).staticcall(
+            // conservative Tier-3 default anyway. A read that ran short of
+            // gas reverts by name instead, so the caller's gas limit cannot
+            // pick the tier stamped on the loan (#3504).
+            (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
                 abi.encodeWithSelector(
                     OracleFacet.getEffectiveLiquidityTier.selector,
                     loan.collateralAsset

@@ -928,4 +928,81 @@ contract BorrowerPartialFillTest is SetupTest {
         assertGt(boundByRisk, 0, "the gate's bound, not the lender's, set the amount somewhere");
     }
 
+
+    // ─────────────────────────────────────────────────────────────────
+    // #3615 — a pro-rata pair admits a borrower term inside the lender's
+    // ─────────────────────────────────────────────────────────────────
+
+    function _setDuration(uint256 offerId, uint256 days_) internal {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+        o.durationDays = days_;
+        TestMutatorFacet(address(diamond)).setOffer(offerId, o);
+    }
+
+    function _assertDurationMismatch(uint256 lo, uint256 bo) internal {
+        assertEq(
+            uint8(_preview(lo, bo).errorCode),
+            uint8(LibOfferMatch.MatchError.DurationMismatch),
+            "preview reports DurationMismatch"
+        );
+        vm.expectRevert(abi.encodeWithSignature("DurationMismatch()"));
+        OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+    }
+
+    /// @notice Both pro-rata (the fixture's default): a 20-day request
+    ///         matches a 30-day lender and the loan runs the borrower's 20.
+    function test_3615_proRataShorterBorrowerTermMatches() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setDuration(bo, 20);
+        assertEq(uint8(_preview(lo, bo).errorCode), uint8(LibOfferMatch.MatchError.Ok), "matchable");
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.durationDays, 20, "the loan runs the borrower's term");
+        assertFalse(loan.useFullTermInterest, "pro-rata loan");
+    }
+
+    /// @notice A borrower is never given a shorter term than it asked for.
+    function test_3615_proRataLongerBorrowerTermRefused() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setDuration(bo, 31);
+        _assertDurationMismatch(lo, bo);
+    }
+
+    /// @notice On full-term interest the term is a price term: equal or refused.
+    function test_3615_fullTermStillNeedsEqualTerms() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setTerms(lo, true, false);
+        _setTerms(bo, true, false);
+        _setDuration(bo, 20);
+        _assertDurationMismatch(lo, bo);
+    }
+
+    /// @notice A mixed-mode pair with different terms keeps the duration refusal.
+    function test_3615_mixedModeDifferentTermsRefused() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        _setTerms(lo, true, false);
+        _setDuration(bo, 20);
+        _assertDurationMismatch(lo, bo);
+    }
+
+    /// @notice One ranged pro-rata lender offer filled by two requests with
+    ///         different shorter terms: two loans, each on its own term.
+    function test_3615_rangedLenderFilledAcrossShorterTerms() public {
+        uint256 lo = _postRangedLenderOffer(lender, 1_000, 10_000, 500, 600, 3_000);
+        uint256 b20 = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 3_000, rateMin: 500, rateMax: 600,
+            collateralMin: 900, collateralMax: 5_000
+        });
+        uint256 b10 = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 3_000, rateMin: 500, rateMax: 600,
+            collateralMin: 900, collateralMax: 5_000
+        });
+        _setDuration(b20, 20);
+        _setDuration(b10, 10);
+        uint256 loanA = OfferMatchFacet(address(diamond)).matchOffers(lo, b20);
+        uint256 loanB = OfferMatchFacet(address(diamond)).matchOffers(lo, b10);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanA).durationDays, 20, "first loan on its term");
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanB).durationDays, 10, "second loan on its term");
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(lo).durationDays, 30, "the lender offer keeps its term");
+    }
 }

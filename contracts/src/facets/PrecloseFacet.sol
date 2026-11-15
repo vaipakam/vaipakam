@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
@@ -1296,12 +1297,20 @@ contract PrecloseFacet is
         // staticcall + degraded-to-0 mirrors the AddCollateralFacet
         // pattern. Saves the consumer a follow-up RiskFacet read for the
         // common liquid case.
+        // Read only for a loan with both legs liquid, so an illiquid loan
+        // needs no price-read gas; a read that ran short of gas reverts by
+        // name instead of reporting 0 (#3504).
         uint256 newHf;
-        (bool hfOk, bytes memory hfRet) = address(this).staticcall(
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
-        );
-        if (hfOk && hfRet.length > 0) {
-            newHf = abi.decode(hfRet, (uint256));
+        if (
+            loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid
+        ) {
+            (bool hfOk, bytes memory hfRet) = LibPriceRead.trySelfRead(
+                abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId)
+            );
+            if (hfOk && hfRet.length > 0) {
+                newHf = abi.decode(hfRet, (uint256));
+            }
         }
         emit LoanObligationTransferred(
             loanId,

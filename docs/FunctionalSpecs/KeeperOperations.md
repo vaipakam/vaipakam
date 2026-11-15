@@ -1127,6 +1127,10 @@ serves. Each ships switched off behind its own flag.
   (or why that could not be read), what was already recorded, what it
   recorded, what landed in the next hour, what another caller recorded first
   and what had no price.
+- A checkpoint batch sent with too little gas fails with a named reason
+  rather than landing with assets silently skipped (#3504), so a gas
+  estimate finds the batch's real cost and "landed" means "written" for
+  every asset whose price reads.
 - The duty ships switched off behind its own flag and pays only gas.
 
 ## Refreshing the market-cap rankings behind asset trust tiers
