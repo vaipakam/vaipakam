@@ -24,10 +24,12 @@
  *   2. Page `getActiveOffersPaginated` for all live ids.
  *   3. Hydrate each id via `getOffer(id)`; split into lender / borrower.
  *   4. Bucket by the cheap continuity key (`(lendingAsset,
- *      collateralAsset, assetType, collateralAssetType, durationDays)`)
- *      so the cartesian shrinks to per-bucket nested loops.
- *   5. Within each bucket, `previewMatch(L, B)` until a pair returns
- *      `errorCode == 0` (Ok).
+ *      collateralAsset, assetType, collateralAssetType)`) so the cartesian
+ *      shrinks to per-bucket nested loops. The term is not in the key: a
+ *      pro-rata pair may match across terms (#3615), so {@link termsFit}
+ *      filters pairs instead.
+ *   5. Within each bucket, `previewMatch(L, B)` for every pair whose terms
+ *      fit, until a pair returns `errorCode == 0` (Ok).
  *   6. Submit `matchOffers(L, B)`. Reverts (lost a race, kill-switch
  *      off, …) are logged and treated as no-ops — next tick re-evaluates.
  *
@@ -409,8 +411,20 @@ function bucketKey(o: OfferLite): string {
     o.collateralAsset.toLowerCase(),
     o.assetType,
     o.collateralAssetType,
-    o.durationDays.toString(),
   ].join('|');
+}
+
+/**
+ * The match core's term rule (`LibOfferMatch`, #3615), checked before a
+ * preview is spent on a pair: equal terms always fit, and when both offers
+ * chose pro-rata interest a borrower term below the lender's fits too (the
+ * loan runs the borrower's term). A full-term pair still needs equal terms.
+ * The preview stays the authority; this only keeps pairs it would refuse
+ * from using the budget.
+ */
+export function termsFit(lender: OfferLite, borrower: OfferLite): boolean {
+  if (lender.durationDays === borrower.durationDays) return true;
+  return !lender.useFullTermInterest && !borrower.useFullTermInterest && borrower.durationDays < lender.durationDays;
 }
 
 function liftOffer(raw: Record<string, unknown>): OfferLite {
@@ -608,7 +622,7 @@ export function* intentFillUnits(
   }
 }
 
-function partitionByBucket(offers: readonly OfferLite[]): {
+export function partitionByBucket(offers: readonly OfferLite[]): {
   lenders: Map<string, OfferLite[]>;
   borrowers: Map<string, OfferLite[]>;
 } {
@@ -1650,7 +1664,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
   const doneLenders = new Set<OfferLite>();
   for (const [L, B] of fairPairs(offerMatchUnits(lenders, borrowers, run), {
     deadA: (l) => doneLenders.has(l),
-    skip: (_l, b) => uncertainBorrowers.has(b.id.toString()),
+    skip: (l, b) => uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b),
     stop: overBudget,
     maxLive: MAX_PREVIEW_CALLS_PER_TICK,
   })) {
