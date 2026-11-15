@@ -2810,7 +2810,7 @@ acceptance made in another tab lets the action continue. A failed
 read is "cannot confirm", with a retry, never "not accepted". Exits
 are never gated.
 
-Above the accept step the prompt lists the six key risks (#3661). Every review that opens a loan or a rental carries one "If things go wrong" line, chosen by side and by settlement: a sale when both legs read liquid, in kind when either reads illiquid, and a line that holds either way for a signed order, whose legs are classed again at fill. It links `/risks`, a public page also linked from the footer. The list is part of the Terms text from version 2, so accepting that version records it.
+Above the accept step the prompt lists the six key risks (#3661). Every review that opens a loan or a rental carries one "If things go wrong" line, chosen by side and by settlement: a sale when both legs read liquid, in kind when either reads illiquid, and a line that holds either way for a posted offer or request or a signed order, whose legs the protocol classes again at fill. It links `/risks`, a public page also linked from the footer. The list is part of the Terms text from version 2, so accepting that version records it.
 
 <a id="settings"></a>
 

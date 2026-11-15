@@ -21,8 +21,9 @@ export const MORE_RISKS: readonly CopyKey[] = ['keyRisks.peg', 'keyRisks.feed', 
 
 /** How a loan that goes wrong is settled: by a sale of the collateral
  *  (both legs liquid), in kind (either leg illiquid: the protocol values it
- *  at zero and never sells it), or not known when the review is signed
- *  (a signed order, whose legs are classed again when it fills). */
+ *  at zero and never sells it), or not known when the review is signed:
+ *  a posted offer or request, or a signed order, fills later, and the
+ *  protocol classes both legs again then and keeps that on the loan. */
 export type Settlement = 'sale' | 'in-kind' | 'unknown';
 
 /** The settlement the two legs' classes give. A distrusted leg never

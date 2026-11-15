@@ -2748,8 +2748,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   filling or signing a signed order) or a rental carries ONE "If things go
   wrong" line for its side and for how that loan settles: by a sale of the
   collateral when both legs are liquid, in kind when either leg is
-  illiquid, and stated without a settlement for a signed order, whose legs
-  are classed again when it fills. The line links to the risk page, which
+  illiquid, and stated without a settlement for a posted offer or request
+  or a signed order, which fill later: the protocol classes both legs again
+  at fill and keeps those classes on the loan. The line links to the risk page, which
   is public, needs no wallet, is linked from the footer, and adds a
   pegged token losing its value, a late or wrong price feed, tax and local
   rules, and the services run by others. No extra signature is asked per

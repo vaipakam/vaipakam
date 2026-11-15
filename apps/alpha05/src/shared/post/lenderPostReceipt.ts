@@ -28,7 +28,7 @@ import { ltvText, needsApproval, promptCount, stakeOfDraft, type PostReview } fr
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
 import { tariffConsequences, tariffRows } from './tariffReview';
 import { guardConsequences, guardRows } from './guardPost';
-import { loanRiskKey, settlementOf } from '../risk/keyRisks';
+import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -150,7 +150,9 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     title: text('lendOffer.title'),
     rows,
     consequences,
-    ifWrong: text(loanRiskKey('lender', settlementOf(r.lendingClass, r.collateralClass))),
+    // A posted offer is classed again when it fills (the loan stores the
+    // classes read then), so its settlement is not known now.
+    ifWrong: text(loanRiskKey('lender', 'unknown')),
     prompts: promptCount(r),
     readAt: r.readAt,
   };

@@ -16,7 +16,7 @@ import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type Pos
 import { tariffConsequences, tariffRows } from './tariffReview';
 import { guardConsequences, guardRows } from './guardPost';
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
-import { loanRiskKey, settlementOf } from '../risk/keyRisks';
+import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -171,7 +171,9 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     title: text('request.title'),
     rows,
     consequences,
-    ifWrong: text(loanRiskKey('borrower', settlementOf(r.lendingClass, r.collateralClass))),
+    // A posted request is classed again when it fills, so its settlement
+    // is not known now.
+    ifWrong: text(loanRiskKey('borrower', 'unknown')),
     prompts: promptCount(r),
     readAt: r.readAt,
   };
