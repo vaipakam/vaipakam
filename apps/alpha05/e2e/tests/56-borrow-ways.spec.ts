@@ -114,7 +114,7 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await expect(standing).toContainText(/stands? ready for this pair: up to [\d.]+ \S+/, { timeout: 60_000 });
   await expect(standing).toContainText(/at rates from [\d.]+%/);
   await expect(ways).toContainText('a fill is likely but neither instant nor guaranteed');
-  await expect(ways).toContainText(/Their limits reach \d+ days and [\d.]+% loan-to-value at most\./);
+  await expect(ways).toContainText(/Their limits reach \d+ days and [\d.]+% loan-to-value at most, end dates counted as read now\./);
 
   // The loan-to-value limit: zero hides every offer whose ratio is a figure.
   const offers = page.getByRole('region', { name: 'Offers you can take' });
@@ -129,9 +129,9 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await ways.getByTestId('request-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Your borrow request' })).toBeVisible();
   await expect(page.getByTestId('standing-ready')).toContainText(/ready for this pair/, { timeout: 60_000 });
-  // Terms no standing lender accepts say so instead of a likely fill.
+  // Pro-rata interest no lender here opted into (#3619) says so instead of a likely fill.
   await page.getByTestId('request-prorata').check();
-  await expect(page.getByTestId('standing-blocked')).toContainText('so no standing lender can fill it');
+  await expect(page.getByTestId('standing-blocked')).toContainText('none of the lenders here has opted in to that');
   await expect(page.locator('form')).not.toContainText('a fill is likely');
   // A longer pro-rata lender offer may match; the loan keeps the borrower's term (#3615).
   await expect(page.getByTestId('request-prorata-term')).toContainText('a lender’s pro-rata offer for a longer term');
