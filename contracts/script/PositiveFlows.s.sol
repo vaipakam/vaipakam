@@ -43,7 +43,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *             funded, filled by a solver, paused, withdrawn and rolled.
  *           - PositiveFlowsSwapToRepay: full and partial swap-to-repay
  *             through a fixed-rate adapter, every share of the proceeds
- *             accounted for.
+ *             accounted for. Staged (`run-staged.sh PositiveFlowsSwapToRepay`).
  *           - PositiveFlowsTimed: offer cancel after the cancel cooldown and a
  *             due periodic-interest checkpoint. Their steps wait minutes and
  *             a month; this simulation steps its clock past each wait, and

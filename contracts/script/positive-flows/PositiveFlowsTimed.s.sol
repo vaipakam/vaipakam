@@ -83,8 +83,6 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
     string private constant PERIODIC_SWITCH = "periodicInterestSwitch";
     /// @dev Recorded with the threshold the run found (the effective value).
     string private constant FINER_CADENCE_THRESHOLD = "finerCadenceThreshold";
-    /// @dev Recorded with the adapter's address: put back means removed.
-    string private constant SETTLEMENT_ADAPTER = "settlementAdapter";
 
     function moduleName() public pure override returns (string memory) {
         return "PositiveFlowsTimed";
@@ -121,14 +119,12 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
         if (_eq(name, FINER_CADENCE_THRESHOLD)) {
             return NumeraireConfigFacet(diamond).getMinPrincipalForFinerCadence() != value;
         }
-        if (_eq(name, SETTLEMENT_ADAPTER)) return _isSwapAdapter(address(uint160(value)));
         return super._stillToRestore(name, value);
     }
 
     function _restore(string memory name, uint256 value) internal override {
         if (_eq(name, PERIODIC_SWITCH)) return _setPeriodicSwitch(value != 0);
         if (_eq(name, FINER_CADENCE_THRESHOLD)) return _restoreFinerCadenceThreshold(value);
-        if (_eq(name, SETTLEMENT_ADAPTER)) return _removeFixedRateAdapter(FixedRateSwapAdapter(address(uint160(value))));
         super._restore(name, value);
     }
 
@@ -231,9 +227,8 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
         }
         // The adapter the settle sells through, registered a month before it
         // is used, so the settle stage only reads that it is there.
-        (FixedRateSwapAdapter adapter,) = _registerFixedRateAdapter();
+        (FixedRateSwapAdapter adapter,) = _registerRunSwapAdapter();
         _keep(ADAPTER, uint256(uint160(address(adapter))));
-        _toRestore(SETTLEMENT_ADAPTER, uint256(uint160(address(adapter))));
         console.log("Settlement adapter registered:", address(adapter));
 
         // A finer cadence than None needs the principal's value at or above
