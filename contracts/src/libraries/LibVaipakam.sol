@@ -8149,9 +8149,10 @@ library LibVaipakam {
         ///      whether that signer approved that round's nominee. Written
         ///      only by `LibProtectedAccount`. Appended — append-only.
         mapping(address => mapping(uint32 => mapping(address => bool))) replacementApproved;
-        /// @dev Protected account mode — per replacement wallet, the retired
-        ///      account it controls (one per wallet); zero means none.
-        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        /// @dev RETIRED (Codex #3489 r5): one account per manager could not
+        ///      hold a manager of two replaced accounts. Nothing reads or
+        ///      writes it; `protectedManagedAccounts` replaces it. Kept for the
+        ///      append-only layout; do not reuse.
         mapping(address => address) protectedRetiredAccountOf;
         /// @dev Protected account mode — the last id handed to a pending
         ///      payout or position-transfer row (one sequence for both).
@@ -8366,6 +8367,12 @@ library LibVaipakam {
         ///      `SignedOfferFacet.cancelSignedOffersBelow`; read by
         ///      `LibSignedOffer.fillFailure`. Appended — append-only.
         mapping(address => uint256) signedOfferNonceFloor;
+        /// @dev Codex #3489 r5 — per manager, every replaced account it now
+        ///      manages (a manager may hold several). Written only by
+        ///      `ProtectedAccountFacet` when it applies a replacement; replaces
+        ///      the retired one-account `protectedRetiredAccountOf`.
+        ///      Appended — append-only.
+        mapping(address => EnumerableSet.AddressSet) protectedManagedAccounts;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -8396,6 +8403,19 @@ library LibVaipakam {
         address controller;
         /// @dev #3204: retired; a pending pin change is held by the VaultBeacon.
         uint64 retiredPendingUnpinAt;
+        /// @dev Codex #3489 r5 — the vault lock count whose platform effects
+        ///      (rows cancelled, pending changes voided, NFTs held) were last
+        ///      applied. Appended.
+        uint64 lockCountApplied;
+        /// @dev Codex #3489 r9 — the vault lock count when the pending co-sign
+        ///      switch-off was requested. A later lock, applied or not, voids
+        ///      it. Appended.
+        uint64 cosignOffLockGen;
+        /// @dev Codex #3489 r14 — the vault's signers-emptied count when the
+        ///      co-sign requirement was switched on. Once the last signer is
+        ///      removed the count moves on and the requirement no longer
+        ///      binds, applied or not. Appended.
+        uint64 cosignSignerGen;
     }
 
     /// @notice Protected account mode — a pending change to one signer.
@@ -8436,6 +8456,14 @@ library LibVaipakam {
         uint256 tokenId;
         uint256 amount;
         uint256 delivered;
+        /// @dev Codex #3489 r8 — the account vault's lock count when the row
+        ///      was queued. A later lock (applied or not) makes the row one
+        ///      the release cancels. Appended — a mapping value may grow.
+        uint64 lockGen;
+        /// @dev Codex #3489 r11 — the generation of the destination's
+        ///      allowlist activation the row was queued for (0 for a payout to
+        ///      the manager). Appended — a mapping value may grow.
+        uint64 destGen;
     }
 
     /// @notice Protected account mode — a position-NFT transfer held back

@@ -794,7 +794,7 @@ library LibRewardStaging {
         // for an EOA, a 7702-delegated one included (#2617). A wallet in
         // protected account mode is always paid into its vault.
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
-            || LibProtectedAccount.isEnabled(user)
+            || LibProtectedAccount.isProtected(user)
             || (venue == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
         setApart = setApart || venue == LibVaipakam.RewardDelivery.SanctionsHeld;
         bool vaulted;

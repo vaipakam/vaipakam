@@ -16,6 +16,7 @@ import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { allowlistOf, enableProtection } from '../lib/protection';
 
 type Hex = `0x${string}`;
 
@@ -57,7 +58,7 @@ test('a wallet joins the book by its signature, is asked, waits the delay, is ma
   const sc = scenario({ lender: 'freshLender' });
   const me = sc.address('lender');
   const other = accountFor('visitor').address;
-  await sc.diamondWrite('lender', 'enableProtectedMode', [2 * DAY, false]);
+  await enableProtection(sc, 'lender', 2 * DAY);
 
   const { page, flags } = await launchWallet('freshLender');
   await page.goto('/protection');
@@ -148,7 +149,7 @@ test('a wallet joins the book by its signature, is asked, waits the delay, is ma
   await expect(row).toContainText('Ready: apply it by');
   await row.getByTestId('destination-apply').click();
   await sign(page, ['Make a destination active', 'Apply it by', 'From now on a protected payout may go to this address'], 'is now a destination');
-  expect((await sc.read<readonly Hex[]>('getAllowlist', [me])).map((a) => a.toLowerCase())).toEqual([other.toLowerCase()]);
+  expect((await allowlistOf(sc, me)).map((a) => a.toLowerCase())).toEqual([other.toLowerCase()]);
   const active = dests.getByTestId('destination-row');
   await expect(active).toHaveAttribute('data-address', other.toLowerCase(), { timeout: 60_000 });
   await expect(active).toContainText('Cold wallet');
@@ -157,7 +158,7 @@ test('a wallet joins the book by its signature, is asked, waits the delay, is ma
   // Removal is immediate and states what it cancels.
   await active.getByTestId('destination-remove').click();
   await sign(page, ['Remove a payout destination', 'Payouts it cancels', 'stops being a destination at once'], 'removed');
-  expect(await sc.read<readonly Hex[]>('getAllowlist', [me])).toHaveLength(0);
+  expect(await allowlistOf(sc, me)).toHaveLength(0);
   await expect(dests.getByTestId('destinations-none')).toBeVisible({ timeout: 60_000 });
   await fitsWidth(page);
 });
@@ -175,7 +176,7 @@ test('without protected mode destinations do not apply; an exchange address is s
   await expect(dests.getByTestId('destinations-mode-off')).toContainText('Protected mode is off', { timeout: 60_000 });
   await expect(dests.getByTestId('destination-add')).toHaveCount(0);
 
-  await sc.diamondWrite('borrower', 'enableProtectedMode', [2 * DAY, false]);
+  await enableProtection(sc, 'borrower', 2 * DAY);
   await page.reload();
   await connectWallet(page);
   await expect(dests.getByTestId('destinations-none')).toBeVisible({ timeout: 60_000 });
@@ -230,6 +231,6 @@ test('without protected mode destinations do not apply; an exchange address is s
   await sign(page, ['Cancel a destination request', 'The request ends now'], 'cancelled');
   expect(flags.sentTransactions).toBe(sent + 2);
   await expect(dests.getByTestId('destination-pending')).toHaveCount(0, { timeout: 60_000 });
-  expect(await sc.read<readonly Hex[]>('getAllowlist', [me])).toHaveLength(0);
+  expect(await allowlistOf(sc, me)).toHaveLength(0);
   await fitsWidth(page);
 });

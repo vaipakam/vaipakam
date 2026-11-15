@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
@@ -1036,10 +1037,8 @@ contract EarlyWithdrawalFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
-        vm.startPrank(newLender);
-        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, true);
-        ProtectedAccountFacet(address(diamond)).lockVault(newLender);
-        vm.stopPrank();
+        LibTestProtection.enableWithNfts(address(diamond), newLender, 2 days);
+        LibTestProtection.lock(address(diamond), newLender, newLender);
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
 
         vm.prank(lender);
@@ -1053,8 +1052,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      allowlist and co-signing, so both sale routes refuse it.
     function testSellLoanViaBuyOfferRefusesAnNftProtectedSeller() public {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
-        vm.prank(lender);
-        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, true);
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
 
         vm.prank(lender);
         vm.expectRevert(

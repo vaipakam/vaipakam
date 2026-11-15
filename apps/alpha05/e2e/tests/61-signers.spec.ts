@@ -17,6 +17,8 @@ import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { accountFor, type Role } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { enableProtection, pendingSignersOf, protect, signersOf } from '../lib/protection';
+import { VAULT_SIGNER } from '@vaipakam/lib/vaultProtectionAuth';
 
 type Hex = `0x${string}`;
 type Launch = LaunchWallet<Role>;
@@ -69,7 +71,7 @@ test('a saved wallet is asked, accepts from its own key, becomes a signer, co-si
   const sc = scenario({ lender: 'freshLender' });
   const me = sc.address('lender');
   const other = accountFor('visitor').address as Hex;
-  await sc.diamondWrite('lender', 'enableProtectedMode', [2 * DAY, false]);
+  await enableProtection(sc, 'lender', 2 * DAY);
 
   const { page, flags } = await launchWallet('freshLender');
   await page.goto('/protection');
@@ -135,7 +137,7 @@ test('a saved wallet is asked, accepts from its own key, becomes a signer, co-si
   await expect(nominee).toHaveAttribute('data-accepted', 'true');
   await nominee.getByTestId('signer-apply').click();
   await sign(page, ['Make a wallet a signer', 'From now on this wallet is a signer'], 'is now a signer');
-  expect((await sc.read<readonly Hex[]>('getProtectedSigners', [me])).map((a) => a.toLowerCase())).toEqual([other.toLowerCase()]);
+  expect((await signersOf(sc, me)).map((a) => a.toLowerCase())).toEqual([other.toLowerCase()]);
   const row = signers.getByTestId('signer-row');
   await expect(row).toHaveAttribute('data-address', other.toLowerCase(), { timeout: 60_000 });
   await expect(signers).toContainText('1 of at most 5 signers');
@@ -156,7 +158,7 @@ test('a saved wallet is asked, accepts from its own key, becomes a signer, co-si
   await connectWallet(page);
   await row.getByTestId('signer-apply-remove').click({ timeout: 60_000 });
   await sign(page, ['Carry out a signer removal', 'stops being a signer now'], 'Payouts no longer need a co-sign');
-  expect(await sc.read<readonly Hex[]>('getProtectedSigners', [me])).toHaveLength(0);
+  expect(await signersOf(sc, me)).toHaveLength(0);
   await expect(signers.getByTestId('signers-none')).toBeVisible({ timeout: 60_000 });
   await expect(signers.getByTestId('signers-cosign')).toHaveAttribute('data-on', 'false');
   expect(flags.sentTransactions).toBe(sent + 5);
@@ -176,8 +178,8 @@ test('without protected mode signers do not apply; a waiting request shows its l
   await expect(signers.getByTestId('signers-mode-off')).toContainText('Protected mode is off', { timeout: 60_000 });
   await expect(signers.getByTestId('signer-add')).toHaveCount(0);
 
-  await sc.diamondWrite('borrower', 'enableProtectedMode', [2 * DAY, false]);
-  await sc.diamondWrite('borrower', 'addSigner', [me, other]);
+  await enableProtection(sc, 'borrower', 2 * DAY);
+  await protect(sc, 'borrower', me, 'signerChange', [VAULT_SIGNER.add, other]);
   await page.reload();
   await connectWallet(page);
   const nominee = signers.getByTestId('signer-pending');
@@ -192,6 +194,5 @@ test('without protected mode signers do not apply; a waiting request shows its l
   await sign(page, ['Cancel a signer request', other, 'the wallet does not become a signer'], 'cancelled');
   expect(flags.sentTransactions).toBe(sent + 1);
   await expect(signers.getByTestId('signer-pending')).toHaveCount(0, { timeout: 60_000 });
-  const [nominees] = await sc.read<readonly [readonly Hex[], readonly bigint[], readonly boolean[]]>('getPendingSignerAdditions', [me]);
-  expect(nominees).toHaveLength(0);
+  expect(await pendingSignersOf(sc, me)).toHaveLength(0);
 });

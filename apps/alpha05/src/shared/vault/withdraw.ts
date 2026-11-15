@@ -27,13 +27,13 @@
  * vault as the wallet's own funds, so they leave through this withdrawal.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, ProtectedAccountFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { ASSET_TYPE, type Standard } from '../nft/nft';
-import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAnswer, type Protection } from '../protection/payout';
+import { payoutRoute, protectionFrom, readProtectedAccountAnswer, type PayoutRoute, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 import { answerOrNull } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
@@ -46,7 +46,6 @@ type Copy = Pick<CopyAccess, 'text' | 'format'>;
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
-const PROTECTED = ProtectedAccountFacetABI as Abi;
 const PAYOUT = VaultPayoutFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -152,7 +151,7 @@ export async function readWithdrawReview(own: OwnStateClient, diamond: Hex, draf
         read<boolean>(ADMIN, 'paused'),
         read<boolean>(PAYOUT, 'isEscapeOpen'),
         readSanctionsPosture(c, diamond, account, block),
-        read<ProtectedAccountAnswer>(PROTECTED, 'getProtectedAccount', [account]),
+        readProtectedAccountAnswer(c, diamond, account, block),
         read<bigint>(DEPOSITORY, 'withdrawableNow', [account, ASSET_TYPE[draft.standard], draft.asset, draft.standard === 'erc20' ? 0n : draft.tokenId]),
       ]);
       const protection = protectionFrom(mode);

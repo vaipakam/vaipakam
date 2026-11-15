@@ -62,6 +62,14 @@ export interface TrackedTxOptions {
    *  replaced the transaction. Resolves with a leg saying what was put back
    *  or why it was not, or null when nothing was left standing. One seam,
    *  so no ending of the transaction can skip the clean-up. */
+  /** What EARLIER transactions of the same action changed, for an action
+   *  sent as several transactions of which this is the one the tracker
+   *  follows (Codex #3489 r19). Read on every ending, the reverted one
+   *  included: a reverted receipt changed nothing itself, but the steps
+   *  that landed before it did, and an outcome that omitted them would
+   *  report a partly done action as one that changed nothing. Absent or
+   *  empty for a one-transaction action. */
+  landedBefore?: () => Promise<readonly LegOutcome[]>;
   unwind?: () => Promise<LegOutcome | null>;
   /** Take back what `send` granted for the call alone (an ERC-1155
    *  operator approval, which covers the whole collection and which no
@@ -139,8 +147,11 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       announceOwnChange({ chainId: ctx.chainId, account: ctx.account, cause: 'receipt' });
       const reason = replacement as ReplacementReason | null;
       if (reason === 'cancelled' || reason === 'replaced') {
+        // The earlier steps of a multi-transaction action took effect even
+        // though this one was superseded (Codex #3489 r20): read and shown.
+        const landed = await readLandedBefore(ctx);
         const unwound = await cleanUpAfterNoEffect(ctx);
-        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound });
+        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound, landed });
         return;
       }
       const mined = apply({
@@ -161,7 +172,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         // changes the verdict.
         const cause = await readRevertCause(client as unknown as RevertReader, receipt);
         legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: `${text('flow.reverted')} ${revertSentence(cause, format)}` }];
-        legs = [...legs, ...(await cleanUpAfterNoEffect(ctx))];
+        legs = [...(await readLandedBefore(ctx)), ...legs, ...(await cleanUpAfterNoEffect(ctx))];
       } else {
         try {
           legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
@@ -191,6 +202,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         account: opts.account,
         sources: opts.sources,
         measure: opts.measure,
+        landedBefore: opts.landedBefore,
         unwind: opts.unwind,
         release: opts.release,
         held: opts.held?.() ?? null,
@@ -214,4 +226,16 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   }, [apply, store, key, track]);
 
   return { key, phase: entry.phase, frozen: entry.frozen, note: entry.note, held: entry.submission?.held ?? null, review, run, resume, reset };
+}
+
+/** The outcome of the earlier transactions of a multi-transaction action
+ *  (`landedBefore`), read for a reverted final receipt; a read that fails
+ *  is stated, never dropped. */
+async function readLandedBefore(ctx: Submission): Promise<readonly LegOutcome[]> {
+  if (!ctx.landedBefore) return [];
+  try {
+    return await ctx.landedBefore();
+  } catch (e) {
+    return [{ status: 'unknown', label: 'earlier steps', reason: `The read-back of the earlier steps failed: ${(e as Error).message}` }];
+  }
 }

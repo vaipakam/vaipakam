@@ -805,7 +805,7 @@ contract RewardClaimFacet is
     ///      A wallet in protected account mode is always paid into its vault.
     function _toVault(address user, LibVaipakam.RewardDelivery deliverTo) private view returns (bool) {
         return deliverTo == LibVaipakam.RewardDelivery.Vault
-            || LibProtectedAccount.isEnabled(user)
+            || LibProtectedAccount.isProtected(user)
             || (deliverTo == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
     }
 

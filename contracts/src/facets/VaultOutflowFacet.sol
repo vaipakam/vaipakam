@@ -162,7 +162,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
         o.asset = asset;
         o.tokenId = tokenId;
         o.amount = amount;
-        o.to = user;
+        // #3379 B2 — the account's owner wallet is the vault's own owner
+        // record: the account wallet, or the wallet a verified replacement
+        // moved it to (the vault pays only that wallet in this class).
+        o.to = LibProtectedAccount.manager(user);
         o.class_ = VaultOutflowTypes.OutflowClass.Owner;
         o.reason = reason;
         return _outflow(user, o);
@@ -235,7 +238,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // moves and the tracked balance is unchanged until a release pays it
         // through this same function.
         if (
-            LibVaipakam.storageSlot().protectedAccount[user].enabled
+            LibProtectedAccount.isProtected(user)
                 && IVaultOutflowPayoutGate(address(this)).applyPayoutGate(
                     user, _assetType(o.kind), o.asset, o.tokenId, o.amount, o.to
                 )
@@ -243,9 +246,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
 
         // A payment to a protected account's WALLET from anyone else's vault
         // is credited to that account's vault, so it leaves only through its
-        // delay. The holder classes pay a vault already.
+        // delay. The holder classes pay a vault already. Codex #3489 r5: the
+        // Owner class too, when a replacement made its payee (the manager) a
+        // different account; an account's own owner payout is never
+        // redirected (`_protectedRecipientVault` skips recipient == user).
         address creditTo;
-        if (_paysWallet(o.class_)) {
+        if (_paysWallet(o.class_) || o.class_ == VaultOutflowTypes.OutflowClass.Owner) {
             creditTo = _protectedRecipientVault(user, o.to);
             if (creditTo != address(0)) {
                 payeeOwner = o.to;
@@ -359,9 +365,18 @@ contract VaultOutflowFacet is IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         VaultOutflowTypes.OutflowClass c = o.class_;
         if (c == VaultOutflowTypes.OutflowClass.Owner) {
-            if (o.to != user) revert OutflowRecipientInvalid(c, o.to);
+            // #3379 B2 — the owner record, which a replacement moves.
+            if (o.to != LibProtectedAccount.manager(user)) revert OutflowRecipientInvalid(c, o.to);
         } else if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
-            if (o.to == user || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
+            address mgr = LibProtectedAccount.manager(user);
+            // #3379 B2 — a payout to the owner record (the controller once a
+            // replacement moved it) is the Owner class, whichever entry asked:
+            // the vault pays the owner record only in that class.
+            if (o.to == mgr && mgr != user) {
+                o.class_ = VaultOutflowTypes.OutflowClass.Owner;
+                return payeeOwner;
+            }
+            if (o.to == user || !LibProtectedAccount.isProtected(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
                 revert OutflowRecipientInvalid(c, o.to);
             }
         } else if (c == VaultOutflowTypes.OutflowClass.MatchedCounterparty) {
@@ -532,7 +547,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
     function _protectedRecipientVault(address user, address recipient) private view returns (address) {
         if (recipient == user) return address(0);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.protectedAccount[recipient].enabled) return address(0);
+        if (!LibProtectedAccount.isProtected(recipient)) return address(0);
         return s.userVaipakamVaults[recipient];
     }
 

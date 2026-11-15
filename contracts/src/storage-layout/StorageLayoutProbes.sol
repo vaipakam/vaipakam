@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibVaultProtectionStorage} from "../vault/LibVaultProtectionStorage.sol";
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -53,6 +54,12 @@ contract StorageLayoutProbeVaipakam {
 contract StorageLayoutProbeERC721 {
     // slither-disable-next-line unused-state
     LibPositionNFT.ERC721Storage internal probe;
+}
+
+/// @dev #3379 B2 — a vault's own protected-mode record (ERC-7201).
+contract StorageLayoutProbeVaultProtection {
+    // slither-disable-next-line unused-state
+    LibVaultProtectionStorage.Layout internal probe;
 }
 
 contract StorageLayoutProbeAccessControl {

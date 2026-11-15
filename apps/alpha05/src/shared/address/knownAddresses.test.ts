@@ -41,16 +41,18 @@ function client(answers: Record<string, unknown | ((fn: string) => Error)>): Pub
   } as unknown as PublicClient;
 }
 
+const VAULT = getAddress('0x00000000000000000000000000000000000000f1');
+
+// #3379 B2: the Diamond names the vault; destinations and signers are its record.
 const ALL = {
-  getAllowlist: [DEST],
-  getPendingAllowlistAdditions: [[], []],
-  getProtectedSigners: [SIGNER],
-  getPendingSignerAdditions: [[NOMINEE], [9n], [false]],
+  getProtection: [VAULT, false, 0n],
+  protectionState: [true, false, 2 * 86_400, 0n, '0x0000000000000000000000000000000000000000', [SIGNER], [DEST]],
+  pendingAdditions: [[], [NOMINEE]],
   getApprovedKeepers: [KEEPER],
 };
 
 describe('readUsedAddresses', () => {
-  it('reads every on-chain list at one block', async () => {
+  it('reads every on-chain list at one block, the protected ones from the vault', async () => {
     await expect(readUsedAddresses(client(ALL), DIAMOND, ME)).resolves.toEqual({
       destinations: [DEST],
       pending: [],
@@ -60,17 +62,16 @@ describe('readUsedAddresses', () => {
     });
   });
 
-  it('reads a feature the Diamond does not route as holding no address', async () => {
-    const used = await readUsedAddresses(
-      client({ ...ALL, getAllowlist: noRoute, getPendingAllowlistAdditions: noRoute, getProtectedSigners: noRoute, getPendingSignerAdditions: noRoute }),
-      DIAMOND,
-      ME,
-    );
-    expect(used).toEqual({ destinations: [], pending: [], signers: [], nominees: [], keepers: [KEEPER] });
+  it('reads a feature the Diamond does not route, or an account without a vault, as holding no address', async () => {
+    const empty = { destinations: [], pending: [], signers: [], nominees: [], keepers: [KEEPER] };
+    await expect(readUsedAddresses(client({ ...ALL, getProtection: noRoute }), DIAMOND, ME)).resolves.toEqual(empty);
+    await expect(
+      readUsedAddresses(client({ ...ALL, getProtection: ['0x0000000000000000000000000000000000000000', false, 0n] }), DIAMOND, ME),
+    ).resolves.toEqual(empty);
   });
 
   it('leaves a list unread on any other refusal, and throws a failed source so the rail moves on', async () => {
-    await expect(readUsedAddresses(client({ ...ALL, getProtectedSigners: otherRevert }), DIAMOND, ME)).resolves.toMatchObject({ signers: null });
+    await expect(readUsedAddresses(client({ ...ALL, protectionState: otherRevert }), DIAMOND, ME)).resolves.toMatchObject({ signers: null, destinations: null });
     await expect(readUsedAddresses(client({ ...ALL, getApprovedKeepers: outage }), DIAMOND, ME)).rejects.toBeInstanceOf(ContractFunctionExecutionError);
   });
 });
