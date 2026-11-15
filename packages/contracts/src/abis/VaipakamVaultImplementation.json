@@ -227,6 +227,11 @@
             "name": "gen",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "request",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

@@ -48,9 +48,10 @@ test('protected mode is turned on in Basic mode with the shortest delay, and the
   await expect(receipt).toContainText('Turn on protected mode', { timeout: 60_000 });
   await expect(receipt).toContainText('Every payout from your vault to this wallet');
   await expect(receipt).toContainText('It never delays what you owe others');
-  // #3379 B2: a wallet with no vault creates it, the vault turns the mode
-  // on, and the Diamond applies it: three prompts.
-  await expect(receipt).toContainText('Wallet prompts: 3');
+  // #3379 B2: a wallet with no vault creates it, then the vault turns the
+  // mode on and applies the platform side in the same transaction (#3489
+  // r16): two prompts.
+  await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);
 
   const sent = flags.sentTransactions;
@@ -58,7 +59,7 @@ test('protected mode is turned on in Basic mode with the shortest delay, and the
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Protected mode is on: payouts to your wallet wait 2 days.');
-  expect(flags.sentTransactions).toBe(sent + 3);
+  expect(flags.sentTransactions).toBe(sent + 2);
   const mode = await protectionMode(sc, me);
   expect(mode.enabled).toBe(true);
   expect(Number(mode.delaySeconds)).toBe(2 * DAY);

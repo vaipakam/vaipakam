@@ -3,14 +3,15 @@
  * protected mode as the protocol stores it, and the four safety actions the
  * card offers in Basic mode. #3379 B2: the record lives in the account's
  * vault (`VaultProtection`, run through the vault's `protect(bytes)` with the
- * wallet's direct authorization), and the Diamond applies its platform side
- * (`applyProtection`). Each action is one or more transactions, sent in
+ * wallet's direct authorization); each vault change that moves the posture
+ * applies the Diamond's side in the same transaction (Codex #3489 r16). Each
+ * action is one or more transactions, sent in
  * order ({@link safetySteps}):
  *
  * - `enable`: the Diamond's `getOrCreateUserVault` when the wallet has no
  *   vault yet, the vault's `enable(delay)`, the Diamond's
- *   `lockPositionNfts(account)` when NFT protection is chosen, then
- *   `applyProtection(account)`. The delay must sit inside the protocol's
+ *   `lockPositionNfts(account)` when NFT protection is chosen. The delay must
+ *   sit inside the protocol's
  *   bounds.
  * - `lock`: the vault's `lock`, which applies the platform side in the same
  *   transaction: it cancels every queued payout (their assets stay in the
@@ -271,13 +272,11 @@ const diamondStep = (abi: Abi, functionName: string, args: readonly unknown[]): 
  *  changes a `finalize` applies. */
 export function safetySteps(action: SafetyAction, account: Hex, vault: Hex | null, draft: SafetyDraft | null, due: readonly PendingChange[] = []): SafetyStep[] {
   const auth = directAuth(account);
-  const apply = diamondStep(PROTECTED, 'applyProtection', [account]);
   if (action === 'enable') {
     return [
       ...(vault === null ? [diamondStep(FACTORY, 'getOrCreateUserVault', [account])] : []),
       vaultStep(SAFETY_FUNCTION.enable, [draft?.delaySeconds ?? 0, auth]),
       ...(draft?.protectNfts ? [diamondStep(PROTECTED, 'lockPositionNfts', [account])] : []),
-      apply,
     ];
   }
   // A lock, an unlock and a switch-off apply their own platform side in the

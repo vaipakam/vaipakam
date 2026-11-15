@@ -64,13 +64,13 @@ const DAY = 86_400;
  * #3379 B2 — protected mode's writes. The record lives in the account's vault:
  * each write is the vault's `protect(bytes)` carrying one VaultProtection call,
  * authorized directly by the connected wallet (`directAuth`), and sent to the
- * ACCOUNT's vault whoever sends it (the owner, a signer, a nominee). A write
- * that changes the posture (a switch-on, a completed move) is followed by the
- * Diamond's `applyProtection(account)`, which applies the platform side; a
- * lock, an unlock, a switch-off and a completed move apply their own platform
- * side in the same transaction (Codex #3489 r9, r10, r12).
+ * ACCOUNT's vault whoever sends it (the owner, a signer, a nominee). Every
+ * write that changes the posture (a switch-on, a raised delay, a lock, an
+ * unlock, a switch-off, a completed move) applies its platform side in the
+ * same transaction (Codex #3489 r9, r10, r12, r16), so the app never sends
+ * the Diamond's `applyProtection` itself.
  */
-function useProtectionWrites(account: `0x${string}` | undefined, vault: `0x${string}` | null) {
+function useProtectionWrites(vault: `0x${string}` | null) {
   const { address } = useActiveChain();
   const { write } = useDiamondWrite();
   /** `fn` with `args` (the Auth is appended unless `auth` is false). */
@@ -80,8 +80,7 @@ function useProtectionWrites(account: `0x${string}` | undefined, vault: `0x${str
       target: { address: vault, abi: VaipakamVaultImplementationABI as Abi },
     });
   };
-  const apply = () => write('applyProtection', [account]);
-  return { protect, apply, write };
+  return { protect, write };
 }
 
 const when = (at: bigint): string => (at > 0n ? formatDateTime(Number(at)) : copy.protection.unknownWhen);
@@ -321,7 +320,7 @@ function AccountView({
   asSigner: boolean;
 }) {
   const { address, walletChain } = useActiveChain();
-  const { protect, apply, write } = useProtectionWrites(account, snap.vault);
+  const { protect, write } = useProtectionWrites(snap.vault);
   const { busy, error, done, run } = useRunner();
   const nowSec = useNowSec();
   const p = copy.protection;
@@ -360,12 +359,8 @@ function AccountView({
   for (let d = Math.ceil(bounds.min / DAY); d <= Math.floor(bounds.max / DAY); d++) dayOptions.push(d);
 
   const tx = (fn: string, args: readonly unknown[]) => run(() => write(fn, args));
-  /** A vault protected-mode write, then the platform side when `applyAfter`. */
-  const ptx = (fn: string, args: readonly unknown[] = [], applyAfter = false, auth = true) =>
-    run(async () => {
-      await protect(fn, args, auth);
-      if (applyAfter) await apply();
-    });
+  /** A vault protected-mode write (its platform side lands with it). */
+  const ptx = (fn: string, args: readonly unknown[] = [], auth = true) => run(() => protect(fn, args, auth));
   // The old Diamond CHANGE_* kinds, routed to where each change now waits:
   // the vault (delay, switch-off, unlock) or the Diamond (co-sign, pin).
   const vaultKind: Readonly<Record<number, number>> = {
@@ -694,9 +689,9 @@ function AccountView({
               className="btn btn-secondary"
               disabled={busy || delayChoice * DAY === record.delaySeconds || (loosenBlocked && delayChoice * DAY < record.delaySeconds)}
               onClick={() =>
-                // A raise applies at once, and the platform carries it
-                // (applyProtection); a lowering waits the delay at the vault.
-                ptx('setDelay', [delayChoice * DAY], delayChoice * DAY > record.delaySeconds)
+                // A raise applies at once, its platform side with it; a
+                // lowering waits the delay at the vault.
+                ptx('setDelay', [delayChoice * DAY])
               }
             >
               {p.setDelay}
@@ -787,7 +782,7 @@ function AccountView({
           busy={busy}
           canCancel={() => canGuard}
           onCancel={(a) => ptx('cancelAllowlisted', [a])}
-          onActivate={(a) => ptx('finalizeAllowlisted', [a], false, false)}
+          onActivate={(a) => ptx('finalizeAllowlisted', [a], false)}
         />
         {manager && !record.retired ? (
           // A replaced account's payouts go only to its controller: the
@@ -848,7 +843,7 @@ function AccountView({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy}
-                  onClick={() => ptx('finalizeSigner', [s.signer], false, false)}
+                  onClick={() => ptx('finalizeSigner', [s.signer], false)}
                 >
                   {p.applyChanges}
                 </button>
@@ -864,7 +859,7 @@ function AccountView({
           // The nominee may withdraw its own nomination too.
           canCancel={(a) => canGuard || address?.toLowerCase() === a.toLowerCase()}
           onCancel={(a) => ptx('signerChange', [VAULT_SIGNER.cancel, a])}
-          onActivate={(a) => ptx('finalizeSigner', [a], false, false)}
+          onActivate={(a) => ptx('finalizeSigner', [a], false)}
         />
         {manager ? (
           <>
@@ -923,7 +918,7 @@ function AccountView({
                 type="button"
                 className="btn btn-primary"
                 disabled={busy}
-                onClick={() => ptx('finalizeReplacement', [], false, false)}
+                onClick={() => ptx('finalizeReplacement', [], false)}
               >
                 {p.finalizeReplacement}
               </button>
@@ -1054,8 +1049,9 @@ function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
     await write('protect', [protectionCall('enable', [delaySeconds, directAuth(address)])], {
       target: { address: vault, abi: VaipakamVaultImplementationABI as Abi },
     });
+    // The vault's switch-on applies its platform side in the same
+    // transaction (Codex #3489 r16).
     if (nfts) await write('lockPositionNfts', [address]);
-    await write('applyProtection', [address]);
   }
   const p = copy.protection;
   const bounds = snap.delayBounds ?? { min: 2 * DAY, max: 5 * DAY };
@@ -1101,7 +1097,7 @@ function SignerEntryCard() {
   const [account, setAccount] = useState<`0x${string}` | undefined>();
   const snap = useProtectedAccount(account);
   const { address, walletChain } = useActiveChain();
-  const { protect } = useProtectionWrites(account, snap.data?.vault ?? null);
+  const { protect } = useProtectionWrites(snap.data?.vault ?? null);
   const { busy, error, done, run } = useRunner();
   const data = snap.data;
   const nowSec = useNowSec();

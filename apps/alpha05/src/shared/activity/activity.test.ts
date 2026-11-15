@@ -117,6 +117,7 @@ const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
   PeriodicInterestAutoLiquidated: 'the flag is whether part is held for the borrower',
   PrepaySaleListingSynced: 'says the listing was brought up to date',
   PrepaySaleOfferSynced: 'says the offer was brought up to date',
+  ProtectionApplied: 'says the platform applied the vault’s settings; the flags are the whole posture, not one switch',
   ProtectedModeEnabled: 'the flag is a setting inside a mode that was switched on',
   TierExclusionUpdated: 'the flag names the side',
 };

@@ -77,15 +77,15 @@ describe('pending and due changes', () => {
 });
 
 describe('safetySteps', () => {
-  it('writes each action to the wallet’s own vault with its direct authorization, and the Diamond applies the posture', () => {
+  it('writes each action to the wallet’s own vault with its direct authorization; the vault applies the platform side itself', () => {
     const auth = directAuth(ME);
     const protect = (fn: string, args: readonly unknown[]) => ({ to: 'vault', functionName: 'protect', args: [protectionCall(fn, args)] });
     expect(safetySteps('enable', ME, VAULT, { delaySeconds: 3 * DAY, protectNfts: true })).toMatchObject([
       protect('enable', [3 * DAY, auth]),
       { to: 'diamond', functionName: 'lockPositionNfts', args: [ME] },
-      { to: 'diamond', functionName: 'applyProtection', args: [ME] },
     ]);
-    expect(safetySteps('enable', ME, null, { delaySeconds: 3 * DAY, protectNfts: false }).map((x) => x.functionName)).toEqual(['getOrCreateUserVault', 'protect', 'applyProtection']);
+    // #3489 r16: the switch-on applies its own platform side.
+    expect(safetySteps('enable', ME, null, { delaySeconds: 3 * DAY, protectNfts: false }).map((x) => x.functionName)).toEqual(['getOrCreateUserVault', 'protect']);
     // One transaction: the vault's lock applies its own platform side (#3489 r9).
     expect(safetySteps('lock', ME, VAULT, null)).toEqual([expect.objectContaining(protect('lock', [auth]))]);
     expect(safetySteps('unlock', ME, VAULT, null)).toMatchObject([protect('requestUnlock', [auth])]);
@@ -167,8 +167,8 @@ describe('safetyReceipt', () => {
     expect(r.consequences).toEqual(
       expect.arrayContaining(['safety.enableNeverOthers', 'safety.enableInbound', 'safety.enableNftsOff', 'safety.enableVault', 'safety.enableVoidsPin']),
     );
-    // #3379 B2: the vault's write, then the Diamond applying it.
-    expect(r.prompts).toBe(2);
+    // #3489 r16: one prompt, the vault's write, which applies the platform side.
+    expect(r.prompts).toBe(1);
   });
   it('a lock states what it cancels and drops; unread facts are said', () => {
     const r = safetyReceipt(review('lock', { mode: { ...ON, pendingDelayAt: NOW, pendingDelay: 3 * DAY }, openRows: 3 }), copy);

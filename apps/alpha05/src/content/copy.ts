@@ -2624,6 +2624,7 @@ export const copy = {
       ProtectedDelaySet: B('The protection delay changed.'),
       ProtectedModeDisabled: B('Protected mode was switched off.'),
       ProtectedModeEnabled: B('Protected mode was switched on.'),
+      ProtectionApplied: B('The platform applied the account’s protection settings from its vault.'),
       RefinancePayoffPermitCleared: B('A refinance payoff permission was removed.'),
       RefinancePayoffPermitSet: B('A refinance payoff permission was attached.'),
       RefinancePayoffPulled: B('The refinance payoff was taken from the wallet.'),

@@ -43,6 +43,11 @@ library LibVaultProtectionStorage {
         ///      value from `allowGen` each time the entry becomes active).
         ///      Appended — a mapping value may grow.
         uint64 gen;
+        /// @dev Codex #3489 r16 — the addition request this entry stands
+        ///      for (a fresh value from `allowRequests` at each request). A
+        ///      destination's signed verification names it, so a signature
+        ///      given for one request never verifies another. Appended.
+        uint64 request;
     }
 
     struct Layout {
@@ -99,6 +104,9 @@ library LibVaultProtectionStorage {
         ///      applies the removal: a signer added later never revives it.
         ///      Appended.
         uint64 signersEmptied;
+        /// @dev Codex #3489 r16 — the last allowlist request number handed
+        ///      out; every `addAllowlisted` takes the next one. Appended.
+        uint64 allowRequests;
     }
 
     function layout() internal pure returns (Layout storage l) {

@@ -1616,6 +1616,26 @@ contract ProtectedVaultTest is Test {
         assertEq(_pay().getPendingPayout(id).state, 3, "and the platform side landed with it");
     }
 
+    /// @dev Codex #3489 r16 — a raised delay applies its platform side in its
+    ///      own transaction, and a raise whose platform delays are already as
+    ///      long (they were never lowered with the vault's) still lands.
+    function testARaisedDelayLandsWhenThePlatformHasNothingToApply() public {
+        P.enable(address(diamond), user, 5 days);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.setDelay, (uint32(2 days), P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        // The platform keeps its longer delays; raising the vault to 3 days
+        // has nothing to apply there, and lands.
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.setDelay, (uint32(3 days), P.direct(user))));
+        (,, uint32 delay,,,,) = v.protectionState();
+        assertEq(delay, 3 days, "raised");
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().applyProtection(user);
+    }
+
     /// @dev Owner security review of #3489 — a lock never lands without its
     ///      platform side: any refusal of the application (here, the shape of
     ///      the Diamond's reentrancy guard) reverts the lock with it, and the

@@ -242,6 +242,34 @@ contract VaultProtectionTest is SetupTest {
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), P.direct(dest))));
     }
 
+    /// @dev Codex #3489 r16 — a destination's signed verification names the
+    ///      addition request it was given for: one withheld from a cancelled
+    ///      request cannot verify the next, and a fresh one for the new
+    ///      request does.
+    function test_aSignedVerificationNamesItsRequest() public {
+        uint256 destKey = 0xD357;
+        address d = vm.addr(destKey);
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (d, P.direct(acct))));
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        uint64 first = vault.allowEntry(d).request;
+        bytes memory oldSig = _sig(
+            destKey, keccak256(abi.encode(code.VERIFY_TYPEHASH(), acct, address(diamond), first, uint256(0), expiry))
+        );
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.cancelAllowlisted, (d, P.direct(acct))));
+        P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (d, P.direct(acct))));
+        uint64 second = vault.allowEntry(d).request;
+        assertGt(second, first, "a new request number");
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, d));
+        vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), _signed(d, expiry, oldSig))));
+        bytes memory newSig = _sig(
+            destKey, keccak256(abi.encode(code.VERIFY_TYPEHASH(), acct, address(diamond), second, uint256(0), expiry))
+        );
+        vm.prank(relayer);
+        vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), _signed(d, expiry, newSig))));
+        assertTrue(vault.allowEntry(d).verified, "the signature for this request verifies it");
+    }
+
     // ─── Lock (#3423) ───────────────────────────────────────────────────
 
     function test_aSignedLockIsRelayedByAnyone_andHoldsOwnerOutflows() public {

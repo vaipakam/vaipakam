@@ -124,7 +124,7 @@ contract VaultProtection {
     /// @dev #3415 — the destination names the account (the vault's creation
     ///      owner), the Diamond and, through the domain, the chain and vault.
     bytes32 public constant VERIFY_TYPEHASH =
-        keccak256("VerifyDestination(address account,address diamond,uint256 nonce,uint64 expiry)");
+        keccak256("VerifyDestination(address account,address diamond,uint64 request,uint256 nonce,uint64 expiry)");
 
     /// @notice How a key authorizes one write: `sig` empty means a direct call
     ///         from `key`; otherwise its EIP-712 / ERC-1271 signature.
@@ -221,6 +221,9 @@ contract VaultProtection {
         l.enabled = true;
         l.delay = delay;
         emit ProtectionEnabled(delay, auth.key);
+        // Codex #3489 r16 / #3679 — the switch-on lands with its platform
+        // side, like every other change of posture ({_applyPlatform}).
+        _applyPlatform();
     }
 
     /// @notice Change the delay (the owner): a raise applies at once, a
@@ -233,6 +236,10 @@ contract VaultProtection {
             l.delay = delay;
             l.pendingDelayAt = 0;
             emit ProtectionSettingApplied(SETTINGS_DELAY, delay);
+            // Codex #3489 r16 / #3679 — a raise lifts the code-pin and NFT-lock
+            // delays with it, in the same transaction; a platform whose
+            // delays are already as long has nothing to apply.
+            _applyPlatform();
             return;
         }
         _loosenable(l);
@@ -356,8 +363,11 @@ contract VaultProtection {
         e.readyAt = _later(l);
         e.epoch = l.epoch;
         // A new request is confirmed afresh (owner review of #3489): a mark
-        // left from an earlier, cancelled or voided request does not carry.
+        // left from an earlier, cancelled or voided request does not carry,
+        // and neither does a signature given for one (Codex #3489 r16: the
+        // verification names the request number).
         e.verified = false;
+        e.request = ++l.allowRequests;
         emit AllowlistAddRequested(destination, e.readyAt, auth.key);
     }
 
@@ -417,7 +427,11 @@ contract VaultProtection {
         // cancelled one, or one a lock, a replacement or a switch-off voided,
         // cannot be verified).
         if (!e.active && (e.readyAt == 0 || e.epoch != l.epoch)) revert BadDestination(destination);
-        _authorize(auth, PURPOSE_VERIFY, keccak256(abi.encode(VERIFY_TYPEHASH, account, diamond, _nonce(destination, PURPOSE_VERIFY), auth.expiry)));
+        _authorize(
+            auth,
+            PURPOSE_VERIFY,
+            keccak256(abi.encode(VERIFY_TYPEHASH, account, diamond, e.request, _nonce(destination, PURPOSE_VERIFY), auth.expiry))
+        );
         e.verified = true;
         emit DestinationVerified(destination);
     }

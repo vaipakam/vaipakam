@@ -36,6 +36,7 @@ struct ProtectionEntry {
     bool active;
     bool verified;
     uint64 gen;
+    uint64 request;
 }
 
 /// @dev Mirrors `LibVaultProtectionStorage.Signer` (ABI-identical).
