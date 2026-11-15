@@ -845,11 +845,19 @@ contract ProtectedVaultTest is Test {
 
     // ─── The escape period knob (#3173) ──────────────────────────────────
 
-    function testEscapePeriodDefaultsToThreeDays() public view {
+    function testEscapePeriodDefaultsToTheVaultCodeDelay() public view {
         (uint256 nextPause, uint256 currentPause) = AdminFacet(address(diamond)).getEscapeGraceSeconds();
-        assertEq(nextPause, 3 days);
+        assertEq(nextPause, 7 days);
         assertEq(currentPause, 0);
         assertEq(_pay().escapeOpensAt(), 0);
+    }
+
+    /// @dev #3441 — the rule "escape period >= vault code delay": a vault code
+    ///      fix registered when a pause starts is live before the escape opens.
+    ///      `VaultBeaconTest` pins the floor against the beacon's code delay.
+    function testEscapePeriodDefaultIsTheFloorAndStaysUnderTheVaultExit() public pure {
+        assertEq(LibPausable.ESCAPE_GRACE_DEFAULT, LibPausable.MIN_ESCAPE_GRACE);
+        assertLt(LibPausable.MAX_ESCAPE_GRACE, 14 days, "the vault-side exit (#3424) stays the longest wait");
     }
 
     function testEscapePeriodBoundsAndZeroRestoresTheDefault() public {
@@ -864,66 +872,78 @@ contract ProtectedVaultTest is Test {
         admin.setEscapeGraceSeconds(justOver);
 
         vm.expectEmit(address(diamond));
-        emit LibPausable.EscapeGraceSet(49 hours);
-        admin.setEscapeGraceSeconds(49 hours);
+        emit LibPausable.EscapeGraceSet(10 days);
+        admin.setEscapeGraceSeconds(10 days);
         (uint256 nextPause,) = admin.getEscapeGraceSeconds();
-        assertEq(nextPause, 49 hours);
+        assertEq(nextPause, 10 days);
         admin.setEscapeGraceSeconds(7 days);
         (nextPause,) = admin.getEscapeGraceSeconds();
         assertEq(nextPause, 7 days);
         admin.setEscapeGraceSeconds(0);
         (nextPause,) = admin.getEscapeGraceSeconds();
-        assertEq(nextPause, 3 days);
+        assertEq(nextPause, 7 days);
     }
 
     function testOnlyTheAdminSetsTheEscapePeriod() public {
         vm.prank(thief);
         vm.expectRevert();
-        AdminFacet(address(diamond)).setEscapeGraceSeconds(5 days);
+        AdminFacet(address(diamond)).setEscapeGraceSeconds(9 days);
         (uint256 nextPause,) = AdminFacet(address(diamond)).getEscapeGraceSeconds();
-        assertEq(nextPause, 3 days);
+        assertEq(nextPause, 7 days);
     }
 
     function testAChangeDuringAPauseDoesNotMoveItsEscape() public {
         _deposit20(10 ether);
         AdminFacet admin = AdminFacet(address(diamond));
+        admin.setEscapeGraceSeconds(10 days);
         admin.pause();
         uint256 start = block.timestamp;
-        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        assertEq(_pay().escapeOpensAt(), start + 10 days);
 
         // Shortening the period mid-pause does not open the escape early...
-        admin.setEscapeGraceSeconds(49 hours);
-        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        admin.setEscapeGraceSeconds(7 days);
+        assertEq(_pay().escapeOpensAt(), start + 10 days);
         (uint256 nextPause, uint256 currentPause) = admin.getEscapeGraceSeconds();
-        assertEq(nextPause, 49 hours);
-        assertEq(currentPause, 3 days);
-        vm.warp(start + 49 hours);
+        assertEq(nextPause, 7 days);
+        assertEq(currentPause, 10 days);
+        vm.warp(start + 7 days);
         assertFalse(_pay().isEscapeOpen());
         vm.prank(user);
         vm.expectRevert(LibProtectedAccount.EscapeClosed.selector);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
 
-        // ...and lengthening it does not close an escape the users were promised.
-        admin.setEscapeGraceSeconds(7 days);
-        vm.warp(start + 3 days);
-        assertTrue(_pay().isEscapeOpen());
-
         // A repeat pause inside the same manual pause keeps the period too.
         admin.pause();
-        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        assertEq(_pay().escapeOpensAt(), start + 10 days);
+        vm.warp(start + 10 days);
         assertTrue(_pay().isEscapeOpen());
+    }
+
+    function testLengtheningDuringAPauseDoesNotCloseItsEscape() public {
+        _deposit20(10 ether);
+        AdminFacet admin = AdminFacet(address(diamond));
+        admin.pause();
+        uint256 start = block.timestamp;
+        assertEq(_pay().escapeOpensAt(), start + 7 days);
+        admin.setEscapeGraceSeconds(10 days);
+        assertEq(_pay().escapeOpensAt(), start + 7 days);
+        vm.warp(start + 7 days);
+        assertTrue(_pay().isEscapeOpen());
+        vm.prank(user);
+        _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
+        assertEq(token.balanceOf(user), 1_000 ether);
     }
 
     function testTheNextPauseUsesTheNewPeriod() public {
         _deposit20(10 ether);
         AdminFacet admin = AdminFacet(address(diamond));
-        admin.setEscapeGraceSeconds(5 days);
+        admin.setEscapeGraceSeconds(9 days);
         admin.pause();
         uint256 start = block.timestamp;
-        assertEq(_pay().escapeOpensAt(), start + 5 days);
-        vm.warp(start + 5 days - 1);
+        assertEq(_pay().escapeOpensAt(), start + 9 days);
+        vm.warp(start + 9 days - 1);
         assertFalse(_pay().isEscapeOpen());
-        vm.warp(start + 5 days);
+        vm.warp(start + 9 days);
         assertTrue(_pay().isEscapeOpen());
         vm.prank(user);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
@@ -936,7 +956,7 @@ contract ProtectedVaultTest is Test {
         assertEq(currentPause, 0);
         admin.setEscapeGraceSeconds(0);
         admin.pause();
-        assertEq(_pay().escapeOpensAt(), block.timestamp + 3 days);
+        assertEq(_pay().escapeOpensAt(), block.timestamp + 7 days);
     }
 
     // ─── Implementation pin ──────────────────────────────────────────────

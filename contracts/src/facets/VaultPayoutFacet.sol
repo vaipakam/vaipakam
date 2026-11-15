@@ -164,7 +164,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     /**
      * @notice During a manual pause that has lasted its escape period (#3173:
      *         the governance setting in force when the pause started, default
-     *         3 days) after the Diamond's launch, take `amount` of a FREE asset out of your own
+     *         7 days) after the Diamond's launch, take `amount` of a FREE asset out of your own
      *         vault to your own wallet.
      * @dev    For accounts without protected mode. A protected account's
      *         queued payouts keep releasing during the same window

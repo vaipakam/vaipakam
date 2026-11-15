@@ -2173,7 +2173,9 @@ still use.
        Until then, do not rely on it.
    - During a long manual pause, vault owners can still leave on their own
      once the escape period has passed (`VaultPayoutFacet.escapeWithdraw`:
-     3 days today, 7 days once #3441 lands). Say so in the pause notice.
+     7 days by default, never less than the vault code delay, #3441). Say so
+     in the pause notice. Register a vault code fix on the pause's first
+     day, so its 7-day window ends no later than the escape opens.
 5. **Who decides.** The owner decides whether to pause, what ships and when
    to disclose. The Pauser Safe signers execute the pause and may cancel a
    queued operation; the Governance Safe proposes the cut. Record each

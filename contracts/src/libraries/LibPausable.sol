@@ -121,16 +121,27 @@ library LibPausable {
     /// @dev The cooldown's ceiling.
     uint256 internal constant MAX_AUTO_PAUSE_COOLDOWN = 7 days;
 
+    /// @dev The escape period's floor: the vault code delay
+    ///      (`VaultBeacon.MIN_CODE_DELAY`, 7 days). A vault code fix needs that
+    ///      long in public before it can go live, so with any shorter escape
+    ///      period a bug on the withdraw path itself would become reachable
+    ///      through the escape before its fix could land (#3441, owner
+    ///      decision 2026-11-09). It is also longer than the governance
+    ///      timelock's 48-hour delay, so a pause that is part of an ordinary
+    ///      timelocked fix never opens the escape (#3173). The rule is
+    ///      "escape period >= vault code delay"; `VaultBeaconTest` pins
+    ///      this constant against the beacon's (a contract's constant cannot
+    ///      be read by name from a library).
+    uint256 internal constant MIN_ESCAPE_GRACE = 7 days;
     /// @dev #3173 — the default escape period: how long a manual pause must
-    ///      run, after launch, before a protected account's escape route opens.
-    uint256 internal constant ESCAPE_GRACE_DEFAULT = 3 days;
-    /// @dev The escape period's floor: longer than the governance timelock's
-    ///      48-hour delay, so a pause that is part of an ordinary timelocked
-    ///      fix never opens the escape (owner decision 2026-11-05).
-    uint256 internal constant MIN_ESCAPE_GRACE = 49 hours;
+    ///      run, after launch, before a protected account's escape route
+    ///      opens. The floor, so the escape opens as soon as a fix registered
+    ///      on the pause's first day can be live (#3441).
+    uint256 internal constant ESCAPE_GRACE_DEFAULT = MIN_ESCAPE_GRACE;
     /// @dev The escape period's ceiling, so a protected account is never held
-    ///      longer than a week by a pause nobody lifts.
-    uint256 internal constant MAX_ESCAPE_GRACE = 7 days;
+    ///      long by a pause nobody lifts. Kept well under the vault-side exit's
+    ///      14-day notice (#3424), which must stay the longest wait.
+    uint256 internal constant MAX_ESCAPE_GRACE = 10 days;
 
     /// @notice One paused interval.
     /// @dev `end == OPEN_END` while a manual pause is in force. An

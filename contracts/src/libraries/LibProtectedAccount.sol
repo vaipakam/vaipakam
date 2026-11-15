@@ -267,9 +267,9 @@ library LibProtectedAccount {
     ///         {LibPausable.manualPauseSince}, which stays put for the whole
     ///         manual pause, so an auto-pause fired during it cannot restart
     ///         the grace and hold the escape shut. #3173 — the period is a
-    ///         bounded governance setting (default 3 days, never under 49
-    ///         hours, so longer than the timelock's 48-hour delay and a pause
-    ///         that is part of an ordinary fix never opens it), and the pause
+    ///         bounded governance setting (default 7 days, never under the
+    ///         vault code delay, so a vault fix registered when the pause
+    ///         starts is live before the escape opens, #3441), and the pause
     ///         uses the value in force when it STARTED
     ///         ({LibPausable.escapeGraceOfCurrentPause}): a change made during
     ///         a pause can neither open nor close that pause's escape.

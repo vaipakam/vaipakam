@@ -1980,7 +1980,7 @@ export const copy = {
     stillOpen: B('Full and partial repayment and adding collateral stay open during a pause.'),
     whySummary: B('What the escape route is'),
     why: C(
-      'A pause stops new positions, claims, withdrawals, liquidations and defaults, but never repayment or adding collateral. If an administrative pause runs for its escape period, three days unless the protocol says otherwise, an escape route opens: you can withdraw what is yours and free from your vault straight to your wallet, never what a loan, offer or claim holds. With protected mode on, your withdrawals still queue for your account’s delay and due payouts keep releasing. An automatic pause never opens the route, and one fired during an administrative pause does not restart its clock. The protocol reports when the route opens; the app shows that time and never guesses it.',
+      'A pause stops new positions, claims, withdrawals, liquidations and defaults, but never repayment or adding collateral. If an administrative pause runs for its escape period, seven days unless the protocol says otherwise, an escape route opens: you can withdraw what is yours and free from your vault straight to your wallet, never what a loan, offer or claim holds. With protected mode on, your withdrawals still queue for your account’s delay and due payouts keep releasing. An automatic pause never opens the route, and one fired during an administrative pause does not restart its clock. The protocol reports when the route opens; the app shows that time and never guesses it.',
       'vault-escape',
     ),
   },

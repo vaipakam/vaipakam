@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -197,6 +198,13 @@ contract VaultBeaconTest is Test {
             "the code delay must exceed the longest protected payout delay");
         assertLt(beacon.MAX_DIAMOND_PIN_DELAY(), beacon.MIN_CODE_DELAY(),
             "a pin requested at proposal time must mature before the change");
+    }
+
+    /// #3441 — escape period >= vault code delay: a vault fix registered when
+    /// a pause starts is live before the pause's escape route opens.
+    function test_escapePeriodNeverOpensBeforeAVaultFixCanLand() public view {
+        assertGe(LibPausable.MIN_ESCAPE_GRACE, beacon.MIN_CODE_DELAY(),
+            "the escape period's floor must be at least the vault code delay");
     }
 
     /// #3421 — a current-version change and a revoke each wait the full 7

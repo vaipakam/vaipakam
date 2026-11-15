@@ -113,8 +113,10 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   owner's escape withdrawal route from their own vault to their own wallet.
   An automatic pause during that period does not restart the count. Queued
   payouts remain releasable.
-- The escape period is three days by default; the admin may set it between
-  49 hours and seven days. Each administrative pause keeps the period in force
+- The escape period is seven days by default; the admin may set it between
+  seven and ten days. It is never shorter than the vault code delay, so a
+  vault code fix registered when a pause starts is live before the escape
+  opens. Each administrative pause keeps the period in force
   when it started, so a change applies only to pauses that start afterwards.
   The time the running pause's escape opens is readable.
 - **Which code a vault runs (#3204).** Every vault runs code chosen by one
