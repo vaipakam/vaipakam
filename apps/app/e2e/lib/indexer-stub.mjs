@@ -12,6 +12,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { POSITION_ERC721_ABI } from '@vaipakam/lib/positionNft';
+import { SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient,
@@ -677,88 +678,25 @@ async function capturePin() {
 /** orderHash → { orderHash, signer, order, signature, createdAt }. */
 const signedOffers = new Map();
 
-/** The 31-field SignedOffer typed-data description — struct order
- *  EXACTLY as `LibSignedOffer.SignedOffer` declares it. Keep in sync
- *  with apps/indexer/src/signedOfferEip712.ts (whose unit test pins
- *  the derived typehash against the contract's canonical type string).
- *  #1949 added the maker's three Full-tariff fields; a stub left on the
- *  28-field type recovers the wrong signer for EVERY order the app now
- *  signs and answers `bad-signature` to all of them. */
-const SIGNED_OFFER_TYPES = {
-  SignedOffer: [
-    { name: 'offerType', type: 'uint8' },
-    { name: 'lendingAsset', type: 'address' },
-    { name: 'amount', type: 'uint256' },
-    { name: 'amountMax', type: 'uint256' },
-    { name: 'interestRateBps', type: 'uint256' },
-    { name: 'interestRateBpsMax', type: 'uint256' },
-    { name: 'collateralAsset', type: 'address' },
-    { name: 'collateralAmount', type: 'uint256' },
-    { name: 'collateralAmountMax', type: 'uint256' },
-    { name: 'durationDays', type: 'uint256' },
-    { name: 'assetType', type: 'uint8' },
-    { name: 'collateralAssetType', type: 'uint8' },
-    { name: 'tokenId', type: 'uint256' },
-    { name: 'quantity', type: 'uint256' },
-    { name: 'collateralTokenId', type: 'uint256' },
-    { name: 'collateralQuantity', type: 'uint256' },
-    { name: 'prepayAsset', type: 'address' },
-    { name: 'allowsPartialRepay', type: 'bool' },
-    { name: 'allowsPrepayListing', type: 'bool' },
-    { name: 'allowsParallelSale', type: 'bool' },
-    { name: 'expiresAt', type: 'uint64' },
-    { name: 'fillMode', type: 'uint8' },
-    { name: 'periodicInterestCadence', type: 'uint8' },
-    { name: 'refinanceTargetLoanId', type: 'uint256' },
-    { name: 'useFullTermInterest', type: 'bool' },
-    // #1949 — the maker's Full tariff opt-in rides the signed artifact.
-    { name: 'creatorFull', type: 'bool' },
-    { name: 'creatorMaxCStar', type: 'uint256' },
-    { name: 'creatorAllowFullDowngrade', type: 'bool' },
-    { name: 'signer', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
-  ],
-};
+/** The SignedOffer typed-data description, from the one shared list
+ *  (`@vaipakam/lib/signedOfferWire`, struct order EXACTLY as
+ *  `LibSignedOffer.SignedOffer` declares it). It was a hand-kept copy until
+ *  #3327: #1949 added three fields and #3327 four more, and a stub left on
+ *  an older type recovers the wrong signer for EVERY order the app signs. */
+const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 
-/** Wire shape (decimal strings / bools) → the bigint-typed message
- *  viem's typed-data encoder expects. Throws on malformed numerics —
- *  the handler's catch answers 500, which is honest for a body the
- *  desk (the only client) never produces. */
+/** Wire shape (decimal strings / bools) → the typed message viem's
+ *  typed-data encoder expects, field by field from the shared list (small
+ *  uints as numbers, the rest as bigints). Throws on malformed numerics —
+ *  the handler's catch answers 500, which is honest for a body the desk
+ *  (the only client) never produces. */
 function signedTypedMessage(o) {
-  return {
-    offerType: Number(o.offerType),
-    lendingAsset: o.lendingAsset,
-    amount: BigInt(o.amount),
-    amountMax: BigInt(o.amountMax),
-    interestRateBps: BigInt(o.interestRateBps),
-    interestRateBpsMax: BigInt(o.interestRateBpsMax),
-    collateralAsset: o.collateralAsset,
-    collateralAmount: BigInt(o.collateralAmount),
-    collateralAmountMax: BigInt(o.collateralAmountMax),
-    durationDays: BigInt(o.durationDays),
-    assetType: Number(o.assetType),
-    collateralAssetType: Number(o.collateralAssetType),
-    tokenId: BigInt(o.tokenId),
-    quantity: BigInt(o.quantity),
-    collateralTokenId: BigInt(o.collateralTokenId),
-    collateralQuantity: BigInt(o.collateralQuantity),
-    prepayAsset: o.prepayAsset,
-    allowsPartialRepay: Boolean(o.allowsPartialRepay),
-    allowsPrepayListing: Boolean(o.allowsPrepayListing),
-    allowsParallelSale: Boolean(o.allowsParallelSale),
-    expiresAt: BigInt(o.expiresAt),
-    fillMode: Number(o.fillMode),
-    periodicInterestCadence: Number(o.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
-    useFullTermInterest: Boolean(o.useFullTermInterest),
-    creatorFull: Boolean(o.creatorFull),
-    creatorMaxCStar: BigInt(o.creatorMaxCStar ?? 0),
-    creatorAllowFullDowngrade: Boolean(o.creatorAllowFullDowngrade),
-    signer: o.signer,
-    nonce: BigInt(o.nonce),
-    deadline: BigInt(o.deadline),
-  };
+  const m = {};
+  for (const { name, type } of SIGNED_OFFER_FIELDS) {
+    const v = o[name];
+    m[name] = type === 'address' ? v : type === 'bool' ? Boolean(v) : /^uint(8|16)$/.test(type) ? Number(v) : BigInt(v ?? 0);
+  }
+  return m;
 }
 
 /** The order hash — the EIP-712 STRUCT hash, matching

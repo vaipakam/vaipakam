@@ -70,6 +70,11 @@ async function signedLenderOrder(role: Role, tliq: Hex, diamond: Hex, until: str
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    // #3327 — caps above any live fee, and no taker or co-signer named.
+    maxTreasuryFeeBps: '65535',
+    maxLoanInitiationFeeBps: '65535',
+    allowedTaker: ZERO,
+    coSigner: ZERO,
     signer: accountFor(role).address.toLowerCase(),
     nonce: '3001',
     deadline: until,

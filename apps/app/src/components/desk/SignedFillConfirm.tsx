@@ -60,6 +60,7 @@ import { captureTxError } from '../../lib/errors';
 import { flowDisabled } from '../../lib/killSwitch';
 import {
   signedOfferCeiling,
+  NO_FILL_AUTH,
   signedOfferTypedMessage,
   signedOrderTimeWindowsOpen,
   type SignedRowMeta,
@@ -387,6 +388,9 @@ export function SignedFillConfirm({
         signed.signature,
         payload.terms,
         payload.signature,
+        // #3327 — no co-signature: an order that names a co-signer is
+        // refused before this point (`signedOrderTakerRefusal`).
+        NO_FILL_AUTH,
       ]);
       setFilledHash(hash);
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
