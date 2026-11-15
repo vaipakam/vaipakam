@@ -21,16 +21,20 @@ import {MockSanctionsList} from "../../test/mocks/MockSanctionsList.sol";
  *         fee-discount consent, a HoldOnly loan and a free-balance withdraw.
  *
  *         Staged (#3574). The recovery scenarios take one step each. PF-250
- *         takes two: the first wires a mock VPFI token on the Diamond,
- *         deposits and consents, and posts the lender's offer; the second,
- *         once the deposit has been held the Diamond's minimum staking
- *         period plus a day (`getTwaConfig().minStakedDays`), opens the
- *         loan, closes it, withdraws free VPFI and puts the Diamond's VPFI
- *         configuration back. Every setting a scenario changes is recorded
- *         to put back (PF-281's flagged source, and PF-250's VPFI token,
- *         discount rate, ETH reference asset and the borrower's consent),
- *         so `unwind()` restores what an abandoned run left changed, and
- *         `finish()` refuses while any is. `run()` is the simulation and
+ *         takes two: the first funds the borrower in a mock VPFI token
+ *         (registering one only on a Diamond that has none, never rotating
+ *         a registered token), deposits and consents, and posts the
+ *         lender's offer; the second, once the deposit has been held the
+ *         Diamond's minimum staking period plus a day
+ *         (`getTwaConfig().minStakedDays`), opens the loan, closes it,
+ *         withdraws free VPFI and puts the discount configuration back.
+ *         Every setting a scenario changes is recorded to put back (PF-281's
+ *         flagged source, and PF-250's discount rate, ETH reference asset
+ *         and the borrower's consent), so `unwind()` restores what an
+ *         abandoned run left changed, and `finish()` refuses while any is.
+ *         A mock VPFI registered on a Diamond that had no token stays
+ *         registered: the setter refuses the zero address, and a later
+ *         rotation away from it could not be undone. `run()` is the simulation and
  *         `stage()` the broadcastable run ({PositiveFlowsStaged},
  *         `script/positive-flows/run-staged.sh`).
  *
@@ -46,10 +50,6 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsStaged {
     /// @dev Settings to put back, recorded before the step that changes them.
     /// @dev PF-281's flagged source: put back means the oracle no longer flags it.
     string private constant STRAY_SOURCE_FLAG = "straySourceFlag";
-    /// @dev The Diamond's VPFI token before PF-250. A Diamond with none is
-    ///      not recorded: the setter refuses the zero address, so the mock
-    ///      stays wired there, as it always has on a fresh Anvil Diamond.
-    string private constant VPFI_TOKEN = "vpfiToken";
     /// @dev The discount rate before PF-250 (wei per VPFI; 0 = disabled).
     string private constant VPFI_DISCOUNT_RATE = "vpfiDiscountRate";
     /// @dev The discount's ETH reference asset before PF-250.
@@ -100,7 +100,6 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsStaged {
     function _stillToRestore(string memory name, uint256 value) internal view override returns (bool) {
         address a = address(uint160(value));
         if (_eq(name, STRAY_SOURCE_FLAG)) return ProfileFacet(diamond).isSanctionedAddress(a);
-        if (_eq(name, VPFI_TOKEN)) return VPFITokenFacet(diamond).getVPFIToken() != a;
         if (_eq(name, VPFI_DISCOUNT_RATE)) {
             (uint256 rate,) = VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
             return rate != value;
@@ -131,10 +130,9 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsStaged {
             vm.stopBroadcast();
             return;
         }
-        if (_eq(name, VPFI_TOKEN) || _eq(name, VPFI_DISCOUNT_RATE) || _eq(name, VPFI_ETH_REF_ASSET)) {
+        if (_eq(name, VPFI_DISCOUNT_RATE) || _eq(name, VPFI_ETH_REF_ASSET)) {
             vm.startBroadcast(adminKey);
-            if (_eq(name, VPFI_TOKEN)) VPFITokenFacet(diamond).setVPFIToken(a);
-            else if (_eq(name, VPFI_DISCOUNT_RATE)) VPFIDiscountFacet(diamond).setVPFIDiscountRate(value);
+            if (_eq(name, VPFI_DISCOUNT_RATE)) VPFIDiscountFacet(diamond).setVPFIDiscountRate(value);
             else VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(a);
             vm.stopBroadcast();
             return;
@@ -284,30 +282,44 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsStaged {
     ///      so the effective tier reads zero here; the discount arithmetic
     ///      itself is covered by the focused unit tests, not by this drive.
     ///
-    ///      The Diamond's VPFI token, discount rate, reference asset and the
-    ///      borrower's consent are recorded before they change and put back
-    ///      after the withdraw ({_restoreVpfiConfig}); on a fresh Anvil
-    ///      Diamond they start unset and the mock token stays wired.
+    ///      THE DIAMOND'S VPFI TOKEN IS NEVER ROTATED. A rotation is not
+    ///      undoable: it archives the deposit epoch and clears every service
+    ///      capacity curve (`LibServiceCapacity.onTokenRotated`), and setting
+    ///      the old token back is a second rotation that restores neither. So
+    ///      the scenario registers a mock VPFI only on a Diamond that has no
+    ///      token (a first registration archives and clears nothing), and
+    ///      that mock then stays registered, since the setter refuses the zero
+    ///      address. On a Diamond whose token is already a mock anyone may
+    ///      mint ({ERC20Mock}, as an earlier run of this scenario leaves), it
+    ///      mints into that one. Any other registered token is left alone and
+    ///      the scenario is skipped, saying why.
+    ///
+    ///      The discount rate, reference asset and the borrower's consent are
+    ///      recorded before they change and put back after the withdraw
+    ///      ({_restoreVpfiConfig}).
     function _vpfiDepositAndPost() internal {
-        address savedToken = VPFITokenFacet(diamond).getVPFIToken();
+        address registered = VPFITokenFacet(diamond).getVPFIToken();
+        if (registered != address(0) && registered.codehash != keccak256(type(ERC20Mock).runtimeCode)) {
+            return _skip("the Diamond's VPFI token is not a mintable mock, and rotating it cannot be undone");
+        }
         (uint256 savedRate, address savedRef) = VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
-        if (savedToken != address(0)) _toRestore(VPFI_TOKEN, uint256(uint160(savedToken)));
         _toRestore(VPFI_DISCOUNT_RATE, savedRate);
         _toRestore(VPFI_ETH_REF_ASSET, uint256(uint160(savedRef)));
         if (!VPFIDiscountFacet(diamond).getVPFIDiscountConsent(borrower)) {
             _toRestore(VPFI_CONSENT, uint256(uint160(borrower)));
         }
 
-        // Step 1: deploy VPFI mock + admin wires it.
+        // Step 1: the mock VPFI (registered on a Diamond with none) and the
+        // borrower's balance in it.
         vm.startBroadcast(deployerKey);
-        vpfi = new ERC20Mock("Vaipakam VPFI", "VPFI", 18);
+        vpfi = registered == address(0) ? new ERC20Mock("Vaipakam VPFI", "VPFI", 18) : ERC20Mock(registered);
         vpfi.mint(borrower, 5_000e18);
         vm.stopBroadcast();
         _keep(VPFI_MOCK, uint256(uint160(address(vpfi))));
-        console.log("VPFI deployed:", address(vpfi));
+        console.log("VPFI mock:", address(vpfi));
 
         vm.startBroadcast(adminKey);
-        VPFITokenFacet(diamond).setVPFIToken(address(vpfi));
+        if (registered == address(0)) VPFITokenFacet(diamond).setVPFIToken(address(vpfi));
         // The discount quote anchor: 0.001 ETH per VPFI, so with the mock
         // WETH at $2000 the discount math values 1 VPFI at $2. It is the
         // fee-discount conversion only; there is no protocol VPFI sale.
@@ -373,7 +385,7 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsStaged {
     ///      only when the chain still shows it changed: the same rule as
     ///      `unwind()`, so a restore never sends a no-op the setter refuses.
     function _restoreVpfiConfig() internal {
-        string[4] memory names = [VPFI_TOKEN, VPFI_DISCOUNT_RATE, VPFI_ETH_REF_ASSET, VPFI_CONSENT];
+        string[3] memory names = [VPFI_DISCOUNT_RATE, VPFI_ETH_REF_ASSET, VPFI_CONSENT];
         for (uint256 i = 0; i < names.length; i++) {
             if (!_restoreRecorded(names[i])) continue;
             uint256 value = _restoreValueOf(names[i]);

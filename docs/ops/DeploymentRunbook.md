@@ -1918,8 +1918,9 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # the finer-cadence threshold), PositiveFlowsSwapToRepay (a swap adapter per
 # scenario), PositiveFlowsKeeperAutomation (a keeper approval),
 # PositiveFlowsOperatorAdmin (a sanctions flag, the pauses, the initiation
-# fee) and PositiveFlowsVaultAndVpfi (a mock VPFI token, its discount config,
-# the borrower's consent). The record lists every such setting under
+# fee) and PositiveFlowsVaultAndVpfi (the VPFI discount config and the
+# borrower's consent; it never replaces a registered VPFI token, because that
+# cannot be undone). The record lists every such setting under
 # `restore_`: if a run is abandoned, put back whatever the chain still shows
 # changed with
 #   forge script script/positive-flows/<module>.s.sol --sig "unwind()" \
