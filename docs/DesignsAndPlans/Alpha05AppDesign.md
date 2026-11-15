@@ -2676,6 +2676,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   the same step on return, with no second signature or edit offered while
   the first may still complete. A listed order shows under the
   viewer's signed orders (RB-DESK-SIGNED).
+- **RB-PRORATA-TERM** — Where a lending offer or a borrow request
+  chooses pro-rata interest (#3615), the form says what that does to the
+  term as soon as it is chosen, and the review says it again. A lender is
+  told that the term it sets is the longest it lends for: a match can pair
+  its offer with a pro-rata request for that term or a shorter one, and
+  that loan runs, and earns interest, only for the borrower's term, while a
+  borrower who takes the offer directly gets the whole term. A borrower is
+  told that a match can also pair its request with a longer pro-rata
+  lender offer, and that its loan always runs for exactly the term it
+  asked for. Full-term interest keeps the terms equal, so nothing is added
+  for it. No figure changes: the review's interest figures are for the
+  offer's own term.
 
 ## 3. Companion specifications
 

@@ -133,9 +133,13 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await page.getByTestId('request-prorata').check();
   await expect(page.getByTestId('standing-blocked')).toContainText('so no standing lender can fill it');
   await expect(page.locator('form')).not.toContainText('a fill is likely');
+  // A longer pro-rata lender offer may match; the loan keeps the borrower's term (#3615).
+  await expect(page.getByTestId('request-prorata-term')).toContainText('a lender’s pro-rata offer for a longer term');
+  await expect(page.getByTestId('request-prorata-term')).toContainText('Your loan always runs for exactly the term you ask for.');
   // Back to the full term's interest, the likely fill returns…
   await page.locator('input[name="request-interest"]').first().check();
   await expect(page.getByTestId('standing-blocked')).toHaveCount(0);
+  await expect(page.getByTestId('request-prorata-term')).toHaveCount(0);
   await expect(page.locator('form')).toContainText('a fill is likely');
   // …and an interest schedule rules every standing lender out again.
   await page.getByTestId('request-amount').fill(String(wholeWeth));

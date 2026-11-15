@@ -14,16 +14,20 @@
 // interest schedule and Full fee tariff fieldsets, and chooses a monthly
 // schedule and the tariff where they are open (OFF-14 / OFF-22 from the
 // lender's side, 18-lend-offer-schedule-tariff.spec.ts in CI).
+// With LIVE_PRORATA=1 the run chooses pro-rata interest and prints the note
+// that the term is the longest the lender lends for (#3615,
+// RB-PRORATA-TERM); the review then carries the same line.
 // Usage: node e2e/live/lend-offer-watch.cjs <address>  (screenshots go to
 // $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin)
 const { chromium, devices } = require('playwright');
 const { watchedPage, connect } = require('./watch-wallet.cjs');
 const ADDR = process.argv[2];
 const URL = (process.env.LIVE_URL ?? 'https://alpha05.vaipakam.com/').replace(/\/?$/, '/lend');
+const PRORATA = process.env.LIVE_PRORATA === '1';
 const OUT = process.env.LIVE_OUT ?? '/tmp';
 const PARTS = process.env.LIVE_PARTS === '1';
 const SCHEDULE = process.env.LIVE_SCHEDULE === '1';
-const TAG = SCHEDULE ? 'lend-schedule' : PARTS ? 'lend-parts' : 'lend-offer';
+const TAG = SCHEDULE ? 'lend-schedule' : PARTS ? 'lend-parts' : PRORATA ? 'lend-prorata' : 'lend-offer';
 
 async function session(b, opts, label) {
   const { ctx, p, errs } = await watchedPage(b, opts, ADDR);
@@ -80,6 +84,10 @@ async function session(b, opts, label) {
     if ((await opt.count()) > 0 && (await opt.isEnabled())) await opt.check();
     await p.waitForTimeout(3000);
     console.log(`--- tariff: ${(await p.getByTestId('request-tariff').innerText()).replace(/\n+/g, ' | ')}`);
+  }
+  if (PRORATA) {
+    await p.getByTestId('request-prorata').check();
+    console.log(`--- pro-rata: ${await p.getByTestId('request-prorata-term').innerText()}`);
   }
   await p.waitForTimeout(1500);
   console.log(`--- summary: ${await p.getByTestId('request-summary').innerText()}`);
