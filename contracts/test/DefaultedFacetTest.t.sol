@@ -3,6 +3,8 @@
 pragma solidity ^0.8.29;
 
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -447,6 +449,7 @@ contract DefaultedFacetTest is Test {
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -1766,7 +1769,7 @@ contract DefaultedFacetTest is Test {
     }
 
     /// @dev Tests cross-facet call failure when triggerDefault tries to get lender vault.
-    function testTriggerDefaultCrossFacetFailure() public {
+    function testTriggerDefaultVaultLookupFailureParks() public {
         // Mock principal as illiquid so both assets match (avoids MixedCollateralNotAllowed)
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
         uint256 loanId = createAndAcceptOffer(
@@ -1784,13 +1787,15 @@ contract DefaultedFacetTest is Test {
             "mock revert"
         );
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
-        vm.expectRevert(bytes("mock revert"));
+        // #3669 — the move fails while the borrower's vault holds the whole
+        // collateral: it stays there under the lien and the loan defaults.
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
+        _assertCollateralParked(loanId);
     }
 
     /// @dev Tests triggerDefault cross-facet failure: collateral withdrawal fails for illiquid path.
-    function testTriggerDefaultIlliquidCollateralWithdrawFails() public {
+    function testTriggerDefaultIlliquidCollateralWithdrawFailureParks() public {
         // Mock principal as illiquid so both assets match (avoids MixedCollateralNotAllowed)
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
         uint256 loanId = createAndAcceptOffer(
@@ -1804,9 +1809,21 @@ contract DefaultedFacetTest is Test {
         // First call (getOrCreateUserVault) succeeds, second (vaultWithdrawERC20) fails.
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
-        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
+        // #3669 — as above, through a failing vault outflow.
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
+        _assertCollateralParked(loanId);
+    }
+
+    function _assertCollateralParked(uint256 loanId) internal view {
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted)
+        );
+        LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId);
+        assertEq(leg.payer, borrower, "left in the borrower's vault");
+        assertEq(leg.amount, 1500 ether, "the whole collateral");
+        assertTrue(leg.collateralLien, "under the loan's lien");
     }
 
     /// @dev Tests triggerDefault NFT rental cross-facet failure: buffer to treasury fails.

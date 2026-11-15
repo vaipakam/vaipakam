@@ -310,6 +310,8 @@ FACETS=(
   "SignedOfferMatchFacet"
   # The loan clock's disclosure, split off LoanFacet (#3410).
   "LoanClockFacet"
+  # A refused settlement leg's park and release (#3669).
+  "SettlementLegFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

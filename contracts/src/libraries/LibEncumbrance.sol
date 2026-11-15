@@ -634,6 +634,27 @@ library LibEncumbrance {
         notifyTierExclusion(loanId, false);
     }
 
+    // ─── Parked settlement leg — #3669 ──────────────────────────────────
+
+    /// @notice Lien `amount` of `asset` (ERC-20) in `payer`'s vault for a
+    ///         settlement leg a token refused to deliver to its payee
+    ///         (`SettlementLegFacet`). The caller has already moved the amount
+    ///         into `payer`'s vault. The per-loan record is the parked row in
+    ///         `LibVaipakam.Storage.parkedLenderLeg`, which names the payer
+    ///         and the amount, so {releaseParkedLeg} always unwinds the bucket
+    ///         this filled.
+    function encumberParkedLeg(address payer, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().encumbered[payer][asset][0] += amount;
+    }
+
+    /// @notice Release a parked leg's lien (see {encumberParkedLeg}) just
+    ///         before the release moves it out of `payer`'s vault.
+    function releaseParkedLeg(address payer, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        _decrementAggregate(payer, asset, 0, amount);
+    }
+
     // ─── Intent working-capital lien — #393 v1-d ────────────────────────
 
     /// @notice Lien `amount` of `owner`'s just-deposited intent working

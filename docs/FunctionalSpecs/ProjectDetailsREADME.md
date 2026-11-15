@@ -202,6 +202,14 @@ platform-wide rules apply across the lifecycle:
   forfeited into the recycle bucket, each forfeit recorded on-chain; reward it
   earned before the flag is held apart for it and paid once the flag is
   revoked; reward already in its vault stays frozen with everything else there.
+- A token issuer freezing an address must not hold a loan hostage (owner
+  2026-11-15, "lien in place, close the loan"). When a repayment or a
+  default cannot move its leg to the lender side because the token refuses
+  the move, the leg stays in the payer's own vault, liened for the lender
+  side, and the loan still reaches Repaid or Defaulted. The lender's claim
+  moves the leg once the token allows it; until then the claim stays open.
+  A leg is held this way only when the payer holds all of it; a shortfall
+  still fails visibly. Nothing waits in the protocol's own contract.
 - Fallback-pending loans are active for dashboard and operator purposes because
   they can still be cured or rescued before final fallback claim.
 

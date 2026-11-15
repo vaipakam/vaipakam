@@ -240,6 +240,8 @@ export interface DeploymentFacets {
   signedOfferMatchFacet?: HexAddress;
   /** #3410 — the loan clock's disclosure, split off LoanFacet. */
   loanClockFacet?: HexAddress;
+  /** #3669 — a refused settlement leg's park and release. */
+  settlementLegFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

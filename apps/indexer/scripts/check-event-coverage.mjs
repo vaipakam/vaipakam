@@ -52,6 +52,10 @@ const DELIBERATELY_NOT_HANDLED = {
     '#1566 slice 3 — custody provenance for an intent fill: the pre-hook took the committed lot out of the borrower vault inside the fill, and the same call carries it to the taker. The loan closes through SwapToRepayIntentFilled in that transaction, which the indexer already handles, so no loans-row field changes; surfacing the pull itself is deferred',
   FallbackCustodyMoved:
     '#1566 slice 2 — custody provenance for liquidation-fallback collateral held in the borrower vault under a lien: one event per row move (entry, each settlement slice, retry pull and restore, match legs, return to the pledge) with its amount and the amount still held. Loan status still derives from the status events (LoanFallbackPending, LoanCuredFromFallback and the terminal events), so no loans-row field changes; indexer surfacing of the custody trail is deferred',
+  SettlementLegParked:
+    '#3669 — custody provenance for a settlement leg the token refused: it waits in the payer\'s vault under a lien for the lender side. The loan still reaches its terminal state through LoanRepaid / LoanDefaulted, which the indexer handles, so no loans-row field changes; the app reads getParkedLenderLeg, and indexer surfacing of the parked row is deferred',
+  SettlementLegReleased:
+    '#3669 — pairs with SettlementLegParked: the lender claim moved the parked leg to the lender side\'s vault, inside the claim the indexer already records',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
   OfferPriceGuardSet:

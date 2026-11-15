@@ -26,6 +26,7 @@ import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
@@ -382,50 +383,32 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // Liquid-collateral DEX liquidation succeeded → "Loan Liquidated".
                 terminalStatus = LibVaipakam.LoanPositionStatus.LoanLiquidated;
             } else if (route == LibDefaultRoute.Route.InKind) {
-                // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault
-                // so ClaimFacet.claimAsLender can withdraw from lender's vault consistently.
-                // The whole collateral moves, so the lien goes first (it
-                // would otherwise block the vault withdrawal below).
-                _releaseLienAtDefault(loanId);
-                // #821 — vault-lock the in-kind collateral into a flagged stored
-                // lender's vault rather than bricking the default. #832 r7 P3 —
-                // report the real parked payload in the lock event: ERC-1155
-                // carries its amount in `collateralQuantity` (`collateralAmount`
-                // is structurally zero for non-ERC-20 collateral), so pass the
-                // quantity for ERC-1155 to keep the reconciliation trail accurate.
-                address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
-                    s,
-                    loan.lender,
-                    loanId,
-                    loan.collateralAsset,
-                    loan.collateralAssetType == LibVaipakam.AssetType.ERC1155
-                        ? loan.collateralQuantity
-                        : loan.collateralAmount
-                );
-                // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
-                // recorded centrally at the `Defaulted` transition (terminalizeFromAny).
-
-                // #821 (Codex #832 r2 P1) — the in-kind move WITHDRAWS the
-                // collateral from the borrower's vault, which resolves through the
-                // Tier-1-gated `getOrCreateUserVault`. Arm the from-side move-out
-                // exemption so a borrower flagged after init doesn't brick the
-                // default (the collateral is pushed OUT to the lender's vault).
-                LibSanctionedLock.beginMoveOut(s, loan.borrower);
-                if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                    // #2440 — vault to vault, and a forced close-out acts on
-                    // what arrived: the lender's vault is credited with, and
-                    // the lender's claim below names, what it received. The
-                    // loan's collateral becomes that figure (one transfer, so
-                    // a token that charges on transfer charges once).
-                    loan.collateralAmount = LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
-                    // The policy books the lender vault's tracked arrival
-                    // (#3205 part 2: one place books both sides of a vault move).
-                } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC721, loan.collateralAsset, loan.collateralTokenId, 1, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
-                } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC1155, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
+                // Illiquid or value collapsed: the whole collateral moves from
+                // the borrower's vault to the stored lender's vault, so
+                // ClaimFacet.claimAsLender withdraws from the lender's vault
+                // consistently. #3669 — through the one host of the refused-leg
+                // rule: when the token refuses the move (a frozen vault), the
+                // collateral stays in the borrower's vault under the loan's
+                // collateral lien for the lender side, and the default still
+                // completes. The host carries the lien release, the #821
+                // receive and move-out exemptions and the #2440 measured
+                // arrival the move always had.
+                bool parked;
+                {
+                    uint256 arrived;
+                    (parked, arrived) = abi.decode(
+                        LibFacet.crossFacetCallReturn(
+                            abi.encodeWithSelector(
+                                SettlementLegFacet.moveInKindCollateralOrPark.selector, loanId
+                            ),
+                            LiquidationFailed.selector
+                        ),
+                        (bool, uint256)
+                    );
+                    if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                        loan.collateralAmount = arrived;
+                    }
                 }
-                LibSanctionedLock.endMoveOut(s);
 
                 // Record collateral claim for the lender
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -444,6 +427,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // same asset ClaimFacet releases on (`claim.asset`). NFT
                 // collateral can't be VPFI and has no fungible unstake door.
                 if (
+                    !parked &&
                     loan.collateralAssetType == LibVaipakam.AssetType.ERC20 &&
                     loan.collateralAsset == s.vpfiToken
                 ) {

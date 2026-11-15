@@ -8366,6 +8366,33 @@ library LibVaipakam {
         ///      `SignedOfferFacet.cancelSignedOffersBelow`; read by
         ///      `LibSignedOffer.fillFailure`. Appended — append-only.
         mapping(address => uint256) signedOfferNonceFloor;
+        /// @dev #3669 — per loan, the lender side's settlement leg a token
+        ///      refused to deliver, left in the payer's own vault under a lien
+        ///      for the lender side. Written only by `SettlementLegFacet`
+        ///      (park and release); zero `amount` and zero `payer` mean
+        ///      nothing is parked. Appended — append-only.
+        mapping(uint256 => ParkedLeg) parkedLenderLeg;
+    }
+
+    /// @notice #3669 — a settlement leg a token refused to move to its payee,
+    ///         held in the payer's own vault under a lien for the payee until
+    ///         the payee's claim releases it. See `SettlementLegFacet`.
+    /// @param payer         The vault owner whose vault holds the leg.
+    /// @param asset         The token.
+    /// @param assetType     ERC-20, ERC-721 or ERC-1155.
+    /// @param tokenId       The NFT id (0 for ERC-20).
+    /// @param amount        ERC-20 amount, 1 for an ERC-721, the ERC-1155
+    ///                      quantity.
+    /// @param collateralLien Whether the leg is the loan's collateral, still
+    ///                      under the loan's collateral lien (an in-kind
+    ///                      default), rather than a payment liened on its own.
+    struct ParkedLeg {
+        address payer;
+        address asset;
+        AssetType assetType;
+        bool collateralLien;
+        uint256 tokenId;
+        uint256 amount;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

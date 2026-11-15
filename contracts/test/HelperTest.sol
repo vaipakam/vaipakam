@@ -117,6 +117,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -980,6 +981,12 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = LoanClockFacet.getLoanDeadlines.selector;
         selectors[1] = LoanClockFacet.getSequencerOutageWindow.selector;
+    }
+
+    /// @dev #3669 — the refused settlement leg host. Mirrors
+    ///      `DeployDiamond._getSettlementLegSelectors`.
+    function getSettlementLegFacetSelectors() public pure returns (bytes4[] memory) {
+        return LibTestSettlementLeg.selectors();
     }
 
     function getRepayFacetSelectors()

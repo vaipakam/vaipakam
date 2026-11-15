@@ -127,7 +127,9 @@ abstract contract DiamondFacetNames {
     ///      and PrecloseFacet for EIP-170).
     ///      117 → 118 with `LoanClockFacet` (#3410 — the loan clock's
     ///      disclosure, split off LoanFacet).
-    function cutFacetNames() internal pure returns (string[118] memory) {
+    ///      118 → 119 with `SettlementLegFacet` (#3669 — a settlement leg the
+    ///      token refuses parks in the payer's vault under a lien).
+    function cutFacetNames() internal pure returns (string[119] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -292,6 +294,8 @@ abstract contract DiamondFacetNames {
             "PrecloseOffsetFacet",
             // The loan clock's disclosure (#3410, split off LoanFacet).
             "LoanClockFacet",
+            // A refused settlement leg's park and release (#3669).
+            "SettlementLegFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

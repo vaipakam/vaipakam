@@ -31,6 +31,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {SellerClaimFacet} from "./SellerClaimFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 
 /**
  * @title ClaimFacet
@@ -781,6 +782,15 @@ contract ClaimFacet is
         // the payout reads it below.)
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
+
+        // #3669 — a lender leg the token refused at settlement waits, liened,
+        // in the payer's vault. Move it to the lender side's vault first; while
+        // the token still refuses, this reverts and the claim stays open for a
+        // later retry. No-op when nothing is parked.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(SettlementLegFacet.releaseParkedLeg.selector, loanId),
+            InvalidLoanStatus.selector
+        );
 
         // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED proceeds.
         // If this lender side was frozen at close-out because the intended

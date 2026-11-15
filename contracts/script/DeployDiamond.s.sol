@@ -63,6 +63,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
@@ -548,6 +549,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
             SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #3410 — the loan clock's disclosure, split off LoanFacet (EIP-170).
         LoanClockFacet loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        SettlementLegFacet settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -596,7 +598,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](119);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -717,6 +719,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
         cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
         cuts[117] = _buildCut(address(loanClockFacet), _getLoanClockSelectors());
+        cuts[118] = _buildCut(address(settlementLegFacet), _getSettlementLegSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1465,6 +1468,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
+        Deployments.writeFacet("settlementLegFacet", address(settlementLegFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2136,6 +2140,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s = new bytes4[](2);
         s[0] = LoanClockFacet.getLoanDeadlines.selector;
         s[1] = LoanClockFacet.getSequencerOutageWindow.selector;
+    }
+
+    /// @dev Selectors for `SettlementLegFacet` (#3669) — the one host for a
+    ///      settlement leg the token refuses: deliver or park it in the
+    ///      payer's vault under a lien, and release it at the claim.
+    function _getSettlementLegSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = SettlementLegFacet.deliverLenderDueOrPark.selector;
+        s[1] = SettlementLegFacet.moveInKindCollateralOrPark.selector;
+        s[2] = SettlementLegFacet.inKindMove.selector;
+        s[3] = SettlementLegFacet.releaseParkedLeg.selector;
+        s[4] = SettlementLegFacet.getParkedLenderLeg.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

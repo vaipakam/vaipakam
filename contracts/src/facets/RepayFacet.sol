@@ -30,6 +30,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
@@ -359,16 +360,23 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // and the borrower's debt clears; the proceeds land in the lender's
             // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
             // (the `claimAsLender` stored-owner screen) until the flag clears.
+            // #3669 — through the one host of the refused-leg rule: when the
+            // token refuses delivery into the lender's vault (a frozen vault),
+            // the due is liened in the payer's own vault for the lender side
+            // and the repayment still completes.
             LibSanctionedLock.begin(s, loan.lender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
-                    msg.sender,        // payer — borrower
-                    loan.lender,       // user — lender, owns the receiving vault
-                    loan.principalAsset,
-                    plan.lenderDue
+            bool parked = abi.decode(
+                LibFacet.crossFacetCallReturn(
+                    abi.encodeWithSelector(
+                        SettlementLegFacet.deliverLenderDueOrPark.selector,
+                        loanId,
+                        msg.sender,        // payer — borrower
+                        loan.principalAsset,
+                        plan.lenderDue
+                    ),
+                    VaultDepositFailed.selector
                 ),
-                VaultDepositFailed.selector
+                (bool)
             );
             LibSanctionedLock.end(
                 s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
@@ -392,7 +400,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // (`withdrawVPFIFromVault`), so reserve the proceeds against that
             // unstake path until the holder claims (released path-agnostically
             // in `ClaimFacet._claimAsLenderImpl`). No-op for non-VPFI principal.
-            if (loan.principalAsset == s.vpfiToken) {
+            if (!parked && loan.principalAsset == s.vpfiToken) {
                 LibEncumbrance.encumberLenderProceeds(
                     loanId, loan.lender, loan.principalAsset, plan.lenderDue
                 );

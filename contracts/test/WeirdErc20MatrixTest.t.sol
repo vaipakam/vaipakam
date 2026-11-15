@@ -6,6 +6,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -180,19 +181,41 @@ contract WeirdErc20MatrixTest is SetupTest {
     }
 
     /// @notice The lender's VAULT is frozen in the lending asset.
-    /// @dev    FINDING #3669: today the repayment reverts, so a freeze the
-    ///         borrower cannot influence holds the loan open into default.
-    ///         This cell records the current behaviour; the #3669 fix flips it
-    ///         to "the loan is Repaid and the repayment waits under a lien".
-    function test_Frozen_LenderVault_Repay_Finding3669() public {
+    /// @dev    #3669: the repayment the token refuses parks in the
+    ///         borrower's own vault, liened for the lender side, and the loan
+    ///         is Repaid. The lender's claim releases it once the freeze lifts,
+    ///         and fails while it holds, leaving the claim open.
+    function test_Frozen_LenderVault_RepayParksThenClaimReleases() public {
         _scaffold(true);
         vm.warp(block.timestamp + 10 days);
         address lVault = _vault(lender);
-        _weird(mockERC20).setFrozen(lVault, true);
+        address bVault = _vault(borrower);
+        WeirdERC20Mock w = _weird(mockERC20);
+        w.setFrozen(lVault, true);
 
-        vm.expectRevert(abi.encodeWithSelector(WeirdERC20Mock.AddressFrozen.selector, lVault));
         _repay();
-        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Active), "the loan stays open (#3669)");
+        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Repaid), "the loan is Repaid");
+        LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN);
+        assertEq(leg.payer, borrower, "parked for the borrower as payer");
+        assertEq(leg.amount, PRINCIPAL, "the whole leg parked");
+        assertEq(_bal(mockERC20, bVault), PRINCIPAL, "it waits in the borrower's vault");
+        assertEq(_bal(mockERC20, lVault), 0, "nothing reached the frozen vault");
+
+        vm.prank(lender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        assertEq(
+            SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN).amount,
+            PRINCIPAL,
+            "the row stays while the token refuses"
+        );
+
+        w.setFrozen(lVault, false);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        assertEq(SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN).amount, 0, "row cleared");
+        assertEq(_bal(mockERC20, bVault), 0, "the leg left the borrower's vault");
+        assertEq(_tracked(lender, mockERC20), PRINCIPAL, "the lender's vault holds the repayment");
     }
 
     /// @notice The borrower's WALLET is frozen in the collateral asset. The
@@ -211,18 +234,33 @@ contract WeirdErc20MatrixTest is SetupTest {
 
     /// @notice The borrower's VAULT is frozen in the collateral asset: the
     ///         collateral cannot move at all.
-    /// @dev    FINDING #3669: today the default reverts, so the loan can never
-    ///         reach a terminal state. The #3669 fix flips this cell to "the
-    ///         loan is Defaulted and the lender's claim waits under the lien".
-    function test_Frozen_BorrowerVault_InKindDefault_Finding3669() public {
+    /// @dev    #3669: the collateral stays in the borrower's vault under the
+    ///         loan's lien and the loan is Defaulted. The lender's claim moves
+    ///         it once the freeze lifts.
+    function test_Frozen_BorrowerVault_InKindDefaultParksThenClaimReleases() public {
         _scaffold(false);
         address bVault = _vault(borrower);
-        _weird(col).setFrozen(bVault, true);
+        WeirdERC20Mock w = _weird(col);
+        w.setFrozen(bVault, true);
 
-        uint256 q = _pastGraceQuote();
-        vm.expectRevert(abi.encodeWithSelector(WeirdERC20Mock.AddressFrozen.selector, bVault));
-        _triggerDefault(q);
-        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Active), "the loan stays open (#3669)");
+        _default();
+        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the loan is Defaulted");
+        LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN);
+        assertEq(leg.payer, borrower, "parked in the borrower's vault");
+        assertEq(leg.amount, COLLATERAL, "the whole collateral parked");
+        assertTrue(leg.collateralLien, "under the loan's collateral lien");
+        assertEq(_bal(col, bVault), COLLATERAL, "the collateral never moved");
+
+        vm.prank(lender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+
+        w.setFrozen(bVault, false);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        assertEq(SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN).amount, 0, "row cleared");
+        assertEq(_tracked(lender, col), COLLATERAL, "the lender's vault holds the collateral");
+        assertEq(_tracked(borrower, col), 0, "nothing left on the borrower's books");
     }
 
     // -- Paused: every path refuses, and resumes on unpause ------------------
