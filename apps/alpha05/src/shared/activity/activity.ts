@@ -73,6 +73,10 @@ export interface PendingLane {
 export interface ActivityPage {
   events: ActivityEvent[];
   repairs: RepairEntry[];
+  /** False when the index could not read the endings a check found for this
+   *  page (it answers null, never an empty list): some loan endings may be
+   *  missing, so the page claims no end. */
+  repairsKnown: boolean;
   /** Asked for on the first page only. `undefined` when not asked; `null`
    *  when the index does not know (no recent read): never an empty list. */
   pending: PendingLane | null | undefined;
@@ -211,6 +215,7 @@ export async function readActivityPage(indexer: IndexerClient, chainId: number, 
     else events.push(e);
   }
   const repairs: RepairEntry[] = [];
+  const repairsKnown = Array.isArray(res.repairObservations);
   if (Array.isArray(res.repairObservations)) {
     for (const raw of res.repairObservations) {
       const r = parseRepairEntry(raw);
@@ -234,7 +239,7 @@ export async function readActivityPage(indexer: IndexerClient, chainId: number, 
       pending = { events: lane, complete: p.complete, readAt };
     }
   }
-  return { events, repairs, pending, walletComplete, nextBefore, unreadable };
+  return { events, repairs, repairsKnown, pending, walletComplete, nextBefore, unreadable };
 }
 
 /**

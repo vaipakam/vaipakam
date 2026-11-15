@@ -21,7 +21,7 @@
 import { activityParticipants } from '@vaipakam/lib/activityParticipants';
 import type { Env } from './env';
 
-/** Rows the backfill reads per pass: one SELECT and one batched write. */
+/** Events the backfill reads per pass. */
 export const PARTICIPANT_BACKFILL_PAGE = 500;
 
 /** The wallets one event concerns: the shared rule's participants, and the
@@ -39,30 +39,48 @@ export function inlineParticipants(wallets: readonly string[]): string | null {
   return wallets.length === 0 ? null : ` ${wallets.join(' ')} `;
 }
 
-/** The statements recording one event's participants. Idempotent, so a
- *  re-scan or the backfill meeting a row ingest already wrote changes nothing. */
-export function participantStatements(
-  db: D1Database,
-  chainId: number,
-  blockNumber: number,
-  logIndex: number,
-  wallets: readonly string[],
-): D1PreparedStatement[] {
-  return wallets.map((w) =>
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO activity_participants (chain_id, block_number, log_index, wallet)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .bind(chainId, blockNumber, logIndex, w),
-  );
+/** One event's participant row: (block, log index, wallet). */
+export type ParticipantRow = readonly [blockNumber: number, logIndex: number, wallet: string];
+
+/** The rows recording one event's participants. */
+export function participantRows(blockNumber: number, logIndex: number, wallets: readonly string[]): ParticipantRow[] {
+  return wallets.map((w) => [blockNumber, logIndex, w] as const);
 }
 
-/** Run statements in batches D1 accepts. */
-export async function runBatched(db: D1Database, statements: D1PreparedStatement[], size = 50): Promise<void> {
-  for (let i = 0; i < statements.length; i += size) {
-    await db.batch(statements.slice(i, i + size));
+/** Rows per INSERT: four bound values each, inside D1's 100-parameter
+ *  ceiling for one statement. */
+export const PARTICIPANT_ROWS_PER_STATEMENT = 24;
+
+/** The fewest statements that record these rows: multi-row inserts, so a
+ *  page of events costs a handful of queries however many wallets each one
+ *  names. Idempotent, so a re-scan or the backfill meeting a row ingest
+ *  already wrote changes nothing. */
+export function participantStatements(db: D1Database, chainId: number, rows: readonly ParticipantRow[]): D1PreparedStatement[] {
+  const out: D1PreparedStatement[] = [];
+  for (let i = 0; i < rows.length; i += PARTICIPANT_ROWS_PER_STATEMENT) {
+    const chunk = rows.slice(i, i + PARTICIPANT_ROWS_PER_STATEMENT);
+    out.push(
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO activity_participants (chain_id, block_number, log_index, wallet)
+           VALUES ${chunk.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        )
+        .bind(...chunk.flatMap(([b, l, w]) => [chainId, b, l, w])),
+    );
   }
+  return out;
+}
+
+/** Participant rows the backfill writes per pass, at most: ten multi-row
+ *  statements in one batch, whatever the page holds. The chain pass awaits
+ *  the backfill before it scans, so its cost here must stay small and fixed;
+ *  a page with more rows is finished on the next pass. */
+export const PARTICIPANT_BACKFILL_ROWS = PARTICIPANT_ROWS_PER_STATEMENT * 10;
+
+/** Record participant rows in one batch of multi-row inserts. */
+export async function writeParticipants(db: D1Database, chainId: number, rows: readonly ParticipantRow[]): Promise<void> {
+  const statements = participantStatements(db, chainId, rows);
+  if (statements.length > 0) await db.batch(statements);
 }
 
 interface StoredEvent {
@@ -98,7 +116,11 @@ export async function ensureActivityParticipantsBackfill(env: Env, chainId: numb
     .bind(chainId, fromBlock, fromLog, PARTICIPANT_BACKFILL_PAGE)
     .all<StoredEvent>();
   const rows = page.results ?? [];
-  const statements: D1PreparedStatement[] = [];
+  // Whole events only, up to the row budget: the watermark moves to the last
+  // event written, so a page that stops early is picked up where it stopped.
+  // The first event is always taken, so every pass moves forward.
+  const writes: ParticipantRow[] = [];
+  let taken = 0;
   for (const r of rows) {
     let args: Record<string, unknown> = {};
     try {
@@ -107,13 +129,17 @@ export async function ensureActivityParticipantsBackfill(env: Env, chainId: numb
     } catch {
       // A malformed row still gets its actor; its args name nobody.
     }
-    statements.push(...participantStatements(env.DB, chainId, r.block_number, r.log_index, eventParticipants(r.kind, args, r.actor)));
+    const own = participantRows(r.block_number, r.log_index, eventParticipants(r.kind, args, r.actor));
+    if (taken > 0 && writes.length + own.length > PARTICIPANT_BACKFILL_ROWS) break;
+    writes.push(...own);
+    taken++;
   }
-  await runBatched(env.DB, statements);
-  const last = rows[rows.length - 1];
-  // Done once a page comes back short: every stored event has been read, and
-  // every event stored from now on gets its participants at ingest.
-  const done = rows.length < PARTICIPANT_BACKFILL_PAGE ? 1 : 0;
+  await writeParticipants(env.DB, chainId, writes);
+  const last = rows[taken - 1];
+  // Done once a short page has been written whole: every stored event has
+  // been read, and every event stored from now on gets its participants at
+  // ingest.
+  const done = rows.length < PARTICIPANT_BACKFILL_PAGE && taken === rows.length ? 1 : 0;
   await env.DB.prepare(
     `INSERT INTO activity_participants_state (chain_id, through_block, through_log, done)
      VALUES (?, ?, ?, ?)
@@ -148,7 +174,10 @@ export const WALLET_LOAN_CONDITION = `loan_id IN (SELECT lp.loan_id FROM loan_pa
  * One page of the wallet's final events, newest first: the union of the two
  * legs, each read to the page's limit on its own index, then joined back to
  * the event rows. Each leg returns at most `limit` keys below the cursor, so
- * the union's top `limit` is exact.
+ * the union's top `limit` is exact. The participant leg keeps only keys whose
+ * event is still stored: a withdrawn phantom loan's events are deleted
+ * (`loanOrphans.ts`) while their participant rows stay, and a key with no
+ * event must not take a place in the page.
  */
 export function walletEventsPage(
   db: D1Database,
@@ -162,10 +191,12 @@ export function walletEventsPage(
     .prepare(
       `WITH keys AS (
          SELECT block_number, log_index FROM (
-           SELECT block_number, log_index FROM activity_participants
-            WHERE chain_id = ?1 AND wallet = ?2
-              AND (?3 IS NULL OR (block_number, log_index) < (?3, ?4))
-            ORDER BY block_number DESC, log_index DESC
+           SELECT p.block_number, p.log_index FROM activity_participants p
+             JOIN activity_events pe
+               ON pe.chain_id = p.chain_id AND pe.block_number = p.block_number AND pe.log_index = p.log_index
+            WHERE p.chain_id = ?1 AND p.wallet = ?2
+              AND (?3 IS NULL OR (p.block_number, p.log_index) < (?3, ?4))
+            ORDER BY p.block_number DESC, p.log_index DESC
             LIMIT ?5)
          UNION
          SELECT block_number, log_index FROM (

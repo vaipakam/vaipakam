@@ -107,6 +107,7 @@
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
+import { activityActor } from '@vaipakam/lib/activityActor';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -704,7 +705,6 @@ async function ingestHealth() {
  *  does not work out itself), the pending lane, repaired endings and the
  *  index's completeness flag. */
 let walletActivityExtra = new Map();
-const txSenders = new Map();
 const blockTimes = new Map();
 
 function namesWallet(value, wallet) {
@@ -723,7 +723,9 @@ function idOrNull(v) {
 /** `/activity?wallet=` (#3677): every Diamond event that names the wallet in
  *  any argument, plus every event on a loan it opened as lender or borrower
  *  (the fixture never moves a position), newest first on the indexer's
- *  `block:logIndex` cursor. The actor is the transaction's sender. What an
+ *  `block:logIndex` cursor. The actor is the shared rule's filed wallet
+ *  (`@vaipakam/lib/activityActor`), as the index files it, not the
+ *  transaction's sender. What an
  *  event moved is left unrecorded, as the index leaves it for an event it
  *  does not normalise; a spec adds rows that carry an amount. */
 async function walletActivity(url) {
@@ -751,7 +753,6 @@ async function walletActivity(url) {
   for (const { l, ev } of decoded) {
     const loanId = idOrNull(ev.args?.loanId);
     if (!namesWallet(ev.args ?? {}, wallet) && !(loanId !== null && loans.has(loanId))) continue;
-    if (!txSenders.has(l.transactionHash)) txSenders.set(l.transactionHash, (await anvil('eth_getTransactionByHash', [l.transactionHash])).from.toLowerCase());
     if (!blockTimes.has(l.blockNumber)) blockTimes.set(l.blockNumber, Number((await anvil('eth_getBlockByNumber', [l.blockNumber, false])).timestamp));
     rows.push({
       chainId: CHAIN_ID,
@@ -761,7 +762,7 @@ async function walletActivity(url) {
       kind: ev.eventName,
       loanId,
       offerId: idOrNull(ev.args?.offerId),
-      actor: txSenders.get(l.transactionHash),
+      actor: activityActor(ev.eventName, Object.fromEntries(Object.entries(ev.args ?? {}).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v]))),
       args: {},
       blockAt: blockTimes.get(l.blockNumber),
       asset: null,
@@ -784,7 +785,7 @@ async function walletActivity(url) {
   page = page.slice(0, limit);
   const last = page[page.length - 1];
   const body = { chainId: CHAIN_ID, wallet, events: page, walletComplete: extra.walletComplete === undefined ? true : extra.walletComplete, nextBefore: more ? `${last.blockNumber}:${last.logIndex}` : null };
-  if (url.searchParams.get('repairObservations') === '1') body.repairObservations = before ? [] : (extra.repairs ?? []);
+  if (url.searchParams.get('repairObservations') === '1') body.repairObservations = before ? [] : extra.repairs === undefined ? [] : extra.repairs;
   if (url.searchParams.get('pending') === '1' && !before) {
     const head = Number(await anvil('eth_blockNumber'));
     body.pending = extra.pending === undefined ? { events: [], finalThrough: head, throughBlock: head, latestBlock: head, readAt: Math.floor(Date.now() / 1000), complete: true } : extra.pending;

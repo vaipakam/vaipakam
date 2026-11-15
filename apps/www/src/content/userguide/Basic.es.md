@@ -668,7 +668,7 @@ La página Alertas muestra los avisos que el índice del protocolo guarda para t
 
 ### Tu actividad
 
-La página Actividad, a la que se llega desde Posiciones y desde Alertas, muestra todo lo que en la red actual involucró a tu billetera, lo más reciente primero: los eventos de cualquier préstamo en el que hayas tenido una posición y los eventos que nombran a tu billetera, como tus ofertas, tu bóveda, tus ajustes y tus recompensas. Cada transacción es una línea, encabezada por lo que ocurrió, con el resto de esa transacción plegado debajo. Una línea indica su préstamo u oferta, quién la envió y cuándo, y enlaza a la transacción.
+La página Actividad, a la que se llega desde Posiciones y desde Alertas, muestra todo lo que en la red actual involucró a tu billetera, lo más reciente primero: los eventos de cualquier préstamo en el que hayas tenido una posición y los eventos que nombran a tu billetera, como tus ofertas, tu bóveda, tus ajustes y tus recompensas. Cada transacción es una línea, encabezada por lo que ocurrió, con el resto de esa transacción plegado debajo. Una línea indica su préstamo u oferta, la billetera a la que se atribuye, que puede no ser la que la envió, y cuándo, y enlaza a la transacción.
 
 Un importe se muestra solo cuando el índice registró uno; si no, la línea dice que no se registró ningún importe. Los eventos de los bloques más recientes van primero, marcados como no definitivos, porque un bloque todavía puede cambiar. Un préstamo cuyo final encontró una comprobación, y no un evento, lo dice. Mientras el índice sigue leyendo el historial antiguo, la página dice que puede faltar actividad anterior, y una página que el índice no pudo responder nunca se muestra como un historial vacío.
 

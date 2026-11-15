@@ -2776,13 +2776,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   name it by the shared participant rule, and says when its record of the
   second part is still being filled from older history: the page then says
   older activity may be missing and never claims the list is complete. Events
-  of one transaction are one line, led by the event that says what happened,
-  with the rest listed under it. Every kind the index can file for a wallet
+  of one transaction are one line, led by the event that says what happened
+  (a loan's start before the accept or match that opened it), with the rest
+  listed under it. The wallet a line names is the one the shared actor rule
+  files the event under, said as "recorded for", never as its sender. Every kind the index can file for a wallet
   has words (a test holds the catalog to the shared rule's kinds); a kind
   without words is named, never hidden. An amount is shown only when the
-  index recorded one, otherwise the line says none was recorded; events in
+  index recorded one, otherwise the line says none was recorded, and a
+  multi-copy token's unrecorded quantity is said, never read as one; events in
   blocks not yet final are marked so, with no time; a loan whose ending a
-  check found says what was and was not seen; a failed read is never shown
+  check found says what was and was not seen, and when those endings could
+  not be read the page says some may be missing and claims no end; a failed
+  read is never shown
   as an empty history, and unreadable rows are counted.
 
 ## 3. Companion specifications

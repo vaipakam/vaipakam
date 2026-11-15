@@ -637,7 +637,7 @@ The Alerts page lists the alerts the protocol's index keeps for your wallet on t
 
 ### Your activity
 
-The Activity page, reached from Positions and from Alerts, lists everything on the network you are on that involved your wallet, newest first: the events on any loan you have held a position in, and the events that name your wallet, such as your offers, your vault, your settings and your rewards. Each transaction is one line, led by what happened, with the rest of that transaction folded under it. A line names its loan or offer, who sent it and when, and links to the transaction.
+The Activity page, reached from Positions and from Alerts, lists everything on the network you are on that involved your wallet, newest first: the events on any loan you have held a position in, and the events that name your wallet, such as your offers, your vault, your settings and your rewards. Each transaction is one line, led by what happened, with the rest of that transaction folded under it. A line names its loan or offer, the wallet it is recorded for, which may not be the one that sent it, and when, and links to the transaction.
 
 An amount is shown only when the index recorded one; otherwise the line says no amount was recorded. Events in the newest blocks come first, marked not final, because a block can still change. A loan whose ending was found by a check, rather than seen as an event, says so. While the index is still reading older history, the page says older activity may be missing, and a page the index could not answer is never shown as an empty history.
 

@@ -12,6 +12,7 @@ import { createSqliteD1 } from './helpers/sqliteD1';
 import { handleActivity } from '../src/loanRoutes';
 import {
   PARTICIPANT_BACKFILL_PAGE,
+  PARTICIPANT_BACKFILL_ROWS,
   ensureActivityParticipantsBackfill,
   eventParticipants,
   inlineParticipants,
@@ -122,6 +123,21 @@ describe('/activity?wallet=', () => {
     expect(third.body.nextBefore).toBeNull();
   });
 
+  it('pages past participant rows whose event is no longer stored', async () => {
+    const h = db();
+    seed(h, [
+      { block: 1, kind: 'OfferCreated', actor: ME, args: { creator: ME } },
+      { block: 2, kind: 'OfferCreated', actor: ME, args: { creator: ME } },
+      { block: 3, kind: 'OfferCreated', actor: ME, args: { creator: ME } },
+      { block: 4, kind: 'OfferCreated', actor: ME, args: { creator: ME } },
+    ]);
+    // A withdrawn phantom loan's events are deleted; their participant rows stay.
+    h.db.prepare('DELETE FROM activity_events WHERE block_number IN (3, 4)').run();
+    markDone(h);
+    const { body } = await get(h, `wallet=${ME}&limit=2`);
+    expect(body.events.map((e) => e.blockNumber)).toEqual([2, 1]);
+  });
+
   it('refuses a wallet filter combined with another filter, and a malformed wallet', async () => {
     const h = db();
     expect((await get(h, `wallet=${ME}&kind=OfferCreated`)).body.error).toBe('wallet-filter-alone');
@@ -159,23 +175,30 @@ describe('/activity?wallet=', () => {
 });
 
 describe('the participant backfill', () => {
-  it('fills the index from stored events a page per call, then reports itself done', async () => {
+  it('fills the index from stored events within a fixed write budget per call, then reports itself done', async () => {
     const h = db();
     const rows: Row[] = [];
     const n = PARTICIPANT_BACKFILL_PAGE + 3;
     for (let b = 1; b <= n; b++) rows.push({ block: b, kind: 'OfferCreated', actor: b % 2 ? ME : OTHER, args: { creator: b % 2 ? ME : OTHER } });
     seed(h, rows, { index: false });
     const env = { DB: h.d1 } as unknown as Env;
-    await ensureActivityParticipantsBackfill(env, BASE);
-    expect((await get(h, `wallet=${ME}&limit=500`)).body.walletComplete).toBe(false);
-    await ensureActivityParticipantsBackfill(env, BASE);
-    const page = await get(h, `wallet=${ME}&limit=500`);
-    expect(page.body.walletComplete).toBe(true);
+    const count = () => (h.db.prepare('SELECT COUNT(*) AS c FROM activity_participants').get() as { c: number }).c;
+    let passes = 0;
+    while ((await get(h, `wallet=${ME}&limit=1`)).body.walletComplete !== true) {
+      const before = count();
+      await ensureActivityParticipantsBackfill(env, BASE);
+      // Each call writes at most its row budget, and always moves forward.
+      expect(count() - before).toBeGreaterThan(0);
+      expect(count() - before).toBeLessThanOrEqual(PARTICIPANT_BACKFILL_ROWS);
+      passes++;
+      expect(passes).toBeLessThan(10);
+    }
+    expect(passes).toBe(Math.ceil(n / PARTICIPANT_BACKFILL_ROWS));
     const mine = (h.db.prepare('SELECT COUNT(*) AS c FROM activity_participants WHERE wallet = ?').get(ME) as { c: number }).c;
     expect(mine).toBe(Math.ceil(n / 2));
     // Done: a further call reads nothing and changes nothing.
     await ensureActivityParticipantsBackfill(env, BASE);
-    expect((h.db.prepare('SELECT COUNT(*) AS c FROM activity_participants').get() as { c: number }).c).toBe(n);
+    expect(count()).toBe(n);
   });
 });
 
