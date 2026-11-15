@@ -21,11 +21,15 @@
  */
 import type { Log } from 'viem';
 import type { Standard } from '../nft/nft';
-import { vaultCredit } from '../protection/payout';
+import { creditLots } from '../protection/payout';
 import type { WithdrawDraft } from '../vault/withdraw';
-import { ASSET_ERC1155, ASSET_ERC20, ASSET_ERC721, type ClaimLane } from './loanClaim';
+import { ASSET_ERC1155, ASSET_ERC20, ASSET_ERC721, isFallback, type ClaimLane, type ClaimSide } from './loanClaim';
 
 type Hex = `0x${string}`;
+
+/** The `VaultOutflow` class of a payout to a position's holder: what every
+ *  loan claim credits the holder's vault as. */
+const CLASS_POSITION_HOLDER = 2;
 
 /** How the reader wants a claim's payout: withdrawn to the wallet after the
  *  claim, or kept in the vault. */
@@ -58,27 +62,75 @@ export function paidAssets(lanes: readonly Pick<ClaimLane, 'asset' | 'assetType'
   return out;
 }
 
+/** What a claim leaves to withdraw, kept with the claim's finish card:
+ *  the identity (network and account) the claim ran for, which a follow-on
+ *  withdrawal must still be connected as; one draft per credited asset whose
+ *  standard is known; and how many credited assets it could not name a
+ *  standard for (said, and left to the Vault page). */
+export interface ClaimWithdrawPlan {
+  identity: string;
+  drafts: WithdrawDraft[];
+  unlisted: number;
+}
+
 /**
- * The withdrawals a claim leaves to make: for each asset the claim's lanes
- * pay, what the transaction credited to `vault` for the claimed loans
- * (`refs`), as the protocol measured it arriving. An asset that arrived
- * nowhere (paid straight to the wallet, or not at all) opens nothing.
+ * The withdrawals a claim leaves to make: everything the transaction
+ * credited to `vault` for the claimed loans (`refs`), read from its own
+ * records, as the protocol measured it arriving. `known` names each asset's
+ * standard (the reviewed lanes, plus the loan's own tokens where a
+ * claim-time match can pay in them); a credited asset outside it is counted
+ * as `unlisted`, never guessed. An asset that arrived nowhere opens nothing.
  */
-export function creditedDrafts(
-  lanes: readonly Pick<ClaimLane, 'asset' | 'assetType' | 'tokenId'>[],
+export function creditedPlan(
+  known: readonly Pick<ClaimLane, 'asset' | 'assetType' | 'tokenId'>[],
   logs: readonly Log[],
   diamond: Hex,
   vault: Hex,
   refs: readonly bigint[],
-): WithdrawDraft[] {
+  identity: string,
+): ClaimWithdrawPlan {
+  const types = paidAssets(known);
   const drafts: WithdrawDraft[] = [];
-  for (const p of paidAssets(lanes)) {
-    const credit = vaultCredit(logs, diamond, vault, p.asset, { ref: refs, ...(p.assetType === ASSET_ERC20 ? {} : { tokenId: p.tokenId }) });
-    if (credit === null || credit.amount === 0n) continue;
-    const standard = standardOf(p.assetType);
-    drafts.push({ standard, asset: p.asset, tokenId: p.tokenId, amount: standard === 'erc721' ? 1n : credit.amount });
+  let unlisted = 0;
+  for (const lot of creditLots(logs, diamond, vault, refs, [CLASS_POSITION_HOLDER])) {
+    const same = (p: Paid) => p.asset.toLowerCase() === lot.asset.toLowerCase();
+    const nft = types.find((p) => same(p) && p.assetType !== ASSET_ERC20 && p.tokenId === lot.tokenId);
+    const erc20 = lot.tokenId === 0n ? types.find((p) => same(p) && p.assetType === ASSET_ERC20) : undefined;
+    const paid = nft ?? erc20;
+    if (paid === undefined) {
+      unlisted += 1;
+      continue;
+    }
+    const standard = standardOf(paid.assetType);
+    if (standard === 'erc20') {
+      const hit = drafts.find((d) => d.standard === 'erc20' && d.asset.toLowerCase() === lot.asset.toLowerCase());
+      if (hit) {
+        hit.amount += lot.amount;
+        continue;
+      }
+    }
+    drafts.push({ standard, asset: paid.asset, tokenId: paid.tokenId, amount: standard === 'erc721' ? 1n : lot.amount });
   }
-  return drafts;
+  return { identity, drafts, unlisted };
+}
+
+/**
+ * The assets a single loan claim can credit, each with its standard: the
+ * reviewed lanes, and, for a lender claiming a loan in fallback, the loan's
+ * principal and collateral tokens, because the claim runs the protocol's
+ * match first and that can pay in either whatever the review named (the
+ * same rule its outcome measurement follows). A fallback only exists for an
+ * ERC-20 loan with liquid collateral, so both are ERC-20s.
+ */
+export function loanClaimKnown(r: {
+  side: ClaimSide;
+  lanes: readonly ClaimLane[];
+  loan: { status: bigint | number; assetType: bigint | number; principalAsset: Hex; collateralAsset: Hex };
+}): Pick<ClaimLane, 'asset' | 'assetType' | 'tokenId'>[] {
+  const known: Pick<ClaimLane, 'asset' | 'assetType' | 'tokenId'>[] = [...r.lanes];
+  if (r.side === 'lender' && isFallback(Number(r.loan.status)) && Number(r.loan.assetType) === ASSET_ERC20)
+    for (const asset of [r.loan.principalAsset, r.loan.collateralAsset]) known.push({ asset, assetType: ASSET_ERC20, tokenId: 0n });
+  return known;
 }
 
 /** One asset's total ready to claim: an ERC-20 amount, an ERC-1155

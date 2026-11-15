@@ -98,6 +98,12 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
     expect(await sc.read<bigint>('withdrawableNow', [lenderAddr, 0, WETH, 0n])).toBe(freeBefore);
     expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderAddr] })).toBe(before + owedLender);
 
+    // Closing the withdrawal that went through never offers it again: a
+    // second confirmation would draw other funds from the vault.
+    await withdraw.locator('[data-phase="measured"]').getByRole('button', { name: 'Close' }).click();
+    await expect(step.getByTestId('claim-withdraw-finished-0')).toBeVisible();
+    await expect(step.getByTestId('claim-withdraw-again-0')).toHaveCount(0);
+
     // Closing the card leaves nothing to collect for this wallet: its
     // position token is burnt. (The withdrawal's own finish card, inside
     // this one, has a Close of its own; the claim's is the card's last row.)

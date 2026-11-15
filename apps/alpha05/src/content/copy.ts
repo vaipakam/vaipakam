@@ -1040,10 +1040,12 @@ export const copy = {
       'Two steps: this claim moves the payout into your vault, then a withdrawal takes what arrived there to your wallet. The app opens the withdrawal once the claim confirms, and your wallet asks you to confirm it too.',
     ),
     reviewWithdrawAll: A(
-      'Two steps: this batch moves each loan payout into your vault, then a withdrawal takes what arrived to your wallet. The app opens the withdrawals once the batch confirms, and your wallet asks you to confirm each. Rewards and any other part of the batch stay in your vault.',
+      'Two steps: this batch moves each loan payout into your vault, then a withdrawal takes what arrived to your wallet. The app opens the withdrawals once the batch confirms, and your wallet asks you to confirm each. Only loan payouts are withdrawn this way: every other part goes where its row above says.',
     ),
     reviewKeep: A('You chose to keep this payout in your vault, ready to lend or post as collateral. You can withdraw it to your wallet whenever you choose.'),
-    reviewKeepAll: A('You chose to keep these payouts in your vault, ready to lend or post as collateral. You can withdraw them to your wallet whenever you choose.'),
+    reviewKeepAll: A(
+      'You chose to keep the loan payouts in your vault, ready to lend or post as collateral, and can withdraw them whenever you choose. Every other part of the batch goes where its row above says.',
+    ),
     stepTitle: B('Step 2 of 2: withdraw to your wallet'),
     stepNote: A(
       'The claim is done and what it paid is in your vault. Each withdrawal below takes what arrived to your wallet. If one is refused or you close it, the money stays in your vault and you can withdraw it again here or from your vault.',
@@ -1053,6 +1055,9 @@ export const copy = {
     withdrawNow: B('Withdraw to my wallet now'),
     withdrawAgain: B('Withdraw {{what}} to my wallet'),
     closeHeld: A('A withdrawal is still out. You can close this once it has finished.'),
+    finished: B('The withdrawal of {{what}} has run. Your vault page shows where it stands.'),
+    otherIdentity: A('{{what}} was claimed on another account or network. Switch back to it to withdraw here, or withdraw from that account’s vault.'),
+    unlisted: A('The claim also credited {{n}} more assets to your vault that the app cannot open a withdrawal for here. They are in your vault; withdraw them from the Vault page.'),
     readyTitle: B('Ready to claim'),
     readyNone: B('Nothing is ready to claim right now.'),
     readyFromOne: B('From 1 payout.'),
@@ -1061,6 +1066,7 @@ export const copy = {
     readyUnread: A('{{n}} payouts could not be read, so they are not counted and the total may be higher.'),
     readyIncomplete: A('You hold more positions than one read covers, so this total may not count every payout.'),
     readyNote: A('A claim moves each payout into your vault. Nothing here has reached your wallet yet.'),
+    readyStale: A('The latest re-read of your payouts failed ({{reason}}), so this total is from the last read that answered and may be out of date.'),
   },
   frozen: {
     noticeTitle: B('Frozen, awaiting de-listing.'),

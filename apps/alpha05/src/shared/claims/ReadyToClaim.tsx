@@ -92,6 +92,11 @@ export function ReadyToClaim({
           {format('claimWithdraw.readyUnread', { n: String(sum.unread) })}
         </p>
       )}
+      {claims.error !== null && (
+        <p className="tier-a" data-testid="ready-to-claim-stale">
+          {format('claimWithdraw.readyStale', { reason: claims.error })}
+        </p>
+      )}
       {!data.complete && <p className="tier-a">{text('claimWithdraw.readyIncomplete')}</p>}
       {sum.totals.length > 0 && <p className="tier-b">{text('claimWithdraw.readyNote')}</p>}
     </section>

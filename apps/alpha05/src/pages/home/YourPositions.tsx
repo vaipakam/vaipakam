@@ -29,15 +29,18 @@ const OFFERS_SHOWN = 3;
 export function YourPositions({ book }: { book: HomeBook }) {
   const { text, format } = useCopy();
   const { chain, loans, payouts, offers, numeraire, meta, empty } = book;
+  // #3631: the payouts' claim read feeds the Ready to claim total, so it is
+  // stamped and refreshed with the rest of Home's reads.
+  const loanClaims = useLoanClaims();
   if (!chain) return null;
   return (
     <>
-      <OwnStamp reads={[loans, offers]} />
+      <OwnStamp reads={[loans, offers, loanClaims.claims]} />
       {empty ? (
         <p className="tier-b home-empty">{format('home.empty', { chain: chain.name })}</p>
       ) : (
         <>
-          <HomeReadyToClaim />
+          <HomeReadyToClaim loanClaims={loanClaims} />
           <PayoutsSection read={payouts} />
           <LoansSection read={loans} meta={meta} unit={numeraire.data ?? text('home.exposureUnit')} />
           <OffersSection read={offers} meta={meta} />
@@ -49,8 +52,8 @@ export function YourPositions({ book }: { book: HomeBook }) {
 
 /** #3631: the total ready to claim across every payout, the same figure
  *  Claims leads with, read once and shared. */
-function HomeReadyToClaim() {
-  const { book, claims } = useLoanClaims();
+function HomeReadyToClaim({ loanClaims }: { loanClaims: ReturnType<typeof useLoanClaims> }) {
+  const { book, claims } = loanClaims;
   const frozen = useFrozenState(book.diamond, book.chain ? book.account : null);
   if (!book.chain) return null;
   return <ReadyToClaim claims={claims} bookFailed={book.read.state === 'failed'} frozen={frozen} account={book.account} />;

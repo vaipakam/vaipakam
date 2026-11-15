@@ -44,9 +44,8 @@ import {
 import { creditedTo } from '../protection/payout';
 import { MULTICALL, readClaimAllList, readClaimAllReview } from './claimAllRead';
 import { readClaimantVault } from './claimOutcome';
-import type { WithdrawDraft } from '../vault/withdraw';
 import { ClaimWithdraw, useClaimWithdrawBusy, useClearClaimWithdraw } from './ClaimWithdraw';
-import { creditedDrafts, type ClaimMode } from './claimWithdraw';
+import { creditedPlan, type ClaimMode, type ClaimWithdrawPlan } from './claimWithdraw';
 import { readPendingRewards, remainderAfter } from './rewards';
 
 type Hex = `0x${string}`;
@@ -252,7 +251,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
   // keep them there. Rewards and the other legs stay in the vault.
   const [modeStored, setMode] = useStoredValue<ClaimMode>(`${CLAIM_ALL_KEY}:mode`);
   const mode: ClaimMode = modeStored ?? 'withdraw';
-  const [drafts, setDrafts] = useStoredValue<WithdrawDraft[]>(`${CLAIM_ALL_KEY}:drafts`);
+  const [plan, setPlan] = useStoredValue<ClaimWithdrawPlan>(`${CLAIM_ALL_KEY}:plan`);
   const withdrawing = useClaimWithdrawBusy(CLAIM_ALL_KEY);
   const clearWithdraw = useClearClaimWithdraw(CLAIM_ALL_KEY);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -305,7 +304,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
       if (!review) return [];
       const vault = await readClaimantVault(at, diamond, account);
       setCredited(vault !== null && creditedTo(receipt.logs, diamond, vault));
-      setDrafts(vault === null ? [] : loanDrafts(review.send, receipt.logs, diamond, vault));
+      setPlan(vault === null ? null : loanPlan(review.send, receipt.logs, diamond, vault, review.identity));
       // A rewards claim pays a bounded run of days: whether more remains is
       // read at the claim's own block or later.
       let more: boolean | null = null;
@@ -433,7 +432,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
   const close = () => {
     setReview(null);
     setStep(null);
-    setDrafts(null);
+    setPlan(null);
     setMode(null);
     clearWithdraw();
     reviewOpened.current = false;
@@ -458,8 +457,8 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={credited === true && (drafts === null || drafts.length === 0) ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
-        after={() => (drafts !== null && drafts.length > 0 ? <ClaimWithdraw claimKey={CLAIM_ALL_KEY} drafts={drafts} mode={mode} chain={chain} own={own} /> : null)}
+        next={credited === true && (plan === null || plan.drafts.length === 0) ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
+        after={() => (plan !== null ? <ClaimWithdraw claimKey={CLAIM_ALL_KEY} plan={plan} mode={mode} chain={chain} own={own} /> : null)}
         closeHeld={withdrawing ? text('claimWithdraw.closeHeld') : null}
         gate={gate}
         onClose={close}
@@ -475,15 +474,18 @@ function hasLoanLeg(legs: readonly ClaimAllLeg[]): boolean {
 }
 
 /** The withdrawals the batch's loan payouts leave to make: what it credited
- *  to the vault for those loans, per asset, measured from its logs. */
-function loanDrafts(legs: readonly ClaimAllLeg[], logs: readonly Log[], diamond: Hex, vault: Hex): WithdrawDraft[] {
+ *  to the vault for those loans, per asset, measured from its logs. (The
+ *  batch never claims a lender's payout on a loan in fallback, so no
+ *  claim-time match can pay in a token its legs do not name.) */
+function loanPlan(legs: readonly ClaimAllLeg[], logs: readonly Log[], diamond: Hex, vault: Hex, identity: string): ClaimWithdrawPlan {
   const loans = legs.filter((l) => l.subject.kind === 'loan');
   const refs = loans.map((l) => (l.subject.kind === 'loan' ? l.subject.loanId : 0n));
-  return creditedDrafts(
+  return creditedPlan(
     loans.flatMap((l) => l.payouts),
     logs,
     diamond,
     vault,
     refs,
+    identity,
   );
 }

@@ -16,9 +16,8 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { creditedTo } from '../protection/payout';
-import type { WithdrawDraft } from '../vault/withdraw';
 import { ClaimWithdraw, useClaimWithdrawBusy, useClearClaimWithdraw } from './ClaimWithdraw';
-import { creditedDrafts, type ClaimMode } from './claimWithdraw';
+import { creditedPlan, loanClaimKnown, type ClaimMode, type ClaimWithdrawPlan } from './claimWithdraw';
 import { measureLoanClaim, readClaimantVault, type OutcomeText } from './claimOutcome';
 import type { ClaimSide } from './loanClaim';
 import { loanClaimReceipt } from './loanClaimReceipt';
@@ -95,7 +94,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
   // credited to the vault, measured from its logs.
   const [modeStored, setMode] = useStoredValue<ClaimMode>(`${flowKey}:mode`);
   const mode: ClaimMode = modeStored ?? 'withdraw';
-  const [drafts, setDrafts] = useStoredValue<WithdrawDraft[]>(`${flowKey}:drafts`);
+  const [plan, setPlan] = useStoredValue<ClaimWithdrawPlan>(`${flowKey}:plan`);
   const withdrawing = useClaimWithdrawBusy(flowKey);
   const clearWithdraw = useClearClaimWithdraw(flowKey);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -133,7 +132,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
       const vault = await readClaimantVault(at, diamond, account);
       const legs = measureLoanClaim(review, receipt.logs, diamond, account, vault, words, await readPaidIncentives(own, diamond, review, receipt.logs));
       setCredited(vault !== null && creditedTo(receipt.logs, diamond, vault));
-      setDrafts(vault === null ? [] : creditedDrafts(review.lanes, receipt.logs, diamond, vault, [review.loanId]));
+      setPlan(vault === null ? null : creditedPlan(loanClaimKnown(review), receipt.logs, diamond, vault, [review.loanId], review.identity));
       return legs;
     },
     release: async () => null,
@@ -247,7 +246,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
   const close = () => {
     setReview(null);
     setStep(null);
-    setDrafts(null);
+    setPlan(null);
     setMode(null);
     clearWithdraw();
     reviewOpened.current = false;
@@ -272,8 +271,8 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={credited === true && (drafts === null || drafts.length === 0) ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
-        after={() => (drafts !== null && drafts.length > 0 ? <ClaimWithdraw claimKey={flowKey} drafts={drafts} mode={mode} chain={chain} own={own} /> : null)}
+        next={credited === true && (plan === null || plan.drafts.length === 0) ? { label: text('payout.withdrawNext'), to: '/vault' } : null}
+        after={() => (plan !== null ? <ClaimWithdraw claimKey={flowKey} plan={plan} mode={mode} chain={chain} own={own} /> : null)}
         closeHeld={withdrawing ? text('claimWithdraw.closeHeld') : null}
         gate={gate}
         onClose={close}

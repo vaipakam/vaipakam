@@ -299,12 +299,19 @@ keep. Once the claim confirms, the app opens the ordinary vault withdrawal
 for exactly what the transaction's logs show the claim credited to the vault
 for the claimed loans, one asset at a time, each with its own review, dry
 run, protected-mode route and finish card; never for the amount the review
-promised. Kept payouts are said to be in the vault and the withdrawal is
-still offered. A withdrawal refused, failed or closed leaves the claim done
-and the money in the vault, said so, and is offered again; the claim's
+promised. The credited assets are read from the transaction's own records,
+so a token a claim-time match paid in is found too; a credited asset whose
+standard the app cannot name is counted and left to the Vault page, never
+guessed. Kept payouts are said to be in the vault and the withdrawal is
+still offered. A withdrawal refused, failed or closed before it moved
+anything leaves the claim done and the money in the vault, said so, and is
+offered again; one that went through, was queued or could not be measured
+is never offered again, so a second confirmation cannot draw other funds.
+The withdrawals open only while the reader is connected as the network and
+account the claim ran for; otherwise that is said instead. The claim's
 finish card cannot be closed while a withdrawal it opened is out. In Claim
-everything only loan payouts are withdrawn; rewards and the other legs stay
-in the vault, and the review says so. The wallet batching both steps into
+everything only loan payouts are withdrawn; every other leg goes where its
+own row says, and the review says so. The wallet batching both steps into
 one confirmation is a follow-up; until then the wallet asks twice and the
 review says it will.
 

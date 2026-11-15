@@ -1,7 +1,7 @@
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
-import { creditedDrafts, paidAssets, readyToClaim, standardOf } from './claimWithdraw';
+import { creditedPlan, loanClaimKnown, paidAssets, readyToClaim, standardOf } from './claimWithdraw';
 import type { ClaimLane } from './loanClaim';
 import { loanClaimKey, parseLoanClaimKey } from './LoanClaim';
 
@@ -38,6 +38,9 @@ const credit = (asset: Hex, delivered: bigint, o: { to?: Hex; ref?: bigint; clas
     ref: o.ref ?? 7n,
   });
 
+const ID = '84532:0xaa';
+const drafts = (...a: [Parameters<typeof creditedPlan>[0], Log[], Hex, Hex, bigint[]]) => creditedPlan(...a, ID).drafts;
+
 const lane = (kind: ClaimLane['kind'], asset: Hex, amount: bigint, assetType = 0, tokenId = 0n): ClaimLane => ({ kind, asset, assetType, tokenId, amount });
 
 describe('claim and withdraw (#3631)', () => {
@@ -56,7 +59,7 @@ describe('claim and withdraw (#3631)', () => {
     const lanes = [lane('row', WETH, 100n), lane('held', WETH, 5n), lane('surplus', TLIQ, 40n)];
     // The token arrived short (a transfer fee): the measured figure is used.
     const logs = [credit(WETH, 103n), credit(TLIQ, 40n)];
-    expect(creditedDrafts(lanes, logs, DIAMOND, MY_VAULT, [7n])).toEqual([
+    expect(drafts(lanes, logs, DIAMOND, MY_VAULT, [7n])).toEqual([
       { standard: 'erc20', asset: WETH, tokenId: 0n, amount: 103n },
       { standard: 'erc20', asset: TLIQ, tokenId: 0n, amount: 40n },
     ]);
@@ -64,22 +67,22 @@ describe('claim and withdraw (#3631)', () => {
 
   it('opens nothing for an asset that reached another vault, another loan or another class', () => {
     const lanes = [lane('row', WETH, 100n)];
-    expect(creditedDrafts(lanes, [credit(WETH, 100n, { to: VAULT })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
-    expect(creditedDrafts(lanes, [credit(WETH, 100n, { ref: 8n })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
-    expect(creditedDrafts(lanes, [credit(WETH, 100n, { class_: 1 })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
-    expect(creditedDrafts(lanes, [], DIAMOND, MY_VAULT, [7n])).toEqual([]);
+    expect(drafts(lanes, [credit(WETH, 100n, { to: VAULT })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
+    expect(drafts(lanes, [credit(WETH, 100n, { ref: 8n })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
+    expect(drafts(lanes, [credit(WETH, 100n, { class_: 1 })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
+    expect(drafts(lanes, [], DIAMOND, MY_VAULT, [7n])).toEqual([]);
   });
 
   it('withdraws an NFT by its token, one for an ERC-721', () => {
     const lanes = [lane('rentalReturn', NFT, 1n, 1, 9n)];
-    expect(creditedDrafts(lanes, [credit(NFT, 1n, { tokenId: 9n })], DIAMOND, MY_VAULT, [7n])).toEqual([{ standard: 'erc721', asset: NFT, tokenId: 9n, amount: 1n }]);
+    expect(drafts(lanes, [credit(NFT, 1n, { tokenId: 9n })], DIAMOND, MY_VAULT, [7n])).toEqual([{ standard: 'erc721', asset: NFT, tokenId: 9n, amount: 1n }]);
     // Another token of the collection is not this payout.
-    expect(creditedDrafts(lanes, [credit(NFT, 1n, { tokenId: 10n })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
+    expect(drafts(lanes, [credit(NFT, 1n, { tokenId: 10n })], DIAMOND, MY_VAULT, [7n])).toEqual([]);
   });
 
   it('sums a batch over every claimed loan', () => {
     const lanes = [lane('row', WETH, 10n), lane('row', WETH, 20n)];
-    expect(creditedDrafts(lanes, [credit(WETH, 10n, { ref: 7n }), credit(WETH, 20n, { ref: 9n })], DIAMOND, MY_VAULT, [7n, 9n])).toEqual([
+    expect(drafts(lanes, [credit(WETH, 10n, { ref: 7n }), credit(WETH, 20n, { ref: 9n })], DIAMOND, MY_VAULT, [7n, 9n])).toEqual([
       { standard: 'erc20', asset: WETH, tokenId: 0n, amount: 30n },
     ]);
   });
@@ -116,5 +119,18 @@ describe('claim and withdraw (#3631)', () => {
     expect(parseLoanClaimKey(key)).toEqual({ loanId: 12n, side: 'borrower' });
     expect(parseLoanClaimKey(`${key}:withdraw:0`)).toBeNull();
     expect(parseLoanClaimKey('claim.seller.3')).toBeNull();
+  });
+
+  it('finds a token the review never named, when the loan’s own match paid in it', () => {
+    const lanes = [lane('row', TLIQ, 9n)];
+    const review = { side: 'lender' as const, lanes, loan: { status: 4, assetType: 0, principalAsset: WETH, collateralAsset: TLIQ } };
+    const logs = [credit(TLIQ, 9n), credit(WETH, 40n)];
+    expect(creditedPlan(loanClaimKnown(review), logs, DIAMOND, MY_VAULT, [7n], ID).drafts).toEqual([
+      { standard: 'erc20', asset: TLIQ, tokenId: 0n, amount: 9n },
+      { standard: 'erc20', asset: WETH, tokenId: 0n, amount: 40n },
+    ]);
+    // Without the loan's tokens named, the extra credit is counted, never guessed.
+    const plan = creditedPlan(lanes, logs, DIAMOND, MY_VAULT, [7n], ID);
+    expect([plan.drafts.length, plan.unlisted, plan.identity]).toEqual([1, 1, ID]);
   });
 });
