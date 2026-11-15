@@ -946,8 +946,7 @@ handovers (e.g. when one chain's Safe SDK lands earlier than another's).
 
 None of the flow scripts is a post-deploy check for a shared chain, and each
 refuses one (#848, #2763): `PositiveFlows.s.sol`, the staged modules under
-`script/positive-flows/` (`PositiveFlowsMidpoints` included),
-`NegativeFlows.s.sol` and the `Sepolia*` seeding scripts all re-point the
+`script/positive-flows/` (`PositiveFlowsMidpoints` and `PositiveFlowsRefusals` included) and the `Sepolia*` seeding scripts all re-point the
 Diamond's oracle (and, for some, its sanctions oracle and risk parameters) at
 mocks they deploy, which on a live testnet would replace the chain's real price
 and sanctions sources. They share one guard (`script/lib/RehearsalChain.sol`):
@@ -1943,18 +1942,20 @@ done
 # put back, because the states are what the run is for:
 bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
-# Negative — 9 gate verifications (range bounds, fallback consent, self-
-# collateralized offer, zero duration, collateral floor, claim before
-# terminal, partial repay opt-out):
-ionice -c 2 -n 0 forge script script/AnvilNegativeFlows.s.sol \
-  --rpc-url http://localhost:8545 --broadcast --slow
+# Refusals — 9 gates the Diamond must enforce, each required by its exact
+# error (offer range bounds, the rate ceiling, the creator's consent, a
+# self-collateralised offer, a zero duration, the collateral floor, a claim
+# on an active loan, a partial repayment the loan did not allow). Probed in
+# the simulation only; the two loan probes open their loan one stage after
+# its offer:
+bash script/positive-flows/run-staged.sh PositiveFlowsRefusals
 ```
 
 Each script must exit `EXIT=0`. The positive flows log `[PF-###] PASS` per
 scenario and a passed/skipped count per module; a `[PF-###] SKIP` line says why
 that scenario could not run here, and is a skip, not a pass. The midpoints
-module logs the same way, by state id (`[MID-A] PASS`, `[P-G] PASS`). The
-negative flows log a `*** PASSED ***` banner, with skipped scenarios and their
+and refusal modules log the same way, by id (`[MID-A] PASS`, `[NEG-9] PASS`). The
+old negative-flow script logged a `*** PASSED ***` banner, with skipped scenarios and their
 unit-test pointers listed at the bottom. A staged run's result is the summary
 its finish prints. Paths that need chain time to pass and have no staged run
 live in `forge test`, because one `--broadcast` cannot advance chain time
@@ -1999,23 +2000,21 @@ RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsBasicLife
 # The 13 UI-testable midpoint states (same chain rule as the positive flow):
 RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
-# Full negative flow — 9 gate verifications (same chain rule):
-forge script script/NegativeFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
+# The 9 refusals (same chain rule):
+RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsRefusals
 ```
 
-Each wrapper instantiates its child scripts in the script-runner's
-own simulation memory and dispatches through their `external run()`
-— no extra deploy txns are emitted by the wrapper itself; the visible
-on-chain effect is exactly the union of the children's broadcasts in
-order. Both halves of each composition already use `Deployments.lib`
-for the diamond address and the standard env-var topology
-(`PRIVATE_KEY`, `ADMIN_*`, `LENDER_*`, `BORROWER_*`, `NEW_LENDER_*`,
-`NEW_BORROWER_*`), so the wrappers inherit chain-agnosticism with
-no further configuration.
+`PositiveFlows.s.sol` instantiates each module in the script-runner's own
+simulation memory and dispatches through its `external run()`; it emits no
+deploy transactions of its own. Every module reads the Diamond from
+`Deployments` and the standard actor keys (`PRIVATE_KEY`, `ADMIN_*`,
+`LENDER_*`, `BORROWER_*`, `NEW_LENDER_*`, `NEW_BORROWER_*`), so each runs on
+any chain the rehearsal rule allows with no further configuration.
 
 When to use which:
-- **Full sweep on a new chain** → use the `*Flows.s.sol` wrappers
-  (this section). One forge invocation per flow type instead of two.
+- **Full sweep on a new chain** → the `PositiveFlows.s.sol` simulation, then
+  every staged module, the midpoint and refusal modules included, through
+  `run-staged.sh` (this section).
 - **Re-run a specific subset** → invoke one module directly
   (`script/positive-flows/PositiveFlowsAdvancedCredit.s.sol`, etc.), or one
   scenario with `ONLY_SCENARIO=PF-230-floor`. Every module builds its own

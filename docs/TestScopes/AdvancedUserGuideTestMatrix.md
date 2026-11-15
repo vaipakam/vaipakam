@@ -31,7 +31,7 @@ scripts that exercise every flow documented in
 
 - `contracts/script/AnvilNewPositiveFlows.s.sol` — happy paths
 - `contracts/script/positive-flows/PositiveFlowsMidpoints.s.sol` — UI-testable midpoint states (chain stays at end-state for manual UI checks). It replaced `AnvilNewPartialFlows.s.sol`, `BaseSepoliaPartialFlows.s.sol` and their composer `PartialFlows.s.sol` (#3574), which posted and filled in one broadcast and stopped once the offer-age rule arrived; it carries their states under ids MID-A to MID-F and P-G, P-H, P-N, P-O, P-P, P-Q, P-T, P-U, and P-T (a listed position with no buyer) now actually posts the listing.
-- `contracts/script/AnvilNegativeFlows.s.sol` — documented reverts / constraints
+- `contracts/script/positive-flows/PositiveFlowsRefusals.s.sol` — documented reverts / constraints, each required by its exact error. It replaced `AnvilNegativeFlows.s.sol` and its `NegativeFlows.s.sol` wrapper (#3574), which accepted any revert as a pass and stopped under the offer-age rule; it carries the same ids (NEG-RA1 to NEG-RA3, NEG-2, NEG-3, NEG-4, NEG-9, NEG-15, NEG-20).
 
 For chain-agnostic full-flow runs (covering both the legacy
 Sepolia-prefixed scripts AND the new-features Anvil-prefixed scripts
@@ -39,9 +39,6 @@ in one invocation per flow type), use the wrappers:
 
 - `contracts/script/PositiveFlows.s.sol` — appends
   `SepoliaPositiveFlows` (15) + `AnvilNewPositiveFlows` (18) = 33 scenarios.
-- `contracts/script/NegativeFlows.s.sol` — chain-agnostic dispatch
-  over `AnvilNegativeFlows` (9 scenarios; only one negative source
-  exists today).
 
 The wrappers do NOT merge state — each child's `external run()` is
 dispatched in append order so the on-chain effect is exactly the
@@ -240,7 +237,7 @@ Cross-reference each against the matrix rows above. Anything missing gets added 
 contracts/script/
 ├── AnvilNewPositiveFlows.s.sol     # N1, N3, N4, N5, N6, N7 + N8/N9/N10/N11/N12/N13/N14/N15 to add
 ├── positive-flows/PositiveFlowsMidpoints.s.sol  # UI-testable midpoint states (staged)
-└── AnvilNegativeFlows.s.sol        # NEG-1..NEG-37 + NEG-S1..NEG-S2 + NEG-K1 + NEG-CC1..NEG-CC2 + NEG-PB1..NEG-PB2 + NEG-PE1..NEG-PE2
+└── positive-flows/PositiveFlowsRefusals.s.sol  # NEG-RA1..RA3, NEG-2, NEG-3, NEG-4, NEG-9, NEG-15, NEG-20 (staged)
 ```
 
 Each script reuses the same env-var topology (`PRIVATE_KEY`,

@@ -10,7 +10,7 @@ import {Deployments} from "./Deployments.sol";
  *         mocks may run (#2763).
  *
  *         The flow fixtures (`PositiveFlowsBase`, which every positive-flow
- *         and midpoint module builds on, and `AnvilNegativeFlows`) and the Sepolia
+ *         module builds on, the midpoint and refusal modules included) and the Sepolia
  *         seeding scripts (`SepoliaOpenOffers`, `SepoliaActiveLoan`) deploy a
  *         fresh Chainlink registry, ETH/USD feed, WETH and (some of them) a
  *         sanctions oracle, then broadcast the admin setters that make the
