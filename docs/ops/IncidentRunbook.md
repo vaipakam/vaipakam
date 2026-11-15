@@ -438,12 +438,9 @@ sudo systemctl try-restart vaipakam-keeper
 `settlePeriodicInterest` is permissionless, so stopping the pass stops only
 this keeper's submissions; anyone can still settle an overdue period.
 
-A deploy afterwards does apply the committed `"TG_BOT_USERNAME": ""` over
-whatever is live, with or without `--keep-vars` — but that is harmless here
-and an earlier revision of this line said otherwise. `apps/keeper` never
-reads that variable; the Telegram deep link is built by `apps/agent` from its
-own binding, which a keeper deploy does not touch. No restore step is
-needed.
+A deploy afterwards applies only the committed `KEEPER_RUNNER_ID` var, which
+the config owns, and leaves the dashboard settings in place. No restore step
+is needed.
 
 **To stop everything, including the snapshot**, stop the keeper on the
 machine: `sudo systemctl stop vaipakam-keeper`, as

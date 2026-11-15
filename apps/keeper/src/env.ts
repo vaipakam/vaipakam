@@ -36,8 +36,8 @@ export const WORKER_NAME = 'vaipakam-keeper';
  * "resolve at the boundary" containment pattern from
  * `SecretsStoreMigration.md` §6.
  *
- * Config that is NOT migrated to the Secrets Store (`TG_BOT_USERNAME`,
- * `FRONTEND_ORIGIN`, `KEEPER_ENABLED`, `REWARD_*_ENABLED`, the `LIQ_*` /
+ * Config that is NOT migrated to the Secrets Store (`FRONTEND_ORIGIN`,
+ * `KEEPER_ENABLED`, `REWARD_*_ENABLED`, the `LIQ_*` /
  * `SPLIT_*` / `PARTIAL_LIQ_*` knobs) needs no `.get()` resolution and is
  * typed as a plain string either way.
  *
@@ -84,10 +84,6 @@ export type KeeperD1 = D1Database & { readonly [KEEPER_PRIVATE]: true };
  * string, not because their values are public — see the module comment.
  */
 interface BaseEnv {
-  // Public Telegram bot handle (the @-name from BotFather). A plain
-  // var; without it the handshake link returns a null bot_url.
-  TG_BOT_USERNAME?: string;
-
   // Connected-app origin for deep-links inside push / Telegram
   // notifications (e.g. "View this loan" → `<FRONTEND_ORIGIN>/loans/{id}`).
   // OPTIONAL and there is no domain default: the consumers fall back to
@@ -563,7 +559,6 @@ export const SECRET_BINDING_KEYS = [
  * `BaseEnv` without being added here.
  */
 export const PLAIN_VAR_KEYS = [
-  'TG_BOT_USERNAME',
   'FRONTEND_ORIGIN',
   'AGENT_ORIGIN',
   'PUSH_CHANNEL_ADDRESS',
@@ -769,7 +764,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     // So does `KEEPER_DB` (#2450) — the brand is a compile-time marker only,
     // so the cast changes nothing at runtime.
     KEEPER_DB: resolveD1Binding(raw.KEEPER_DB, WORKER_NAME) as KeeperD1,
-    TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     AGENT_ORIGIN: raw.AGENT_ORIGIN,
     PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,

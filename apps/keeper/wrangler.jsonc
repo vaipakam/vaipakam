@@ -528,20 +528,10 @@
   //
   //     CONFIG-OWNED (declared below, therefore NOT preserved — every deploy
   //     uploads the declared value and overwrites a dashboard edit):
-  //   - TG_BOT_USERNAME  — public Telegram bot handle, and LEGACY: no code
-  //                        on this Worker reads it (it is declared, typed and
-  //                        passed through, and nothing consumes it). The
-  //                        Telegram link that uses the handle is built by
-  //                        apps/agent from ITS binding, which a keeper deploy
-  //                        does not touch — so changing this value here
-  //                        changes nothing observable. It stays because the
-  //                        declaration is what makes the config-owned vs
-  //                        dashboard-owned split above concrete.
+  //   - KEEPER_RUNNER_ID — this copy's name for the one-runner lease.
+  //   (TG_BOT_USERNAME was declared here until #1722's cleanup; no keeper
+  //   code read it. The Telegram bot handle belongs to apps/agent.)
   "vars": {
-    // Public Telegram bot handle (the @-name from BotFather). Filled
-    // post-provision; the worker accepts an empty string and returns
-    // bot_url: null in the handshake response when not configured.
-    "TG_BOT_USERNAME": "",
     // #2503 — this runner's name for the one-runner lease. A machine host
     // uses its own name, so the Worker and a machine can never both run.
     "KEEPER_RUNNER_ID": "cloudflare-worker",
