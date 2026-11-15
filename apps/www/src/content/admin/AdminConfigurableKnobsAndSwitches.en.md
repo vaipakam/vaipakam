@@ -1496,7 +1496,19 @@ an implementation built with the new treasury on the `VaultBeacon`
 wait `MIN_CODE_DELAY` (7 days), then `executeCurrentVersion`. Registering
 and proposing are the beacon owner's (the Timelock after handover);
 anyone may execute once the delay has passed, and the Pauser Safe can
-cancel the proposal during the wait. There is no other way. Steps and consequences: `UpgradeSafety.md`, "Moving the treasury
+cancel the proposal during the wait.
+
+**The emergency path moves it at once.** While the Diamond is paused, the
+beacon's guardian (the Pauser Safe) can call
+`guardianRevokeVersion(currentId, successorId)`, which revokes the current
+version and makes `successorId` current in the same transaction, with no
+proposal and no wait. The successor must already be registered, and
+registering is the owner's, so the guardian can only switch to code the
+owner put in the registry; but if that code names a different treasury,
+the treasury moves immediately. So every registered, unrevoked version is
+a treasury the guardian can switch to: read `TREASURY()` on each one, and
+revoke a version whose treasury you would not accept. These are the only
+two ways. Steps and consequences: `UpgradeSafety.md`, "Moving the treasury
 (#3569)".
 
 **Where each fee goes.** A fee the Diamond moves itself (a payer's

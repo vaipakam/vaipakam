@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibTreasury} from "./LibTreasury.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
@@ -978,20 +977,29 @@ library LibRewardCustody {
         }
     }
 
-    /// @dev When the current vault code names this Diamond as the treasury (#3569), an ERC-20 delivered
-    ///      to it must be CREDITED to the treasury's tracked balance (Codex
-    ///      #2158 post-cap P2): `TreasuryFacet.claimTreasuryFees` releases
-    ///      only `treasuryBalances[asset]`, so an uncredited receipt would sit
-    ///      in the Diamond's raw balance, unclaimable — and, for the
-    ///      configured VPFI, back in the mixed balance the holder exists to
-    ///      separate. Credited as a plain balance, not through the fee
+    /// @dev When the treasury an ERC-20 was delivered to is this Diamond,
+    ///      the receipt must be CREDITED to the treasury's tracked balance
+    ///      (Codex #2158 post-cap P2): `TreasuryFacet.claimTreasuryFees`
+    ///      releases only `treasuryBalances[asset]`, so an uncredited receipt
+    ///      would sit in the Diamond's raw balance, unclaimable — and, for
+    ///      the configured VPFI, back in the mixed balance the holder exists
+    ///      to separate. Credited as a plain balance, not through the fee
     ///      analytics: a recovered stray asset is not revenue.
+    ///
+    ///      `to` is the recipient the caller captured BEFORE the transfer,
+    ///      never a fresh read of the treasury (#3569 r1 P2): the treasury
+    ///      is the current vault code's, and a callback token could make
+    ///      the vault beacon's permissionless code change take effect during
+    ///      the transfer, so a fresh read could credit a receipt that went
+    ///      to an external treasury, or skip one the Diamond received. Same
+    ///      rule as `LibFacet.recordTreasuryAccrual`.
     function creditDiamondTreasury(
         LibVaipakam.Storage storage s,
         address asset,
-        uint256 amount
+        uint256 amount,
+        address to
     ) internal {
-        if (amount == 0 || !LibTreasury.isDiamond()) return;
+        if (amount == 0 || to != address(this)) return;
         s.treasuryBalances[asset] += amount;
     }
 

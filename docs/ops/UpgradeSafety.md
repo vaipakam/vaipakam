@@ -101,11 +101,13 @@ A vault runs its owner's **pinned** version while that version is not revoked, o
 8. To withdraw a bad version: `proposeRevoke(id, successorId)` then `executeRevoke()` after the delay; in an emergency, while paused, the guardian's `guardianRevokeVersion`.
 
 ### Moving the treasury (#3569)
-The treasury is the `TREASURY` endpoint fixed into the vault code; there is no Diamond-side copy and no `setTreasury`. `AdminFacet.getTreasury()` reports the current vault code's treasury. Moving it is a vault code change and nothing else:
+The treasury is the `TREASURY` endpoint fixed into the vault code; there is no Diamond-side copy and no `setTreasury`. `AdminFacet.getTreasury()` reports the current vault code's treasury. Moving it is a vault code change and nothing else. The ordinary route waits the code delay:
 
 1. Build and deploy a `VaipakamVaultImplementation` whose `TREASURY` is the new address (a zero treasury is refused by name, `TreasuryUnset`, on every fee).
 2. Follow the procedure above: `registerVersion`, `proposeCurrentVersion`, wait `MIN_CODE_DELAY` (7 days), `executeCurrentVersion`.
 3. Verify `getTreasury()` returns the new address.
+
+The emergency route does not wait. While the Diamond is paused, the guardian's `guardianRevokeVersion(currentId, successorId)` revokes the current version and makes an already-registered successor current at once, and with it that successor's `TREASURY`. The guardian cannot register code, so it can only pick from versions the owner registered. Treat every registered, unrevoked version as a treasury that can become current immediately: check its `TREASURY()` when it is registered, and revoke any version whose treasury you would not accept.
 
 Consequences to plan for:
 - Fees the Diamond moves itself (a payer's wallet pull, a share the Diamond already holds) go to the new treasury from the execution on.

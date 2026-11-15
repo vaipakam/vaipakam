@@ -326,7 +326,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         RewardCustodyHolder(holder).release(token, treasury, amount);
         uint256 received = IERC20(token).balanceOf(treasury) - before;
         LibRewardCustody.requireDebited(holder, holderBefore, IERC20(token).balanceOf(holder), amount);
-        LibRewardCustody.creditDiamondTreasury(s, token, received);
+        LibRewardCustody.creditDiamondTreasury(s, token, received, treasury);
         emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount, received);
     }
 
@@ -538,7 +538,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyExceedsUnattributed(amount, unattributed);
         }
         LibRewardCustody.releaseMeasured(token, bound, treasury, amount);
-        LibRewardCustody.creditDiamondTreasury(s, token, amount);
+        LibRewardCustody.creditDiamondTreasury(s, token, amount, treasury);
         emit RewardCustodyUnattributedVpfiSwept(bound, treasury, amount, unattributed);
     }
 
@@ -940,7 +940,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (amount > recorded) revert IVaipakamErrors.RewardCustodyOverageExceedsRecorded(amount, recorded);
         s.strandedReturnOverage = recorded - amount;
         LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Overage, treasury, amount);
-        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount);
+        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount, treasury);
         emit RewardCustodyOverageReleased(treasury, amount, recorded - amount);
     }
 
@@ -1002,7 +1002,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         address treasury = _treasury();
         LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Restitution, treasury, amount);
-        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount);
+        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount, treasury);
         emit RewardCustodyRestitutionReleased(treasury, amount, dispositionId);
     }
 
