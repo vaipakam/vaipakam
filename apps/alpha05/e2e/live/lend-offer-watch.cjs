@@ -20,7 +20,7 @@
 // Usage: node e2e/live/lend-offer-watch.cjs <address>  (screenshots go to
 // $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin)
 const { chromium, devices } = require('playwright');
-const { watchedPage, connect } = require('./watch-wallet.cjs');
+const { watchedPage, connect, passTakeNow } = require('./watch-wallet.cjs');
 const ADDR = process.argv[2];
 const URL = (process.env.LIVE_URL ?? 'https://alpha05.vaipakam.com/').replace(/\/?$/, '/lend');
 const PRORATA = process.env.LIVE_PRORATA === '1';
@@ -93,6 +93,7 @@ async function session(b, opts, label) {
   console.log(`--- summary: ${await p.getByTestId('request-summary').innerText()}`);
   await p.screenshot({ path: `${OUT}/live-${TAG}-${label}-form.png`, fullPage: false });
   await p.getByTestId('request-review').click();
+  await passTakeNow(p);
   const flow = p.locator('.post-request');
   await flow.locator('.receipt').waitFor({ timeout: 60000 });
   await p.waitForTimeout(6000);

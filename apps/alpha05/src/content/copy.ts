@@ -3966,6 +3966,12 @@ export const copy = {
     proRataNote: A(
       'With pro-rata interest, the term you set is the longest you lend for. A match can pair your offer with a pro-rata request for that term or a shorter one, and that loan runs for exactly the term the borrower asked for. A borrower who takes your offer directly gets your whole term.',
     ),
+    takeNowTitle: B('A borrower’s request already fits your offer'),
+    takeNowLead: A(
+      'Funding it opens the loan now, on that request’s own terms shown below, each inside what you were about to offer. Posting your offer instead waits for a borrower to take it or, while matching is on, for a match with a request whose rate range includes your rate, which lends at your rate.',
+    ),
+    takeNowPost: B('Post my offer anyway'),
+    takeNowBack: B('Back to the form'),
     optionsSummary: B('Full-term interest keeps what you earn; the defaults are the common choice.'),
     optionsWhy: C(
       "Full-term interest means the borrower owes the whole term's interest even if they repay early, so an early repayment does not lower what you earn; pro-rata interest pays you only for the time the loan is open. Allowing partial repayments lets the borrower repay part of the loan early; with full-term interest, a partial repayment lowers the future interest on what it repays, and the full-term floor still applies to the rest. Each choice is fixed in the offer and binds the loan it opens.",
@@ -4389,6 +4395,13 @@ export const copy = {
     fullTermOption: B("Full term: the whole term's interest is owed"),
     proRataOption: B('Pro-rata: only for the time the loan is open'),
     proRataNote: A('With pro-rata interest, a match can also pair your request with a lender’s pro-rata offer for a longer term. Your loan always runs for exactly the term you ask for.'),
+    takeNowTitle: B('A lender’s offer already fits your request'),
+    takeNowLead: A(
+      'Taking it opens the loan now, on that offer’s own terms shown below, each inside what you were about to ask for. Posting your request instead waits for a lender to take it or, while matching is on, for a match with an offer whose rate range includes your rate, which lends at your rate.',
+    ),
+    takeNowPost: B('Post my request anyway'),
+    takeNowBack: B('Back to the form'),
+    takeNowGone: A('The open offer that fitted is no longer listed. Post anyway, or go back to the form.'),
     partialOption: B('Allow partial repayments'),
     optionsSummary: B('Most lenders look for full-term interest; the defaults are the common choice.'),
     optionsWhy: C(

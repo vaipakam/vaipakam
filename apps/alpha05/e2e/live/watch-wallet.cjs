@@ -48,4 +48,18 @@ async function connect(p) {
   for (let i = 0; i < 10 && (await btn.isVisible().catch(() => false)); i++) { await btn.click({ timeout: 2000 }).catch(() => {}); await p.waitForTimeout(1500); const w = p.getByRole('button', { name: /watch|injected|browser wallet/i }).first(); if (await w.isVisible().catch(() => false)) await w.click().catch(() => {}); }
 }
 
-module.exports = { watchedPage, connect };
+/** #3622 B1 (RB-TAKE-NOW): after a post form's review is asked for, an open
+ *  offer on the other side that already fits the draft is shown first.
+ *  Prints what it shows and chooses "post anyway", so a post driver still
+ *  reaches the post review; nothing is taken. Returns whether it appeared. */
+async function passTakeNow(p) {
+  const choice = p.getByTestId('take-now');
+  const post = p.locator('.post-request');
+  await Promise.race([choice.waitFor({ timeout: 60000 }), post.waitFor({ timeout: 60000 })]).catch(() => {});
+  if (!(await choice.isVisible().catch(() => false))) return false;
+  console.log(`--- take it now\n${(await choice.innerText()).replace(/\n+/g, '\n')}`);
+  await choice.getByTestId('take-now-post').click();
+  return true;
+}
+
+module.exports = { watchedPage, connect, passTakeNow };

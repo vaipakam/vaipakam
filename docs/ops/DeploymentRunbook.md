@@ -942,10 +942,11 @@ entire 14-leg matrix is Safe-signable — emit one batch JSON per chain
 and execute. The auth-mismatch case above only occurs during phased
 handovers (e.g. when one chain's Safe SDK lands earlier than another's).
 
-### 3. Smoke tests (positive + partial flow sweeps)
+### 3. Smoke tests (positive flow and midpoint sweeps)
 
 None of the flow scripts is a post-deploy check for a shared chain, and each
-refuses one (#848, #2763): `PositiveFlows.s.sol`, `PartialFlows.s.sol`,
+refuses one (#848, #2763): `PositiveFlows.s.sol`, the staged modules under
+`script/positive-flows/` (`PositiveFlowsMidpoints` included),
 `NegativeFlows.s.sol` and the `Sepolia*` seeding scripts all re-point the
 Diamond's oracle (and, for some, its sanctions oracle and risk parameters) at
 mocks they deploy, which on a live testnet would replace the chain's real price
@@ -959,11 +960,12 @@ fork with the `contracts/script/fork-scenarios/` driver instead. Run the flow
 scripts on a local Anvil (section 5a), or on a rehearsal Diamond:
 
 ```bash
-REHEARSAL_ALLOW_CHAIN_ID=84532 \
-  forge script script/PartialFlows.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+REHEARSAL_ALLOW_CHAIN_ID=84532 RPC_URL=$BASE_SEPOLIA_RPC_URL \
+  bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 ```
 
-`PartialFlows.s.sol` stands up 13 partial midpoints.
+`PositiveFlowsMidpoints` stands up 13 UI-testable midpoint states and leaves
+them in place for checking the app by hand.
 
 ### 4. Recovery from a mid-flight failure
 
@@ -1018,10 +1020,8 @@ each item is checked:
       returns that chain's CCIP TokenAdminRegistry, not the zero
       address.
 - [ ] `PositiveFlows.s.sol` (a simulation), the staged positive-flow
-      modules through `script/positive-flows/run-staged.sh` and
-      `PartialFlows.s.sol` green on every chain. The partial flows are not
-      staged yet (#3574), so any that fill an offer they posted stop under
-      `--broadcast` with `TermsAgeNeedsStagedRun` before sending anything.
+      modules through `script/positive-flows/run-staged.sh`, including
+      `PositiveFlowsMidpoints`, green on every chain.
       On a live chain, `run-staged.sh PositiveFlowsTimed` waits out the
       cancel cooldowns and then stops with exit code 75 before PF-116's
       month-long wait; run it again once the time it prints has passed.
@@ -1936,13 +1936,12 @@ for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsVa
   bash script/positive-flows/run-staged.sh "$m" || break
 done
 
-# Partial — 7 UI-testable midpoint states (offer states, partial repay,
-# collateral doubled, keeper enabled, refinance offer posted, stray token,
-# dual claimable). Not staged yet (#3502): a state reached by filling an offer
-# the script posted stops the broadcast with `TermsAgeNeedsStagedRun` before
-# anything is sent; run it without `--broadcast` to check it meanwhile:
-ionice -c 2 -n 0 forge script script/AnvilNewPartialFlows.s.sol \
-  --rpc-url http://localhost:8545 --broadcast --slow
+# Midpoints — 13 UI-testable states left in place for checking the app by
+# hand (open offers, active loans of each kind, a repaid loan nobody claimed,
+# a partly filled range offer, a refinance request and a listing with no
+# taker, a stray token in a vault). Staged like the modules above; nothing is
+# put back, because the states are what the run is for:
+bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
 # Negative — 9 gate verifications (range bounds, fallback consent, self-
 # collateralized offer, zero duration, collateral floor, claim before
@@ -1953,8 +1952,9 @@ ionice -c 2 -n 0 forge script script/AnvilNegativeFlows.s.sol \
 
 Each script must exit `EXIT=0`. The positive flows log `[PF-###] PASS` per
 scenario and a passed/skipped count per module; a `[PF-###] SKIP` line says why
-that scenario could not run here, and is a skip, not a pass. The other two
-scripts log a `*** PASSED ***` banner, with skipped scenarios and their
+that scenario could not run here, and is a skip, not a pass. The midpoints
+module logs the same way, by state id (`[MID-A] PASS`, `[P-G] PASS`). The
+negative flows log a `*** PASSED ***` banner, with skipped scenarios and their
 unit-test pointers listed at the bottom. A staged run's result is the summary
 its finish prints. Paths that need chain time to pass and have no staged run
 live in `forge test`, because one `--broadcast` cannot advance chain time
@@ -1996,9 +1996,8 @@ forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --disable-block-gas-l
 # waits for the chain's own clock between stages instead of stepping it):
 RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsBasicLifecycle
 
-# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new)
-# (same chain rule as the positive flow):
-forge script script/PartialFlows.s.sol  --rpc-url $RPC_URL --broadcast --slow
+# The 13 UI-testable midpoint states (same chain rule as the positive flow):
+RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
 # Full negative flow — 9 gate verifications (same chain rule):
 forge script script/NegativeFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
