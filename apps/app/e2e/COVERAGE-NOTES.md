@@ -1972,3 +1972,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Direct sale bound to its review (#3513).** Opening the direct sale's review (`EarlyExitFlow`) reads the chain's own quote of the two seller figures for that buyer's rate (`quoteSellerBounds`, the computation a listing records), states the least the seller nets and any money set aside for the lender that moves to the buyer, and sends exactly those figures; an unreadable quote opens no review. A refusal that says the figures moved (`SaleNetBelowReviewed`, `SaleHeldAboveReviewed`, `DeadlinePassed`, or a mined revert) closes the review, so the next one reads a fresh quote. The refusal rule is unit-pinned in `src/data/saleListingPlan.test.ts`; the flow has no CI-Anvil spec yet, and the live review after deploy drives it.
 
+## Signed offers carry the maker's protections (#3327)
+<a id="cov-signed-offer-maker-protections-3327"></a>
+
+**Journey.** A signed order now carries four more signed fields: the highest treasury fee and loan initiation fee the maker accepts, an optional wallet the order is reserved for, and an optional co-signer whose fresh approval each fill needs. A wallet can also cancel every order it signed below a nonce floor in one transaction. The gasless ticket signs the fees its review showed as the caps (and refuses to post if the live fees moved since the review), names no taker and no co-signer, and draws its nonce above the wallet's floor, so a fresh order is never born cancelled. The offer book keeps a restricted order as depth but shows no Fill button on it, with a tooltip that says why; a fill this app cannot complete is never offered.
+
+**Tier.** Unit for the signed caps, the refusal order (taker, co-signer, cancel floor, fee cap) and the floor-relative nonce, in `src/lib/signedOffer.test.ts`. CI-Anvil through the existing signed-book specs, whose maker signatures and fills now run over the 35-field struct against the #3327 contracts; the indexer stub reads its typed-data description from the one shared field list (`@vaipakam/lib/signedOfferWire`), so it cannot drift from the app again.
+
+**Gap.** No spec posts an order that names a taker or a co-signer, because neither app can sign one yet; the contract suite (`SignedOfferBook.t.sol`, `SignedOfferMatcher.t.sol`) drives both, and the follow-up issues for a co-signing service and a taker-binding control carry the app side.
+

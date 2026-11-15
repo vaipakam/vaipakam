@@ -118,11 +118,9 @@ import {RefinancePayoffPermitHelper} from "../../test/helpers/RefinancePayoffPer
  *         stops with `TermsAgeNeedsStagedRun` before anything is sent. A
  *         module built on {PositiveFlowsStaged} splits each scenario at its
  *         fills and position moves and broadcasts one stage per `forge script`
- *         call, waiting between them (`run-staged.sh`, #3502);
- *         {PositiveFlowsTimed} has its own stages for its longer waits
- *         (`run-timed.sh`), until it moves onto the staged runner (#3574).
- *         Every other module runs as a simulation (no `--broadcast`) until it
- *         is staged.
+ *         call, waiting between them (`run-staged.sh`, #3502), including
+ *         {PositiveFlowsTimed}'s longer waits (#3574). Every other module runs
+ *         as a simulation (no `--broadcast`) until it is staged.
  *
  *         Env vars: DEPLOYER_PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
  *         LENDER_PRIVATE_KEY, LENDER_ADDRESS, BORROWER_PRIVATE_KEY,

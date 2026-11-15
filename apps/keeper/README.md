@@ -111,6 +111,7 @@ by `keep_vars: true` because this config declares no value for any of them:
 |---|---|
 | `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
 | `REWARD_REMIT_LANE_CAP` | Ceiling (wei) on each remitted **part** (#918). Each tick the pass sends a part no larger than the smallest of this, the Base lane bucket's live tokens, and the mirror's inbound lane capacity from Base (#2960, read on the mirror's own RPC), so a day above it goes in several parts over several ticks and the mirror opens it once every part has landed. It no longer needs to cover the largest day slice. An end the pass cannot read (no mirror RPC, a Diamond without the view) is named in the tick's log and does not size the part. Default `50000e18` (matches the on-chain lane default). |
+| `MATCHER_FRESH_LANE_SHARE` | The offer matcher's fresh lane (#3622 B2): the share of each matcher pass (previews, matches and wall time alike) spent first on offers created or re-priced in the last 10 minutes, once their terms are old enough for the protocol's terms-age rule, against their own bucket in the same creator-pair turns as the ordinary walk. An offer enters the lane once for its creation; a re-price enters again only an hour after its last entry. The ordinary rotating walk keeps the rest of the pass whether or not the lane used its share, and passes over pairs the lane already previewed. 0 turns the lane off; at most 0.5; unset or unreadable is 0.25. A plain var. |
 | `REWARD_REMIT_MIN_PART` | The smallest part (wei) that may leave its day still owing (#2960). Below it the pass waits for the bucket to refill instead of sending a dust part; a part that completes its day is always sent. Never above the largest part the lane could carry. Default `1000e18`. Partly sent days are continued whatever their age, from Base's own list of them, so `REWARD_REMIT_LOOKBACK_DAYS` no longer bounds them. |
 | `REWARD_COMMIT_LOOKBACK_DAYS` | Recent-day window the commitment pass re-scans for un-reported armed days each tick (default `14`). |
 | `REWARD_CLOSE_OUT_WINDOW_DAYS` | Days the close-out pass reads a run (default `60`): that many of the days not yet proven closed, and that many again of every provable day for parking. Each rotates from where the last run stopped above a stored floor of finished days, so this bounds a run's reads, never which days are visited. |
@@ -136,14 +137,9 @@ Config-owned var — its value is committed in `wrangler.jsonc`'s `vars`, so eve
 |---|---|
 | `KEEPER_RUNNER_ID` | This copy's name for the one-runner lease (#2503). Every tick claims the lease first and declines while another copy holds it; unset declines every tick. The Worker's is `cloudflare-worker` in `wrangler.jsonc`; a machine's defaults to `host:<host name>`. See `docs/ops/KeeperMachine.md` §2. |
 
-`TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
-note above: this config **declares** it, so every deploy uploads the declared
-value and a dashboard edit is overwritten rather than preserved. Note though
-that setting it here changes nothing observable — as §"What the kill-switch
-does and does not stop" records below, no keeper code reads it; the Telegram
-deep link that uses the handle is built by `apps/agent` from its own binding.
-It is a legacy config-owned value, kept because the declaration is what makes
-the overwrite behaviour visible, not because the keeper needs it.
+The keeper has no Telegram bot settings at all: `TG_BOT_USERNAME`, once
+declared here though no keeper code read it, was removed with the rest of the
+user bot (#1722). The bot handle is the agent's.
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 
@@ -196,8 +192,7 @@ complete and reversible.
 
 **The var hazard is handled by the deploy script, not by this config being
 small** (Codex #1924 r7). An earlier revision said the hazard was "resolved"
-because `TG_BOT_USERNAME` is the only var declared here and `apps/keeper`
-never reads it. That reasoning was backwards: a bare `wrangler deploy`
+because the only var then declared here was one `apps/keeper` never read. That reasoning was backwards: a bare `wrangler deploy`
 deletes every var **not** in the config before applying the ones that are, and
 what is not in the config is exactly the dashboard-managed tuning the keeper
 *does* read — `HF_SCALE`, the `LIQ_CONFIDENCE_*` and `LIQ_TIER3_*`
@@ -247,8 +242,7 @@ are gone. What that gives up is listed by name in the header of
 `scripts/check-keep-vars.mjs`.
 
 Keeping vars costs nothing here: the only var this config declares is
-`TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
-nowhere in the Worker.
+`KEEPER_RUNNER_ID`, which the config owns on purpose.
 
 
 **Three other passes also run ungated** — `watcher`, `preGraceWatcher` and

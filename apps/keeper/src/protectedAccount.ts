@@ -1193,8 +1193,10 @@ function changeCalls(c: Change, a: ProtectedAccount | undefined): ReadCall[] | n
  *  the vault's `finalizeSettings`), or a replacement. */
 function changesPosture(c: Change): boolean {
   // A lowered delay is not one: the Diamond acts only on a raised delay, and
-  // would refuse the call as nothing to apply.
-  return c.t === 'replace' || (c.t === 'setting' && (c.kind === CHANGE_DISABLE || c.kind === 5));
+  // would refuse the call as nothing to apply. A completed replacement is not
+  // one either: the vault's finalizer applies the platform side in its own
+  // transaction (Codex #3489 r10), so a second application would find nothing.
+  return c.t === 'setting' && (c.kind === CHANGE_DISABLE || c.kind === 5);
 }
 
 /** The accounts the page's events name (`PayoutQueued` and

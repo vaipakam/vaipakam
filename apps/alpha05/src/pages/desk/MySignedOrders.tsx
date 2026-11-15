@@ -52,12 +52,13 @@ const SIGNED_POLL_MS = 30_000;
 const STANDING_KEY: Readonly<
   Record<
     Exclude<SignedStanding, 'partly-filled'>,
-    'signedOrders.open' | 'signedOrders.used' | 'signedOrders.nonceDone' | 'signedOrders.lapsed' | 'signedOrders.unread'
+    'signedOrders.open' | 'signedOrders.used' | 'signedOrders.nonceDone' | 'signedOrders.floorDone' | 'signedOrders.lapsed' | 'signedOrders.unread'
   >
 > = {
   open: 'signedOrders.open',
   used: 'signedOrders.used',
   'nonce-cancelled': 'signedOrders.nonceDone',
+  'floor-cancelled': 'signedOrders.floorDone',
   lapsed: 'signedOrders.lapsed',
   unread: 'signedOrders.unread',
 };

@@ -16,14 +16,17 @@ export interface TokenMeta {
 
 export type TokenMetaMap = Readonly<Record<string, TokenMeta>>;
 
-export async function readTokenMeta(client: PublicClient, addresses: readonly `0x${string}`[]): Promise<TokenMetaMap> {
+/** `blockNumber` pins both reads to a snapshot block, so a page that reads
+ *  every figure at one block scales its amounts by metadata from that same
+ *  block; omitted, the latest block answers. */
+export async function readTokenMeta(client: PublicClient, addresses: readonly `0x${string}`[], blockNumber?: bigint): Promise<TokenMetaMap> {
   // One call per field, settled separately: the clients carry no chain
   // object, so there is no multicall address to batch through, and a token
   // that answers one field and not the other keeps the field it answered.
   const results = await Promise.allSettled(
     addresses.flatMap((address) => [
-      client.readContract({ address, abi: erc20Abi, functionName: 'symbol' }),
-      client.readContract({ address, abi: erc20Abi, functionName: 'decimals' }),
+      client.readContract({ address, abi: erc20Abi, functionName: 'symbol', blockNumber }),
+      client.readContract({ address, abi: erc20Abi, functionName: 'decimals', blockNumber }),
     ]),
   );
   const out: Record<string, TokenMeta> = {};

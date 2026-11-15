@@ -523,8 +523,7 @@ contract VaultProtection {
         // platform-held pending changes and holds the position NFTs. Best
         // effort: a failed application never blocks a lock, and every queued
         // row and pending switch-off also carries the lock count it predates.
-        IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
-        try IProtectionApply(self.vaultDiamond()).applyProtection(self.vaultCreationOwner()) {} catch {}
+        _applyPlatform(false);
     }
 
     /// @notice The platform locks the vault (its keeper relaying a LOCK the
@@ -633,6 +632,11 @@ contract VaultProtection {
         l.retired = true; // one-way (Codex #3489 r4)
         IProtectedVaultSelf(address(this)).setOwnerFromProtection(nominee);
         emit PrimaryReplaced(previous, nominee, l.cooldownUntil);
+        // Codex #3489 r10 — the platform side lands WITH the replacement, or
+        // the replacement does not land: the retired wallet's positions are
+        // held and its rows cancelled in this transaction, so there is no
+        // window in which it can move them. (A finalizer anyone may retry.)
+        _applyPlatform(true);
     }
 
     // ─── Nonces ─────────────────────────────────────────────────────────
@@ -645,6 +649,24 @@ contract VaultProtection {
     }
 
     // ─── Internals ──────────────────────────────────────────────────────
+
+    /// @dev Apply this vault's posture on the platform side, through the
+    ///      Diamond's permissionless `applyProtection` (the queued payouts
+    ///      cancelled, the platform-held pending changes voided, the position
+    ///      NFTs held). `strict`: a failed application reverts the caller (a
+    ///      replacement must never land without it); otherwise best effort (a
+    ///      lock must never be blocked; its rows and pending switch-off also
+    ///      carry the lock count they predate).
+    function _applyPlatform(bool strict) private {
+        IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
+        IProtectionApply diamondApply = IProtectionApply(self.vaultDiamond());
+        address account = self.vaultCreationOwner();
+        if (strict) {
+            diamondApply.applyProtection(account);
+        } else {
+            try diamondApply.applyProtection(account) {} catch {}
+        }
+    }
 
     /// @dev The ONE rule for "the account's own wallets" (Codex #3489 r7):
     ///      its creation owner (the original wallet, retired for good once a

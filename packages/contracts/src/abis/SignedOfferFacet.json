@@ -149,6 +149,26 @@
             "internalType": "bool"
           },
           {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -351,6 +371,23 @@
         "name": "acceptSig",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "auth",
+        "type": "tuple",
+        "internalType": "struct LibSignedOffer.FillAuth",
+        "components": [
+          {
+            "name": "validUntil",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "coSignature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -510,6 +547,26 @@
             "name": "creatorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "signer",
@@ -748,6 +805,23 @@
         "name": "acceptSig",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "auth",
+        "type": "tuple",
+        "internalType": "struct LibSignedOffer.FillAuth",
+        "components": [
+          {
+            "name": "validUntil",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "coSignature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -909,6 +983,26 @@
             "internalType": "bool"
           },
           {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -924,6 +1018,19 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelSignedOffersBelow",
+    "inputs": [
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -1079,6 +1186,26 @@
             "internalType": "bool"
           },
           {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -1094,6 +1221,45 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hashSignedOfferFill",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "taker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "filledBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -1138,6 +1304,25 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "signedOfferCancelFloor",
+    "inputs": [
+      {
+        "name": "signer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1311,6 +1496,26 @@
             "internalType": "bool"
           },
           {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -1336,6 +1541,25 @@
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "event",
+    "name": "SignedOfferCancelFloorRaised",
+    "inputs": [
+      {
+        "name": "signer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "floor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1445,7 +1669,44 @@
   },
   {
     "type": "error",
+    "name": "SignedOfferBelowCancelFloor",
+    "inputs": [
+      {
+        "name": "nonce",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SignedOfferCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferCancelFloorNotRaised",
+    "inputs": [
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferCoSignatureInvalid",
     "inputs": []
   },
   {
@@ -1477,10 +1738,58 @@
   },
   {
     "type": "error",
+    "name": "SignedOfferLoanInitiationFeeAboveCap",
+    "inputs": [
+      {
+        "name": "liveBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SignedOfferNonceInvalidated",
     "inputs": [
       {
         "name": "nonce",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferTakerNotAllowed",
+    "inputs": [
+      {
+        "name": "taker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "allowedTaker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferTreasuryFeeAboveCap",
+    "inputs": [
+      {
+        "name": "liveBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capBps",
         "type": "uint256",
         "internalType": "uint256"
       }

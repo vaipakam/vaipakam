@@ -106,6 +106,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['SignedOfferMatched', ['signer', 'matcher']],
   ['SignedOfferCancelled', ['signer']],
   ['SignedOfferNonceBurned', ['signer']],
+  ['SignedOfferCancelFloorRaised', ['signer']],
   // ── Lender intents.
   ['LenderIntentSet', ['owner']],
   ['LenderIntentFunded', ['owner']],

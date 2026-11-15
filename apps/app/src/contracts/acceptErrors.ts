@@ -78,6 +78,11 @@ export const ACCEPT_ERROR_NAMES = [
   'SignedOfferUnsupportedShape',
   'SignedOfferMakerShort',
   'SignedOfferBelowMinimumValue',
+  // #3327 — the maker protections' refusals, appended in the enum.
+  'SignedOfferBelowCancelFloor',
+  'SignedOfferFeeAboveCap',
+  'SignedOfferTakerNotAllowed',
+  'SignedOfferCoSignatureInvalid',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -141,6 +146,10 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   SignedOfferUnsupportedShape: null,
   SignedOfferMakerShort: null,
   SignedOfferBelowMinimumValue: null,
+  SignedOfferBelowCancelFloor: null,
+  SignedOfferFeeAboveCap: null,
+  SignedOfferTakerNotAllowed: null,
+  SignedOfferCoSignatureInvalid: null,
 };
 
 /**

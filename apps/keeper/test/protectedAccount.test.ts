@@ -814,14 +814,14 @@ describe('a run', () => {
       d.replacements.set(BOB, { nominee: DEST, proposedBy: BOB, readyAt: NOW - 1n, approvals: 0n, threshold: 2n });
       ledger.add('ReplacementScheduled', { account: BOB, nominee: DEST, readyAt: String(NOW - 1n) });
       const r = await run();
-      // #3379 B2: each goes to its account's vault, through `protect`; the
-      // replacement is followed by the Diamond's `applyProtection`.
+      // #3379 B2: each goes to its account's vault, through `protect`. The
+      // replacement's finalizer applies the platform side in its own
+      // transaction (Codex #3489 r10), so no separate application follows.
       expect(d.sent.map((s) => [s.fn, s.args])).toEqual([
         ['protect:finalizeAllowlisted', [DEST]],
         ['protect:finalizeSigner', [SIGNER]],
         ['protect:finalizeSigner', [SIGNER]],
         ['protect:finalizeReplacement', []],
-        ['applyProtection', [BOB]],
       ]);
       expect(r.finalized).toHaveLength(4);
       expect(cursors.rows.get(CHANGE_FLOOR_ITEM)).toBe(encodePos(ledger.rows[3]));

@@ -205,6 +205,33 @@ export function creditedTo(logs: readonly Log[], diamond: Hex, vault: Hex): bool
   return creditEvents(logs, diamond, vault, CREDIT_CLASSES).some((a) => BigInt(a.delivered ?? 0n) > 0n);
 }
 
+/** One asset (and, for an NFT, one token) the transaction credited to a
+ *  vault, summed over its records. */
+export interface CreditLot {
+  asset: Hex;
+  tokenId: bigint;
+  amount: bigint;
+}
+
+/** Everything the transaction credited to `vault` for `refs`, per asset and
+ *  token id, as the protocol measured it arriving: read from the records
+ *  themselves, so an asset no review named (a claim-time match paying in
+ *  another token) is found too. Lots that delivered nothing are left out. */
+export function creditLots(logs: readonly Log[], diamond: Hex, vault: Hex, refs: readonly bigint[], classes: readonly number[] = CREDIT_CLASSES): CreditLot[] {
+  const out: CreditLot[] = [];
+  for (const a of creditEvents(logs, diamond, vault, classes)) {
+    if (!refs.includes(BigInt(a.ref ?? 0n))) continue;
+    const asset = String(a.asset) as Hex;
+    const tokenId = BigInt(a.tokenId ?? 0n);
+    const amount = BigInt(a.delivered ?? 0n);
+    if (amount === 0n) continue;
+    const hit = out.find((l) => l.asset.toLowerCase() === asset.toLowerCase() && l.tokenId === tokenId);
+    if (hit) hit.amount += amount;
+    else out.push({ asset, tokenId, amount });
+  }
+  return out;
+}
+
 export function vaultCredit(
   logs: readonly Log[],
   diamond: Hex,

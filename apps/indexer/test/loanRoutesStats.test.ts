@@ -246,17 +246,25 @@ describe('GET /loans/stats — distinct liquidators (#3366)', () => {
     expect(l.windows['30d'].primary.byRoute.discounted).toEqual({ thirdParty: 1, keeper: 0, events: 1 });
   });
 
-  it('reports the other routes apart and never infers a caller for LoanLiquidated', async () => {
+  it('reports the other routes apart, the time-based default sale by its keeper field', async () => {
     const h = fresh();
     liq(h, 'InternalMatchExecuted', { loanIdA: '1', matcher: A }, 1);
     liq(h, 'PeriodicInterestAutoLiquidated', { loanId: '2', settler: KEEPER }, 1);
-    liq(h, 'LoanLiquidated', { loanId: '3', proceeds: '1', treasuryFee: '0' }, 1);
-    liq(h, 'LoanLiquidated', { loanId: '4', proceeds: '1', treasuryFee: '0' }, 10);
+    // ForcedSaleKind.TimeBasedDefault = 3: counted under its keeper field.
+    liq(h, 'ForcedSaleSettled', { loanId: '3', kind: 3, keeper: B }, 1);
+    liq(h, 'ForcedSaleSettled', { loanId: '4', kind: 3, keeper: B }, 10);
+    // The HF kinds repeat HFLiquidationTriggered's sale: never counted twice.
+    liq(h, 'ForcedSaleSettled', { loanId: '5', kind: 1, keeper: A }, 1);
+    liq(h, 'ForcedSaleSettled', { loanId: '6', kind: 2, keeper: A }, 1);
+    // The periodic kind repeats PeriodicInterestAutoLiquidated's.
+    liq(h, 'ForcedSaleSettled', { loanId: '2', kind: 0, keeper: KEEPER }, 1);
     const { liquidators: l } = await stats(h);
     expect(l.windows['30d'].primary).toMatchObject({ thirdParty: 0, keeper: 0, events: 0 });
-    expect(l.windows['30d'].otherRoutes).toMatchObject({ thirdParty: 1, keeper: 1, events: 2 });
-    expect(l.windows['7d'].callerNotRecorded.events).toBe(1);
-    expect(l.windows['30d'].callerNotRecorded.events).toBe(2);
+    expect(l.windows['7d'].otherRoutes).toMatchObject({ thirdParty: 2, keeper: 1, events: 3 });
+    expect(l.windows['30d'].otherRoutes).toMatchObject({ thirdParty: 2, keeper: 1, events: 4 });
+    expect(l.windows['30d'].otherRoutes.byRoute.timeBasedDefault).toEqual({ thirdParty: 1, keeper: 0, events: 2 });
+    expect(l.windows['7d'].otherRoutes.byRoute.timeBasedDefault).toEqual({ thirdParty: 1, keeper: 0, events: 1 });
+    expect(l.caveats.join(' ')).toMatch(/sells nothing/);
     expect(l.caveats.join(' ')).toMatch(/not independent operators/);
   });
 });

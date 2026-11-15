@@ -67,7 +67,8 @@ const DAY = 86_400;
  * ACCOUNT's vault whoever sends it (the owner, a signer, a nominee). A write
  * that changes the posture (a switch-on, a completed move) is followed by the
  * Diamond's `applyProtection(account)`, which applies the platform side; a
- * lock applies its own platform side in the same transaction (Codex #3489 r9).
+ * lock and a completed move apply their own platform side in the same
+ * transaction (Codex #3489 r9, r10).
  */
 function useProtectionWrites(account: `0x${string}` | undefined, vault: `0x${string}` | null) {
   const { address } = useActiveChain();
@@ -921,7 +922,7 @@ function AccountView({
                 type="button"
                 className="btn btn-primary"
                 disabled={busy}
-                onClick={() => ptx('finalizeReplacement', [], true, false)}
+                onClick={() => ptx('finalizeReplacement', [], false, false)}
               >
                 {p.finalizeReplacement}
               </button>

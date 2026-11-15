@@ -381,6 +381,26 @@
             "internalType": "bool"
           },
           {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -406,6 +426,23 @@
         "name": "acceptor",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "auth",
+        "type": "tuple",
+        "internalType": "struct LibSignedOffer.FillAuth",
+        "components": [
+          {
+            "name": "validUntil",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "coSignature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -646,6 +683,11 @@
   {
     "type": "error",
     "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PriceReadOutOfGas",
     "inputs": []
   }
 ]

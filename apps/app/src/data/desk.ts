@@ -55,6 +55,7 @@ import {
 } from './indexer';
 import {
   signedOrderIsSingleValue,
+  signedOrderTakerRefusal,
   type DeskBookRow,
 } from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
@@ -804,6 +805,9 @@ export function signedFillCandidate(
         // Ranged rows never direct-fill (floor-bind / ceiling-consume
         // depth vaporization — see the doc comment above).
         signedOrderIsSingleValue(o.signed.order) &&
+        // #3327 — an order reserved for another wallet, or one needing a
+        // co-signature this app cannot request, has no direct fill here.
+        signedOrderTakerRefusal(o.signed.order, wallet) === null &&
         (!me || o.signed.signer.toLowerCase() !== me),
     ) ?? null
   );

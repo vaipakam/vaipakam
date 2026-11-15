@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 
 /**
  * @title  LibSaleSolvency
@@ -204,8 +205,9 @@ library LibSaleSolvency {
     {
         // Preview must never revert the caller's whole read, so a classifier
         // that reverts degrades here rather than taking the surrounding read
-        // down with it.
-        (bool ok, bytes memory ret) = address(this).staticcall(
+        // down with it. A classifier that ran short of gas is not an
+        // unavailable answer: it reverts by name (#3504).
+        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, loanId)
         );
         // Codex #1635 r5 — this used to degrade to code 1, which the preview

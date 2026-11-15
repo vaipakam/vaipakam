@@ -166,14 +166,18 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const sw = r.risk.partialFill;
+  // #3615: a pro-rata match may run for a borrower's shorter term.
+  const term = parsed.fullTerm ? [] : [format('lendOffer.loseProRataTerm', { days: String(parsed.durationDays) })];
   if (!isRanged(parsed)) {
     return [
       text(sw === null ? 'lendOffer.loseMatchUnread' : sw ? 'lendOffer.loseMatch' : 'lendOffer.loseMatchOff'),
+      ...term,
     ];
   }
   return [
     figured((x) => format('lendOffer.loseRangeParts', { part: tokenAmount(parsed.amount, pair.lending, meta, format, x) })),
     text(sw === null ? 'lendOffer.loseRangeMatchUnread' : sw ? 'lendOffer.loseRangeMatch' : 'lendOffer.loseRangeMatchOff'),
+    ...term,
     text('lendOffer.loseRangeNoDirect'),
     text('lendOffer.loseRangeShare'),
     text('lendOffer.loseFillFixed'),

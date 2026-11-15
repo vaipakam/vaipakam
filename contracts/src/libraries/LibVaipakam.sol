@@ -8351,6 +8351,12 @@ library LibVaipakam {
         ///      its `lenderHoldDiscountBps` / `lenderHoldDiscountView`.
         ///      Appended — append-only.
         mapping(uint256 => LenderEntryDiscount) lenderEntryDiscount;
+        /// @dev #3327 — per signer, the cancel floor of their signed offers:
+        ///      every signed offer whose `nonce` is below it is cancelled.
+        ///      Only rises. Written only by
+        ///      `SignedOfferFacet.cancelSignedOffersBelow`; read by
+        ///      `LibSignedOffer.fillFailure`. Appended — append-only.
+        mapping(address => uint256) signedOfferNonceFloor;
         /// @dev Codex #3489 r5 — per manager, every replaced account it now
         ///      manages (a manager may hold several). Written only by
         ///      `ProtectedAccountFacet` when it applies a replacement; replaces

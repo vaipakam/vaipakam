@@ -473,6 +473,8 @@ function signedOrder(over = {}) {
     allowsPrepayListing: false, allowsParallelSale: false, expiresAt: '0', fillMode: '0',
     periodicInterestCadence: '0', refinanceTargetLoanId: '0', useFullTermInterest: false,
     creatorFull: false, creatorMaxCStar: '0', creatorAllowFullDowngrade: false,
+    maxTreasuryFeeBps: '200', maxLoanInitiationFeeBps: '20',
+    allowedTaker: `0x${'0'.repeat(40)}`, coSigner: `0x${'0'.repeat(40)}`,
     signer: `0x${'c'.repeat(40)}`, nonce: '0', deadline: '0',
     ...over,
   };

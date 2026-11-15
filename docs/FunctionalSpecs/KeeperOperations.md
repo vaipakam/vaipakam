@@ -292,6 +292,16 @@ evidence that the migration has completed.
   Standing-intent sizing searches upward after a minimum-size refusal and
   downward after a capacity, collateral, or risk refusal; a dust refusal is
   not proof that every larger fill would fail.
+- Offers created or re-priced in the last few minutes are looked at first
+  each run, once their terms are old enough for the protocol's terms-age
+  rule, so a new offer with a resting counterparty is matched on the next
+  run. That first look takes at most a fixed minority share of the run's
+  previews, matches and time (a quarter by default, never more than half),
+  and the rotating walk keeps the rest whether or not the share was used, so
+  every pair of counterparties is still reached in turn. An offer gets that
+  priority once for its creation; re-pricing it earns it again only after an
+  hour, so repeated re-pricing buys no standing priority. One wallet's burst
+  of new offers counts as one counterparty, as in the walk.
 - Auto-roll is reserved for proceeds worth at least one hundred times the
   complete transaction fee, using protocol prices and every fee component
   the chain charges. An unreadable fee component is not zero. VPFI-principal
@@ -1127,6 +1137,10 @@ serves. Each ships switched off behind its own flag.
   (or why that could not be read), what was already recorded, what it
   recorded, what landed in the next hour, what another caller recorded first
   and what had no price.
+- A checkpoint batch sent with too little gas fails with a named reason
+  rather than landing with assets silently skipped (#3504), so a gas
+  estimate finds the batch's real cost and "landed" means "written" for
+  every asset whose price reads.
 - The duty ships switched off behind its own flag and pays only gas.
 
 ## Refreshing the market-cap rankings behind asset trust tiers

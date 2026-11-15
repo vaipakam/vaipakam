@@ -34,6 +34,7 @@ import {
 } from '../../lib/ladderFlash';
 import {
   signedOrderIsSingleValue,
+  signedOrderTakerRefusal,
   type SignedRowMeta,
 } from '../../lib/signedOffer';
 import {
@@ -66,6 +67,7 @@ function LevelRow({
   onPick,
   signedFill,
   onFillSigned,
+  wallet,
 }: {
   level: LadderLevel;
   side: 'ask' | 'bid';
@@ -83,6 +85,8 @@ function LevelRow({
    *  (#1131 slice D). Null = no affordance. */
   signedFill: SignedRowMeta | null;
   onFillSigned: (signed: SignedRowMeta) => void;
+  /** The connected wallet — judges a signed row reserved for one taker. */
+  wallet: string | undefined;
 }) {
   // Any signed depth at this level gets the badge — the level may mix
   // on-chain and signed rows at the same rate.
@@ -110,6 +114,17 @@ function LevelRow({
     !signedPartialOnly &&
     level.offers.some(
       (o) => o.signed !== undefined && !signedOrderIsSingleValue(o.signed.order),
+    );
+  // #3327 — signed depth its maker limited (reserved for another wallet,
+  // or needing a co-signature this app cannot request): no Fill button,
+  // and the tooltip says why.
+  const signedRestrictedOnly =
+    hasSigned &&
+    signedFill === null &&
+    !signedPartialOnly &&
+    !signedRangedOnly &&
+    level.offers.some(
+      (o) => o.signed !== undefined && signedOrderTakerRefusal(o.signed.order, wallet) !== null,
     );
   // UX-028 — the interactive pick target is the RATE cell (a real
   // button), NOT the whole row. That un-nests the Take / Fill controls,
@@ -149,7 +164,9 @@ function LevelRow({
                 ? copy.desk.signed.partialBadgeTooltip
                 : signedRangedOnly
                   ? copy.desk.signed.rangedBadgeTooltip
-                  : copy.desk.signed.badgeTooltip
+                  : signedRestrictedOnly
+                    ? copy.desk.signed.restrictedBadgeTooltip
+                    : copy.desk.signed.badgeTooltip
             }
           >
             {copy.desk.signed.badge}
@@ -336,6 +353,7 @@ export function RateLadder({
               }
               signedFill={signedFillCandidate(l, wallet)?.signed ?? null}
               onFillSigned={setFillTarget}
+              wallet={wallet}
             />
           ))}
 
@@ -378,6 +396,7 @@ export function RateLadder({
               }
               signedFill={signedFillCandidate(l, wallet)?.signed ?? null}
               onFillSigned={setFillTarget}
+              wallet={wallet}
             />
           ))}
         </div>

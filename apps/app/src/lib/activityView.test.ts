@@ -317,7 +317,7 @@ describe('coalesceByTx', () => {
   // transaction: a default or fallback entry is labelled by the default (or
   // by the status change, as before the record existed).
   it('never lets the owed-at-default record represent the transaction', () => {
-    for (const lead of ['LoanDefaulted', 'LoanLiquidated', 'LoanStatusChanged']) {
+    for (const lead of ['LoanDefaulted', 'LoanStatusChanged']) {
       const rows = coalesceByTx([
         ev({ kind: 'OwedAtDefaultRecorded', logIndex: 0, loanId: 7 }),
         ev({ kind: lead, logIndex: 1, loanId: 7 }),

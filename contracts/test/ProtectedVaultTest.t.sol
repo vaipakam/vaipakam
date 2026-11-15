@@ -1477,6 +1477,21 @@ contract ProtectedVaultTest is Test {
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
     }
 
+    /// @dev Codex #3489 r10 — a replacement finalized straight on the vault
+    ///      holds the retired wallet's positions in the same transaction, with
+    ///      no separate application: there is no window to move them.
+    function testAReplacementHoldsThePositionsInItsOwnTransaction() public {
+        P.enable(address(diamond), user, DELAY); // NFTs not locked by the owner
+        (bool lockedBefore,,,,) = LibTestPositionNFT.core(address(diamond)).lockOf(user);
+        assertFalse(lockedBefore, "fixture: positions not held yet");
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeReplacement, ()));
+        (bool locked,,,,) = LibTestPositionNFT.core(address(diamond)).lockOf(user);
+        assertTrue(locked, "held by the finalize itself");
+        assertEq(_prot().protectionManagerOf(user), nominee);
+    }
+
     /// @dev Codex #3489 r9 — a vault lock lands its platform side with it: a
     ///      pending co-sign switch-off is voided by the lock's own application.
     function testAVaultLockAppliesItsPlatformSide() public {

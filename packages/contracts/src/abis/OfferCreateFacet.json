@@ -3357,6 +3357,11 @@
   },
   {
     "type": "error",
+    "name": "PriceReadOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ProtocolRegistryUnset",
     "inputs": []
   },

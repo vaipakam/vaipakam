@@ -443,6 +443,26 @@
             "internalType": "bool"
           },
           {
+            "name": "maxTreasuryFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxLoanInitiationFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowedTaker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "coSigner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -678,6 +698,11 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriceReadOutOfGas",
+    "inputs": []
   },
   {
     "type": "error",

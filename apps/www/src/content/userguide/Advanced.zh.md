@@ -1840,7 +1840,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow：请求的条款
 
-Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 1 (AON)，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 1 (AON)，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。当两份报价的 `useFullTermInterest` 都为 false 时，`matchOffers` 接受不超过出借人 `durationDays` 的借款人 `durationDays`，贷款采用借款人的期限（#3615）；直接接受则采用报价自身的期限。
 
 <a id="borrow-request-review"></a>
 
@@ -1918,7 +1918,7 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：报价的条款
 
-未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 1 (AON)（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 1 (AON)（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。当两份报价的 `useFullTermInterest` 都为 false 时，`matchOffers` 接受不超过出借人 `durationDays` 的借款人 `durationDays`，贷款采用借款人的期限（#3615）；直接接受则采用报价自身的期限。
 
 <a id="rate-check"></a>
 
@@ -2033,6 +2033,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 `claimAsLender(loanId)` 和 `claimAsBorrower(loanId)` 带有 `whenNotPaused`，从该方登记的当事人（`loan.lender` / `loan.borrower`）的金库付款给调用者，调用者必须是该方头寸代币的 `ownerOf`。出借人可在 Repaid、Defaulted、FallbackPending 或 InternalMatched 的贷款上领取；借款人只能在 Repaid、Defaulted 或 InternalMatched 上领取。出借人的领取在持有人检查之前拒绝已领取的记录（`AlreadyClaimed`），在之后拒绝没有任何待付项的一方（`NothingToClaim`）；强制平仓记为零的记录仍会执行并关闭头寸。借款人的领取只在抵押品记录和盈余记录都为空或已领取时才拒绝，并按各自的标志分别支付，同时支付仍以另一种代币处于贷款留置之下的抵押品。
 
 审核页读取 `getClaimable`（出借人记录已扣除前任卖家的部分，旁边附有 `getSellersShareOfLenderClaim`）、`getBorrowerSurplusClaim` 和 `getLoanCollateralLien`，并模拟运行领取，这也会执行制裁检查。列表以头寸代币为准：`getUserDashboardClaimables` 列出登记当事人的领取，因此列出的记录只在钱包持有该方时保留；从他人处得到的、已结束贷款上的持有头寸，则直接读取其领取。完成卡片读取 `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed` 和 `LoanSettled`，以及转入钱包的代币；对处于保护账户模式的调用者，读取 `PayoutQueued`（账户自己的金库）、`PayoutHeldInVault`（账户已锁定或队列已满）或 `PaymentCreditedToVault`（其他当事人的金库）。在 FallbackPending 贷款上，出借人的领取可能在领取时执行内部撮合并改写记录，因此完成卡片会将转账与协议自己的记录进行比较。
+
+“Claim and withdraw”是两笔交易。领取会记入持有人自己的金库:每次移动都记录为 `VaultOutflow`,类别为 PositionHolder,`to` 是持有人的金库,`ref` 是贷款编号,`delivered` 是到账的金额。领取上链后,应用按资产(NFT 按代币编号)汇总所领取贷款的 `delivered`,并按该数额逐个资产打开 `withdrawFromVault`,使用金库提取本身的读取和试运行:`withdrawableNow` 仍然限制它,保护模式仍然让它排队。全部领取只对其中的贷款调用做同样的事。“Ready to claim”汇总领取判定当前为开放的每一方的款项;仍在等待或无法读取的一方单独计数。
 
 <a id="claim-everything"></a>
 
@@ -2345,3 +2347,21 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 找回：放弃如何被记录
 
 `disownUntracked(kind, asset, tokenId)` 只需要一个金库和大于零的未计入数额。它没有暂停检查、制裁筛查或管理者检查，因此被替换的钱包和被禁止的金库也能使用，且不需要签名。它发出 `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`，完成卡片从收据中的该事件读取记录的数额。
+
+<a id="analytics-figures"></a>
+
+### 数据分析：数据如何读取
+
+页面取最新区块，并在该区块号读取每个 Diamond 视图：`getProtocolStats`、`getProtocolTVL`、`getProtocolHealth`、`getGlobalCounts`（已发布报价为 `totalOffersCreated`）、`getLifetimeLendingAssets` 及每个资产的 `getLifetimeLendingTotals`，以及 `getNumeraireSymbol`；部署的首个区块来自部署记录。每组单独确定，因此读取失败的视图会在原位说明。页面在同一区块用 `getNumeraireValue(asset, amount, false)` 对每个资产的累计本金和利息估值，这与协议总额使用的取整一致，因此估值部分相加等于 `totalVolumeLentNumeraire` 和 `totalInterestPaidNumeraire`；估值回退的资产会被列为未计入。页面不显示 `defaultRateBps`：其计数器 `terminalBadOrSettledCount` 在贷款进入 Defaulted 或 Settled 时增加，而正常还款后完成领取也会进入 Settled，因此它无法区分违约与正常结束。`getProtocolTVL` 的第三个值是以 NFT 为抵押的未结贷款数量，不是价值。利息为 `lifetimeInterestPaid`，随借款人每次付款写入；出借人回收抵押品不计入其中。
+
+<a id="analytics-fees"></a>
+
+### 数据分析：费用与托管如何读取
+
+费率为 `getTreasuryFeeBps` 和 `getLoanInitiationFeeBps`。费用数据为 `getTreasuryMetrics`：自开始以来的总额是 `feeLedgerTotal`，一天和一周的数据从费用账本末尾最多扫描 `MAX_FEE_EVENTS_ITER`（10,000）条记录，超过后即为下限。每条账本记录按尽力而为规则记载费用计提时的参考货币价值，无法估值时为 0。所显示的国库为 `getTreasury`，即当前金库代码指定的地址。从金库收取的费用会付给该金库自身代码指定的国库，而每当有费用到达 Diamond，`recordTreasuryAccrual` 都会记入 `treasuryBalances`，因此固定在旧代码上的金库或早先的配置，无论 `getTreasury` 显示什么，都可能在那里留下持有的费用。所以页面始终显示 `getTreasuryMetrics` 的持有数额，仅对未结贷款的资产求和，并附上 `getTreasuryConvertConfig` 的最近一次兑换和目标。与部署记录不一致的国库会被标出。
+
+<a id="analytics-vpfi"></a>
+
+### 数据分析：VPFI 信息如何读取
+
+代币为 Diamond 的 `getVPFIToken`，主网络为其 `isCanonicalVpfiChain`，均在页面的区块读取；零地址代币视为未设置。页面从代币读取 `name`、`symbol`、`decimals`、`totalSupply`、`owner` 和 `paused`，在主网络还读取 `cap`、`INITIAL_MINT` 和 `minter`；可铸造量为 `cap` 减去 `totalSupply`，不会低于零。`mint` 只对 `minter` 开放，`setMinter` 只对 `owner` 开放，因此只有当 `owner` 是部署的 `timelock` 时，更换铸造者才需等待时间锁。跨链代币是销毁与铸造的镜像代币，其供应量为主网络资金池为其锁定的数量。地址列表为每个受支持网络在部署记录中的 `vpfiToken`，记录中没有 `vpfiMirror` 的标为主网络。与记录不一致的代币，或不等于 230,000,000 VPFI 的 `cap`，会被标出。

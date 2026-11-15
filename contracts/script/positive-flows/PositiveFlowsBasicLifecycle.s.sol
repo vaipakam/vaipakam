@@ -23,7 +23,7 @@ import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
  *         suite. Its scenario 8 (a lender selling through a buy offer) is the
  *         same flow as {PositiveFlowsAdvancedCredit}'s PF-230 and is run there
  *         only. Its scenarios 5 and 6 (cancelling an unaccepted offer) are
- *         in {PositiveFlowsTimed}, which can step past the cancel cooldown.
+ *         in {PositiveFlowsTimed}, whose staged run waits out the cancel cooldown.
  *         Fixture and ids: {PositiveFlowsBase}.
  *
  *         Every scenario takes two steps (#3502): the first posts the offer;

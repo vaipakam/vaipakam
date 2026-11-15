@@ -80,4 +80,92 @@ library LibPriceGuard {
     function weth() internal view returns (address) {
         return guard().weth();
     }
+
+    // ─── Budgeted reads (#3504) ─────────────────────────────────────────
+    //
+    // The guard reads each outside source (the sequencer feed, Pyth, the
+    // secondary quorum) inside its own try/catch, and several Diamond
+    // readers catch a refused price and carry on without it. A read that
+    // runs out of gas is caught the same way, so whoever sets a
+    // transaction's gas limit could otherwise choose to have a source, or
+    // the whole price, read as missing. Every read of a price or of the
+    // sequencer from the Diamond therefore gives the guard exactly
+    // {GUARD_READ_GAS}: it first checks it holds enough to pass all of it
+    // on, and reverts {PriceReadOutOfGas} by name when it does not. What
+    // the guard answers then depends on the chain's state and the guard's
+    // config, never on the caller's gas limit.
+
+    /// @notice The gas the guard is given for one read: exactly this much,
+    ///         never more and never less. Measured on Base Sepolia
+    ///         (2026-11-11), a whole `getAssetPrice` through the Diamond
+    ///         costs 45,000-57,000 gas; a mainnet guard with Pyth, three
+    ///         secondary sources, the sequencer feed and a two-hop pivot
+    ///         reads more external contracts, so the budget sits several
+    ///         times above that. The trade is stated: a guard that one day
+    ///         needs more than this reads as refusing the price (fail
+    ///         closed) until a facet refresh raises the budget.
+    uint256 internal constant GUARD_READ_GAS = 500_000;
+
+    /// @dev The cost of the call itself that the 63/64 rule is applied
+    ///      after (base and cold-account charges, the calldata), rounded up.
+    uint256 internal constant CALL_OVERHEAD_GAS = 20_000;
+
+    /// @dev What the guard lookup ({guard} / {tryGuard}: the registry
+    ///      pointer and the numeraire check) may spend before the read,
+    ///      rounded up well past its cost.
+    uint256 internal constant GUARD_LOOKUP_GAS = 40_000;
+
+    /// @notice Too little gas was left to give a price read its whole
+    ///         budget. Raise the transaction's gas limit; nothing was read.
+    error PriceReadOutOfGas();
+
+    /// @notice {guard}, for a read the caller is about to make with
+    ///         `{gas: GUARD_READ_GAS}`. Reverts {PriceReadOutOfGas} unless
+    ///         that read is sure to receive its whole budget, checked before
+    ///         the lookup (so the lookup itself cannot be starved) and again
+    ///         after it.
+    function guardForRead() internal view returns (IPriceGuard g) {
+        requireReadGas(GUARD_LOOKUP_GAS);
+        g = guard();
+        requireReadGas(0);
+    }
+
+    /// @notice {tryGuard}, for a best-effort read the caller is about to
+    ///         make with `{gas: GUARD_READ_GAS}`. The same two checks as
+    ///         {guardForRead}, so a missing guard is a fact about the chain,
+    ///         never a lookup the caller starved.
+    function tryGuardForRead() internal view returns (bool ok, IPriceGuard g) {
+        requireReadGas(GUARD_LOOKUP_GAS);
+        (ok, g) = tryGuard();
+        requireReadGas(0);
+    }
+
+    /// @dev What a Diamond SELF-call must receive for the facet it reaches to
+    ///      pass {guardForRead} / {tryGuardForRead}: the guard's budget with
+    ///      its call overhead, the guard lookup, and the Diamond's own
+    ///      dispatch (the selector lookup, the delegatecall and the facet's
+    ///      dispatch, rounded up well past their cost).
+    uint256 internal constant SELF_READ_GAS =
+        (GUARD_READ_GAS * 64) / 63 + CALL_OVERHEAD_GAS + GUARD_LOOKUP_GAS + 20_000;
+
+    /// @notice Revert {PriceReadOutOfGas} unless a Diamond self-call made now
+    ///         to a facet that reads the guard is sure to receive
+    ///         {SELF_READ_GAS}, so the facet's own check passes and the guard
+    ///         gets its whole budget. For a reader that reaches the guard
+    ///         through the Diamond and treats a failed call as "no answer"
+    ///         ({LibPriceRead}, {LibLoanClock.outageWindow}).
+    function requireSelfReadGas() internal view {
+        if (gasleft() < (SELF_READ_GAS * 64) / 63 + CALL_OVERHEAD_GAS) revert PriceReadOutOfGas();
+    }
+
+    /// @notice Revert {PriceReadOutOfGas} unless a call capped at
+    ///         {GUARD_READ_GAS}, made after `extra` more gas is spent, is
+    ///         sure to receive all of it. A capped call receives the smaller
+    ///         of its cap and all but 1/64 of what is left after the call's
+    ///         own cost (covered by {CALL_OVERHEAD_GAS}).
+    function requireReadGas(uint256 extra) internal view {
+        if (gasleft() < (GUARD_READ_GAS * 64) / 63 + CALL_OVERHEAD_GAS + extra) {
+            revert PriceReadOutOfGas();
+        }
+    }
 }

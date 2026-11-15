@@ -34,6 +34,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *           - PositiveFlowsVaultAndVpfi: stuck-token recovery, the
  *             sanctioned-source ban, disown, VPFI deposit and withdraw.
  *           - PositiveFlowsKeeperAutomation: keeper approval and execution.
+ *             Staged (`run-staged.sh PositiveFlowsKeeperAutomation`).
  *           - PositiveFlowsOperatorAdmin: sanctions Tier-1 vs Tier-2, pauses,
  *             treasury accrual and withdrawal, an admin fee knob inside its bounds.
  *           - PositiveFlowsPositionHolder: a transferred position NFT moves
@@ -43,12 +44,13 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *             funded, filled by a solver, paused, withdrawn and rolled.
  *           - PositiveFlowsSwapToRepay: full and partial swap-to-repay
  *             through a fixed-rate adapter, every share of the proceeds
- *             accounted for.
+ *             accounted for. Staged (`run-staged.sh PositiveFlowsSwapToRepay`).
  *           - PositiveFlowsTimed: offer cancel after the cancel cooldown and a
- *             due periodic-interest checkpoint. These need the chain clock to
- *             move between two steps, so here they SKIP wherever the wait
- *             applies and name their staged run,
- *             `script/positive-flows/run-timed.sh`.
+ *             due periodic-interest checkpoint. Their steps wait minutes and
+ *             a month; this simulation steps its clock past each wait, and
+ *             the staged run (`run-staged.sh PositiveFlowsTimed`) waits on
+ *             the chain. It runs last, so its month-long clock step moves no
+ *             other module's clock.
  *         The catalog's cross-chain module is not written here: a forge
  *         script runs on one chain. The cross-chain flows are driven on two
  *         local Anvil chains by `packages/protocol-e2e` instead, and this
@@ -81,12 +83,10 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         transactions; under `--broadcast` the first such fill stops the run
  *         with `TermsAgeNeedsStagedRun` before anything is sent. The modules
  *         that are staged ({PositiveFlowsStaged}: BasicLifecycle,
- *         AdvancedCredit, LenderIntent, PositionHolder) broadcast one at a
- *         time through `script/positive-flows/run-staged.sh <module>`.
- *         {PositiveFlowsTimed} has its own stages (`run-timed.sh`), whose open
- *         stage also fills a fresh offer and so stops the same way until it
- *         moves onto the staged runner (#3574); the others run as this
- *         simulation only until they are staged.
+ *         AdvancedCredit, LenderIntent, PositionHolder, KeeperAutomation,
+ *         SwapToRepay, Timed) broadcast one
+ *         at a time through `script/positive-flows/run-staged.sh <module>`;
+ *         the others run as this simulation only until they are staged.
  *
  *         `--disable-block-gas-limit` is REQUIRED, and is not a workaround for
  *         a contract fault: a forge script runs inside ONE simulated call
