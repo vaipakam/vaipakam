@@ -137,6 +137,8 @@ owner-signed, bounded mandates).
 | `KeeperBackupUpkeep`, `RiskPremiumRateModel` | No | Step mask and timing; tier premiums | — | Whatever their owner's is: the handover moves every owned contract its walk finds to the Timelock, and #651 confirms none is missed |
 | `VaipakamTimelock` | No | Its delay can only rise above the deploy-time floor | Pauser Safe cancels queued operations | — |
 
+> **#3569 (2026-11-12):** the `ProtocolRegistry` row above no longer holds the treasury. The treasury is the `TREASURY` endpoint of the vault code and moves only when new vault code becomes current on the `VaultBeacon` (there is no `AdminFacet.setTreasury` and no registry treasury pointer). So the treasury now carries the `VaultBeacon` row's authority and delay, including its open gap: while the Diamond is paused, the guardian can make any registered version current at once (#3536), and a version registered with a different treasury moves the treasury that way too. A vault pinned to an older version keeps paying that version's treasury until it unpins or the version is revoked.
+
 ## 3. Guardian fast-pause — already in place
 
 The research recommended adding a Diamond-level guardian-pause mirroring the
@@ -255,6 +257,8 @@ step's revision of this document names the dates:
 | E | Lending core (the Diamond's facets) | Every facet replaceable after the Timelock delay | A final non-upgradeable lending core, deployed beside the governed one, that users opt into | §6 |
 | F | Cross-chain contracts, `VPFIToken` | UUPS behind the Timelock; guardian pause | Upgrade paths frozen in code; lane limits stay bounded settings, with no unbounded owner route | Upgrade each proxy, through the Timelock, to an implementation whose upgrade authorisation always refuses, or replace it with a final deployment, on the same criteria; an owner merely choosing not to upgrade is a pledge, not this state. For the lane limits, move each pool's ownership to a contract that can only forward bounded limit changes (or reach the same through a final deployment), so the pool owner's direct setter no longer bypasses the governor. #651 enumerates the full set |
 | G | Collateral-sale executor, backstop vault, aggregator adapters | UUPS, behind the Timelock (the executor through its own owner) | Frozen or replaced by final versions with the lending core | With Stage E: these serve the lending core, so they move with it |
+
+> **#3569 (2026-11-12):** Stage D's treasury half moved to Stage A. The registry holds no treasury pointer any more; the treasury is fixed in each vault code version, so it hardens with the vault code, and the pledge to propose no treasury change is now a pledge to register no vault code with a different treasury.
 
 **Freeze candidates must cover the whole surface.** For any component that
 freezes in place, the freeze covers adding new code as well as replacing or

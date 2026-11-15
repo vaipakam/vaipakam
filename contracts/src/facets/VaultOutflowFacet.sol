@@ -11,6 +11,7 @@ import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -424,7 +425,9 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
             o.to = LibFacet.getOrCreateVault(payeeOwner);
         } else if (c == VaultOutflowTypes.OutflowClass.Treasury) {
-            o.to = LibFacet.getTreasury();
+            // #3569 — the treasury the paying vault's own code names, which
+            // is the only treasury that vault will pay.
+            o.to = LibTreasury.ofVault(s.userVaipakamVaults[user]);
         } else if (c == VaultOutflowTypes.OutflowClass.Backstop) {
             // The backstop's own Vaipakam vault, where it holds what it
             // absorbs. The settlement books the arrival (tracked ledger).

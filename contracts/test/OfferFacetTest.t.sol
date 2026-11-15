@@ -275,7 +275,6 @@ contract OfferFacetTest is Test {
         // Diamond born paused (LibPausable). Clear via direct
         // storage write since this fixture doesn't cut AdminFacet.
         vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
-        TestMutatorFacet(address(diamond)).setTreasuryAddress(address(diamond));
         // nftContract = nftFacet;
         // Initialize vault implementation
         vm.prank(owner);

@@ -1471,15 +1471,62 @@ contract upgrade to change.
 
 ### Treasury address
 
-Zero rejected at the setter level. The
-treasury is the destination for all yield-fee and loan-initiation-fee
+**Not a Diamond setting any more (#3569, owner decision 2026-11-12).**
+The treasury lives in exactly one place: the `TREASURY` endpoint fixed
+into the vault code (the vault implementation the `VaultBeacon` serves,
+#3431). There is no `AdminFacet.setTreasury`, no `TreasurySet` event and
+no treasury pointer in the protocol registry. `AdminFacet.getTreasury()`
+reads the `TREASURY` of the CURRENT vault code (zero when no beacon is
+installed).
+
+The treasury is the destination for all yield-fee and loan-initiation-fee
 flows that don't go to the matcher kickback or the VPFI tier discount
 (a direct reduction of the fee charged, not a rebate — see the
 Loan Initiation Fee section above).
-Misconfig surfaces as fees disappearing into the wrong wallet —
-no on-chain bound stops this beyond the "non-zero" check. Operators
-must sanity-check the address against the published treasury
-multisig.
+
+**How it is set.** `DeployDiamond` builds the vault code with
+`TREASURY_ADDRESS`, refuses a zero treasury, and after the beacon is set
+checks that `getTreasury()` reads that address back. A fee with no
+treasury (vault code naming zero) is refused by name (`TreasuryUnset`),
+never sent to address zero.
+
+**How it moves, and who can move it.** Only by new vault code: register
+an implementation built with the new treasury on the `VaultBeacon`
+(`registerVersion`), propose it as current (`proposeCurrentVersion`),
+wait `MIN_CODE_DELAY` (7 days), then `executeCurrentVersion`. Registering
+and proposing are the beacon owner's (the Timelock after handover);
+anyone may execute once the delay has passed, and the Pauser Safe can
+cancel the proposal during the wait.
+
+**The emergency path moves it at once.** While the Diamond is paused, the
+beacon's guardian (the Pauser Safe) can call
+`guardianRevokeVersion(currentId, successorId)`, which revokes the current
+version and makes `successorId` current in the same transaction, with no
+proposal and no wait. The successor must already be registered, and
+registering is the owner's, so the guardian can only switch to code the
+owner put in the registry; but if that code names a different treasury,
+the treasury moves immediately. So every registered, unrevoked version is
+a treasury the guardian can switch to: read `TREASURY()` on each one, and
+revoke a version whose treasury you would not accept. These are the only
+two ways. Steps and consequences: `UpgradeSafety.md`, "Moving the treasury
+(#3569)".
+
+**Where each fee goes.** A fee the Diamond moves itself (a payer's
+wallet pull, a share the Diamond already holds) goes to the CURRENT vault
+code's treasury. A fee drawn from a vault goes to the treasury that
+VAULT'S OWN code names: a vault whose owner pinned an older version keeps
+paying that version's treasury until the owner unpins, or until that
+version is revoked (a non-current version is revoked with successor 0;
+its pinned vaults then run the current code). The Diamond counts a fee in
+`treasuryBalances` only when it actually reached the Diamond, and the
+Diamond-as-treasury operations (treasury convert, payroll funding,
+backstop seed and withdraw) require the current vault code to name the
+Diamond.
+
+Misconfig surfaces as fees going to the wrong wallet — no on-chain bound
+stops this beyond the non-zero check. Operators must sanity-check the
+address built into the vault code against the published treasury
+multisig before it becomes current.
 
 ### 0x proxy / Pancakeswap V3 factory / Sushiswap V3 factory
 
@@ -1945,8 +1992,9 @@ touches user funds or per-user consent state.
 - **Default new chain bring-up**: every numeric knob defaults to a
   reasonable library value. Governance does NOT need to write each
   knob at deploy time; the only mandatory writes are the
-  chain-specific addresses (treasury, oracles, the CCIP messenger
-  registry, and the sanctions oracle on retail).
+  chain-specific addresses (oracles, the CCIP messenger registry, and
+  the sanctions oracle on retail). The treasury is not a write: it is
+  fixed into the vault code at deploy (#3569).
 - **Dark and dormant knobs are not "unconfigured"**: the Full tariff
   switch, the reward claim horizon, and the surplus-flag multiple all
   ship off, and the allocation register ships dormant. A bring-up

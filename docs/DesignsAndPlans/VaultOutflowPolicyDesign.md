@@ -758,6 +758,16 @@ checks what actually happens instead.
    change. A Diamond setting that differs from the vault's constant fails
    closed: the vault refuses the outflow or the grant. The launch readiness
    check compares the two and names any mismatch.
+
+   > **#3569 (2026-11-12):** the treasury no longer has a Diamond-side copy
+   > to mismatch. The vault code's `TREASURY` is the one treasury:
+   > `AdminFacet.setTreasury` and `TreasurySet` are removed,
+   > `AdminFacet.getTreasury()` reads the current vault code's `TREASURY`,
+   > and a fee the Diamond moves itself goes there. A fee drawn from a vault
+   > goes to the treasury that vault's own code names, so a vault pinned to
+   > an older version pays that version's treasury until it unpins or the
+   > version is revoked. "Vault endpoints match" no longer compares the
+   > treasury; the other endpoints are unchanged.
 2. **The backstop exists before the vault code.** The backstop vault is now
    provisioned in `DeployDiamond` (step 5c-iii), before step 5d builds the
    vault code with its address. Provisioning no longer waits for the
@@ -812,7 +822,9 @@ checks what actually happens instead.
 8. **The registry stays the Diamond's.** The protocol registry keeps the
    endpoints the Diamond itself reads, seeded at construction, and the
    deploy refuses a registry whose seeded set is empty. The treasury pointer
-   is kept there as the published record. The launch readiness check
+   is kept there as the published record. (#3569, 2026-11-12: no longer.
+   The registry seeds no treasury pointer and `RegistryKeys.TREASURY` is
+   removed; the vault code's `TREASURY` is the published record.) The launch readiness check
    ("vault endpoints match") holds the vault constants to the Diamond's own
    settings: the treasury, the backstop vault, the 1inch order protocol,
    and, once a listing executor is set, its Seaport and an allowed conduit.

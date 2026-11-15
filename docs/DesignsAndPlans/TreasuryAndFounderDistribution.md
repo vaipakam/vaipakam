@@ -278,6 +278,11 @@ This is structurally different from automated revenue routing.
 
 - **Diamond is the treasury** (`s.treasury == address(this)`).
   Already supported via the configurable `treasury` storage slot.
+  (#3569, 2026-11-12: no longer a storage slot. The treasury is the
+  `TREASURY` endpoint of the vault code, so "the Diamond is the
+  treasury" means the current vault code names the Diamond; moving it is
+  a vault code change on the `VaultBeacon`. `treasuryBalances` counts
+  only fees that actually reached the Diamond.)
 - **Per-token fee accrual** via the existing
   `LibFacet.recordTreasuryAccrual` path. Already implemented;
   fees from LIF, yield share, liquidation handling, late fees,
@@ -660,8 +665,9 @@ thresholds (`setTreasuryConvertThresholds`; defaults $10k, 30 days)
 are the only remaining packed-config knobs.
 
 **Hard precondition**: the convert function and the salary stream
-require **Diamond-as-treasury mode** (`s.treasury == address(this)`)
-— `treasuryBalances` only tracks convertible funds then. The
+require **Diamond-as-treasury mode** (`s.treasury == address(this)`;
+since #3569, 2026-11-12: the current vault code's `TREASURY` is the
+Diamond) — `treasuryBalances` only tracks convertible funds then. The
 external-EOA/multisig treasury mode is incompatible with the
 on-chain salary stream.
 

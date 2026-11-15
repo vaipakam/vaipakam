@@ -118,7 +118,6 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'SwapAdaptersReordered',
   'SushiswapV3FactorySet',
   'PancakeswapV3FactorySet',
-  'TreasurySet',
   'ZeroExProxySet',
   'AllowanceTargetSet',
   'SanctionsOracleSet',

@@ -7,6 +7,7 @@ import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -131,7 +132,7 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
     // ─── Convert — gate reverts (no swap needed) ─────────────────────────
 
     function test_convert_treasuryNotDiamond_reverts() public {
-        TestMutatorFacet(address(diamond)).setTreasuryAddress(makeAddr("extEOA"));
+        LibTestVaultBeacon.setTreasury(address(diamond), makeAddr("extEOA"));
         vm.prank(owner);
         vm.expectRevert(TreasuryFacet.TreasuryNotDiamond.selector);
         TreasuryFacet(address(diamond)).convertTreasuryAsset(

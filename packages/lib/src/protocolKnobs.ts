@@ -131,8 +131,10 @@ export const PROTOCOL_KNOB_GETTERS = [
   // when governance has set none).
   { key: 'minOfferValueNumeraire', getter: 'getMinOfferValueNumeraire', setterEvents: ['MinOfferValueNumeraireSet'] },
   { key: 'maxOpenOffersPerWallet', getter: 'getMaxOpenOffersPerWallet', setterEvents: ['MaxOpenOffersPerWalletSet'] },
-  // Treasury
-  { key: 'treasury', getter: 'getTreasury', setterEvents: ['TreasurySet'] },
+  // Treasury. #3569 — the vault code's immutable TREASURY, read through the
+  // vault beacon: it moves when the beacon's current version moves, which
+  // the beacon (not the Diamond) announces, so it is eventless here.
+  { key: 'treasury', getter: 'getTreasury', setterEvents: ['VaultBeaconSet'], eventless: true },
   // #2680 — the swap venues' factories that have a getter. (The 0x proxy
   // and the Uniswap V3 factory have none; the console says so.)
   { key: 'pancakeswapV3Factory', getter: 'getPancakeswapV3Factory', setterEvents: ['PancakeswapV3FactorySet'] },

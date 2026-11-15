@@ -1127,6 +1127,10 @@ SecondaryOracleMaxStalenessSet(uint40 previous, uint40 current)
 
 Operators should hook each into the existing config-change alerting
 the same way `TreasurySet` / `ZeroExProxySet` are tracked today.
+(#3569, 2026-11-12: `TreasurySet` is removed with `AdminFacet.setTreasury`.
+The treasury is the current vault code's `TREASURY` and moves only through
+the `VaultBeacon`, so the treasury alert watches the beacon's
+`CurrentVaultVersionProposed` / `CurrentVaultVersionSet` events instead.)
 
 ### 9.5 External consumers of the admin surface
 

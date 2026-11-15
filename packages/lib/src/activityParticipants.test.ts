@@ -76,7 +76,7 @@ describe('activityParticipants — the rule', () => {
 
   it('names nobody for an exempt or unknown kind, whatever its args hold', () => {
     expect(activityParticipants('RoleGranted', { account: A, sender: A })).toEqual([]);
-    expect(activityParticipants('TreasurySet', { newTreasury: A })).toEqual([]);
+    expect(activityParticipants('ZeroExProxySet', { newProxy: A })).toEqual([]);
     expect(activityParticipants('NoSuchEvent', { user: A })).toEqual([]);
   });
 

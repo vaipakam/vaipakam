@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -107,7 +108,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     error ZeroAmount();
     error VPFITokenNotRegistered();
     /// @notice `convertTreasuryAsset` requires Diamond-as-treasury
-    ///         mode (`s.treasury == address(this)`) — only then does
+    ///         mode (the vault code names the Diamond as the treasury, #3569) — only then does
     ///         `treasuryBalances` track convertible funds.
     error TreasuryNotDiamond();
     /// @notice The conversion eligibility gate (USD-value OR max-interval)
@@ -324,7 +325,8 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      *      governance action.
      *
      *      Requires Diamond-as-treasury mode — `treasuryBalances` only
-     *      tracks convertible funds when `s.treasury == address(this)`.
+     *      tracks convertible funds when the vault code names the
+     *      Diamond as the treasury (#3569).
      *
      *      The target allocation is the fully governance-configurable
      *      `s.treasuryConvertTargets` list (`ConfigFacet.setTreasuryConvertTargets`)
@@ -372,7 +374,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // Diamond-as-treasury precondition.
-        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        if (!LibTreasury.isDiamond()) revert TreasuryNotDiamond();
         if (tokenIn == address(0)) revert InvalidAddress();
         // Codex Sub 3.A round-1 P2 — the no-convert flag must also
         // block the treasury-convert path; otherwise an admin or

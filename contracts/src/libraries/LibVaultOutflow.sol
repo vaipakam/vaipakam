@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {VaultOutflowTypes, OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibDelivery} from "./LibDelivery.sol";
+import {LibTreasury} from "./LibTreasury.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /// @dev The policy host's entries, for the self-call encoding.
@@ -181,9 +182,17 @@ library LibVaultOutflow {
 
     // ─── Configured payees ───────────────────────────────────────────────
 
-    /// @notice To the treasury.
-    function toTreasury(address user, address asset, uint256 amount, uint256 ref, uint8 reason) internal returns (uint256) {
-        return _go(user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.Treasury, ref, 0, reason);
+    /// @notice To the treasury `user`'s vault code names (#3569): a vault
+    ///         pinned to an older version pays that version's treasury.
+    /// @return received What the treasury received.
+    /// @return to The treasury it went to, which the caller records the
+    ///         accrual against.
+    function toTreasury(address user, address asset, uint256 amount, uint256 ref, uint8 reason)
+        internal
+        returns (uint256 received, address to)
+    {
+        to = LibTreasury.ofUserVault(user);
+        received = _go(user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.Treasury, ref, 0, reason);
     }
 
     /// @notice To the backstop vault.
