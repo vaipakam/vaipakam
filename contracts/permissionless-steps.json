@@ -437,6 +437,11 @@
       "flag": "TIER_PUSH_RETRY_ENABLED",
       "evidence": "apps/keeper/src/tierPushRetry.ts"
     },
+    "ProtocolBroadcastFacet.broadcastTierTableVersionTo(uint256)": {
+      "class": "gap",
+      "issue": "#912",
+      "why": "sends Base's tier-table version to one mirror after governance changes the tier table, so the mirror stops honouring caches stamped with the old table; the caller pays the lane. The keeper pass (compare each mirror's getCurrentTierTableVersion with getTierTableVersion, send where behind, shipped disarmed) lands with the contract batch"
+    },
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"

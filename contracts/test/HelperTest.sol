@@ -2005,7 +2005,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](11);
         selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -2016,6 +2016,9 @@ contract HelperTest {
         // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
         // the spacing window (the budget pays only lowers, never a raise).
         selectors[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        selectors[8] = ProtocolBroadcastFacet.broadcastTierTableVersionTo.selector;
+        selectors[9] = ProtocolBroadcastFacet.quoteBroadcastTierTableVersionTo.selector;
+        selectors[10] = ProtocolBroadcastFacet.getTierTableVersion.selector;
         return selectors;
     }
 

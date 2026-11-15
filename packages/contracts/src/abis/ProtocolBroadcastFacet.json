@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "broadcastTierTableVersionTo",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "deliverTierPush",
     "inputs": [
       {
@@ -132,6 +145,19 @@
   },
   {
     "type": "function",
+    "name": "getTierTableVersion",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserTierPushNonce",
     "inputs": [
       {
@@ -161,6 +187,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "quoteBroadcastTierTableVersionTo",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nativeFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -465,6 +510,11 @@
   {
     "type": "error",
     "name": "TierPushRefundFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TierTableVersionUnset",
     "inputs": []
   },
   {

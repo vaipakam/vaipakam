@@ -1152,8 +1152,13 @@
   },
   {
     "type": "function",
-    "name": "quoteSendVersionBumped",
+    "name": "quoteSendVersionBumpedTo",
     "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "newVersion",
         "type": "uint16",
@@ -1477,8 +1482,13 @@
   },
   {
     "type": "function",
-    "name": "sendVersionBumped",
+    "name": "sendVersionBumpedTo",
     "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "newVersion",
         "type": "uint16",
@@ -1490,7 +1500,13 @@
         "internalType": "address payable"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
     "stateMutability": "payable"
   },
   {

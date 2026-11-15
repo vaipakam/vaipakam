@@ -947,41 +947,39 @@ contract VaipakamRewardMessenger is
         _refund(refundAddress, msg.value - fee);
     }
 
-    /// @notice T-087 Sub 2.B — Base → every configured mirror eager
-    ///         tier-table-version bump on governance threshold / BPS
-    ///         change. Diamond-only.
-    // slither-disable-start msg-value-loop
-    function sendVersionBumped(
+    /// @notice #912 — send the canonical tier-table version to ONE mirror,
+    ///         so it stops honouring tier caches stamped with an older table
+    ///         at once instead of waiting for each user's next push.
+    ///         Diamond-only: the Diamond's permissionless
+    ///         `broadcastTierTableVersionTo` reads the version from its own
+    ///         storage, so no caller can choose what is sent.
+    /// @dev    One lane per call, like {sendTierUpdateTo}: a lane that cannot
+    ///         be routed fails alone, and a lane can be re-sent on its own.
+    ///         The mirror's ingress is a monotonic max, so a repeat or an
+    ///         out-of-order delivery changes nothing. The caller's value pays
+    ///         the lane; what is left is refunded to `refundAddress`.
+    function sendVersionBumpedTo(
+        uint256 destChainId,
         uint16 newVersion,
         address payable refundAddress
-    ) external payable onlyDiamond whenNotPaused nonReentrant {
+    ) external payable onlyDiamond whenNotPaused nonReentrant returns (bytes32 messageId) {
         if (messenger == address(0)) revert MessengerNotSet();
-        uint256 n = broadcastDestinationChainIds.length;
-        if (n == 0) revert NoBroadcastDestinations();
+        if (!_isBroadcastDestination(destChainId)) revert NotBroadcastDestination(destChainId);
 
         bytes memory payload = abi.encode(MSG_TYPE_VERSION_BUMPED, newVersion);
+        uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+            destChainId, payload, _noTokens(), destGasLimit
+        );
+        if (msg.value < fee) revert InsufficientFee(msg.value, fee);
 
-        uint256 spent;
-        for (uint256 i; i < n; ++i) {
-            uint256 dst = broadcastDestinationChainIds[i];
-            uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
-                dst, payload, _noTokens(), destGasLimit
-            );
-            if (msg.value - spent < fee) {
-                revert InsufficientFee(msg.value - spent, fee);
-            }
-            // slither-disable-next-line arbitrary-send-eth,msg-value-loop
-            bytes32 messageId = ICrossChainMessenger(messenger).sendMessage{
-                value: fee
-            }(dst, payload, _noTokens(), destGasLimit);
-            spent += fee;
+        // slither-disable-next-line arbitrary-send-eth
+        messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
+            destChainId, payload, _noTokens(), destGasLimit
+        );
+        emit VersionBumpSent(messageId, destChainId, newVersion);
 
-            emit VersionBumpSent(messageId, dst, newVersion);
-        }
-
-        _refund(refundAddress, msg.value - spent);
+        _refund(refundAddress, msg.value - fee);
     }
-    // slither-disable-end msg-value-loop
 
     /// @notice Quote the native fee for a {sendTierUpdateTo} to one lane.
     ///         Reverts `NotBroadcastDestination` for a chain off the list,
@@ -1039,22 +1037,21 @@ contract VaipakamRewardMessenger is
         return false;
     }
 
-    /// @notice T-087 Sub 2.B — quote total fee for a {sendVersionBumped}.
-    function quoteSendVersionBumped(uint16 newVersion)
+    /// @notice #912 — quote the native fee for a {sendVersionBumpedTo} to
+    ///         one lane. Reverts `NotBroadcastDestination` for a chain off the
+    ///         list, as the send does.
+    function quoteSendVersionBumpedTo(uint256 destChainId, uint16 newVersion)
         external
         view
         returns (uint256 nativeFee)
     {
-        uint256 n = broadcastDestinationChainIds.length;
-        bytes memory payload = abi.encode(MSG_TYPE_VERSION_BUMPED, newVersion);
-        for (uint256 i; i < n; ++i) {
-            nativeFee += ICrossChainMessenger(messenger).quoteMessageFee(
-                broadcastDestinationChainIds[i],
-                payload,
-                _noTokens(),
-                destGasLimit
-            );
-        }
+        if (!_isBroadcastDestination(destChainId)) revert NotBroadcastDestination(destChainId);
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            destChainId,
+            abi.encode(MSG_TYPE_VERSION_BUMPED, newVersion),
+            _noTokens(),
+            destGasLimit
+        );
     }
 
     /// @dev The shared→wire field mapping for the V2 fields the kind-10 wire

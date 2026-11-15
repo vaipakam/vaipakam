@@ -3340,7 +3340,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](8);
+        s = new bytes4[](11);
         s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -3351,6 +3351,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
         // the spacing window (the budget pays only lowers, never a raise).
         s[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        // #912: the per-mirror tier-table version send, its quote and the
+        // canonical version a keeper compares each mirror against.
+        s[8] = ProtocolBroadcastFacet.broadcastTierTableVersionTo.selector;
+        s[9] = ProtocolBroadcastFacet.quoteBroadcastTierTableVersionTo.selector;
+        s[10] = ProtocolBroadcastFacet.getTierTableVersion.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
