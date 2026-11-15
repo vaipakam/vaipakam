@@ -1,0 +1,116 @@
+# Collateral priced by an exchange rate — design
+
+**Status:** owner approved the feature on 2026-11-15, before the feature freeze. Card #3683. Design for review before build.
+**Related:** `PriceGuardDesign.md` (#3272), `FeedRegistryDesign.md` (#2880), `LoanSettingsSnapshotDesign.md` (#3437), `OraclePolicy.md`.
+
+## 1. Why
+
+A large part of what people hold on-chain is no longer a plain token. It is a token that stands for a growing amount of another one: a staked form of a chain's native asset, or a share in a vault. One unit is redeemable for a number of units of the underlying asset, and that number, the **exchange rate**, rises as rewards arrive. These are among the most used collateral assets in on-chain lending.
+
+The platform cannot take them today. Scouting the code on 2026-11-15: the price guard prices a token from a registered market feed for that token, cross-checked by secondary sources. It has no way to say "this token is worth the underlying's price times a rate". Without a registered feed a token is illiquid, valued at zero and lent against only by explicit consent.
+
+## 2. What is added
+
+A second way for the price guard to price a token:
+
+> price of the token = price of its underlying asset × the token's exchange rate
+
+The underlying's price comes through the guard's existing path, with every check it has today. The rate comes from a per-token rate source the guard is told about. The result then passes the same downstream checks as any other price.
+
+Scope of the first version:
+
+- **Collateral only.** A rate-priced token may be posted as collateral. It may not be the lending asset. Every safeguard below errs toward a lower value, which protects the lender when the token is collateral and would do the opposite if it were the debt.
+- **Tokens whose balance does not change by itself.** The token must carry its growth in the rate, not in a balance that rebases. Vaults account in fixed balances.
+- A short admitted list to start: two or three of the most established staked forms of a chain's native asset, on the chains where they have deep markets.
+
+## 3. The rate source
+
+Each rate-priced token has one binding, held by the price guard and changed only through its delayed changes:
+
+| Field | Meaning |
+| --- | --- |
+| Underlying | The asset the rate converts into. It must itself be priced by a registered feed, not by another rate. |
+| Rate source kind | **Rate feed**: a feed, published by the same network as the price feeds, that reports the token's exchange rate; registered in the feed registry with its heartbeat like any feed. **Token rate**: the token contract's own conversion function, read through a small fixed reader for that token type. |
+| Largest rise per day | The most the accepted rate may grow in a day. |
+| Largest fall | The size of a single drop that marks the price distrusted. |
+| Market feed, optional | A registered market feed for the token itself, where one exists. |
+
+Which kind to use is decided per token and chain. On the chain where the token is issued, the token's own conversion function is the source of truth for redemption. On other chains that function usually does not exist and the rate arrives only as a feed.
+
+## 4. Safeguards
+
+1. **The rate may not jump up.** The guard keeps the last accepted rate and its time. A read uses the lower of the reported rate and the last accepted rate grown at the largest daily rise. An attacker who inflates a vault's share value in one transaction (for example by donating to it) gains nothing: the price moves by at most the daily bound. Anyone may call a function that records the current accepted rate, so the stored point keeps up with honest growth; the hourly price checkpoint pass does it.
+2. **A drop is taken at once, and a large one stops trust.** A lower rate is used immediately, since it lowers the collateral's value. A single fall larger than the configured bound marks the token's price distrusted, with the same effect a distrusted price has today, until governance or the guardian confirms the new level.
+3. **A stale rate is not used.** A rate feed older than its heartbeat, or a reader call that fails, gives no price, handled like any missing feed.
+4. **The market may say less.** Where a market feed for the token exists, the collateral value is the lower of the rate price and the market price. A token can trade below its redemption value when exits are slow, and a forced sale gets the market price.
+5. **The underlying keeps every check it has**: staleness, the secondary sources, the sequencer check.
+6. **Liquidity is still measured on the token itself.** A rate-priced token is liquid only if it passes the same sale-size and slippage probe as any other, against the token's own pools. A sound rate with no market is still illiquid.
+7. **The loan-to-value tier is set per token**, no higher than the underlying's and normally one step lower.
+
+## 5. How it fits the settings a loan carries
+
+Under #3437 a loan carries the price guard's address and price version, and that design's rule 5 says any governance-settable state inside the guard must be versioned or stop-only. The rate binding is such state:
+
+- adding or changing a binding is a delayed guard change that raises the price version, so open loans keep reading the binding they opened with;
+- marking a token's price distrusted, and muting a rate source, are stop-only actions that reach every loan at once;
+- the last accepted rate is measured state, not a setting. It is one value per token, shared by every version that uses the same binding, and a new binding starts its own.
+
+The hourly checkpoints and the calm test read the resulting price and need no change.
+
+## 6. Admission checklist
+
+A token is proposed for the list only with a written answer to each, kept with the proposal:
+
+1. The balance does not rebase; growth is in the rate.
+2. The rate can fall only through a loss event (for a staked asset, a penalty), and the size of the largest plausible single loss is stated.
+3. The rate source: which kind, who can change the contract behind it and with what delay.
+4. The underlying has a registered feed of the quality required for a lending asset.
+5. On-chain market depth for the token on that chain, against the sale sizes the platform's tiers assume.
+6. How long a redemption takes, and what the token has traded at against its redemption value in past stress.
+7. The token contract's upgrade and pause powers.
+8. The proposed bounds: largest rise per day, largest fall, loan-to-value tier.
+
+The app's asset page states that the asset is priced from an exchange rate, names the underlying, and shows the bounds.
+
+## 7. Contract changes
+
+| Where | Change |
+| --- | --- |
+| Price guard | A source kind for a rate-priced token; the binding; the accepted-rate record and its recorder; the lower-of rule with an optional market feed; the distrust flag on a large fall. The readers are separate contracts, so adding a token type does not grow the guard; measure the guard's size against the limit in the same change. |
+| Feed registry | Rate feeds registered as their own entry type, so a rate feed can never be read as a price feed or the reverse. |
+| Readers | One small fixed contract per token type for the token-rate kind. No settings, no owner. |
+| Offer creation and admission | A rate-priced token is refused as the lending asset. |
+| Views | Per token: the binding, the reported and accepted rate, the price and which of rate or market set it. |
+| Keeper | The hourly checkpoint pass also records accepted rates. |
+
+The price guard work belongs with the rest of #3272 and the as-of reads of #3437, and should be built by the same hands in the same pass.
+
+## 8. Tests
+
+1. Price equals underlying times rate for both source kinds, with decimals of every combination in the admitted list.
+2. An inflated rate in one block moves the price by no more than the daily bound; honest growth over many days is followed.
+3. A small fall is used at once; a fall past the bound marks the price distrusted and every consumer treats it as such.
+4. A stale feed or failing reader gives no price.
+5. With a market feed, the lower of the two is used in each direction.
+6. Refused as a lending asset on create, accept, match and intent paths.
+7. A binding change raises the price version; an open loan keeps the old binding; a mute reaches every loan.
+8. A rate-priced token with no pool depth is illiquid.
+9. The underlying may not itself be rate-priced.
+
+## 9. Alternatives considered
+
+1. **Treat such tokens as illiquid.** The status quo. Safe, and it shuts out a large share of the collateral people hold.
+2. **Use only a market feed for the token.** Simple where a feed exists, but the market price of these tokens is thinly traded on many chains and easier to push than the underlying's, and on some chains no market feed exists at all.
+3. **Use only the rate, ignore the market.** Overvalues the collateral whenever the token trades below its redemption value. Rejected in favour of the lower of the two.
+4. **Allow them as lending assets too.** Needs the opposite rounding and bounds everywhere. Left for after the audit.
+5. **A general formula engine in the guard** (any price from any chain of sources). More power than is needed and far more to audit. Rejected: one multiplication, one level deep.
+
+## 10. Recommendation
+
+Add the rate-priced source kind to the price guard with the safeguards in section 4, for collateral only, starting with a short admitted list.
+
+## 11. Open items for the builder to raise, not decide silently
+
+- The first admitted tokens per chain and their bounds, as proposals under the checklist.
+- Whether the first version ships both source kinds or the rate feed alone.
+- Whether a platform-wide limit per collateral asset accompanies the first admission. That decision is open with the owner.
