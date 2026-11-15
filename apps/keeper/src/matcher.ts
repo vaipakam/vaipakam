@@ -71,6 +71,7 @@ import {
   FreshLaneTracker,
   freshBuckets,
   freshLaneBudget,
+  freshLaneDeadline,
   freshLaneShare,
   type FreshLaneBudget,
 } from './freshLane';
@@ -1875,10 +1876,15 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
   const lane = freshLaneBudget(share, {
     previews: MAX_PREVIEW_CALLS_PER_TICK,
     submits: MAX_SUBMITS_PER_TICK,
-    wallMs: PER_CHAIN_WALL_TIME_BUDGET_MS,
   });
 
+  // The lane's wall time is its share of what is LEFT of this pass, not of
+  // the whole budget: listing and hydration have already spent part of it,
+  // and the run's own deadline (#2572) can be shorter than the chain budget.
+  // Measured from here, the walk keeps (1 - share) of the time it really has.
   const laneStart = Date.now();
+  const passEnd = Math.min(tickStart + PER_CHAIN_WALL_TIME_BUDGET_MS, ctx.notAfterMs);
+  const laneEnd = freshLaneDeadline(share, laneStart, passEnd);
   const walk = await runMatchWalks({
     lenders,
     borrowers,
@@ -1886,7 +1892,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
     fresh,
     lane,
     stop: overBudget,
-    laneStop: () => Date.now() - laneStart > lane.wallMs,
+    laneStop: () => Date.now() >= laneEnd,
     onEntered: (o) => tracker.markEntered(o, nowSec),
     io: {
       preview: (L, B) => previewMatch(ctx, L.id, B.id),

@@ -51,22 +51,28 @@ export function freshLaneShare(raw: string | undefined): number {
   return Math.min(FRESH_LANE_MAX_SHARE, Math.max(0, n));
 }
 
-/** The lane's caps for one pass, each the floor of `share` of the pass's. */
+/** The lane's count caps for one pass, each the floor of `share` of the
+ *  pass's. Its wall time is sized by the caller from the time the pass has
+ *  left when the lane starts ({@link freshLaneDeadline}). */
 export interface FreshLaneBudget {
   readonly previews: number;
   readonly submits: number;
-  readonly wallMs: number;
 }
 
-export function freshLaneBudget(
-  share: number,
-  pass: { previews: number; submits: number; wallMs: number },
-): FreshLaneBudget {
+export function freshLaneBudget(share: number, pass: { previews: number; submits: number }): FreshLaneBudget {
   return {
     previews: Math.floor(pass.previews * share),
     submits: Math.floor(pass.submits * share),
-    wallMs: Math.floor(pass.wallMs * share),
   };
+}
+
+/** When the lane must stop: `share` of the time between its start and the
+ *  pass's real end (the chain budget or the run's deadline, whichever is
+ *  sooner). Sizing it from the whole budget instead would let a lane that
+ *  starts late, after a slow listing, take every millisecond the walk had
+ *  left. */
+export function freshLaneDeadline(share: number, laneStartMs: number, passEndMs: number): number {
+  return laneStartMs + Math.floor(Math.max(0, passEndMs - laneStartMs) * share);
 }
 
 /** When the offer's terms last changed: its creation, or its latest

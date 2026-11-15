@@ -10,6 +10,7 @@ import {
   FRESH_LOOKBACK_SEC,
   FreshLaneTracker,
   freshLaneBudget,
+  freshLaneDeadline,
   freshLaneShare,
 } from '../src/freshLane';
 import {
@@ -40,7 +41,7 @@ function offer(
   };
 }
 
-const PASS = { previews: MAX_PREVIEW_CALLS_PER_TICK, submits: 25, wallMs: 90_000 };
+const PASS = { previews: MAX_PREVIEW_CALLS_PER_TICK, submits: 25 };
 
 /** A preview that refuses every pair with `code`, recording what it saw. */
 function refusingIO(code = 4, seen: string[] = []): MatchWalkIO {
@@ -81,7 +82,14 @@ describe('freshLaneShare', () => {
   });
 
   it('sizes the lane caps as floors of the pass caps', () => {
-    expect(freshLaneBudget(0.25, PASS)).toEqual({ previews: 500, submits: 6, wallMs: 22_500 });
+    expect(freshLaneBudget(0.25, PASS)).toEqual({ previews: 500, submits: 6 });
+  });
+
+  it('gives the lane its share of the time the pass has left, not of the whole budget', () => {
+    // A 30 s run window whose listing took 20 s: the lane gets 2.5 s of the
+    // 10 s left, never the 22.5 s a quarter of the 90 s chain budget would be.
+    expect(freshLaneDeadline(0.25, 20_000, 30_000)).toBe(22_500);
+    expect(freshLaneDeadline(0.25, 31_000, 30_000)).toBe(31_000);
   });
 });
 
