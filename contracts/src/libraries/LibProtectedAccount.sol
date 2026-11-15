@@ -632,16 +632,19 @@ library LibProtectedAccount {
         while (payouts.length() != 0) cancelPayout(payouts.at(payouts.length() - 1), by);
     }
 
-    /// @notice Cancel every queued payout of `account` addressed to
-    ///         `recipient` (the destination was just removed).
-    function cancelRowsTo(address account, address recipient, address by) internal {
+    /// @notice Cancel every queued payout of `account` queued before its
+    ///         vault's lock number `lockCount` (Codex #3489 r12): the rows a
+    ///         lock invalidates. A row queued after an unlock carries the
+    ///         current number and is kept, so applying an old lock late never
+    ///         cancels a request made after the account was unlocked.
+    function cancelRowsBeforeLock(address account, uint64 lockCount, address by) internal {
         LibVaipakam.Storage storage s = _s();
         EnumerableSet.UintSet storage payouts = s.pendingPayoutIds[account];
         uint256 i = payouts.length();
         while (i != 0) {
             --i;
             uint256 id = payouts.at(i);
-            if (s.pendingPayouts[id].recipient == recipient) cancelPayout(id, by);
+            if (s.pendingPayouts[id].lockGen < lockCount) cancelPayout(id, by);
         }
     }
 }

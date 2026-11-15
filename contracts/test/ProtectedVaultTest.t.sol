@@ -1608,23 +1608,84 @@ contract ProtectedVaultTest is Test {
         );
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
-        vm.clearMockedCalls();
         vm.prank(user);
         v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
         vm.warp(vm.getBlockTimestamp() + DELAY);
+        // The unlock's own application fails too.
         v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        vm.clearMockedCalls();
         (, bool locked,,,,,) = v.protectionState();
         assertFalse(locked, "fixture: unlocked in the vault");
+        assertTrue(_pay().payoutReleaseCancels(id), "the release would cancel it");
         assertFalse(_pay().payoutNeedsCosign(id), "a row the release cancels needs no co-sign");
         uint256 before = token.balanceOf(user);
         _pay().releasePayout(id);
         assertEq(token.balanceOf(user), before, "nothing paid");
         assertEq(_pay().getPendingPayout(id).state, 3, "cancelled by the release");
-        // A row queued after the unlock is paid normally.
+        // A row queued after the unlock is paid normally, even when the old
+        // lock is applied late (Codex #3489 r12): the application spares it.
         uint256 id2 = _queue(1 ether, user);
+        assertFalse(_pay().payoutReleaseCancels(id2), "a post-unlock row is payable");
+        _prot().applyProtection(user);
+        assertEq(_pay().getPendingPayout(id2).state, 1, "the late application kept the post-unlock row");
         vm.warp(vm.getBlockTimestamp() + DELAY);
         _pay().releasePayout(id2);
         assertEq(token.balanceOf(user) - before, 1 ether, "a post-unlock row pays");
+    }
+
+    /// @dev Codex #3489 r12 — an unlock applies its platform side in its own
+    ///      transaction, settling a lock the platform never applied: the
+    ///      pre-lock row is cancelled at the unlock, before any post-unlock
+    ///      request can exist.
+    function testAnUnlockSettlesAnUnappliedLockInItsOwnTransaction() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
+        );
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.clearMockedCalls();
+        assertEq(_pay().getPendingPayout(id).state, 1, "fixture: the lock's application failed");
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled at the unlock");
+        // Nothing is left to apply: the unlock's own application did it all.
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().applyProtection(user);
+    }
+
+    /// @dev Codex #3489 r12 — a co-sign switch-off asked after an unlock is
+    ///      not voided by a late application of the lock before it.
+    function testALateLockApplicationKeepsAPostUnlockCosignOff() public {
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), "apply failed"
+        );
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        vm.clearMockedCalls();
+        vm.prank(user);
+        _prot().setRequireCosign(user, false);
+        _prot().applyProtection(user);
+        (,, uint64 offAt) = _prot().getProtection(user);
+        assertTrue(offAt != 0, "the post-unlock switch-off survives");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _prot().finalizeSettingChanges(user);
+        (, bool on,) = _prot().getProtection(user);
+        assertFalse(on, "and applies when due");
     }
 
     /// @dev Codex #3489 r7 — neither of the account's own wallets may become

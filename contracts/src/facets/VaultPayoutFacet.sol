@@ -230,6 +230,16 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     ///         destination is no longer allowed
     ///         ({LibProtectedAccount.releaseCancels}). Whether the
     ///         co-signature was already given is the row's own `cosigned`.
+    /// @notice Whether releasing payout `id` now would CANCEL it instead of
+    ///         paying it ({LibProtectedAccount.releaseCancels}, the rule the
+    ///         release applies): its destination was removed or re-added
+    ///         since it was queued, the account was replaced, or a lock was
+    ///         taken after it (Codex #3489 r12). A review reads this so it
+    ///         never describes a release as a payment it is not.
+    function payoutReleaseCancels(uint256 id) external view returns (bool) {
+        return LibProtectedAccount.releaseCancels(LibVaipakam.storageSlot().pendingPayouts[id]);
+    }
+
     function payoutNeedsCosign(uint256 id) external view returns (bool) {
         LibVaipakam.PendingPayout storage p = LibVaipakam.storageSlot().pendingPayouts[id];
         if (p.state != LibProtectedAccount.ROW_QUEUED) return false;

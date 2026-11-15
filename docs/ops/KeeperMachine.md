@@ -519,8 +519,9 @@ journalctl -u vaipakam-keeper -f
    Telegram LOCK step also needs `PROTECTED_LOCK_ENABLED`, and its owner
    alerts `PROTECTED_ALERTS_ENABLED`. Since #3379 Stage B2 protected mode is
    held by each account's vault: the pass finalizes a matured change through
-   the vault's own permissionless finalizers, then has the Diamond apply its
-   side (`applyProtection`), and its Telegram LOCK goes through the vault
+   the vault's own permissionless finalizers, which apply the Diamond's side
+   of an unlock, a switch-off or a replacement in the same transaction (no
+   separate `applyProtection` is sent), and its Telegram LOCK goes through the vault
    (`lockVaultFor`). Until the indexer reads the vault's events (Stage B4)
    it finalizes only the vault changes a ledger row names, and the lock and
    proposed-replacement alerts do not fire),

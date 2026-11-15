@@ -1166,7 +1166,7 @@ export const copy = {
     changedAccount: B('The account’s protected mode'),
     allowUnread: A('Whether this payout’s destination is still allowed could not be read. If it is not, releasing it cancels it instead.'),
     releasePays: A('Releasing pays {{what}} from the account’s vault to {{destination}}. A release always pays the destination the payout recorded.'),
-    releaseCancels: A('This payout’s destination is no longer allowed, so releasing it cancels it: nothing is paid, and {{what}} stays in the vault, free to withdraw again.'),
+    releaseCancels: A('This payout can no longer be paid (its destination was removed since it was queued, or a lock or a wallet replacement came after it), so releasing it cancels it: nothing is paid, and {{what}} stays in the vault, free to withdraw again.'),
     pauseNote: A('If the protocol pauses before this confirms, it is refused and the payout stays queued.'),
     escapeNote: A('The protocol is paused, but its escape route is open, so queued payouts keep releasing.'),
     cancelNote: A('Cancelling stops this payout: nothing is paid, and {{what}} stays in the vault, free to withdraw again. A new withdrawal waits the full delay.'),

@@ -49,7 +49,7 @@ function row(over: Partial<NonNullable<QueueRow['payout']>> = {}, id = 1n): Queu
   return {
     id,
     code: 'ABCDEF',
-    payout: { user: OWNER, state: ROW_QUEUED, kind: 0, asset: WETH, tokenId: 0n, amount: 100n, recipient: OWNER, releaseAt: NOW - 1, cosigned: false, needsCosign: null, ...over },
+    payout: { user: OWNER, state: ROW_QUEUED, kind: 0, asset: WETH, tokenId: 0n, amount: 100n, recipient: OWNER, releaseAt: NOW - 1, cosigned: false, needsCosign: null, releaseCancels: false, ...over },
   };
 }
 
@@ -88,13 +88,16 @@ describe('queue rules', () => {
     expect(code(queueVerdict('cancel', queue({ paused: true }), row(), OWNER, NOW, copy))).toBe('open');
   });
 
-  it('opens a release that cancels a row whose destination is no longer allowed, before any time check', () => {
-    const r = row({ recipient: OTHER, releaseAt: NOW + 1000 });
-    expect(releaseCancels(queue(), r)).toBe(true);
+  it('opens a release that cancels a row by the protocol’s own answer, before any time check (Codex #3489 r12)', () => {
+    // A destination removed and re-added is on the list again; the row's own
+    // reading of the release rule still says it cancels.
+    const r = row({ recipient: SAFE, releaseAt: NOW + 1000, releaseCancels: true });
+    expect(releaseCancels(r)).toBe(true);
     expect(code(queueVerdict('release', queue(), r, OTHER, NOW, copy))).toBe('open');
-    expect(releaseCancels(queue(), row({ recipient: SAFE }))).toBe(false);
-    expect(releaseCancels(queue({ allowlist: null }), row({ recipient: SAFE }))).toBeNull();
-    expect(code(queueVerdict('release', queue({ allowlist: null }), row({ recipient: SAFE }), OTHER, NOW, copy))).toBe('unknown');
+    expect(releaseCancels(row({ recipient: SAFE }))).toBe(false);
+    expect(releaseCancels(row({ releaseCancels: null }))).toBeNull();
+    expect(code(queueVerdict('release', queue(), row({ releaseCancels: null }), OTHER, NOW, copy))).toBe('unknown');
+    expect(releaseCancels(row({ state: 2, releaseCancels: true }))).toBe(false);
   });
 
   it('treats a retired account’s controller as its manager', () => {

@@ -137,8 +137,9 @@ test('a lock cancels the queued payout, and the unlock is asked, waits the delay
   finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Unlock');
-  // #3379 B2: the vault applies the unlock, then the Diamond applies it.
-  expect(flags.sentTransactions).toBe(sent + 2);
+  // #3489 r12: one transaction, the vault's finalizer, which applies the
+  // unlock's platform side in the same transaction.
+  expect(flags.sentTransactions).toBe(sent + 1);
   expect((await protectionMode(sc, me)).locked).toBe(false);
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(card.getByTestId('vault-safety-state')).toHaveAttribute('data-state', 'on', { timeout: 60_000 });

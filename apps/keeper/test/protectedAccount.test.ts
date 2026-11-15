@@ -378,10 +378,6 @@ class FakeDiamond {
           this.lastLogs = [logOf('SettingChangeApplied', { account: a[0], kind: 4 })];
         };
       }
-      case 'applyProtection':
-        return () => {
-          this.lastLogs = [];
-        };
       default:
         throw new Error(`unexpected call ${functionName}`);
     }
@@ -716,7 +712,7 @@ describe('a run', () => {
   });
 
   describe('pending changes', () => {
-    it("applies an account's due vault settings in one call, an unlock included, then applies the platform side (#3379 B2)", async () => {
+    it("applies an account's due vault settings in one call, an unlock included, whose platform side lands with it (#3379 B2, #3489 r12)", async () => {
       d.accounts.set(ALICE, account({ locked: true, pendingUnlockAt: NOW - 5n }));
       d.accounts.set(BOB, account({ pendingDelayAt: NOW - 5n, pendingCosignOffAt: NOW - 1n }));
       ledger.add('SettingChangeRequested', { account: ALICE, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
@@ -724,13 +720,11 @@ describe('a run', () => {
       ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 1n) });
       ledger.add('SettingChangeRequested', { account: BOB, kind: 3, value: '0', effectiveAt: String(NOW - 1n) });
       const r = await run();
-      // The vault's settings go to the vault (the unlock then to the
-      // Diamond's applyProtection; a lowered delay needs none); the co-sign
-      // switch-off stays the
+      // The vault's settings go to the vault (its finalizer applies the
+      // unlock's platform side itself); the co-sign switch-off stays the
       // Diamond's. The retired NFT switch-off has nothing pending.
       expect(d.sent.map((s) => [s.fn, s.args])).toEqual([
         ['protect:finalizeSettings', []],
-        ['applyProtection', [ALICE]],
         ['protect:finalizeSettings', []],
         ['finalizeSettingChanges', [BOB]],
       ]);

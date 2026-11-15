@@ -34,8 +34,8 @@
 //      primary wallet (`finalizeReplacement`). The co-sign requirement's
 //      switch-off stays on the Diamond (`finalizeSettingChanges`). A
 //      finalize that changes the account's posture (an unlock, a switch-off,
-//      a replacement) is followed by the Diamond's `applyProtection`, which
-//      applies the platform side of it. Nothing that is not due is sent, and
+//      a replacement) applies the platform side of it in its own transaction
+//      (Codex #3489 r10, r12). Nothing that is not due is sent, and
 //      nothing is sent for a locked account except what an unlock itself
 //      needs.
 //
@@ -106,7 +106,6 @@ const PICK: ReadonlySet<string> = new Set([
   // #3379 B2: the Diamond names the account's vault and keeps the co-sign
   // setting; the vault holds the rest of the record and its finalizers.
   'getProtection',
-  'applyProtection',
   'finalizeSettingChanges',
   'protect',
   'protectionState',
@@ -164,12 +163,8 @@ export const PASS_CADENCE_SEC = 60;
 /** Sends per step per chain per run. Each step has its own share, so a
  *  long payout queue cannot leave an unlock, a replacement or a signer
  *  addition (which expires) unsent run after run, and a burst of Telegram
- *  LOCK requests cannot hold back the rest (`StepSender.stepBudgets`).
- *  `apply` is the Diamond's `applyProtection` after a finalize that changed
- *  an account's posture (#3379 B2): its own share, so the finalizes' share
- *  is not spent on it. One not sent (its share used, the run stopped) is not
- *  retried by this pass; anyone may still call it. */
-export const STEP_SENDS: Readonly<Record<string, number>> = { lock: 4, release: 4, transfer: 4, finalize: 4, apply: 4 };
+ *  LOCK requests cannot hold back the rest (`StepSender.stepBudgets`). */
+export const STEP_SENDS: Readonly<Record<string, number>> = { lock: 4, release: 4, transfer: 4, finalize: 4 };
 /** The three steps, in the order of the run whose index is 0. */
 export const STEP_NAMES = ['release', 'transfer', 'finalize'] as const;
 export type StepName = (typeof STEP_NAMES)[number];
@@ -1022,12 +1017,9 @@ class Step {
         }
         settled.add(key);
         this.report.finalized.push(changeLabel(c));
-        // The platform side of a change of posture (an unlock, a switch-off,
-        // a replacement) is applied by the Diamond from the vault's record.
-        if (changesPosture(c)) {
-          // eslint-disable-next-line no-await-in-loop
-          await this.sender.call('apply', c.account, 'applyProtection', [c.account]);
-        }
+        // The vault's finalizers apply the platform side of an unlock, a
+        // switch-off and a replacement in their own transaction (Codex #3489
+        // r10, r12), so no application follows here.
       }
     }
     await page.liftFloor(this.r.finalized, (c) => settled.has(changeId(c)), async (cs, block: FinalBlock) => {
@@ -1186,17 +1178,6 @@ function changeCalls(c: Change, a: ProtectedAccount | undefined): ReadCall[] | n
         { functionName: 'replacementTally', args: [], address: at },
       ];
   }
-}
-
-/** Whether applying `c` changes the account's posture, so the Diamond's
- *  `applyProtection` follows it: an unlock or a switch-off (both applied by
- *  the vault's `finalizeSettings`), or a replacement. */
-function changesPosture(c: Change): boolean {
-  // A lowered delay is not one: the Diamond acts only on a raised delay, and
-  // would refuse the call as nothing to apply. A completed replacement is not
-  // one either: the vault's finalizer applies the platform side in its own
-  // transaction (Codex #3489 r10), so a second application would find nothing.
-  return c.t === 'setting' && (c.kind === CHANGE_DISABLE || c.kind === 5);
 }
 
 /** The accounts the page's events name (`PayoutQueued` and

@@ -88,7 +88,7 @@ export async function readQueueReview(
     id,
     queue,
     row: ownRow,
-    cancels: action === 'release' ? releaseCancels(queue, ownRow) : null,
+    cancels: action === 'release' ? releaseCancels(ownRow) : null,
     verdict,
     dryRun,
     readAt: Date.now(),

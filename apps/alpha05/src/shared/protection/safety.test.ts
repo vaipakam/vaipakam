@@ -90,7 +90,9 @@ describe('safetySteps', () => {
     expect(safetySteps('lock', ME, VAULT, null)).toEqual([expect.objectContaining(protect('lock', [auth]))]);
     expect(safetySteps('unlock', ME, VAULT, null)).toMatchObject([protect('requestUnlock', [auth])]);
     expect(safetySteps('finalize', ME, VAULT, null, ['cosignOff'])).toMatchObject([{ to: 'diamond', functionName: 'finalizeSettingChanges', args: [ME] }]);
-    expect(safetySteps('finalize', ME, VAULT, null, ['unlock']).map((x) => x.functionName)).toEqual(['protect', 'applyProtection']);
+    // The vault's finalizer applies an unlock's and a switch-off's platform side (#3489 r12).
+    expect(safetySteps('finalize', ME, VAULT, null, ['unlock']).map((x) => x.functionName)).toEqual(['protect']);
+    expect(safetySteps('finalize', ME, VAULT, null, ['disable']).map((x) => x.functionName)).toEqual(['protect']);
   });
 });
 

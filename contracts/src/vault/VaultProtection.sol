@@ -281,14 +281,17 @@ contract VaultProtection {
         P.Layout storage l = _enabled();
         uint64 nowTs = uint64(block.timestamp);
         bool applied;
+        bool disabled;
         if (l.pendingDelayAt != 0 && nowTs >= l.pendingDelayAt) {
             applied = true;
             l.delay = l.pendingDelay;
             l.pendingDelayAt = 0;
             emit ProtectionSettingApplied(SETTINGS_DELAY, l.delay);
         }
+        bool unlocked;
         if (l.pendingUnlockAt != 0 && nowTs >= l.pendingUnlockAt) {
             applied = true;
+            unlocked = true;
             l.locked = false;
             l.lockedBy = address(0);
             l.lockedAt = 0;
@@ -304,10 +307,21 @@ contract VaultProtection {
                 _clear(l);
                 emit ProtectionDisabled();
                 applied = true;
+                disabled = true;
             } else if (!applied) {
                 revert PendingRowsExist();
             }
         }
+        // Codex #3489 r12 — an unlock or a switch-off applies its platform
+        // side in its own transaction, best effort like a lock: it never
+        // blocks the vault's own change. An unlock's application also settles
+        // any lock the platform had not applied (the rows and switch-off
+        // from before it cancelled) before a request after the unlock can
+        // exist. Should it fail, a later application still spares the
+        // payouts and the co-sign switch-off asked after the unlock (they
+        // carry the current lock number); a code-pin or NFT-unlock request
+        // made in between would be voided and must be asked again.
+        if (unlocked || disabled) _applyPlatform(false);
     }
 
     function _noOpenRows() private view returns (bool) {

@@ -131,8 +131,13 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             _voidBeaconPending(account);
             _voidCoreLockPending(account);
             _lockPositionNfts(account);
-            LibProtectedAccount.cancelAllRows(account, address(this));
-            a.pendingCosignOffAt = 0;
+            // Codex #3489 r12 — a lock invalidates what was pending WHEN it
+            // was taken, not what was asked after a later unlock: rows and a
+            // co-sign switch-off carry the lock number they were made under.
+            // A handover drops everything the outgoing manager queued.
+            if (handover) LibProtectedAccount.cancelAllRows(account, address(this));
+            else LibProtectedAccount.cancelRowsBeforeLock(account, c.lockCount, address(this));
+            if (handover || a.cosignOffLockGen < c.lockCount) a.pendingCosignOffAt = 0;
             changed = true;
         }
         if (handover) {

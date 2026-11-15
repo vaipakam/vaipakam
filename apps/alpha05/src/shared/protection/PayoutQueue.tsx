@@ -246,7 +246,7 @@ function QueueRowCard({ q, row, own, chain, meta }: { q: AccountQueue; row: Queu
   const nowSec = queueClock(q, nowMs);
   const what = payoutWords(p, meta, format);
   const verdicts = Object.fromEntries(ACTIONS.map((a) => [a, queueVerdict(a, q, row, viewer, nowSec, copy)])) as Record<QueueAction, ReturnType<typeof queueVerdict>>;
-  const cancels = releaseCancels(q, row);
+  const cancels = releaseCancels(row);
   const release = verdicts.release;
   return (
     <li className="card queue-row" data-queue-row={testId}>

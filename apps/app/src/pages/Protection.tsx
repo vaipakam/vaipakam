@@ -67,8 +67,8 @@ const DAY = 86_400;
  * ACCOUNT's vault whoever sends it (the owner, a signer, a nominee). A write
  * that changes the posture (a switch-on, a completed move) is followed by the
  * Diamond's `applyProtection(account)`, which applies the platform side; a
- * lock and a completed move apply their own platform side in the same
- * transaction (Codex #3489 r9, r10).
+ * lock, an unlock, a switch-off and a completed move apply their own platform
+ * side in the same transaction (Codex #3489 r9, r10, r12).
  */
 function useProtectionWrites(account: `0x${string}` | undefined, vault: `0x${string}` | null) {
   const { address } = useActiveChain();
@@ -379,9 +379,9 @@ function AccountView({
     run(async () => {
       const due = pending.filter((c) => isDue(c.at, now) && !disableWaits(c));
       if (due.some((c) => vaultKind[c.kind] !== undefined)) await protect('finalizeSettings', [], false);
+      // The vault's finalizer applies the platform side of an unlock or a
+      // switch-off in its own transaction (Codex #3489 r12).
       if (due.some((c) => c.kind === 4)) await write('finalizeSettingChanges', [account]);
-      // An unlock or a switch-off changes the posture the platform applies.
-      if (due.some((c) => c.kind === 1 || c.kind === 5)) await apply();
     });
   // TODO(#3321 positionNft-legacy-removal): the legacy queue writes, sent
   // through the frozen pre-#3205 fragment.

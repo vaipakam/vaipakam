@@ -58,6 +58,11 @@ export interface PendingPayout {
    *  while it has a signer, or an unverified allowlisted destination
    *  (#3415). Null when that read failed. */
   needsCosign: boolean | null;
+  /** Whether releasing it now cancels it instead of paying it, by the
+   *  release's own rule (`payoutReleaseCancels`, Codex #3489 r12): its
+   *  destination was removed or re-added since it was queued, the account
+   *  was replaced, or a lock came after it. Null when that read failed. */
+  releaseCancels: boolean | null;
 }
 
 /** A row of the queue: its id, the row (null when its read failed), and its
@@ -165,7 +170,12 @@ export async function readAccountQueue(c: PublicClient, diamond: Hex, account: H
 export async function readQueueRow(c: PublicClient, diamond: Hex, id: bigint, blockNumber?: bigint): Promise<QueueRow> {
   const at = blockNumber === undefined ? {} : { blockNumber };
   const read = <T>(functionName: string) => answerOrNull(c.readContract({ address: diamond, abi: PAYOUT, functionName, args: [id], ...at }) as Promise<T>);
-  const [p, code, needs] = await Promise.all([read<RawPayout>('getPendingPayout'), read<number | bigint>('requestCode'), read<boolean>('payoutNeedsCosign')]);
+  const [p, code, needs, cancels] = await Promise.all([
+    read<RawPayout>('getPendingPayout'),
+    read<number | bigint>('requestCode'),
+    read<boolean>('payoutNeedsCosign'),
+    read<boolean>('payoutReleaseCancels'),
+  ]);
   return {
     id,
     payout:
@@ -182,6 +192,7 @@ export async function readQueueRow(c: PublicClient, diamond: Hex, id: bigint, bl
             releaseAt: Number(p.releaseAt),
             cosigned: p.cosigned,
             needsCosign: needs,
+            releaseCancels: cancels,
           },
     code: code === null ? null : formatRequestCode(code),
   };
@@ -221,13 +232,15 @@ export type QueueAction = 'release' | 'cancel' | 'cosign';
 /** The call each action runs. */
 export const QUEUE_FUNCTION: Record<QueueAction, string> = { release: 'releasePayout', cancel: 'cancelPayout', cosign: 'cosignPayout' };
 
-/** Whether releasing this row would cancel it instead of paying it (its
- *  destination is no longer allowed); null when unread. */
-export function releaseCancels(q: AccountQueue, row: QueueRow): boolean | null {
+/** Whether releasing this row would cancel it instead of paying it; null
+ *  when unread. The protocol's own answer (`payoutReleaseCancels`), never a
+ *  copy of its rule: a destination removed and re-added, or a lock the
+ *  platform has not applied, is not visible in the current allowlist
+ *  (Codex #3489 r12). */
+export function releaseCancels(row: QueueRow): boolean | null {
   if (row.payout === null) return null;
   if (row.payout.state !== ROW_QUEUED) return false;
-  const allowed = destinationAllowed(q, row.payout.recipient);
-  return allowed === null ? null : !allowed;
+  return row.payout.releaseCancels;
 }
 
 /** RB-ELIG: whether `viewer` may run `action` on `row` now, `nowSec` being
@@ -249,7 +262,7 @@ export function queueVerdict(action: QueueAction, q: AccountQueue, row: QueueRow
     }
     if (p === null) return unread();
     if (p.state !== ROW_QUEUED) return refuse('RowNotQueued', text('queue.notQueued'));
-    const cancels = releaseCancels(q, row);
+    const cancels = releaseCancels(row);
     if (cancels === null) return unread();
     // The contract cancels a row it may no longer pay before any other
     // check: releasing it is open, and the receipt says it cancels.

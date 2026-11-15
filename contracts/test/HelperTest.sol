@@ -1475,7 +1475,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function getVaultPayoutFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](16);
         selectors[0] = VaultPayoutFacet.applyPayoutGate.selector;
         selectors[1] = VaultPayoutFacet.cancelPayout.selector;
         selectors[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -1494,6 +1494,8 @@ contract HelperTest {
         selectors[13] = VaultPayoutFacet.getOpenPayoutIds.selector;
         // Codex #3489 r2 — the release's co-sign rule, per row.
         selectors[14] = VaultPayoutFacet.payoutNeedsCosign.selector;
+        // Codex #3489 r12 — whether the release would cancel the row.
+        selectors[15] = VaultPayoutFacet.payoutReleaseCancels.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

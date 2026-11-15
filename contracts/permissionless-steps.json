@@ -338,10 +338,8 @@
       "why": "the user's own profile"
     },
     "ProtectedAccountFacet.applyProtection(address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
+      "class": "user",
+      "why": "the vault's own lock, unlock, switch-off and replacement apply it in their transaction (#3489 r9, r10, r12), and the owner's switch-on sends it; a separate call only retries a best-effort application, which never leaves a lock's cancellations undone (they bind by lock number)"
     },
     "ProtectedAccountFacet.finalizeSettingChanges(address)": {
       "class": "keeper",

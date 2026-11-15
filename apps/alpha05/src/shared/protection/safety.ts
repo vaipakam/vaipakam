@@ -21,9 +21,9 @@
  *   through `finalize`.
  * - `finalize`: the vault's `finalizeSettings()` for a due vault setting
  *   (a lowered delay, the unlock, the switch-off, which waits until no
- *   payout is queued), the Diamond's `finalizeSettingChanges(account)` for a
- *   due co-sign switch-off, and `applyProtection(account)` after an unlock or
- *   a switch-off.
+ *   payout is queued), which applies the platform side of an unlock or a
+ *   switch-off in the same transaction, and the Diamond's
+ *   `finalizeSettingChanges(account)` for a due co-sign switch-off.
  *
  * The pending setting times and the lock time are the vault's
  * `protectionPending()`.
@@ -280,14 +280,14 @@ export function safetySteps(action: SafetyAction, account: Hex, vault: Hex | nul
       apply,
     ];
   }
-  // A lock applies its own platform side in the same transaction (#3489 r9).
+  // A lock, an unlock and a switch-off apply their own platform side in the
+  // vault's transaction (#3489 r9, r12).
   if (action === 'lock') return [vaultStep(SAFETY_FUNCTION.lock, [auth])];
   if (action === 'unlock') return [vaultStep(SAFETY_FUNCTION.unlock, [auth])];
   const vaultDue = due.some((d) => d === 'lowerDelay' || d === 'unlock' || d === 'disable');
   return [
     ...(vaultDue ? [vaultStep(SAFETY_FUNCTION.finalize, [])] : []),
     ...(due.includes('cosignOff') ? [diamondStep(PROTECTED, 'finalizeSettingChanges', [account])] : []),
-    ...(due.includes('unlock') || due.includes('disable') ? [apply] : []),
   ];
 }
 
@@ -448,6 +448,11 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
             : diamondApplied.has(CHANGE_KIND[change]);
     return done ? { status: 'done', label } : { status: 'not-done', label, reason: text(change === 'disable' ? 'safety.rowsOpen' : 'safety.notApplied') };
   });
+  // The vault's finalizer applies an unlock's or a switch-off's platform
+  // side in the same transaction, best effort (Codex #3489 r12): when the
+  // vault's change landed without it, the card says it is still to apply.
+  const postureInVault = vaultApplied.has(VAULT_SETTING_OF.unlock!) || findVault('ProtectionDisabled').length > 0;
+  if (postureInVault && applied.length === 0) legs.push(platformPending);
   return legs.length > 0 ? legs : [{ status: 'not-done', label: text('safety.titleFinalize'), reason: text('safety.nothingDue') }];
 }
 
