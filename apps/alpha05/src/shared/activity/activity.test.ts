@@ -3,7 +3,7 @@ import { participantKinds } from '@vaipakam/lib/activityParticipants';
 import { refScopedKinds } from '@vaipakam/lib/activityRefs';
 import { copyEntry, type CopyAccess, type CopyKey } from '../copy/useCopy';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
-import { activityLines, historyClaims, parseActivityEvent, parseRepairEntry, readActivityPage, type ActivityEvent, type ActivityPage } from './activity';
+import { OUTCOME_ARGS, activityLines, historyClaims, parseActivityEvent, parseRepairEntry, readActivityPage, type ActivityEvent, type ActivityPage } from './activity';
 import { amountLine } from './amountLine';
 import { kindKey, namedKinds } from './useWalletActivity';
 
@@ -86,6 +86,25 @@ describe('parseActivityEvent', () => {
 
   it('keeps an event with no time read, as a pending one has', () => {
     expect(parseActivityEvent(raw({ blockAt: null }), false)).toMatchObject({ blockAt: null, final: false });
+  });
+});
+
+describe('outcome kinds', () => {
+  it('reads whether the step worked from the event’s own argument, and only for a kind that states it', () => {
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5', succeeded: true, proceeds: '10' } }), true)?.succeeded).toBe(true);
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5', succeeded: false, proceeds: '0' } }), true)?.succeeded).toBe(false);
+    // Not stated, or not a boolean: unknown, never a success.
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { loanId: '5' } }), true)?.succeeded).toBeNull();
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: { succeeded: 'true' } }), true)?.succeeded).toBeNull();
+    expect(parseActivityEvent(raw({ kind: 'ClaimRetryExecuted', args: null }), true)?.succeeded).toBeNull();
+    expect(parseActivityEvent(raw({ kind: 'LoanRepaid', args: { succeeded: true } }), true)?.succeeded).toBeNull();
+  });
+
+  it('has words for each outcome of every outcome kind, and its plain line does not claim one', () => {
+    for (const kind of Object.keys(OUTCOME_ARGS)) {
+      expect(namedKinds().has(kind)).toBe(true);
+      for (const o of ['succeeded', 'failed']) expect(copyEntry(`activity.outcomes.${kind}.${o}` as CopyKey)).toBeTruthy();
+    }
   });
 });
 

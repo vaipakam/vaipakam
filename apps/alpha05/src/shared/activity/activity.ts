@@ -31,8 +31,9 @@ export interface ActivityEvent {
   kind: string;
   loanId: bigint | null;
   offerId: bigint | null;
-  /** Who sent the transaction, as the index files it; null when it records
-   *  none (a step anyone may take, such as a default, often has none). */
+  /** The wallet the index files the event under (not always the sender);
+   *  null when it files it under none (a step anyone may take, such as a
+   *  default, often has none). */
   actor: Hex | null;
   /** The block's time in unix seconds; null when it was not read (always,
    *  for an event that is not final). */
@@ -45,6 +46,10 @@ export interface ActivityEvent {
   amountMax: bigint | null;
   tokenId: bigint | null;
   quantity: bigint | null;
+  /** For a kind whose event states whether the step worked (see
+   *  {@link OUTCOME_ARGS}): true when it did, false when it did not. null for
+   *  every other kind, and when the event's arguments do not say. */
+  succeeded: boolean | null;
   /** False for an event in a block that may still be replaced. */
   final: boolean;
 }
@@ -112,6 +117,23 @@ function addressOrNull(v: unknown): Hex | null | undefined {
   return typeof v === 'string' && HEX_ADDRESS.test(v) ? (v.toLowerCase() as Hex) : undefined;
 }
 
+/**
+ * The kinds whose event carries the step's outcome, and the argument that
+ * holds it. A line for one of these never reads as done when it failed: it
+ * says which, or that the outcome was not recorded.
+ */
+export const OUTCOME_ARGS: Readonly<Record<string, string>> = {
+  ClaimRetryExecuted: 'succeeded',
+};
+
+/** The outcome an event's arguments state for its kind, or null. */
+function outcomeOf(kind: string, args: unknown): boolean | null {
+  const name = OUTCOME_ARGS[kind];
+  if (name === undefined || typeof args !== 'object' || args === null) return null;
+  const v = (args as Record<string, unknown>)[name];
+  return typeof v === 'boolean' ? v : null;
+}
+
 /** One event, or null when its shape cannot be read. */
 export function parseActivityEvent(raw: unknown, final: boolean): ActivityEvent | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -161,6 +183,7 @@ export function parseActivityEvent(raw: unknown, final: boolean): ActivityEvent 
     amountMax,
     tokenId,
     quantity,
+    succeeded: outcomeOf(r.kind, r.args),
     final,
   };
 }
