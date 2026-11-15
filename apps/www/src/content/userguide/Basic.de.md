@@ -677,6 +677,14 @@ kein Gas; nichts passiert on-chain.
 
 Die Seite Alerts listet die Hinweise, die der Index des Protokolls für deine Wallet im aktuellen Netzwerk führt, die neuesten zuerst. Sie ist kostenlos, und du musst dich für nichts anmelden. Ein Hinweis entsteht, wenn ein Kredit startet, teilweise oder vollständig zurückgezahlt wird, ausfällt oder liquidiert wird, sich seiner Fälligkeit nähert, in seine Nachfrist eintritt oder sie verlässt oder seine Gesundheit unter 1,5, 1,2 oder 1,05 fällt, und wenn sich ein Belohnungseintrag seiner Einlösefrist nähert oder sie überschreitet. Jeder Hinweis öffnet den Kredit, dessen Seite ihn von der Chain liest, oder bei einer Belohnung die Seite Claims. Die Glocke neben deiner Wallet oben zählt die Hinweise, die seit deinem letzten Öffnen der Seite in diesem Browser eingegangen sind. Kann der Index nicht gelesen werden, sagt die Seite das, statt einen leeren Posteingang zu zeigen. Telegram, Push, Gesundheitswarnungen und Zahlungserinnerungen richtest du direkt unter dem Posteingang ein. Jede Benachrichtigung beschreibt den Stand zu dem Zeitpunkt, als sie geschrieben wurde; öffnen Sie den Kredit, um den aktuellen Stand zu sehen.
 
+<a id="activity-history"></a>
+
+### Ihre Aktivität
+
+Die Seite Aktivität, erreichbar über Positionen und über Alerts, listet alles im aktuellen Netzwerk auf, woran Ihre Wallet beteiligt war, das Neueste zuerst: die Ereignisse zu jedem Kredit, an dem Sie eine Position gehalten haben, und die Ereignisse, die Ihre Wallet nennen, etwa Ihre Angebote, Ihr Vault, Ihre Einstellungen und Ihre Belohnungen. Jede Transaktion ist eine Zeile, angeführt von dem, was geschah; die übrigen Ereignisse dieser Transaktion sind darunter eingeklappt. Eine Zeile nennt ihren Kredit oder ihr Angebot, die Wallet, für die sie erfasst ist (nicht unbedingt die sendende), und wann, und verlinkt die Transaktion.
+
+Ein Betrag wird nur gezeigt, wenn der Index einen erfasst hat; sonst sagt die Zeile, dass kein Betrag erfasst wurde. Ereignisse in den neuesten Blöcken stehen oben und sind als noch nicht endgültig markiert, weil sich ein Block noch ändern kann. Ein Kredit, dessen Ende eine Prüfung gefunden hat statt eines Ereignisses, sagt das. Solange der Index ältere Historie noch einliest, sagt die Seite, dass ältere Aktivität fehlen kann, und eine Seite, auf die der Index nicht antworten konnte, wird nie als leere Historie gezeigt.
+
 <a id="alerts-channels"></a>
 
 ### Telegram, Push und Warnungen

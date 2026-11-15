@@ -2769,6 +2769,33 @@ above. Each resolves here, so a route reviewer needs no private file:
   resumes: a connect the picker started (a phone connection prepares its
   link as the picker opens) can stay pending after the picker closes, and
   must never leave the visitor with a button that cannot be pressed.
+- **RB-ACTIVITY** — The Activity page (#3677) reads one wallet's history
+  from the index's own wallet filter, never by paging the whole network's feed
+  and keeping the rows that look like the wallet's. The index answers with the
+  events on any loan the wallet ever held a position in and the events that
+  name it by the shared participant rule, and says when its record of the
+  second part is still being filled from older history: the page then says
+  older activity may be missing and never claims the list is complete. Events
+  of one transaction are one line, led by the event that says what happened
+  (a loan's start before the accept or match that opened it), with the rest
+  listed under it. The wallet a line names is the one the shared actor rule
+  files the event under, said as "recorded for", never as its sender. Every kind the index can file for a wallet
+  has words (a test holds the catalog to the shared rule's kinds); a kind
+  without words is named, never hidden. A kind whose meaning turns on a
+  yes/no its event states (a step that worked or failed, a permission or
+  consent given or withdrawn, a setting on or off, a claim paid in full or
+  not, a withdrawal paid or queued) reads it from the event and says which,
+  or that it was not recorded; no line asserts one direction for both, and a
+  test holds every such kind of the contract's events to a decision. The
+  index reads a wallet's page, and its repaired endings, from that wallet's
+  own rows, so its cost follows the wallet's history, not the network's. An amount is shown only when the
+  index recorded one, otherwise the line says none was recorded, and a
+  multi-copy token's unrecorded quantity is said, never read as one; events in
+  blocks not yet final are marked so, with no time; a loan whose ending a
+  check found says what was and was not seen, and when those endings could
+  not be read the page says some may be missing and claims no end; a failed
+  read is never shown
+  as an empty history, and unreadable rows are counted.
 
 ## 3. Companion specifications
 
