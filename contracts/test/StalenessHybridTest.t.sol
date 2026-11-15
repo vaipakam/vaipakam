@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
@@ -15,7 +16,7 @@ import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
 ///           - age <= STABLE_STALENESS AND feed
 ///             reports ~ $1 (within PEG_TOLERANCE_BPS)
 ///             AND decimals == 8                             → accept
-///           - age >  PriceGuard.STABLE_STALENESS              → revert
+///           - age >  PriceGuardState.STABLE_STALENESS              → revert
 ///           - age in stable window but off-peg              → revert
 ///           - age in stable window but decimals != 8        → revert
 contract StalenessHybridTest is SetupTest {
@@ -44,7 +45,7 @@ contract StalenessHybridTest is SetupTest {
         // 8-decimal stablecoin-style feed, fresh.
         feed = new MockChainlinkAggregator(int256(1e8), block.timestamp, 8);
 
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, registry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.FeedRegistry, registry);
 
         // Route every registry.getFeed(asset, usd) to our scriptable aggregator.
         vm.mockCall(

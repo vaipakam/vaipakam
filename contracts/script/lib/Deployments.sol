@@ -590,6 +590,8 @@ library Deployments {
     /// @notice #3272 — the chain's PriceGuard, the one price source the
     ///         Diamond and the vaults read (through the registry pointer).
     function writePriceGuard(address a) internal { _writeAddr(".priceGuard", a); }
+    /// @notice #3437 — the reader whose code answers that guard's price reads.
+    function writePriceGuardReader(address a) internal { _writeAddr(".priceGuardReader", a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }

@@ -2,7 +2,9 @@
 pragma solidity ^0.8.29;
 
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {PriceGuardDeployment} from "../../script/lib/PriceGuardDeployment.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 import {MockProtocolRegistry} from "../mocks/MockProtocolRegistry.sol";
@@ -43,7 +45,7 @@ library LibTestPriceGuard {
 
     /// @notice {install} for a suite Diamond with no vault beacon: a fresh
     ///         registry for `diamond`, and a guard in identity `id`.
-    function installWith(address diamond, address owner, PriceGuard.Identity memory id)
+    function installWith(address diamond, address owner, PriceGuardState.Identity memory id)
         internal
         returns (PriceGuard guard)
     {
@@ -55,8 +57,8 @@ library LibTestPriceGuard {
     }
 
     /// @notice The retail identity, keyed by `usd` and `eth` denominators.
-    function identity(address usd, address eth) internal pure returns (PriceGuard.Identity memory) {
-        return PriceGuard.Identity({
+    function identity(address usd, address eth) internal pure returns (PriceGuardState.Identity memory) {
+        return PriceGuardState.Identity({
             numeraireDenominator: usd,
             numeraireSymbol: bytes32("usd"),
             padDenominator: address(0),
@@ -70,12 +72,8 @@ library LibTestPriceGuard {
     }
 
     /// @notice A guard in identity `id`, with no feeds set and a zero delay.
-    function deployGuard(address owner, PriceGuard.Identity memory id) internal returns (PriceGuard) {
-        return PriceGuard(
-            ArtifactDeploy.deploy(
-                type(PriceGuard).name, abi.encode(owner, owner, id, uint64(0), new PriceGuard.Change[](0))
-            )
-        );
+    function deployGuard(address owner, PriceGuardState.Identity memory id) internal returns (PriceGuard) {
+        return PriceGuard(PriceGuardDeployment.build(owner, owner, id, uint64(0), new PriceGuardState.Change[](0)));
     }
 
     /// @notice The guard `diamond` prices through now.
@@ -84,18 +82,18 @@ library LibTestPriceGuard {
     }
 
     /// @notice Apply one config change at once (the guard's delay is zero).
-    function set(address diamond, PriceGuard.Kind kind, bytes32 subject, bytes32 value) internal {
+    function set(address diamond, PriceGuardState.Kind kind, bytes32 subject, bytes32 value) internal {
         setOn(PriceGuard(guardOf(diamond)), kind, subject, value);
     }
 
     /// @notice {set} on a guard no Diamond names (a guard-level suite).
-    function setOn(PriceGuard g, PriceGuard.Kind kind, bytes32 subject, bytes32 value) internal {
+    function setOn(PriceGuard g, PriceGuardState.Kind kind, bytes32 subject, bytes32 value) internal {
         g.proposeChange(kind, subject, value);
         g.executeChange(kind, subject);
     }
 
     /// @notice {setAddress} on a guard no Diamond names.
-    function setAddressOn(PriceGuard g, PriceGuard.Kind kind, address value) internal {
+    function setAddressOn(PriceGuard g, PriceGuardState.Kind kind, address value) internal {
         _code(value);
         setOn(g, kind, bytes32(0), bytes32(uint256(uint160(value))));
     }
@@ -104,39 +102,39 @@ library LibTestPriceGuard {
     ///         address with no code gets a one-byte body first: the guard
     ///         refuses a config address without code, and a suite's feeds are
     ///         `vm.mockCall` targets.
-    function setAddress(address diamond, PriceGuard.Kind kind, address value) internal {
+    function setAddress(address diamond, PriceGuardState.Kind kind, address value) internal {
         _code(value);
         set(diamond, kind, bytes32(0), bytes32(uint256(uint160(value))));
     }
 
     /// @notice {set} for a number-valued entry with no subject.
-    function setUint(address diamond, PriceGuard.Kind kind, uint256 value) internal {
+    function setUint(address diamond, PriceGuardState.Kind kind, uint256 value) internal {
         set(diamond, kind, bytes32(0), bytes32(value));
     }
 
     /// @notice A secondary source (Tellor, API3 or DIA).
-    function setSource(address diamond, PriceGuard.Source source, address value) internal {
+    function setSource(address diamond, PriceGuardState.Source source, address value) internal {
         _code(value);
-        set(diamond, PriceGuard.Kind.SecondarySource, bytes32(uint256(source)), bytes32(uint256(uint160(value))));
+        set(diamond, PriceGuardState.Kind.SecondarySource, bytes32(uint256(source)), bytes32(uint256(uint160(value))));
     }
 
     /// @notice A stable reference feed for `symbol` (zero removes it).
     function setStableRef(address diamond, string memory symbol, address feed) internal {
         _code(feed);
-        set(diamond, PriceGuard.Kind.StableRef, bytes32(bytes(symbol)), bytes32(uint256(uint160(feed))));
+        set(diamond, PriceGuardState.Kind.StableRef, bytes32(bytes(symbol)), bytes32(uint256(uint160(feed))));
     }
 
     /// @notice A per-feed staleness and minimum-answer override.
     function setFeedOverride(address diamond, address feed, uint256 maxStaleness, int256 minAnswer) internal {
         bytes32 subject = bytes32(uint256(uint160(feed)));
-        set(diamond, PriceGuard.Kind.FeedMaxStaleness, subject, bytes32(maxStaleness));
-        set(diamond, PriceGuard.Kind.FeedMinAnswer, subject, bytes32(uint256(minAnswer)));
+        set(diamond, PriceGuardState.Kind.FeedMaxStaleness, subject, bytes32(maxStaleness));
+        set(diamond, PriceGuardState.Kind.FeedMinAnswer, subject, bytes32(uint256(minAnswer)));
     }
 
     /// @notice A per-asset direct numeraire feed (zero removes it).
     function setAssetDirectFeed(address diamond, address asset, address feed) internal {
         _code(feed);
-        set(diamond, PriceGuard.Kind.AssetDirectFeed, bytes32(uint256(uint160(asset))), bytes32(uint256(uint160(feed))));
+        set(diamond, PriceGuardState.Kind.AssetDirectFeed, bytes32(uint256(uint160(asset))), bytes32(uint256(uint160(feed))));
     }
 
     function _code(address a) private {

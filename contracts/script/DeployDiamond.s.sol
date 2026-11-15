@@ -146,6 +146,7 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
 import {PriceGuardDeployment} from "./lib/PriceGuardDeployment.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
@@ -1360,6 +1361,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeProtocolRegistry(protocolRegistry);
         Deployments.writeBackstopVault(backstopVault);
         Deployments.writePriceGuard(priceGuard);
+        Deployments.writePriceGuardReader(PriceGuard(priceGuard).READER());
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
@@ -2708,13 +2710,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `SaleFloorFacet` (#3359) — the forced-sale floor
     ///      rule, its settings and the hourly price checkpoints it reads.
     function _getSaleFloorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = SaleFloorFacet.saleFloorBps.selector;
         s[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         s[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         s[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         s[4] = SaleFloorFacet.getSaleFloorConfig.selector;
         s[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
+        s[6] = SaleFloorFacet.getHourlyPriceCheckpointVersion.selector; // #3437
     }
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault

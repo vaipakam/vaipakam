@@ -13,7 +13,11 @@ import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
 import {IPyth} from "../interfaces/IPyth.sol";
 import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
+import {IVersionedFeedRegistry} from "../interfaces/IVersionedFeedRegistry.sol";
+import {IRateReader} from "../interfaces/IRateReader.sol";
 import {TestnetChains} from "../compliance/TestnetChains.sol";
+import {PriceGuardState} from "./PriceGuardState.sol";
+import {PriceGuardReader} from "./PriceGuardReader.sol";
 
 /**
  * @title  PriceGuard
@@ -65,217 +69,46 @@ import {TestnetChains} from "../compliance/TestnetChains.sol";
  *           quorum, so it waits {SECONDARY_REMOVAL_DELAY} after it is
  *           proposed, visibly, and the owner or the guardian may cancel it.
  *           Re-enabling a muted or removed source waits the delay.
+ *         - Every price setting is VERSIONED (#3437,
+ *           `LoanSettingsSnapshotDesign.md`). Each executed change to one
+ *           raises the guard's config {epoch} by one, and the old value is
+ *           kept, so every price read can also be made "as of" a price
+ *           version: the guard epoch together with the feed registry's own
+ *           epoch. A loan opened at a version keeps reading that version.
+ *           The stop levers (muting, removal, a rate source's mute) are not
+ *           versioned: a stop reaches every version at once, and can only
+ *           refuse more. A retired version is refused by the guard itself:
+ *           the {priceFloor}, raised only through the delayed change path
+ *           and only to the current version, answers no read below it.
+ *         - A token that stands for a growing amount of another one (a
+ *           staked form of a chain's native asset, a vault share) may be
+ *           priced from its exchange rate (#3683,
+ *           `RatePricedCollateralDesign.md`): the underlying's price, with
+ *           every check it has, times the token's rate. The rate may not rise
+ *           faster than its binding's daily bound, a fall past the binding's
+ *           bound marks the price distrusted until the new level is
+ *           confirmed under a fixed rule, and an optional market feed may
+ *           only lower the result. Such a token is collateral only.
+ *         - Its pricing path runs in a separate immutable contract, the
+ *           {PriceGuardReader} named at construction (#3437; the split keeps
+ *           both under the contract size limit). Every price read runs the
+ *           reader's code over this guard's storage inside a static call, so
+ *           a read can never write. The reader must carry this guard's
+ *           numeraire identity, and the two share one storage layout
+ *           ({PriceGuardState}).
  *         - Every write emits an event naming exactly what it changed.
  */
-contract PriceGuard is Ownable2Step, IPriceGuard {
+contract PriceGuard is PriceGuardState, Ownable2Step {
     using EnumerableSet for EnumerableSet.Bytes32Set;
 
-    // ─── Constants ───────────────────────────────────────────────────────
+    /// @notice The contract whose code answers every price read (#3437).
+    address public immutable READER;
 
-    /// @notice The shortest and longest delay a production chain may set.
-    ///         The floor matches the vault code delay (`VaultBeacon`, 7 days
-    ///         once #3421 lands), so no price setting reaches the vaults'
-    ///         reads sooner than a vault code change could.
-    uint64 public constant MIN_DELAY = 7 days;
-    uint64 public constant MAX_DELAY = 14 days;
-
-    /// @notice How long a proposed secondary removal waits (#3537). Fixed and
-    ///         the same on every chain: removing a source's refusals is the
-    ///         step that loosens the quorum, and 48 hours matches the
-    ///         Timelock's unpause, so a wrong source can hold an asset's
-    ///         pricing refused for at most that long.
-    uint64 public constant SECONDARY_REMOVAL_DELAY = 48 hours;
-
-    /// @notice A volatile feed's answer must be at most this old.
-    uint256 public constant VOLATILE_STALENESS = 2 hours;
-    /// @notice A stable feed's answer may be this old when it sits at a peg.
-    uint256 public constant STABLE_STALENESS = 25 hours;
-    /// @notice How far from a peg a stable answer may sit (3%).
-    uint256 public constant PEG_TOLERANCE_BPS = 300;
-    /// @notice The implicit USD $1 peg, at 8 decimals.
-    int256 public constant USD_PEG_1E8 = 1e8;
-    /// @notice How long after an L2 sequencer recovers before prices count.
-    uint256 public constant SEQUENCER_GRACE_PERIOD = 1 hours;
-    /// @notice A Tellor value is read only once it is this old (#665).
-    uint256 public constant TELLOR_DISPUTE_BUFFER = 20 minutes;
-
-    uint16 public constant SECONDARY_MAX_DEVIATION_BPS_MIN = 100;
-    uint16 public constant SECONDARY_MAX_DEVIATION_BPS_MAX = 2000;
-    uint40 public constant SECONDARY_MAX_STALENESS_MIN = 60;
-    /// @dev 29h: DIA and API3 publish some pairs on a 24h heartbeat.
-    uint40 public constant SECONDARY_MAX_STALENESS_MAX = 29 hours;
-    uint16 public constant PYTH_MAX_DEVIATION_BPS_MIN = 100;
-    uint16 public constant PYTH_MAX_DEVIATION_BPS_MAX = 2000;
-    uint16 public constant PYTH_CONFIDENCE_MAX_BPS_MIN = 50;
-    uint16 public constant PYTH_CONFIDENCE_MAX_BPS_MAX = 500;
-    uint64 public constant PYTH_MAX_STALENESS_MIN = 60;
-    uint64 public constant PYTH_MAX_STALENESS_MAX = 3600;
-
-    /// @notice The most stable-peg references the peg check walks.
-    uint256 public constant MAX_STABLE_REFS = 16;
-    /// @notice The longest stable-reference symbol (an ISO 4217 or metal ticker).
-    uint256 public constant MAX_STABLE_SYMBOL_LEN = 10;
-
-    uint256 private constant BPS = 10_000;
-
-    // ─── Types ───────────────────────────────────────────────────────────
-
-    /// @notice The entries a change can name. `subject` is zero for a
-    ///         single entry, and names the feed, asset, source or symbol for
-    ///         a keyed one. `value` is an address, a number or a word,
-    ///         left-padded into 32 bytes.
-    enum Kind {
-        FeedRegistry, //            the chain's VaipakamFeedRegistry
-        Weth, //                    the chain's WETH, priced from the ETH anchor (0: none)
-        EthNumeraireFeed, //        ETH/<numeraire>
-        EthPadFeed, //              ETH/<PAD> (0: the ETH/<numeraire> feed)
-        PadNumeraireRateFeed, //    PAD/<numeraire> (0: derived through ETH)
-        SequencerFeed, //           L2 sequencer uptime (0: an L1, no check)
-        PythOracle, //              (0: the cross-check is off)
-        PythFeedId, //              Pyth ETH/<numeraire> id (0: off)
-        PythMaxStaleness, //        seconds
-        PythMaxDeviationBps,
-        PythConfidenceMaxBps,
-        SecondarySource, //         subject = Source; value = the source contract (0: none)
-        SecondaryMaxDeviationBps,
-        SecondaryMaxStaleness, //   seconds
-        FeedMaxStaleness, //        subject = feed; seconds (0: no override)
-        FeedMinAnswer, //           subject = feed; int256 in the feed's decimals (<= 0: no floor)
-        StableRef, //               subject = symbol; value = reference feed (0: removed)
-        AssetDirectFeed, //         subject = asset; asset/<numeraire> feed (0: none). Industrial pivot only.
-        SecondaryEnabled, //        subject = Source; value 1 re-enables (disabling is instant)
-        Delay //                    a lowered delay
-    }
-
-    /// @notice The secondary sources the quorum consults.
-    enum Source {
-        Tellor,
-        Api3,
-        Dia
-    }
-
-    /// @notice One config entry: what it is, which one, and its new value.
-    struct Change {
-        Kind kind;
-        bytes32 subject;
-        bytes32 value;
-    }
-
-    /// @notice The numeraire identity, fixed at construction.
-    struct Identity {
-        /// @dev The Chainlink denominator prices are quoted in (USD on retail).
-        address numeraireDenominator;
-        /// @dev Lower-case ASCII, left-aligned (`"usd"`). Builds the secondary queries.
-        bytes32 numeraireSymbol;
-        /// @dev The predominant denominator; zero or the numeraire itself means
-        ///      no pivot (retail).
-        address padDenominator;
-        /// @dev The Chainlink ETH denominator, for the asset/ETH fallback.
-        address ethDenominator;
-    }
-
-    /// @dev A proposed value. `executableAt` 0 means nothing is pending.
-    struct Pending {
-        bytes32 value;
-        uint64 executableAt;
-    }
-
-    enum SecondaryStatus {
-        Unavailable,
-        Agree,
-        Disagree
-    }
-
-    /// @notice How a secondary source takes part in the quorum (#3537).
-    ///         `Counted`: its agreement accepts a price and its disagreement
-    ///         refuses one. `Muted`: its agreement no longer counts, its
-    ///         disagreement still refuses. `Removed`: it is not asked.
-    enum SecondaryState {
-        Counted,
-        Muted,
-        Removed
-    }
-
-    // ─── Immutable identity ──────────────────────────────────────────────
-
-    address public immutable NUMERAIRE_DENOMINATOR;
-    bytes32 public immutable NUMERAIRE_SYMBOL;
-    /// @notice The denominator asset prices are read in before any pivot.
-    ///         Equal to {NUMERAIRE_DENOMINATOR} on retail.
-    address public immutable PAD_DENOMINATOR;
-    address public immutable ETH_DENOMINATOR;
-    /// @notice True when this chain may set a delay below {MIN_DELAY}.
-    bool public immutable TESTNET;
-
-    // ─── Config ──────────────────────────────────────────────────────────
-
-    address public feedRegistry;
-    /// @notice The chain's WETH, priced from the ETH anchor feed. The
-    ///         Diamond's liquidity probe also routes over it.
-    /// @dev    It must be the chain's canonical bridged WETH9, never the
-    ///         wrapped native token where native gas is not ETH (WBNB on BNB
-    ///         Chain, WPOL on Polygon PoS): the guard prices it from the ETH
-    ///         feed without touching it, so a wrong token is mispriced as
-    ///         ETH. Nothing on-chain says which token is WETH9; the chain's
-    ///         official bridge registry is the source, and the launch
-    ///         readiness check compares this entry with the declared one.
-    address public weth;
-    address public ethNumeraireFeed;
-    address public ethPadFeed;
-    address public padNumeraireRateFeed;
-    address public sequencerFeed;
-    address public pythOracle;
-    bytes32 public pythFeedId;
-    uint64 public pythMaxStaleness;
-    uint16 public pythMaxDeviationBps;
-    uint16 public pythConfidenceMaxBps;
-    uint16 public secondaryMaxDeviationBps;
-    uint40 public secondaryMaxStaleness;
-    /// @notice The source contract per {Source}.
-    mapping(Source => address) public secondarySource;
-    /// @notice How each source takes part in the quorum (#3537).
-    mapping(Source => SecondaryState) public secondaryState;
-    /// @notice When a proposed removal of the source may execute; 0 = none.
-    mapping(Source => uint64) public secondaryRemovalAt;
-    mapping(address feed => uint40) public feedMaxStaleness;
-    mapping(address feed => int256) public feedMinAnswer;
-    mapping(address asset => address) public assetDirectFeed;
-    mapping(bytes32 symbol => address) public stableRefFeed;
-    EnumerableSet.Bytes32Set private _stableRefSymbols;
-
-    address public guardian;
-    uint64 public delay;
-    mapping(bytes32 id => Pending) private _pending;
-
-    // ─── Events ──────────────────────────────────────────────────────────
-
-    event ConfigSet(Kind indexed kind, bytes32 indexed subject, bytes32 value);
-    event ChangeProposed(Kind indexed kind, bytes32 indexed subject, bytes32 value, uint256 executableAt);
-    event ChangeCancelled(Kind indexed kind, bytes32 indexed subject, address indexed by);
-    event SecondaryMuted(Source indexed source, address indexed by);
-    event SecondaryRemovalProposed(Source indexed source, address indexed by, uint256 executableAt);
-    event SecondaryRemovalCancelled(Source indexed source, address indexed by);
-    event SecondaryRemoved(Source indexed source);
-    event DelaySet(uint256 oldDelay, uint256 newDelay);
-    event GuardianSet(address indexed previous, address indexed next);
-
-    // ─── Errors ──────────────────────────────────────────────────────────
-
-    error ZeroAddress();
-    error NotOwnerOrGuardian(address caller);
-    error RenounceDisabled();
-    error DelayOutOfRange(uint256 requested, uint256 min, uint256 max);
-    error ChangePending(Kind kind, bytes32 subject);
-    error NothingPending(Kind kind, bytes32 subject);
-    error NotReady(Kind kind, bytes32 subject, uint256 executableAt);
-    error InvalidChange(Kind kind, bytes32 subject, bytes32 value);
-    error NotAContract(Kind kind, address value);
-    error TooManyStableRefs(uint256 max);
-    error InvalidNumeraireSymbol(bytes32 symbol);
-    error SecondaryAlreadyRemoved(Source source);
-    error SecondaryRemovalPending(Source source, uint256 executableAt);
-    error NoSecondaryRemovalPending(Source source);
-    error SecondaryRemovalNotReady(Source source, uint256 executableAt);
+    /// @notice The reader is not a {PriceGuardReader} built for this guard's
+    ///         identity.
+    error ReaderMismatch(address reader);
+    /// @notice {readThroughReader} is the guard's own entry.
+    error NotSelf();
 
     // ─── Construction ────────────────────────────────────────────────────
 
@@ -283,194 +116,251 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     /// @param guardian_ The Pauser Safe (the admin until the handover moves it).
     /// @param id        The numeraire identity, fixed for life.
     /// @param delay_    The starting delay, within the chain's bounds.
-    /// @param initial   The starting config, applied through the same checks
-    ///                  as an executed change. Unnamed knobs take their
-    ///                  defaults; unnamed feeds and sources start unset.
+    /// @param initial   The starting price config, applied as epoch 1 through
+    ///                  the same checks as an executed change. Unnamed knobs
+    ///                  take their defaults; unnamed feeds and sources start
+    ///                  unset. Rate bindings, levers and the floor are refused
+    ///                  here: they come later, through the delay.
+    /// @param reader_   The {PriceGuardReader} built for this identity.
     constructor(
         address owner_,
         address guardian_,
         Identity memory id,
         uint64 delay_,
-        Change[] memory initial
-    ) Ownable(owner_) {
+        Change[] memory initial,
+        address reader_
+    ) PriceGuardState(id) Ownable(owner_) {
         if (guardian_ == address(0)) revert ZeroAddress();
-        if (id.numeraireDenominator == address(0) || id.ethDenominator == address(0)) revert ZeroAddress();
-        if (!_isLowerSymbol(id.numeraireSymbol)) revert InvalidNumeraireSymbol(id.numeraireSymbol);
-        NUMERAIRE_DENOMINATOR = id.numeraireDenominator;
-        NUMERAIRE_SYMBOL = id.numeraireSymbol;
-        PAD_DENOMINATOR = id.padDenominator == address(0) ? id.numeraireDenominator : id.padDenominator;
-        ETH_DENOMINATOR = id.ethDenominator;
-        TESTNET = TestnetChains.isTestnet(block.chainid);
+        _requireReader(reader_);
+        READER = reader_;
         _checkDelay(delay_);
         delay = delay_;
         guardian = guardian_;
+        epoch = 1;
+        rateObservation = RATE_OBSERVATION_DEFAULT;
         emit GuardianSet(address(0), guardian_);
         emit DelaySet(0, delay_);
+        emit EpochAdvanced(1);
 
-        _apply(Kind.PythMaxStaleness, bytes32(0), bytes32(uint256(300)));
-        _apply(Kind.PythMaxDeviationBps, bytes32(0), bytes32(uint256(500)));
-        _apply(Kind.PythConfidenceMaxBps, bytes32(0), bytes32(uint256(100)));
-        _apply(Kind.SecondaryMaxDeviationBps, bytes32(0), bytes32(uint256(500)));
-        _apply(Kind.SecondaryMaxStaleness, bytes32(0), bytes32(uint256(3600)));
+        _apply(Kind.PythMaxStaleness, bytes32(0), bytes32(uint256(300)), 1);
+        _apply(Kind.PythMaxDeviationBps, bytes32(0), bytes32(uint256(500)), 1);
+        _apply(Kind.PythConfidenceMaxBps, bytes32(0), bytes32(uint256(100)), 1);
+        _apply(Kind.SecondaryMaxDeviationBps, bytes32(0), bytes32(uint256(500)), 1);
+        _apply(Kind.SecondaryMaxStaleness, bytes32(0), bytes32(uint256(3600)), 1);
         for (uint256 i; i < initial.length; ++i) {
-            if (initial[i].kind == Kind.Delay || initial[i].kind == Kind.SecondaryEnabled) {
+            if (!_isPriceSetting(initial[i].kind) || initial[i].kind == Kind.RateBinding) {
                 revert InvalidChange(initial[i].kind, initial[i].subject, initial[i].value);
             }
-            _apply(initial[i].kind, initial[i].subject, initial[i].value);
+            _apply(initial[i].kind, initial[i].subject, initial[i].value, 1);
         }
     }
 
-    // ─── Price reads ─────────────────────────────────────────────────────
+
+    /// @dev The reader must carry exactly this guard's identity: a reader
+    ///      built for another numeraire would price in it.
+    function _requireReader(address reader_) private view {
+        if (reader_.code.length == 0) revert ReaderMismatch(reader_);
+        (Identity memory r, bool testnet) = PriceGuardReader(reader_).identity();
+        if (
+            r.numeraireDenominator != NUMERAIRE_DENOMINATOR || r.numeraireSymbol != NUMERAIRE_SYMBOL
+                || r.padDenominator != PAD_DENOMINATOR || r.ethDenominator != ETH_DENOMINATOR || testnet != TESTNET
+        ) revert ReaderMismatch(reader_);
+    }
+
+    // ─── Price reads, answered by the reader ─────────────────────────────
 
     /// @inheritdoc IPriceGuard
-    function getAssetPrice(address asset) public view returns (uint256 price, uint8 decimals) {
-        (price, decimals) = _primaryPrice(asset);
-        // #2419: a composed price can floor to zero from positive feeds.
-        if (price == 0) revert ZeroPrice(asset);
-        _enforceSecondaryQuorum(asset, price, decimals);
+    function getAssetPrice(address) external view returns (uint256 price, uint8 decimals) {
+        _forward();
     }
 
     /// @inheritdoc IPriceGuard
-    /// @dev A divergence is recognised by its own selector at its own encoded
-    ///      length. Only the quorum raises {OraclePriceDivergence} and only
-    ///      the Pyth gate raises {OracleCrossCheckDivergence}; every secondary
-    ///      source and Pyth are read in their own try/catch, so their revert
-    ///      data never reaches here. A primary Chainlink feed's or the
-    ///      sequencer feed's revert data does: those are the owner's own
-    ///      delayed config, not an outside source. The self-call takes 63/64 of the gas
-    ///      left, so a caller cannot starve it into a false `Unavailable` and
-    ///      still afford its own work.
-    function getAssetPriceStatus(address asset)
-        public
+    function getAssetPriceAt(address, uint64, uint64) external view returns (uint256 price, uint8 decimals) {
+        _forward();
+    }
+
+    /// @inheritdoc IPriceGuard
+    function getAssetPriceStatus(address)
+        external
         view
         returns (PriceStatus status, uint256 price, uint8 decimals)
     {
-        try this.getAssetPrice(asset) returns (uint256 p, uint8 d) {
-            return (PriceStatus.Priced, p, d);
-        } catch (bytes memory reason) {
-            if (reason.length >= 4) {
-                bytes4 sel = bytes4(reason);
-                if (
-                    (sel == OraclePriceDivergence.selector && reason.length == 4)
-                        || (sel == OracleCrossCheckDivergence.selector && reason.length == 4 + 4 * 32)
-                ) return (PriceStatus.Divergent, 0, 0);
-            }
-            return (PriceStatus.Unavailable, 0, 0);
-        }
+        _forward();
     }
 
     /// @inheritdoc IPriceGuard
-    function tryGetAssetPrice(address asset) external view returns (bool ok, uint256 price, uint8 decimals) {
-        PriceStatus status;
-        (status, price, decimals) = getAssetPriceStatus(asset);
-        ok = status == PriceStatus.Priced;
-    }
-
-    /// @inheritdoc IPriceGuard
-    function countLiveSecondaryOracleFeeds(address asset)
+    function getAssetPriceStatusAt(address, uint64, uint64)
         external
         view
-        returns (uint8 agreeing, uint8 disagreeing)
+        returns (PriceStatus status, uint256 price, uint8 decimals)
     {
-        (uint256 primary, uint8 dec) = _primaryPrice(asset);
-        bytes32 symbol = _secondarySymbol(asset);
-        if (symbol == bytes32(0)) return (0, 0);
-        SecondaryStatus[3] memory statuses = _secondaryStatuses(symbol, primary, dec);
-        for (uint256 i; i < 3; ++i) {
-            if (statuses[i] == SecondaryStatus.Agree) agreeing++;
-            else if (statuses[i] == SecondaryStatus.Disagree) disagreeing++;
-        }
+        _forward();
     }
 
     /// @inheritdoc IPriceGuard
-    function sequencerHealthy() external view returns (bool) {
-        address feed = sequencerFeed;
-        if (feed == address(0)) return true;
-        try AggregatorV3Interface(feed).latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
-            return answer == 0 && startedAt != 0 && startedAt <= block.timestamp
-                && block.timestamp - startedAt >= SEQUENCER_GRACE_PERIOD;
-        } catch {
-            return false;
-        }
+    function tryGetAssetPrice(address) external view returns (bool ok, uint256 price, uint8 decimals) {
+        _forward();
     }
 
     /// @inheritdoc IPriceGuard
-    function sequencerOutageWindow() external view returns (uint256 downAt, uint256 windowEnd) {
-        address feed = sequencerFeed;
-        if (feed == address(0)) return (0, 0);
-        uint80 roundId;
-        int256 answer;
-        uint256 startedAt;
-        try AggregatorV3Interface(feed).latestRoundData() returns (uint80 r, int256 a, uint256 st, uint256, uint80) {
-            (roundId, answer, startedAt) = (r, a, st);
-        } catch {
-            return (block.timestamp, block.timestamp + SEQUENCER_GRACE_PERIOD);
-        }
-        // A missing or future start is a broken feed: read as down from now.
-        if (startedAt == 0 || startedAt > block.timestamp) {
-            return (block.timestamp, block.timestamp + SEQUENCER_GRACE_PERIOD);
-        }
-        if (answer != 0) return (startedAt, block.timestamp + SEQUENCER_GRACE_PERIOD);
-        // Up since `startedAt`: the outage began at the previous round, when
-        // that round is readable and was a down round; otherwise unknown,
-        // and only the recovery grace counts.
-        downAt = startedAt;
-        windowEnd = startedAt + SEQUENCER_GRACE_PERIOD;
-        if (roundId == 0) return (downAt, windowEnd);
-        try AggregatorV3Interface(feed).getRoundData(roundId - 1) returns (uint80, int256 pa, uint256 pst, uint256, uint80) {
-            if (pa != 0 && pst != 0 && pst <= startedAt) downAt = pst;
-        } catch {}
-    }
-
-    /// @inheritdoc IPriceGuard
-    function readFeed(address feed, bool allowStablePeg)
+    function tryGetAssetPriceAt(address, uint64, uint64)
         external
         view
         returns (bool ok, uint256 price, uint8 decimals)
     {
-        if (feed == address(0)) return (false, 0, 0);
-        int256 answer;
-        uint256 updatedAt;
-        try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 roundId, int256 a, uint256, uint256 u, uint80 answeredInRound
-        ) {
-            if (a <= 0 || u == 0 || u > block.timestamp || roundId != answeredInRound) return (false, 0, 0);
-            answer = a;
-            updatedAt = u;
-        } catch {
-            return (false, 0, 0);
-        }
-        uint256 age = block.timestamp - updatedAt;
-        if (age > STABLE_STALENESS) return (false, 0, 0);
-        uint8 dec;
-        try AggregatorV3Interface(feed).decimals() returns (uint8 d) {
-            dec = d;
-        } catch {
-            return (false, 0, 0);
-        }
-        if (!_freshEnough(feed, answer, age, dec, allowStablePeg)) return (false, 0, 0);
-        // safe: `answer` > 0 was checked above.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return (true, uint256(answer), dec);
+        _forward();
     }
 
-    // ─── Config reads ────────────────────────────────────────────────────
+    /// @inheritdoc IPriceGuard
+    function countLiveSecondaryOracleFeeds(address) external view returns (uint8 agreeing, uint8 disagreeing) {
+        _forward();
+    }
+
+    /// @inheritdoc IPriceGuard
+    function sequencerHealthy() external view returns (bool healthy) {
+        _forward();
+    }
+
+    /// @inheritdoc IPriceGuard
+    function sequencerOutageWindow() external view returns (uint256 downAt, uint256 windowEnd) {
+        _forward();
+    }
+
+    /// @inheritdoc IPriceGuard
+    function sequencerOutageWindowAt(uint64) external view returns (uint256 downAt, uint256 windowEnd) {
+        _forward();
+    }
+
+    /// @inheritdoc IPriceGuard
+    function readFeed(address, bool) external view returns (bool ok, uint256 price, uint8 decimals) {
+        _forward();
+    }
+
+    /// @notice The guard's own entry for its reads: runs the reader's code on
+    ///         `data` over this guard's storage. Only the guard may call it,
+    ///         and it does so only inside a static call ({_forward}), so the
+    ///         reader's code can never write here.
+    function readThroughReader(bytes calldata data) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        (bool ok, bytes memory ret) = READER.delegatecall(data);
+        assembly ("memory-safe") {
+            if iszero(ok) { revert(add(ret, 32), mload(ret)) }
+            return(add(ret, 32), mload(ret))
+        }
+    }
+
+    /// @dev Answer the current call from the reader, returning or reverting
+    ///      with exactly what it did. Reads `ret`, a bytes array this
+    ///      function holds, only within its length.
+    function _forward() private view {
+        (bool ok, bytes memory ret) = address(this).staticcall(abi.encodeCall(this.readThroughReader, (msg.data)));
+        assembly ("memory-safe") {
+            if iszero(ok) { revert(add(ret, 32), mload(ret)) }
+            return(add(ret, 32), mload(ret))
+        }
+    }
+
+    // ─── Version and config reads ────────────────────────────────────────
+
+    /// @notice The live value of a setting, as its {Kind} encodes it.
+    function config(Kind kind, bytes32 subject) external view returns (bytes32) {
+        return _cfg[_id(kind, subject)];
+    }
+
+    /// @notice The value a price setting had at guard epoch `at` (#3437).
+    function configAt(Kind kind, bytes32 subject, uint64 at) external view returns (bytes32) {
+        if (at == 0 || at > epoch) revert UnknownPriceVersion(at, 0);
+        return _valueAt(_id(kind, subject), at);
+    }
+
+    // Named reads of the live settings, for consoles and scripts that read
+    // one setting by name. Each is {config} for one {Kind}.
+
+    function ethPadFeed() external view returns (address) {
+        return _addr(_cfg[_id(Kind.EthPadFeed, 0)]);
+    }
+
+    function padNumeraireRateFeed() external view returns (address) {
+        return _addr(_cfg[_id(Kind.PadNumeraireRateFeed, 0)]);
+    }
+
+    function pythOracle() external view returns (address) {
+        return _addr(_cfg[_id(Kind.PythOracle, 0)]);
+    }
+
+    function pythFeedId() external view returns (bytes32) {
+        return _cfg[_id(Kind.PythFeedId, 0)];
+    }
+
+    function pythMaxStaleness() external view returns (uint64) {
+        return uint64(uint256(_cfg[_id(Kind.PythMaxStaleness, 0)]));
+    }
+
+    function pythMaxDeviationBps() external view returns (uint16) {
+        return uint16(uint256(_cfg[_id(Kind.PythMaxDeviationBps, 0)]));
+    }
+
+    function pythConfidenceMaxBps() external view returns (uint16) {
+        return uint16(uint256(_cfg[_id(Kind.PythConfidenceMaxBps, 0)]));
+    }
+
+    function secondaryMaxDeviationBps() external view returns (uint16) {
+        return uint16(uint256(_cfg[_id(Kind.SecondaryMaxDeviationBps, 0)]));
+    }
+
+    function secondaryMaxStaleness() external view returns (uint40) {
+        return uint40(uint256(_cfg[_id(Kind.SecondaryMaxStaleness, 0)]));
+    }
+
+    function secondarySource(Source source) external view returns (address) {
+        return _addr(_cfg[_id(Kind.SecondarySource, bytes32(uint256(uint8(source))))]);
+    }
+
+    function feedMaxStaleness(address feed) external view returns (uint40) {
+        return uint40(uint256(_cfg[_id(Kind.FeedMaxStaleness, _w(feed))]));
+    }
+
+    function feedMinAnswer(address feed) external view returns (int256) {
+        return int256(uint256(_cfg[_id(Kind.FeedMinAnswer, _w(feed))]));
+    }
+
+    function assetDirectFeed(address asset) external view returns (address) {
+        return _addr(_cfg[_id(Kind.AssetDirectFeed, _w(asset))]);
+    }
+
+    function stableRefFeed(bytes32 symbol) external view returns (address) {
+        return _addr(_cfg[_id(Kind.StableRef, symbol)]);
+    }
 
     /// @notice The ETH anchor the PAD price reads WETH and the ETH pivot from:
     ///         the ETH/PAD feed, or the ETH/<numeraire> feed when none is set.
-    function ethAnchorFeed() public view returns (address) {
-        address a = ethPadFeed;
-        return a == address(0) ? ethNumeraireFeed : a;
+    function ethAnchorFeed() external view returns (address) {
+        return _ethAnchorFeed(_latest());
     }
 
-    /// @notice Whether prices are read in the numeraire directly (retail).
-    function padIsNumeraire() public view returns (bool) {
-        return PAD_DENOMINATOR == NUMERAIRE_DENOMINATOR;
+    /// @notice Every stable-peg reference symbol with a live feed, in no
+    ///         particular order.
+    function stableRefSymbols() external view returns (bytes32[] memory out) {
+        bytes32[] memory all = _stableRefSymbols.values();
+        uint256 n;
+        out = new bytes32[](all.length);
+        for (uint256 i; i < all.length; ++i) {
+            if (_cfg[_id(Kind.StableRef, all[i])] != bytes32(0)) out[n++] = all[i];
+        }
+        assembly ("memory-safe") {
+            mstore(out, n)
+        }
     }
 
-    /// @notice Every stable-peg reference symbol, in no particular order.
-    function stableRefSymbols() external view returns (bytes32[] memory) {
-        return _stableRefSymbols.values();
+    /// @notice A rate binding registered by {proposeRateBinding}.
+    function rateBindingOf(bytes32 hash) external view returns (RateBinding memory) {
+        return _rateBinding[hash];
+    }
+
+    /// @notice What the guard has measured of `token`'s rate under binding
+    ///         `hash` (#3683).
+    function rateStateOf(address token, bytes32 hash) external view returns (RateState memory) {
+        return _rate[token][hash];
     }
 
     /// @notice The pending change to (`kind`, `subject`); `executableAt` 0 = none.
@@ -479,28 +369,43 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         return (p.value, p.executableAt);
     }
 
-    // ─── Config writes ───────────────────────────────────────────────────
-
     /// @notice Propose a change, executable by anyone once `delay` has passed.
     ///         It is checked now and again when it is executed.
+    ///         A rate binding is set through {proposeRateBinding}; here it
+    ///         may only be removed (value zero).
     function proposeChange(Kind kind, bytes32 subject, bytes32 value) external onlyOwner {
-        Pending storage p = _pending[_id(kind, subject)];
-        if (p.executableAt != 0) revert ChangePending(kind, subject);
-        if (kind == Kind.Delay) {
-            uint256 d = uint256(value);
-            // One delay, so one pending lowering; a raise is instant.
-            if (subject != bytes32(0) || d >= delay) revert InvalidChange(kind, subject, value);
-            _checkDelay(uint64(d));
-        } else {
-            _validate(kind, subject, value);
+        if (kind == Kind.RateBinding && value != bytes32(0)) revert InvalidChange(kind, subject, value);
+        _propose(kind, subject, value);
+    }
+
+    /// @notice Register a rate binding for `token` and propose it (#3683).
+    ///         The binding is stored under its hash, which is the value the
+    ///         proposed change carries, so it applies whole or not at all.
+    ///         The rate the source reports now is the binding's first
+    ///         accepted rate: from here to execution it is recorded under the
+    ///         daily bound like any other, so a rate pushed up when the change
+    ///         executes gains nothing.
+    /// @return hash The binding's hash.
+    function proposeRateBinding(address token, RateBinding calldata binding) external onlyOwner returns (bytes32 hash) {
+        hash = keccak256(abi.encode(binding));
+        _rateBinding[hash] = binding;
+        emit RateBindingRegistered(hash, token, binding);
+        _propose(Kind.RateBinding, _w(token), hash);
+        RateState storage st = _rate[token][hash];
+        if (st.at == 0) {
+            uint256 reported = _requireRate(token, binding);
+            // safe: `_requireRate` refuses a rate above uint128.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            st.accepted = uint128(reported);
+            st.at = uint64(block.timestamp);
+            emit RateRecorded(token, hash, reported, reported);
         }
-        uint64 at = uint64(block.timestamp) + delay;
-        p.value = value;
-        p.executableAt = at;
-        emit ChangeProposed(kind, subject, value, at);
     }
 
     /// @notice Apply a pending change whose delay has passed. Anyone may call.
+    ///         A change to a price setting raises the {epoch}. A floor change
+    ///         that comes due after the current version moved on lapses: it
+    ///         is dropped unapplied, and says so.
     function executeChange(Kind kind, bytes32 subject) external {
         Pending storage p = _pending[_id(kind, subject)];
         uint64 at = p.executableAt;
@@ -512,8 +417,15 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
             uint64 d = uint64(uint256(value));
             emit DelaySet(delay, d);
             delay = d;
+        } else if (kind == Kind.PriceFloor) {
+            _raiseFloor(value);
         } else {
-            _apply(kind, subject, value);
+            uint64 e = epoch;
+            if (_isPriceSetting(kind)) {
+                e = ++epoch;
+                emit EpochAdvanced(e);
+            }
+            _apply(kind, subject, value, e);
         }
     }
 
@@ -534,7 +446,7 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
     ///         this stop cannot undo it; the way back is a new proposal that
     ///         waits the full delay. Muting a removed source changes nothing.
     function muteSecondary(Source source) external onlyOwnerOrGuardian {
-        _cancelReEnable(source);
+        _cancelPending(Kind.SecondaryEnabled, bytes32(uint256(uint8(source))));
         if (secondaryState[source] != SecondaryState.Counted) return;
         secondaryState[source] = SecondaryState.Muted;
         emit SecondaryMuted(source, msg.sender);
@@ -550,7 +462,7 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         if (secondaryState[source] == SecondaryState.Removed) revert SecondaryAlreadyRemoved(source);
         uint64 pendingAt = secondaryRemovalAt[source];
         if (pendingAt != 0) revert SecondaryRemovalPending(source, pendingAt);
-        _cancelReEnable(source);
+        _cancelPending(Kind.SecondaryEnabled, bytes32(uint256(uint8(source))));
         if (secondaryState[source] == SecondaryState.Counted) {
             secondaryState[source] = SecondaryState.Muted;
             emit SecondaryMuted(source, msg.sender);
@@ -578,14 +490,87 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         emit SecondaryRemoved(source);
     }
 
-    /// @dev Drop a pending re-enable of `source`, even one already due.
-    function _cancelReEnable(Source source) private {
-        bytes32 subject = bytes32(uint256(uint8(source)));
-        bytes32 key = _id(Kind.SecondaryEnabled, subject);
-        if (_pending[key].executableAt != 0) {
-            delete _pending[key];
-            emit ChangeCancelled(Kind.SecondaryEnabled, subject, msg.sender);
+    /// @notice Mute a token's rate source at once (#3683): its price reads as
+    ///         distrusted at every version, which refuses close-outs rather
+    ///         than moving them to the missing-price route. Stop-only. It
+    ///         cancels a pending unmute, even one already due; unmuting is a
+    ///         new proposal that waits the delay.
+    function muteRateSource(address token) external onlyOwnerOrGuardian {
+        _cancelPending(Kind.RateSourceEnabled, _w(token));
+        if (rateMuted[token]) return;
+        rateMuted[token] = true;
+        emit RateSourceMuted(token, msg.sender);
+    }
+
+    /// @notice Record `token`'s rate under binding `hash` (#3683). Anyone may
+    ///         call; the hourly checkpoint pass does, for every binding a
+    ///         token has had, so a loan on an older binding keeps up too.
+    ///         The accepted rate follows the source down at once, and up by at
+    ///         most the binding's daily bound for the time since the last
+    ///         record, counted as at most one day. A fall past the bound
+    ///         marks the price distrusted and starts its observation; while
+    ///         distrusted, each record keeps the lowest rate reported and
+    ///         restarts the observation when a reading breaks the rule.
+    function recordRate(address token, bytes32 hash) external {
+        RateState storage st = _rate[token][hash];
+        if (st.at == 0) revert UnknownRateBinding(token, hash);
+        RateBinding memory b = _rateBinding[hash];
+        uint256 reported = _requireRate(token, b);
+        if (st.observedSince == 0) {
+            uint256 accepted = st.accepted;
+            // While the binding waits to execute, nothing is priced from it,
+            // so a fall corrects the starting rate instead of marking a
+            // price distrusted that no loan reads yet.
+            if (!_rateBindingPending(token, hash) && _fellPast(reported, accepted, b.maxFallBps)) {
+                st.observedSince = uint64(block.timestamp);
+                st.preFall = uint128(accepted);
+                st.lowest = uint128(reported);
+                emit RateDistrusted(token, hash, accepted, reported);
+                return;
+            }
+            uint256 cap = _rateCap(accepted, st.at, b.maxRiseBpsPerDay);
+            accepted = reported < cap ? reported : cap;
+            // safe: a reported rate above uint128 is refused by `_requireRate`.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            st.accepted = uint128(accepted);
+            st.at = uint64(block.timestamp);
+            emit RateRecorded(token, hash, reported, accepted);
+            return;
         }
+        if (_fellPast(reported, st.lowest, b.maxFallBps) || reported > st.preFall) {
+            st.observedSince = uint64(block.timestamp);
+        }
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (reported < st.lowest) st.lowest = uint128(reported);
+        emit RateObserved(token, hash, reported, st.lowest, st.observedSince);
+    }
+
+    /// @notice Confirm a distrusted rate (#3683). The owner or the guardian,
+    ///         on one rule, choosing no number: allowed only once the rate
+    ///         has been observed for {rateObservation} at or below the
+    ///         pre-fall rate with no further fall past the bound, and the
+    ///         rate it accepts is the lower of the lowest reported since the
+    ///         fall and the rate reported now. From there the rate rises only
+    ///         under the daily bound.
+    function confirmRate(address token, bytes32 hash) external onlyOwnerOrGuardian {
+        RateState storage st = _rate[token][hash];
+        uint64 since = st.observedSince;
+        if (since == 0) revert RateNotDistrusted(token, hash);
+        RateBinding memory b = _rateBinding[hash];
+        uint256 reported = _requireRate(token, b);
+        if (_fellPast(reported, st.lowest, b.maxFallBps) || reported > st.preFall) {
+            revert RateStillMoving(token, hash, reported);
+        }
+        uint256 confirmableAt = uint256(since) + rateObservation;
+        if (block.timestamp < confirmableAt) revert RateObservationNotOver(token, hash, confirmableAt);
+        uint256 level = reported < st.lowest ? reported : st.lowest;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        st.accepted = uint128(level);
+        st.at = uint64(block.timestamp);
+        st.observedSince = 0;
+        st.lowest = 0;
+        st.preFall = 0;
+        emit RateConfirmed(token, hash, level, msg.sender);
     }
 
     /// @notice Raise the delay at once: a longer wait only tightens. Changes
@@ -615,10 +600,36 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         _;
     }
 
-    // ─── Config internals ────────────────────────────────────────────────
+    function _propose(Kind kind, bytes32 subject, bytes32 value) private {
+        Pending storage p = _pending[_id(kind, subject)];
+        if (p.executableAt != 0) revert ChangePending(kind, subject);
+        if (kind == Kind.Delay) {
+            uint256 d = uint256(value);
+            // One delay, so one pending lowering; a raise is instant.
+            if (subject != bytes32(0) || d >= delay) revert InvalidChange(kind, subject, value);
+            _checkDelay(uint64(d));
+        } else {
+            _validate(kind, subject, value);
+        }
+        uint64 at = uint64(block.timestamp) + delay;
+        p.value = value;
+        p.executableAt = at;
+        emit ChangeProposed(kind, subject, value, at);
+    }
 
-    function _id(Kind kind, bytes32 subject) private pure returns (bytes32) {
-        return keccak256(abi.encode(kind, subject));
+    /// @dev Drop a pending change, even one already due.
+    function _cancelPending(Kind kind, bytes32 subject) private {
+        bytes32 key = _id(kind, subject);
+        if (_pending[key].executableAt != 0) {
+            delete _pending[key];
+            emit ChangeCancelled(kind, subject, msg.sender);
+        }
+    }
+
+    /// @dev Whether executing a change of `kind` changes what a price read
+    ///      answers, and so raises the epoch.
+    function _isPriceSetting(Kind kind) private pure returns (bool) {
+        return kind <= Kind.AssetDirectFeed || kind == Kind.RateBinding;
     }
 
     function _checkDelay(uint64 d) private view {
@@ -633,7 +644,8 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         uint256 v = uint256(value);
         if (kind == Kind.Delay) revert InvalidChange(kind, subject, value);
         bool keyed = kind == Kind.SecondarySource || kind == Kind.FeedMaxStaleness || kind == Kind.FeedMinAnswer
-            || kind == Kind.StableRef || kind == Kind.AssetDirectFeed || kind == Kind.SecondaryEnabled;
+            || kind == Kind.StableRef || kind == Kind.AssetDirectFeed || kind == Kind.SecondaryEnabled
+            || kind == Kind.RateBinding || kind == Kind.RateSourceEnabled;
         if (!keyed && subject != bytes32(0)) revert InvalidChange(kind, subject, value);
 
         if (kind == Kind.PythFeedId) return;
@@ -654,6 +666,9 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         if (kind == Kind.SecondaryMaxStaleness) {
             return _range(kind, subject, value, SECONDARY_MAX_STALENESS_MIN, SECONDARY_MAX_STALENESS_MAX);
         }
+        if (kind == Kind.RateObservation) {
+            return _range(kind, subject, value, RATE_OBSERVATION_MIN, RATE_OBSERVATION_MAX);
+        }
         if (kind == Kind.FeedMaxStaleness) {
             _requireAddress(kind, subject, value, subject, false);
             // 0 removes the override; a set override may only be tighter
@@ -665,6 +680,19 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
             if (uint256(subject) > uint256(type(Source).max) || v != 1) revert InvalidChange(kind, subject, value);
             return;
         }
+        if (kind == Kind.RateSourceEnabled) {
+            if (uint256(subject) > type(uint160).max || v != 1) revert InvalidChange(kind, subject, value);
+            return;
+        }
+        if (kind == Kind.PriceFloor) {
+            // Only the current version, and only upwards (#3437).
+            (uint64 g, uint64 r) = priceVersion();
+            if (v != (uint256(g) << 64 | r) || (g == _floorGuardEpoch && r == _floorRegistryEpoch)) {
+                revert InvalidChange(kind, subject, value);
+            }
+            return;
+        }
+        if (kind == Kind.RateBinding) return _validateRateBinding(subject, value);
 
         // Every remaining kind sets an address.
         if (v > type(uint160).max) revert InvalidChange(kind, subject, value);
@@ -692,6 +720,41 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         }
     }
 
+    /// @dev A binding for the token `subject` (#3683): the token is a
+    ///      contract that is neither WETH nor any live binding's underlying;
+    ///      the underlying is a different contract that is not itself
+    ///      rate-priced; the bounds are in range; the rate source answers
+    ///      now; and a rate feed and a market feed are each the one the feed
+    ///      registry holds for the pair, with its heartbeat. Zero removes the
+    ///      binding.
+    function _validateRateBinding(bytes32 subject, bytes32 value) private view {
+        Kind kind = Kind.RateBinding;
+        _requireAddress(kind, subject, value, subject, false);
+        address token = _addr(subject);
+        if (value == bytes32(0)) return;
+        RateBinding memory b = _rateBinding[value];
+        address under = b.underlying;
+        if (
+            under == address(0) || under == token || token == weth() || _underlyingRefs[token] != 0
+                || _cfg[_id(kind, _w(under))] != bytes32(0) || b.maxRiseBpsPerDay == 0
+                || b.maxRiseBpsPerDay > RATE_MAX_RISE_BPS_PER_DAY || b.maxFallBps < RATE_MAX_FALL_BPS_MIN
+                || b.maxFallBps > RATE_MAX_FALL_BPS_MAX
+        ) revert InvalidChange(kind, subject, value);
+        _requireAddress(kind, subject, value, _w(under), false);
+        _requireAddress(kind, subject, value, _w(b.source), false);
+        address registry = feedRegistry();
+        if (!b.sourceIsReader) {
+            IVersionedFeedRegistry.Entry memory re = IVersionedFeedRegistry(registry).rateEntry(token, under);
+            if (re.feed != b.source || re.heartbeat != b.rateHeartbeat) revert InvalidChange(kind, subject, value);
+        }
+        if (b.marketFeed != address(0)) {
+            IVersionedFeedRegistry.Entry memory me = IVersionedFeedRegistry(registry).entry(token, NUMERAIRE_DENOMINATOR);
+            if (me.feed != b.marketFeed || me.heartbeat != b.marketHeartbeat) revert InvalidChange(kind, subject, value);
+        }
+        (bool ok,) = _reportedRate(token, b);
+        if (!ok) revert InvalidChange(kind, subject, value);
+    }
+
     function _range(Kind kind, bytes32 subject, bytes32 value, uint256 lo, uint256 hi) private pure {
         uint256 v = uint256(value);
         if (v < lo || v > hi) revert InvalidChange(kind, subject, value);
@@ -713,30 +776,81 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         if (a.code.length == 0) revert NotAContract(kind, a);
     }
 
-    /// @dev Validate and write one entry, and say so.
-    function _apply(Kind kind, bytes32 subject, bytes32 value) private {
+    /// @dev Validate and write one entry at epoch `at`, keeping the value it
+    ///      replaces for reads at earlier epochs, and say so.
+    function _apply(Kind kind, bytes32 subject, bytes32 value, uint64 at) private {
         _validate(kind, subject, value);
-        address a = address(uint160(uint256(value)));
-        if (kind == Kind.FeedRegistry) feedRegistry = a;
-        else if (kind == Kind.Weth) weth = a;
-        else if (kind == Kind.EthNumeraireFeed) ethNumeraireFeed = a;
-        else if (kind == Kind.EthPadFeed) ethPadFeed = a;
-        else if (kind == Kind.PadNumeraireRateFeed) padNumeraireRateFeed = a;
-        else if (kind == Kind.SequencerFeed) sequencerFeed = a;
-        else if (kind == Kind.PythOracle) pythOracle = a;
-        else if (kind == Kind.PythFeedId) pythFeedId = value;
-        else if (kind == Kind.PythMaxStaleness) pythMaxStaleness = uint64(uint256(value));
-        else if (kind == Kind.PythMaxDeviationBps) pythMaxDeviationBps = uint16(uint256(value));
-        else if (kind == Kind.PythConfidenceMaxBps) pythConfidenceMaxBps = uint16(uint256(value));
-        else if (kind == Kind.SecondarySource) secondarySource[Source(uint8(uint256(subject)))] = a;
-        else if (kind == Kind.SecondaryMaxDeviationBps) secondaryMaxDeviationBps = uint16(uint256(value));
-        else if (kind == Kind.SecondaryMaxStaleness) secondaryMaxStaleness = uint40(uint256(value));
-        else if (kind == Kind.FeedMaxStaleness) feedMaxStaleness[_addr(subject)] = uint40(uint256(value));
-        else if (kind == Kind.FeedMinAnswer) feedMinAnswer[_addr(subject)] = int256(uint256(value));
-        else if (kind == Kind.AssetDirectFeed) assetDirectFeed[_addr(subject)] = a;
-        else if (kind == Kind.SecondaryEnabled) _reEnable(Source(uint8(uint256(subject))));
-        else if (kind == Kind.StableRef) _setStableRef(subject, a);
+        if (kind == Kind.SecondaryEnabled) {
+            _reEnable(Source(uint8(uint256(subject))));
+        } else if (kind == Kind.RateSourceEnabled) {
+            rateMuted[_addr(subject)] = false;
+        } else if (kind == Kind.RateObservation) {
+            rateObservation = uint64(uint256(value));
+        } else {
+            if (kind == Kind.RateBinding) _bindRate(_addr(subject), value);
+            else if (kind == Kind.StableRef && value != bytes32(0)) _noteStableRef(subject);
+            bytes32 id = _id(kind, subject);
+            uint64 since = _cfgSince[id];
+            if (since != 0 && since != at) {
+                _cfgHistory[id].push(Past({sinceEpoch: since, untilEpoch: at, value: _cfg[id]}));
+            }
+            _cfg[id] = value;
+            _cfgSince[id] = at;
+        }
         emit ConfigSet(kind, subject, value);
+    }
+
+    /// @dev Raise the floor to the version `value` names, if it is still the
+    ///      current one; otherwise the change lapses.
+    function _raiseFloor(bytes32 value) private {
+        uint64 g = uint64(uint256(value) >> 64);
+        uint64 r = uint64(uint256(value));
+        (uint64 cg, uint64 cr) = priceVersion();
+        if (g != cg || r != cr) {
+            emit PriceFloorLapsed(g, r);
+            return;
+        }
+        address registry = feedRegistry();
+        _floorGuardEpoch = g;
+        _floorRegistry = registry;
+        _floorRegistryEpoch = r;
+        emit PriceFloorRaised(g, registry, r);
+    }
+
+    /// @dev Move `token` onto binding `hash` (zero: none). The underlying
+    ///      counts are kept so no token is both rate-priced and a live
+    ///      underlying. The binding's rate has been recorded since it was
+    ///      proposed ({proposeRateBinding}), and execution records it once
+    ///      more under the daily bound.
+    function _bindRate(address token, bytes32 hash) private {
+        bytes32 old = _cfg[_id(Kind.RateBinding, _w(token))];
+        if (old != bytes32(0)) --_underlyingRefs[_rateBinding[old].underlying];
+        if (hash == bytes32(0)) return;
+        ++_underlyingRefs[_rateBinding[hash].underlying];
+        // Execution records the rate too, so a binding left unrecorded
+        // through its delay still starts no higher than the daily bound
+        // allows. A distrusted record keeps its observation.
+        RateState storage st = _rate[token][hash];
+        if (st.observedSince != 0) return;
+        uint256 reported = _requireRate(token, _rateBinding[hash]);
+        RateBinding storage b = _rateBinding[hash];
+        uint256 accepted = reported;
+        if (st.at != 0) {
+            uint256 cap = _rateCap(st.accepted, st.at, b.maxRiseBpsPerDay);
+            if (cap < accepted) accepted = cap;
+        }
+        // safe: `_requireRate` refuses a rate above uint128.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        st.accepted = uint128(accepted);
+        st.at = uint64(block.timestamp);
+        emit RateRecorded(token, hash, reported, accepted);
+    }
+
+    /// @dev Whether `hash` is `token`'s pending binding and not yet its live one.
+    function _rateBindingPending(address token, bytes32 hash) private view returns (bool) {
+        bytes32 key = _id(Kind.RateBinding, _w(token));
+        Pending storage p = _pending[key];
+        return p.executableAt != 0 && p.value == hash && _cfg[key] != hash;
     }
 
     /// @dev A re-enable counts the source again and drops any removal still
@@ -750,445 +864,24 @@ contract PriceGuard is Ownable2Step, IPriceGuard {
         }
     }
 
-    function _setStableRef(bytes32 symbol, address feed) private {
-        stableRefFeed[symbol] = feed;
-        if (feed == address(0)) {
-            _stableRefSymbols.remove(symbol);
-        } else if (_stableRefSymbols.add(symbol) && _stableRefSymbols.length() > MAX_STABLE_REFS) {
-            revert TooManyStableRefs(MAX_STABLE_REFS);
-        }
-    }
-
-    function _addr(bytes32 word) private pure returns (address) {
-        return address(uint160(uint256(word)));
-    }
-
-    // ─── Primary price ───────────────────────────────────────────────────
-
-    /// @dev The Chainlink primary, quoted in the numeraire.
-    ///      - Retail (PAD is the numeraire): the asset/numeraire feed from the
-    ///        registry, else asset/ETH × ETH/numeraire. WETH reads the ETH
-    ///        anchor directly.
-    ///      - Industrial (PAD differs): an asset's direct asset/<numeraire>
-    ///        feed when one is set, else its PAD price × PAD/<numeraire>.
-    function _primaryPrice(address asset) private view returns (uint256 price, uint8 decimals) {
-        _requireSequencerHealthy();
-        if (padIsNumeraire()) return _padPrice(asset);
-
-        address direct = assetDirectFeed[asset];
-        if (direct != address(0)) return _readStrict(direct, true);
-        (uint256 padPrice, uint8 padDec) = _padPrice(asset);
-        (uint256 fx, uint8 fxDec) = _padNumeraireRate();
-        return _composePrice(padPrice, padDec, fx, fxDec);
-    }
-
-    /// @dev The asset's price in PAD units.
-    function _padPrice(address asset) private view returns (uint256 price, uint8 decimals) {
-        address anchor = ethAnchorFeed();
-        if (asset != address(0) && asset == weth) {
-            if (anchor == address(0)) revert NoPriceFeed();
-            (uint256 p, uint8 d) = _readStrict(anchor, false);
-            _validatePythCrossCheck(p, d);
-            return (p, d);
-        }
-
-        address registry = feedRegistry;
-        if (registry != address(0)) {
-            address feed = _registryFeed(registry, asset, PAD_DENOMINATOR);
-            if (feed != address(0)) return _readStrict(feed, true);
-
-            if (anchor != address(0)) {
-                address ethQuoted = _registryFeed(registry, asset, ETH_DENOMINATOR);
-                if (ethQuoted != address(0)) {
-                    (uint256 perEth, uint8 perEthDec) = _readStrict(ethQuoted, false);
-                    (uint256 ethPad, uint8 ethDec) = _readStrict(anchor, false);
-                    _validatePythCrossCheck(ethPad, ethDec);
-                    return _composePrice(perEth, perEthDec, ethPad, ethDec);
-                }
-            }
-        }
-        revert NoPriceFeed();
-    }
-
-    /// @dev PAD/<numeraire>: the direct feed when set, else ETH/<numeraire> ÷
-    ///      ETH/PAD at the finer of the two precisions.
-    function _padNumeraireRate() private view returns (uint256 rate, uint8 decimals) {
-        address direct = padNumeraireRateFeed;
-        if (direct != address(0)) return _readStrict(direct, true);
-        address numerFeed = ethNumeraireFeed;
-        address padFeed = ethPadFeed;
-        if (numerFeed == address(0) || padFeed == address(0)) revert PadNumeraireRateUnavailable();
-        (uint256 ethNumer, uint8 numerDec) = _readStrict(numerFeed, false);
-        (uint256 ethPad, uint8 padDec) = _readStrict(padFeed, false);
-        _validatePythCrossCheck(ethPad, padDec);
-        uint8 outDec = numerDec > padDec ? numerDec : padDec;
-        uint256 numerScaled = _rescale(ethNumer, numerDec, outDec);
-        uint256 padScaled = _rescale(ethPad, padDec, outDec);
-        if (padScaled == 0) revert PadNumeraireRateUnavailable();
-        rate = (numerScaled * (10 ** outDec)) / padScaled;
-        decimals = outDec;
-    }
-
-    /// @dev The registry's feed for (`base`, `quote`); zero when none or the
-    ///      read fails. The registry is the chain's own VaipakamFeedRegistry
-    ///      (#2880), which answers Chainlink's `getFeed` shape on every chain.
-    // slither-disable-next-line chainlink-feed-registry
-    function _registryFeed(address registry, address base, address quote) private view returns (address) {
-        if (quote == address(0)) return address(0);
-        try FeedRegistryInterface(registry).getFeed(base, quote) returns (AggregatorV2V3Interface f) {
-            return address(f);
-        } catch {
-            return address(0);
-        }
-    }
-
-    /// @dev A Chainlink read that reverts {StalePriceData} unless the
-    ///      answer passes {_freshEnough}.
-    function _readStrict(address feed, bool allowStablePeg) private view returns (uint256 price, uint8 decimals) {
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
-            AggregatorV3Interface(feed).latestRoundData();
-        if (answer <= 0 || updatedAt == 0 || updatedAt > block.timestamp || roundId != answeredInRound) {
-            revert StalePriceData();
-        }
-        uint256 age = block.timestamp - updatedAt;
-        // The outer bound before `decimals()`, so a stale feed reports itself
-        // as stale rather than tripping on an odd `decimals()` reply.
-        if (age > STABLE_STALENESS) revert StalePriceData();
-        uint8 dec = AggregatorV3Interface(feed).decimals();
-        if (!_freshEnough(feed, answer, age, dec, allowStablePeg)) revert StalePriceData();
-        // safe: `answer` > 0 was checked above.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return (uint256(answer), dec);
-    }
-
-    /// @dev The ONE freshness rule for a Chainlink answer. A volatile feed
-    ///      must be at most {VOLATILE_STALENESS} old; a stable one may be up
-    ///      to {STABLE_STALENESS} old only when its answer sits at a peg. A
-    ///      per-feed override only adds bounds: a shorter staleness budget
-    ///      and a floor on the answer (#2742).
-    function _freshEnough(address feed, int256 answer, uint256 age, uint8 dec, bool allowStablePeg)
-        private
-        view
-        returns (bool)
-    {
-        int256 floor = feedMinAnswer[feed];
-        if (floor > 0 && answer < floor) return false;
-        uint40 maxAge = feedMaxStaleness[feed];
-        if (maxAge > 0 && age > maxAge) return false;
-        if (age > STABLE_STALENESS) return false;
-        if (age > VOLATILE_STALENESS) {
-            if (!allowStablePeg) return false;
-            if (!_answerWithinAnyPeg(answer, dec)) return false;
-        }
-        return true;
-    }
-
-    /// @dev An 8-decimal answer within {PEG_TOLERANCE_BPS} of $1 or of a
-    ///      registered fiat or commodity reference.
-    function _answerWithinAnyPeg(int256 answer, uint8 dec) private view returns (bool) {
-        if (dec != 8) return false;
-        if (_withinPeg(answer, USD_PEG_1E8)) return true;
-        uint256 n = _stableRefSymbols.length();
-        for (uint256 i; i < n; ++i) {
-            (bool ok, int256 ref) = _readRefPeg(stableRefFeed[_stableRefSymbols.at(i)]);
-            if (ok && _withinPeg(answer, ref)) return true;
-        }
-        return false;
-    }
-
-    /// @dev A peg reference (EUR/USD, XAU/USD...): fresh within the stable
-    ///      ceiling and 8 decimals, never reverting.
-    function _readRefPeg(address feed) private view returns (bool ok, int256 answer) {
-        try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 roundId, int256 a, uint256, uint256 updatedAt, uint80 answeredInRound
-        ) {
-            if (a <= 0 || updatedAt == 0 || updatedAt > block.timestamp || roundId != answeredInRound) return (false, 0);
-            if (block.timestamp - updatedAt > STABLE_STALENESS) return (false, 0);
-            answer = a;
-        } catch {
-            return (false, 0);
-        }
-        try AggregatorV3Interface(feed).decimals() returns (uint8 d) {
-            if (d != 8) return (false, 0);
-        } catch {
-            return (false, 0);
-        }
-        return (true, answer);
-    }
-
-    function _withinPeg(int256 answer, int256 peg) private pure returns (bool) {
-        if (peg <= 0) return false;
-        int256 diff = answer > peg ? answer - peg : peg - answer;
-        // safe: `peg` > 0 and `diff` >= 0.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return (uint256(diff) * BPS) / uint256(peg) <= PEG_TOLERANCE_BPS;
-    }
-
-    function _requireSequencerHealthy() private view {
-        address feed = sequencerFeed;
-        if (feed == address(0)) return;
-        (, int256 answer, uint256 startedAt,,) = AggregatorV3Interface(feed).latestRoundData();
-        // A start time in the future is a broken feed, read as down rather
-        // than left to underflow.
-        if (answer != 0 || startedAt == 0 || startedAt > block.timestamp) revert SequencerDown();
-        if (block.timestamp - startedAt < SEQUENCER_GRACE_PERIOD) revert SequencerGracePeriod();
-    }
-
-    // ─── Pyth cross-check ────────────────────────────────────────────────
-
-    /// @dev Cross-check an ETH-anchor reading against Pyth. Soft-skips when
-    ///      the gate is off, Pyth fails, or its snapshot is non-positive,
-    ///      stale or low-confidence; reverts {OracleCrossCheckDivergence} on a
-    ///      deviation beyond tolerance.
-    // The publishTime and confidence gates sit below the snapshot copy;
-    // both are load-bearing and tested.
-    // slither-disable-start pyth-unchecked-publishtime
-    // slither-disable-start pyth-unchecked-confidence
-    function _validatePythCrossCheck(uint256 chainlinkPrice, uint8 chainlinkDecimals) private view {
-        address pyth = pythOracle;
-        bytes32 feedId = pythFeedId;
-        if (pyth == address(0) || feedId == bytes32(0)) return;
-        IPyth.Price memory snap;
-        try IPyth(pyth).getPriceUnsafe(feedId) returns (IPyth.Price memory p) {
-            snap = p;
-        } catch {
-            return;
-        }
-        if (snap.price <= 0) return;
-        if (block.timestamp > snap.publishTime + pythMaxStaleness) return;
-        uint256 pythScaled = _pythPriceToScale(uint256(uint64(snap.price)), snap.expo, chainlinkDecimals);
-        if (pythScaled == 0) return;
-        uint256 confBps = (uint256(snap.conf) * BPS) / uint256(uint64(snap.price));
-        if (confBps > pythConfidenceMaxBps) return;
-        uint256 absDelta = chainlinkPrice > pythScaled ? chainlinkPrice - pythScaled : pythScaled - chainlinkPrice;
-        uint256 deviationBps = (absDelta * BPS) / chainlinkPrice;
-        uint256 maxDev = pythMaxDeviationBps;
-        if (deviationBps > maxDev) {
-            revert OracleCrossCheckDivergence(chainlinkPrice, pythScaled, deviationBps, maxDev);
-        }
-    }
-    // slither-disable-end pyth-unchecked-confidence
-    // slither-disable-end pyth-unchecked-publishtime
-
-    /// @dev Pyth's (price, expo) in `targetDecimals`; 0 (treated as no data)
-    ///      when the scale step exceeds 30 decimals either way.
-    function _pythPriceToScale(uint256 magnitude, int32 expo, uint8 targetDecimals) private pure returns (uint256) {
-        int256 net = int256(uint256(targetDecimals)) + int256(expo);
-        if (net >= 0) {
-            if (net > 30) return 0;
-            // forge-lint: disable-next-line(unsafe-typecast)
-            return magnitude * (10 ** uint256(net));
-        }
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 down = uint256(-net);
-        if (down > 30) return 0;
-        return magnitude / (10 ** down);
-    }
-
-    // ─── Secondary quorum (soft 2-of-N) ──────────────────────────────────
-
-    /// @dev Every secondary unavailable: accept the primary alone. Any one
-    ///      counted source agreeing: accept. Some disagreeing and none
-    ///      agreeing: revert {OraclePriceDivergence}.
-    function _enforceSecondaryQuorum(address asset, uint256 primary, uint8 dec) private view {
-        bytes32 symbol = _secondarySymbol(asset);
-        if (symbol == bytes32(0)) return;
-        SecondaryStatus[3] memory st = _secondaryStatuses(symbol, primary, dec);
-        if (st[0] == SecondaryStatus.Agree || st[1] == SecondaryStatus.Agree || st[2] == SecondaryStatus.Agree) return;
-        if (st[0] == SecondaryStatus.Disagree || st[1] == SecondaryStatus.Disagree || st[2] == SecondaryStatus.Disagree) {
-            revert OraclePriceDivergence();
-        }
-    }
-
-    /// @dev The one reading of every source as the quorum counts it, in
-    ///      {Source} order: a removed source is not asked, and a muted
-    ///      source's agreement reads as no data while its disagreement stands.
-    function _secondaryStatuses(bytes32 symbol, uint256 primary, uint8 dec)
-        private
-        view
-        returns (SecondaryStatus[3] memory st)
-    {
-        st[0] = _asCounted(Source.Tellor, _checkTellor(symbol, primary, dec));
-        st[1] = _asCounted(Source.Api3, _checkApi3(symbol, primary, dec));
-        st[2] = _asCounted(Source.Dia, _checkDia(symbol, primary, dec));
-    }
-
-    function _asCounted(Source source, SecondaryStatus status) private view returns (SecondaryStatus) {
-        if (status == SecondaryStatus.Agree && secondaryState[source] == SecondaryState.Muted) {
-            return SecondaryStatus.Unavailable;
-        }
-        return status;
-    }
-
-    /// @dev The source contract a probe may ask, or zero when it is unset or
+    /// @dev Note a newly registered stable-peg symbol. The set never shrinks,
+    ///      so a read at an earlier version can still walk it.
+    /// @dev Keep `symbol` among the symbols a peg read walks. At most
+    ///      {MAX_STABLE_REFS} are kept, so a read stays bounded. A removed
+    ///      symbol stays while any answered version may still read its feed,
+    ///      and is dropped to make room once its removal is at or below the
+    ///      floor (#3437): every version still answered then reads it as
     ///      removed.
-    function _liveSource(Source source) private view returns (address) {
-        if (secondaryState[source] == SecondaryState.Removed) return address(0);
-        return secondarySource[source];
-    }
-
-    /// @dev Tellor SpotPrice: the newest value reported at least
-    ///      {TELLOR_DISPUTE_BUFFER} ago (#665), 18 decimals.
-    function _checkTellor(bytes32 symbol, uint256 primary, uint8 dec) private view returns (SecondaryStatus) {
-        address oracle = _liveSource(Source.Tellor);
-        if (oracle == address(0)) return SecondaryStatus.Unavailable;
-        if (block.timestamp <= TELLOR_DISPUTE_BUFFER) return SecondaryStatus.Unavailable;
-        bytes32 queryId = keccak256(
-            abi.encode("SpotPrice", abi.encode(_toLower(_wordToString(symbol)), _wordToString(NUMERAIRE_SYMBOL)))
-        );
-        bytes memory raw;
-        uint256 reportedAt;
-        try ITellor(oracle).getDataBefore(queryId, block.timestamp - TELLOR_DISPUTE_BUFFER) returns (
-            bytes memory v, uint256 t
-        ) {
-            raw = v;
-            reportedAt = t;
-        } catch {
-            return SecondaryStatus.Unavailable;
+    function _noteStableRef(bytes32 symbol) private {
+        if (_stableRefSymbols.contains(symbol)) return;
+        if (_stableRefSymbols.length() >= MAX_STABLE_REFS) {
+            bytes32[] memory all = _stableRefSymbols.values();
+            for (uint256 i; i < all.length; ++i) {
+                bytes32 id = _id(Kind.StableRef, all[i]);
+                if (_cfg[id] == bytes32(0) && _cfgSince[id] <= _floorGuardEpoch) _stableRefSymbols.remove(all[i]);
+            }
+            if (_stableRefSymbols.length() >= MAX_STABLE_REFS) revert TooManyStableRefs(MAX_STABLE_REFS);
         }
-        if (reportedAt == 0 || raw.length < 32) return SecondaryStatus.Unavailable;
-        if (block.timestamp - reportedAt > secondaryMaxStaleness) return SecondaryStatus.Unavailable;
-        uint256 at18 = abi.decode(raw, (uint256));
-        if (at18 == 0) return SecondaryStatus.Unavailable;
-        return _classify(primary, _rescale(at18, 18, dec));
-    }
-
-    /// @dev API3 dAPI `<SYMBOL>/<NUMERAIRE>`, 18 decimals.
-    function _checkApi3(bytes32 symbol, uint256 primary, uint8 dec) private view returns (SecondaryStatus) {
-        address server = _liveSource(Source.Api3);
-        if (server == address(0)) return SecondaryStatus.Unavailable;
-        bytes memory packed = abi.encodePacked(_toUpper(_wordToString(symbol)), "/", _numeraireUpper());
-        if (packed.length > 32) return SecondaryStatus.Unavailable;
-        bytes32 dapiName;
-        for (uint256 i; i < packed.length; ++i) {
-            dapiName |= bytes32(packed[i]) >> (i * 8);
-        }
-        int224 value;
-        uint32 reportedAt;
-        try IApi3ServerV1(server).readDataFeedWithDapiNameHash(keccak256(abi.encodePacked(dapiName))) returns (
-            int224 v, uint32 t
-        ) {
-            value = v;
-            reportedAt = t;
-        } catch {
-            return SecondaryStatus.Unavailable;
-        }
-        if (value <= 0 || reportedAt == 0) return SecondaryStatus.Unavailable;
-        if (block.timestamp - reportedAt > secondaryMaxStaleness) return SecondaryStatus.Unavailable;
-        // safe: `value` > 0 was checked above.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return _classify(primary, _rescale(uint256(int256(value)), 18, dec));
-    }
-
-    /// @dev DIA key `<SYMBOL>/<NUMERAIRE>`, 8 decimals.
-    function _checkDia(bytes32 symbol, uint256 primary, uint8 dec) private view returns (SecondaryStatus) {
-        address oracle = _liveSource(Source.Dia);
-        if (oracle == address(0)) return SecondaryStatus.Unavailable;
-        string memory key = string(abi.encodePacked(_toUpper(_wordToString(symbol)), "/", _numeraireUpper()));
-        uint128 value;
-        uint128 reportedAt;
-        try IDIAOracleV2(oracle).getValue(key) returns (uint128 v, uint128 t) {
-            value = v;
-            reportedAt = t;
-        } catch {
-            return SecondaryStatus.Unavailable;
-        }
-        if (value == 0 || reportedAt == 0) return SecondaryStatus.Unavailable;
-        if (block.timestamp - uint256(reportedAt) > secondaryMaxStaleness) return SecondaryStatus.Unavailable;
-        return _classify(primary, _rescale(uint256(value), 8, dec));
-    }
-
-    /// @dev Agree within the secondary tolerance; a secondary that scales to
-    ///      zero is no data.
-    function _classify(uint256 primary, uint256 secondary) private view returns (SecondaryStatus) {
-        if (secondary == 0) return SecondaryStatus.Unavailable;
-        uint256 diff = primary > secondary ? primary - secondary : secondary - primary;
-        if ((diff * BPS) / primary > secondaryMaxDeviationBps) return SecondaryStatus.Disagree;
-        return SecondaryStatus.Agree;
-    }
-
-    /// @dev #2745: the asset's price identity is the base symbol of its
-    ///      registered pair, never the token's own `symbol()`. Looked up
-    ///      under the quotes the primary tries, in its order. WETH is ETH.
-    ///      Zero (every secondary Unavailable) when no pair is registered.
-    function _secondarySymbol(address asset) private view returns (bytes32) {
-        if (asset != address(0) && asset == weth) return bytes32("ETH");
-        address registry = feedRegistry;
-        if (registry == address(0)) return bytes32(0);
-        bytes32 symbol = _pairBase(registry, asset, PAD_DENOMINATOR);
-        if (symbol == bytes32(0)) symbol = _pairBase(registry, asset, ETH_DENOMINATOR);
-        return symbol;
-    }
-
-    /// @dev One `pairBase` read; a failure or a reply that is not one word is zero.
-    function _pairBase(address registry, address base, address quote) private view returns (bytes32 symbol) {
-        (bool ok, bytes memory ret) =
-            registry.staticcall(abi.encodeCall(IFeedRegistryPairBase.pairBase, (base, quote)));
-        if (ok && ret.length == 32) symbol = abi.decode(ret, (bytes32));
-    }
-
-    function _numeraireUpper() private view returns (string memory) {
-        return _toUpper(_wordToString(NUMERAIRE_SYMBOL));
-    }
-
-    // ─── Pure helpers ────────────────────────────────────────────────────
-
-    /// @dev A non-empty, left-aligned run of lower-case ASCII letters.
-    function _isLowerSymbol(bytes32 word) private pure returns (bool) {
-        uint256 len;
-        while (len < 32 && word[len] != 0) {
-            uint8 c = uint8(word[len]);
-            if (c < 0x61 || c > 0x7A) return false;
-            ++len;
-        }
-        for (uint256 i = len; i < 32; ++i) {
-            if (word[i] != 0) return false;
-        }
-        return len > 0;
-    }
-
-    /// @dev A left-aligned word as a string, up to its first zero byte.
-    function _wordToString(bytes32 word) private pure returns (string memory) {
-        uint256 len;
-        while (len < 32 && word[len] != 0) ++len;
-        bytes memory out = new bytes(len);
-        for (uint256 i; i < len; ++i) out[i] = word[i];
-        return string(out);
-    }
-
-    function _toLower(string memory s) private pure returns (string memory) {
-        bytes memory b = bytes(s);
-        for (uint256 i; i < b.length; ++i) {
-            uint8 c = uint8(b[i]);
-            if (c >= 0x41 && c <= 0x5A) b[i] = bytes1(c + 32);
-        }
-        return string(b);
-    }
-
-    function _toUpper(string memory s) private pure returns (string memory) {
-        bytes memory b = bytes(s);
-        for (uint256 i; i < b.length; ++i) {
-            uint8 c = uint8(b[i]);
-            if (c >= 0x61 && c <= 0x7A) b[i] = bytes1(c - 32);
-        }
-        return string(b);
-    }
-
-    /// @dev The product of two prices at the finer of their scales, divided
-    ///      once at full width. Rounds down.
-    function _composePrice(uint256 a, uint8 aDec, uint256 b, uint8 bDec)
-        private
-        pure
-        returns (uint256 price, uint8 decimals)
-    {
-        (uint8 lo, uint8 hi) = aDec < bDec ? (aDec, bDec) : (bDec, aDec);
-        price = Math.mulDiv(a, b, 10 ** uint256(lo));
-        decimals = hi;
-    }
-
-    function _rescale(uint256 value, uint8 fromDec, uint8 toDec) private pure returns (uint256) {
-        if (fromDec == toDec) return value;
-        if (fromDec < toDec) return value * (10 ** uint256(toDec - fromDec));
-        return value / (10 ** uint256(fromDec - toDec));
+        _stableRefSymbols.add(symbol);
     }
 }

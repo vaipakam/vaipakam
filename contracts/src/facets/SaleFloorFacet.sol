@@ -8,6 +8,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {LibPairCalm} from "../libraries/LibPairCalm.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
+import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
 
 /**
  * @title SaleFloorFacet
@@ -78,9 +80,17 @@ contract SaleFloorFacet is DiamondAccessControl {
         FloorReason reason;
     }
 
-    /// @notice An hourly price checkpoint was recorded.
+    /// @notice An hourly price checkpoint was recorded, read at price
+    ///         version (`guardEpoch`, `registryEpoch`) of the guard `guard`.
     /// @custom:event-category informational/config
-    event HourlyPriceCheckpointed(address indexed asset, uint256 indexed hourIndex, uint256 price1e18);
+    event HourlyPriceCheckpointed(
+        address indexed asset,
+        uint256 indexed hourIndex,
+        uint256 price1e18,
+        address guard,
+        uint64 guardEpoch,
+        uint64 registryEpoch
+    );
 
     /// @notice Governance changed the forced-sale floor settings. Every
     ///         figure is the one now in effect (a default where unset).
@@ -95,7 +105,8 @@ contract SaleFloorFacet is DiamondAccessControl {
 
     // ─── Checkpoints ─────────────────────────────────────────────────────
 
-    /// @notice Record each asset's oracle price for the current UTC hour.
+    /// @notice Record each asset's oracle price for the current UTC hour,
+    ///         with the price version it was read at (#3437).
     /// @dev    Anyone may call. The first caller in an hour sets that hour's
     ///         checkpoint; later calls in the same hour skip it. A price that
     ///         cannot be read (stale, divergent, missing) is skipped, so the
@@ -104,25 +115,50 @@ contract SaleFloorFacet is DiamondAccessControl {
     ///         ({OracleFacet.getAssetPrice}), scaled to 1e18; a caller
     ///         chooses only WHEN in the hour it is taken, and the calm test
     ///         compares against two hours so no single timing choice decides it.
+    ///         With no reachable guard nothing can be priced, so nothing is
+    ///         recorded.
     /// @param  assets The assets to checkpoint.
     function checkpointHourlyPrices(address[] calldata assets) external {
-        mapping(address => mapping(uint256 => uint256)) storage book =
-            LibVaipakam.storageSlot().hourlyPrice1e18;
+        (bool hasGuard, IPriceGuard g) = LibPriceGuard.tryGuard();
+        if (!hasGuard) return;
+        (uint64 ge, uint64 re) = g.priceVersion();
+        mapping(address => mapping(uint256 => LibVaipakam.HourlyPriceCheckpoint)) storage book =
+            LibVaipakam.storageSlot().hourlyPriceCheckpoint;
         uint256 hour = block.timestamp / 1 hours;
         for (uint256 i; i < assets.length; ++i) {
             address asset = assets[i];
-            if (asset == address(0) || book[asset][hour] != 0) continue;
+            if (asset == address(0) || book[asset][hour].price1e18 != 0) continue;
             (bool ok, uint256 p) = LibPairCalm.price1e18(asset);
-            if (!ok) continue;
-            book[asset][hour] = p;
-            emit HourlyPriceCheckpointed(asset, hour, p);
+            if (!ok || p > type(uint128).max) continue;
+            // safe: bounded just above.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            book[asset][hour] = LibVaipakam.HourlyPriceCheckpoint({
+                price1e18: uint128(p),
+                guardEpoch: ge,
+                registryEpoch: re,
+                guard: address(g)
+            });
+            emit HourlyPriceCheckpointed(asset, hour, p, address(g), ge, re);
         }
     }
 
     /// @notice The checkpoint for `asset` in UTC hour `hourIndex`
     ///         (`timestamp / 3600`), 1e18-scaled; 0 = none recorded.
     function getHourlyPriceCheckpoint(address asset, uint256 hourIndex) external view returns (uint256) {
-        return LibVaipakam.storageSlot().hourlyPrice1e18[asset][hourIndex];
+        return LibVaipakam.storageSlot().hourlyPriceCheckpoint[asset][hourIndex].price1e18;
+    }
+
+    /// @notice The price version `asset`'s checkpoint in UTC hour
+    ///         `hourIndex` was read at, and the guard that read it (#3437);
+    ///         all zero when none was recorded.
+    function getHourlyPriceCheckpointVersion(address asset, uint256 hourIndex)
+        external
+        view
+        returns (address guard, uint64 guardEpoch, uint64 registryEpoch)
+    {
+        LibVaipakam.HourlyPriceCheckpoint storage c =
+            LibVaipakam.storageSlot().hourlyPriceCheckpoint[asset][hourIndex];
+        return (c.guard, c.guardEpoch, c.registryEpoch);
     }
 
     // ─── The rule ────────────────────────────────────────────────────────

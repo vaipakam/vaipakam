@@ -3130,6 +3130,18 @@ library LibVaipakam {
         uint256 grossOwed;
     }
 
+    /// @notice #3359 / #3437 — one asset's hourly price checkpoint: its
+    ///         oracle price that hour, scaled to 1e18, and the price version
+    ///         it was read at, on the guard that read it. The calm test reads
+    ///         "now" at the same version, so a settings change alone never
+    ///         reads as a price move. `price1e18 == 0`: no checkpoint.
+    struct HourlyPriceCheckpoint {
+        uint128 price1e18;
+        uint64 guardEpoch;
+        uint64 registryEpoch;
+        address guard;
+    }
+
     /// @notice #3359 — governance's forced-sale floor settings. Every field
     ///         reads 0 as its default ({SALE_FLOOR_TIER1_BPS_DEFAULT} and
     ///         siblings); written only by `SaleFloorFacet.setSaleFloorConfig`.
@@ -8259,13 +8271,12 @@ library LibVaipakam {
         ///      Written only by `SaleFloorFacet.setSaleFloorConfig`. Appended
         ///      — append-only.
         SaleFloorConfig saleFloorCfg;
-        /// @dev #3359 — per asset and UTC hour (`timestamp / 1 hours`), the
-        ///      asset's oracle price that hour, scaled to 1e18; 0 = no
-        ///      checkpoint. Written only by
-        ///      `SaleFloorFacet.checkpointHourlyPrices` (first caller in the
-        ///      hour wins), read by the forced-sale floor's calm test.
-        ///      Appended — append-only.
-        mapping(address => mapping(uint256 => uint256)) hourlyPrice1e18;
+        /// @dev #3359 / #3437 — per asset and UTC hour (`timestamp / 1
+        ///      hours`), the asset's checkpoint that hour
+        ///      ({HourlyPriceCheckpoint}; a zero price = none). Written only
+        ///      by `SaleFloorFacet.checkpointHourlyPrices` (first caller in
+        ///      the hour wins), read by the calm test ({LibPairCalm}).
+        mapping(address => mapping(uint256 => HourlyPriceCheckpoint)) hourlyPriceCheckpoint;
         /// @dev #3361 — every queued payout id, across all accounts: the same
         ///      ids as the union of `pendingPayoutIds`, kept as one set so a
         ///      keeper (ours, or the Chainlink backup) can find matured

@@ -284,6 +284,10 @@ export interface Deployment {
    *  pointer, not this key, to find the guard in force). Optional until each
    *  chain's next fresh deploy writes it. */
   priceGuard?: HexAddress;
+  /** #3437 — the PriceGuardReader whose code answers the guard's price
+   *  reads, over the guard's storage. Fixed in the guard's code: a new
+   *  reader means a new guard. Recorded so the pair is visible together. */
+  priceGuardReader?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;

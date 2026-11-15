@@ -6,6 +6,10 @@ import {console} from "forge-std/console.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
 import {LaunchCrossChainChecks} from "../../src/governance/LaunchCrossChainChecks.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardReader} from "../../src/oracle/PriceGuardReader.sol";
+import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
+import {Erc4626RateReader} from "../../src/oracle/rate/Erc4626RateReader.sol";
 
 /**
  * @title FacetSizeLimitTest
@@ -108,6 +112,17 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
             EIP3860_INITCODE_LIMIT,
             "LaunchCrossChainChecks initcode exceeds the EIP-3860 limit"
         );
+    }
+
+    /// @notice #3437 — the price guard, the reader that runs its pricing
+    ///         path, the feed registry and the rate readers are standalone
+    ///         contracts no facet list names. The guard was split from its
+    ///         reader because together they did not fit.
+    function test_PriceContractsUnderSizeLimit() public view {
+        _assertUnderLimit(type(PriceGuard).name);
+        _assertUnderLimit(type(PriceGuardReader).name);
+        _assertUnderLimit(type(VaipakamFeedRegistry).name);
+        _assertUnderLimit(type(Erc4626RateReader).name);
     }
 
     /// @notice #1780 — report every facet within {HEADROOM_WARN_BYTES} of the

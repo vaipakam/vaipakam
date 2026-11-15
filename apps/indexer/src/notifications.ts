@@ -209,6 +209,14 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
     'custody provenance for vault-held fallback collateral — the liquidation, default, claim, cure or match it rides in carries the notification',
   SwapToRepayIntentLotPulled:
     'custody provenance for an intent fill — the same transaction\'s SwapToRepayIntentFilled carries the notification',
+  // #3669 — a leg the token refused, held in the payer's vault under a lien
+  // for the lender side. The settlement it rides in (repay, default, sale,
+  // claim) carries the notification; both loan parties see the parked and
+  // released rows on their Activity page through the loan.
+  SettlementLegParked:
+    'companion to the settlement it rides in — that event notifies; the parked leg is shown on both parties\' Activity page',
+  SettlementLegReleased:
+    'companion to the claim or release that moved the parked leg — shown on both parties\' Activity page',
   LoanInitiatedDetails: 'companion to LoanInitiated (mapped) — no separate row',
   // ── Internal / companion / transient — no user-facing notification ─
   OfferCreated: 'own action — the creator initiated it; no inbound notification',

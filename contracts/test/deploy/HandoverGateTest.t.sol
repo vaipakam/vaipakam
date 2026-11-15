@@ -6,7 +6,9 @@ import {LibTestVaultEndpoints} from "../helpers/LibTestVaultEndpoints.sol";
 import {VaultBeacon} from "../../src/VaultBeacon.sol";
 import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {PriceGuardDeployment} from "../../script/lib/PriceGuardDeployment.sol";
 import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -32,6 +34,7 @@ import {
     TokenAdminRegistryStub
 } from "../mocks/GovernanceHarnesses.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {PriceGuardDeployment} from "../../script/lib/PriceGuardDeployment.sol";
 import {ZeroExAggregatorAdapter} from "../../src/adapters/ZeroExAggregatorAdapter.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 
@@ -598,15 +601,12 @@ contract HandoverGateTest is Test {
             admin, admin, 3 days, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
         );
         priceGuard = PriceGuard(
-            ArtifactDeploy.deploy(
-                type(PriceGuard).name,
-                abi.encode(
-                    admin,
-                    admin,
-                    PriceGuard.Identity(address(840), bytes32("usd"), address(0), 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE),
-                    uint64(0),
-                    new PriceGuard.Change[](0)
-                )
+            PriceGuardDeployment.build(
+                admin,
+                admin,
+                PriceGuardState.Identity(address(840), bytes32("usd"), address(0), 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE),
+                uint64(0),
+                new PriceGuardState.Change[](0)
             )
         );
         vaultBeacon = new VaultBeacon(

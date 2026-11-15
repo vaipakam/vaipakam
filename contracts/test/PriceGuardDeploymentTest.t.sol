@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {PriceGuardDeployment} from "../script/lib/PriceGuardDeployment.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
@@ -16,7 +17,7 @@ contract PriceGuardDeploymentHarness {
     function startingConfig(address feedRegistry, PriceGuardDeployment.Inputs memory inputs)
         external
         view
-        returns (PriceGuard.Identity memory, uint64, PriceGuard.Change[] memory)
+        returns (PriceGuardState.Identity memory, uint64, PriceGuardState.Change[] memory)
     {
         return PriceGuardDeployment.startingConfig(feedRegistry, inputs);
     }
@@ -70,20 +71,20 @@ contract PriceGuardDeploymentTest is Test {
         i.ethUsdFeed = _code("ethUsd");
         i.sequencerFeed = _code("sequencer");
 
-        (PriceGuard.Identity memory id, uint64 delay, PriceGuard.Change[] memory c) = h.startingConfig(feeds, i);
+        (PriceGuardState.Identity memory id, uint64 delay, PriceGuardState.Change[] memory c) = h.startingConfig(feeds, i);
         assertEq(id.numeraireDenominator, VaipakamFeedRegistry(feeds).USD());
         assertEq(id.ethDenominator, VaipakamFeedRegistry(feeds).ETH());
         assertEq(id.numeraireSymbol, bytes32("usd"));
         assertEq(id.padDenominator, address(0));
         assertEq(delay, 7 days);
         assertEq(c.length, 4);
-        assertEq(uint8(c[0].kind), uint8(PriceGuard.Kind.FeedRegistry));
+        assertEq(uint8(c[0].kind), uint8(PriceGuardState.Kind.FeedRegistry));
         assertEq(address(uint160(uint256(c[0].value))), feeds);
-        assertEq(uint8(c[1].kind), uint8(PriceGuard.Kind.Weth));
+        assertEq(uint8(c[1].kind), uint8(PriceGuardState.Kind.Weth));
         assertEq(address(uint160(uint256(c[1].value))), i.weth);
-        assertEq(uint8(c[2].kind), uint8(PriceGuard.Kind.EthNumeraireFeed));
+        assertEq(uint8(c[2].kind), uint8(PriceGuardState.Kind.EthNumeraireFeed));
         assertEq(address(uint160(uint256(c[2].value))), i.ethUsdFeed);
-        assertEq(uint8(c[3].kind), uint8(PriceGuard.Kind.SequencerFeed));
+        assertEq(uint8(c[3].kind), uint8(PriceGuardState.Kind.SequencerFeed));
 
         // And it constructs: every entry passes the guard's own checks.
         PriceGuard g = PriceGuard(h.deploy(admin, feeds, i));
@@ -118,10 +119,10 @@ contract PriceGuardDeploymentTest is Test {
         i.stableSymbols[0] = bytes32("USDC");
         i.stableFeeds[0] = _code("usdcFeed");
         i.stableSymbols[1] = bytes32("DAI");
-        (, uint64 delay, PriceGuard.Change[] memory c) = h.startingConfig(feeds, i);
+        (, uint64 delay, PriceGuardState.Change[] memory c) = h.startingConfig(feeds, i);
         assertEq(delay, 0);
         assertEq(c.length, 2, "the registry and the one stable feed with code");
-        assertEq(uint8(c[1].kind), uint8(PriceGuard.Kind.StableRef));
+        assertEq(uint8(c[1].kind), uint8(PriceGuardState.Kind.StableRef));
         assertEq(c[1].subject, bytes32("USDC"));
     }
 

@@ -22,6 +22,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /**
  * @title OracleFacetTest
@@ -122,7 +123,7 @@ contract OracleFacetTest is Test {
         // #3272 part 2 - the Diamond prices through a guard keyed by these
         // denominators, named by the registry it records.
         LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, makeAddr("ethDenom")));
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.FeedRegistry, mockRegistry);
         // A real registry reverts for a pair it files no feed under. The
         // mock registry is a one-byte body, which would answer an unmocked
         // lookup with empty data instead, so every lookup a test does not
@@ -130,9 +131,9 @@ contract OracleFacetTest is Test {
         vm.mockCallRevert(
             mockRegistry, abi.encodeWithSignature("getFeed(address,address)"), "FeedNotFound"
         );
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, mockWeth);
         OracleAdminFacet(address(diamond)).setUniswapV3Factory(mockFactory);
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.EthNumeraireFeed, mockEthUsdFeed);
 
         // Default ETH/USD mock: $2000, 8 decimals, fresh. Individual tests
         // may override or revert this to cover the ETH-feed branches.

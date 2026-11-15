@@ -2845,13 +2845,14 @@ contract HelperTest {
     /// #3359 - the forced-sale floor rule. Mirrors
     /// `DeployDiamond._getSaleFloorSelectors`.
     function getSaleFloorFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = SaleFloorFacet.saleFloorBps.selector;
         selectors[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         selectors[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         selectors[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         selectors[4] = SaleFloorFacet.getSaleFloorConfig.selector;
         selectors[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
+        selectors[6] = SaleFloorFacet.getHourlyPriceCheckpointVersion.selector; // #3437
     }
 
     /// #2748 - the rate-model host (model, band, offer-rate clamp). Mirrors

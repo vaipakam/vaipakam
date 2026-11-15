@@ -79,7 +79,7 @@ import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWit
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
@@ -7235,7 +7235,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Make the loan's existing collateral blue-chip by IDENTITY, which is
         // the whole mechanism: `_isBlueChip` short-circuits on
         // `asset == weth` (the price guard's, #3272) without reading liquidity.
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockCollateralERC20);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, mockCollateralERC20);
         (uint8 before, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(
             before,

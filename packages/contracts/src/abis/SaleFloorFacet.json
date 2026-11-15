@@ -38,6 +38,40 @@
   },
   {
     "type": "function",
+    "name": "getHourlyPriceCheckpointVersion",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hourIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "guard",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getSaleFloorConfig",
     "inputs": [],
     "outputs": [
@@ -222,6 +256,24 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "guard",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -307,7 +359,33 @@
   },
   {
     "type": "error",
+    "name": "PriceGuardNumeraireMismatch",
+    "inputs": [
+      {
+        "name": "guard",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recorded",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "guardNumeraire",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PriceReadOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProtocolRegistryUnset",
     "inputs": []
   }
 ]

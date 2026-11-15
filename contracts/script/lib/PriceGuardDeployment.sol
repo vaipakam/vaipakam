@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
+import {PriceGuardReader} from "../../src/oracle/PriceGuardReader.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {TestnetChains} from "../../src/compliance/TestnetChains.sol";
 import {Deployments} from "./Deployments.sol";
@@ -84,19 +86,71 @@ library PriceGuardDeployment {
 
     /// @notice Build the chain's guard. The caller holds the broadcast.
     function deploy(address admin, address feedRegistry, Inputs memory inputs) internal returns (address guard) {
-        (PriceGuard.Identity memory id, uint64 delay, PriceGuard.Change[] memory c) =
+        (PriceGuardState.Identity memory id, uint64 delay, PriceGuardState.Change[] memory c) =
             startingConfig(feedRegistry, inputs);
-        guard = ArtifactDeploy.deploy(type(PriceGuard).name, abi.encode(admin, admin, id, delay, c));
+        guard = build(admin, admin, id, delay, c);
         console.log("PriceGuard:", guard);
+        console.log("  reader  :", PriceGuard(guard).READER());
         console.log("  delay s :", uint256(delay));
         console.log("  entries :", c.length);
+    }
+
+    /// @notice A guard and the reader that runs its pricing path (#3437): the
+    ///         reader first, built for the same identity, then the guard
+    ///         naming it. The one way any script or test builds a guard.
+    function build(
+        address owner,
+        address guardian,
+        PriceGuardState.Identity memory id,
+        uint64 delay,
+        PriceGuardState.Change[] memory initial
+    ) internal returns (address guard) {
+        address reader = ArtifactDeploy.deploy(type(PriceGuardReader).name, abi.encode(id));
+        requireArtifactCode(reader, type(PriceGuardReader).name);
+        guard = ArtifactDeploy.deploy(type(PriceGuard).name, abi.encode(owner, guardian, id, delay, initial, reader));
+    }
+
+    /// @dev One immutable reference in an artifact. Fields in alphabetical
+    ///      order, the order `parseJson` decodes an object's keys in.
+    struct ImmutableRef {
+        uint256 length;
+        uint256 start;
+    }
+
+    /// @notice Refuse unless the runtime code at `at` is this tree's build of
+    ///         `contractName`, immutables aside (#3437). The guard pins its
+    ///         reader by address and the reader's code can never change, so
+    ///         this check, made before the guard is deployed, is what ties
+    ///         the pricing path to reviewed code.
+    /// @param  contractName `type(C).name` of the contract (never a literal).
+    function requireArtifactCode(address at, string memory contractName) internal view {
+        string memory json = VM.readFile(
+            string.concat(VM.projectRoot(), "/out/", contractName, ".sol/", contractName, ".json")
+        );
+        bytes memory expected = VM.parseJsonBytes(json, ".deployedBytecode.object");
+        bytes memory actual = at.code;
+        require(actual.length == expected.length, "PriceGuardDeployment: reader code is not this tree's build");
+        string[] memory ids = VM.parseJsonKeys(json, ".deployedBytecode.immutableReferences");
+        for (uint256 i; i < ids.length; ++i) {
+            ImmutableRef[] memory refs = abi.decode(
+                VM.parseJson(json, string.concat(".deployedBytecode.immutableReferences.", ids[i])),
+                (ImmutableRef[])
+            );
+            for (uint256 j; j < refs.length; ++j) {
+                for (uint256 k; k < refs[j].length; ++k) {
+                    actual[refs[j].start + k] = 0;
+                    expected[refs[j].start + k] = 0;
+                }
+            }
+        }
+        require(keccak256(actual) == keccak256(expected), "PriceGuardDeployment: reader code is not this tree's build");
     }
 
     /// @notice The guard's identity, delay and starting entries for this chain.
     function startingConfig(address feedRegistry, Inputs memory inputs)
         internal
         view
-        returns (PriceGuard.Identity memory id, uint64 delay, PriceGuard.Change[] memory c)
+        returns (PriceGuardState.Identity memory id, uint64 delay, PriceGuardState.Change[] memory c)
     {
         bool testnet = TestnetChains.isTestnet(block.chainid);
         require(feedRegistry.code.length != 0, "PriceGuardDeployment: the feed registry has no code");
@@ -109,21 +163,21 @@ library PriceGuardDeployment {
         id.ethDenominator = VaipakamFeedRegistry(feedRegistry).ETH();
         delay = inputs.delay;
 
-        c = new PriceGuard.Change[](4 + inputs.stableSymbols.length);
+        c = new PriceGuardState.Change[](4 + inputs.stableSymbols.length);
         uint256 k;
-        c[k++] = _entry(PriceGuard.Kind.FeedRegistry, bytes32(0), feedRegistry);
-        k = _addEntry(c, k, PriceGuard.Kind.Weth, bytes32(0), inputs.weth, "WETH_ADDRESS", !testnet);
-        k = _addEntry(c, k, PriceGuard.Kind.EthNumeraireFeed, bytes32(0), inputs.ethUsdFeed, "ETH_USD_FEED", !testnet);
-        k = _addEntry(c, k, PriceGuard.Kind.SequencerFeed, bytes32(0), inputs.sequencerFeed, "SEQUENCER_UPTIME_FEED", false);
+        c[k++] = _entry(PriceGuardState.Kind.FeedRegistry, bytes32(0), feedRegistry);
+        k = _addEntry(c, k, PriceGuardState.Kind.Weth, bytes32(0), inputs.weth, "WETH_ADDRESS", !testnet);
+        k = _addEntry(c, k, PriceGuardState.Kind.EthNumeraireFeed, bytes32(0), inputs.ethUsdFeed, "ETH_USD_FEED", !testnet);
+        k = _addEntry(c, k, PriceGuardState.Kind.SequencerFeed, bytes32(0), inputs.sequencerFeed, "SEQUENCER_UPTIME_FEED", false);
         for (uint256 i; i < inputs.stableSymbols.length; ++i) {
             bytes32 sym = inputs.stableSymbols[i];
             k = _addEntry(
-                c, k, PriceGuard.Kind.StableRef, sym, inputs.stableFeeds[i], string.concat(_str(sym), "_FEED"), false
+                c, k, PriceGuardState.Kind.StableRef, sym, inputs.stableFeeds[i], string.concat(_str(sym), "_FEED"), false
             );
         }
         // Trim to the entries found: allocate the exact array rather than
         // rewrite a length in place.
-        PriceGuard.Change[] memory found = new PriceGuard.Change[](k);
+        PriceGuardState.Change[] memory found = new PriceGuardState.Change[](k);
         for (uint256 i; i < k; ++i) {
             found[i] = c[i];
         }
@@ -133,9 +187,9 @@ library PriceGuardDeployment {
     /// @dev One address entry. `required`: a production chain's load-bearing
     ///      entry, which must name a contract. `key` names its config.
     function _addEntry(
-        PriceGuard.Change[] memory c,
+        PriceGuardState.Change[] memory c,
         uint256 k,
-        PriceGuard.Kind kind,
+        PriceGuardState.Kind kind,
         bytes32 subject,
         address a,
         string memory key,
@@ -156,8 +210,8 @@ library PriceGuardDeployment {
         return k + 1;
     }
 
-    function _entry(PriceGuard.Kind kind, bytes32 subject, address a) private pure returns (PriceGuard.Change memory) {
-        return PriceGuard.Change(kind, subject, bytes32(uint256(uint160(a))));
+    function _entry(PriceGuardState.Kind kind, bytes32 subject, address a) private pure returns (PriceGuardState.Change memory) {
+        return PriceGuardState.Change(kind, subject, bytes32(uint256(uint160(a))));
     }
 
     /// @dev `<CHAIN>_KEY`, else `KEY`, else zero.

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 
 /**
@@ -35,7 +36,7 @@ library PriceGuardConfig {
     }
 
     /// @notice Bring `kind`/`subject` to `value`. See the library notes.
-    function ensure(PriceGuard guard, PriceGuard.Kind kind, bytes32 subject, bytes32 value)
+    function ensure(PriceGuard guard, PriceGuardState.Kind kind, bytes32 subject, bytes32 value)
         internal
         returns (Outcome)
     {
@@ -78,15 +79,15 @@ library PriceGuardConfig {
     ///         applied at once on a zero-delay chain, and left pending
     ///         otherwise. A zero `ethNumeraireFeed` leaves that entry alone.
     function pointAt(PriceGuard guard, address feedRegistry, address weth, address ethNumeraireFeed) internal {
-        ensureAddress(guard, PriceGuard.Kind.FeedRegistry, bytes32(0), feedRegistry);
-        ensureAddress(guard, PriceGuard.Kind.Weth, bytes32(0), weth);
+        ensureAddress(guard, PriceGuardState.Kind.FeedRegistry, bytes32(0), feedRegistry);
+        ensureAddress(guard, PriceGuardState.Kind.Weth, bytes32(0), weth);
         if (ethNumeraireFeed != address(0)) {
-            ensureAddress(guard, PriceGuard.Kind.EthNumeraireFeed, bytes32(0), ethNumeraireFeed);
+            ensureAddress(guard, PriceGuardState.Kind.EthNumeraireFeed, bytes32(0), ethNumeraireFeed);
         }
     }
 
     /// @notice {ensure} for an address-valued entry.
-    function ensureAddress(PriceGuard guard, PriceGuard.Kind kind, bytes32 subject, address value)
+    function ensureAddress(PriceGuard guard, PriceGuardState.Kind kind, bytes32 subject, address value)
         internal
         returns (Outcome)
     {
@@ -95,37 +96,23 @@ library PriceGuardConfig {
 
     /// @notice The value an entry holds now, in the word {PriceGuard.proposeChange}
     ///         takes. `SecondaryEnabled` reads 1 while the source counts.
-    function current(PriceGuard guard, PriceGuard.Kind kind, bytes32 subject) internal view returns (bytes32) {
-        if (kind == PriceGuard.Kind.FeedRegistry) return _w(guard.feedRegistry());
-        if (kind == PriceGuard.Kind.Weth) return _w(guard.weth());
-        if (kind == PriceGuard.Kind.EthNumeraireFeed) return _w(guard.ethNumeraireFeed());
-        if (kind == PriceGuard.Kind.EthPadFeed) return _w(guard.ethPadFeed());
-        if (kind == PriceGuard.Kind.PadNumeraireRateFeed) return _w(guard.padNumeraireRateFeed());
-        if (kind == PriceGuard.Kind.SequencerFeed) return _w(guard.sequencerFeed());
-        if (kind == PriceGuard.Kind.PythOracle) return _w(guard.pythOracle());
-        if (kind == PriceGuard.Kind.PythFeedId) return guard.pythFeedId();
-        if (kind == PriceGuard.Kind.PythMaxStaleness) return bytes32(uint256(guard.pythMaxStaleness()));
-        if (kind == PriceGuard.Kind.PythMaxDeviationBps) return bytes32(uint256(guard.pythMaxDeviationBps()));
-        if (kind == PriceGuard.Kind.PythConfidenceMaxBps) return bytes32(uint256(guard.pythConfidenceMaxBps()));
-        if (kind == PriceGuard.Kind.SecondarySource) {
-            return _w(guard.secondarySource(PriceGuard.Source(uint8(uint256(subject)))));
-        }
-        if (kind == PriceGuard.Kind.SecondaryMaxDeviationBps) return bytes32(uint256(guard.secondaryMaxDeviationBps()));
-        if (kind == PriceGuard.Kind.SecondaryMaxStaleness) return bytes32(uint256(guard.secondaryMaxStaleness()));
-        if (kind == PriceGuard.Kind.FeedMaxStaleness) {
-            return bytes32(uint256(guard.feedMaxStaleness(address(uint160(uint256(subject))))));
-        }
-        if (kind == PriceGuard.Kind.FeedMinAnswer) {
-            return bytes32(uint256(guard.feedMinAnswer(address(uint160(uint256(subject))))));
-        }
-        if (kind == PriceGuard.Kind.StableRef) return _w(guard.stableRefFeed(subject));
-        if (kind == PriceGuard.Kind.AssetDirectFeed) return _w(guard.assetDirectFeed(address(uint160(uint256(subject)))));
-        if (kind == PriceGuard.Kind.SecondaryEnabled) {
-            return guard.secondaryState(PriceGuard.Source(uint8(uint256(subject)))) == PriceGuard.SecondaryState.Counted
+    function current(PriceGuard guard, PriceGuardState.Kind kind, bytes32 subject) internal view returns (bytes32) {
+        if (kind == PriceGuardState.Kind.SecondaryEnabled) {
+            return guard.secondaryState(PriceGuardState.Source(uint8(uint256(subject)))) == PriceGuardState.SecondaryState.Counted
                 ? bytes32(uint256(1))
                 : bytes32(0);
         }
-        return bytes32(uint256(guard.delay()));
+        if (kind == PriceGuardState.Kind.RateSourceEnabled) {
+            return guard.rateMuted(address(uint160(uint256(subject)))) ? bytes32(0) : bytes32(uint256(1));
+        }
+        if (kind == PriceGuardState.Kind.RateObservation) return bytes32(uint256(guard.rateObservation()));
+        if (kind == PriceGuardState.Kind.Delay) return bytes32(uint256(guard.delay()));
+        if (kind == PriceGuardState.Kind.PriceFloor) {
+            (uint64 g,, uint64 r) = guard.priceFloor();
+            return bytes32(uint256(g) << 64 | r);
+        }
+        // Every other entry is a stored setting (#3437).
+        return guard.config(kind, subject);
     }
 
     function _w(address a) private pure returns (bytes32) {

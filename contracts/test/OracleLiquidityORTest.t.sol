@@ -16,7 +16,7 @@ import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /**
  * @title OracleLiquidityORTest
@@ -128,10 +128,10 @@ contract OracleLiquidityORTest is Test {
         // #3272 part 2 - the Diamond prices through a guard keyed by these
         // denominators, named by the registry it records.
         LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, LibTestPriceGuard.ETH));
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.FeedRegistry, mockRegistry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, mockWeth);
         OracleAdminFacet(address(diamond)).setUniswapV3Factory(mockUniFactory);
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.EthNumeraireFeed, mockEthUsdFeed);
 
         // Phase 7b.1 — register the two new V3-clone factories.
         AdminFacet(address(diamond)).setPancakeswapV3Factory(mockPancakeFactory);

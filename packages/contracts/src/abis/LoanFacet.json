@@ -2607,6 +2607,17 @@
   },
   {
     "type": "error",
+    "name": "RatePricedLendingAsset",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },
