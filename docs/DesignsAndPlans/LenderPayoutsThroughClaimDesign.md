@@ -97,6 +97,24 @@ A held extra on an open loan must be claimable before the loan ends, as on the l
 
 Tests: both callers leave nothing in the holder's wallet and the surplus row, vault balance and reservation rise by what arrived; a mid-loan claim pays the holder's vault once; a handover still pays the exiting holder; a sale or transfer of the borrower position inside the cooldown after a claim is refused; a frozen holder behaves as today. `ForcedSaleFacet` and `PrepayListingFacet` refresh together with the host, as today.
 
+### 3.7 Payments found by the builder's scout (2026-11-15)
+
+The build thread's scout of the code found wallet payments the tables above do not list. The rule in section 1 covers each; they are recorded here so the scope is whole.
+
+| Payment | Today | Rule |
+| --- | --- | --- |
+| Swap-to-repay partial: the lender's part | Paid to the lender holder's wallet; the loan stays open | Held for the position, as a partial repayment is (3.1). |
+| Swap-to-repay partial: the borrower's surplus | Paid to the borrower holder's wallet | Held on the borrower surplus row (3.6). |
+| Swap-to-repay full and the filled swap-to-repay order: the borrower's surplus | Paid to the borrower holder's wallet when the holder is clean (`LibCloseoutFreeze.freezeOrPayBorrowerSurplus`) | Always the held surplus row, released by the borrower claim. |
+| Lender sale proceeds, both routes (listed sale completion, direct sale) | Paid to the seller's wallet | **Credited to the seller's own vault as free balance**, measured on arrival. |
+| Rental payments | The clean branch already pays the holder's vault, not a wallet; the table in section 2 overstated it | Held route as designed. |
+
+Why the seller's vault for sale proceeds: after a sale the seller holds no position to claim against, so a claim row would be a claim invented for a party that holds nothing. The seller is the party acting in that transaction, so crediting their own vault creates no vault for someone who did not act (the objection to alternative 2 in section 7 does not apply). The money then reaches a wallet only by a vault withdrawal, which is where the outflow policy and a protected account's delay apply. `SecondaryDebtMarketDesign.md` section 5 already states the same for a sale to Auto-lend.
+
+A frozen seller keeps today's behaviour for a frozen party. The sale's reviewed "least net" figure is measured on what arrives in the seller's vault. The app's sale review says the proceeds land in the vault and that the withdrawal follows the account's rules.
+
+Tests: for each row, nothing reaches a wallet; the vault balance or held row rises by what arrived; a protected seller's withdrawal waits its delay.
+
 ## 4. Spec and app
 
 - `ProjectDetailsREADME.md`: replace the "paths that pay the lender's wallet directly" sentence and state the rule in section 1; state the mid-loan claim and the intent re-commit. Record the change of intent with this decision's date, as the docs-versus-code rule requires.
