@@ -79,11 +79,15 @@ import {Deployments} from "../lib/Deployments.sol";
  *         scenario that changes a protocol setting in one step and puts it
  *         back in a later one leaves the setting changed while it waits,
  *         which for a periodic checkpoint is a month. Such a step names the
- *         setting and the value to put back ({_toRestore}); the step that puts
- *         it back says so ({_restoredNow}). The record carries every setting
- *         still to put back, so a run abandoned part-way does not leave it
- *         changed silently: `unwind()` puts back whatever the chain shows is
- *         still changed, and `finish()` refuses while anything is.
+ *         setting and the value to put back ({_toRestore}), and the record
+ *         keeps that entry for the rest of the run. No step removes it, not
+ *         even the one that puts the setting back: a stage's record is written
+ *         before its broadcast is sent, so a step that stopped part-way would
+ *         otherwise have erased the value before the transaction putting it
+ *         back landed. Whether a setting is still changed is read from the
+ *         chain, never from the record ({_stillToRestore}): `unwind()` puts
+ *         back whatever the chain shows is still changed, and `finish()`
+ *         refuses while anything is.
  *
  *         SCENARIOS NEVER INTERLEAVE. A scenario runs to its end before the
  *         next one starts, exactly as in `run()`; only the wall-clock time
@@ -160,26 +164,16 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     }
 
     /// @dev This step changed the setting `name`, and a later step puts back
-    ///      `value`. Until then a staged run's record carries it, so an
-    ///      abandoned run can be unwound ({unwind}).
+    ///      `value`. The staged run's record carries it from here to the end
+    ///      of the run, so an abandoned run can be unwound ({unwind}) however
+    ///      far its last broadcast got; the chain says whether it still needs
+    ///      putting back ({_stillToRestore}). A second call for the same name
+    ///      keeps the value first recorded: that is what the run found.
     function _toRestore(string memory name, uint256 value) internal {
         bytes32 h = keccak256(bytes(name));
-        if (!_restoreListed(h)) _restoreNames.push(name);
+        if (_restoreListed(h)) return;
+        _restoreNames.push(name);
         _restoreValue[h] = value;
-    }
-
-    /// @dev This step put the setting `name` back, so the record no longer
-    ///      carries it.
-    function _restoredNow(string memory name) internal {
-        bytes32 h = keccak256(bytes(name));
-        for (uint256 i = 0; i < _restoreNames.length; i++) {
-            if (keccak256(bytes(_restoreNames[i])) != h) continue;
-            _restoreNames[i] = _restoreNames[_restoreNames.length - 1];
-            _restoreNames.pop();
-            delete _restoreValue[h];
-            return;
-        }
-        revert(string.concat(moduleName(), ": no step recorded the setting ", name, " to put back"));
     }
 
     /// @dev The value an earlier step recorded to put back for `name`.
@@ -605,7 +599,7 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
 
     function _freshRunRemedy() private view returns (string memory) {
         string memory removal = string.concat("remove ", Deployments.namedPath(_recordFile()), " and start a fresh run");
-        if (_restoreNames.length == 0) return string.concat("To start over, ", removal);
+        if (bytes(_stillChanged()).length == 0) return string.concat("To start over, ", removal);
         return string.concat("To start over, run unwind() with --broadcast to put back the settings this run",
             " changed, then ", removal);
     }

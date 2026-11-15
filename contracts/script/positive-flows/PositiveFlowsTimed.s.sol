@@ -48,8 +48,9 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *         PF-116's steps the switch, the adapter and (for one terms-age wait)
  *         the threshold stay changed, which for the checkpoint is a month.
  *         Each is recorded as a setting to put back ({_toRestore}), with the
- *         value the run found, and cleared from the record by the step that
- *         puts it back. A run abandoned part-way is unwound with `unwind()`,
+ *         value the run found, and stays in the record to the end of the run,
+ *         even after the step that puts it back (whose broadcast may not land
+ *         whole). A run abandoned part-way is unwound with `unwind()`,
  *         which puts back whatever the chain shows still changed; it leaves
  *         the run's open offers and loan on the rehearsal chain. `finish()`
  *         refuses while the chain shows any recorded setting still changed.
@@ -270,7 +271,6 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
         console.log("Monthly-cadence loan initiated:", loanId);
         if (_kept(THRESHOLD_LOWERED) == 1) {
             _restore(FINER_CADENCE_THRESHOLD, _restoreValueOf(FINER_CADENCE_THRESHOLD));
-            _restoredNow(FINER_CADENCE_THRESHOLD);
             console.log("Finer-cadence principal threshold put back");
         }
 
@@ -301,11 +301,9 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
         _claimUnclaimed(loanId);
 
         _removeFixedRateAdapter(adapter);
-        _restoredNow(SETTLEMENT_ADAPTER);
         console.log("Settlement adapter removed from the swap list:", address(adapter));
         if (_kept(SWITCH_WAS_OFF) == 1) {
             _setPeriodicSwitch(false);
-            _restoredNow(PERIODIC_SWITCH);
             console.log("Periodic-interest switch put back off");
         }
     }

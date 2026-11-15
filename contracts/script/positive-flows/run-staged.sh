@@ -28,9 +28,10 @@
 # clock step, elsewhere the script waits until the chain's own clock has
 # passed it. A record left by a run that stopped is resumed: a stage refuses
 # to run on top of a stage whose broadcast did not land whole, and names the
-# record to remove for a fresh run. A run that changed a protocol setting it
-# had not yet put back (the record lists it under `restore_`) is unwound first,
-# with `forge script <module> --sig "unwind()" --broadcast`.
+# record to remove for a fresh run. A run that changed a protocol setting
+# (the record lists every one it changed under `restore_`, put back or not) is
+# unwound first, with `forge script <module> --sig "unwind()" --broadcast`,
+# which puts back only what the chain still shows changed.
 #
 # Extra arguments are passed to every `forge script` call.
 
