@@ -94,7 +94,7 @@ export function ClaimWithdraw({ claimKey, plan, mode, chain, own }: { claimKey: 
       {drafts.map((d, n) =>
         finished?.includes(n) ? (
           <p key={n} className="tier-b" data-testid={`claim-withdraw-finished-${n}`}>
-            {format('claimWithdraw.finished', { what: what(d) })}
+            {text('claimWithdraw.finished')}
           </p>
         ) : closed?.includes(n) || !sameIdentity ? (
           sameIdentity ? (
@@ -123,7 +123,10 @@ export function ClaimWithdraw({ claimKey, plan, mode, chain, own }: { claimKey: 
   );
 }
 
-/** One follow-on withdrawal. Its finish card's Close reports whether the
+/** One follow-on withdrawal. The reader may change its amount before
+ *  confirming, so once it has run the card names no amount: the withdrawal's
+ *  own finish card stated what moved, and the vault shows what is left.
+ *  Its finish card's Close reports whether the
  *  withdrawal went through: anything but a measured "nothing moved" (a
  *  completed or queued withdrawal, part of one, or one whose outcome could
  *  not be read) counts as moved, so it is not offered again. A withdrawal

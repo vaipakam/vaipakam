@@ -1055,7 +1055,7 @@ export const copy = {
     withdrawNow: B('Withdraw to my wallet now'),
     withdrawAgain: B('Withdraw {{what}} to my wallet'),
     closeHeld: A('A withdrawal is still out. You can close this once it has finished.'),
-    finished: B('The withdrawal of {{what}} has run. Your vault page shows where it stands.'),
+    finished: B('This withdrawal has run. Your vault page shows where it went and anything left in your vault.'),
     otherIdentity: A('{{what}} was claimed on another account or network. Switch back to it to withdraw here, or withdraw from that account’s vault.'),
     unlisted: A('The claim also credited {{n}} more assets to your vault that the app cannot open a withdrawal for here. They are in your vault; withdraw them from the Vault page.'),
     readyTitle: B('Ready to claim'),
