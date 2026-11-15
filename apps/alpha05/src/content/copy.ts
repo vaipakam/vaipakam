@@ -791,6 +791,7 @@ export const copy = {
     checkAgain: B('Check again'),
     cancelled: A('Your wallet cancelled this transaction, so the change was not made. The cancelling transaction:'),
     replaced: A('Your wallet replaced this transaction with a different one, so the change was not made through it. The replacing transaction:'),
+    earlierSteps: A('The earlier steps of this action did take effect:'),
     notSent: A('Not sent. {{reason}}'),
     identityChanged: A('Your wallet or network changed after this review opened, so it is not offered for signing. Close it and start again.'),
     sentFrom: A('This was confirmed from {{account}} on {{chain}}, not the wallet connected now. Everything below is about that wallet.'),

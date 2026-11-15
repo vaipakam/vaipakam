@@ -147,8 +147,11 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       announceOwnChange({ chainId: ctx.chainId, account: ctx.account, cause: 'receipt' });
       const reason = replacement as ReplacementReason | null;
       if (reason === 'cancelled' || reason === 'replaced') {
+        // The earlier steps of a multi-transaction action took effect even
+        // though this one was superseded (Codex #3489 r20): read and shown.
+        const landed = await readLandedBefore(ctx);
         const unwound = await cleanUpAfterNoEffect(ctx);
-        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound });
+        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound, landed });
         return;
       }
       const mined = apply({

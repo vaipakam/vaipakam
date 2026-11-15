@@ -51,13 +51,16 @@ describe('transition', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
     for (const reason of ['cancelled', 'replaced'] as const) {
       const p = transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n });
-      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n, unwound: [] });
+      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n, unwound: [], landed: [] });
       expect(() => transition(p, { type: 'measured', hash: OTHER, outcome: summarize([], 1) })).toThrow(IllegalTransition);
       expect(transition(p, { type: 'review' })).toEqual({ kind: 'review' });
       expect(transition(p, { type: 'reset' })).toEqual({ kind: 'idle' });
     }
     // Also after a resumed track, and only for this flow's hash.
     const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
+    // Codex #3489 r20: the earlier steps of a multi-transaction action are kept on this ending.
+    const earlier = [{ status: 'done' as const, label: 'Protected mode is on' }];
+    expect(transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 4n, landed: earlier })).toMatchObject({ landed: earlier });
     expect(transition(unknown, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 5n }).kind).toBe('superseded');
     expect(() => transition(submitted, { type: 'superseded', submittedHash: OTHER, minedHash: OTHER, reason: 'cancelled', blockNumber: 5n })).toThrow(IllegalTransition);
   });
