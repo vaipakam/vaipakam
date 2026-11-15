@@ -67,7 +67,7 @@ A set is a small record in Diamond storage, numbered from 1:
 | Price guard | The guard contract's address |
 | Price version | The guard's config epoch and the feed registry's epoch, as a pair (section 4) |
 | Route set | An immutable ordered adapter list (section 5) |
-| Marketplace | Seaport, conduit key and the listing executor (section 6) |
+| Marketplace | Seaport and the conduit key (section 6) |
 
 A loan stores only the set's number. The set is minted lazily: at loan
 creation the Diamond compares the live values with the newest set and mints a
@@ -95,8 +95,7 @@ as of an epoch:
 - the feed registry's bindings, which get the same epoch treatment in the
   registry. The two counters move independently, so a price version is the
   pair (guard epoch, registry epoch). The guard reports the pair in one
-  view, every "as of" read takes the pair, and the settings set and the
-  vault's lien stamp both carry the pair. A feed rebinding alone therefore
+  view, every "as of" read takes the pair, and the settings set carries the pair. A feed rebinding alone therefore
   makes a new set.
 
 The guard keeps every price entry point it has today and adds an "as of
@@ -141,40 +140,43 @@ price takes the lender-first in-kind path, and a distrusted price refuses.
 The cure for a price version whose source has died is an announced
 retirement (section 7).
 
+### Retired price versions are refused by the guard itself
+
+Retiring a price version (section 7) is an act on the guard: the guard keeps
+a floor, raised only through its delayed change path, and refuses every "as
+of" read below it. The Diamond reads that floor; it keeps no second record
+of which versions are retired. A new guard has its own versions and its own
+floor, so versions are never compared across guards.
+
 ### The vault's own check
 
-A vault names the price guard as a constant of its code and checks outcomes
-itself (#3431, #3268). To keep that check on the same footing as the loan,
-the vault stamps the guard address and the guard's current price version
-into the lien row when the lien is created, reading both itself. A later
-check for that lien reads prices at the stamp and nowhere else.
+A vault names the price guard in its code and checks outcomes itself (#3431,
+#3268). The vault keeps no copy of a loan's settings. For each check the
+Diamond names the guard and the price version the loan is on, and the vault
+accepts them only when:
 
-When a loan's price part moves (a retirement or a consent move, section 7),
-the Diamond asks the vault to **restamp the price fields** of the lien in the
-same step, naming the guard and the price version the loan moved to. The
-vault trusts none of that by itself. It accepts the restamp only when:
+- the guard is one its own code lists as accepted. The vault code carries
+  the guard new loans use and, beside it, any earlier guard still in use by
+  open loans; every vault version is announced under the code delay;
+- the guard answers the read, which it does only for a version that exists
+  and is not below its floor.
 
-- the named guard is one its own code lists as accepted. The vault code
-  carries the guard new liens use and, beside it, any earlier guard still in
-  use by open loans; every vault version is announced under the code delay;
-- the named price version is not older than the lien's stamp and not newer
-  than that guard's newest version. A stamp only moves forward.
-
-A restamp is scoped to the part that moved. A route retirement restamps
-nothing, because the vault holds no route stamp, and a marketplace move
-leaves the price fields as they are (section 6). The stamp therefore always
-equals the settings the loan is on, also after later changes for new loans,
-and a faulty Diamond can at most move a lien forward to settings that were
-announced under a 7-day delay.
+The vault does not order versions and holds no per-lien stamp. An earlier
+draft had the vault stamp settings into the lien row and restamp on a move;
+that needed a rule for every way a lien is created or a loan moves (a
+handover recreates a lien, a new guard starts its versions again), and a
+stamp the Diamond may move is no stronger than a named value the vault
+validates. With this rule a faulty Diamond can choose only among settings
+that are still live on a guard the vault's own code accepts, each announced
+under a 7-day delay, and a retired version is refused by the guard whoever
+asks.
 
 A vault whose owner has pinned older code keeps that code's accepted list.
 If the loan's guard is not on it, the vault's check refuses, as a pinned
 vault does today (#3431).
 
-The vault does not check prices yet, so this lands on top of the vault's
-price checks (#3268) and the lien checks (#3379), in the same lien-creation
-path those checks read, and shares one lien row shape with the payee lien of
-#3669.
+The vault does not check prices yet, so this lands with the vault's price
+checks (#3268) and the lien checks (#3379).
 
 ## 5. Swap routes
 
@@ -197,26 +199,33 @@ makes it current. The old list is never edited.
 
 ## 6. Marketplace
 
-The set records Seaport, the conduit key and the listing executor. Every
-listing made for a loan (the borrower's own listing, the auto-list at the
-floor, the Dutch listing, the atomic sale) resolves the conduit from the
-loan's set, not from the live setting. The per-loan executor record that
-exists today folds into the set.
+The set records Seaport and the conduit key. Every listing made for a loan
+(the borrower's own listing, the auto-list at the floor, the Dutch listing,
+the atomic sale) resolves the conduit from the loan's set, not from the live
+setting.
 
-The vault refuses a conduit other than its constant. As with prices, the
-vault stamps its marketplace constants into the lien row at lien creation,
-accepts only the stamp for that lien, and restamps the marketplace fields
-alone when the loan's marketplace part moves. The named marketplace must be
-one the vault code lists as accepted: the one new liens use, or an earlier
-one still in use by open loans. A vault version that names a
-new conduit therefore does not strand a listing on an open loan, and does
-not move an open loan either.
+**A live listing keeps the settings it was made with.** Each listing already
+records its executor and its order context (Seaport, conduit, zone). That
+per-listing record stays as it is and does not fold into the set: a listing
+is cancelled, filled and cleaned up through the executor and the conduit it
+was created on, whatever the loan's set says by then. A marketplace move
+therefore changes only listings created afterwards. The retirement of a
+marketplace takes effect for a loan with a live listing once that listing
+has ended; `syncLoanSettings` cancels a live auto-listing first, through its
+original executor, and a borrower's own listing is left to run or be
+cancelled by the borrower.
+
+The vault refuses a conduit its code does not list as accepted. The code
+carries the conduit new listings use and, beside it, any earlier one still in
+use by open loans. The vault holds no marketplace record per loan. A vault
+version that names a new conduit therefore does not strand a listing on an
+open loan, and does not move an open loan either.
 
 ## 7. Announced retirement and consent
 
 **Retirement.** Governance (the Timelock) may propose to retire one part:
-a price version (which retires every older one with it, since versions are
-one line of history), a route set, or a marketplace.
+a price version (which retires every older one on that guard with it, by
+raising the guard's floor), a whole guard, a route set, or a marketplace.
 
 - It waits at least 7 days. The guardian or the owner can cancel it. Anyone
   can execute it once due, and a keeper pass backs that step (shipped
@@ -235,8 +244,7 @@ one line of history), a route set, or a marketplace.
   to the holders of loans that would land on it, so a loan never receives
   settings its parties were not told about at least 7 days ahead.
 - The move is one step, `syncLoanSettings`, which writes the loan onto the
-  matching set and restamps the moved part's fields in the vault liens
-  (sections 4 and 6). Anyone may call
+  matching set. Nothing is written to a vault (sections 4 and 6). Anyone may call
   it, the keeper pass does, and every loan action runs it first, so no action
   ever reads a retired part. A view of a loan not yet moved answers as if it
   had been.
@@ -257,8 +265,7 @@ parties' consent, and it is never silent.
 when the borrower-position holder and every lender-position holder have each
 approved that exact set number. An approval names the set, so it cannot be
 replayed for a later one, and the move is refused if that set is no longer
-current. The move restamps, in the same step, the fields of each part that
-changed. A loan in
+current. A loan in
 fallback custody or past default cannot be moved.
 
 ## 8. One rule, enforced
@@ -322,16 +329,19 @@ fallback custody or past default cannot be moved.
   sync, changes that one part only, and is frozen again afterwards.
 - After a move and a later change for new loans, the vault still validates
   the loan at the settings it moved to.
-- A route retirement leaves the lien's price and marketplace stamps
-  untouched.
+- A retired price version is refused by the guard for every caller; versions
+  on two guards are never compared.
+- An obligation handover keeps the loan's set, and the incoming borrower's
+  vault validates the same named settings.
+- A live listing is cancelled and cleaned up through its original executor
+  and conduit after a marketplace move.
 - A retirement whose named replacement stops being current before execution
   lapses; a loan moved late lands on the named replacement, not a newer one.
 - Consent: both sides, exact set number, refused in fallback custody and
   after default; every holder on a divided loan.
 - Try-list indexes stay stable for a loan across a reorder.
-- The vault reads at its stamp only; a restamp is refused for a guard or a
-  marketplace outside the vault code's accepted list, for an older price
-  version, and for one newer than the guard's newest.
+- The vault refuses a guard or a conduit outside its code's accepted list
+  and holds no per-loan settings.
 - The pre-deploy check fails on an unlisted "current" caller.
 
 ## 12. Alternatives considered
@@ -365,7 +375,7 @@ Build order:
 3. Loan forms of the numeraire value entries and the switch of every loan
    path; the pre-deploy check.
 4. Retirement, the sync step, consent, the keeper pass.
-5. Vault lien stamps and restamp.
+5. The vault's accepted lists and named-settings check, with #3268.
 6. Indexer and app.
 
 ## 14. Open items
