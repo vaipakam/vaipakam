@@ -17,6 +17,8 @@
  *                                      lifetime); homepage hero card.
  *   GET /offers/active?...          — paginated active offer list.
  *   GET /offers/:id                 — single offer by id.
+ *   GET /offers/:id/nearest         — #3623: the other side's open
+ *                                      offers closest to an open offer.
  *   GET /offers/by-creator/:addr    — wallet's offers regardless of
  *                                      status; "my offers" view.
  *
@@ -606,6 +608,95 @@ export async function handleOfferById(
   } catch (err) {
     console.error('[offerRoutes] byId failed', redactedError(err));
     return jsonResponse({ error: 'byId-failed' }, 500);
+  }
+}
+
+/** #3623 — how many nearest counterparties `/offers/:id/nearest` serves by
+ *  default, and at most. */
+const NEAREST_DEFAULT = 5;
+const NEAREST_MAX = 10;
+
+/**
+ * GET /offers/:id/nearest?chainId=8453&limit=5
+ *
+ * #3623 — for an open offer, the open offers on the other side of its pair
+ * that sit closest to it, so a maker whose offer is not matching can be told
+ * what keeps it apart. Only an open token-for-token offer that is not bound
+ * to a loan (a sale or offset vehicle) is served; any other offer answers
+ * `eligible: false` with the reason, never an empty list that would read as
+ * "nothing on the other side".
+ *
+ * Candidates are the open, unexpired, token-for-token offers of the other
+ * side on the same two assets, not bound to a loan and not from the same
+ * wallet (the protocol never matches a wallet with itself). They are ranked
+ * by how far their rate range sits from this offer's (0 where the two
+ * ranges meet), then by how far their term is from this offer's, newest
+ * first on a tie. `oppositeOpen` counts every such candidate, so the reader
+ * can say how many stand behind the ones served.
+ *
+ * This is a CACHE ranking, never a verdict: it holds no interest cadence,
+ * prepay-listing or price-guard terms, and no risk read. The app reads each
+ * candidate from the chain and asks the protocol's own match preview before
+ * it names the gap.
+ */
+export async function handleOfferNearest(req: Request, env: Env, offerIdRaw: string): Promise<Response> {
+  const url = new URL(req.url);
+  const chainId = requestedChainId(url);
+  const offerId = Number.parseInt(offerIdRaw, 10);
+  if (!Number.isFinite(offerId) || offerId <= 0) {
+    return jsonResponse({ error: 'bad-offer-id' }, 400);
+  }
+  const rawLimit = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, NEAREST_MAX) : NEAREST_DEFAULT;
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
+  try {
+    const me = await env.DB.prepare(`SELECT * FROM offers WHERE chain_id = ? AND offer_id = ?`).bind(chainId, offerId).first<OfferRow>();
+    if (!me) return jsonResponse({ error: 'not-found' }, 404);
+    const now = Math.floor(Date.now() / 1000);
+    const ineligible =
+      me.status !== 'active'
+        ? 'not-open'
+        : me.expires_at !== 0 && me.expires_at <= now
+          ? 'expired'
+          : me.asset_type !== 0 || me.collateral_asset_type !== 0
+            ? 'not-erc20'
+            : me.is_sale_vehicle === 1 || me.is_offset_vehicle === 1
+              ? 'loan-bound'
+              : null;
+    if (ineligible !== null) {
+      return jsonResponse({ chainId, offerId, eligible: false, reason: ineligible });
+    }
+    const myMin = me.interest_rate_bps;
+    const myMax = Math.max(me.interest_rate_bps, me.interest_rate_bps_max);
+    const where = `chain_id = ? AND status = 'active' AND offer_type = ?
+       AND lending_asset = ? AND collateral_asset = ?
+       AND asset_type = 0 AND collateral_asset_type = 0
+       AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+       AND lower(creator) <> lower(?)
+       AND (expires_at = 0 OR expires_at > ?)`;
+    const binds = [chainId, me.offer_type === 0 ? 1 : 0, me.lending_asset, me.collateral_asset, me.creator, now];
+    // The rate gap: 0 where the two ranges meet, else how far apart they sit
+    // (a range whose max reads below its min is taken as its min).
+    const rateGap = `MAX(0, interest_rate_bps - ?, ? - MAX(interest_rate_bps, interest_rate_bps_max))`;
+    const [rows, count] = await Promise.all([
+      env.DB.prepare(
+        `SELECT *, ${rateGap} AS rate_gap FROM offers WHERE ${where}
+         ORDER BY rate_gap ASC, ABS(duration_days - ?) ASC, offer_id DESC LIMIT ?`,
+      )
+        .bind(myMax, myMin, ...binds, me.duration_days, limit)
+        .all<OfferRow & { rate_gap: number }>(),
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM offers WHERE ${where}`)
+        .bind(...binds)
+        .first<{ n: number }>(),
+    ]);
+    const found = rows.results ?? [];
+    const json = await toJsonRows(env, chainId, found);
+    const candidates = json.map((o, i) => ({ ...o, rateGapBps: found[i].rate_gap }));
+    return jsonResponse({ chainId, offerId, eligible: true, candidates, oppositeOpen: count?.n ?? candidates.length });
+  } catch (err) {
+    console.error('[offerRoutes] nearest failed', redactedError(err));
+    return jsonResponse({ error: 'nearest-failed' }, 500);
   }
 }
 

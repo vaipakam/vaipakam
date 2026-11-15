@@ -2711,6 +2711,32 @@ above. Each resolves here, so a route reviewer needs no private file:
   review the reader asked for, and "Back to the form" keeps what was typed.
   Nothing is taken or posted from this step without a press. An offer that
   stops fitting while the reader decides is dropped, and the step says so.
+- **RB-WHY-MATCH** — The page of an open token-for-token offer the reader
+  posted (not a sale or early-close vehicle, not a refinance request) says
+  why it is not matching (#3623). The index ranks the other side's open
+  offers on the same two assets, closest rate range first, then closest
+  term (`/offers/:id/nearest`); it leaves out lapsed offers, the vehicles and
+  the reader's own wallet, and counts every one it could rank. The page reads
+  up to five of them from the chain at one block and asks the protocol's own
+  match preview for each pair, with the reader's wallet as the one who would
+  send it. It then states one thing: that no open offer stands on the other
+  side; that matching is off on the network (or could not be read); that a
+  pair would match now, naming the offer and the rate the match would lend
+  at, and that anyone may send it; or the closest open counterparty's first
+  refusal. A refusal on rate gives both rates from the two offers' own terms
+  (the counterparty's best for the reader and the reader's own nearest
+  bound), a refusal on term gives both terms (a pro-rata lender's term is
+  "up to"), a refusal on lifecycle terms names the first option that
+  differs (interest mode, partial repayment, prepay listing, the interest
+  schedule), and any other refusal is given in the preview's own words. The
+  count of open offers on the other side is shown, and the closest offers,
+  each with its verdict, sit behind a tap. The page never promises a match,
+  and says that another taker can reach an offer first. Until this app can
+  change an open offer, a gap says the way to close it is to cancel and post
+  again. A failed index read says the closest offers are unknown, never that
+  there are none; an index that does not list the offer as open yet says it
+  may be catching up. The Offers list links each open token-for-token offer
+  the reader created to its page with one line, "Why isn’t it matching?".
 
 ## 3. Companion specifications
 

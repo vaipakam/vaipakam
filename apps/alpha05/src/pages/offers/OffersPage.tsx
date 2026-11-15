@@ -179,6 +179,14 @@ function OfferRow({
         </p>
       )}
       {t !== null && t.expiresAt > 0n && o.state === 'open' && <p className="tier-b">{format('home.offerExpires', { when: formatUtc(Number(t.expiresAt)) })}</p>}
+      {t !== null && o.state === 'open' && createdHere && t.assetType === ASSET_ERC20 && t.collateralAssetType === ASSET_ERC20 && (
+        // #3623 — one line here; the page states the gap.
+        <p className="tier-b">
+          <Link to={`/offers/${id}`} data-testid={`offer-why-${id}`}>
+            {text('whyMatch.hint')}
+          </Link>
+        </p>
+      )}
       {o.state === 'expired' && <p className="tier-a">{text('offers.expiredHolds')}</p>}
       {o.state === 'accepted' && <p className="tier-b">{text('offers.filledNote')}</p>}
       {o.state === 'sale-consumed' && <p className="tier-a">{text('offers.soldNote')}</p>}
