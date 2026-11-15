@@ -2791,3 +2791,21 @@ La cifra es `untrackedHolding(user, asset, tokenId)` (token 0 para un ERC-20), l
 ### Recuperar: cómo se registra una renuncia
 
 `disownUntracked(kind, asset, tokenId)` solo necesita una bóveda y una cifra sin contar mayor que cero. No tiene comprobación de pausa, filtro de sanciones ni comprobación de gestor, así que una cartera reemplazada y una bóveda bloqueada pueden usarlo, y no requiere firma. Emite `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, y la tarjeta final lee la cantidad registrada de ese evento en el recibo.
+
+<a id="analytics-figures"></a>
+
+### Analítica: cómo se leen las cifras
+
+La página toma el último bloque y lee cada vista del Diamond en ese número de bloque: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (las ofertas publicadas son `totalOffersCreated`), `getLifetimeLendingAssets` con `getLifetimeLendingTotals` por activo, y `getNumeraireSymbol`; el primer bloque del despliegue viene del registro de despliegue. Cada grupo se resuelve por separado, así que una vista fallida se indica en su lugar. La página valora el principal y el interés de cada activo con `getNumeraireValue(asset, amount, false)` en el mismo bloque, el redondeo que usan los totales del protocolo, de modo que las partes valoradas suman `totalVolumeLentNumeraire` y `totalInterestPaidNumeraire`; un activo cuya valoración revierte se nombra como excluido. La página no muestra `defaultRateBps`: su contador, `terminalBadOrSettledCount`, sube cuando un préstamo entra en Defaulted o Settled, y un reembolso ordinario seguido de los cobros también llega a Settled, así que no separa los impagos de los cierres normales. El tercer valor de `getProtocolTVL` es un recuento de préstamos abiertos con garantía NFT, no un valor. El interés es `lifetimeInterestPaid`, escrito a medida que pagan los prestatarios; la recuperación de garantía de un prestamista no está incluida.
+
+<a id="analytics-fees"></a>
+
+### Analítica: cómo se leen las comisiones y la custodia
+
+Los tipos de comisión son `getTreasuryFeeBps` y `getLoanInitiationFeeBps`. Las cifras de comisiones son `getTreasuryMetrics`: el total desde el inicio es `feeLedgerTotal`, y las cifras del día y la semana recorren el registro de comisiones desde el final como mucho `MAX_FEE_EVENTS_ITER` (10.000) entradas, así que más allá son un límite inferior. Cada entrada lleva el valor en numerario de la comisión al devengarse según la regla de mejor esfuerzo, 0 cuando no se pudo valorar. La tesorería mostrada es `getTreasury`, la dirección que nombra el código de bóveda actual. Una comisión cobrada de una bóveda va a la tesorería que nombra el propio código de esa bóveda, y `recordTreasuryAccrual` abona `treasuryBalances` siempre que una comisión llega al Diamond, así que una bóveda fijada a código anterior, o una configuración anterior, puede dejar comisiones retenidas allí diga lo que diga `getTreasury`. Por eso la página siempre muestra la cifra retenida de `getTreasuryMetrics`, sumada solo sobre los activos de préstamos abiertos, con la última conversión y los objetivos de `getTreasuryConvertConfig`. Una tesorería distinta del registro de despliegue se señala.
+
+<a id="analytics-vpfi"></a>
+
+### Analítica: cómo se leen los datos de VPFI
+
+El token es `getVPFIToken` del Diamond, y la red de origen es su `isCanonicalVpfiChain`, ambos en el bloque de la página; un token cero se lee como no configurado. Del token la página lee `name`, `symbol`, `decimals`, `totalSupply`, `owner` y `paused`, y en la red de origen también `cap`, `INITIAL_MINT` y `minter`; lo acuñable es `cap` menos `totalSupply`, nunca por debajo de cero. `mint` solo está abierto a `minter`, y `setMinter` solo a `owner`, así que un cambio de acuñador espera al timelock solo cuando `owner` es el `timelock` del despliegue. Un token puenteado es el espejo de quema y acuñación, cuyo suministro es lo que el pool de origen bloqueó para él. La lista de direcciones es el `vpfiToken` del registro de despliegue por red servida, marcado como origen donde el registro no lleva `vpfiMirror`. Un token distinto del registro, o un `cap` distinto de 230.000.000 VPFI, se señala.

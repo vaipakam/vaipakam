@@ -1669,3 +1669,21 @@ Votre coffre ne compte que ce qui y arrive par le protocole : un dépôt, un pr�
 ### Récupérer : renoncer à un actif
 
 Si votre coffre a reçu quelque chose que vous ne revendiquez pas, renoncez-y. Renoncer inscrit sur la chaîne, à la vue de tous, que vous ne le revendiquez pas. Rien n’est déplacé ni crédité, et l’actif reste dans votre coffre, non compté. Aucune déclaration, signature ni filtre de sanctions n’est demandé, et cela reste ouvert pendant une pause du protocole, pour un portefeuille remplacé et pour un coffre bloqué par une adoption antérieure.
+
+<a id="analytics-figures"></a>
+
+### Analyses : les chiffres publics du protocole
+
+La page Analyses affiche les chiffres du protocole lui-même sur un réseau, sans portefeuille : prêts ouverts, prêts et offres créés depuis le début, portefeuilles ayant participé, taux moyen convenu, valeur sur les prêts ouverts et totaux prêtés depuis le début. Choisissez n’importe quel réseau servi par l’application. Chaque chiffre est lu dans le contrat du protocole à un seul bloc, et la page indique ce bloc, son âge et le bloc où ce déploiement a commencé, là où démarrent les compteurs. Un chiffre illisible le dit au lieu d’afficher zéro, et un taux sans rien à diviser indique qu’il n’y en a pas encore. Les valeurs sont dans la monnaie de référence du protocole, évaluées maintenant selon sa propre règle ; un actif qu’il ne peut pas évaluer compte pour rien dans un total, et la page nomme cet actif et liste ses montants. Les intérêts comptent ce que les emprunteurs ont payé ; la garantie reçue par un prêteur après un défaut n’est pas un intérêt. La page n’affiche aucun taux de défaut : le compteur du protocole qui le sert compte aussi les prêts réglés après un remboursement ordinaire, il ne distingue donc pas un défaut d’une clôture normale.
+
+<a id="analytics-fees"></a>
+
+### Analyses : les frais et la trésorerie
+
+La section des frais affiche la part de la trésorerie sur les intérêts et les frais d’ouverture de prêt tels que fixés maintenant, ainsi que les frais perçus depuis le début, sur le dernier jour et sur la dernière semaine. Chaque frais est évalué dans la monnaie de référence au moment de sa perception, si bien qu’un changement de prix ultérieur ne le modifie pas ; un frais que le protocole n’a pas pu évaluer alors compte pour rien. Les chiffres du jour et de la semaine comptent au plus un nombre fixe des frais les plus récents, et sont donc inférieurs au chiffre réel s’il y en a davantage sur la période. La page nomme et lie la trésorerie à laquelle le code de coffre actuel verse les frais. Un coffre resté sur un code plus ancien verse les frais à la trésorerie que nomme son propre code, et les frais arrivés plus tôt au contrat du protocole y restent ; la page affiche donc aussi ce que détient le contrat, en ne comptant que les actifs des prêts ouverts. La trésorerie n’est pas investie pour obtenir un rendement.
+
+<a id="analytics-vpfi"></a>
+
+### Analyses : le jeton VPFI
+
+La section VPFI de la page Analyses lit le jeton que le protocole désigne sur le réseau choisi : son nom, son symbole, ses décimales et son offre. Le VPFI est émis sur un seul réseau, son réseau d’origine. Là, la page affiche aussi le plafond inscrit dans le jeton, ce qui peut encore être frappé sous ce plafond, le montant frappé au lancement, le frappeur et le propriétaire du jeton. Seul le frappeur peut frapper, et seul le propriétaire peut changer le frappeur. Sur tout autre réseau, la page affiche le VPFI qui s’y trouve et indique que le plafond appartient au réseau d’origine, où chaque VPFI présent ailleurs est adossé à un VPFI verrouillé. En dessous figurent les adresses VPFI sur chaque réseau servi par l’application, et la répartition publiée du plafond de 230 000 000 : chaque ligne est le maximum qui peut être frappé pour elle, et la réserve de 24 % n’est pas décidée, rien n’étant frappé tant que la gouvernance n’a pas choisi.

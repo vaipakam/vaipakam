@@ -2507,3 +2507,21 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 ### الاسترداد: كيف يُسجَّل التنصّل
 
 لا يحتاج `disownUntracked(kind, asset, tokenId)` إلا إلى خزنة ورقم غير محسوب أكبر من صفر. وليس فيه فحص إيقاف ولا فحص عقوبات ولا فحص مدير، فيستطيع استخدامه حتى المحفظة المستبدلة والخزنة المحظورة، ولا يتطلب توقيعًا. ويطلق `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`، وتقرأ بطاقة الختام المبلغ المسجّل من هذا الحدث في الإيصال.
+
+<a id="analytics-figures"></a>
+
+### التحليلات: كيف تُقرأ الأرقام
+
+تأخذ الصفحة أحدث كتلة وتقرأ كل واجهة عرض في الـDiamond عند رقم تلك الكتلة: `getProtocolStats` و`getProtocolTVL` و`getProtocolHealth` و`getGlobalCounts` (العروض المنشورة هي `totalOffersCreated`) و`getLifetimeLendingAssets` مع `getLifetimeLendingTotals` لكل أصل، و`getNumeraireSymbol`؛ وأول كتلة للنشر تأتي من سجل النشر. تُحسم كل مجموعة وحدها، فتُذكر الواجهة الفاشلة في مكانها. وتقيّم الصفحة أصل القرض والفائدة لكل أصل بـ`getNumeraireValue(asset, amount, false)` عند الكتلة نفسها، وهو التقريب الذي تستخدمه إجماليات البروتوكول، فتجتمع الأجزاء المقيّمة في `totalVolumeLentNumeraire` و`totalInterestPaidNumeraire`؛ ويُسمّى الأصل الذي يرتد تقييمه مستبعدًا. ولا تعرض الصفحة `defaultRateBps`: فعدّاده `terminalBadOrSettledCount` يرتفع حين يدخل قرض Defaulted أو Settled، والسداد العادي متبوعًا بالمطالبات يبلغ Settled أيضًا، فلا يفصل التعثر عن الإغلاق العادي. والقيمة الثالثة في `getProtocolTVL` عدد القروض المفتوحة بضمان NFT وليست قيمة. والفائدة هي `lifetimeInterestPaid`، تُكتب مع كل دفعة من المقترضين؛ واسترداد المقرض للضمان ليس منها.
+
+<a id="analytics-fees"></a>
+
+### التحليلات: كيف تُقرأ الرسوم والحفظ
+
+معدلات الرسوم هي `getTreasuryFeeBps` و`getLoanInitiationFeeBps`. وأرقام الرسوم هي `getTreasuryMetrics`: الإجمالي منذ البداية هو `feeLedgerTotal`، وأرقام اليوم والأسبوع تمسح سجل الرسوم من نهايته لعدد أقصاه `MAX_FEE_EVENTS_ITER` (10,000) إدخال، فهي بعد ذلك حد أدنى. يحمل كل إدخال قيمة الرسوم بالعملة المرجعية عند الاستحقاق وفق قاعدة أفضل جهد، و0 حين تعذّر تقييمها. والخزانة المعروضة هي `getTreasury`، العنوان الذي يسمّيه رمز الخزنة الحالي. والرسوم المأخوذة من خزنة تذهب إلى الخزانة التي يسمّيها رمز تلك الخزنة نفسه، ويقيّد `recordTreasuryAccrual` في `treasuryBalances` كلما وصلت رسوم إلى الـDiamond، لذلك قد تترك خزنة مثبّتة على رمز أقدم، أو إعداد سابق، رسومًا محتفظًا بها هناك أيًّا كان ما يقوله `getTreasury`. ولهذا تعرض الصفحة دائمًا الرقم المحتفظ به من `getTreasuryMetrics`، مجموعًا على أصول القروض المفتوحة فقط، مع آخر تحويل وأهداف `getTreasuryConvertConfig`. وتُعلَّم الخزانة التي تختلف عن سجل النشر.
+
+<a id="analytics-vpfi"></a>
+
+### التحليلات: كيف تُقرأ بيانات VPFI
+
+الرمز هو `getVPFIToken` في الـDiamond، والشبكة الأم هي `isCanonicalVpfiChain` الخاص به، وكلاهما عند كتلة الصفحة؛ والرمز الصفري يُقرأ على أنه غير مضبوط. ومن الرمز تقرأ الصفحة `name` و`symbol` و`decimals` و`totalSupply` و`owner` و`paused`، وعلى الشبكة الأم أيضًا `cap` و`INITIAL_MINT` و`minter`؛ والقابل للسك هو `cap` ناقص `totalSupply`، ولا ينزل تحت الصفر. و`mint` مفتوح لـ`minter` وحده، و`setMinter` لـ`owner` وحده، فلا ينتظر تغيير الساكّ الـtimelock إلا حين يكون `owner` هو `timelock` النشر. والرمز المجسور هو مرآة الحرق والسك، وعرضه هو ما أقفله مجمّع الشبكة الأم له. وقائمة العناوين هي `vpfiToken` في سجل النشر لكل شبكة مخدومة، وتُعلَّم أمًّا حيث لا يحمل السجل `vpfiMirror`. ويُعلَّم الرمز المختلف عن السجل، أو `cap` غير 230,000,000 VPFI.

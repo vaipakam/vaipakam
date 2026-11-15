@@ -2811,3 +2811,21 @@ Le chiffre est `untrackedHolding(user, asset, tokenId)` (jeton 0 pour un ERC-20)
 ### Récupérer : comment une renonciation est enregistrée
 
 `disownUntracked(kind, asset, tokenId)` ne demande qu’un coffre et un chiffre non compté supérieur à zéro. Il n’a ni contrôle de pause, ni filtrage de sanctions, ni contrôle de gestionnaire : un portefeuille remplacé et un coffre bloqué peuvent donc l’utiliser, et aucune signature n’est requise. Il émet `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, et la carte finale lit le montant enregistré dans cet événement du reçu.
+
+<a id="analytics-figures"></a>
+
+### Analyses : comment les chiffres sont lus
+
+La page prend le dernier bloc et lit chaque vue du Diamond à ce numéro de bloc : `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (les offres publiées sont `totalOffersCreated`), `getLifetimeLendingAssets` avec `getLifetimeLendingTotals` par actif, et `getNumeraireSymbol` ; le premier bloc du déploiement vient du registre de déploiement. Chaque groupe se résout séparément, donc une vue en échec est signalée à sa place. La page évalue le principal et les intérêts de chaque actif avec `getNumeraireValue(asset, amount, false)` au même bloc, l’arrondi des totaux du protocole, si bien que les parties évaluées s’additionnent en `totalVolumeLentNumeraire` et `totalInterestPaidNumeraire` ; un actif dont l’évaluation échoue est nommé comme exclu. La page n’affiche pas `defaultRateBps` : son compteur, `terminalBadOrSettledCount`, augmente quand un prêt passe en Defaulted ou Settled, et un remboursement ordinaire suivi des réclamations atteint aussi Settled, il ne sépare donc pas les défauts des clôtures normales. La troisième valeur de `getProtocolTVL` est un nombre de prêts ouverts avec garantie NFT, pas une valeur. Les intérêts sont `lifetimeInterestPaid`, écrits au fil des paiements ; la récupération de garantie d’un prêteur n’y figure pas.
+
+<a id="analytics-fees"></a>
+
+### Analyses : comment les frais et la garde sont lus
+
+Les taux de frais sont `getTreasuryFeeBps` et `getLoanInitiationFeeBps`. Les chiffres de frais sont `getTreasuryMetrics` : le total depuis le début est `feeLedgerTotal`, et les chiffres du jour et de la semaine parcourent le registre des frais depuis la fin sur au plus `MAX_FEE_EVENTS_ITER` (10 000) entrées, ce qui en fait au-delà une borne inférieure. Chaque entrée porte la valeur en numéraire du frais au moment de son accumulation selon la règle au mieux, 0 lorsqu’il n’a pas pu être évalué. La trésorerie affichée est `getTreasury`, l’adresse que nomme le code de coffre actuel. Un frais prélevé sur un coffre va à la trésorerie que nomme le code propre à ce coffre, et `recordTreasuryAccrual` crédite `treasuryBalances` dès qu’un frais arrive au Diamond ; un coffre figé sur un code plus ancien, ou une configuration antérieure, peut donc y laisser des frais détenus, quoi que dise `getTreasury`. La page affiche donc toujours le montant détenu de `getTreasuryMetrics`, additionné sur les seuls actifs des prêts ouverts, avec la dernière conversion et les cibles de `getTreasuryConvertConfig`. Une trésorerie différente du registre de déploiement est signalée.
+
+<a id="analytics-vpfi"></a>
+
+### Analyses : comment les données VPFI sont lues
+
+Le jeton est `getVPFIToken` du Diamond, et le réseau d’origine est son `isCanonicalVpfiChain`, tous deux au bloc de la page ; un jeton nul se lit comme non défini. Du jeton, la page lit `name`, `symbol`, `decimals`, `totalSupply`, `owner` et `paused`, et sur le réseau d’origine aussi `cap`, `INITIAL_MINT` et `minter` ; le frappable est `cap` moins `totalSupply`, jamais sous zéro. `mint` n’est ouvert qu’à `minter`, et `setMinter` qu’à `owner`, donc un changement de frappeur n’attend le timelock que lorsque `owner` est le `timelock` du déploiement. Un jeton ponté est le miroir à brûlage et frappe, dont l’offre correspond à ce que le pool d’origine a verrouillé pour lui. La liste d’adresses est le `vpfiToken` du registre de déploiement par réseau servi, marqué origine là où le registre ne porte pas de `vpfiMirror`. Un jeton différent du registre, ou un `cap` autre que 230 000 000 VPFI, est signalé.

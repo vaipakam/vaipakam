@@ -1673,3 +1673,21 @@ Ihr Tresor zählt nur, was über das Protokoll hineinkommt: eine Einzahlung, ein
 ### Wiederherstellen: ein Asset zurückweisen
 
 Ist etwas in Ihrem Tresor angekommen, das Sie nicht beanspruchen, weisen Sie es zurück. Das Zurückweisen hält auf der Chain für alle sichtbar fest, dass Sie es nicht beanspruchen. Es bewegt und schreibt nichts gut, und das Asset bleibt ungezählt in Ihrem Tresor. Es verlangt keine Erklärung, keine Signatur und keine Sanktionsprüfung und bleibt offen, solange das Protokoll pausiert, für eine ersetzte Wallet und für einen durch eine frühere Übernahme gesperrten Tresor.
+
+<a id="analytics-figures"></a>
+
+### Analysen: die öffentlichen Zahlen des Protokolls
+
+Die Seite Analysen zeigt die eigenen Zahlen des Protokolls in einem Netzwerk, ohne Wallet: offene Darlehen, seit Beginn eröffnete Darlehen und Angebote, die beteiligten Wallets, den durchschnittlich vereinbarten Zins, den Wert offener Darlehen und die Verleihsummen seit Beginn. Wählen Sie jedes Netzwerk, das die App bedient. Jede Zahl wird zu einem einzigen Block aus dem Protokollvertrag gelesen, und die Seite nennt diesen Block, sein Alter und den Block, mit dem diese Bereitstellung begann und die Zähler starten. Eine nicht lesbare Zahl sagt das, statt null zu zeigen, und ein Satz ohne Teiler sagt, dass es noch keinen gibt. Werte stehen in der Referenzwährung des Protokolls, jetzt nach seiner eigenen Regel bewertet; ein Asset, das es nicht bewerten kann, zählt in einer Summe als nichts, und die Seite nennt dieses Asset und listet seine Beträge. Zinsen zählen, was Kreditnehmer gezahlt haben; Sicherheiten, die ein Kreditgeber nach einem Ausfall erhielt, sind keine Zinsen. Eine Ausfallquote zeigt die Seite nicht: Der Zähler des Protokolls dafür zählt auch Darlehen, die nach einer gewöhnlichen Rückzahlung abgewickelt wurden, und kann einen Ausfall daher nicht von einem normalen Abschluss unterscheiden.
+
+<a id="analytics-fees"></a>
+
+### Analysen: Gebühren und die Treasury
+
+Der Gebührenabschnitt zeigt den Anteil der Treasury an den Zinsen und die Darlehensstartgebühr, wie sie jetzt eingestellt sind, sowie die seit Beginn, am letzten Tag und in der letzten Woche erhobenen Gebühren. Jede Gebühr wird zum Zeitpunkt ihrer Erhebung in der Referenzwährung bewertet, sodass eine spätere Preisänderung sie nicht verschiebt; eine Gebühr, die das Protokoll damals nicht bewerten konnte, zählt als nichts. Die Tages- und Wochenzahlen zählen höchstens eine feste Anzahl der neuesten Gebühren und liegen daher unter dem echten Wert, wenn mehr in den Zeitraum fallen. Die Seite nennt und verlinkt die Treasury, an die der aktuelle Tresorcode Gebühren zahlt. Ein Tresor, der noch auf älterem Code läuft, zahlt an die Treasury, die sein eigener Code nennt, und Gebühren, die früher beim Protokollvertrag ankamen, bleiben dort; deshalb zeigt die Seite auch, was der Vertrag hält, wobei nur Assets offener Darlehen zählen. Die Treasury wird nicht angelegt, um einen Ertrag zu erzielen.
+
+<a id="analytics-vpfi"></a>
+
+### Analysen: der VPFI-Token
+
+Der VPFI-Abschnitt der Seite Analysen liest den Token, den das Protokoll im gewählten Netzwerk nennt: Name, Symbol, Dezimalstellen und Umlauf. VPFI wird in einem einzigen Netzwerk ausgegeben, seinem Heimatnetzwerk. Dort zeigt die Seite außerdem die im Token festgeschriebene Obergrenze, was darunter noch geprägt werden darf, die beim Start geprägte Menge, den Minter und den Eigentümer des Tokens. Nur der Minter kann prägen, und nur der Eigentümer kann den Minter ändern. In jedem anderen Netzwerk zeigt die Seite den dortigen VPFI-Bestand und sagt, dass die Obergrenze zum Heimatnetzwerk gehört, wo jedes VPFI dort durch ein gesperrtes gedeckt ist. Darunter stehen die VPFI-Adressen in jedem Netzwerk, das die App bedient, und die veröffentlichte Aufteilung der Obergrenze von 230.000.000: Jede Zeile ist das Höchste, was dafür geprägt werden darf, und die Reserve von 24 % ist nicht entschieden; nichts davon wird geprägt, bis die Governance entscheidet.

@@ -54,9 +54,13 @@ export function useChainRead<T>(
      *  tab is visible (RB-REFRESH). */
     immutable?: boolean;
     enabled?: boolean;
+    /** A public page the reader may point at another network (Analytics)
+     *  reads there instead of on the screen's chain. */
+    chain?: SupportedChain;
   } = {},
 ): ChainRead<T> {
-  const chain = useScreenChain();
+  const screen = useScreenChain();
+  const chain = opts.chain ?? screen;
   const visible = useVisible();
   const client = useMemo(() => clientFor(chain), [chain]);
   const query = useQuery({
@@ -69,7 +73,14 @@ export function useChainRead<T>(
     retry: 1,
   });
   if (query.status === 'error' && query.data === undefined) {
-    return { data: null, state: 'failed', error: (query.error as Error).message, readAt: null, refreshing: query.isFetching, refetch: () => void query.refetch() };
+    return {
+      data: null,
+      state: 'failed',
+      error: (query.error as Error).message,
+      readAt: null,
+      refreshing: query.isFetching,
+      refetch: () => void query.refetch(),
+    };
   }
   if (query.data === undefined) {
     return { data: null, state: 'reading', error: null, readAt: null, refreshing: true, refetch: () => void query.refetch() };

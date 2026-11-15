@@ -1651,3 +1651,21 @@ Tu bóveda solo cuenta lo que llega a través del protocolo: un depósito, un pr
 ### Recuperar: renunciar a un activo
 
 Si llegó a tu bóveda algo que no reclamas, renuncia a ello. Renunciar deja constancia en la cadena, a la vista de todos, de que no lo reclamas. No mueve ni acredita nada, y el activo sigue en tu bóveda sin contar. No pide declaración, firma ni filtro de sanciones, y sigue abierto mientras el protocolo está en pausa, para una cartera reemplazada y para una bóveda bloqueada por una adopción anterior.
+
+<a id="analytics-figures"></a>
+
+### Analítica: las cifras públicas del protocolo
+
+La página Analítica muestra las cifras del propio protocolo en una red, sin necesidad de cartera: préstamos abiertos, préstamos y ofertas creados desde el inicio, las carteras que participaron, el tipo medio acordado, el valor en préstamos abiertos y los totales prestados desde el inicio. Elige cualquier red que sirva la app. Cada cifra se lee del contrato del protocolo en un mismo bloque, y la página indica qué bloque, su antigüedad y el bloque en que empezó este despliegue, donde empiezan los contadores. Una cifra que no se pudo leer lo dice en lugar de mostrar cero, y un tipo sin nada que dividir dice que aún no hay ninguno. Los valores están en la moneda de referencia del protocolo, valorados ahora con su propia regla; un activo que no puede valorar cuenta como nada en un total, y la página nombra ese activo y lista sus importes. El interés cuenta lo que pagaron los prestatarios; la garantía que recibió un prestamista tras un impago no es interés. La página no muestra un porcentaje de impagos: el contador del protocolo para él también cuenta los préstamos cerrados tras un reembolso ordinario, así que no distingue un impago de un cierre normal.
+
+<a id="analytics-fees"></a>
+
+### Analítica: las comisiones y la tesorería
+
+La sección de comisiones muestra la parte de la tesorería sobre el interés y la comisión de inicio del préstamo tal como están fijadas ahora, y las comisiones cobradas desde el inicio, en el último día y en la última semana. Cada comisión se valora en la moneda de referencia en el momento en que se cobró, así que un cambio de precio posterior no la mueve; una comisión que el protocolo no pudo valorar entonces cuenta como nada. Las cifras del día y de la semana cuentan como mucho un número fijo de las comisiones más recientes, así que con más que eso en el periodo quedan por debajo de la cifra real. La página nombra y enlaza la tesorería a la que el código de bóveda actual paga las comisiones. Una bóveda que sigue con código anterior paga a la tesorería que nombra su propio código, y las comisiones que llegaron antes al contrato del protocolo siguen allí, así que la página también muestra lo que guarda el contrato, contando solo activos de préstamos abiertos. La tesorería no se invierte para obtener un rendimiento.
+
+<a id="analytics-vpfi"></a>
+
+### Analítica: el token VPFI
+
+La sección VPFI de la página Analítica lee el token que el protocolo indica en la red elegida: su nombre, símbolo, decimales y suministro. VPFI se emite en una sola red, su red de origen. Allí la página también muestra el tope escrito en el token, lo que aún puede acuñarse bajo él, la cantidad acuñada en el lanzamiento, el acuñador y el propietario del token. Solo el acuñador puede acuñar, y solo el propietario puede cambiar el acuñador. En cualquier otra red la página muestra el VPFI que hay allí y dice que el tope pertenece a la red de origen, donde cada VPFI de allí está respaldado por uno bloqueado. Debajo están las direcciones de VPFI en cada red que sirve la app y la asignación publicada del tope de 230.000.000: cada línea es lo máximo que puede acuñarse para ella, y la reserva del 24% está sin decidir, sin acuñar nada hasta que la gobernanza elija.
