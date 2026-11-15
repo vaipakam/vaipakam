@@ -68,9 +68,10 @@ Cost: up to 8 resolutions on an interest payment to a divided loan, and nothing 
 
 A sale leaves the seller a claim for interest earned and not yet paid (the existing rule). On a divided loan:
 
-- A seller claim is recorded against **the token that holds the part sold**: on a part sale that is the buyer's new token, on a whole-token sale the token that replaces the one sold. It has first call on that token's later interest only, never on its principal or other credits. It never draws on the part the seller kept, nor on another holder's part.
+- A seller claim is recorded against **the token that holds the part sold**: on a part sale that is the buyer's new token, on a whole-token sale the token that replaces the one sold. While the loan is open it has first call on that token's later interest only, never on its principal; at the end of the loan the terminal order below applies. It never draws on the part the seller kept, nor on another holder's part.
 - The limit of open seller claims is **per token** (4, today's figure), so sales by other holders cannot use up a holder's room to sell. The sale-exit verdict reads the count the sold part would carry.
 - **Claims follow the part they are owed from.** When a token that carries open seller claims is itself sold in part, each open claim is divided between the two tokens in the ratio of the split, so the interest that funds a claim and the claim stay together and the total owed is unchanged. The new token then carries those portions plus the new seller's claim; a sale that would put more than the limit on it is refused by name.
+- **At the end of a loan the existing terminal order applies, per token.** A recovery that ends the loan (a liquidation, a default, an in-kind recovery ranked by value) is not simply "everything else". Today's terminal rule ranks it: the holder's outstanding principal first, then open seller claims from what exceeds it, then the holder. On a divided loan that same ranking runs on each token's part of the recovery with that token's own outstanding principal and its own seller claims, when the token is checkpointed after the loan has ended. So a seller claim is paid from a terminal recovery exactly when it would be on an undivided loan, and never from another token's part.
 - A token's seller claims are settled when that token is checkpointed: its newly credited interest pays its seller claims, oldest first, before its owed interest. A seller may checkpoint the token to collect; the payment goes to the seller's vault as today. No per-payment loop over every token's claims is added to the payer's transaction.
 
 ### 4.4 Claims
@@ -128,7 +129,7 @@ A flagged holder freezes their own token's claim and nothing else. The frozen-cl
 | A new share host facet | Create a token at a sale, the token-aware migration, the per-token entitlement read, the limits. One library holds the division rule; nothing else divides. |
 | `LibLoan.migrateLenderPosition` | Reached only through the share host's token-aware migration: the selected token and its row are replaced; the stored lender and custody change only when it is the lead. |
 | The lender-fee host (`resolveLenderYieldFeeFor`) and `LibVPFIDiscount.lenderYieldFeeEligible` | Per-token resolution for a divided loan (4.2); same result shape for callers. |
-| `LibInterestLedger`, `SellerClaimFacet`, `SaleExitVerdictFacet` | Seller claims and their limit per token, settled at the token's checkpoint (4.3). |
+| `LibInterestLedger`, `SellerClaimFacet`, `SaleExitVerdictFacet` | Seller claims and their limit per token, settled at the token's checkpoint; the terminal ranking run per token (4.3). |
 | `ClaimFacet`, the mid-loan claim of #3629 | Take a token; checkpoint it; pay its owed balance; close the row with the last token. |
 | The four sale routes | Accept a part (section 5); the direct sale's exact-principal rule becomes "not more than". |
 | Lender-side caller checks | "Holds the lender token" becomes "holds a lender token of this loan" for own-token actions, and "the only holder" for section 6's consent steps. One helper. |
@@ -158,6 +159,7 @@ Facet room is checked with the deploy-sanity suite; where a facet has none, spli
 5. Mid-loan claim by one holder, then a further payment, then claims by all: nothing is paid twice.
 6. Sale of a part, then of the rest of the same token; sale of the lead token whole (custody follows); plain transfer of a share token.
 7. Seller claim for interest earned before a part sale is recorded on the buyer's token and paid first from later interest on that part only; the part the seller kept pays none of it. A token with open claims is sold in part again: each claim divides in the split's ratio and the total owed is unchanged. Four sales from other tokens do not stop an untouched holder from selling; a fifth open claim on one token is refused for that token only.
+7c. A divided loan ends in a liquidation whose recovery exceeds the outstanding principal: on a token with an open seller claim, the token's principal part is covered first, the seller claim is paid from the excess, and the holder gets the rest; a recovery below principal pays the seller nothing; another token's part is untouched. The same with collateral received in kind.
 7a. A non-lead holder sells their whole token: only that token is replaced, the lead token and custody are untouched. The lead sold whole: custody follows.
 7b. A loan with ERC-721 or ERC-1155 collateral, and an NFT rental, refuse a part sale by name.
 8. Rewards: entries by share from the sale day, the shared ceiling holds across several sales.
