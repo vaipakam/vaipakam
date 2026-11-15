@@ -7,9 +7,13 @@ transaction per nonce. Four new signed terms and one new action close that gap.
 
 The maker now signs the highest treasury fee and the highest loan initiation
 fee they accept, and a fill is refused while either protocol fee is above its
-cap. They may name the one wallet allowed to fill (on a match, the creator of
-the counterparty offer), and a co-signer whose fresh approval, lapsing within
-fifteen minutes, each fill needs, so a leaked signature alone cannot be filled.
+cap (only while it stays above: the offer is fillable again if the fee comes
+back down, so cancelling is what stops it for good). They may name the one
+wallet allowed to fill (on a match, the creator of the counterparty offer), and
+a co-signer whose fresh approval, lapsing within fifteen minutes, each fill
+needs. The approval is bound to how much of the offer was already filled, so
+it can be spent on one fill only, and a leaked signature alone cannot be
+filled.
 A new cancel-floor action cancels every offer the wallet signed below a chosen
 nonce in one transaction; the floor only rises.
 

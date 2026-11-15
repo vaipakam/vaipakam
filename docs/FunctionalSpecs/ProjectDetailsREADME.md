@@ -823,14 +823,21 @@ An offer may be created two ways, both reaching the same on-chain offer state:
     the maker did not agree to. An interface signs the fees it showed the
     maker as the caps, and refuses to post an order when the fees moved
     between the maker's review and the signature.
+    The refusal lasts only while the fee stays above the cap: if the fee comes
+    back down, the same unexpired offer is fillable again. Only cancelling the
+    offer stops it for good, and an interface must say so rather than imply
+    that a fee rise ended the offer.
   - **Allowed taker.** Optionally, the one wallet that may fill the offer. On a
     direct fill that is the wallet sending the fill; on a match it is the
     creator of the counterparty offer, since the matcher is only a relay. Left
     empty, anyone may fill.
   - **Co-signer.** Optionally, a second key whose fresh approval each fill
-    needs. The approval names the offer, the taker, the amount filled and a
-    time it lapses, which may be at most fifteen minutes away, so a stolen or
-    leaked maker signature alone cannot be filled. Left empty, no approval is
+    needs. The approval names the offer, the taker, how much of the offer was
+    already filled, the amount this fill takes and a time it lapses, which may
+    be at most fifteen minutes away. Because every fill raises the amount
+    already filled, one approval can be spent on one fill only, even on an
+    offer filled in several slices; a stolen or leaked maker signature alone
+    cannot be filled. Left empty, no approval is
     needed.
   - **Cancel floor.** A maker can cancel, in one transaction, every offer they
     signed with a nonce below a floor they choose. The floor only rises. An

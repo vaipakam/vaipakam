@@ -508,5 +508,11 @@ describe('maker protections (#3327)', () => {
   it('draws a nonce at or above the cancel floor', () => {
     const floor = 1n << 100n;
     for (let i = 0; i < 8; i++) expect(randomSignedOfferNonce(floor) >= floor).toBe(true);
+    const max = (1n << 256n) - 1n;
+    for (let i = 0; i < 8; i++) {
+      const n = randomSignedOfferNonce(max - 2n);
+      expect(n >= max - 2n && n <= max).toBe(true);
+    }
+    expect(randomSignedOfferNonce(max)).toBe(max);
   });
 });

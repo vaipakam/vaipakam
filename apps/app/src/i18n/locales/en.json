@@ -2634,7 +2634,7 @@
         "restrictedBadgeTooltip": "A signed offer its maker has limited: it is reserved for one wallet, or each fill needs approval from the maker’s co-signer, which this app can’t request yet. It counts as depth but has no Fill button here.",
         "reservedForOtherTaker": "This offer is reserved for another wallet, so it can’t be taken from this one.",
         "needsCoSigner": "This offer needs its maker’s co-signer to approve each fill, and this app can’t request that approval yet, so it can’t be taken here.",
-        "feeAboveCap": "The protocol fees are now higher than the maker of this offer agreed to, so it can’t be taken until they sign a new one.",
+        "feeAboveCap": "The protocol fees are now higher than the maker of this offer agreed to, so it can’t be taken while they stay that high. It becomes takeable again if the fees come back down.",
         "fill": "Fill",
         "confirmTitle": "Fill signed order",
         "confirmLede": "You execute the whole fill in one transaction: your side moves from your wallet, the maker’s side from their vault, and the loan starts immediately.",
@@ -2782,7 +2782,7 @@
         "lockAtFill": "{{amount}} {{symbol}} collateral — locked only when someone takes the offer.",
         "netYield": "If someone takes the offer and the loan is repaid, you earn about {{net}}% a year after the {{feePct}}% protocol fee on your interest.",
         "lifNote": "Starting fee: {{feePct}}% of the loan amount (about {{amount}} {{symbol}}), charged when the loan starts.",
-        "feeCapNote": "Your signed order fills only while the protocol fees stay at or below these: {{interestPct}}% of interest and {{startPct}}% to start a loan. If either rises, no one can take it until you sign a new one."
+        "feeCapNote": "Your signed order fills only while the protocol fees stay at or below these: {{interestPct}}% of interest and {{startPct}}% to start a loan. If either rises, no one can take it while it stays higher, but it becomes takeable again if the fee comes back down. To stop the order for good, cancel it."
       },
       "orders": {
         "loading": "Loading your open orders…",

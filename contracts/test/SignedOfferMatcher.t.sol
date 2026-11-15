@@ -1087,7 +1087,7 @@ contract SignedOfferMatcherTest is SetupTest {
         LibSignedOffer.FillAuth memory auth;
         auth.validUntil = until;
         (uint8 v, bytes32 r, bytes32 s2) = vm.sign(
-            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, keeper, PRINCIPAL, until)
+            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, keeper, 0, PRINCIPAL, until)
         );
         auth.coSignature = abi.encodePacked(r, s2, v);
         vm.prank(keeper);
@@ -1095,7 +1095,7 @@ contract SignedOfferMatcherTest is SetupTest {
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL, auth);
 
         (v, r, s2) = vm.sign(
-            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, PRINCIPAL, until)
+            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, 0, PRINCIPAL, until)
         );
         auth.coSignature = abi.encodePacked(r, s2, v);
         vm.prank(keeper);
@@ -1103,6 +1103,50 @@ contract SignedOfferMatcherTest is SetupTest {
             SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL, auth),
             0,
             "co-signed slice fills"
+        );
+    }
+
+    /// @dev A co-signature authorizes ONE fill: it is bound to the order's
+    ///      fill ledger before that fill, so replaying it for a second slice
+    ///      of a partially fillable order (same taker, same amount, still
+    ///      inside its window) is refused, and the second slice needs a fresh
+    ///      approval over the raised ledger.
+    function test_3327_coSignatureIsSpentByItsFill() public {
+        uint256 coSignerPk = 0xC053;
+        uint256 ceiling = 3 * PRINCIPAL;
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3304, PRINCIPAL, ceiling, LibVaipakam.FillMode.Partial);
+        o.coSigner = vm.addr(coSignerPk);
+        _fundActorVault(signer, mockERC20, ceiling);
+        uint256 first = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        uint256 second = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        bytes memory sig = _sign(o);
+        bytes32 orderHash = _orderHash(o);
+        uint64 until = uint64(block.timestamp + 10 minutes);
+
+        LibSignedOffer.FillAuth memory auth;
+        auth.validUntil = until;
+        (uint8 v, bytes32 r, bytes32 s2) = vm.sign(
+            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, 0, PRINCIPAL, until)
+        );
+        auth.coSignature = abi.encodePacked(r, s2, v);
+        vm.prank(keeper);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, first, PRINCIPAL, auth);
+
+        vm.prank(keeper);
+        vm.expectRevert(LibSignedOffer.SignedOfferCoSignatureInvalid.selector);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, second, PRINCIPAL, auth);
+
+        (v, r, s2) = vm.sign(
+            coSignerPk,
+            SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, PRINCIPAL, PRINCIPAL, until)
+        );
+        auth.coSignature = abi.encodePacked(r, s2, v);
+        vm.prank(keeper);
+        assertGt(
+            SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, second, PRINCIPAL, auth),
+            0,
+            "a fresh approval over the raised ledger fills the second slice"
         );
     }
 

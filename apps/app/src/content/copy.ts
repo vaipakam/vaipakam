@@ -5620,7 +5620,7 @@ const copySource = {
       needsCoSigner:
         'This offer needs its maker’s co-signer to approve each fill, and this app can’t request that approval yet, so it can’t be taken here.',
       feeAboveCap:
-        'The protocol fees are now higher than the maker of this offer agreed to, so it can’t be taken until they sign a new one.',
+        'The protocol fees are now higher than the maker of this offer agreed to, so it can’t be taken while they stay that high. It becomes takeable again if the fees come back down.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:
@@ -5889,7 +5889,7 @@ const copySource = {
       ),
       // #3327 — a gasless order signs these fees as its caps.
       feeCapNote: tmpl(
-        `Your signed order fills only while the protocol fees stay at or below these: {{interestPct}}% of interest and {{startPct}}% to start a loan. If either rises, no one can take it until you sign a new one.`,
+        `Your signed order fills only while the protocol fees stay at or below these: {{interestPct}}% of interest and {{startPct}}% to start a loan. If either rises, no one can take it while it stays higher, but it becomes takeable again if the fee comes back down. To stop the order for good, cancel it.`,
         ['interestPct', 'startPct'],
       ),
     },

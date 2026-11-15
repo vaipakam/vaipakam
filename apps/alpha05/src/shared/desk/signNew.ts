@@ -33,7 +33,7 @@ import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { figured, textValue } from '../receipt/types';
 import { IndexerUnavailable, type IndexerPoster } from '../reads/world/indexerClient';
 import { lapseText, orderSentence, type AmountWords } from './cancelSigned';
-import { bookAnswer, orderHashOf, randomNonce, signedStake, type BookAnswer, type SignedOrderWire } from './signedOrder';
+import { bookAnswer, nonceAboveFloor, orderHashOf, signedStake, type BookAnswer, type SignedOrderWire } from './signedOrder';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -166,7 +166,7 @@ export function signDraftFrom(
   chainId: number,
   account: Hex,
   terms: SignTerms,
-  nonce: bigint = terms.cancelFloor + randomNonce(),
+  nonce: bigint = nonceAboveFloor(terms.cancelFloor),
 ): SignDraft {
   const order = signedOrderFrom(draft, account, nonce, terms);
   return { identity: identityOf(chainId, account), chainId, draft, order, orderHash: orderHashOf(order) };

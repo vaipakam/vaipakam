@@ -2066,7 +2066,7 @@
         "restrictedBadgeTooltip": "Una oferta firmada que su creador ha limitado: está reservada para una cartera, o cada ejecución necesita la aprobación de su cofirmante, que esta app aún no puede solicitar. Cuenta como profundidad, pero aquí no tiene botón de Ejecutar.",
         "reservedForOtherTaker": "Esta oferta está reservada para otra cartera, así que no se puede aceptar desde esta.",
         "needsCoSigner": "Esta oferta necesita que el cofirmante de su creador apruebe cada ejecución, y esta app aún no puede solicitar esa aprobación, así que no se puede aceptar aquí.",
-        "feeAboveCap": "Las comisiones del protocolo son ahora más altas de lo que aceptó el creador de esta oferta, así que no se puede aceptar hasta que firme una nueva."
+        "feeAboveCap": "Las comisiones del protocolo son ahora más altas de lo que aceptó el creador de esta oferta, así que no se puede aceptar mientras sigan así. Vuelve a poder aceptarse si las comisiones bajan."
       },
       "chart": {
         "title": "Tasas acordadas",
@@ -2199,7 +2199,7 @@
         "gaslessBelowFloor": "Esta orden es menor que la oferta más pequeña que el protocolo acepta en este token, así que nadie podría tomarla. No se publicó nada. Aumenta el monto y firma de nuevo.",
         "gaslessBelowCancelFloor": "Esta orden quedaría cubierta por una cancelación total hecha antes desde tu cartera, así que se cancelaría en cuanto se publicara. No se publicó nada. Vuelve a firmar.",
         "feesChanged": "Las comisiones del protocolo cambiaron después de que revisaras esta orden. No se publicó nada. Revisa las nuevas comisiones y vuelve a firmar.",
-        "feeCapNote": "Tu orden firmada solo se ejecuta mientras las comisiones del protocolo no superen estas: {{interestPct}} % de los intereses y {{startPct}} % al iniciar un préstamo. Si alguna sube, nadie podrá aceptarla hasta que firmes una nueva."
+        "feeCapNote": "Tu orden firmada solo se ejecuta mientras las comisiones del protocolo no superen estas: {{interestPct}} % de los intereses y {{startPct}} % al iniciar un préstamo. Si alguna sube, nadie podrá aceptarla mientras siga más alta, pero vuelve a poder aceptarse si la comisión baja. Para detenerla definitivamente, cancélala."
       },
       "orders": {
         "loading": "Cargando tus órdenes abiertas…",

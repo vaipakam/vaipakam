@@ -1012,7 +1012,9 @@ contract SignedOfferBookTest is SetupTest {
         uint256 pk
     ) internal view returns (LibSignedOffer.FillAuth memory auth) {
         bytes32 orderHash = SignedOfferFacet(address(diamond)).signedOfferOrderHash(o);
-        bytes32 d = SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, taker, fillAmount, validUntil);
+        bytes32 d = SignedOfferFacet(address(diamond)).hashSignedOfferFill(
+            orderHash, taker, SignedOfferFacet(address(diamond)).signedOfferFilledAmount(orderHash), fillAmount, validUntil
+        );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, d);
         auth.validUntil = validUntil;
         auth.coSignature = abi.encodePacked(r, s, v);

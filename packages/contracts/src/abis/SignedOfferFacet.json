@@ -1247,6 +1247,11 @@
         "internalType": "address"
       },
       {
+        "name": "filledBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "fillAmount",
         "type": "uint256",
         "internalType": "uint256"

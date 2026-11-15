@@ -200,14 +200,19 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @notice #3327 — the EIP-712 digest an offer's co-signer signs for one
-    ///         fill: the order, the taker, the fill amount and the latest
-    ///         time the co-signature may be used (at most 15 minutes ahead).
-    function hashSignedOfferFill(bytes32 orderHash, address taker, uint256 fillAmount, uint64 validUntil)
-        external
-        view
-        returns (bytes32)
-    {
-        return LibSignedOffer.fillDigest(orderHash, taker, fillAmount, validUntil);
+    ///         fill: the order, the taker, the order's fill ledger before this
+    ///         fill (`signedOfferFilledAmount(orderHash)`), the fill amount and
+    ///         the latest time the co-signature may be used (at most 15
+    ///         minutes ahead). Binding the ledger makes each co-signature good
+    ///         for one fill only.
+    function hashSignedOfferFill(
+        bytes32 orderHash,
+        address taker,
+        uint256 filledBefore,
+        uint256 fillAmount,
+        uint64 validUntil
+    ) external view returns (bytes32) {
+        return LibSignedOffer.fillDigest(orderHash, taker, filledBefore, fillAmount, validUntil);
     }
 
     /// @notice The order hash (struct hash) — the on-chain ledger key.

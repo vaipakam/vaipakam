@@ -383,6 +383,8 @@ export function signedOrderTakerRefusal(
   return null;
 }
 
+const MAX_UINT256 = (1n << 256n) - 1n;
+
 /** Random 64-bit nonce at or above the signer's cancel floor. The
  *  contract's signed-offer nonces are ARBITRARY (a `signer → nonce → used`
  *  mapping, burned only by an explicit `invalidateSignedOfferNonce`), NOT
@@ -396,7 +398,11 @@ export function randomSignedOfferNonce(floor: bigint = 0n): bigint {
   crypto.getRandomValues(bytes);
   let n = 0n;
   for (const b of bytes) n = (n << 8n) | BigInt(b);
-  return floor + n;
+  // The draw stays inside [floor, 2^256 - 1]: a floor near the top of the
+  // range leaves less than 64 bits of room, and `floor + n` would then
+  // exceed uint256 and the signature could never be encoded or filled.
+  const room = MAX_UINT256 - floor;
+  return floor + (room >= n ? n : n % (room + 1n));
 }
 
 // ---------------------------------------------------------------------------

@@ -198,9 +198,15 @@ library LibSignedOffer {
     }
 
     /// @notice #3327 — what a co-signer signs for one fill, in the offer's own
-    ///         EIP-712 domain: the order, who takes it, how much, and until when.
+    ///         EIP-712 domain: the order, who takes it, how much of the order
+    ///         was already filled, how much this fill takes, and until when.
+    ///         `filledBefore` is the order's fill ledger
+    ///         (`signedOfferFilled[orderHash]`) before this fill. Every fill
+    ///         raises that ledger, so a co-signature authorizes exactly one
+    ///         fill: a second slice of a partially fillable order sees a higher
+    ///         ledger and needs a fresh approval.
     bytes32 internal constant FILL_TYPEHASH = keccak256(
-        "SignedOfferFill(bytes32 orderHash,address taker,uint256 fillAmount,uint64 validUntil)"
+        "SignedOfferFill(bytes32 orderHash,address taker,uint256 filledBefore,uint256 fillAmount,uint64 validUntil)"
     );
 
     /// @notice #3327 — the longest a co-signature may stay usable. A short
@@ -327,7 +333,9 @@ library LibSignedOffer {
 
     /// @notice #3327 — whether `auth` is `o.coSigner`'s live signature over
     ///         this fill: unexpired, valid for at most {MAX_COSIGN_WINDOW} from
-    ///         now, and signed (EOA or ERC-1271) over {fillDigest}.
+    ///         now, and signed (EOA or ERC-1271) over {fillDigest} for the
+    ///         order's fill ledger as it stands before this fill, so it can
+    ///         be spent once.
     function coSignatureValid(
         SignedOffer calldata o,
         bytes32 orderHash,
@@ -338,21 +346,27 @@ library LibSignedOffer {
         if (auth.validUntil < block.timestamp) return false;
         if (auth.validUntil > block.timestamp + MAX_COSIGN_WINDOW) return false;
         return SignatureChecker.isValidSignatureNow(
-            o.coSigner, fillDigest(orderHash, taker, fillAmount, auth.validUntil), auth.coSignature
+            o.coSigner,
+            fillDigest(
+                orderHash, taker, LibVaipakam.storageSlot().signedOfferFilled[orderHash], fillAmount, auth.validUntil
+            ),
+            auth.coSignature
         );
     }
 
     /// @notice #3327 — the EIP-712 digest a co-signer signs for one fill.
-    function fillDigest(bytes32 orderHash, address taker, uint256 fillAmount, uint64 validUntil)
-        internal
-        view
-        returns (bytes32)
-    {
+    function fillDigest(
+        bytes32 orderHash,
+        address taker,
+        uint256 filledBefore,
+        uint256 fillAmount,
+        uint64 validUntil
+    ) internal view returns (bytes32) {
         return keccak256(
             abi.encodePacked(
                 "\x19\x01",
                 domainSeparator(),
-                keccak256(abi.encode(FILL_TYPEHASH, orderHash, taker, fillAmount, validUntil))
+                keccak256(abi.encode(FILL_TYPEHASH, orderHash, taker, filledBefore, fillAmount, validUntil))
             )
         );
     }

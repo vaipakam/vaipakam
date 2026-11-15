@@ -13,7 +13,7 @@ import {
   stakeShortfall,
   type SignReview,
 } from './signNew';
-import { bookAnswer, orderHashOf, randomNonce, signedOfferDomain } from './signedOrder';
+import { bookAnswer, nonceAboveFloor, orderHashOf, randomNonce, signedOfferDomain } from './signedOrder';
 import { checkTicket, DEFAULT_TICKET, ticketDraft, type TicketContext, type TicketInput } from './ticket';
 
 type Hex = `0x${string}`;
@@ -122,6 +122,18 @@ describe('signedOrderFrom', () => {
     expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, collateralFloor: 1n } }, ME, 1n, TERMS)).toThrow('one size');
     expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, guardBps: 500 } }, ME, 1n, TERMS)).toThrow('price guard');
     expect(() => signedOrderFrom({ ...d, pair: { ...d.pair, leg: { kind: 'erc721', tokenId: 1n } } }, ME, 1n, TERMS)).toThrow('token collateral');
+  });
+});
+
+describe('nonceAboveFloor', () => {
+  const MAX = (1n << 256n) - 1n;
+  it('adds the draw when there is room', () => {
+    expect(nonceAboveFloor(10n, 5n)).toBe(15n);
+  });
+  it('stays at or under the uint256 maximum near the top', () => {
+    expect(nonceAboveFloor(MAX, (1n << 128n) - 1n)).toBe(MAX);
+    const n = nonceAboveFloor(MAX - 3n, 1000n);
+    expect(n >= MAX - 3n && n <= MAX).toBe(true);
   });
 });
 
