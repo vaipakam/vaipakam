@@ -321,9 +321,9 @@ contract VaultProtection {
         // no payout destination at all (its list was cleared at replacement).
         if (l.retired) revert RetiredAccount();
         _loosenable(l);
-        address owner = _asOwner(auth, PURPOSE_ALLOWLIST_ADD, keccak256(abi.encode(ALLOWLIST_ADD_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_ADD), auth.expiry)));
+        _asOwner(auth, PURPOSE_ALLOWLIST_ADD, keccak256(abi.encode(ALLOWLIST_ADD_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_ADD), auth.expiry)));
         P.Entry storage e = l.allow[destination];
-        if (destination == address(0) || destination == owner || destination == address(this) || e.active) {
+        if (destination == address(0) || _isAccountWallet(destination) || destination == address(this) || e.active) {
             revert BadDestination(destination);
         }
         if (l.allowlist.length >= MAX_ALLOWLIST) revert TooMany();
@@ -403,8 +403,12 @@ contract VaultProtection {
         P.Signer storage sg = l.signer[who];
         if (action == SIGNER_ADD) {
             _loosenable(l);
-            address owner = _asOwner(auth, PURPOSE_SIGNER_CHANGE, h);
-            if (who == address(0) || who == owner || sg.active || l.allow[who].active) revert BadNominee(who);
+            _asOwner(auth, PURPOSE_SIGNER_CHANGE, h);
+            // Neither of the account's own wallets may become its signer: the
+            // original (retired) wallet has lost every right, the current one
+            // manages it (Codex #3489 r7).
+            if (_isAccountWallet(who)) revert NomineeIsAccountWallet(who);
+            if (who == address(0) || sg.active || l.allow[who].active) revert BadNominee(who);
             if (l.signers.length >= MAX_SIGNERS) revert TooMany();
             if (sg.addAt == 0 || sg.epoch != l.epoch) {
                 address[] storage pending = l.pendingSigners[l.epoch];
@@ -458,6 +462,9 @@ contract VaultProtection {
         if (sg.addAt != 0) {
             if (l.locked) revert Locked();
             if (!sg.accepted) revert NotRequested();
+            // Re-checked here: a replacement between the request and now may
+            // have made the nominee one of the account's own wallets.
+            if (_isAccountWallet(who)) revert NomineeIsAccountWallet(who);
             _inWindow(l, sg.addAt);
             if (l.signers.length >= MAX_SIGNERS) revert TooMany();
             sg.addAt = 0;
@@ -555,9 +562,7 @@ contract VaultProtection {
             if (bySigner && l.signers.length < MIN_RECOVERY_SIGNERS) {
                 revert NotEnoughSigners(l.signers.length, MIN_RECOVERY_SIGNERS);
             }
-            if (nominee == owner || nominee == IProtectedVaultSelf(address(this)).vaultCreationOwner()) {
-                revert NomineeIsAccountWallet(nominee);
-            }
+            if (_isAccountWallet(nominee)) revert NomineeIsAccountWallet(nominee);
             if (nominee == address(0) || nominee == address(this) || l.signer[nominee].active) {
                 revert BadNominee(nominee);
             }
@@ -627,6 +632,15 @@ contract VaultProtection {
     }
 
     // ─── Internals ──────────────────────────────────────────────────────
+
+    /// @dev The ONE rule for "the account's own wallets" (Codex #3489 r7):
+    ///      its creation owner (the original wallet, retired for good once a
+    ///      replacement moved the owner record) and the wallet that holds it
+    ///      now. Neither may be named as a signer, a replacement nominee or a
+    ///      payout destination.
+    function _isAccountWallet(address a) private view returns (bool) {
+        return a == _owner() || a == IProtectedVaultSelf(address(this)).vaultCreationOwner();
+    }
 
     function _owner() private view returns (address) {
         return IProtectedVaultSelf(address(this)).vaultOwner();

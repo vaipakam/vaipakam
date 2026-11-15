@@ -1477,6 +1477,28 @@ contract ProtectedVaultTest is Test {
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
     }
 
+    /// @dev Codex #3489 r7 — neither of the account's own wallets may become
+    ///      its signer: after a replacement the original wallet cannot be
+    ///      nominated, and a nomination made before it became an account
+    ///      wallet cannot be finalized.
+    function testTheAccountsOwnWalletsCannotBecomeSigners() public {
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), user, P.direct(nominee))));
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), nominee, P.direct(nominee))));
+        // An ordinary signer can still be added.
+        P.addSigner(address(diamond), user, nominee, s1, DELAY);
+        assertTrue(v.signerEntry(s1).active);
+    }
+
     /// @dev Codex #3489 r6 — a replaced account pays only its manager: the
     ///      new wallet cannot add a payout destination, not even the original
     ///      wallet, and the readers admit no destination but the manager.
