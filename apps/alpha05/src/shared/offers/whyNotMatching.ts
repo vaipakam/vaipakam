@@ -63,6 +63,8 @@ export async function readNearestIndex(indexer: IndexerClient, chainId: number, 
 
 /** One counterparty as the chain reads it, with the protocol's verdict. */
 export interface Counterparty {
+  /** Its place in the index's ranking, 0 = closest. */
+  rank: number;
   offer: StoredOffer;
   state: OfferState;
   /** The preview's `MatchError` ordinal; null where the preview was not
@@ -91,15 +93,15 @@ export async function readWhy(c: PublicClient, diamond: Hex, mine: StoredOffer, 
   const lend = mine.offerType === OFFER_TYPE_LENDER;
   let unread = 0;
   const read = await Promise.all(
-    ids.map(async (id): Promise<Counterparty | null> => {
+    ids.map(async (id, rank): Promise<Counterparty | null> => {
       try {
         const [offer, state] = await Promise.all([readOffer(c, diamond, id, at), readOfferState(c, diamond, id, at)]);
-        if (state !== 'open' || settings.switchOn !== true) return { offer, state, code: null, matchRateBps: null };
+        if (state !== 'open' || settings.switchOn !== true) return { rank, offer, state, code: null, matchRateBps: null };
         const [lenderId, borrowerId] = lend ? [mine.id, id] : [id, mine.id];
         const v = await answerOrNull(c.readContract({ address: diamond, abi: MATCH, functionName: 'previewMatch', args: [lenderId, borrowerId, sender, sender], ...at }));
         const r = v as { errorCode?: number | bigint; matchRateBps?: bigint } | null;
         const code = r?.errorCode === undefined ? null : Number(r.errorCode);
-        return { offer, state, code, matchRateBps: code === MATCH_CODE.ok ? (r?.matchRateBps ?? null) : null };
+        return { rank, offer, state, code, matchRateBps: code === MATCH_CODE.ok ? (r?.matchRateBps ?? null) : null };
       } catch {
         unread += 1;
         return null;
@@ -136,7 +138,11 @@ export type Why =
   | { kind: 'switch-unread' }
   /** The protocol would match this pair now; nobody has sent it yet. */
   | { kind: 'matchable'; with: Counterparty }
-  | { kind: 'gap'; with: Counterparty; gap: Gap }
+  /** The closest counterparty the protocol answered for refuses the pair.
+   *  `closerUnknown` counts the offers ranked closer that are still open, or
+   *  could not be read, and got no answer: the gap is then the closest
+   *  KNOWN one, not the closest. */
+  | { kind: 'gap'; with: Counterparty; gap: Gap; closerUnknown: number }
   /** The index named counterparties, but none could be read open with a
    *  verdict: they were taken or ended since, or the chain did not answer. */
   | { kind: 'unread' };
@@ -203,5 +209,9 @@ export function whyOf(mine: StoredOffer, index: Extract<NearestIndex, { kind: 'r
   if (ok) return { kind: 'matchable', with: ok };
   const first = open[0];
   if (!first || first.code === null) return { kind: 'unread' };
-  return { kind: 'gap', with: first, gap: gapOf(mine, first.offer, first.code) };
+  // A closer offer is unknown unless the chain read it as no longer open.
+  const ended = new Set(read.counterparties.filter((c) => c.state !== 'open').map((c) => c.rank));
+  let closerUnknown = 0;
+  for (let rank = 0; rank < first.rank; rank += 1) if (!ended.has(rank)) closerUnknown += 1;
+  return { kind: 'gap', with: first, gap: gapOf(mine, first.offer, first.code), closerUnknown };
 }

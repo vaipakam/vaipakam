@@ -46,13 +46,20 @@ function offer(over: Partial<StoredOffer> = {}): StoredOffer {
 
 const mine = offer({ id: 1n, offerType: 0, interestRateBps: 700n, interestRateBpsMax: 700n });
 const req = (over: Partial<StoredOffer> = {}) => offer({ id: 2n, offerType: 1, interestRateBps: 400n, interestRateBpsMax: 600n, ...over });
-const cp = (o: StoredOffer, code: number | null, state: Counterparty['state'] = 'open', matchRateBps: bigint | null = null): Counterparty => ({
+// rank -1 takes the counterparty's place in the list given to `read`.
+const cp = (o: StoredOffer, code: number | null, state: Counterparty['state'] = 'open', matchRateBps: bigint | null = null, rank = -1): Counterparty => ({
+  rank,
   offer: o,
   state,
   code,
   matchRateBps,
 });
-const read = (counterparties: Counterparty[], switchOn: boolean | null = true): WhyRead => ({ block: 1n, switchOn, counterparties, unread: 0 });
+const read = (counterparties: Counterparty[], switchOn: boolean | null = true): WhyRead => ({
+  block: 1n,
+  switchOn,
+  counterparties: counterparties.map((c, i) => (c.rank < 0 ? { ...c, rank: i } : c)),
+  unread: 0,
+});
 const ranked = (n: number, oppositeOpen = n) => ({ kind: 'ranked' as const, ids: Array.from({ length: n }, (_, i) => BigInt(i + 2)), oppositeOpen });
 
 function indexer(body: unknown): IndexerClient {
@@ -93,10 +100,16 @@ describe('why an offer is not matching (#3623)', () => {
     expect(gapOf(mine, req(), 6)).toEqual({ kind: 'code', code: 6 });
   });
   it('prefers a pair the protocol would match, then the closest open refusal', () => {
-    const matchable = cp(req({ id: 3n }), MATCH_CODE.ok, 'open', 650n);
+    const matchable = cp(req({ id: 3n }), MATCH_CODE.ok, 'open', 650n, 1);
     expect(whyOf(mine, ranked(2), read([cp(req(), MATCH_CODE.rate), matchable]))).toEqual({ kind: 'matchable', with: matchable });
     const why = whyOf(mine, ranked(2), read([cp(req(), null, 'accepted'), cp(req({ id: 3n }), MATCH_CODE.rate)]));
-    expect(why).toMatchObject({ kind: 'gap', gap: { kind: 'rate' } });
+    // The closer offer was read as taken, so the gap is the closest one.
+    expect(why).toMatchObject({ kind: 'gap', gap: { kind: 'rate' }, closerUnknown: 0 });
+  });
+  it('says when closer offers got no answer, rather than calling a farther refusal the closest', () => {
+    // #2 (rank 0) failed to read; #3 (rank 1) answered open with no verdict; #4 refuses on rate.
+    const why = whyOf(mine, ranked(3), read([cp(req({ id: 3n }), null, 'open', null, 1), cp(req({ id: 4n }), MATCH_CODE.rate, 'open', null, 2)]));
+    expect(why).toMatchObject({ kind: 'gap', with: { rank: 2 }, closerUnknown: 2 });
   });
   it('states an empty side, the switch and an unreadable list', () => {
     expect(whyOf(mine, ranked(0), read([]))).toEqual({ kind: 'none' });

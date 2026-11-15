@@ -85,6 +85,11 @@ export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chai
           <p className="tier-a" data-testid="why-match-verdict" data-why={why.kind}>
             <WhyLine why={why} mine={offer} />
           </p>
+          {why.kind === 'gap' && why.closerUnknown > 0 && (
+            <p className="tier-a notice-warn" data-testid="why-match-closer-unknown">
+              {format('whyMatch.closerUnknown', { count: String(why.closerUnknown) })}
+            </p>
+          )}
           {staleRead && (
             <p className="tier-a notice-warn" data-testid="why-match-stale">
               {format('whyMatch.stale', { reason: chainRead.error ?? '', age: formatAge(Math.max(0, Math.round((nowMs - (chainRead.readAt ?? 0)) / 1000))) })}

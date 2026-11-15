@@ -3211,6 +3211,7 @@ export const copy = {
     optionPrepay: B('Yours and the closest offer differ on whether the collateral may be listed for sale early.'),
     optionCadence: B('Yours and the closest offer differ on the interest payment schedule.'),
     code: A('The closest offer on the other side, #{{id}}, does not match yours: {{reason}}'),
+    closerUnknown: A('Offers ranked closer than this one got no answer from the protocol just now: {{count}}. The gap above is the closest one it answered for; look again in a few minutes.'),
     unread: A('The closest offers could not be read as open just now; they may have been taken or cancelled. Look again in a few minutes.'),
     standing: B('Open offers on the other side of this pair: {{count}}.'),
     closestTitle: B('Closest offers on the other side'),
