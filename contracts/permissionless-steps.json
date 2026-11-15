@@ -129,7 +129,7 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,bool,uint64)": {
+    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,uint64,bool,bool,uint64)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
