@@ -114,6 +114,47 @@ contract SettlementLegFacet is IVaipakamErrors {
         return true;
     }
 
+    // ─── A forced sale's lender share ──────────────────────────────────
+
+    /**
+     * @notice Deposit a forced sale's lender share, which the Diamond holds
+     *         from the sale, into the vault of `loanId`'s stored lender, or,
+     *         when the token refuses that deposit, into the stored borrower's
+     *         vault (the sold collateral was theirs) under a lien for the
+     *         lender side.
+     * @return credited What reached the vault it was deposited into.
+     * @return parked   Whether the share was parked.
+     */
+    function depositLenderShareOrPark(uint256 loanId, address asset, uint256 amount)
+        external
+        returns (uint256 credited, bool parked)
+    {
+        _onlySelf();
+        if (amount == 0) return (0, false);
+        (bool ok, bytes memory ret) = _attempt(abi.encodeCall(this.depositToStoredLender, (loanId, asset, amount)));
+        if (ok) return (abi.decode(ret, (uint256)), false);
+        // The Diamond must hold the whole share; otherwise the failure is not
+        // the token's refusal of the move, and it surfaces as it always did.
+        if (IERC20(asset).balanceOf(address(this)) < amount) {
+            LibRevert.bubbleOnFailureTyped(false, ret, VaultDepositFailed.selector);
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address borrower = s.loans[loanId].borrower;
+        credited = LibSanctionedLock.depositLocked(s, borrower, loanId, asset, amount);
+        LibEncumbrance.encumberParkedLeg(borrower, asset, credited);
+        _park(s, loanId, borrower, asset, LibVaipakam.AssetType.ERC20, 0, credited, false);
+        parked = true;
+    }
+
+    /// @notice The deposit itself, run as the attempt above. Self-only.
+    ///         Through the receive-side exemption (#821), so a flagged stored
+    ///         lender never blocks it.
+    function depositToStoredLender(uint256 loanId, address asset, uint256 amount) external returns (uint256) {
+        _onlySelf();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return LibSanctionedLock.depositLocked(s, s.loans[loanId].lender, loanId, asset, amount);
+    }
+
     // ─── In-kind default ───────────────────────────────────────────────
 
     /**

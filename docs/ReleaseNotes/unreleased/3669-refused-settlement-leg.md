@@ -18,9 +18,11 @@ has rebased below the tracked amount still fails visibly. Each attempt is
 given a fixed amount of gas, and the step refuses when less is available, so
 a caller cannot starve a deliverable payment into the held path.
 
-This first phase covers full repayment and the in-kind default. Partial
-repayment, periodic interest, preclose, swap-to-repay and the treasury share
-follow through the same host. The design is in
+This covers full repayment, the in-kind default, and the lender's share of a
+forced sale (the liquid default and liquidations), which waits in the
+borrower's vault. Partial repayment, preclose, swap-to-repay and periodic
+interest still refuse, because a refusal there holds no one else hostage:
+the borrower can still repay in full. The treasury share follows. The design is in
 `docs/DesignsAndPlans/RefusedSettlementLegDesign.md`.
 
 Advances #3669.

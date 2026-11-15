@@ -209,7 +209,10 @@ platform-wide rules apply across the lifecycle:
   side, and the loan still reaches Repaid or Defaulted. The lender's claim
   moves the leg once the token allows it; until then the claim stays open.
   A leg is held this way only when the payer holds all of it; a shortfall
-  still fails visibly. Nothing waits in the protocol's own contract.
+  still fails visibly. Nothing waits in the protocol's own contract. A
+  forced sale's lender share waits the same way in the borrower's vault. A
+  partial repayment, preclose, swap-to-repay or periodic interest payment the
+  token refuses still fails, since the borrower can always repay in full.
 - Fallback-pending loans are active for dashboard and operator purposes because
   they can still be cured or rescued before final fallback claim.
 

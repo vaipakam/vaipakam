@@ -119,5 +119,24 @@ cell per row of the table.
   the stored lender's vault through the claim-custody outflow class and sets
   the claim to what arrived.
 
-Partial repay, periodic interest, preclose, swap-to-repay and the treasury
-leg come next, each through the same host.
+- `depositLenderShareOrPark` carries a forced sale's lender share (the
+  liquid default and the Health-Factor liquidations, which all book through
+  `ForcedSaleFacet.sellToNeed`). The Diamond holds the share from the sale;
+  a refused deposit into the lender's vault goes into the stored borrower's
+  vault instead, since the collateral sold was theirs, and is liened there.
+
+## 8. What does not park, and why
+
+A closer read of the remaining rows of the table in section 2 changes two of
+them:
+
+- **Partial repay, preclose and swap-to-repay** are the borrower's own
+  choices on an open loan. A refusal leaves the borrower full repay, which
+  parks, so no one is held hostage. They refuse as today.
+- **Periodic interest** pays the current lender-position holder while the
+  loan is open. A refusal delays only that holder's own interest, and the
+  forced sale that would settle the period stops with it, which costs the
+  borrower nothing. It refuses as today.
+- **The treasury share** does hold others hostage: a frozen treasury would
+  stop every repayment and default in that token. It parks next, through
+  the one treasury host, with the payer named at each call site.

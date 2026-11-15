@@ -263,6 +263,42 @@ contract WeirdErc20MatrixTest is SetupTest {
         assertEq(_tracked(borrower, col), 0, "nothing left on the borrower's books");
     }
 
+    /// @notice The lender's VAULT is frozen in the lending asset when a
+    ///         liquid loan defaults.
+    /// @dev    #3669: the sale's lender share parks in the borrower's vault,
+    ///         liened for the lender side, the loan is Defaulted, and the
+    ///         lender's claim releases the share once the freeze lifts.
+    function test_Frozen_LenderVault_LiquidDefaultParksThenClaimReleases() public {
+        _scaffold(true);
+        address lVault = _vault(lender);
+        address bVault = _vault(borrower);
+        WeirdERC20Mock w = _weird(mockERC20);
+        w.setFrozen(lVault, true);
+        uint256 bBefore = _bal(mockERC20, bVault);
+
+        _default();
+        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the loan is Defaulted");
+        LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN);
+        assertEq(leg.payer, borrower, "parked in the borrower's vault");
+        assertGt(leg.amount, 0, "the lender share parked");
+        assertFalse(leg.collateralLien, "under its own lien");
+        uint256 bAfter = _bal(mockERC20, bVault);
+        // The borrower's vault also holds the sale's extra for the borrower.
+        assertGe(bAfter - bBefore, leg.amount, "it waits in the borrower's vault");
+        assertEq(_bal(mockERC20, lVault), 0, "nothing reached the frozen vault");
+
+        vm.prank(lender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+
+        w.setFrozen(lVault, false);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        assertEq(SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN).amount, 0, "row cleared");
+        assertEq(_bal(mockERC20, bVault), bAfter - leg.amount, "exactly the share left the borrower's vault");
+        assertEq(_tracked(lender, mockERC20), leg.amount, "the lender's vault holds it");
+    }
+
     // -- Paused: every path refuses, and resumes on unpause ------------------
 
     function test_Paused_RepayRefusedThenResumes() public {

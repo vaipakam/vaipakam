@@ -2146,12 +2146,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      settlement leg the token refuses: deliver or park it in the
     ///      payer's vault under a lien, and release it at the claim.
     function _getSettlementLegSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](7);
         s[0] = SettlementLegFacet.deliverLenderDueOrPark.selector;
         s[1] = SettlementLegFacet.moveInKindCollateralOrPark.selector;
         s[2] = SettlementLegFacet.inKindMove.selector;
         s[3] = SettlementLegFacet.releaseParkedLeg.selector;
         s[4] = SettlementLegFacet.getParkedLenderLeg.selector;
+        s[5] = SettlementLegFacet.depositLenderShareOrPark.selector;
+        s[6] = SettlementLegFacet.depositToStoredLender.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

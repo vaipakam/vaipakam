@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -513,7 +514,19 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received
         // (#2440).
-        lenderNet = LibSanctionedLock.depositLocked(s, loan.lender, loanId, loan.principalAsset, lenderNet);
+        // #3669 — a share the token refuses to deposit there parks in the
+        // stored borrower's vault under a lien for the lender side; the lender
+        // claim releases it. The claim names what was credited.
+        bool parked;
+        (lenderNet, parked) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    SettlementLegFacet.depositLenderShareOrPark.selector, loanId, loan.principalAsset, lenderNet
+                ),
+                VaultDepositFailed.selector
+            ),
+            (uint256, bool)
+        );
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderNet,
@@ -530,7 +543,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         // #592 — reserve VPFI lender proceeds against the unstake path until
         // the current holder claims; ClaimFacet releases.
-        if (loan.principalAsset == s.vpfiToken) {
+        if (!parked && loan.principalAsset == s.vpfiToken) {
             LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, loan.principalAsset, lenderNet);
         }
         out.lenderPaid = lenderNet;
