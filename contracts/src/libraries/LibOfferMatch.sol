@@ -48,7 +48,7 @@ library LibOfferMatch {
         Ok,
         AssetMismatch,            // lending / collateral asset differ
         AssetTypeMismatch,        // assetType / collateralAssetType differ
-        DurationMismatch,         // durationDays differ
+        DurationMismatch,         // #3615 — terms differ (full-term), or the borrower term exceeds the lender's (pro-rata)
         AmountNoOverlap,          // [maxMin, minMax] empty
         RateNoOverlap,
         CollateralBelowRequired,  // borrower's range can't cover the lender's pro-rated requirement (post-#164: `picked = max(reqFromLender, B.collateralAmount)` exceeds `B.collateralAmountMax - B.collateralAmountFilled`)
@@ -507,7 +507,10 @@ library LibOfferMatch {
             r.errorCode = MatchError.AssetTypeMismatch;
             return r;
         }
-        if (L.durationDays != B.durationDays) {
+        // #3615 — the loan runs the BORROWER offer's term (a match accepts
+        // the borrower offer and `LoanFacet` copies its duration). See
+        // {_durationsAgree} for which lender terms admit it.
+        if (!_durationsAgree(L, B)) {
             r.errorCode = MatchError.DurationMismatch;
             return r;
         }
@@ -797,6 +800,27 @@ library LibOfferMatch {
     ///      the prepay asset. An ERC-20 loan never reads `prepayAsset`, and
     ///      offers carry differing placeholders there, so it is compared only
     ///      when the lending asset is an NFT.
+    /// @dev #3615 — whether the lender offer admits the borrower offer's term,
+    ///      which is the term the loan runs for.
+    ///      - Full-term interest on either side: the term is a price term (the
+    ///        borrower owes interest for all of it), so the terms must be equal.
+    ///      - Pro-rata interest on BOTH sides: interest accrues only for time
+    ///        actually held and the borrower may repay at any second, so the
+    ///        lender's term is the longest it lends for. A borrower term at or
+    ///        below it is inside what both parties agreed to; the borrower gets
+    ///        exactly its own term and the lender never lends longer than it
+    ///        offered. Nothing is derived or split between the two terms.
+    ///      A pair that differs on the interest mode with equal terms passes
+    ///      here and is refused by {_lifecycleTermsAgree}, as before.
+    function _durationsAgree(
+        LibVaipakam.Offer memory L,
+        LibVaipakam.Offer storage B
+    ) private view returns (bool) {
+        uint256 bTerm = B.durationDays;
+        if (L.durationDays == bTerm) return true;
+        return !L.useFullTermInterest && !B.useFullTermInterest && bTerm < L.durationDays;
+    }
+
     function _lifecycleTermsAgree(
         LibVaipakam.Offer memory L,
         LibVaipakam.Offer storage B
