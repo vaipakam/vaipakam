@@ -159,7 +159,7 @@ No contract change. Alternatives considered: convert every lender offer into an 
 
 ### What a ladder means under midpoint pricing
 
-An intent fill is priced at the midpoint of the overlap between the lender's floor and the borrower's ceiling, not at the floor. A higher-floor slot therefore does two things: it refuses borrowers whose ceiling is below it, and it lifts the midpoint for those it fills. The app states both when a lender adds a second rate.
+An intent fill is priced at the midpoint of the rate overlap, not at the lender's floor: the lower end of the overlap is the higher of the lender's floor and the borrower's own lowest rate, the upper end is the borrower's ceiling, and the loan's rate is halfway between. A higher-floor slot therefore always refuses borrowers whose ceiling is below it, and lifts the loan's rate only when the floor is above the borrower's own lowest rate. Example: a borrower asking 8% to 10% is filled at 9% from a 2% slot and from a 6% slot alike; a borrower asking 3% to 10% is filled at 6.5% from a 3%-or-lower slot and at 8% from a 6% slot. The app states the formula and both effects when a lender adds a second rate, and never says a higher rung always earns more.
 
 ### Changes and reach
 
