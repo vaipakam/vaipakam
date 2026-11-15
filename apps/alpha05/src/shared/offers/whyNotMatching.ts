@@ -188,9 +188,15 @@ export function gapOf(mine: StoredOffer, theirs: StoredOffer, code: number): Gap
     return { kind: 'code', code };
   }
   if (code === MATCH_CODE.duration) {
-    // A pro-rata lender's term is the longest it lends for (#3615).
-    const lender = lend ? mine : theirs;
-    return { kind: 'term', theirs: theirs.durationDays, mine: mine.durationDays, upTo: !lender.useFullTermInterest };
+    // The protocol admits a shorter request only when BOTH offers are
+    // pro-rata (#3615): then the lender's term is the longest it lends for.
+    const [lender, borrower] = lend ? [mine, theirs] : [theirs, mine];
+    const bothProRata = !lender.useFullTermInterest && !borrower.useFullTermInterest;
+    if (!bothProRata && !lender.useFullTermInterest && borrower.durationDays < lender.durationDays) {
+      // A shorter term would do but for the interest modes: name that.
+      return { kind: 'option', which: 'interest-mode' };
+    }
+    return { kind: 'term', theirs: theirs.durationDays, mine: mine.durationDays, upTo: bothProRata };
   }
   if (code === MATCH_CODE.terms) {
     const which = optionGap(mine, theirs);

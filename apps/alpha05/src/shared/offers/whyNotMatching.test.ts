@@ -91,6 +91,10 @@ describe('why an offer is not matching (#3623)', () => {
     expect(gapOf(mine, req({ durationDays: 45n }), MATCH_CODE.duration)).toEqual({ kind: 'term', theirs: 45n, mine: 30n, upTo: false });
     const proRata = offer({ useFullTermInterest: false });
     expect(gapOf(proRata, req({ durationDays: 45n, useFullTermInterest: false }), MATCH_CODE.duration)).toMatchObject({ upTo: true });
+    // A pro-rata lender and a full-term request: up-to does not apply, and a
+    // shorter request is refused for the interest modes, not the term.
+    expect(gapOf(proRata, req({ durationDays: 45n }), MATCH_CODE.duration)).toMatchObject({ kind: 'term', upTo: false });
+    expect(gapOf(offer({ useFullTermInterest: false }), req({ durationDays: 14n }), MATCH_CODE.duration)).toEqual({ kind: 'option', which: 'interest-mode' });
   });
   it('names the first lifecycle option that differs, else the bare code', () => {
     expect(optionGap(mine, req({ useFullTermInterest: false, allowsPartialRepay: true }))).toBe('interest-mode');
