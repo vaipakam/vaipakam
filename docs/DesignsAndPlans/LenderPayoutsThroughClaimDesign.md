@@ -61,7 +61,7 @@ A new entry, `claimHeldForLender(loanId)`, callable by the holder of the lender 
 - sets `heldForLender[loanId]` to zero (the outflow route stamps `markLoanValueOut`), emits an event that states the loan, the holder, the asset and the amount;
 - does not touch the loan's status, its NFTs, the intent exposure counter or the loan's terminal claim row.
 
-The final lender claim keeps folding any unclaimed held amount, as today. One internal function pays a held amount, called by both entries, so the split and the outflow cannot differ between them.
+The final lender claim keeps folding any unclaimed held amount, as today. One internal function consumes a held amount, and every step that takes held value out uses it: the mid-loan claim, the final claim, the roll and the mid-loan re-commit (3.3). It settles seller claims, retires the interest ledger's parked-interest entries and reports the holder's interest as paid, zeroes the held ledger and releases the reservation; only the destination differs (the holder's vault, or the intent's capital lien). A step that cleared the held balance without retiring the parked-interest entries would let a later sale turn interest the holder already took into a seller claim against future payments, paying it twice.
 
 Placement: `ClaimFacet` is the natural home; check its room with the deploy-sanity size test and, if it does not fit, host the entry beside the park helpers on `EncumbranceMutateFacet` or split along that seam. Do not trim.
 
@@ -105,6 +105,7 @@ Fund-moving paths change and the six callers, the host, the claim and the roll m
 4. Seller claims: a position sold mid-loan, then a payment, then a claim: sellers are paid first and the holder's interest is reported once.
 5. The position is sold with an unclaimed held amount: the interest earned before the sale is reserved for the seller and the buyer can claim the rest (held principal and later payments), each exactly once; a plain transfer carries the whole amount. A sale or transfer cannot go through inside the cooldown after a mid-loan claim or after `recommitHeldToIntent`, including in the same block.
 6. Final settlement folds an unclaimed held amount into the terminal claim exactly once; a loan claimed mid-loan and then settled pays nothing twice.
+7a. Interest payment, then `recommitHeldToIntent`, then a sale of the position, then a further repayment: the re-committed interest is not paid again to the seller; the interest ledger shows it paid once.
 7. Intent loan: the roll re-commits final proceeds plus the held amount to the originating slot; `recommitHeldToIntent` moves a held partial repayment behind the intent, the exposure counter is unchanged, and a later fill can draw on it; both refuse when the position was sold or seller claims exist.
 8. A fee-on-transfer or short-delivering token: what is held is what arrived.
 9. A frozen holder behaves as today, including a freeze that begins after an amount was parked while clean. A rental whose lender NFT moved to a clean holder and whose stored lender is then flagged: the renter's payment still goes through, is held in the stored lender's vault under the lock, and the clean holder can claim it.
