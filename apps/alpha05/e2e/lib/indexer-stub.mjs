@@ -30,6 +30,9 @@
 //    the indexer honours it (`lendingAsset`, `collateralAsset`,
 //    `durationDays`, and the opt-in `excludeExpired`, `excludeSaleVehicles`
 //    and `excludeOffsetVehicles`). Also refused while the posture is `down`;
+//  - the indexer's `GET /offers/:id/nearest?chainId&limit` (#3623): the
+//    other side's open token offers on the offer's pair, ranked as the
+//    indexer ranks them. Refused while the posture is `down`;
 //  - the indexer's `GET /offers/markets?chainId`, the rate desk's market
 //    list: the open token-against-token offers above, unexpired and without
 //    the sale and early-close vehicles, grouped by both tokens and the term,
@@ -218,6 +221,31 @@ async function activeOffers(url) {
   return { chainId: CHAIN_ID, offers, nextBefore: offers.length === limit ? offers[offers.length - 1].offerId : null };
 }
 
+/** `/offers/:id/nearest` (#3623): the other side's open token-against-token
+ *  offers on the offer's two assets, unexpired, without the vehicles and the
+ *  offer's own wallet, closest rate range first, then closest term, newest
+ *  on a tie, as the indexer ranks them. */
+async function nearestOffers(id, url) {
+  const me = await offerRow(BigInt(id));
+  if (me === null) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'not-open' } };
+  if (!unexpired(me)) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'expired' } };
+  if (me.assetType !== 0 || me.collateralAssetType !== 0) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'not-erc20' } };
+  if (me.isSaleVehicle || me.isOffsetVehicle) return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: false, reason: 'loan-bound' } };
+  const limit = Math.min(10, Math.max(1, Number(url.searchParams.get('limit') ?? 5)));
+  const myMax = Math.max(me.interestRateBps, me.interestRateBpsMax);
+  const all = [];
+  for (const oid of await offerIds()) {
+    const row = await offerRow(oid);
+    if (row === null || !unexpired(row) || row.offerType === me.offerType) continue;
+    if (row.lendingAsset !== me.lendingAsset || row.collateralAsset !== me.collateralAsset) continue;
+    if (row.assetType !== 0 || row.collateralAssetType !== 0 || row.isSaleVehicle || row.isOffsetVehicle || row.creator === me.creator) continue;
+    const rateGapBps = Math.max(0, row.interestRateBps - myMax, me.interestRateBps - Math.max(row.interestRateBps, row.interestRateBpsMax));
+    all.push({ ...row, rateGapBps });
+  }
+  all.sort((a, b) => a.rateGapBps - b.rateGapBps || Math.abs(a.durationDays - me.durationDays) - Math.abs(b.durationDays - me.durationDays) || b.offerId - a.offerId);
+  return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: true, candidates: all.slice(0, limit), oppositeOpen: all.length } };
+}
+
 /** `/offers/markets`: the open token-against-token offers grouped into
  *  markets, deepest first, ties broken on the market's own terms. */
 async function offerMarkets() {
@@ -331,9 +359,7 @@ async function rateCandles(url) {
   const since = ranges[rangeRaw] === null ? 0 : Math.floor(Date.now() / 1000) - ranges[rangeRaw] * 86400;
   const q = new URLSearchParams({ limit: '200', lendingAsset: lending, collateralAsset: collateral, durationDays: days, excludeSaleVehicles: '1' });
   const { loans } = await recentLoans(new URL(`http://stub/loans/recent?${q.toString()}`));
-  const fills = loans
-    .filter((l) => l.assetType === 0 && l.collateralAssetType === 0 && l.startAt >= since)
-    .sort((a, b) => a.startAt - b.startAt || a.loanId - b.loanId);
+  const fills = loans.filter((l) => l.assetType === 0 && l.collateralAssetType === 0 && l.startAt >= since).sort((a, b) => a.startAt - b.startAt || a.loanId - b.loanId);
   const buckets = [];
   for (const f of fills) {
     const t = Math.floor(f.startAt / step) * step;
@@ -561,10 +587,7 @@ async function postSignedOrder(raw) {
   if (signer === null || signer.toLowerCase() !== order.signer) return { status: 400, body: { error: 'bad-signature' } };
   if (signedBook.has(orderHash)) return { status: 200, body: { chainId: CHAIN_ID, orderHash } };
   const read = (functionName, args) => chain.readContract({ address: DEPLOYMENT.diamond, abi: DIAMOND_ABI, functionName, args });
-  const [filled, nonceUsed] = await Promise.all([
-    read('signedOfferFilledAmount', [orderHash]),
-    read('isSignedOfferNonceUsed', [order.signer, BigInt(order.nonce)]),
-  ]);
+  const [filled, nonceUsed] = await Promise.all([read('signedOfferFilledAmount', [orderHash]), read('isSignedOfferNonceUsed', [order.signer, BigInt(order.nonce)])]);
   if (nonceUsed) return { status: 409, body: { error: 'nonce-used' } };
   const ceiling = BigInt(order.amountMax) === 0n ? BigInt(order.amount) : BigInt(order.amountMax);
   if (filled >= ceiling) return { status: 409, body: { error: 'order-consumed' } };
@@ -576,9 +599,7 @@ async function postSignedOrder(raw) {
  *  burned (signer, nonce) pairs, as the indexer's lifecycle handlers read
  *  them. */
 async function signedRetirements() {
-  const logs = await anvil('eth_getLogs', [
-    { address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[SIGNED_CANCELLED, SIGNED_NONCE_BURNED]] },
-  ]);
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[SIGNED_CANCELLED, SIGNED_NONCE_BURNED]] }]);
   const cancelled = new Set();
   const burned = new Set();
   for (const l of logs) {
@@ -808,6 +829,7 @@ const server = http.createServer(async (req, res) => {
           '/activity (seller and reserve kinds)',
           '/offers/active',
           '/offers/markets',
+          '/offers/:id/nearest',
           '/loans/recent',
           '/loans/rate-candles',
           '/loans/by-participant',
@@ -1118,6 +1140,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await offerMarkets());
+      return;
+    }
+    const nearestPath = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);
+    if (nearestPath && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const out = await nearestOffers(nearestPath[1], url);
+      json(res, out.status, out.body);
       return;
     }
     if (url.pathname === '/offers/active' && req.method === 'GET') {

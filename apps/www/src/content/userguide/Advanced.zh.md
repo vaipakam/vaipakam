@@ -2130,7 +2130,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### 报价页面
 
-`/offers/:id` 在同一区块读取 `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)` 和 `getOfferLinkedLoanId(id)`，经由已连接的钱包读取；连接钱包之前不读取任何内容。创建者为零表示记录已被删除（未成交任何部分即取消）或从未写入；协议不保存报价数量，因此页面不说明是哪一种。非零的关联贷款标记贷款出售（借款人报价）或抵销（出借人报价）；借款人报价的 `refinanceTargetLoanId` 标记再融资请求。接受时使用共享的 `acceptOffer` 流程（签名的 `AcceptTerms`、精确授权、试运行、实测结果），并使用独立的存储键；取消和清理使用共享的 `cancelOffer` 流程。租赁、NFT 抵押、贷款出售和抵销会链接到当前应用。
+`/offers/:id` 在同一区块读取 `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)` 和 `getOfferLinkedLoanId(id)`，经由已连接的钱包读取；连接钱包之前不读取任何内容。创建者为零表示记录已被删除（未成交任何部分即取消）或从未写入；协议不保存报价数量，因此页面不说明是哪一种。非零的关联贷款标记贷款出售（借款人报价）或抵销（出借人报价）；借款人报价的 `refinanceTargetLoanId` 标记再融资请求。接受时使用共享的 `acceptOffer` 流程（签名的 `AcceptTerms`、精确授权、试运行、实测结果），并使用独立的存储键；取消和清理使用共享的 `cancelOffer` 流程。租赁、NFT 抵押、贷款出售和抵销会链接到当前应用。对于读者发布的开放、普通、代币对代币报价，页面通过索引器的 `GET /offers/:id/nearest?chainId&limit=5` 获取交易对另一侧最接近的开放报价（先按利率差，再按期限差），在同一区块读取每一个报价和撮合开关，并对每个开放的配对调用 `OfferMatchFacet.previewMatch(lenderId, borrowerId, sender, sender)`。所述差距是预览对最接近报价返回的第一个 `MatchError`；返回 `Ok` 的配对被表述为现在可撮合，绝不表述为已撮合（#3623）。
 
 <a id="offer-cancel"></a>
 

@@ -16,6 +16,7 @@ import { roleTerms } from '../../shared/offers/acceptTerms';
 import { detailAction, readOfferDetail, type OfferDetail } from '../../shared/offers/offerDetail';
 import { collateralWords } from '../../shared/offers/collateralWords';
 import { offerAmount, offerLine } from '../../shared/offers/offerLine';
+import { WhyNotMatching } from '../../shared/offers/WhyNotMatching';
 import type { OfferState } from '../../shared/offers/reads';
 import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../../shared/positions/model';
 import { useScreenChain } from '../../shared/reads/chainRead';
@@ -224,6 +225,7 @@ function OfferBody({
         <Fact label={text('offerPage.factDuration')} value={format('offerPage.days', { days: o.durationDays.toString() })} unknown={unknown} />
         <Fact label={text('offerPage.factExpires')} value={o.expiresAt > 0n ? formatUtc(Number(o.expiresAt)) : text('offerPage.never')} unknown={unknown} />
       </Facts>
+      {mine && d.state === 'open' && d.purpose === 'plain' && erc20 && erc20Collateral && walletChain && own && <WhyNotMatching offer={o} chain={walletChain} own={own} />}
       {d.purpose === 'refinance' && <p className="tier-a">{format('offerPage.refinanceNote', { loan: o.refinanceTargetLoanId.toString() })}</p>}
       {d.purpose === 'loan-sale' && <p className="tier-a">{format('offerPage.loanSaleNote', { loan: d.linkedLoanId.toString() })}</p>}
       {d.purpose === 'offset' && <p className="tier-a">{format('offerPage.offsetNote', { loan: d.linkedLoanId.toString() })}</p>}
@@ -385,7 +387,9 @@ function TakeAction({
           }}
         />
       )}
-      {open && rental === null && <AcceptOffer flowKey={OFFERS_ACCEPT_KEY} source={storedSource(id)} chain={chain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />}
+      {open && rental === null && (
+        <AcceptOffer flowKey={OFFERS_ACCEPT_KEY} source={storedSource(id)} chain={chain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+      )}
     </>
   );
 }

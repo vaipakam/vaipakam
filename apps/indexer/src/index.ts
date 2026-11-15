@@ -31,6 +31,7 @@
  *       GET  /offers/active       GET  /loans/recent
  *       GET  /offers/recent       GET  /loans/stats
  *       GET  /offers/:offerId     GET  /loans/timeseries
+ *       GET  /offers/:offerId/nearest
  *       GET  /offers/by-creator/:address     GET /loans/:loanId
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
  *       GET  /loans/rate-candles  GET  /loans/by-participant
@@ -132,6 +133,7 @@ import {
   handleOffersMarkets,
   handleOffersRecent,
   handleOfferById,
+  handleOfferNearest,
   handleOffersByCreator,
   handleOffersByCurrentHolder,
   handleOffersPreflight,
@@ -632,6 +634,8 @@ export default {
         if (byHolder) {
           return handleOffersByCurrentHolder(req, resolved, byHolder[1]);
         }
+        const nearest = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);
+        if (nearest) return handleOfferNearest(req, resolved, nearest[1]);
         const byId = url.pathname.match(/^\/offers\/(\d+)$/);
         if (byId) return handleOfferById(req, resolved, byId[1]);
       }
