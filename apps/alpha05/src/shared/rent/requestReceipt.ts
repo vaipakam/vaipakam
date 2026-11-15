@@ -15,6 +15,7 @@ import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan, formatUtc } from '../ui/format';
 import { listedNftName } from './listReceipt';
 import { requestCost, requestNeedsApproval, requestPromptCount, requestTokenNote, type RequestReview } from './requestReview';
+import { rentalRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -82,6 +83,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     title: text('rentRequest.title'),
     rows,
     consequences,
+    ifWrong: text(rentalRiskKey('renter')),
     prompts: requestPromptCount(r),
     readAt: r.readAt,
   };

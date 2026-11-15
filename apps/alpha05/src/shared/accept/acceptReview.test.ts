@@ -132,6 +132,11 @@ describe('acceptReceipt', () => {
     expect(both).toEqual(expect.arrayContaining(['accept.loseIlliquidLending', 'accept.loseIlliquidCollateral']));
     expect(lose(review())).toContain('accept.losePause');
   });
+  it('states the one if-things-go-wrong line for the side and how the loan settles (#3661)', () => {
+    const ifWrong = (r: AcceptReview) => acceptReceipt(r, null, copy).ifWrong;
+    expect(ifWrong(review())).toBe('keyRisks.borrowerSale');
+    expect(ifWrong(review({ collateralClass: 'illiquid' }))).toBe('keyRisks.borrowerInKind');
+  });
 });
 
 describe('changedBetween', () => {

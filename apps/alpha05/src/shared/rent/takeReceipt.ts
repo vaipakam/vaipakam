@@ -15,6 +15,7 @@ import { textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { assetName, exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
 import { takeApprovalPrompts, takeCost, takeNeedsApproval, takePromptCount, type TakeReview } from './takeReview';
+import { rentalRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -76,6 +77,7 @@ export function takeReceipt(r: TakeReview, meta: TokenMetaMap | null, copy: Pick
     title: format('rentTake.title', { id: r.offerId.toString() }),
     rows,
     consequences,
+    ifWrong: text(rentalRiskKey('owner')),
     prompts: takePromptCount(r),
     readAt: r.readAt,
   };

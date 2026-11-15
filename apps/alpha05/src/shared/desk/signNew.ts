@@ -34,6 +34,7 @@ import { figured, textValue } from '../receipt/types';
 import { IndexerUnavailable, type IndexerPoster } from '../reads/world/indexerClient';
 import { lapseText, orderSentence, type AmountWords } from './cancelSigned';
 import { bookAnswer, nonceAboveFloor, orderHashOf, signedStake, type BookAnswer, type SignedOrderWire } from './signedOrder';
+import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -256,7 +257,7 @@ export function signNewReceipt(d: SignDraft, r: SignReview, amount: AmountWords,
   if (short !== null && short > 0n) {
     consequences.push(figured((exact) => format('signNew.short', { missing: amount(stake.asset, short, exact) })));
   }
-  return { title: text('signNew.title'), rows, consequences, prompts: 1, readAt: r.readAt };
+  return { title: text('signNew.title'), rows, consequences, ifWrong: text(loanRiskKey(d.draft.side, 'unknown')), prompts: 1, readAt: r.readAt };
 }
 
 /** Send a signed order to the offer book. A refusal is an answer; no

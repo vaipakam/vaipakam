@@ -2622,6 +2622,8 @@ L'interrupteur est `getRiskAccessGateEnabled`. L'étape dont un parcours a besoi
 
 `getCurrentTos` renvoie la version et le hash du contenu en vigueur sur la chaîne de l'action ; la version 0 signifie aucune, et rien n'est bloqué. Un wallet dont `hasAcceptedCurrentTerms` vaut false est sollicité avant toute nouvelle exposition, et la demande renvoie vers `/terms/v<N>`, la page figée sur la version, dont le texte ne change jamais. Accepter appelle `acceptTerms(version, hash)` une seule fois. Avant l'ouverture du wallet, la paire est relue : une version plus récente remplace celle affichée, et une acceptation faite dans un autre onglet laisse l'action continuer. Une lecture échouée signifie « impossible à confirmer », avec un nouvel essai, jamais « non accepté ». Les sorties ne sont jamais bloquées.
 
+Au-dessus de l’étape d’acceptation, l’invite liste les six risques principaux (#3661). Chaque récapitulatif qui ouvre un prêt ou une location porte une ligne « Si les choses tournent mal », choisie selon le côté et le règlement : une vente quand les deux jambes sont lues liquides, en nature quand l’une est lue illiquide, et une ligne valable dans les deux cas pour un ordre signé, dont les jambes sont reclassées à l’exécution. Elle renvoie à `/risks`, une page publique aussi liée depuis le pied de page. La liste est montrée avec les Conditions, sans encore être enregistrée par elles : la prochaine version des Conditions la portera.
+
 <a id="settings"></a>
 
 ### Paramètres

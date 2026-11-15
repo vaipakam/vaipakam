@@ -2602,6 +2602,8 @@ El interruptor es `getRiskAccessGateEnabled`. Qué paso necesita un flujo es la 
 
 `getCurrentTos` devuelve la versión y el hash del contenido vigentes en la cadena de la acción; la versión 0 significa ninguna y nada queda bloqueado. A una wallet cuyo `hasAcceptedCurrentTerms` es false se le pregunta antes de una nueva exposición, y el aviso enlaza `/terms/v<N>`, la página fijada a la versión cuyo texto nunca cambia. Aceptar llama a `acceptTerms(version, hash)` una sola vez. Antes de abrir la wallet se vuelve a leer el par: una versión más nueva reemplaza la mostrada y una aceptación hecha en otra pestaña deja continuar la acción. Una lectura fallida es «no se puede confirmar», con reintento, nunca «no aceptado». Las salidas nunca se bloquean.
 
+Encima del paso de aceptar, el aviso enumera los seis riesgos clave (#3661). Cada revisión que abre un préstamo o un alquiler lleva una línea «Si algo sale mal», elegida por parte y por liquidación: una venta cuando ambas partes se leen líquidas, en especie cuando alguna se lee ilíquida, y una línea válida en ambos casos para una orden firmada, cuyas partes se clasifican de nuevo al ejecutarse. Enlaza `/risks`, una página pública también enlazada desde el pie. La lista se muestra con los Términos, pero aún no queda registrada por ellos: la próxima versión de los Términos la incluirá.
+
 <a id="settings"></a>
 
 ### Ajustes

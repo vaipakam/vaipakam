@@ -2612,6 +2612,8 @@ Der Schalter ist `getRiskAccessGateEnabled`. Welchen Schritt ein Ablauf braucht,
 
 `getCurrentTos` liefert Version und Inhalts-Hash, die auf der Chain der Aktion gelten; Version 0 bedeutet keine, und nichts ist gesperrt. Eine Wallet, deren `hasAcceptedCurrentTerms` false ist, wird vor neuer Exposition gefragt, und die Abfrage verlinkt `/terms/v<N>`, die versionsfeste Seite, deren Text sich nie ändert. Das Akzeptieren ruft `acceptTerms(version, hash)` einmal auf. Bevor die Wallet öffnet, wird das Paar erneut gelesen: Eine neuere Version ersetzt die angezeigte, und eine Akzeptanz aus einem anderen Tab lässt die Aktion weiterlaufen. Ein fehlgeschlagener Lesevorgang heißt „nicht bestätigbar“, mit Wiederholung, nie „nicht akzeptiert“. Ausstiege sind nie gesperrt.
 
+Über dem Schritt zum Akzeptieren listet die Abfrage die sechs wichtigsten Risiken (#3661). Jede Prüfung, die einen Kredit oder eine Miete eröffnet, trägt eine Zeile „Wenn etwas schiefgeht“, gewählt nach Seite und Abwicklung: ein Verkauf, wenn beide Seiten als liquide gelesen werden, in Sachwerten, wenn eine als illiquide gelesen wird, und eine Zeile, die in beiden Fällen gilt, für eine signierte Order, deren Seiten bei der Ausführung neu eingestuft werden. Sie verlinkt `/risks`, eine öffentliche Seite, die auch in der Fußzeile verlinkt ist. Die Liste wird mit den Bedingungen gezeigt, aber noch nicht von ihnen erfasst: Die nächste Version der Bedingungen wird sie enthalten.
+
 <a id="settings"></a>
 
 ### Einstellungen

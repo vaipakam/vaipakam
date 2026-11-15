@@ -1445,6 +1445,8 @@ accepted, it says so and lets you try again instead of treating it
 as a no. Repaying, claiming, withdrawing your own assets, cancelling
 your own offers and turning a consent off are never held back.
 
+The prompt also shows a short list of key risks above the accept step, so you read what can go wrong before you accept. Every review that opens a loan or a rental adds one line, "If things go wrong", that says what happens to your side of that loan, with a link to the Key risks page. That page is also in the footer and needs no wallet.
+
 <a id="settings"></a>
 
 ### Settings

@@ -1486,6 +1486,8 @@ Jedes Konto beginnt auf der niedrigsten Risikostufe, nur Blue-Chip-Assets, und n
 
 Wo eine Version der Nutzungsbedingungen gilt, bittet dich die App, sie vor einer Aktion zu akzeptieren, die etwas Neues beginnt, etwa das Einschalten des Gebührenrabatts, und nennt die Aktion, die gefragt hat. Sie zeigt die Version, einen Fingerabdruck ihres Textes und einen Link zu genau dieser Version, deren Text sich nie ändert. Das Akzeptieren ist eine Bestätigung in der Wallet und bewegt keine Mittel. Kann die App nicht lesen, ob du akzeptiert hast, sagt sie das und lässt dich es erneut versuchen, statt es als Nein zu werten. Zurückzahlen, Forderungen einlösen, eigene Assets abheben, eigene Angebote stornieren und eine Zustimmung ausschalten werden nie aufgehalten.
 
+Die Abfrage zeigt über dem Schritt zum Akzeptieren außerdem eine kurze Liste der wichtigsten Risiken, damit Sie vor dem Akzeptieren lesen, was schiefgehen kann. Jede Prüfung, die einen Kredit oder eine Miete eröffnet, enthält eine Zeile „Wenn etwas schiefgeht“, die sagt, was mit Ihrer Seite dieses Kredits geschieht, mit einem Link zur Seite „Wichtigste Risiken“. Diese Seite ist auch in der Fußzeile verlinkt und braucht keine Wallet.
+
 <a id="settings"></a>
 
 ### Einstellungen

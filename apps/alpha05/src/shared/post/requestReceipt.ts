@@ -16,6 +16,7 @@ import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type Pos
 import { tariffConsequences, tariffRows } from './tariffReview';
 import { guardConsequences, guardRows } from './guardPost';
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
+import { loanRiskKey, settlementOf } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -166,7 +167,14 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     text('request.loseBinding'),
   ];
 
-  return { title: text('request.title'), rows, consequences, prompts: promptCount(r), readAt: r.readAt };
+  return {
+    title: text('request.title'),
+    rows,
+    consequences,
+    ifWrong: text(loanRiskKey('borrower', settlementOf(r.lendingClass, r.collateralClass))),
+    prompts: promptCount(r),
+    readAt: r.readAt,
+  };
 }
 
 /**

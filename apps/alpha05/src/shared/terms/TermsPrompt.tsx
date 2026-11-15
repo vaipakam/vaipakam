@@ -8,6 +8,7 @@ import type { Receipt } from '../receipt/types';
 import { simulateCall } from '../tx/simulate';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
+import { KeyRiskList } from '../risk/KeyRiskList';
 import { formatUtc } from '../ui/format';
 import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl } from './terms';
 import { inFlight } from '../tx/txStore';
@@ -138,6 +139,9 @@ export function TermsPrompt({
         </li>
       </ul>
       <p className="tier-b">{text('terms.english')}</p>
+      <h3>{text('keyRisks.title')}</h3>
+      <p className="tier-b">{text('keyRisks.lead')}</p>
+      <KeyRiskList testId="terms-key-risks" />
       {session.settled ? (
         <>
           <p className="actions">{proceed}</p>
