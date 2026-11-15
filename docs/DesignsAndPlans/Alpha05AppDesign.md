@@ -2688,6 +2688,29 @@ above. Each resolves here, so a route reviewer needs no private file:
   asked for. Full-term interest keeps the terms equal, so nothing is added
   for it. No figure changes: the review's interest figures are for the
   offer's own term.
+- **RB-TAKE-NOW** — Before a new lending offer or borrow request is
+  posted (#3622 B1), the page looks through the other side's open offers it
+  has already read for the pair. An offer is shown first only when a direct
+  accept of it stays inside every limit the reader is about to post: the
+  same pair (both legs tokens) and the same term in days, the same interest
+  mode, partial repayment and interest schedule, no prepay listing, no
+  refinance and no linked loan, the accepted amount within the reader's
+  amount range, a rate no worse than the reader's, and collateral no worse
+  than the reader's for that amount. It must also be open and takeable by
+  this wallet as it stands. A draft that opts into the Full fee tariff is
+  never offered a take, because a direct accept here never opts into it,
+  and neither is a draft that arms a price-move guard, because a direct
+  accept carries no guard.
+  Each fitting offer (at most three, in the list's own order) is shown as
+  the offer list shows it, with its own take button, which opens the
+  ordinary accept review on that offer's own terms. Beside it the page says
+  that posting waits for a taker or, while matching is on, a match with an offer whose rate range includes the reader's rate, which
+  lends at that rate (a match lends at the midpoint of where the two rate
+  ranges overlap, and a draft posts one rate). If the latest re-read of the
+  offers failed, the step says the list is from the read before. "Post anyway" opens the post
+  review the reader asked for, and "Back to the form" keeps what was typed.
+  Nothing is taken or posted from this step without a press. An offer that
+  stops fitting while the reader decides is dropped, and the step says so.
 
 ## 3. Companion specifications
 
