@@ -8386,6 +8386,14 @@ library LibVaipakam {
         ///      `ForcedSaleFacet.sellToNeed` (and the test mutator); read
         ///      through `LibFallbackGate`. Appended — append-only.
         mapping(uint256 => FallbackGate) fallbackGate;
+        /// @dev #3339 — the borrower position token a loan's refinance request
+        ///      was recorded against, beside `refinanceRequestTransferCount`.
+        ///      The count belongs to the token, and an obligation handover
+        ///      mints a new borrower token whose count restarts at 0, so the
+        ///      request stands only while BOTH the token and its count are
+        ///      unchanged. Written only by `LibRefinanceRequest.record`.
+        ///      Appended — append-only.
+        mapping(uint256 => uint256) refinanceRequestTokenId;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

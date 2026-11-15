@@ -194,6 +194,22 @@ contract VaipakamNFTFacetTest is Test {
         VaipakamNFTFacet(address(diamond)).retirePosition(TOKEN_ID_1);
     }
 
+    /// #3339 — a token retired while its stored status still reads as live
+    /// (a zero-residual matched loan's borrower token is retired without
+    /// first being marked closed) is a transferable receipt, so it must not
+    /// read as governing claim rights.
+    function testARetiredReceiptNeverGovernsClaimRights() public {
+        _mintViaProxy(user, TOKEN_ID_1, false, LibVaipakam.LoanPositionStatus.LoanInitiated);
+        vm.prank(address(diamond));
+        VaipakamNFTFacet(address(diamond)).retirePosition(TOKEN_ID_1);
+
+        MetricsFacet.NFTPositionSummary memory s =
+            MetricsFacet(address(diamond)).getNFTPositionSummary(TOKEN_ID_1);
+        assertEq(uint256(s.nftStatus), uint256(LibVaipakam.LoanPositionStatus.LoanClosed), "a receipt reads closed");
+        string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
+        assertGt(bytes(uri).length, 0);
+    }
+
     function testRetirePositionRevertsEOACall() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
 
