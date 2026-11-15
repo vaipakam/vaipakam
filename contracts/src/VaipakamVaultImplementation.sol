@@ -901,6 +901,13 @@ contract VaipakamVaultImplementation is
         return LibVaultProtectionStorage.layout().lockCount;
     }
 
+    /// @notice How many times this record's signer set has gone from
+    ///         non-empty to empty (Codex #3489 r14): the Diamond's co-sign
+    ///         requirement binds only under the number it was set at.
+    function protectionSignersEmptied() external view returns (uint64) {
+        return LibVaultProtectionStorage.layout().signersEmptied;
+    }
+
     /// @notice One allowlist entry (#3415 `verified` included).
     ///         A pending addition voided by a lock, a replacement or a
     ///         switch-off (an earlier epoch) reads as not pending (Codex #3489

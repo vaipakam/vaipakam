@@ -1444,6 +1444,36 @@ contract ProtectedVaultTest is Test {
         assertFalse(requireCosign, "cleared on apply");
     }
 
+    /// @dev Codex #3489 r14 — removing the last signer clears the co-sign
+    ///      requirement for good: a signer added afterwards, with no
+    ///      application in between, does not revive it, and an application
+    ///      after that clears the stored flag.
+    function testANewSignerNeverRevivesAClearedCosignRequirement() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
+        _addSigner(s2);
+        (, bool inForce,) = _prot().getProtection(user);
+        assertFalse(inForce, "a new signer does not revive the requirement");
+        uint256 id = _queue(1 ether, user);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        assertFalse(_pay().payoutNeedsCosign(id), "the owner's payout needs no co-sign");
+        uint256 before = token.balanceOf(user);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(user) - before, 1 ether, "paid without a co-sign");
+        _prot().applyProtection(user);
+        // Switching it on again is the owner's own act, under the new count.
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        (, inForce,) = _prot().getProtection(user);
+        assertTrue(inForce, "switched on again, it binds");
+    }
+
     /// @dev Codex #3489 r2 — one co-sign rule, read per row: the view agrees
     ///      with the release, the account's setting binds only while it has a
     ///      signer, and an unverified destination needs a co-sign with the

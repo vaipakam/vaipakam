@@ -841,6 +841,7 @@ contract VaultProtection {
             if (l.signers[i] == who) {
                 l.signers[i] = l.signers[n - 1];
                 l.signers.pop();
+                if (n == 1) ++l.signersEmptied;
                 return;
             }
         }
@@ -850,6 +851,7 @@ contract VaultProtection {
     ///      signature given before can be replayed after a re-enable.
     function _clear(P.Layout storage l) private {
         while (l.allowlist.length != 0) _dropAllow(l, l.allowlist[l.allowlist.length - 1]);
+        if (l.signers.length != 0) ++l.signersEmptied;
         while (l.signers.length != 0) {
             address s = l.signers[l.signers.length - 1];
             delete l.signer[s];

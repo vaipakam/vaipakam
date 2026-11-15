@@ -151,7 +151,9 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         // The co-sign requirement binds only while the account has a signer:
         // removing the last one clears it (as the platform-held rule did), so
         // no payout waits on a co-signature nobody can give.
-        if (a.requireCosign && c.enabled && !LibProtectedAccount.hasSigners(account)) {
+        // Codex #3489 r14 — the same rule the release reads: a requirement the
+        // signer set has emptied under no longer binds, signers added or not.
+        if (a.requireCosign && c.enabled && !LibProtectedAccount.cosignSettingInForce(account)) {
             a.requireCosign = false;
             a.pendingCosignOffAt = 0;
             emit CosignRequirementSet(account, false);
@@ -214,6 +216,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             if (signers.length == 0) revert LibProtectedAccount.NotEnoughSigners(0, 1);
             a.requireCosign = true;
             a.pendingCosignOffAt = 0;
+            a.cosignSignerGen = IVaultProtectionRead(c.vault).protectionSignersEmptied();
             emit CosignRequirementSet(account, true);
             return;
         }

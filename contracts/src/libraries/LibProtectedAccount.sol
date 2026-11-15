@@ -14,6 +14,7 @@ interface IVaultProtectionRead {
     function protectionLockCount() external view returns (uint64);
     function allowEntry(address destination) external view returns (ProtectionEntry memory);
     function signerEntry(address who) external view returns (ProtectionSigner memory);
+    function protectionSignersEmptied() external view returns (uint64);
     function protectionState()
         external
         view
@@ -354,10 +355,16 @@ library LibProtectedAccount {
         return cosignSettingInForce(account) || unverifiedNeedsCosign(account, recipient);
     }
 
-    /// @notice Whether `account`'s own co-sign setting is in force: set, and
-    ///         the account has a signer to give one.
+    /// @notice Whether `account`'s own co-sign setting is in force: set, the
+    ///         account has a signer to give one, and its signer set has not
+    ///         emptied since it was set (Codex #3489 r14): removing the last
+    ///         signer clears the requirement for good, so a signer added
+    ///         later never revives it, whether or not the platform applied
+    ///         the removal.
     function cosignSettingInForce(address account) internal view returns (bool) {
-        return _s().protectedAccount[account].requireCosign && hasSigners(account);
+        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
+        if (!a.requireCosign || !hasSigners(account)) return false;
+        return IVaultProtectionRead(_s().userVaipakamVaults[account]).protectionSignersEmptied() == a.cosignSignerGen;
     }
 
     /// @notice #3415 — whether a payout from `account` to `recipient` needs a

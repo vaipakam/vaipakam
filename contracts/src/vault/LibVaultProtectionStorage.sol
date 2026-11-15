@@ -92,6 +92,13 @@ library LibVaultProtectionStorage {
         ///      every finalized allowlist addition takes the next one.
         ///      Appended.
         uint64 allowGen;
+        /// @dev Codex #3489 r14 — how many times the signer set has gone
+        ///      from non-empty to empty. The Diamond's co-sign requirement
+        ///      binds only under the number it was set at, so removing the
+        ///      last signer clears it for good, even before the platform
+        ///      applies the removal: a signer added later never revives it.
+        ///      Appended.
+        uint64 signersEmptied;
     }
 
     function layout() internal pure returns (Layout storage l) {

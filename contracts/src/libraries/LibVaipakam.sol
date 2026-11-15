@@ -8401,6 +8401,11 @@ library LibVaipakam {
         ///      switch-off was requested. A later lock, applied or not, voids
         ///      it. Appended.
         uint64 cosignOffLockGen;
+        /// @dev Codex #3489 r14 — the vault's signers-emptied count when the
+        ///      co-sign requirement was switched on. Once the last signer is
+        ///      removed the count moves on and the requirement no longer
+        ///      binds, applied or not. Appended.
+        uint64 cosignSignerGen;
     }
 
     /// @notice Protected account mode — a pending change to one signer.
