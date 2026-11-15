@@ -53,6 +53,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/activity', name: 'Activity', tier: 'basic', rows: 'ACC activity feed', order: 19, built: false, nav: false, currentApp: '/activity' },
   { path: '/help', name: 'Help', tier: 'public', rows: 'help, guides, build provenance', order: 20, built: false, nav: false, currentApp: '/help' },
   { path: '/governance', name: 'Governance', tier: 'public', rows: 'queued governance changes (#3237)', order: 21, built: true, nav: false, currentApp: null },
+  { path: '/risks', name: 'Key risks', tier: 'public', rows: 'key risks (#3661)', order: 22, built: true, nav: false, currentApp: null },
 ];
 
 /** The current app's address for the same job, with this route's params

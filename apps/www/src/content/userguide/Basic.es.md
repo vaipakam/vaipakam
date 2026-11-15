@@ -1464,6 +1464,8 @@ Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y s
 
 Cuando hay una versión de los Términos del servicio vigente, la app te pide aceptarla antes de una acción que inicia algo nuevo, como activar el descuento en comisiones, y nombra la acción que lo pidió. Muestra la versión, una huella de su texto y un enlace a esa versión exacta, cuyo texto nunca cambia. Aceptar es una confirmación en la wallet y no mueve fondos. Si la app no puede leer si aceptaste, lo dice y te deja reintentar en lugar de tomarlo como un no. Repagar, cobrar, retirar tus propios activos, cancelar tus propias ofertas y desactivar un consentimiento nunca se bloquean.
 
+El aviso también muestra una lista breve de riesgos clave encima del paso de aceptar, para que leas qué puede salir mal antes de aceptar. Cada revisión que abre un préstamo o un alquiler añade una línea, «Si algo sale mal», que dice qué le pasa a tu parte de ese préstamo, con un enlace a la página de riesgos clave. Esa página también está en el pie de página y no necesita monedero.
+
 <a id="settings"></a>
 
 ### Ajustes

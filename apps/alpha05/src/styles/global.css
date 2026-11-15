@@ -847,6 +847,15 @@ dd.value-unknown > .icon {
   margin: 8px 0;
   padding-inline-start: 20px;
 }
+/* #3661 — a review's one "if things go wrong" line: set apart from the
+   list below it, read first. */
+.if-wrong {
+  margin: 12px 0 8px;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--warn);
+  background: var(--surface-sunken);
+  overflow-wrap: anywhere;
+}
 .legs {
   list-style: none;
   padding: 0;
