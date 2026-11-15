@@ -153,13 +153,19 @@ export interface ReadyToClaim {
   waiting: number;
   /** Payouts whose claim, or whose rule, could not be read: not counted. */
   unread: number;
+  /** Payouts whose claim is open but whose amounts are not settled until it
+   *  runs (a lender's payout on a loan in fallback: the claim runs the
+   *  protocol's match first, which can change the asset and the amount):
+   *  listed, not counted. */
+  contingent: number;
 }
 
 /** One payout as the total reads it: its lanes, and its claim's verdict
- *  (open, closed, or unknown when it could not be read). */
+ *  (open, closed, unknown when it could not be read, or contingent when it
+ *  is open but what it pays is only settled when it runs). */
 export interface ReadyInput {
   lanes: readonly ClaimLane[];
-  state: 'open' | 'closed' | 'unknown';
+  state: 'open' | 'closed' | 'unknown' | 'contingent';
 }
 
 /** The per-asset total of every open payout, ERC-20 amounts summed, NFTs
@@ -169,7 +175,12 @@ export function readyToClaim(rows: readonly ReadyInput[]): ReadyToClaim {
   let ready = 0;
   let waiting = 0;
   let unread = 0;
+  let contingent = 0;
   for (const r of rows) {
+    if (r.state === 'contingent') {
+      contingent += 1;
+      continue;
+    }
     if (r.state === 'unknown') {
       unread += 1;
       continue;
@@ -188,5 +199,5 @@ export function readyToClaim(rows: readonly ReadyInput[]): ReadyToClaim {
       else totals.push({ assetType: l.assetType, asset: l.asset, tokenId, amount: l.assetType === ASSET_ERC721 ? 1n : l.amount });
     }
   }
-  return { totals, ready, waiting, unread };
+  return { totals, ready, waiting, unread, contingent };
 }

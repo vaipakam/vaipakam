@@ -6,7 +6,7 @@ import { assetName, useTokenMeta } from '../reads/tokens';
 import type { OwnRead } from '../reads/useOwnRead';
 import type { FrozenState } from '../sanctions/posture';
 import { useNow } from '../ui/useNow';
-import { ASSET_ERC20 } from './loanClaim';
+import { ASSET_ERC20, isFallback } from './loanClaim';
 import type { LoanClaimRows } from './loanClaimRows';
 import { readyToClaim, type ReadyInput } from './claimWithdraw';
 
@@ -45,6 +45,7 @@ export function ReadyToClaim({
       copy,
       nowMs,
     );
+    if (v.state === 'open' && r.side === 'lender' && isFallback(Number(r.loan.status))) return { lanes: r.lanes, state: 'contingent' };
     return { lanes: r.lanes, state: v.state === 'open' ? 'open' : v.state === 'unknown' ? 'unknown' : 'closed' };
   });
   const sum = readyToClaim(inputs);
@@ -85,6 +86,11 @@ export function ReadyToClaim({
           </dl>
           <p className="tier-b">{sum.ready === 1 ? text('claimWithdraw.readyFromOne') : format('claimWithdraw.readyFrom', { n: String(sum.ready) })}</p>
         </>
+      )}
+      {sum.contingent > 0 && (
+        <p className="tier-a" data-testid="ready-to-claim-contingent">
+          {format('claimWithdraw.readyContingent', { n: String(sum.contingent) })}
+        </p>
       )}
       {sum.waiting > 0 && <p className="tier-b">{format('claimWithdraw.readyWaiting', { n: String(sum.waiting) })}</p>}
       {sum.unread > 0 && (

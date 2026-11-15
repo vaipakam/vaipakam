@@ -94,6 +94,8 @@ describe('claim and withdraw (#3631)', () => {
       { state: 'open', lanes: [lane('rentalReturn', NFT, 1n, 1, 9n)] },
       { state: 'closed', lanes: [lane('row', WETH, 1000n)] },
       { state: 'unknown', lanes: [] },
+      // A fallback payout's amounts are settled only when its claim runs.
+      { state: 'contingent', lanes: [lane('row', TLIQ, 70n)] },
       // A claim open with nothing in it adds nothing and is not a payout.
       { state: 'open', lanes: [] },
     ]);
@@ -102,7 +104,7 @@ describe('claim and withdraw (#3631)', () => {
       { assetType: 0, asset: TLIQ, tokenId: 0n, amount: 5n },
       { assetType: 1, asset: NFT, tokenId: 9n, amount: 1n },
     ]);
-    expect([sum.ready, sum.waiting, sum.unread]).toEqual([3, 1, 1]);
+    expect([sum.ready, sum.waiting, sum.unread, sum.contingent]).toEqual([3, 1, 1, 1]);
   });
 
   it('keeps each ERC-721 token its own entry and sums an ERC-1155 token', () => {

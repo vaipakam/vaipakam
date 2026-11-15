@@ -1062,6 +1062,7 @@ export const copy = {
     readyNone: B('Nothing is ready to claim right now.'),
     readyFromOne: B('From 1 payout.'),
     readyFrom: B('From {{n}} payouts.'),
+    readyContingent: A('{{n}} payouts are on loans in fallback. Claiming runs a match first, which can change what they pay, so they are not counted.'),
     readyWaiting: A('{{n}} more payouts are not ready to claim yet, so they are not counted.'),
     readyUnread: A('{{n}} payouts could not be read, so they are not counted and the total may be higher.'),
     readyIncomplete: A('You hold more positions than one read covers, so this total may not count every payout.'),

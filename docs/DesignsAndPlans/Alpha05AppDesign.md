@@ -317,8 +317,10 @@ review says it will.
 
 "Ready to claim" leads Claims and Home: the per-asset total of every loan
 payout whose claim rule is open now (the same verdict its button reads),
-ERC-20 amounts summed, each NFT its own entry. A payout that waits or could
-not be read is counted apart and named, never added in; an incomplete
+ERC-20 amounts summed, each NFT its own entry. A payout that waits, could
+not be read, or is a lender's on a loan in fallback (whose claim runs the
+match first, so its asset and amount are settled only then) is counted
+apart and named, never added in; an incomplete
 position walk is said to limit the total; and the total is never called
 received, since a claim pays the vault.
 
