@@ -27,7 +27,10 @@ import {Deployments} from "../lib/Deployments.sol";
  *         terms an earlier step set or moves a position an earlier step
  *         opened. A step runs in one `forge script` call; the wait passes
  *         between calls. The wait is the longer of the two rules, so either
- *         kind of step may follow any other.
+ *         kind of step may follow any other. A step whose successor must
+ *         wait longer than that (an offer cancel after the cancel cooldown,
+ *         a periodic checkpoint a month away, #3574) says so with
+ *         {_nextStepNotBefore}, and the wait after it is that much longer.
  *
  *         TWO WAYS TO RUN A MODULE.
  *
@@ -68,9 +71,23 @@ import {Deployments} from "../lib/Deployments.sol";
  *
  *         A wait this runner does not cover is not hidden behind it: an
  *         early stage is refused by the protocol rule itself (a fill too
- *         early by `OfferTermsTooFresh`, a move by `PositionCoolingDown`), and
- *         the cancel cooldown and the periodic checkpoint keep their own
- *         staged module ({PositiveFlowsTimed}) until it moves here (#3574).
+ *         early by `OfferTermsTooFresh`, a move by `PositionCoolingDown`, a
+ *         cancel by `CancelCooldownActive`), and a stage run before the time
+ *         its record names is refused by name (`StageNotReady`).
+ *
+ *         SETTINGS A SCENARIO CHANGES ACROSS A WAIT ARE RECORDED (#3574). A
+ *         scenario that changes a protocol setting in one step and puts it
+ *         back in a later one leaves the setting changed while it waits,
+ *         which for a periodic checkpoint is a month. Such a step names the
+ *         setting and the value to put back ({_toRestore}), and the record
+ *         keeps that entry for the rest of the run. No step removes it, not
+ *         even the one that puts the setting back: a stage's record is written
+ *         before its broadcast is sent, so a step that stopped part-way would
+ *         otherwise have erased the value before the transaction putting it
+ *         back landed. Whether a setting is still changed is read from the
+ *         chain, never from the record ({_stillToRestore}): `unwind()` puts
+ *         back whatever the chain shows is still changed, and `finish()`
+ *         refuses while anything is.
  *
  *         SCENARIOS NEVER INTERLEAVE. A scenario runs to its end before the
  *         next one starts, exactly as in `run()`; only the wall-clock time
@@ -80,12 +97,16 @@ import {Deployments} from "../lib/Deployments.sol";
  *         the module's waits.
  */
 abstract contract PositiveFlowsStaged is PositiveFlowsBase {
-    uint256 private constant RECORD_VERSION = 1;
+    uint256 private constant RECORD_VERSION = 2;
 
     /// @notice `run()` under `--broadcast` reached a wait between two steps.
     ///         A broadcast cannot wait between its own transactions; use the
     ///         staged run. The next step could run from `readyAt`.
     error StepWaitNeedsStagedRun(uint256 readyAt);
+
+    /// @notice A stage was run before the time its record names for it. The
+    ///         chain's clock is at `chainTime`; run the stage again from `readyAt`.
+    error StageNotReady(uint256 readyAt, uint256 chainTime);
 
     /// @dev The scenario whose step is running: what {_keep} and {_kept}
     ///      file values under.
@@ -95,6 +116,16 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     mapping(bytes32 => uint256) private _keptValue;
     mapping(bytes32 => bool) private _keptKnown;
     string[] private _keptKeys;
+
+    /// @dev The earliest time the running scenario's next step may run, as
+    ///      its last step declared ({_nextStepNotBefore}); 0 when it declared
+    ///      nothing beyond the ordinary wait.
+    uint256 private _notBefore;
+
+    /// @dev Settings a step changed and a later step puts back, by name, with
+    ///      the value to put back ({_toRestore}).
+    string[] private _restoreNames;
+    mapping(bytes32 => uint256) private _restoreValue;
 
     // ── Where each scenario has got to, for a staged run ─────────────────
     mapping(uint256 => bool) private _selected;
@@ -108,6 +139,56 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     /// @dev Runs step `step` (0-based) of scenario `index`. A step that fills
     ///      terms an earlier step set must be a later step than that one.
     function _runStep(uint256 index, uint256 step) internal virtual;
+
+    /// @dev Whether the setting `name`, recorded with {_toRestore}, still
+    ///      differs on the chain from what putting back `value` leaves. A
+    ///      module that records a setting overrides this and {_restore}.
+    function _stillToRestore(string memory name, uint256 value) internal view virtual returns (bool) {
+        value;
+        revert(string.concat(moduleName(), ": records no setting called ", name));
+    }
+
+    /// @dev Puts back the setting `name`, recorded with {_toRestore}.
+    function _restore(string memory name, uint256 value) internal virtual {
+        value;
+        revert(string.concat(moduleName(), ": records no setting called ", name));
+    }
+
+    // ─── What a step says about the next one ──────────────────────────────
+
+    /// @dev The running scenario's next step may not run before `at`. The
+    ///      wait after this step is the longer of this and the ordinary wait
+    ///      between steps (the terms age and the transfer cooldown).
+    function _nextStepNotBefore(uint256 at) internal {
+        if (at > _notBefore) _notBefore = at;
+    }
+
+    /// @dev This step changed the setting `name`, and a later step puts back
+    ///      `value`. The staged run's record carries it from here to the end
+    ///      of the run, so an abandoned run can be unwound ({unwind}) however
+    ///      far its last broadcast got; the chain says whether it still needs
+    ///      putting back ({_stillToRestore}). A second call for the same name
+    ///      keeps the value first recorded: that is what the run found.
+    function _toRestore(string memory name, uint256 value) internal {
+        bytes32 h = keccak256(bytes(name));
+        if (_restoreListed(h)) return;
+        _restoreNames.push(name);
+        _restoreValue[h] = value;
+    }
+
+    /// @dev The value an earlier step recorded to put back for `name`.
+    function _restoreValueOf(string memory name) internal view returns (uint256) {
+        bytes32 h = keccak256(bytes(name));
+        require(_restoreListed(h), string.concat(moduleName(), ": no step recorded the setting ", name, " to put back"));
+        return _restoreValue[h];
+    }
+
+    function _restoreListed(bytes32 h) private view returns (bool) {
+        for (uint256 i = 0; i < _restoreNames.length; i++) {
+            if (keccak256(bytes(_restoreNames[i])) == h) return true;
+        }
+        return false;
+    }
 
     // ─── Values one step leaves for the next ──────────────────────────────
 
@@ -144,21 +225,33 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         for (uint256 step = 0; step < steps; step++) {
             if (step != 0) _waitBetweenSteps();
             _current = index;
+            _notBefore = 0;
             _runStep(index, step);
             if (_skipPending()) return;
         }
     }
 
     /// @dev The simulation's stand-in for the wait between two stages: the
-    ///      clock steps past {_stepWaitSec} and into a later block, so
-    ///      whatever the last step posted is fillable and whatever it opened
-    ///      may move. A broadcast cannot wait between its own transactions,
-    ///      so under `--broadcast` this refuses, before anything is sent.
+    ///      clock steps past {_waitAfterStep} and into a later block, so
+    ///      whatever the last step posted is fillable, whatever it opened
+    ///      may move and whatever it said to wait for has passed. A broadcast
+    ///      cannot wait between its own transactions, so under `--broadcast`
+    ///      this refuses, before anything is sent.
     function _waitBetweenSteps() private {
-        uint256 readyAt = block.timestamp + _stepWaitSec();
+        uint256 readyAt = block.timestamp + _waitAfterStep();
         if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) revert StepWaitNeedsStagedRun(readyAt);
         vm.warp(readyAt);
         vm.roll(block.number + 1);
+    }
+
+    /// @dev The wait after the step that just ran, in seconds from now: the
+    ///      ordinary wait between steps, or longer when the step said so
+    ///      ({_nextStepNotBefore}).
+    function _waitAfterStep() private view returns (uint256 wait) {
+        wait = _stepWaitSec();
+        if (_notBefore > block.timestamp && _notBefore - block.timestamp > wait) {
+            wait = _notBefore - block.timestamp;
+        }
     }
 
     // ─── Staged run ───────────────────────────────────────────────────────
@@ -191,8 +284,10 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
             require(!vm.parseJsonBool(json, ".finished"), string.concat(
                 moduleName(), ": every scenario in ", path, " has run its last step; run finish()"
             ));
-            _requireLanded(json, "stage");
             _loadProgress(json, list.length);
+            _requireLanded(json, "stage");
+            uint256 readyAt = vm.parseJsonUint(json, ".readyAt");
+            if (block.timestamp < readyAt) revert StageNotReady(readyAt, block.timestamp);
             // Every stage after the first takes at least the waiting
             // scenario's next step, so a run needs no more stages than this.
             require(stageNo <= _maxStages(list.length), string.concat(
@@ -225,10 +320,14 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         require(vm.parseJsonBool(json, ".finished"), string.concat(
             moduleName(), ": a scenario in ", path, " still has a step to run; run stage() again first"
         ));
-        _requireLanded(json, "finish");
-
         Scenario[] memory list = scenarios();
         _loadProgress(json, list.length);
+        _requireLanded(json, "finish");
+        string memory changed = _stillChanged();
+        require(bytes(changed).length == 0, string.concat(
+            moduleName(), ": the chain still shows a setting this run changed (", changed,
+            "). Run unwind() with --broadcast to put it back, then finish() again"
+        ));
         for (uint256 i = 0; i < list.length; i++) {
             if (!_selected[i]) continue;
             string memory tag = string.concat("[", list[i].id, "] ");
@@ -245,6 +344,44 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
             vm.toString(skipped), " skipped ==="));
         vm.removeFile(path);
         console.log("Every stage landed; record removed:", path);
+    }
+
+    /// @notice Puts back every setting the recorded run changed that the
+    ///         chain still shows changed, for a run that will not be carried
+    ///         on (a stage refused, or the operator stops it). Run it with
+    ///         `--broadcast`. It reads the chain, not the record's progress,
+    ///         so it is safe to run again; it keeps the record, and once its
+    ///         broadcast has landed the record can be removed for a fresh run.
+    function unwind() external {
+        string memory path = Deployments.namedPath(_recordFile());
+        require(vm.exists(path), string.concat(moduleName(), ": no staged run is recorded at ", path));
+        string memory json = vm.readFile(path);
+        _beginModule("unwind");
+        _checkRecord(json);
+        _loadProgress(json, scenarios().length);
+        uint256 restored;
+        for (uint256 i = 0; i < _restoreNames.length; i++) {
+            string memory name = _restoreNames[i];
+            uint256 value = _restoreValue[keccak256(bytes(name))];
+            if (!_stillToRestore(name, value)) continue;
+            _restore(name, value);
+            console.log(string.concat("Put back: ", name));
+            restored++;
+        }
+        console.log(restored == 0
+            ? "Nothing the record names is still changed on the chain."
+            : "Once this broadcast lands, the chain shows nothing the record names as changed.");
+        console.log("Remove the record for a fresh run:", path);
+    }
+
+    /// @dev The settings the record names that the chain still shows
+    ///      changed, as a list for a refusal; empty when none is.
+    function _stillChanged() private view returns (string memory list) {
+        for (uint256 i = 0; i < _restoreNames.length; i++) {
+            string memory name = _restoreNames[i];
+            if (!_stillToRestore(name, _restoreValue[keccak256(bytes(name))])) continue;
+            list = bytes(list).length == 0 ? name : string.concat(list, ", ", name);
+        }
     }
 
     /// @notice Logs where this module's staged-run record lives on the
@@ -264,6 +401,7 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
             vm.toString(_stepCount(index)), ")"));
         if (step == 0) console.log(string.concat(tag, "  flows: ", sc.flows));
         _current = index;
+        _notBefore = 0;
         _runStep(index, step);
         string memory reason = _takeSkipReason();
         if (bytes(reason).length != 0) {
@@ -275,7 +413,8 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
             console.log(string.concat(tag, "PASS"));
             return true;
         }
-        console.log(string.concat(tag, "waits for its terms to age; it continues in the next stage"));
+        console.log(string.concat(tag, "waits ", vm.toString(_waitAfterStep()),
+            "s for its next step; it continues in the next stage"));
         return false;
     }
 
@@ -315,8 +454,18 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         vm.serializeAddress(k, "diamond", diamond);
         vm.serializeString(k, "only", _only);
         vm.serializeUint(k, "stage", stageNo);
-        vm.serializeUint(k, "waitSec", _stepWaitSec());
+        // The wait before the next stage, and the earliest time it may run
+        // as this stage's simulation saw the clock. The broadcast lands
+        // after the simulation, so once it has landed `run-staged.sh` moves
+        // `readyAt` to `waitSec` past the landed block; the next stage
+        // refuses to run before it ({StageNotReady}).
+        uint256 waitSec = _waitAfterStep();
+        vm.serializeUint(k, "waitSec", waitSec);
+        vm.serializeUint(k, "readyAt", block.timestamp + waitSec);
         vm.serializeUint(k, "maxStages", _maxStages(count));
+        for (uint256 r = 0; r < _restoreNames.length; r++) {
+            vm.serializeUint(k, string.concat("restore_", _restoreNames[r]), _restoreValue[keccak256(bytes(_restoreNames[r]))]);
+        }
 
         bool finished = true;
         for (uint256 i = 0; i < count; i++) {
@@ -341,8 +490,8 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         console.log("Staged-run record written:", path);
         console.log(finished
             ? "Every scenario has run its last step: run finish() (no --broadcast) once this broadcast lands."
-            : "Run stage() again once this broadcast lands and the wait between steps has passed (seconds):");
-        if (!finished) console.log("  wait between steps (s):", _stepWaitSec());
+            : "Run stage() again once this broadcast lands and this wait has passed (seconds):");
+        if (!finished) console.log("  wait before the next stage (s):", waitSec);
     }
 
     /// @dev Refuses a record written for another module, chain, Diamond or
@@ -449,7 +598,10 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     }
 
     function _freshRunRemedy() private view returns (string memory) {
-        return string.concat("Remove ", Deployments.namedPath(_recordFile()), " and start a fresh run");
+        string memory removal = string.concat("remove ", Deployments.namedPath(_recordFile()), " and start a fresh run");
+        if (bytes(_stillChanged()).length == 0) return string.concat("To start over, ", removal);
+        return string.concat("To start over, run unwind() with --broadcast to put back the settings this run",
+            " changed, then ", removal);
     }
 
     function _loadProgress(string memory json, uint256 count) private {
@@ -464,19 +616,23 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         string[] memory keys = vm.parseJsonKeys(json, "$");
         for (uint256 j = 0; j < keys.length; j++) {
             bytes memory kb = bytes(keys[j]);
-            if (kb.length <= 5 || bytes5(kb) != bytes5("kept_")) continue;
-            string memory key = _after5(keys[j]);
-            bytes32 h = keccak256(bytes(key));
-            _keptKnown[h] = true;
-            _keptKeys.push(key);
-            _keptValue[h] = vm.parseJsonUint(json, string.concat(".", keys[j]));
+            if (kb.length > 5 && bytes5(kb) == bytes5("kept_")) {
+                string memory key = _after(keys[j], 5);
+                bytes32 h = keccak256(bytes(key));
+                _keptKnown[h] = true;
+                _keptKeys.push(key);
+                _keptValue[h] = vm.parseJsonUint(json, string.concat(".", keys[j]));
+            } else if (kb.length > 8 && bytes8(kb) == bytes8("restore_")) {
+                _toRestore(_after(keys[j], 8), vm.parseJsonUint(json, string.concat(".", keys[j])));
+            }
         }
     }
 
-    function _after5(string memory s) private pure returns (string memory out) {
+    /// @dev `s` without its first `n` bytes.
+    function _after(string memory s, uint256 n) private pure returns (string memory out) {
         bytes memory b = bytes(s);
-        bytes memory r = new bytes(b.length - 5);
-        for (uint256 i = 5; i < b.length; i++) r[i - 5] = b[i];
+        bytes memory r = new bytes(b.length - n);
+        for (uint256 i = n; i < b.length; i++) r[i - n] = b[i];
         out = string(r);
     }
 
