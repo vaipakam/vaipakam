@@ -85,6 +85,8 @@ import OfferPriceGuardFacetABI from './OfferPriceGuardFacet.json';
 import SignedOfferMatchFacetABI from './SignedOfferMatchFacet.json';
 import LoanClockFacetABI from './LoanClockFacet.json';
 import MarketLedgerFacetABI from './MarketLedgerFacet.json';
+import InstantMarketFacetABI from './InstantMarketFacet.json';
+import InstantFillFacetABI from './InstantFillFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -277,6 +279,8 @@ export {
   SignedOfferMatchFacetABI,
   LoanClockFacetABI,
   MarketLedgerFacetABI,
+  InstantMarketFacetABI,
+  InstantFillFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

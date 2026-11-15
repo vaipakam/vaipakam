@@ -116,13 +116,12 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // == its `collateralAmountMax`). See `executeMatch`'s borrowerCollFloor
         // doc + the #616 P1 rationale. Signed-LENDER: 0 (the on-chain borrower
         // counterparty governs its own collateral).
-        loanId = signedIsLender
-            ? LibOfferMatchExecute.executeMatch(sliceOfferId, counterpartyOfferId, 0)
-            : LibOfferMatchExecute.executeMatch(
-                counterpartyOfferId,
-                sliceOfferId,
-                s.offers[sliceOfferId].collateralAmount
-            );
+        // One call site: the match core is inlined once into this facet.
+        loanId = LibOfferMatchExecute.executeMatch(
+            signedIsLender ? sliceOfferId : counterpartyOfferId,
+            signedIsLender ? counterpartyOfferId : sliceOfferId,
+            signedIsLender ? 0 : s.offers[sliceOfferId].collateralAmount
+        );
         // #1219 — one fill, charged after the match (a refused charge reverts the
         // fill whole) to the actor the route names for the matcher.
         LibServiceCapacity.chargeSolver();

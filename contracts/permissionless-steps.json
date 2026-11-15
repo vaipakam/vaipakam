@@ -133,6 +133,14 @@
       "class": "user",
       "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves and every slot write rolls its own asset and pair"
     },
+    "InstantMarketFacet.borrowInstant(struct:InstantMarketFacet.InstantBorrowRequest,struct:InstantFillFacet.InstantSource[])": {
+      "class": "user",
+      "why": "the borrower's own instant borrow; it opens loans for the caller only"
+    },
+    "InstantMarketFacet.setInstantSlot(address,address,uint8,bool,bool,bool,bool,uint64)": {
+      "class": "user",
+      "why": "the slot owner's own instant-market consents"
+    },
     "LenderIntentFacet.rollIntentLoan(uint256)": {
       "class": "keeper",
       "pass": "matcher",

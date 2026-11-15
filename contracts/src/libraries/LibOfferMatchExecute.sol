@@ -163,6 +163,24 @@ library LibOfferMatchExecute {
         internal
         returns (uint256 loanId)
     {
+        return executeMatchFor(lenderOfferId, borrowerOfferId, borrowerCollFloor, msg.sender);
+    }
+
+    /// @notice {executeMatch} with the matcher named instead of taken from
+    ///         `msg.sender`. Instant market (#3656): a borrower's own instant
+    ///         borrow names no matcher (`address(0)`), so no match share is
+    ///         paid and the whole initiation fee goes to the treasury, as the
+    ///         design requires ("the borrower is never paid a share").
+    /// @param matcher The match-share recipient, or `address(0)` for none.
+    function executeMatchFor(
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId,
+        uint256 borrowerCollFloor,
+        address matcher
+    )
+        internal
+        returns (uint256 loanId)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // #595 — carry-over-aware matched refinance. A refinance-tagged BORROWER
@@ -354,7 +372,7 @@ library LibOfferMatchExecute {
         mo.rateBps = mr.matchRateBps;
         mo.collateralAmount = mr.reqCollateral;
         mo.counterparty = s.offers[lenderOfferId].creator;
-        mo.matcher = msg.sender;
+        mo.matcher = matcher;
         mo.active = true;
         // #1369 — the lender's Full-tariff authorization lives on THEIR offer,
         // which `acceptOfferInternal` never sees (it is handed the borrower
@@ -690,7 +708,7 @@ library LibOfferMatchExecute {
             lenderOfferId,
             borrowerOfferId,
             loanId,
-            msg.sender,
+            matcher,
             mr.matchAmount,
             mr.matchRateBps,
             lenderRemaining,
@@ -703,7 +721,7 @@ library LibOfferMatchExecute {
             // hold-tier discount into this facet inlines the discount resolver
             // and pushes OfferMatchFacet past the EIP-170 runtime-size limit,
             // and this is a convenience estimate, not the authoritative amount.
-            (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
+            matcher == address(0) ? 0 : (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
                 * LibVaipakam.cfgLifMatcherFeeBps())
                 / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS),
             borrowerEffFilled,

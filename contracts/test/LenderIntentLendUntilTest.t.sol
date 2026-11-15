@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -170,7 +171,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(solver);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchIntentFacet.LenderIntentPastLendUntil.selector,
+                LibIntentFill.LenderIntentPastLendUntil.selector,
                 vm.getBlockTimestamp() + uint256(duration) * 1 days,
                 uint256(lendUntil)
             )
@@ -393,7 +394,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         LibOfferMatch.IntentPreviewResult memory r = _preview(cpProRata, PRINCIPAL);
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.FullTermRequired), "off: refused");
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentFullTermRequired.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpProRata, PRINCIPAL);
 
         _setIntent(0, true);
@@ -444,7 +445,7 @@ contract LenderIntentLendUntilTest is SetupTest {
             "off, full-term partial"
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentPartialRepayNotAllowed.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpFullPartial, PRINCIPAL);
         assertEq(
             uint8(_preview(cpProRataPartial, PRINCIPAL).intentError),
@@ -452,7 +453,7 @@ contract LenderIntentLendUntilTest is SetupTest {
             "off, pro-rata partial"
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentFullTermRequired.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpProRataPartial, PRINCIPAL);
 
         _setIntent(0, true);
@@ -462,7 +463,7 @@ contract LenderIntentLendUntilTest is SetupTest {
             "on, full-term partial"
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentPartialRepayNotAllowed.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpFullPartial, PRINCIPAL);
     }
 

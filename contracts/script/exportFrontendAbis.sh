@@ -311,6 +311,9 @@ FACETS=(
   # The loan clock's disclosure, split off LoanFacet (#3410).
   "LoanClockFacet"
   "MarketLedgerFacet"
+  # The instant market (#3656): the borrower entry and one fill.
+  "InstantMarketFacet"
+  "InstantFillFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

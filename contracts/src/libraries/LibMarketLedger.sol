@@ -172,9 +172,9 @@ library LibMarketLedger {
         rec.amount = amount;
     }
 
-    /// @dev The loan was opened by an Auto-lend slot fill. Called once, where
-    ///      the fill records the loan's intent origin; its current
-    ///      contribution moves into the slot figure as well.
+    /// @dev The loan now has an Auto-lend slot origin: a slot fill opened it,
+    ///      or a takeover moved it into a slot. Called where the origin is
+    ///      recorded; its current contribution moves into the slot figure.
     function markFromSlot(LibVaipakam.Storage storage s, LibVaipakam.Loan storage loan) internal {
         LibVaipakam.LentRecord storage rec = s.loanLentRecord[loan.id];
         if (rec.fromSlot) return;
@@ -185,6 +185,33 @@ library LibMarketLedger {
         s.lentByPair[loan.principalAsset][loan.collateralAsset].fromSlots += amount;
     }
 
+    /// @dev The loan no longer has an Auto-lend slot origin (a sale took it
+    ///      out of the slot). The slot figure follows the loan's current slot
+    ///      origin, so a later takeover into a slot ({markFromSlot}) brings it
+    ///      back in and "how full" stays true (#3656 design refinement).
+    function unmarkFromSlot(LibVaipakam.Storage storage s, LibVaipakam.Loan storage loan) internal {
+        LibVaipakam.LentRecord storage rec = s.loanLentRecord[loan.id];
+        if (!rec.fromSlot) return;
+        rec.fromSlot = false;
+        uint256 amount = rec.amount;
+        if (amount == 0) return;
+        s.lentByAsset[loan.principalAsset].fromSlots -= amount;
+        s.lentByPair[loan.principalAsset][loan.collateralAsset].fromSlots -= amount;
+    }
+
+    /// @dev The loan was opened through the instant market (#3656). Called
+    ///      once, at opening; its current contribution moves into the instant
+    ///      figure as well.
+    function markInstant(LibVaipakam.Storage storage s, LibVaipakam.Loan storage loan) internal {
+        LibVaipakam.LentRecord storage rec = s.loanLentRecord[loan.id];
+        if (rec.instant) return;
+        rec.instant = true;
+        uint256 amount = rec.amount;
+        if (amount == 0) return;
+        s.lentByAsset[loan.principalAsset].instant += amount;
+        s.lentByPair[loan.principalAsset][loan.collateralAsset].instant += amount;
+    }
+
     function _moveLent(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
@@ -193,12 +220,16 @@ library LibMarketLedger {
         uint256 to
     ) private {
         bool fromSlot = rec.fromSlot;
-        _shift(s.lentByAsset[loan.principalAsset], from, to, fromSlot);
-        _shift(s.lentByPair[loan.principalAsset][loan.collateralAsset], from, to, fromSlot);
+        bool instant = rec.instant;
+        _shift(s.lentByAsset[loan.principalAsset], from, to, fromSlot, instant);
+        _shift(s.lentByPair[loan.principalAsset][loan.collateralAsset], from, to, fromSlot, instant);
     }
 
-    function _shift(LibVaipakam.LentTotals storage t, uint256 from, uint256 to, bool fromSlot) private {
+    function _shift(LibVaipakam.LentTotals storage t, uint256 from, uint256 to, bool fromSlot, bool instant)
+        private
+    {
         t.all = t.all - from + to;
         if (fromSlot) t.fromSlots = t.fromSlots - from + to;
+        if (instant) t.instant = t.instant - from + to;
     }
 }

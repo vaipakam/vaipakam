@@ -242,6 +242,10 @@ export interface DeploymentFacets {
   loanClockFacet?: HexAddress;
   /** Instant market §8 — the common ledger. */
   marketLedgerFacet?: HexAddress;
+  /** #3656 — the instant market: borrower entry, settings and slot consents. */
+  instantMarketFacet?: HexAddress;
+  /** #3656 — one instant-borrow fill (Diamond-internal). */
+  instantFillFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

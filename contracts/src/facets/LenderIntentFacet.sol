@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
+import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -351,6 +352,9 @@ contract LenderIntentFacet is
         // so a replacement intent never inherits the old one and never spends the
         // owner's paid credits without a fresh opt-in ({setLenderIntentPriority}).
         LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
+        // Instant market (#3656) — the slot's instant-market consents were given
+        // for its previous terms; new terms need them given again.
+        delete s.instantSlot[msg.sender][lendingAsset][collateralAsset][slot];
 
         emit LenderIntentSet(
             msg.sender,
@@ -698,6 +702,8 @@ contract LenderIntentFacet is
         s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset][io.slot] =
             io.amount <= live ? live - io.amount : 0;
         delete s.intentOrigin[loanId];
+        // Instant market §8 — the loan leaves the slot figure with its origin.
+        LibMarketLedger.unmarkFromSlot(s, s.loans[loanId]);
         // #625 WI-2c — de-register from the roll-discovery set (the proceeds were
         // claimed/withdrawn through the normal path, not auto-rolled).
         LibVaipakam.removeIntentLoan(loanId);

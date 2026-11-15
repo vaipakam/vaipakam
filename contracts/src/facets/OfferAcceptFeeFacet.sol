@@ -152,7 +152,12 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         );
 
         if (initiationFee > 0) {
-            uint256 matcherCut = LibOfferMatch.matcherShareOf(initiationFee);
+            // Instant market (#3656) — a match that names no matcher (the
+            // borrower's own instant borrow) pays no match share: the whole
+            // fee goes to the treasury.
+            uint256 matcherCut = s.matchOverride.active && s.matchOverride.matcher == address(0)
+                ? 0
+                : LibOfferMatch.matcherShareOf(initiationFee);
             uint256 treasuryCut = initiationFee - matcherCut;
             // #2440 — the treasury accrues what reached it.
             LibFacet.vaultFeeToTreasury(lender, lendingAsset, treasuryCut);

@@ -1559,13 +1559,39 @@ library LibVaipakam {
     struct LentTotals {
         uint256 all;
         uint256 fromSlots;
+        /// @dev The part opened through the instant market (#3656).
+        uint256 instant;
     }
 
-    /// @dev What one loan last added to Lent, and whether a slot opened it
-    ///      (fixed at opening).
+    /// @dev What one loan last added to Lent, whether an Auto-lend slot holds
+    ///      it now, and whether the instant market opened it (fixed at
+    ///      opening).
     struct LentRecord {
         uint256 amount;
         bool fromSlot;
+        bool instant;
+    }
+
+    /// @dev Instant market (#3656, design §3) — one Auto-lend slot's three
+    ///      standing consents, set by its owner after the slot's terms and
+    ///      cleared whenever the slot's terms are set again. `fills`: a
+    ///      borrower's instant borrow may fill it at its minimum rate.
+    ///      `renewal`: its instant-market loans may renew in place.
+    ///      `takeover`: it may take over another lender's instant-market loan
+    ///      at face value. `setAt`: when they were set; a borrower fill waits
+    ///      the same minimum age as the slot's terms (#3443).
+    struct InstantSlot {
+        bool fills;
+        bool renewal;
+        bool takeover;
+        uint64 setAt;
+    }
+
+    /// @dev Instant market (#3656) — the master switch (off by default) and
+    ///      the most fills one instant borrow opens (0 = the default, 8).
+    struct InstantMarketConfig {
+        bool enabled;
+        uint8 maxFills;
     }
 
     struct LenderIntent {
@@ -8460,6 +8486,17 @@ library LibVaipakam {
         /// @dev Per loan, what it last added to Lent and whether a slot
         ///      opened it. Written only by `LibMarketLedger`.
         mapping(uint256 => LentRecord) loanLentRecord;
+        /// @dev Instant market (#3656) — each Auto-lend slot's instant-market
+        ///      consents, keyed like `lenderIntent`. Appended — append-only.
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => InstantSlot)))) instantSlot;
+        /// @dev Instant market (#3656) — the master switch and fill bound.
+        InstantMarketConfig instantCfg;
+        /// @dev The last instant-borrow group id issued (ids start at 1).
+        uint256 lastInstantGroupId;
+        /// @dev Per loan, the instant-borrow group that opened it (0 = none).
+        ///      A label only: each loan keeps its own collateral, health
+        ///      factor and liquidation.
+        mapping(uint256 => uint256) instantGroupOf;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

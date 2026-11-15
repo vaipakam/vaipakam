@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -335,7 +336,7 @@ contract LenderIntentMatchTest is SetupTest {
 
         // Second fill: live (1000) + 1000 > cap (1500) → revert.
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentExposureExceeded.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentExposureExceeded.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp2, PRINCIPAL
         );
@@ -350,7 +351,7 @@ contract LenderIntentMatchTest is SetupTest {
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentInactive.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentInactive.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -362,7 +363,7 @@ contract LenderIntentMatchTest is SetupTest {
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFillBelowMin.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentFillBelowMin.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, MIN_FILL / 2
         );
@@ -406,7 +407,7 @@ contract LenderIntentMatchTest is SetupTest {
             type(uint64).max
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentDurationTooLong.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentDurationTooLong.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -451,7 +452,7 @@ contract LenderIntentMatchTest is SetupTest {
             type(uint64).max
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentFullTermRequired.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -496,7 +497,7 @@ contract LenderIntentMatchTest is SetupTest {
             type(uint64).max
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentPartialRepayNotAllowed.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -1157,7 +1158,7 @@ contract LenderIntentMatchTest is SetupTest {
             uint8(LibOfferMatch.IntentError.BelowMinFill)
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFillBelowMin.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentFillBelowMin.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, tiny
         );
@@ -1201,7 +1202,7 @@ contract LenderIntentMatchTest is SetupTest {
             uint8(LibOfferMatch.IntentError.ExposureExceeded)
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentExposureExceeded.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentExposureExceeded.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, 600 ether
         );
@@ -1256,7 +1257,7 @@ contract LenderIntentMatchTest is SetupTest {
             uint8(LibOfferMatch.IntentError.DurationTooLong)
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentDurationTooLong.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentDurationTooLong.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -1277,7 +1278,7 @@ contract LenderIntentMatchTest is SetupTest {
             uint8(LibOfferMatch.IntentError.FullTermRequired)
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentFullTermRequired.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -1325,7 +1326,7 @@ contract LenderIntentMatchTest is SetupTest {
             uint8(LibOfferMatch.IntentError.PartialRepayNotAllowed)
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentPartialRepayNotAllowed.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
@@ -1343,7 +1344,7 @@ contract LenderIntentMatchTest is SetupTest {
             uint8(LibOfferMatch.IntentError.Inactive)
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentInactive.selector);
+        vm.expectRevert(LibIntentFill.LenderIntentInactive.selector);
         OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );

@@ -74,29 +74,32 @@ contract MarketLedgerFacet {
     ///         route.
     /// @return lentFromSlots The part of `lent` opened by Auto-lend slot
     ///         fills; with `declared`, how full the market is.
+    /// @return lentInstant The part of `lent` opened through the instant
+    ///         market (#3656), fixed when each loan opens.
     function getMarketLedger(address lendingAsset)
         external
         view
-        returns (uint256 declared, uint256 lent, uint256 lentFromSlots)
+        returns (uint256 declared, uint256 lent, uint256 lentFromSlots, uint256 lentInstant)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.LentTotals storage t = s.lentByAsset[lendingAsset];
-        return (LibMarketLedger.declaredOf(s.declaredByAsset[lendingAsset]), t.all, t.fromSlots);
+        return (LibMarketLedger.declaredOf(s.declaredByAsset[lendingAsset]), t.all, t.fromSlots, t.instant);
     }
 
-    /// @notice The same three figures for one (lending asset, collateral
+    /// @notice The same four figures for one (lending asset, collateral
     ///         asset) pair. See {getMarketLedger}.
     function getPairLedger(address lendingAsset, address collateralAsset)
         external
         view
-        returns (uint256 declared, uint256 lent, uint256 lentFromSlots)
+        returns (uint256 declared, uint256 lent, uint256 lentFromSlots, uint256 lentInstant)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.LentTotals storage t = s.lentByPair[lendingAsset][collateralAsset];
         return (
             LibMarketLedger.declaredOf(s.declaredByPair[lendingAsset][collateralAsset]),
             t.all,
-            t.fromSlots
+            t.fromSlots,
+            t.instant
         );
     }
 }

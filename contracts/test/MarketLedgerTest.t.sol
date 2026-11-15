@@ -120,15 +120,15 @@ abstract contract MarketLedgerBase is SetupTest {
     }
 
     function _asset() internal view returns (uint256 declared, uint256 lent) {
-        (declared, lent, ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        (declared, lent, , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
     }
 
     function _pair(address coll) internal view returns (uint256 declared, uint256 lent) {
-        (declared, lent, ) = MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, coll);
+        (declared, lent, , ) = MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, coll);
     }
 
     function _fromSlots() internal view returns (uint256 f) {
-        (, , f) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        (, , f, ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
     }
 
     function _setUntil(uint8 slot, uint256 maxExposure, uint64 lendUntil) internal {

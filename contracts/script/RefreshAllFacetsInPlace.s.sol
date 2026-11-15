@@ -90,6 +90,8 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
+import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
+import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -324,7 +326,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // Replace cut repoints it); `getSequencerOutageWindow` is new (an Add).
     // 118 -> 119: MarketLedgerFacet (instant market §8) - the common ledger's
     // totals and the Declared host; every selector is new (an Add).
-    uint256 public constant EXPECTED_FACETS = 119;
+    // 119 -> 121: InstantMarketFacet + InstantFillFacet (#3656) - the instant
+    // borrow and its one-fill executor; every selector is new (an Add).
+    uint256 public constant EXPECTED_FACETS = 121;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1376,6 +1380,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[117] = Item("loanClockFacet", ArtifactDeploy.deploy(type(LoanClockFacet).name), _getLoanClockSelectors());
         items[118] = Item(
             "marketLedgerFacet", ArtifactDeploy.deploy(type(MarketLedgerFacet).name), _getMarketLedgerSelectors()
+        );
+        items[119] = Item(
+            "instantMarketFacet", ArtifactDeploy.deploy(type(InstantMarketFacet).name), _getInstantMarketSelectors()
+        );
+        items[120] = Item(
+            "instantFillFacet", ArtifactDeploy.deploy(type(InstantFillFacet).name), _getInstantFillSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

@@ -53,6 +53,8 @@
     "SignedOfferMatchFacet",
     "LoanClockFacet",
     "MarketLedgerFacet",
+    "InstantMarketFacet",
+    "InstantFillFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

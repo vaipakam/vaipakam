@@ -118,6 +118,8 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
+import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
+import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -985,6 +987,24 @@ contract HelperTest {
         selectors[1] = MarketLedgerFacet.getPairLedger.selector;
         selectors[2] = MarketLedgerFacet.rollDeclaredLedger.selector;
         selectors[3] = MarketLedgerFacet.syncDeclared.selector;
+    }
+
+    /// @dev #3656 — mirrors `DeployDiamond._getInstantMarketSelectors`.
+    function getInstantMarketFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](7);
+        selectors[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
+        selectors[1] = InstantMarketFacet.setInstantMaxFills.selector;
+        selectors[2] = InstantMarketFacet.getInstantMarketConfig.selector;
+        selectors[3] = InstantMarketFacet.setInstantSlot.selector;
+        selectors[4] = InstantMarketFacet.getInstantSlot.selector;
+        selectors[5] = InstantMarketFacet.borrowInstant.selector;
+        selectors[6] = InstantMarketFacet.getInstantGroup.selector;
+    }
+
+    /// @dev #3656 — mirrors `DeployDiamond._getInstantFillSelectors`.
+    function getInstantFillFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = InstantFillFacet.fillInstant.selector;
     }
 
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {

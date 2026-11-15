@@ -50,6 +50,8 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
+import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
+import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -434,6 +436,8 @@ contract SetupTest is Test {
     SignedOfferMatchFacet signedOfferMatchFacet;
     LoanClockFacet loanClockFacet;
     MarketLedgerFacet marketLedgerFacet;
+    InstantMarketFacet instantMarketFacet;
+    InstantFillFacet instantFillFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -615,6 +619,8 @@ contract SetupTest is Test {
         signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
         marketLedgerFacet = MarketLedgerFacet(ArtifactDeploy.deploy(type(MarketLedgerFacet).name));
+        instantMarketFacet = InstantMarketFacet(ArtifactDeploy.deploy(type(InstantMarketFacet).name));
+        instantFillFacet = InstantFillFacet(ArtifactDeploy.deploy(type(InstantFillFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -652,7 +658,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](120);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1171,6 +1177,17 @@ contract SetupTest is Test {
             facetAddress: address(marketLedgerFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getMarketLedgerFacetSelectors()
+        });
+        // #3656 — the instant market and its one-fill executor.
+        cuts[120] = IDiamondCut.FacetCut({
+            facetAddress: address(instantMarketFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInstantMarketFacetSelectors()
+        });
+        cuts[121] = IDiamondCut.FacetCut({
+            facetAddress: address(instantFillFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInstantFillFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
