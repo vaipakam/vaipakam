@@ -321,13 +321,18 @@ library LibProtectedAccount {
     }
 
     /// @notice Whether releasing queued row `p` CANCELS it instead of paying:
-    ///         its destination is no longer allowed (an allowlist removal, a
-    ///         replacement). The release checks this first, before the time,
+    ///         a lock was taken after it was queued, or its destination is no
+    ///         longer allowed (an allowlist removal, a replacement). The release checks this first, before the time,
     ///         the lock or the co-signature, and the payout views read the same
     ///         rule (Codex #3489 r3), so a row the release would cancel is
     ///         never reported as waiting on a co-signature.
     function releaseCancels(LibVaipakam.PendingPayout storage p) internal view returns (bool) {
-        return p.state == ROW_QUEUED && !isAllowed(p.user, p.recipient);
+        if (p.state != ROW_QUEUED) return false;
+        // Codex #3489 r8 — a lock taken after the row was queued cancels it,
+        // whether or not the platform has applied that lock yet: an unlock
+        // never revives a payout the lock was meant to stop.
+        if (p.lockGen < core(p.user).lockCount) return true;
+        return !isAllowed(p.user, p.recipient);
     }
 
     /// @notice The ONE co-sign rule for a payout from `account` to
@@ -555,7 +560,8 @@ library LibProtectedAccount {
             recipient: recipient,
             tokenId: tokenId,
             amount: amount,
-            delivered: 0
+            delivered: 0,
+            lockGen: c.lockCount
         });
         s.pendingPayoutIds[account].add(id);
         s.openPayoutIds.add(id);

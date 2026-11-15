@@ -270,6 +270,11 @@
             "name": "delivered",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "lockGen",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

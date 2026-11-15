@@ -8431,6 +8431,10 @@ library LibVaipakam {
         uint256 tokenId;
         uint256 amount;
         uint256 delivered;
+        /// @dev Codex #3489 r8 — the account vault's lock count when the row
+        ///      was queued. A later lock (applied or not) makes the row one
+        ///      the release cancels. Appended — a mapping value may grow.
+        uint64 lockGen;
     }
 
     /// @notice Protected account mode — a position-NFT transfer held back

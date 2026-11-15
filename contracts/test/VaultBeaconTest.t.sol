@@ -502,6 +502,24 @@ contract VaultBeaconTest is Test {
         assertEq(beacon.pinnedVersion(vaultA), 0, "the controller unpinned");
     }
 
+    /// Codex #3489 r8 — applyProtection compares the vault's delay with the
+    /// beacon's LIVE pin delay: one the owner lowered at the beacon on its own
+    /// is raised again, though the delay the platform last recorded is equal.
+    function test_applyRaisesAPinDelayLoweredAtTheBeacon() public {
+        _protectAlice();
+        uint256 raised = beacon.pinDelay(vaultA);
+        assertEq(raised, beacon.MAX_DIAMOND_PIN_DELAY(), "fixture: protected mode raised it (capped)");
+        // The owner lowers the beacon's pin delay on its own (waits the delay).
+        bytes memory sig = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
+        beacon.setPinDelay(vaultA, 0, sig);
+        vm.warp(block.timestamp + raised);
+        beacon.executePinDelay(vaultA);
+        assertEq(beacon.pinDelay(vaultA), 0, "fixture: lowered at the beacon");
+        // The platform's recorded delay is unchanged, yet applying raises it.
+        ProtectedAccountFacet(address(diamond)).applyProtection(alice);
+        assertEq(beacon.pinDelay(vaultA), raised, "raised again to the vault's delay");
+    }
+
     /// A facet calling the beacon directly with a valid owner signature can
     /// neither execute a pin before its time nor after a cancel, nor lower
     /// the pin delay before the current delay has passed.

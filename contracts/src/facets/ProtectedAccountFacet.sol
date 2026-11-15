@@ -110,10 +110,13 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             _voidCoreLockPending(account);
             changed = true;
         }
-        if (c.enabled && c.delay > a.delaySeconds) {
-            _raiseBeaconPinDelay(account, c.delay);
-            _raiseCoreLockDelay(account, c.delay);
-            changed = true;
+        // Codex #3489 r8 — compared with each endpoint's LIVE delay, not the
+        // last recorded figure: an endpoint lowered on its own (the beacon's
+        // pin delay, the PositionNFT lock delay) is raised again whenever the
+        // vault's delay is above it.
+        if (c.enabled) {
+            if (_raiseBeaconPinDelay(account, c.delay)) changed = true;
+            if (_raiseCoreLockDelay(account, c.delay)) changed = true;
         }
         // Codex #3489 r1 — a HANDOVER is any move of the owner record to a
         // wallet not applied yet (a first replacement, or a later one from
@@ -351,13 +354,17 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         c.lockFor(account);
     }
 
-    function _raiseCoreLockDelay(address account, uint256 delaySeconds) private {
+    /// @dev Raise the PositionNFT lock delay to `delaySeconds` (capped) when
+    ///      the live delay is below it; true when it raised.
+    function _raiseCoreLockDelay(address account, uint256 delaySeconds) private returns (bool) {
         IPositionNFTCore c = _positionCore();
-        if (address(c) == address(0)) return;
+        if (address(c) == address(0)) return false;
         uint256 cap = c.MAX_DIAMOND_LOCK_DELAY();
         uint256 d = delaySeconds > cap ? cap : delaySeconds;
         (, uint256 current,,,) = c.lockOf(account);
-        if (d > current) c.raiseLockDelay(account, d);
+        if (d <= current) return false;
+        c.raiseLockDelay(account, d);
+        return true;
     }
 
     function _beaconAndVault(address account) private view returns (VaultBeacon beacon, address vault) {
@@ -381,11 +388,16 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         return true;
     }
 
-    function _raiseBeaconPinDelay(address account, uint256 delaySeconds) private {
+    /// @dev Raise the beacon's pin delay for `account`'s vault to
+    ///      `delaySeconds` (capped) when the live delay is below it; true
+    ///      when it raised.
+    function _raiseBeaconPinDelay(address account, uint256 delaySeconds) private returns (bool) {
         (VaultBeacon beacon, address vault) = _beaconAndVault(account);
-        if (vault == address(0) || address(beacon) == address(0)) return;
+        if (vault == address(0) || address(beacon) == address(0)) return false;
         uint256 cap = beacon.MAX_DIAMOND_PIN_DELAY();
         uint256 d = delaySeconds > cap ? cap : delaySeconds;
-        if (d > beacon.pinDelay(vault)) beacon.raisePinDelay(vault, d);
+        if (d <= beacon.pinDelay(vault)) return false;
+        beacon.raisePinDelay(vault, d);
+        return true;
     }
 }

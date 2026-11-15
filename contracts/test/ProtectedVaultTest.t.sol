@@ -1477,6 +1477,35 @@ contract ProtectedVaultTest is Test {
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
     }
 
+    /// @dev Codex #3489 r8 — a lock cancels every row queued before it, even
+    ///      when nobody applies it: after the vault's unlock, a pre-lock row
+    ///      is cancelled by its release, never paid.
+    function testAnUnappliedLockStillCancelsEarlierRows() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        // Lock and unlock through the vault only; the platform never applies.
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        (, bool locked,,,,,) = v.protectionState();
+        assertFalse(locked, "fixture: unlocked in the vault");
+        assertFalse(_pay().payoutNeedsCosign(id), "a row the release cancels needs no co-sign");
+        uint256 before = token.balanceOf(user);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(user), before, "nothing paid");
+        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled by the release");
+        // A row queued after the unlock is paid normally.
+        uint256 id2 = _queue(1 ether, user);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id2);
+        assertEq(token.balanceOf(user) - before, 1 ether, "a post-unlock row pays");
+    }
+
     /// @dev Codex #3489 r7 — neither of the account's own wallets may become
     ///      its signer: after a replacement the original wallet cannot be
     ///      nominated, and a nomination made before it became an account
