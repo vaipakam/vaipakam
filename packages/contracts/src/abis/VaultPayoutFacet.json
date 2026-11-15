@@ -275,6 +275,11 @@
             "name": "lockGen",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "destGen",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

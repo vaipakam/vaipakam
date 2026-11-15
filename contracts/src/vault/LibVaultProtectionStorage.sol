@@ -39,6 +39,10 @@ library LibVaultProtectionStorage {
         uint64 epoch;
         bool active;
         bool verified;
+        /// @dev Codex #3489 r11 — this finalization's generation (a fresh
+        ///      value from `allowGen` each time the entry becomes active).
+        ///      Appended — a mapping value may grow.
+        uint64 gen;
     }
 
     struct Layout {
@@ -84,6 +88,10 @@ library LibVaultProtectionStorage {
         ///      a lock taken after an unlock the Diamond never saw still
         ///      cancels the rows and changes queued since.
         uint64 lockCount;
+        /// @dev Codex #3489 r11 — the last destination generation handed out;
+        ///      every finalized allowlist addition takes the next one.
+        ///      Appended.
+        uint64 allowGen;
     }
 
     function layout() internal pure returns (Layout storage l) {

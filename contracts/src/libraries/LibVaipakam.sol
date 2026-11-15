@@ -8445,6 +8445,10 @@ library LibVaipakam {
         ///      was queued. A later lock (applied or not) makes the row one
         ///      the release cancels. Appended — a mapping value may grow.
         uint64 lockGen;
+        /// @dev Codex #3489 r11 — the generation of the destination's
+        ///      allowlist activation the row was queued for (0 for a payout to
+        ///      the manager). Appended — a mapping value may grow.
+        uint64 destGen;
     }
 
     /// @notice Protected account mode — a position-NFT transfer held back

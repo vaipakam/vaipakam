@@ -34,6 +34,7 @@ struct ProtectionEntry {
     uint64 epoch;
     bool active;
     bool verified;
+    uint64 gen;
 }
 
 /// @dev Mirrors `LibVaultProtectionStorage.Signer` (ABI-identical).
@@ -331,8 +332,15 @@ library LibProtectedAccount {
         // Codex #3489 r8 — a lock taken after the row was queued cancels it,
         // whether or not the platform has applied that lock yet: an unlock
         // never revives a payout the lock was meant to stop.
-        if (p.lockGen < core(p.user).lockCount) return true;
-        return !isAllowed(p.user, p.recipient);
+        Core memory c = core(p.user);
+        if (p.lockGen < c.lockCount) return true;
+        if (p.recipient == c.manager) return false;
+        // A destination is payable only in the activation the row was queued
+        // for: a removal kills its rows for good, and re-adding the address
+        // starts a new generation that never revives them (Codex #3489 r11).
+        if (c.vault == address(0) || c.retired) return true;
+        ProtectionEntry memory e = IVaultProtectionRead(c.vault).allowEntry(p.recipient);
+        return !e.active || e.gen != p.destGen;
     }
 
     /// @notice The ONE co-sign rule for a payout from `account` to
@@ -561,7 +569,8 @@ library LibProtectedAccount {
             tokenId: tokenId,
             amount: amount,
             delivered: 0,
-            lockGen: c.lockCount
+            lockGen: c.lockCount,
+            destGen: recipient == c.manager ? 0 : IVaultProtectionRead(c.vault).allowEntry(recipient).gen
         });
         s.pendingPayoutIds[account].add(id);
         s.openPayoutIds.add(id);

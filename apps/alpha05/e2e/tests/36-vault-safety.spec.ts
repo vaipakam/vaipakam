@@ -106,8 +106,9 @@ test('a lock cancels the queued payout, and the unlock is asked, waits the delay
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Your account is locked.');
   await expect(finish).toContainText('Queued payouts cancelled: 1.');
-  // #3379 B2: the vault's lock, then the Diamond applying it.
-  expect(flags.sentTransactions).toBe(sent + 2);
+  // #3489 r9: one transaction, the vault's lock, which applies the platform
+  // side (the queued payout cancelled) in the same transaction.
+  expect(flags.sentTransactions).toBe(sent + 1);
   expect(await sc.read<readonly bigint[]>('getPendingPayoutIds', [me])).toHaveLength(0);
   expect((await protectionMode(sc, me)).locked).toBe(true);
   await finish.getByRole('button', { name: 'Close' }).click();

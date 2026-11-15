@@ -222,6 +222,11 @@
             "name": "verified",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "gen",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

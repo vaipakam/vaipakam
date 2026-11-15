@@ -194,6 +194,10 @@ contract VaultProtection {
     /// @dev Codex #3489 r5 — a replaced account's protection is permanent.
     error RetiredAccount();
     error CannotCancelOwnRemoval(address signer);
+    /// @notice The best-effort platform application ran out of gas: the
+    ///         transaction was sent with too little gas for it, so it is
+    ///         refused rather than landing a lock without its platform side.
+    error PlatformApplyOutOfGas();
 
     constructor() {
         SELF = address(this);
@@ -365,6 +369,9 @@ contract VaultProtection {
         if (l.allowlist.length >= MAX_ALLOWLIST) revert TooMany();
         e.active = true;
         e.readyAt = 0;
+        // A fresh generation each time: a payout queued to an earlier
+        // activation of this address never pays this one (Codex #3489 r11).
+        e.gen = ++l.allowGen;
         _remove(l.pendingAllow[l.epoch], destination);
         l.allowlist.push(destination);
         emit AllowlistAdded(destination);
@@ -664,7 +671,17 @@ contract VaultProtection {
         if (strict) {
             diamondApply.applyProtection(account);
         } else {
-            try diamondApply.applyProtection(account) {} catch {}
+            // A failure is tolerated, but not one caused by the gas the
+            // transaction was given (#3489): under EIP-150 a gas limit just
+            // big enough for the lock starves the inner call while the lock
+            // still lands, and `eth_estimateGas` finds exactly that limit.
+            // Every refusal the application can raise carries an error
+            // (nothing changed, the guard held, a pause); running out of gas
+            // anywhere in it bubbles up with no data. So an empty failure
+            // reverts the lock, and the estimate funds the application.
+            try diamondApply.applyProtection(account) {} catch (bytes memory reason) {
+                if (reason.length == 0) revert PlatformApplyOutOfGas();
+            }
         }
     }
 

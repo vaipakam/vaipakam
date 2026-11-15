@@ -1567,6 +1567,11 @@
   },
   {
     "type": "error",
+    "name": "PlatformApplyOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RetiredAccount",
     "inputs": []
   },

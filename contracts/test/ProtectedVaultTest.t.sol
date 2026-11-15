@@ -1477,6 +1477,28 @@ contract ProtectedVaultTest is Test {
         assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
     }
 
+    /// @dev Codex #3489 r11 — removing a destination kills the payouts queued
+    ///      to it for good: re-adding the same address starts a new generation
+    ///      that never revives them.
+    function testReAddingADestinationNeverRevivesItsCancelledPayouts() public {
+        _deposit20(10 ether);
+        _enable();
+        P.allow(address(diamond), user, user, friend, DELAY);
+        uint256 old = _queue(1 ether, friend);
+        P.removeAllowed(address(diamond), user, user, friend);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        P.allow(address(diamond), user, user, friend, DELAY); // re-added and finalized
+        assertFalse(_pay().payoutNeedsCosign(old), "a row the release cancels needs no co-sign");
+        _pay().releasePayout(old);
+        assertEq(_pay().getPendingPayout(old).state, 3, "the old row is cancelled, not paid");
+        assertEq(token.balanceOf(friend), 0, "nothing reached the destination");
+        // A row queued to the new activation pays.
+        uint256 fresh = _queue(1 ether, friend);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(fresh);
+        assertEq(token.balanceOf(friend), 1 ether, "the new activation pays");
+    }
+
     /// @dev Codex #3489 r10 — a replacement finalized straight on the vault
     ///      holds the retired wallet's positions in the same transaction, with
     ///      no separate application: there is no window to move them.
@@ -1509,6 +1531,38 @@ contract ProtectedVaultTest is Test {
         (,, uint64 offAt) = _prot().getProtection(user);
         assertEq(offAt, 0, "the switch-off died with the lock");
         assertEq(_pay().getPendingPayout(id).state, 3, "the queued row was cancelled at once");
+    }
+
+    /// @dev #3489 (alpha05 e2e) — a lock sent with the least gas it succeeds
+    ///      with, which is what `eth_estimateGas` finds, still lands its
+    ///      platform side: a gas limit that would starve the best-effort
+    ///      application is refused instead of locking without it.
+    function testTheLeastGasALockSucceedsWithStillAppliesIt() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        bytes memory call = abi.encodeCall(v.protect, (abi.encodeCall(VaultProtection.lock, (P.direct(user)))));
+        uint256 lo = 50_000;
+        uint256 hi = 3_000_000;
+        uint256 snap = vm.snapshotState();
+        vm.prank(user);
+        (bool okHi,) = address(v).call{gas: hi}(call);
+        assertTrue(okHi, "fixture: the lock succeeds with ample gas");
+        vm.revertToState(snap);
+        while (hi - lo > 1) {
+            uint256 mid = (lo + hi) / 2;
+            snap = vm.snapshotState();
+            vm.prank(user);
+            (bool ok,) = address(v).call{gas: mid}(call);
+            vm.revertToState(snap);
+            if (ok) hi = mid;
+            else lo = mid;
+        }
+        vm.prank(user);
+        (bool okMin,) = address(v).call{gas: hi}(call);
+        assertTrue(okMin, "the least gas succeeds");
+        assertEq(_pay().getPendingPayout(id).state, 3, "and the platform side landed with it");
     }
 
     /// @dev Codex #3489 r9 — even when the lock's application fails, a co-sign
