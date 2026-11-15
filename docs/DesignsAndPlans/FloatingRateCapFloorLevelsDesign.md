@@ -34,13 +34,14 @@ A loan stores the level ids it signed and the value of each of its two cumulativ
 
 That is exactly `clamp(r, floor, cap) + margin` accrued over time, because floor is below cap. A cap and a floor combine by addition, so the update tracks each level once and never each pair.
 
-Cost: a level's cumulative changes only while the reference is beyond that level, so in ordinary conditions the update writes nothing extra. The worst case is one extra write per level on one side (caps and floors cannot both be exceeded in the same update).
+Cost: a level's cumulative changes only while the reference is beyond that level, so in ordinary conditions the update writes nothing extra. The worst case is one extra write per tracked level on one side, eight at most: the list rule in section 4 keeps every tracked floor level below every tracked cap level, so the reference cannot be above a cap and below a floor in the same update.
 
 While the quorum is in its "previous reference holds" state, levels accrue against the held value, as the index does.
 
 ## 4. The level list
 
 - Per lending asset and chain: at most **4 cap levels and 4 floor levels** open for new loans. Each is a rate in basis points with a permanent id.
+- **Every tracked floor level is below every tracked cap level** for the asset, retired-but-referenced levels included. Adding a level that would break this is refused. It bounds the update's cost (section 3) and makes the per-offer floor-below-cap rule hold for any pair a maker can choose.
 - Set through the same delayed configuration as the reference sources. A level's value is **immutable** once added: open loans signed it.
 - A level may be **retired**: no new offer may name it and **no new loan may open on it**; it keeps accruing while any open loan references it (a per-level count of open loans), and stops being tracked when that count reaches zero.
 - Retirement binds at loan creation, not only at offer creation. Every path that opens a floating loan (a match, a direct accept, a signed offer's fill, an Auto-lend fill, a refinance, an obligation handover) checks in the one shared origination step that the loan's cap and floor levels are open, and refuses by name otherwise. An offer posted before its level was retired therefore waits unfillable; its preview says the level was retired, the app tells its maker, and the maker changes the level or cancels. So only open levels can gain loans, and the tracked set stays within its bound whatever offers are outstanding. The total of open and retired-but-referenced levels per side is bounded (8); adding a level beyond that is refused until one is free.
@@ -72,7 +73,7 @@ While the quorum is in its "previous reference holds" state, levels accrue again
 | Loan record | The two level ids and their two cumulative snapshots, beside the index snapshot. |
 | `LibInterestLedger` floating accrual | The formula in section 3. |
 | Match core and previews | Level equality in the lifecycle-terms check; intent acceptance bounds; new error members appended. |
-| Level configuration | Add and retire, behind the Timelock delay. Each rate is range-checked against the protocol maximum; the floor-below-cap rule is checked per offer, not across the lists. |
+| Level configuration | Add and retire, behind the Timelock delay. Each rate is range-checked against the protocol maximum, and an addition must keep every tracked floor below every tracked cap. |
 | Views | The level list per asset with each level's state; a loan's effective rate now, its cap and floor as all-in rates. |
 
 Reaches a chain by fresh deploy, with the rest of #3337. Run the storage-layout guard's `write` and commit the golden file. Check facet sizes with the deploy-sanity suite; split along a seam, do not trim.
@@ -100,6 +101,7 @@ Reaches a chain by fresh deploy, with the rest of #3337. Run the storage-layout 
 10. Match refuses unequal levels; the previews report the same reason; an intent's acceptance bounds are enforced and the materialized slice copies the request's levels.
 11. Health factor and liquidation read the clamped effective rate.
 12. The "previous reference holds" state accrues levels against the held value.
+12a. Adding a floor at or above any tracked cap, or a cap at or below any tracked floor, is refused, including against a retired level that still has a loan. With every slot on both sides in use, one update writes at most eight level cumulatives.
 13. An index update writes no level cumulative while the reference is inside every level.
 
 ## 10. Alternatives considered
