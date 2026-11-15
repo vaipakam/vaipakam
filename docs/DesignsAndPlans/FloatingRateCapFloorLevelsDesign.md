@@ -42,7 +42,8 @@ While the quorum is in its "previous reference holds" state, levels accrue again
 
 - Per lending asset and chain: at most **4 cap levels and 4 floor levels** open for new loans. Each is a rate in basis points with a permanent id.
 - Set through the same delayed configuration as the reference sources. A level's value is **immutable** once added: open loans signed it.
-- A level may be **retired**: no new offer may name it; it keeps accruing while any open loan references it (a per-level count of open loans), and stops being tracked when that count reaches zero. The total of open and retired-but-referenced levels per side is bounded (8); adding a level beyond that is refused until one is free.
+- A level may be **retired**: no new offer may name it and **no new loan may open on it**; it keeps accruing while any open loan references it (a per-level count of open loans), and stops being tracked when that count reaches zero.
+- Retirement binds at loan creation, not only at offer creation. Every path that opens a floating loan (a match, a direct accept, a signed offer's fill, an Auto-lend fill, a refinance, an obligation handover) checks in the one shared origination step that the loan's cap and floor levels are open, and refuses by name otherwise. An offer posted before its level was retired therefore waits unfillable; its preview says the level was retired, the app tells its maker, and the maker changes the level or cancels. So only open levels can gain loans, and the tracked set stays within its bound whatever offers are outstanding. The total of open and retired-but-referenced levels per side is bounded (8); adding a level beyond that is refused until one is free.
 - A level added later starts its cumulative at zero at that moment; loans opened on it snapshot from there.
 - Proposed starting lists, for the owner to confirm at configuration time, not fixed here: caps at the reference's recent average plus roughly 3, 6 and 10 percentage points rounded to whole points; floors at 0.5, 1 and 2 percent. Levels are absolute rates, not offsets, so the lists are reviewed when the market moves a long way.
 
@@ -93,6 +94,7 @@ Reaches a chain by fresh deploy, with the rest of #3337. Run the storage-layout 
 5. Two loans on the same level opened at different times each accrue only from their own snapshot.
 6. Settlement on any touch (repay, partial repay, liquidation, sale, claim, roll) leaves the same total interest as one settlement at the end.
 7. Level retired with a loan open keeps accruing for that loan; a new offer naming it is refused; tracking stops when the last loan closes; the level limit is enforced.
+7a. An offer created before its level was retired cannot open a loan by any path (match, direct accept, signed-offer fill, Auto-lend fill, refinance, handover), and every preview reports the retired level. Repeating add, post offers, retire never leaves a loan on an untracked level and never exceeds the tracked bound.
 8. A level added later starts from zero and does not change any existing loan.
 9. Offer creation refuses floor not below cap, cap plus margin above the protocol maximum, an unknown or retired level, and levels on a fixed-rate offer.
 10. Match refuses unequal levels; the previews report the same reason; an intent's acceptance bounds are enforced and the materialized slice copies the request's levels.
