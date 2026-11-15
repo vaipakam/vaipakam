@@ -41,14 +41,18 @@ opened".
    the forced-sale plan, swap-to-repay, every collateral sale route and every
    collateral listing.
 3. A governance change makes a new set. New loans take it. Open loans do not.
-4. Three things can still reach an open loan, and nothing else:
-   - **Stop.** A source, an adapter or a marketplace can be stopped at once.
-     A stop removes; it never adds. This exists today (muting or removing a
-     secondary source, disabling an adapter) and stays as it is.
-   - **Announced replacement.** When a stop leaves a set unable to work, or a
-     security fault needs a source replaced, governance may name a successor
-     for a set. It waits at least 7 days, the guardian can cancel it, and both
-     parties of every loan on the set are told when it is proposed.
+4. Four things can still reach an open loan, and nothing else:
+   - **Stop.** A secondary source can be muted and an adapter disabled at
+     once. A stop only refuses more; it never adds and never accepts a price
+     that was refused. This exists today and stays as it is.
+   - **Dead-source removal.** Removing a secondary source also drops its
+     refusals, so it is not a stop. It keeps its own cancellable 48-hour
+     wait (#3537) and is announced to both parties of open loans.
+   - **Announced retirement.** When a part of a set can no longer work, or a
+     security fault needs a source replaced, governance may retire that part.
+     It waits at least 7 days, the guardian can cancel it, and both parties
+     of every loan holding the part are told when it is proposed. A loan
+     holding a retired part moves to the current value of that part.
    - **Consent.** Both parties of a loan may move it to the current set.
 
 A read that has no loan (an offer preview, the offer book's value floor, a
@@ -61,7 +65,7 @@ A set is a small record in Diamond storage, numbered from 1:
 | Part | What it names |
 | --- | --- |
 | Price guard | The guard contract's address |
-| Price epoch | The guard's config version (section 4) |
+| Price version | The guard's config epoch and the feed registry's epoch, as a pair (section 4) |
 | Route set | An immutable ordered adapter list (section 5) |
 | Marketplace | Seaport, conduit key and the listing executor (section 6) |
 
@@ -89,7 +93,11 @@ as of an epoch:
   tolerances, per-feed staleness and minimum answer, stable references,
   per-asset direct feeds);
 - the feed registry's bindings, which get the same epoch treatment in the
-  registry. The guard reports both counters in one view.
+  registry. The two counters move independently, so a price version is the
+  pair (guard epoch, registry epoch). The guard reports the pair in one
+  view, every "as of" read takes the pair, and the settings set and the
+  vault's lien stamp both carry the pair. A feed rebinding alone therefore
+  makes a new set.
 
 The guard keeps every price entry point it has today and adds an "as of
 epoch" form of each. The current form is the "as of the newest epoch" form,
@@ -117,7 +125,7 @@ What is not versioned, on purpose:
   delay. A removal still reaches every open loan: it is the cure for a dead
   source, and a dead source that keeps refusing would block every close-out
   that needs a price. The removal proposal is announced to both parties of
-  every open loan the same way a succession is (section 7).
+  every open loan the same way a retirement is (section 7).
 - **The sequencer check and the peg constants.** They are code, not config.
 
 A source that an epoch did not name is never consulted for a loan on that
@@ -130,21 +138,33 @@ guard stays on chain and keeps answering.
 
 **When a loan's price cannot be read.** The existing rule stands: a missing
 price takes the lender-first in-kind path, and a distrusted price refuses.
-The cure for a set whose source has died is an announced replacement
-(section 7).
+The cure for a price version whose source has died is an announced
+retirement (section 7).
 
 ### The vault's own check
 
 A vault names the price guard as a constant of its code and checks outcomes
 itself (#3431, #3268). To keep that check on the same footing as the loan,
-the vault stamps the guard address and the guard's current epoch into the
-lien row when the lien is created, reading both itself. A later check for
-that lien accepts a price read either at the stamp or at the vault's current
-constant and newest epoch. Both were announced under a 7-day delay, so a
-faulty Diamond can choose only between two legitimate readings. The vault
-does not check prices yet, so this lands on top of the vault's price checks
-(#3268) and the lien checks (#3379), in the same lien-creation path those
-checks read, and shares one lien row shape with the payee lien of #3669.
+the vault stamps the guard address and the guard's current price version
+into the lien row when the lien is created, reading both itself. A later
+check for that lien reads prices at the stamp and nowhere else.
+
+When a loan moves to the current set (a retirement or a consent move,
+section 7), the Diamond asks the vault to **restamp** the lien in the same
+step. The vault takes no values from the Diamond: it reads its own guard
+constant and that guard's newest price version at that moment and writes
+those. The stamp therefore always equals the settings the loan is on, also
+after later changes for new loans, and a faulty Diamond can at most move a
+lien to settings that are current and were announced under a 7-day delay.
+
+A vault whose owner has pinned older code keeps that code's guard constant.
+If it differs from the Diamond's current guard, the vault's check refuses, as
+a pinned vault does today (#3431).
+
+The vault does not check prices yet, so this lands on top of the vault's
+price checks (#3268) and the lien checks (#3379), in the same lien-creation
+path those checks read, and shares one lien row shape with the payee lien of
+#3669.
 
 ## 5. Swap routes
 
@@ -162,7 +182,8 @@ makes it current. The old list is never edited.
   set when the outflow belongs to a loan, and the current route set
   otherwise.
 - A loan whose route set has no enabled adapter keeps today's behaviour
-  (`NoEnabledSwapRoute`). The cure is an announced replacement.
+  (`NoEnabledSwapRoute`). The cure is an announced retirement of that route
+  set.
 
 ## 6. Marketplace
 
@@ -173,48 +194,57 @@ loan's set, not from the live setting. The per-loan executor record that
 exists today folds into the set.
 
 The vault refuses a conduit other than its constant. As with prices, the
-vault stamps its marketplace constants into the lien row at lien creation
-and accepts the stamp or its current constants. A vault version that names a
+vault stamps its marketplace constants into the lien row at lien creation,
+accepts only the stamp for that lien, and restamps from its own current
+constants when the loan moves to the current set. A vault version that names a
 new conduit therefore does not strand a listing on an open loan, and does
 not move an open loan either.
 
-## 7. Announced replacement and consent
+## 7. Announced retirement and consent
 
-**Succession.** Governance (the Timelock) may propose that set A is
-succeeded by set B.
+**Retirement.** Governance (the Timelock) may propose to retire one part:
+a price version (which retires every older one with it, since versions are
+one line of history), a route set, or a marketplace.
 
 - It waits at least 7 days. The guardian or the owner can cancel it. Anyone
   can execute it once due, and a keeper pass backs that step (shipped
   disarmed, with its row in the permissionless-steps ledger).
-- B must be a set that already exists or is minted by the proposal. For the
-  route set and the marketplace, B may differ from A in that one part only.
-  For prices, B's price part is always the guard's newest epoch (or a new
-  guard's first epoch): epochs are a single line of history, so a price
-  replacement brings the loan to the current price settings in full. The
-  proposal event lists every difference between A's price settings and B's,
-  and the app shows that list.
-- When it executes, every loan on A reads B. A loan follows at most a short
-  chain of successions; anyone can repoint a loan to the end of its chain.
-- The proposal event is the announcement. The indexer knows which loans sit
-  on A and notifies both parties of each, and the app shows the pending
+- The current value of a part cannot be retired. Governance first makes the
+  new value current through the ordinary delayed change, then retires the
+  old one.
+- A loan holding a retired part is **moved**: that one part of its set
+  becomes the value current at the moment of the move, and its other parts
+  stay. The move is one step, `syncLoanSettings`, which writes the loan onto
+  the matching set and restamps the vault liens (section 4). Anyone may call
+  it, the keeper pass does, and every loan action runs it first, so no action
+  ever reads a retired part. A view of a loan not yet moved answers as if it
+  had been.
+- After the move the loan is frozen again on what it moved to. Later changes
+  for new loans do not reach it.
+- A retired price version moves the loan to the current price settings in
+  full. The proposal event lists every difference between the retired
+  version and the current one, and the app shows that list.
+- The proposal event is the announcement. The indexer knows which loans hold
+  the part and notifies both parties of each, and the app shows the pending
   change on the loan page with its date. A party who does not accept it has
   the 7 days to repay, sell or close.
 
-Succession is the only way an addition can reach an open loan, and it is
-never silent.
+Retirement is the only way an addition can reach an open loan without its
+parties' consent, and it is never silent.
 
 **Consent.** `moveLoanToCurrentSettings` moves one loan to the current set
 when the borrower-position holder and every lender-position holder have each
 approved that exact set number. An approval names the set, so it cannot be
-replayed for a later one. A loan in fallback custody or past default cannot
-be moved.
+replayed for a later one, and the move is refused if that set is no longer
+current. The move restamps the vault liens in the same step. A loan in
+fallback custody or past default cannot be moved.
 
 ## 8. One rule, enforced
 
 - `LibLoanSettings` is the one reader: given a loan it returns the guard,
-  the price epoch, the route set and the marketplace, after following any
-  succession. A new `LoanSettingsFacet` hosts the mint, the views, succession
-  and consent, so no facet near the size limit grows.
+  the price version, the route set and the marketplace, with any retired
+  part already resolved. A new `LoanSettingsFacet` hosts the mint, the views,
+  retirement, the sync step and consent, so no facet near the size limit grows.
 - `LibNumeraireValue` gains loan forms of its entries. The no-loan entries
   are renamed so their name says "current".
 - A pre-deploy check lists every caller of a "current" price or route entry
@@ -229,9 +259,15 @@ be moved.
 
 - **Liquidity tier and pool depth.** They describe today's market, not a
   governance choice. A loan's sale must respect the depth that exists now.
-- **Hourly and daily price checkpoints.** One series per asset, written at
-  the newest epoch. The calm test compares market movement, which does not
-  depend on the loan.
+- **Hourly and daily price checkpoints, and the calm test.** One series per
+  asset, written at the newest price version. The calm test measures market
+  movement, so both of its ends are read on the same settings: the
+  checkpoints and the "now" price it compares them with are both taken at
+  the newest price version, for every loan. A loan's own price version is
+  never compared with a checkpoint written under another one, so a settings
+  change by itself cannot read as a price move. The coverage test beside it
+  (collateral against debt) and the sale's minimum output use the loan's own
+  set.
 - **Numeric risk thresholds already stamped per loan** (the treasury fee at
   origination, for example) are unchanged by this design.
 
@@ -239,13 +275,14 @@ be moved.
 
 - **App.** The loan page shows the set in plain words: which price sources
   and how many must agree, which sale routes, which marketplace, and the date
-  they were fixed. A pending replacement shows with its date and the list of
+  they were fixed. A pending retirement shows with its date and the list of
   differences. The consent move is a two-party action on the loan page.
-- **Indexer.** New events: set minted, set assigned to a loan, succession
+- **Indexer.** New events: set minted, set assigned to a loan, retirement
   proposed, cancelled and executed, consent given, loan moved. Loans are
   indexed by set so a proposal can be fanned out to both parties.
 - **Keeper.** Try-lists are built against the loan's route set, read from
-  `getLoanSettings`. One new pass executes due successions.
+  `getLoanSettings`. One new pass executes due retirements and moves the
+  loans that hold a retired part.
 
 ## 11. Tests
 
@@ -253,14 +290,21 @@ be moved.
   reorder, a conduit change and a guard swap each leave an open loan's
   health factor, liquidation, default route, forced sale and listing reading
   the old settings, while a loan opened afterwards reads the new ones.
-- A stop reaches every set at once; a re-enable waits the delay.
+- A mute or a disable reaches every set at once; a re-enable waits the
+  delay. A removal's refusals count until its 48 hours have passed.
+- A feed rebinding alone gives the next loan a new set.
+- The calm test reads both ends at the newest price version.
 - A source added after a loan opened is never consulted for it.
-- Succession: not before 7 days, cancellable, lists differences, moves every
-  loan on the set, chain following is bounded.
+- Retirement: not before 7 days, cancellable, lists differences, never the
+  current value; a loan holding the part moves on its next action or by
+  sync, changes that one part only, and is frozen again afterwards.
+- After a move and a later change for new loans, the vault still validates
+  the loan at the settings it moved to.
 - Consent: both sides, exact set number, refused in fallback custody and
   after default; every holder on a divided loan.
 - Try-list indexes stay stable for a loan across a reorder.
-- The vault accepts the stamp or its current constants and nothing else.
+- The vault reads at its stamp only; a restamp takes the vault's own current
+  values and nothing from the Diamond.
 - The pre-deploy check fails on an unlisted "current" caller.
 
 ## 12. Alternatives considered
@@ -274,16 +318,16 @@ be moved.
 3. **Keep settings live and rely on the 7-day delay.** This is today's
    behaviour and the one the owner decided against: a delay warns the
    parties, it does not keep their deal.
-4. **Let a replacement patch one price entry on an old epoch.** It would
+4. **Let a retirement patch one price entry on an old epoch.** It would
    need branching history in the guard. Rejected for complexity; a price
-   replacement moves the loan to the current price settings and says so.
+   retirement moves the loan to the current price settings and says so.
 
 ## 13. Recommendation
 
 Build the settings set as described: epochs in the guard and the feed
 registry, immutable route sets, the marketplace in the set, one reader
-library, succession and consent as the only ways a change reaches an open
-loan.
+library, and the four exceptions of section 2 as the only ways a change
+reaches an open loan.
 
 Build order:
 
@@ -293,8 +337,8 @@ Build order:
    `LoanSettingsFacet`, the set number on the loan.
 3. Loan forms of the numeraire value entries and the switch of every loan
    path; the pre-deploy check.
-4. Succession, consent, the keeper pass.
-5. Vault lien stamps.
+4. Retirement, the sync step, consent, the keeper pass.
+5. Vault lien stamps and restamp.
 6. Indexer and app.
 
 ## 14. Open items
@@ -302,4 +346,4 @@ Build order:
 - Whether the registry pointer delay for the price guard should rise from 3
   days to 7 now that a swap reaches new loans only. Recommendation: leave it.
 - Whether tightening a tolerance should be allowed to reach open loans
-  without succession. Recommendation: no; one rule is easier to trust.
+  without retirement. Recommendation: no; one rule is easier to trust.
