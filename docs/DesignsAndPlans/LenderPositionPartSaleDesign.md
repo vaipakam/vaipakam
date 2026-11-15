@@ -49,7 +49,7 @@ A checkpoint of a token adds `share × (the side's total now − the token's val
 
 Everything the side receives is credited to the running total by the amount that arrived: principal, interest net of the treasury's base cut, sale proceeds on a liquidation or default, collateral received in kind (always an ERC-20 here, by rule 5), a late fee's lender part. The settlement facets do not change for this: they credit the side as today, and the side's two existing ledgers feed the running total.
 
-**Rounding** rounds a token's part down. What remains, at most a few base units per asset, is paid with the last token's claim, so the side's ledger ends at zero and the reservation is fully released.
+**Precision.** The side's running total and each token's owed balance are kept at a fixed extra precision (scaled well below one base unit). A checkpoint adds the exact scaled amount and discards nothing. A claim pays the whole base units of the token's owed balance and leaves the fraction on the token, where later credits add to it. So how often a token is checkpointed, and by whom, changes nothing: a token checkpointed after every credit and one checkpointed once end with the same total. What remains for the whole side at the end, less than one base unit per token and asset, is paid with the last token's claim, so the side's ledger ends at zero and the reservation is fully released.
 
 ### 4.2 The treasury's cut, per holder
 
@@ -68,8 +68,9 @@ Cost: up to 8 resolutions on an interest payment to a divided loan, and nothing 
 
 A sale leaves the seller a claim for interest earned and not yet paid (the existing rule). On a divided loan:
 
-- A seller claim is recorded against **the token it was sold from**, and has first call on that token's later interest only. It never draws on another holder's part.
-- The limit of open seller claims is **per token** (4, today's figure), so sales by other holders cannot use up a holder's room to sell. The sale-exit verdict reads the selling token's own count.
+- A seller claim is recorded against **the token that holds the part sold**: on a part sale that is the buyer's new token, on a whole-token sale the token that replaces the one sold. It has first call on that token's later interest only. It never draws on the part the seller kept, nor on another holder's part.
+- The limit of open seller claims is **per token** (4, today's figure), so sales by other holders cannot use up a holder's room to sell. The sale-exit verdict reads the count the sold part would carry.
+- **Claims follow the part they are owed from.** When a token that carries open seller claims is itself sold in part, each open claim is divided between the two tokens in the ratio of the split, so the interest that funds a claim and the claim stay together and the total owed is unchanged. The new token then carries those portions plus the new seller's claim; a sale that would put more than the limit on it is refused by name. A merge adds the two tokens' claims (two portions of one original claim rejoin as one) and is refused if the result would pass the limit.
 - A token's seller claims are settled when that token is checkpointed: its newly credited interest pays its seller claims, oldest first, before its owed balance. A seller may checkpoint the token to collect; the payment goes to the seller's vault as today. No per-payment loop over every token's claims is added to the payer's transaction.
 
 ### 4.4 Claims
@@ -149,11 +150,12 @@ Facet room is checked with the deploy-sanity suite; where a facet has none, spli
 1. A part sale on each of the four routes: the buyer's token and the seller's token hold the stated shares, summing to the whole; the price paid is measured; the borrower's record is unchanged.
 2. Limits: a ninth holder, a part below the minimum, a remainder below the minimum, a buy amount above the token's principal are each refused by name; a purchase by an existing holder merges.
 3. Interest with different standing: two holders at different tiers each receive their own net; the treasury receives exactly the sum of both cuts; one holder unstaking lowers only their own. Mixed cases: the lead has no consent and another holder does; one holder is on the full tariff and pays in VPFI from their own vault; that holder's vault is short and only their token falls back.
+3b. Two equal tokens and many small credits: one token is checkpointed after every credit (by its holder and by a seller), the other once; both end with the same total, to the base unit.
 3a. A holder claims, then sells part: the seller's token and the new token together can claim exactly what is credited afterwards plus what the sale rule moved, and the reservation invariant holds. A merge after claims conserves both owed balances.
 4. Principal, liquidation proceeds, in-kind collateral and a late fee divide by share; claims in any order pay each token once; the last claim leaves the ledger and the reservation at zero.
 5. Mid-loan claim by one holder, then a further payment, then claims by all: nothing is paid twice.
 6. Sale of a part, then of the rest of the same token; sale of the lead token whole (custody follows); plain transfer of a share token.
-7. Seller claim for interest earned before a part sale is paid first from later interest on that part only. Four sales from other tokens do not stop an untouched holder from selling; a fifth open claim on one token is refused for that token only.
+7. Seller claim for interest earned before a part sale is recorded on the buyer's token and paid first from later interest on that part only; the part the seller kept pays none of it. A token with open claims is sold in part again: each claim divides in the split's ratio and the total owed is unchanged; a merge rejoins them. Four sales from other tokens do not stop an untouched holder from selling; a fifth open claim on one token is refused for that token only.
 7a. A non-lead holder sells their whole token: only that token is replaced, the lead token and custody are untouched. The lead sold whole: custody follows.
 7b. A loan with ERC-721 or ERC-1155 collateral, and an NFT rental, refuse a part sale by name.
 8. Rewards: entries by share from the sale day, the shared ceiling holds across several sales.
