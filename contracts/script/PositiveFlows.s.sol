@@ -34,6 +34,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *           - PositiveFlowsVaultAndVpfi: stuck-token recovery, the
  *             sanctioned-source ban, disown, VPFI deposit and withdraw.
  *           - PositiveFlowsKeeperAutomation: keeper approval and execution.
+ *             Staged (`run-staged.sh PositiveFlowsKeeperAutomation`).
  *           - PositiveFlowsOperatorAdmin: sanctions Tier-1 vs Tier-2, pauses,
  *             treasury accrual and withdrawal, an admin fee knob inside its bounds.
  *           - PositiveFlowsPositionHolder: a transferred position NFT moves
@@ -82,7 +83,8 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         transactions; under `--broadcast` the first such fill stops the run
  *         with `TermsAgeNeedsStagedRun` before anything is sent. The modules
  *         that are staged ({PositiveFlowsStaged}: BasicLifecycle,
- *         AdvancedCredit, LenderIntent, PositionHolder, Timed) broadcast one
+ *         AdvancedCredit, LenderIntent, PositionHolder, KeeperAutomation,
+ *         SwapToRepay, Timed) broadcast one
  *         at a time through `script/positive-flows/run-staged.sh <module>`;
  *         the others run as this simulation only until they are staged.
  *
