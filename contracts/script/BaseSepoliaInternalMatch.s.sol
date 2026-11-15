@@ -41,8 +41,12 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *         prices. The script does the same with {RepriceTestnetMock}'s
  *         coherent feed + pool + venue move.
  *
- *         The run is FOUR STAGES (plus `disable`, for recovery), one `forge script` invocation each, chosen
- *         by `IM_STAGE`. `forge script` simulates a whole body and then sends
+ *         The run is SIX STAGES (plus `disable`, for recovery), one `forge
+ *         script` invocation each, chosen by `IM_STAGE`. Each loan takes two:
+ *         an offer can be filled only once its terms have stood the minimum
+ *         age (#3412, a few seconds), and one broadcast cannot wait between
+ *         its own transactions, so the lender posts in one stage and the
+ *         borrower accepts in the next (#3574). `forge script` simulates a whole body and then sends
  *         its transactions later, so any value a body reads — a loan id a
  *         call returns, the kill-switch, the book — is a simulation result
  *         by the time the broadcast lands. A stage boundary is where the
@@ -50,17 +54,21 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *         actually produced (from its receipts, passed as env) and verifies
  *         them against the live chain before it sends anything.
  *
- *           `open-a`  Switch matching OFF (queued unconditionally — the
+ *           `post-a`  Switch matching OFF (queued unconditionally — the
  *                     setter is idempotent, and the simulated value can be
  *                     stale by broadcast time). Print the three pre-run
  *                     price surfaces as the env line every later stage
- *                     needs. tLIQ to `IM_P0_E8`; open A (LENDER / BORROWER),
- *                     its mUSDC collateral worth 2x the principal at p0.
- *                     Ends at p0, where A is healthy.
- *           `open-b`  Verify `IM_LOAN_A` live (Active, parties, assets).
- *                     tLIQ to `IM_P1_E8`; open B (NEW_LENDER / NEW_BORROWER)
- *                     mirroring A's LIVE principal and collateral; tLIQ to
- *                     p2. Mirrored legs share one LTV at exactly one price,
+ *                     needs. tLIQ to `IM_P0_E8`; LENDER posts A's offer,
+ *                     asking mUSDC collateral worth 2x the principal at p0.
+ *           `open-a`  Verify `IM_OFFER_A` live (this run's lender, the
+ *                     pair, nothing filled) and matching OFF; BORROWER
+ *                     accepts it. Ends at p0, where A is healthy.
+ *           `post-b`  Verify `IM_LOAN_A` live (Active, parties, assets).
+ *                     tLIQ to `IM_P1_E8`; NEW_LENDER posts B's offer,
+ *                     mirroring A's LIVE principal and collateral.
+ *           `open-b`  Verify `IM_LOAN_A` and `IM_OFFER_B` live (B's offer
+ *                     still mirrors A, nothing filled) and matching OFF;
+ *                     NEW_BORROWER accepts it at p1; tLIQ to p2. Mirrored legs share one LTV at exactly one price,
  *                     the one where A's collateral is worth A's principal
  *                     (both legs at 100%, up to accrued interest), and p2
  *                     defaults to that price, derived from A's live terms
@@ -74,7 +82,7 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     trigger actually closed.
  *           `restore` The one stage that ends a run, after `match` or any
  *                     failure: matching OFF, the three price surfaces back
- *                     to the `open-a` snapshot exactly, then the kill-switch
+ *                     to the `post-a` snapshot exactly, then the kill-switch
  *                     to the DECLARED original state (ON only with
  *                     `IM_ORIGINALLY_ENABLED` or `IM_KEEP_ENABLED`). It
  *                     lists every Active or FallbackPending tLIQ loan this
@@ -103,33 +111,36 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *         flagged when inside the external-liquidation priority window) and
  *         every open tLIQ offer (what is still fillable). Those lists are a
  *         snapshot taken at that STAGE's simulation: a position created
- *         after it is affected and not listed. Broadcast with `--slow`.
+ *         after it is affected and not listed. Broadcast with `--slow`,
+ *         and `match` with `--gas-estimate-multiplier 300`: on a local Anvil
+ *         run (#3574) forge's own estimate left the trigger's price reads
+ *         short of gas and it reverted `PriceReadOutOfGas`, after the
+ *         enable had landed (run `disable` if that happens).
  *
  *         Races the script cannot close, stated rather than hidden:
- *           - Between stages the price stays moved: at p0 (after `open-a`)
- *             A is healthy; at p2 (after `open-b`) both A and B are at
+ *           - Between stages the price stays moved: at p0 (after `post-a`
+ *             and `open-a`) A is healthy; at p1 (after `post-b`) A is far
+ *             past its liquidation LTV, see below; at p2 (after `open-b`)
+ *             both A and B are at
  *             their liquidation LTV and a keeper may liquidate either, and
  *             every other tLIQ position sits at p2 until `match` or
  *             `restore` runs. Run the stages back to back.
- *           - Inside `open-a` / `open-b`, an offer created by someone else
- *             between the simulation and the accept takes the offer id the
- *             accept was signed for; the borrower's signed terms then do not
- *             match that offer and the accept reverts, leaving this run's
- *             offer open (cancel it). The loan id a stage prints is that
- *             stage's prediction; read the real one from the receipt's
- *             `LoanInitiated` before the next stage.
- *           - Inside `open-b`, at p1 (default 4x p0) loan A sits far past
- *             its liquidation LTV - ~200% at the defaults - for every block
- *             until the move to p2, with matching OFF, so any keeper can
- *             liquidate it externally while B's offer, mints, approvals and
- *             accept land. A liquidated A fails `match`'s input checks; run
- *             `restore` and start again.
- *           - Each `_openLoan` lender offer is public from its createOffer
- *             until the borrower's accept lands (`--slow`: a few blocks).
- *             Anyone may accept all or part of it, opening a loan with this
- *             run's lender funds that `restore` cannot unwind; this run's
- *             accept then reverts. Check the offer's fills before the next
- *             stage, and cancel any remainder.
+ *           - The offer and loan ids a stage prints are that stage's
+ *             predictions; read the real ones from the receipts'
+ *             `OfferCreated` / `LoanInitiated` before the next stage.
+ *           - From `post-b` until `open-b` moves the price to p2, at p1
+ *             (default 4x p0), loan A sits far past its liquidation LTV -
+ *             ~200% at the defaults - with matching OFF, so any keeper can
+ *             liquidate it externally while B's offer waits out its age and
+ *             B's accept lands. A liquidated A fails `open-b`'s and
+ *             `match`'s input checks; run `restore` and start again. Run
+ *             `open-b` as soon as B's offer is a few seconds old.
+ *           - Each lender offer is public from its `post-*` stage until the
+ *             `open-*` accept lands. Anyone may accept all or part of it,
+ *             opening a loan with this run's lender funds that `restore`
+ *             cannot unwind. The `open-*` stage refuses an offer with any
+ *             fill, and an accept landing after its check makes this run's
+ *             accept revert; cancel any remainder.
  *           - Each stage's input checks (loan state, position-NFT holders,
  *             the kill-switch) are read at that stage's simulation; a
  *             transfer or a change landing before its broadcast is not seen.
@@ -146,16 +157,17 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *             price without ever being listed; this script cannot see the
  *             signed-offer book and its exposure there is unknown.
  *
- *         The kill-switch is never inferred from its current value. `open-a`
+ *         The kill-switch is never inferred from its current value. `post-a`
  *         refuses to start with it ON unless `IM_ORIGINALLY_ENABLED=true`
  *         says that is the deployment's intended state, and every stage that
  *         ends the run restores the declared state, not an observed one.
  *
  *         Env (keys from contracts/.env): DEPLOYER_PRIVATE_KEY (mock owner,
  *         matcher), ADMIN_PRIVATE_KEY (kill-switch), LENDER_*, BORROWER_*,
- *         NEW_LENDER_*, NEW_BORROWER_*; `IM_STAGE`. Stage inputs: IM_LOAN_A,
- *         IM_LOAN_B (open-b, match), and the snapshot IM_RESTORE_PRICE_E8 /
- *         IM_RESTORE_SPOT_X96 / IM_RESTORE_VENUE_E8 (printed by `open-a`).
+ *         NEW_LENDER_*, NEW_BORROWER_*; `IM_STAGE`. Stage inputs: IM_OFFER_A
+ *         (open-a), IM_LOAN_A (post-b, open-b, match), IM_OFFER_B (open-b),
+ *         IM_LOAN_B (match), and the snapshot IM_RESTORE_PRICE_E8 /
+ *         IM_RESTORE_SPOT_X96 / IM_RESTORE_VENUE_E8 (printed by `post-a`).
  *         Optional: IM_P0_E8 / IM_P1_E8 / IM_P2_E8, IM_PRINCIPAL_A (tLIQ wei),
  *         IM_RATE_BPS, IM_KEEP_ENABLED, IM_ORIGINALLY_ENABLED,
  *         IM_RESTORE_WITH_ACTIVE.
@@ -215,13 +227,15 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         }
         address mUsdc = _resolveTarget("liquidToken2").asset;
         console.log("mUSDC:", mUsdc);
-        if (s == keccak256("open-a")) _stageOpenA(t, a, mUsdc);
+        if (s == keccak256("post-a")) _stagePostA(t, a, mUsdc);
+        else if (s == keccak256("open-a")) _stageOpenA(t, a, mUsdc);
+        else if (s == keccak256("post-b")) _stagePostB(t, a, mUsdc);
         else if (s == keccak256("open-b")) _stageOpenB(t, a, mUsdc);
         else if (s == keccak256("match")) _stageMatch(t, a, mUsdc);
-        else revert("BaseSepoliaInternalMatch: IM_STAGE must be open-a, open-b, match, restore or disable");
+        else revert("BaseSepoliaInternalMatch: IM_STAGE must be post-a, open-a, post-b, open-b, match, restore or disable");
     }
 
-    function _stageOpenA(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
+    function _stagePostA(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
         uint256 p0 = vm.envOr("IM_P0_E8", uint256(2_000e8));
         uint256 principalA = vm.envOr("IM_PRINCIPAL_A", uint256(1e18)); // 1 tLIQ
         (bool wasEnabled,,) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
@@ -250,13 +264,19 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         _reportExposure(t, 0, 0);
         _reprice(t, a.deployerKey, p0, 0, 0);
         uint256 collateralA = _collateralWorthTwice(t.diamond, t.asset, principalA, p0, mUsdc);
-        uint256 loanA = _openLoan(
-            t.diamond, a.lenderKey, a.borrowerKey, t.asset, principalA, mUsdc, collateralA, _rate()
-        );
+        uint256 offerA = _postLoanOffer(t.diamond, a.lenderKey, t.asset, principalA, mUsdc, collateralA, _rate());
+        console.log("Next, a few seconds from now: IM_STAGE=open-a IM_OFFER_A=", offerA);
+    }
+
+    function _stageOpenA(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
+        uint256 offerA = vm.envUint("IM_OFFER_A");
+        _requireMatchingOff(t.diamond);
+        _requirePostedOffer(t.diamond, offerA, a.lenderKey, t.asset, mUsdc);
+        uint256 loanA = _acceptLoanOffer(t.diamond, a.borrowerKey, offerA);
         _logLoan("A (predicted id - read LoanInitiated from the receipt)", t.diamond, loanA);
     }
 
-    function _stageOpenB(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
+    function _stagePostB(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
         uint256 loanA = vm.envUint("IM_LOAN_A");
         LibVaipakam.Loan memory la = _requireLeg(t.diamond, loanA, a.lenderKey, a.borrowerKey, t.asset, mUsdc);
         _requireMatchingOff(t.diamond);
@@ -266,9 +286,23 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // they are equal only where both are 100%: the price at which A's
         // collateral is worth A's principal. That is p2's default, derived
         // from A's live terms rather than from the configured p0 (#2458).
-        uint256 loanB = _openLoan(
-            t.diamond, a.newLenderKey, a.newBorrowerKey, mUsdc, la.collateralAmount, t.asset, la.principal, _rate()
+        uint256 offerB = _postLoanOffer(
+            t.diamond, a.newLenderKey, mUsdc, la.collateralAmount, t.asset, la.principal, _rate()
         );
+        console.log("Next, a few seconds from now: IM_STAGE=open-b IM_LOAN_A / IM_OFFER_B =", loanA, offerB);
+    }
+
+    function _stageOpenB(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
+        uint256 loanA = vm.envUint("IM_LOAN_A");
+        uint256 offerB = vm.envUint("IM_OFFER_B");
+        LibVaipakam.Loan memory la = _requireLeg(t.diamond, loanA, a.lenderKey, a.borrowerKey, t.asset, mUsdc);
+        _requireMatchingOff(t.diamond);
+        LibVaipakam.Offer memory ob = _requirePostedOffer(t.diamond, offerB, a.newLenderKey, mUsdc, t.asset);
+        require(
+            ob.amount == la.collateralAmount && ob.collateralAmount == la.principal,
+            "BaseSepoliaInternalMatch: IM_OFFER_B does not mirror IM_LOAN_A"
+        );
+        uint256 loanB = _acceptLoanOffer(t.diamond, a.newBorrowerKey, offerB);
         _logLoan("B (predicted id - read LoanInitiated from the receipt)", t.diamond, loanB);
         uint256 equalLtvPrice8 = _equalLtvPrice8(t.diamond, t.asset, la.principal, mUsdc, la.collateralAmount);
         uint256 p2 = vm.envOr("IM_P2_E8", equalLtvPrice8);
@@ -421,7 +455,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         }
     }
 
-    /// @dev Matching OFF, the `open-a` snapshot restored exactly, then the
+    /// @dev Matching OFF, the `post-a` snapshot restored exactly, then the
     ///      kill-switch to the DECLARED original state — never an observed
     ///      one, which after an interrupted originally-on run reads OFF.
     function _endRun(RepriceTarget memory t, Actors memory a, uint256 skipA, uint256 skipB) internal {
@@ -593,35 +627,66 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     }
 
     /// @dev Lender offers `principal` of `lendAsset` against `collateral` of
-    ///      `collAsset`; the borrower accepts. Mints both legs (faucet mocks).
-    function _openLoan(
+    ///      `collAsset`, minting the principal (faucet mock). The borrower
+    ///      accepts in the NEXT stage ({_acceptLoanOffer}): an offer can be
+    ///      filled only once its terms have stood the minimum age (#3412), and
+    ///      one broadcast cannot wait between its own transactions.
+    function _postLoanOffer(
         address diamond,
         uint256 lenderKey,
-        uint256 borrowerKey,
         address lendAsset,
         uint256 principal,
         address collAsset,
         uint256 collateral,
         uint256 rateBps
-    ) internal returns (uint256 loanId) {
-        address borrower = vm.addr(borrowerKey);
+    ) internal returns (uint256 offerId) {
         vm.startBroadcast(lenderKey);
         ERC20Mock(lendAsset).mint(vm.addr(lenderKey), principal);
         ERC20Mock(lendAsset).approve(diamond, principal);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(
+        offerId = OfferCreateFacet(diamond).createOffer(
             _offerParams(lendAsset, principal, collAsset, collateral, rateBps),
             type(uint64).max
         );
         vm.stopBroadcast();
+        console.log("Posted offer (predicted id - read OfferCreated from the receipt):", offerId);
+    }
 
+    /// @dev The borrower accepts `offerId` in full, minting the collateral.
+    function _acceptLoanOffer(address diamond, uint256 borrowerKey, uint256 offerId)
+        internal
+        returns (uint256 loanId)
+    {
+        address borrower = vm.addr(borrowerKey);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
         LibAcceptTerms.AcceptTerms memory terms =
             LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
         bytes memory sig = LibAcceptTestSigner.sign(diamond, terms, borrowerKey);
         vm.startBroadcast(borrowerKey);
-        ERC20Mock(collAsset).mint(borrower, collateral);
-        ERC20Mock(collAsset).approve(diamond, collateral);
+        ERC20Mock(o.collateralAsset).mint(borrower, o.collateralAmount);
+        ERC20Mock(o.collateralAsset).approve(diamond, o.collateralAmount);
         loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, terms, sig);
         vm.stopBroadcast();
+    }
+
+    /// @dev `offerId` is this run's lender's offer on the expected pair, and
+    ///      nobody has filled any of it: a fill by someone else between the
+    ///      stages would open a loan this run cannot unwind.
+    function _requirePostedOffer(
+        address diamond,
+        uint256 offerId,
+        uint256 lenderKey,
+        address lendAsset,
+        address collAsset
+    ) internal view returns (LibVaipakam.Offer memory o) {
+        o = OfferCancelFacet(diamond).getOffer(offerId);
+        require(
+            o.creator == vm.addr(lenderKey) && o.lendingAsset == lendAsset && o.collateralAsset == collAsset,
+            "BaseSepoliaInternalMatch: the offer id is not this run's offer on the expected pair"
+        );
+        require(
+            !o.accepted && o.amountFilled == 0,
+            "BaseSepoliaInternalMatch: the offer was filled by someone else - cancel any remainder and run `restore`"
+        );
     }
 
     function _offerParams(address lendAsset, uint256 amount, address collAsset, uint256 collateral, uint256 rateBps)

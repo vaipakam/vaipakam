@@ -1,7 +1,7 @@
 // #1209 live verification — a lender who sold their position withdraws, from
 // the Claims page, the interest they earned while they held it, against a
 // REAL seller claim on the Base Sepolia Diamond (set up by
-// contracts/script/BaseSepoliaSellerClaim.s.sol: open, sell, repay).
+// contracts/script/BaseSepoliaSellerClaim.s.sol: post, open, list, sell, repay).
 //
 // What is under test: the seller-claims card on /claims of the deployed build
 // finds the loan, offers the withdrawal for it, and — with WITHDRAW=1 — sends

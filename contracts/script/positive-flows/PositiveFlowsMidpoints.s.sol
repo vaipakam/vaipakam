@@ -27,6 +27,10 @@ import {AutoLifecycleSettingsFacet} from "../../src/facets/AutoLifecycleSettings
  *         `AnvilNewPartialFlows`) and their composer (`PartialFlows`), which
  *         posted and filled in one broadcast and so stopped before sending
  *         anything once the offer-age rule (#3412) arrived.
+ *         It also replaces the two testnet seeding scripts, `SepoliaOpenOffers`
+ *         (now MID-G, a varied offer book) and `SepoliaActiveLoan` (MID-C),
+ *         which deployed their own tokens and price feeds on every run and so
+ *         left the earlier run's offers and loans unpriced.
  *
  *         It is a staged module ({PositiveFlowsStaged}): a scenario that
  *         fills an offer posts it in one step and fills it in the next, once
@@ -73,7 +77,7 @@ contract PositiveFlowsMidpoints is PositiveFlowsStaged {
     }
 
     function scenarios() public pure override returns (Scenario[] memory list) {
-        list = new Scenario[](13);
+        list = new Scenario[](14);
         list[0] = Scenario("MID-A", "Open lender offer, left for a borrower to accept", "MID-A");
         list[1] = Scenario("MID-B", "Open borrower offer, left for a lender to accept", "MID-B");
         list[2] = Scenario("MID-C", "Active liquid loan, left to repay, add collateral or preclose", "MID-C");
@@ -87,18 +91,21 @@ contract PositiveFlowsMidpoints is PositiveFlowsStaged {
         list[10] = Scenario("P-Q", "Active loan with a refinance request posted and no lender yet", "P-Q");
         list[11] = Scenario("P-T", "Active loan whose lender listed the position, no buyer yet", "P-T");
         list[12] = Scenario("P-U", "Stray ERC-20 in a vault, recovery not started", "P-U");
+        list[13] = Scenario("MID-G", "A varied offer book: three lender and two borrower offers on different terms", "MID-G");
     }
 
-    /// @dev The open offers and the stray token take one step; every other
-    ///      scenario posts, then fills once the terms have stood the minimum age.
+    /// @dev The open offers, the offer book and the stray token take one step;
+    ///      every other scenario posts, then fills once the terms have stood
+    ///      the minimum age.
     function _stepCount(uint256 index) internal pure override returns (uint256) {
-        return (index == 0 || index == 1 || index == 12) ? 1 : 2;
+        return (index == 0 || index == 1 || index == 12 || index == 13) ? 1 : 2;
     }
 
     function _runStep(uint256 index, uint256 step) internal override {
         if (index == 0) return _openLenderOffer();
         if (index == 1) return _openBorrowerOffer();
         if (index == 12) return _strayTokenInVault();
+        if (index == 13) return _offerBookSpread();
         if (index == 6) return step == 0 ? _postOfferStates() : _fillOfferStates();
         if (step == 0) return _keep(OFFER, _post(index));
 
@@ -382,6 +389,35 @@ contract PositiveFlowsMidpoints is PositiveFlowsStaged {
         uint256 tracked = VaultFactoryFacet(diamond).getTrackedHolding(newBorrower, address(usdc), 0);
         require(usdc.balanceOf(vault) > tracked, "P-U: the vault should hold more than the tracked count");
         console.log("Stray USDC in vault:", usdc.balanceOf(vault) - tracked);
+    }
+
+    // ─── MID-G ────────────────────────────────────────────────────────────
+
+    /// @dev Five open offers whose amount, rate and term differ, so the offer
+    ///      book reads as a market rather than one row repeated. Each asks
+    ///      collateral worth about twice its amount at the fixture's WETH price,
+    ///      so every one of them can be accepted.
+    function _offerBookSpread() internal {
+        uint256[5] memory amounts = [uint256(500e6), 1_000e6, 2_000e6, 600e6, 1_400e6];
+        uint256[5] memory collaterals = [uint256(0.5e18), 1e18, 2e18, 0.6e18, 1.5e18];
+        uint256[5] memory rates = [uint256(500), 800, 1200, 600, 1000];
+        uint256[5] memory terms = [uint256(7), 30, 90, 14, 60];
+        for (uint256 i = 0; i < 5; i++) {
+            bool lenderSide = i < 3;
+            LibVaipakam.CreateOfferParams memory p = lenderSide ? _lenderOfferStandard() : _borrowerOfferStandard();
+            p.amount = amounts[i];
+            p.amountMax = amounts[i];
+            p.collateralAmount = collaterals[i];
+            p.collateralAmountMax = collaterals[i];
+            p.interestRateBps = rates[i];
+            p.interestRateBpsMax = rates[i];
+            p.durationDays = terms[i];
+            uint256 offerId = lenderSide
+                ? _postAs(lenderKey, p, address(usdc), amounts[i])
+                : _postAs(borrowerKey, p, address(weth), collaterals[i]);
+            _requireOpen(offerId, "MID-G: every offer in the book should stay open");
+        }
+        console.log("Action: browse the offer book; three lender and two borrower offers are open");
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────

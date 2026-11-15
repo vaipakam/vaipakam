@@ -266,8 +266,8 @@ contract DeployTestnetLiquidityMocks is Script {
         // The direct-feed path resolved via `getFeed(asset, USD)`
         // above is enough.
 
-        // Risk params for both assets — mirror the values used in
-        // SepoliaActiveLoan so the assets are immediately usable
+        // Risk params for both assets — mirror the values the
+        // positive-flow fixture uses so the assets are immediately usable
         // for offers without a second `updateRiskParams` step.
         // (collateralFactor, ltvBps, liquidationThresholdBps,
         //  stalenessBps, riskScore — see RiskFacet.updateRiskParams)

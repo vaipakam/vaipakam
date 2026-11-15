@@ -946,7 +946,7 @@ handovers (e.g. when one chain's Safe SDK lands earlier than another's).
 
 None of the flow scripts is a post-deploy check for a shared chain, and each
 refuses one (#848, #2763): `PositiveFlows.s.sol`, the staged modules under
-`script/positive-flows/` (`PositiveFlowsMidpoints` and `PositiveFlowsRefusals` included) and the `Sepolia*` seeding scripts all re-point the
+`script/positive-flows/` (`PositiveFlowsMidpoints` and `PositiveFlowsRefusals` included) all re-point the
 Diamond's oracle (and, for some, its sanctions oracle and risk parameters) at
 mocks they deploy, which on a live testnet would replace the chain's real price
 and sanctions sources. They share one guard (`script/lib/RehearsalChain.sol`):
@@ -963,7 +963,7 @@ REHEARSAL_ALLOW_CHAIN_ID=84532 RPC_URL=$BASE_SEPOLIA_RPC_URL \
   bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 ```
 
-`PositiveFlowsMidpoints` stands up 13 UI-testable midpoint states and leaves
+`PositiveFlowsMidpoints` stands up 14 UI-testable midpoint states, a varied open-offer book among them, and leaves
 them in place for checking the app by hand.
 
 ### 4. Recovery from a mid-flight failure
@@ -1935,10 +1935,10 @@ for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsVa
   bash script/positive-flows/run-staged.sh "$m" || break
 done
 
-# Midpoints — 13 UI-testable states left in place for checking the app by
-# hand (open offers, active loans of each kind, a repaid loan nobody claimed,
-# a partly filled range offer, a refinance request and a listing with no
-# taker, a stray token in a vault). Staged like the modules above; nothing is
+# Midpoints — 14 UI-testable states left in place for checking the app by
+# hand (open offers and a varied offer book, active loans of each kind, a
+# repaid loan nobody claimed, a partly filled range offer, a refinance request
+# and a listing with no taker, a stray token in a vault). Staged like the modules above; nothing is
 # put back, because the states are what the run is for:
 bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
@@ -1963,15 +1963,17 @@ mid-script.
 
 ### 5b. Testnet smoke tests (after the Anvil sweep is green)
 
-Run the `Sepolia*` family against a rehearsal Diamond on the target testnet
-first, then execute on mainnet forks. Like the flow suites, these scripts point
-the Diamond at their own mocks, so they refuse a shared chain unless
+Run the midpoint module against a rehearsal Diamond on the target testnet
+first, then execute on mainnet forks. It leaves open offers and active loans
+in place, which is what the reward checks below need. Like the flow suites, it
+points the Diamond at its own mocks, so it refuses a shared chain unless
 `REHEARSAL_ALLOW_CHAIN_ID` names it (see section 3); the fork-scenarios driver
-covers a live deployment.
+covers a live deployment. (The `SepoliaActiveLoan` and `SepoliaOpenOffers`
+seeders this step used to run are retired; their states are MID-C and MID-G.)
 
 ```bash
-REHEARSAL_ALLOW_CHAIN_ID=<chain id> \
-  forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
+REHEARSAL_ALLOW_CHAIN_ID=<chain id> RPC_URL=$RPC_URL \
+  bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 ```
 
 Manual checks post-smoke:
@@ -1997,7 +1999,7 @@ forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --disable-block-gas-l
 # waits for the chain's own clock between stages instead of stepping it):
 RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsBasicLifecycle
 
-# The 13 UI-testable midpoint states (same chain rule as the positive flow):
+# The 14 UI-testable midpoint states (same chain rule as the positive flow):
 RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
 # The 9 refusals (same chain rule):

@@ -1930,9 +1930,8 @@ gates from the source; just don't enable them on the retail deploy.
 See [`docs/DesignsAndPlans/Roadmap.md`](docs/DesignsAndPlans/Roadmap.md) for the
 fork plan.
 
-The Sepolia test scripts (`SepoliaActiveLoan.s.sol`,
-`SepoliaOpenOffers.s.sol`) and the positive-flow fixture
-(`script/positive-flows/PositiveFlowsBase.sol`) call
+The positive-flow fixture
+(`script/positive-flows/PositiveFlowsBase.sol`) calls
 `updateKYCTier(...)` / `setTradeAllowance(...)` defensively but those
 calls are no-ops while enforcement is off and trade-pair checks are
 unconditional. They can stay.

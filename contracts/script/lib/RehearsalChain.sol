@@ -10,8 +10,7 @@ import {Deployments} from "./Deployments.sol";
  *         mocks may run (#2763).
  *
  *         The flow fixtures (`PositiveFlowsBase`, which every positive-flow
- *         module builds on, the midpoint and refusal modules included) and the Sepolia
- *         seeding scripts (`SepoliaOpenOffers`, `SepoliaActiveLoan`) deploy a
+ *         module builds on, the midpoint and refusal modules included) deploy a
  *         fresh Chainlink registry, ETH/USD feed, WETH and (some of them) a
  *         sanctions oracle, then broadcast the admin setters that make the
  *         target Diamond read them. Pointed at a shared Diamond, that replaces

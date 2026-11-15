@@ -115,8 +115,8 @@ contract SeedAnvilOffers is Script {
         // KYC enforcement is OFF on retail deploys (per CLAUDE.md), so
         // these calls are no-ops at the gate level. Setting the tier
         // anyway keeps the user dashboard's "your KYC tier" view
-        // populated and matches the existing testnet-seeder pattern in
-        // `SepoliaActiveLoan.s.sol`.
+        // populated, as the positive-flow fixture
+        // (`positive-flows/PositiveFlowsBase.sol`) does.
         vm.startBroadcast(adminKey);
         ProfileFacet(diamond).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
         ProfileFacet(diamond).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
