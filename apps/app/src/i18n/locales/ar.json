@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "loan تعثر",
         "OwedAtDefaultRecorded": "تم تسجيل المبلغ المستحق عند التعثر",
         "OwedAtInternalMatchRecorded": "تسجيل المبلغ الذي سدّدته المطابقة الداخلية",
-        "LoanLiquidated": "تمت تصفية loan",
         "BackstopAbsorbedLoan": "تم امتصاص loan بواسطة backstop",
         "LoanExtended": "تم تمديد loan",
         "LoanRefinanced": "تم refinance loan",
