@@ -14,6 +14,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {IPriceGuard} from "../interfaces/IPriceGuard.sol";
 
 /**
@@ -212,8 +213,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         view
         returns (LibVaipakam.LiquidityStatus, address distrusted)
     {
-        IPriceGuard guard = LibPriceGuard.guard();
-        if (!guard.sequencerHealthy()) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
+        IPriceGuard guard = LibPriceGuard.guardForRead();
+        if (!guard.sequencerHealthy{gas: LibPriceGuard.GUARD_READ_GAS}()) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address weth = guard.weth();
@@ -544,11 +545,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             // batch keepers shouldn't fail-fast on a single
             // already-captured asset, the rest may still need work.
             if (s.assetPriceSnapshots[asset][today].capturedAt != 0) continue;
-            // try-call so a single asset whose feed is stale or whose
-            // secondary-quorum check disagrees doesn't take down the
-            // whole batch. The day's slot stays unwritten and any
-            // subsequent caller can retry once the feed recovers.
-            try this.getAssetPrice(asset) returns (uint256 price, uint8 feedDecimals) {
+            // A refused price (a stale feed, a quorum that disagrees)
+            // skips only this asset, so one bad feed doesn't take down the
+            // whole batch; the day's slot stays unwritten and any later
+            // caller can retry once the feed recovers. Running short of
+            // gas is not a refusal: the read reverts the batch by name
+            // instead of skipping (#3504).
+            (bool ok, uint256 price, uint8 feedDecimals) = LibPriceRead.tryAssetPrice(asset);
+            if (ok) {
                 s.assetPriceSnapshots[asset][today] = LibVaipakam.AssetPriceSnapshot({
                     // SafeCast: Chainlink price is non-negative + non-stale
                     // by `_primaryPrice`'s upstream guards. SafeCast.toInt256
@@ -560,8 +564,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                     capturedAt: uint64(block.timestamp)
                 });
                 emit DailyAssetPriceCaptured(asset, today, price, feedDecimals);
-            } catch {
-                // No-op for this asset; loop continues.
             }
         }
     }
@@ -619,7 +621,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     function getAssetPrice(
         address asset
     ) external view returns (uint256 price, uint8 decimals) {
-        return LibPriceGuard.guard().getAssetPrice(asset);
+        return LibPriceGuard.guardForRead().getAssetPrice{gas: LibPriceGuard.GUARD_READ_GAS}(asset);
     }
 
     /// @notice The live secondary sources (Tellor, API3, DIA) for `asset`,
@@ -630,7 +632,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     function countLiveSecondaryOracleFeeds(
         address asset
     ) external view returns (uint8 agreeing, uint8 disagreeing) {
-        return LibPriceGuard.guard().countLiveSecondaryOracleFeeds(asset);
+        return LibPriceGuard.guardForRead().countLiveSecondaryOracleFeeds{gas: LibPriceGuard.GUARD_READ_GAS}(asset);
     }
 
     // ─── README §13.5 asset-risk views ──────────────────────────────────
@@ -1412,7 +1414,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         returns (PriceStatus status, uint256 price, uint8 decimals)
     {
         IPriceGuard.PriceStatus st;
-        (st, price, decimals) = LibPriceGuard.guard().getAssetPriceStatus(asset);
+        (st, price, decimals) =
+            LibPriceGuard.guardForRead().getAssetPriceStatus{gas: LibPriceGuard.GUARD_READ_GAS}(asset);
         status = PriceStatus(uint8(st));
     }
 
@@ -1453,6 +1456,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         feed is set). Consumed by the default and liquidation facets
     ///         to choose between a swap and the full-collateral transfer.
     function sequencerHealthy() external view returns (bool) {
-        return LibPriceGuard.guard().sequencerHealthy();
+        return LibPriceGuard.guardForRead().sequencerHealthy{gas: LibPriceGuard.GUARD_READ_GAS}();
     }
 }

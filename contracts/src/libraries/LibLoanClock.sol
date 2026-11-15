@@ -175,6 +175,10 @@ library LibLoanClock {
     ///         default does not rely on this: it separately refuses while the
     ///         sequencer is unhealthy, reading the guard fail-closed.
     function outageWindow() internal view returns (uint256 downAt, uint256 windowEnd) {
+        // A failed call reads as "no outage", so the call must never fail
+        // for want of gas: check first that it can give the guard its whole
+        // budget, and revert by name when it cannot (#3504).
+        LibPriceGuard.requireSelfReadGas();
         bytes4 sel = LoanClockFacet.getSequencerOutageWindow.selector;
         // Memory-safe: the call's 4-byte input and its two-word answer use
         // only the scratch space (0x00-0x3f), which inline assembly may use
@@ -198,11 +202,13 @@ library LibLoanClock {
     ///         {LoanClockFacet} calls this; every other reader goes through
     ///         {outageWindow}.
     /// @dev    Best-effort: an unreadable guard moves nothing. The guard
-    ///         itself reads an unreadable FEED as down.
+    ///         itself reads an unreadable FEED as down. The guard is given
+    ///         exactly {LibPriceGuard.GUARD_READ_GAS} (#3504), so "unreadable"
+    ///         is never a read the caller starved.
     function guardOutageWindow() internal view returns (uint256 downAt, uint256 windowEnd) {
-        (bool ok, IPriceGuard g) = LibPriceGuard.tryGuard();
+        (bool ok, IPriceGuard g) = LibPriceGuard.tryGuardForRead();
         if (!ok) return (0, 0);
-        try g.sequencerOutageWindow() returns (uint256 d, uint256 e) {
+        try g.sequencerOutageWindow{gas: LibPriceGuard.GUARD_READ_GAS}() returns (uint256 d, uint256 e) {
             return (d, e);
         } catch {
             return (0, 0);

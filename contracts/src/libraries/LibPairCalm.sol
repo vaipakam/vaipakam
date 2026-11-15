@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
+import {LibPriceRead} from "./LibPriceRead.sol";
 
 /**
  * @title  LibPairCalm
@@ -41,15 +41,14 @@ library LibPairCalm {
     }
 
     /// @dev `asset`'s oracle price scaled to 1e18, or false when it cannot be
-    ///      read (any reason the strict reader refuses) or reads zero.
+    ///      read (any reason the strict reader refuses) or reads zero. Read
+    ///      through {LibPriceRead}, so a caller short of gas gets a revert by
+    ///      name, never a pair that reads as unpriced (#3504).
     function price1e18(address asset) internal view returns (bool ok, uint256 p) {
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (uint256 price, uint8 dec) {
-            if (price == 0) return (false, 0);
-            p = dec <= 18 ? price * 10 ** (18 - dec) : price / 10 ** (dec - 18);
-            ok = p != 0;
-        } catch {
-            return (false, 0);
-        }
+        (bool priced, uint256 price, uint8 dec) = LibPriceRead.tryAssetPrice(asset);
+        if (!priced || price == 0) return (false, 0);
+        p = dec <= 18 ? price * 10 ** (18 - dec) : price / 10 ** (dec - 18);
+        ok = p != 0;
     }
 
     /// @dev How far the collateral/principal rate moved between an earlier

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
@@ -969,7 +970,7 @@ contract RiskPreviewFacet {
         view
         returns (LibVaipakam.LiquidityStatus)
     {
-        (bool ok, bytes memory ret) = address(this).staticcall(
+        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset)
         );
         if (!ok || ret.length < 32) return LibVaipakam.LiquidityStatus.Illiquid;
@@ -980,7 +981,7 @@ contract RiskPreviewFacet {
     ///      all, so the comparison above is like-for-like with what would be
     ///      stamped on a loan originated right now.
     function _effectiveTierOrZero(address asset) private view returns (uint8) {
-        (bool ok, bytes memory ret) = address(this).staticcall(
+        (bool ok, bytes memory ret) = LibPriceRead.trySelfRead(
             abi.encodeWithSelector(
                 OracleFacet.getEffectiveLiquidityTier.selector,
                 asset
