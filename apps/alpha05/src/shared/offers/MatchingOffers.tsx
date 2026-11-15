@@ -82,7 +82,7 @@ export interface MatchesView {
  *  when it can be worked out (and why not when it cannot), the interest
  *  mode and schedule, the expiry, what taking it moves, and why it cannot
  *  be taken when the protocol says so. */
-function OfferRow({
+export function OfferRow({
   role,
   row,
   matcherBps,

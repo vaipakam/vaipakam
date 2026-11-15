@@ -22,6 +22,8 @@ import { StandingLenders } from '../../shared/offers/StandingLenders';
 import { readMatches } from '../../shared/offers/matches';
 import { ArmTariff, TARIFF_CONTEXT_KEY, type ArmContext } from '../../shared/post/ArmTariff';
 import { PostOffer } from '../../shared/post/PostOffer';
+import { TakeNowChoice } from '../../shared/post/TakeNowChoice';
+import { takeNowPicks } from '../../shared/post/takeNow';
 import { OfferForm, REQUEST_KEY } from '../../shared/post/OfferForm';
 import type { PostDraft } from '../../shared/post/postReview';
 import { lifecycleTerms, type PostAssets } from '../../shared/post/postModel';
@@ -76,6 +78,9 @@ export function BorrowPage() {
   const [composing, setComposing] = useStoredValue<boolean>(`${REQUEST_KEY}:composing`);
   const [draft, setDraft] = useStoredValue<PostDraft>(`${REQUEST_KEY}:draft`);
   const [pendingDraft, setPendingDraft] = useStoredValue<PostDraft>(`${REQUEST_KEY}:pending`);
+  /** #3622 B1: a confirmed draft that an open lender offer already fits,
+   *  waiting on the reader's choice between taking that offer and posting. */
+  const [choice, setChoice] = useStoredValue<PostDraft>(`${REQUEST_KEY}:choice`);
   const [, setTyped] = useStoredValue<unknown>(`${REQUEST_KEY}:input`);
   /** OFF-22: the Full tariff step for a request just posted, kept apart from
    *  the request's review so it outlives that card. */
@@ -115,7 +120,7 @@ export function BorrowPage() {
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
   const meta = useTokenMeta(assets).data;
 
-  const requesting = composing === true || draft !== null;
+  const requesting = composing === true || draft !== null || choice !== null;
   const flowOpen = taking !== null || requesting;
   const termsOpen = termsGate.session !== null;
 
@@ -138,13 +143,15 @@ export function BorrowPage() {
       termsGate.start(terms.data);
       return;
     }
-    setDraft(next);
+    openReview(next);
   };
+  // #3622 B1: an open offer that already fits the request is offered first.
+  const openReview = (next: PostDraft) => (takeNowPicks(next, view.data).length > 0 ? setChoice(next) : setDraft(next));
 
   const termsUnknown = connected && walletChain !== null && terms.state === 'failed';
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
 
-  const step = taking !== null || draft !== null ? 2 : ready ? 1 : 0;
+  const step = taking !== null || draft !== null || choice !== null ? 2 : ready ? 1 : 0;
   // NFT-13: what each leg's contract claims decides the request's shape. A
   // request borrows an ERC-20 (borrowing an NFT is a rental), and locks an
   // ERC-20, one ERC-721 token or a quantity of one ERC-1155 token; an
@@ -212,7 +219,7 @@ export function BorrowPage() {
         </section>
       )}
       {chain && ready && !flowOpen && connected && walletChain !== null && <MatchingOffers role="borrower" view={view} meta={meta} onTake={take} takeDisabled={takeDisabled} />}
-      {composing === true && draft === null && armContext === null && !termsOpen && walletChain && own && requestPair && (
+      {composing === true && draft === null && choice === null && armContext === null && !termsOpen && walletChain && own && requestPair && (
         <section className="borrow-section" aria-labelledby="borrow-request-form">
           <OfferForm
             side="borrower"
@@ -246,7 +253,7 @@ export function BorrowPage() {
           onAccepted={() => {
             termsGate.end();
             if (pendingTake !== null) setTaking(pendingTake);
-            if (pendingDraft !== null) setDraft(pendingDraft);
+            if (pendingDraft !== null) openReview(pendingDraft);
             setPendingTake(null);
             setPendingDraft(null);
           }}
@@ -256,6 +263,27 @@ export function BorrowPage() {
             termsGate.end();
           }}
         />
+      )}
+      {choice !== null && draft === null && taking === null && (
+        <section className="borrow-section">
+          <TakeNowChoice
+            side="borrower"
+            picks={takeNowPicks(choice, view.data)}
+            matcherBps={view.data?.matcherBps ?? null}
+            meta={meta}
+            takeDisabled={takeDisabled}
+            onTake={(id) => {
+              setChoice(null);
+              setComposing(null);
+              take(id);
+            }}
+            onPost={() => {
+              setDraft(choice);
+              setChoice(null);
+            }}
+            onBack={() => setChoice(null)}
+          />
+        </section>
       )}
       {taking !== null && walletChain && own && (
         <section className="borrow-section" aria-labelledby="borrow-review">
