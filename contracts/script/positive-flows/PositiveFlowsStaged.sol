@@ -99,7 +99,12 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *         the module's waits.
  */
 abstract contract PositiveFlowsStaged is PositiveFlowsBase {
-    uint256 private constant RECORD_VERSION = 2;
+    /// @dev The record's format. Raised whenever a record written before
+    ///      the change would be read differently after it, so the old record
+    ///      is refused by name instead of misread. 3: a swap adapter a
+    ///      scenario registers is recorded as `swapAdapter_<index>` (the
+    ///      timed module's `settlementAdapter` entry is retired).
+    uint256 private constant RECORD_VERSION = 3;
 
     /// @notice `run()` under `--broadcast` reached a wait between two steps.
     ///         A broadcast cannot wait between its own transactions; use the
@@ -532,7 +537,8 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     ///      version of this runner.
     function _checkRecord(string memory json) private view {
         require(vm.parseJsonUint(json, ".version") == RECORD_VERSION,
-            string.concat(moduleName(), ": the staged-run record is from another version of this runner"));
+            string.concat(moduleName(), ": the staged-run record is from another version of this runner. Finish",
+                " or unwind it from the commit that wrote it, then remove it for a fresh run"));
         require(_eq(vm.parseJsonString(json, ".module"), moduleName()),
             string.concat(moduleName(), ": the staged-run record is another module's"));
         require(vm.parseJsonUint(json, ".chainId") == block.chainid,
