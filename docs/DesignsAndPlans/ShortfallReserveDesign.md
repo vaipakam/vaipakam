@@ -1,6 +1,6 @@
 # Shortfall reserve — design
 
-**Status:** direction approved by the owner, 2026-11-15. Card #3641. Build after the external audit and the mainnet deploy; the fee split that fills the reserve ships with the mainnet deploy so it collects from the first day. The owner settled the fee split, the wording, the share and the round slice on 2026-11-15 (section 11); the fee levels that feed it are in `FeeLevelsDesign.md`.
+**Status:** direction approved by the owner, 2026-11-15. Card #3641. Build after the external audit and the mainnet deploy; the fee split that fills the reserve ships with the mainnet deploy so it collects from the first day. The owner settled the fee split, the wording, the share, the round slice and the two-stage activation on 2026-11-15 (section 11); the fee levels that feed it are in `FeeLevelsDesign.md`.
 **Related:** the treasury-seeded backstop (roles A and B, functional spec), `ForcedSaleSizingDesign.md` (sell to need, lender first), #3640 (missing-price fallback wait), #3629 (every loan payout goes through the position claim).
 
 ## 1. What this is, and what it is not
@@ -107,7 +107,7 @@ A shortfall is paid once, from one round. Nothing carries forward to a later rou
 - **One place.** The split happens once, inside the fee host, so every fee path inherits it and none can skip it. Events state the amount to treasury and the amount to reserve.
 - **Custody.** The reserve is its own contract with its own vault, holding treasury-origin funds only, never user deposits and never inside the Diamond. Per-asset balances; a shortfall in an asset is paid only from that asset's balance, so no price is needed to pay.
 - **Conversions.** Moving reserve funds between assets uses the existing treasury conversion route behind the Timelock delay.
-- **Activation in two stages (proposed, 11.1).** Records start to be written for an asset once governance activates it, which requires the asset's reserve to be at least 2% of that asset's open principal at the moment the change executes (bounded 1 to 10%). From then the share is 25%. The share setting may be raised above 25%, up to 50%, only by a delayed change that finds the reserve at 5% or more of open principal when it executes (bounded 3 to 15%). Both checks are made on-chain by the setting change itself; no round reads a live ratio, so nothing a user does around a round's close can move the share. A reserve that later falls below a level keeps its setting: weekly proportional rounds already limit what a weaker reserve pays. The owner's first figure, half of active loans, cannot be reached from fees: the reserve earns very roughly 0.8% to 1.6% of open principal a year at the proposed fee levels, so 2% takes about one and a half to two and a half years at a steady size and 5% three to six, longer while lending grows.
+- **Activation in two stages (owner decision 2026-11-15).** Records start to be written for an asset once governance activates it, which requires the asset's reserve to be at least 2% of that asset's open principal at the moment the change executes (bounded 1 to 10%). From then the share is 25%. The share setting may be raised above 25%, up to 50%, only by a delayed change that finds the reserve at 5% or more of open principal when it executes (bounded 3 to 15%). Both checks are made on-chain by the setting change itself; no round reads a live ratio, so nothing a user does around a round's close can move the share. A reserve that later falls below a level keeps its setting: weekly proportional rounds already limit what a weaker reserve pays. The owner's first figure, half of active loans, cannot be reached from fees: the reserve earns very roughly 0.8% to 1.6% of open principal a year at the proposed fee levels, so 2% takes about one and a half to two and a half years at a steady size and 5% three to six, longer while lending grows.
 - **No return is paid on reserve funds to anyone,** and the reserve is not tied to the platform token.
 - **Transparency.** Views report, per asset: balance, open principal, the current round's recorded shortfalls and budget, and every past round's totals. The app shows them on a public page.
 
@@ -142,11 +142,11 @@ Settled 2026-11-15:
 - **Wording:** "reserve" only, nothing promised (section 9). Describing it as a fund for future development was considered and rejected: the reserve's rules pay lender shortfalls, and a description that says otherwise is a misstatement about funds. Until the payout contract exists, the collected amount is described as a protocol reserve set aside from fees, which is all it is.
 - **Share and round slice:** a 50% share and 10% of the reserve per round.
 - **Eligibility:** top-tier assets on both sides only (section 5).
+- **Activation:** two stages (section 8): a 25% share from 2% of open principal, 50% from 5%. A single switch at 2% (the full share on a thin reserve) and a single switch at 5% (nothing paid for years) were the alternatives.
 
 Still open:
 
-1. **Activation.** Two stages are proposed (section 8): 25% share from 2% of open principal, 50% from 5%. The alternatives are a single switch at 2% or at 5%.
-2. **Legal review** of the reserve and its wording before activation (private list).
+1. **Legal review** of the reserve and its wording before activation (private list).
 
 ## 12. Alternatives considered
 
