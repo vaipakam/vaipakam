@@ -149,17 +149,27 @@ the vault stamps the guard address and the guard's current price version
 into the lien row when the lien is created, reading both itself. A later
 check for that lien reads prices at the stamp and nowhere else.
 
-When a loan moves to the current set (a retirement or a consent move,
-section 7), the Diamond asks the vault to **restamp** the lien in the same
-step. The vault takes no values from the Diamond: it reads its own guard
-constant and that guard's newest price version at that moment and writes
-those. The stamp therefore always equals the settings the loan is on, also
-after later changes for new loans, and a faulty Diamond can at most move a
-lien to settings that are current and were announced under a 7-day delay.
+When a loan's price part moves (a retirement or a consent move, section 7),
+the Diamond asks the vault to **restamp the price fields** of the lien in the
+same step, naming the guard and the price version the loan moved to. The
+vault trusts none of that by itself. It accepts the restamp only when:
 
-A vault whose owner has pinned older code keeps that code's guard constant.
-If it differs from the Diamond's current guard, the vault's check refuses, as
-a pinned vault does today (#3431).
+- the named guard is one its own code lists as accepted. The vault code
+  carries the guard new liens use and, beside it, any earlier guard still in
+  use by open loans; every vault version is announced under the code delay;
+- the named price version is not older than the lien's stamp and not newer
+  than that guard's newest version. A stamp only moves forward.
+
+A restamp is scoped to the part that moved. A route retirement restamps
+nothing, because the vault holds no route stamp, and a marketplace move
+leaves the price fields as they are (section 6). The stamp therefore always
+equals the settings the loan is on, also after later changes for new loans,
+and a faulty Diamond can at most move a lien forward to settings that were
+announced under a 7-day delay.
+
+A vault whose owner has pinned older code keeps that code's accepted list.
+If the loan's guard is not on it, the vault's check refuses, as a pinned
+vault does today (#3431).
 
 The vault does not check prices yet, so this lands on top of the vault's
 price checks (#3268) and the lien checks (#3379), in the same lien-creation
@@ -195,8 +205,10 @@ exists today folds into the set.
 
 The vault refuses a conduit other than its constant. As with prices, the
 vault stamps its marketplace constants into the lien row at lien creation,
-accepts only the stamp for that lien, and restamps from its own current
-constants when the loan moves to the current set. A vault version that names a
+accepts only the stamp for that lien, and restamps the marketplace fields
+alone when the loan's marketplace part moves. The named marketplace must be
+one the vault code lists as accepted: the one new liens use, or an earlier
+one still in use by open loans. A vault version that names a
 new conduit therefore does not strand a listing on an open loan, and does
 not move an open loan either.
 
@@ -212,18 +224,27 @@ one line of history), a route set, or a marketplace.
 - The current value of a part cannot be retired. Governance first makes the
   new value current through the ordinary delayed change, then retires the
   old one.
-- A loan holding a retired part is **moved**: that one part of its set
-  becomes the value current at the moment of the move, and its other parts
-  stay. The move is one step, `syncLoanSettings`, which writes the loan onto
-  the matching set and restamps the vault liens (section 4). Anyone may call
+- A retirement **names its replacement**, and the replacement must be the
+  current value both when it is proposed and when it is executed. If the
+  current value changes in between, the retirement lapses and needs a fresh
+  proposal and a fresh wait.
+- A loan holding a retired part is **moved** to the named replacement, not
+  to whatever is current when the move happens, and its other parts stay. If
+  the named replacement has itself been retired by then, the loan moves on
+  to that retirement's named replacement. Each such retirement is announced
+  to the holders of loans that would land on it, so a loan never receives
+  settings its parties were not told about at least 7 days ahead.
+- The move is one step, `syncLoanSettings`, which writes the loan onto the
+  matching set and restamps the moved part's fields in the vault liens
+  (sections 4 and 6). Anyone may call
   it, the keeper pass does, and every loan action runs it first, so no action
   ever reads a retired part. A view of a loan not yet moved answers as if it
   had been.
 - After the move the loan is frozen again on what it moved to. Later changes
   for new loans do not reach it.
-- A retired price version moves the loan to the current price settings in
+- A retired price version moves the loan to the named price version in
   full. The proposal event lists every difference between the retired
-  version and the current one, and the app shows that list.
+  version and the named one, and the app shows that list.
 - The proposal event is the announcement. The indexer knows which loans hold
   the part and notifies both parties of each, and the app shows the pending
   change on the loan page with its date. A party who does not accept it has
@@ -236,7 +257,8 @@ parties' consent, and it is never silent.
 when the borrower-position holder and every lender-position holder have each
 approved that exact set number. An approval names the set, so it cannot be
 replayed for a later one, and the move is refused if that set is no longer
-current. The move restamps the vault liens in the same step. A loan in
+current. The move restamps, in the same step, the fields of each part that
+changed. A loan in
 fallback custody or past default cannot be moved.
 
 ## 8. One rule, enforced
@@ -300,11 +322,16 @@ fallback custody or past default cannot be moved.
   sync, changes that one part only, and is frozen again afterwards.
 - After a move and a later change for new loans, the vault still validates
   the loan at the settings it moved to.
+- A route retirement leaves the lien's price and marketplace stamps
+  untouched.
+- A retirement whose named replacement stops being current before execution
+  lapses; a loan moved late lands on the named replacement, not a newer one.
 - Consent: both sides, exact set number, refused in fallback custody and
   after default; every holder on a divided loan.
 - Try-list indexes stay stable for a loan across a reorder.
-- The vault reads at its stamp only; a restamp takes the vault's own current
-  values and nothing from the Diamond.
+- The vault reads at its stamp only; a restamp is refused for a guard or a
+  marketplace outside the vault code's accepted list, for an older price
+  version, and for one newer than the guard's newest.
 - The pre-deploy check fails on an unlisted "current" caller.
 
 ## 12. Alternatives considered
