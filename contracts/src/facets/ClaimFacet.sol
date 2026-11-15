@@ -1632,7 +1632,8 @@ contract ClaimFacet is
         }
 
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, treasuryGets);
+        // #3669 — a refused share waits, liened, in the borrower's vault.
+        LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, treasuryGets);
 
         if (lenderGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender

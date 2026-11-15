@@ -14,6 +14,9 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
 
 /**
  * @title  SettlementLegFacet
@@ -48,7 +51,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *         the settlement facets. No reentrancy guard of its own: every caller
  *         already holds the Diamond guard.
  */
-contract SettlementLegFacet is IVaipakamErrors {
+contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondPausable {
     /// @notice The gas each attempt to move a leg is given: exactly this,
     ///         well above a vault-to-vault move that also creates the payee's
     ///         vault.
@@ -71,6 +74,25 @@ contract SettlementLegFacet is IVaipakamErrors {
     ///         `arrived` is what reached it.
     /// @custom:event-category state-change/loan-mutation
     event SettlementLegReleased(uint256 indexed loanId, address indexed payer, uint256 arrived);
+
+    /// @notice A treasury share the token refused was left in `owner`'s
+    ///         vault under a lien for the treasury.
+    /// @custom:event-category state-change/treasury
+    event TreasuryShareParked(address indexed owner, address indexed asset, uint256 amount);
+    /// @notice `owner`'s parked treasury shares in `asset` left for the
+    ///         treasury; `accrued` is what reached it.
+    /// @custom:event-category state-change/treasury
+    event TreasuryShareReleased(address indexed owner, address indexed asset, uint256 amount, uint256 accrued);
+
+    /// @notice Nothing is parked for the treasury from `owner` in `asset`.
+    error NoParkedTreasuryShare(address owner, address asset);
+
+    /// @notice Where a treasury share comes from: a payer's wallet (their
+    ///         allowance to the Diamond), a user's vault, or proceeds the
+    ///         Diamond holds from a settlement.
+    uint8 internal constant FROM_WALLET = 0;
+    uint8 internal constant FROM_VAULT = 1;
+    uint8 internal constant FROM_DIAMOND = 2;
 
     /// @notice Less gas was left than an attempt is given; the step reverts so
     ///         a deliverable leg can never be parked by withholding gas.
@@ -153,6 +175,97 @@ contract SettlementLegFacet is IVaipakamErrors {
         _onlySelf();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return LibSanctionedLock.depositLocked(s, s.loans[loanId].lender, loanId, asset, amount);
+    }
+
+    // ─── The treasury share ────────────────────────────────────────────
+
+    /**
+     * @notice Move a forced or terminal settlement's treasury share through
+     *         `TreasuryFeeFacet`, or, when the token refuses the move to the
+     *         treasury, leave it in `owner`'s own vault under a lien for the
+     *         treasury. `source` names where the share is ({FROM_WALLET}:
+     *         `owner`'s wallet; {FROM_VAULT}: `owner`'s vault;
+     *         {FROM_DIAMOND}: the Diamond, from proceeds of `owner`'s).
+     * @return accrued What reached the treasury now (0 when parked).
+     * @return parked  Whether the share was parked.
+     */
+    function treasuryShareOrPark(uint8 source, address owner, address asset, uint256 amount)
+        external
+        returns (uint256 accrued, bool parked)
+    {
+        _onlySelf();
+        if (amount == 0) return (0, false);
+        bytes memory call_ = source == FROM_WALLET
+            ? abi.encodeCall(ITreasuryFeeHost.collectFeeFromPayer, (owner, asset, amount))
+            : source == FROM_VAULT
+                ? abi.encodeCall(ITreasuryFeeHost.collectFeeFromVault, (owner, asset, amount))
+                : abi.encodeCall(ITreasuryFeeHost.collectFeeFromDiamond, (asset, amount));
+        (bool ok, bytes memory ret) = _attempt(call_);
+        if (ok) return (source == FROM_WALLET ? amount : abi.decode(ret, (uint256)), false);
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 held;
+        if (source == FROM_WALLET) {
+            if (
+                IERC20(asset).balanceOf(owner) < amount
+                    || IERC20(asset).allowance(owner, address(this)) < amount
+            ) LibRevert.bubbleOnFailureTyped(false, ret, TreasuryTransferFailed.selector);
+            LibFacet.crossFacetCall(
+                abi.encodeCall(VaultFactoryFacet.vaultDeliverERC20From, (owner, owner, asset, amount, 0)),
+                TreasuryTransferFailed.selector
+            );
+            held = amount;
+        } else if (source == FROM_VAULT) {
+            // The share is already in `owner`'s vault; it stays there.
+            if (IERC20(asset).balanceOf(s.userVaipakamVaults[owner]) < amount) {
+                LibRevert.bubbleOnFailureTyped(false, ret, TreasuryTransferFailed.selector);
+            }
+            held = amount;
+        } else {
+            if (IERC20(asset).balanceOf(address(this)) < amount) {
+                LibRevert.bubbleOnFailureTyped(false, ret, TreasuryTransferFailed.selector);
+            }
+            held = LibSanctionedLock.depositLocked(s, owner, 0, asset, amount);
+        }
+        LibEncumbrance.encumberParkedLeg(owner, asset, held);
+        s.parkedTreasury[owner][asset] += held;
+        emit TreasuryShareParked(owner, asset, held);
+        return (0, true);
+    }
+
+    /**
+     * @notice Move every treasury share parked in `owner`'s vault in `asset`
+     *         to the treasury the vault code names, and accrue what arrived.
+     *         Permissionless: the destination is fixed, and the call only
+     *         completes a payment the protocol already owes. Reverts with the
+     *         token's own error while it still refuses, leaving the row.
+     */
+    function releaseParkedTreasury(address owner, address asset)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 accrued)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 amount = s.parkedTreasury[owner][asset];
+        if (amount == 0) revert NoParkedTreasuryShare(owner, asset);
+        delete s.parkedTreasury[owner][asset];
+        LibEncumbrance.releaseParkedLeg(owner, asset, amount);
+        LibSanctionedLock.beginMoveOut(s, owner);
+        accrued = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(ITreasuryFeeHost.collectFeeFromVault, (owner, asset, amount)),
+                TreasuryTransferFailed.selector
+            ),
+            (uint256)
+        );
+        LibSanctionedLock.endMoveOut(s);
+        emit TreasuryShareReleased(owner, asset, amount, accrued);
+    }
+
+    /// @notice The treasury shares parked in `owner`'s vault in `asset`.
+    function getParkedTreasury(address owner, address asset) external view returns (uint256) {
+        return LibVaipakam.storageSlot().parkedTreasury[owner][asset];
     }
 
     // ─── In-kind default ───────────────────────────────────────────────

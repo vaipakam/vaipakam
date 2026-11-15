@@ -8372,6 +8372,12 @@ library LibVaipakam {
         ///      (park and release); zero `amount` and zero `payer` mean
         ///      nothing is parked. Appended — append-only.
         mapping(uint256 => ParkedLeg) parkedLenderLeg;
+        /// @dev #3669 — per owner and asset, the treasury shares a token
+        ///      refused to deliver, left in the owner's own vault under a lien
+        ///      for the treasury. Written only by `SettlementLegFacet`;
+        ///      released, permissionlessly, to the treasury the vault code
+        ///      names. Appended — append-only.
+        mapping(address => mapping(address => uint256)) parkedTreasury;
     }
 
     /// @notice #3669 — a settlement leg a token refused to move to its payee,

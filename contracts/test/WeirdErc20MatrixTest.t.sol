@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -297,6 +298,39 @@ contract WeirdErc20MatrixTest is SetupTest {
         assertEq(SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN).amount, 0, "row cleared");
         assertEq(_bal(mockERC20, bVault), bAfter - leg.amount, "exactly the share left the borrower's vault");
         assertEq(_tracked(lender, mockERC20), leg.amount, "the lender's vault holds it");
+    }
+
+    /// @notice The TREASURY is frozen in the lending asset.
+    /// @dev    #3669: the repayment completes, and the treasury share waits,
+    ///         liened, in the borrower's vault until anyone releases it to the
+    ///         treasury once the freeze lifts.
+    function test_Frozen_Treasury_RepayParksShareThenReleases() public {
+        _scaffold(true);
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
+        l.interestRateBps = 1_000;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        vm.warp(block.timestamp + 10 days);
+        address treasury = AdminFacet(address(diamond)).getTreasury();
+        address bVault = _vault(borrower);
+        WeirdERC20Mock w = _weird(mockERC20);
+        w.setFrozen(treasury, true);
+
+        _repay();
+        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Repaid), "the repayment completed");
+        uint256 parked = SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20);
+        assertGt(parked, 0, "the treasury share parked");
+        assertEq(_bal(mockERC20, bVault), parked, "it waits in the borrower's vault");
+
+        vm.expectRevert();
+        SettlementLegFacet(address(diamond)).releaseParkedTreasury(borrower, mockERC20);
+
+        w.setFrozen(treasury, false);
+        uint256 before = _bal(mockERC20, treasury);
+        vm.prank(makeAddr("anyone"));
+        SettlementLegFacet(address(diamond)).releaseParkedTreasury(borrower, mockERC20);
+        assertEq(_bal(mockERC20, treasury) - before, parked, "the treasury received it");
+        assertEq(SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20), 0, "row cleared");
+        assertEq(_bal(mockERC20, bVault), 0, "nothing left in the borrower's vault");
     }
 
     // -- Paused: every path refuses, and resumes on unpause ------------------

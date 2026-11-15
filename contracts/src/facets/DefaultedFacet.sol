@@ -475,7 +475,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // is accrued as it arrived like every other treasury inflow (it
             // was sent unaccrued before, which on a Diamond-as-treasury
             // deployment left it outside `treasuryBalances`).
-            LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, loan.bufferAmount);
+            // #3669 — a refused share waits, liened, in the borrower's vault.
+            LibFacet.treasuryShareOrPark(1, loan.borrower, loan.prepayAsset, loan.bufferAmount);
 
             // Lender's prepay share: rental fees minus treasury fee (buffer already sent to treasury)
             (uint256 treasuryFee, uint256 prepayToLender) = LibEntitlement.splitTreasury(
@@ -519,7 +520,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
             // Treasury fee from rental portion
             // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-            LibFacet.transferToTreasury(loan.prepayAsset, treasuryFee);
+            LibFacet.treasuryShareOrPark(2, loan.borrower, loan.prepayAsset, treasuryFee); // #3669
 
             // Lender gets remainder. #821 — vault-lock for a flagged stored lender
             // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).

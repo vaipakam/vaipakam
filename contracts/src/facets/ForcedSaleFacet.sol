@@ -509,7 +509,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
             );
             lenderNet = sp.lender - treasuryInterest;
         }
-        LibFacet.transferToTreasury(loan.principalAsset, sp.fee + treasuryInterest);
+        // #3669 — a frozen treasury never stops the close-out: a refused share
+        // waits, liened, in the borrower's vault.
+        LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, sp.fee + treasuryInterest);
 
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received

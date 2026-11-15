@@ -213,6 +213,9 @@ platform-wide rules apply across the lifecycle:
   forced sale's lender share waits the same way in the borrower's vault. A
   partial repayment, preclose, swap-to-repay or periodic interest payment the
   token refuses still fails, since the borrower can always repay in full.
+  A treasury share refused at a repayment or default waits the same way in
+  the payer's vault, and anyone may send it on to the treasury once the
+  token allows it.
 - Fallback-pending loans are active for dashboard and operator purposes because
   they can still be cured or rescued before final fallback claim.
 

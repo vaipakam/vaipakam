@@ -643,7 +643,8 @@ contract PrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
         LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, lenderAmount);
-        uint256 treasuryAmount = LibFacet.transferToTreasury(loan.principalAsset, treasuryNet);
+        // #3669 — a refused share waits, liened, in the borrower's vault.
+        uint256 treasuryAmount = LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, treasuryNet);
 
         // `lenderExtra + treasuryNet == plan.treasuryShare`, so this is
         // `proceeds - floor`, which the check above keeps non-negative.

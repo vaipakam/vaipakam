@@ -198,6 +198,11 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
+    "SettlementLegFacet.releaseParkedTreasury(address,address)": {
+      "class": "gap",
+      "issue": "#3669",
+      "why": "moves treasury shares a token refused at a close-out from the payer's vault to the treasury the vault code names, once the token allows it; the destination is fixed. The keeper pass (read TreasuryShareParked rows, retry while getParkedTreasury is non-zero, shipped disarmed) lands with the contract batch"
+    },
     "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,uint256,uint256,struct:LibSignedOffer.FillAuth)": {
       "class": "alternative",
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",

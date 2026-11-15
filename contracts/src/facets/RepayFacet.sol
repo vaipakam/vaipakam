@@ -343,7 +343,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // Skipped entirely when the VPFI discount path satisfied it.
             // #1281-011 — through the one payer -> treasury pull, which
             // refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
+            // #3669 — a frozen treasury never stops the repayment: a refused
+            // share waits, liened, in the borrower's vault.
+            LibFacet.treasuryShareOrPark(0, msg.sender, loan.principalAsset, plan.treasuryShare);
 
             // T-037 — Lender's due: borrower → lender's vault in ONE
             // transfer. The Diamond carries the borrower's allowance
@@ -505,8 +507,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // the already-screened treasury / lender, the payer loses custody.
             LibSanctionedLock.beginMoveOut(s, msg.sender);
             // Treasury share: immediate from borrower's vault. #2440 — the
-            // treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);
+            // treasury accrues what reached it; #3669 — a refused share waits,
+            // liened, in that vault.
+            LibFacet.treasuryShareOrPark(1, msg.sender, loan.prepayAsset, treasuryShare);
 
             // Lender's rental share: withdraw from borrower's vault → Diamond → lender's vault.
             // #2440 — a voluntary repayment: refused unless the whole share

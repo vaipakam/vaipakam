@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ISettlementLegHost} from "../interfaces/ISettlementLegHost.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
@@ -314,6 +315,29 @@ library LibFacet {
             IVaipakamErrors.VaultDepositFailed.selector
         );
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
+    }
+
+    /// @dev #3669 — a forced or terminal settlement's treasury share, through
+    ///      `SettlementLegFacet.treasuryShareOrPark`: moved to the treasury
+    ///      through `TreasuryFeeFacet`, or, when the token refuses the move,
+    ///      left in `owner`'s own vault under a lien for the treasury, so a
+    ///      frozen treasury never stops the close-out. `source` is 0 for
+    ///      `owner`'s wallet, 1 for `owner`'s vault, 2 for proceeds of
+    ///      `owner`'s the Diamond holds. Returns what reached the treasury
+    ///      now (0 when parked). Voluntary steps keep the plain helpers above
+    ///      and refuse.
+    function treasuryShareOrPark(uint8 source, address owner, address asset, uint256 amount)
+        internal
+        returns (uint256 accrued)
+    {
+        if (amount == 0) return 0;
+        (accrued, ) = abi.decode(
+            crossFacetCallReturn(
+                abi.encodeCall(ISettlementLegHost.treasuryShareOrPark, (source, owner, asset, amount)),
+                IVaipakamErrors.TreasuryTransferFailed.selector
+            ),
+            (uint256, bool)
+        );
     }
 
     /// @dev Staticcall variant for read-only cross-facet reads (e.g. HF/LTV).

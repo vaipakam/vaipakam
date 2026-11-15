@@ -30,7 +30,7 @@ library LibTestSettlementLeg {
 
     /// @dev Mirrors `DeployDiamond._getSettlementLegSelectors`.
     function selectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](10);
         s[0] = SettlementLegFacet.deliverLenderDueOrPark.selector;
         s[1] = SettlementLegFacet.moveInKindCollateralOrPark.selector;
         s[2] = SettlementLegFacet.inKindMove.selector;
@@ -38,5 +38,8 @@ library LibTestSettlementLeg {
         s[4] = SettlementLegFacet.getParkedLenderLeg.selector;
         s[5] = SettlementLegFacet.depositLenderShareOrPark.selector;
         s[6] = SettlementLegFacet.depositToStoredLender.selector;
+        s[7] = SettlementLegFacet.treasuryShareOrPark.selector;
+        s[8] = SettlementLegFacet.releaseParkedTreasury.selector;
+        s[9] = SettlementLegFacet.getParkedTreasury.selector;
     }
 }

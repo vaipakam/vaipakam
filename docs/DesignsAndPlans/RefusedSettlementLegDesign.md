@@ -138,5 +138,25 @@ them:
   forced sale that would settle the period stops with it, which costs the
   borrower nothing. It refuses as today.
 - **The treasury share** does hold others hostage: a frozen treasury would
-  stop every repayment and default in that token. It parks next, through
-  the one treasury host, with the payer named at each call site.
+  stop every repayment and default in that token. It parks (section 9).
+
+## 9. The treasury share
+
+`SettlementLegFacet.treasuryShareOrPark(source, owner, asset, amount)`
+attempts the move through `TreasuryFeeFacet` (from `owner`'s wallet, from
+`owner`'s vault, or from proceeds of `owner`'s the Diamond holds). When the
+token refuses it, the share goes into, or stays in, `owner`'s vault under a
+lien for the treasury, added to one row per owner and asset. The forced and
+terminal sites call it through `LibFacet.treasuryShareOrPark`: full repay
+(wallet and rental), the time-based default's rental buffer and fee, the
+forced sale's terminal share, the prepay sale's settlement and the
+fallback retry's distribution. Voluntary sites keep the plain helpers.
+
+`releaseParkedTreasury(owner, asset)` is open to anyone: it sends the whole
+row to the treasury the vault code names and accrues what arrived. Its
+keeper pass is a recorded gap (#3669) and ships disarmed.
+
+Two limits are known. Parked VPFI still counts toward its holder's fee
+tier until it is released. And the periodic and partial liquidation routes
+keep the plain treasury helper, so a frozen treasury stops them; the full
+liquidation and the default, which park, remain open.

@@ -22,7 +22,12 @@ This covers full repayment, the in-kind default, and the lender's share of a
 forced sale (the liquid default and liquidations), which waits in the
 borrower's vault. Partial repayment, preclose, swap-to-repay and periodic
 interest still refuse, because a refusal there holds no one else hostage:
-the borrower can still repay in full. The treasury share follows. The design is in
+the borrower can still repay in full.
+
+A frozen treasury no longer stops a repayment or default either: the
+treasury's share waits in the payer's vault, and anyone can send it on to
+the treasury once the token allows it. A keeper pass for that release is
+planned and will ship switched off. The design is in
 `docs/DesignsAndPlans/RefusedSettlementLegDesign.md`.
 
 Advances #3669.
