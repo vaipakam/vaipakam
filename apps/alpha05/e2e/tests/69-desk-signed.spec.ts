@@ -71,6 +71,11 @@ test('your signed orders are listed with the chain’s standing, and each is can
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    // #3327 — caps above any live fee, and no taker or co-signer named.
+    maxTreasuryFeeBps: '65535',
+    maxLoanInitiationFeeBps: '65535',
+    allowedTaker: ZERO,
+    coSigner: ZERO,
     signer: accountFor(role).address.toLowerCase(),
     nonce: '1001',
     deadline: until,

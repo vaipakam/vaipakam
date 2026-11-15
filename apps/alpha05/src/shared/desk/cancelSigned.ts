@@ -77,7 +77,17 @@ export function signedCancelBlockers(r: Pick<SignedCancelReview, 'target' | 'sta
   if (!states.some(fillable)) {
     if (r.target.kind === 'nonce') return [text('signedCancel.nonceNothingOpen')];
     const s = states[0]!;
-    return [text(s === 'used' ? 'signedCancel.used' : s === 'nonce-cancelled' ? 'signedCancel.nonceDone' : 'signedCancel.lapsed')];
+    return [
+      text(
+        s === 'used'
+          ? 'signedCancel.used'
+          : s === 'nonce-cancelled'
+            ? 'signedCancel.nonceDone'
+            : s === 'floor-cancelled'
+              ? 'signedCancel.floorDone'
+              : 'signedCancel.lapsed',
+      ),
+    ];
   }
   if (r.paused === null) return [text('signedCancel.pauseUnread')];
   if (r.paused) return [text('signedCancel.paused')];

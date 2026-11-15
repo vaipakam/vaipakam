@@ -175,8 +175,18 @@ const ADDRESS_FIELDS = [
   'lendingAsset',
   'collateralAsset',
   'prepayAsset',
+  // #3327 — zero is meaningful for both: anyone may take / no co-signer.
+  'allowedTaker',
+  'coSigner',
   'signer',
 ] as const;
+
+/** #3327 — the maker's fee caps, uint16 bps. Not bounded against the live
+ *  fees here: the fees are governance-tunable, so like every other DYNAMIC
+ *  rule the fill re-checks them (a cap below today's fee refuses today's
+ *  fill and the app's preview says so). */
+const U16_FIELDS = ['maxTreasuryFeeBps', 'maxLoanInitiationFeeBps'] as const;
+const U16_MAX = 0xffffn;
 
 const BOOL_FIELDS = [
   'allowsPartialRepay',
@@ -228,7 +238,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 31 struct fields — unknown keys are rejected so order_json
+  // Exactly the 35 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -275,6 +285,13 @@ function validateOrder(
   for (const f of U256_FIELDS) {
     const v = raw[f];
     if (typeof v !== 'string' || !DEC.test(v) || BigInt(v) > U256_MAX) {
+      return { error: `invalid-${f}` };
+    }
+    out[f] = v;
+  }
+  for (const f of U16_FIELDS) {
+    const v = raw[f];
+    if (typeof v !== 'string' || !DEC.test(v) || BigInt(v) > U16_MAX) {
       return { error: `invalid-${f}` };
     }
     out[f] = v;
@@ -505,7 +522,7 @@ function validateOrder(
 /**
  * POST /signed-offers
  *
- * Body: `{ chainId: number, order: <31-field SignedOffer wire object>,
+ * Body: `{ chainId: number, order: <35-field SignedOffer wire object>,
  *          signature: 0x-hex }` — every uint as a decimal string, addresses
  * 0x-40-hex, bools as booleans (the same shape GET returns and takers replay
  * on-chain).
@@ -682,7 +699,7 @@ export async function handleSignedOfferPost(
   let initialFilledAmount = '0';
   try {
     const client = createPublicClient({ transport: http(chain.rpc) });
-    const [nonceUsed, filled, floor] = await Promise.all([
+    const [nonceUsed, filled, floor, cancelFloor] = await Promise.all([
       client.readContract({
         address: chain.diamond as Address,
         abi: DIAMOND_SIGNED_OFFER_ABI,
@@ -703,9 +720,21 @@ export async function handleSignedOfferPost(
         // Its own failure (a Diamond that predates the floor, a blip) costs
         // only this check, never the two above.
       }).catch(() => null) as Promise<readonly [boolean, bigint] | null>,
+      // #3327 — the signer's cancel floor: every order of theirs with a
+      // nonce below it is cancelled. A Diamond that predates the floor
+      // fails this read alone; the order is then admitted as before.
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: DIAMOND_SIGNED_OFFER_ABI,
+        functionName: 'signedOfferCancelFloor',
+        args: [order.signer as Address],
+      }).catch(() => null) as Promise<bigint | null>,
     ]);
     if (nonceUsed) {
       return jsonResponse({ error: 'nonce-used' }, 409);
+    }
+    if (cancelFloor !== null && BigInt(order.nonce) < cancelFloor) {
+      return jsonResponse({ error: 'below-cancel-floor' }, 409);
     }
     if (floor !== null && floor[0] && BigInt(order.amount) < floor[1]) {
       return jsonResponse({ error: 'below-offer-floor', minAmount: floor[1].toString() }, 400);
@@ -939,8 +968,8 @@ export async function handleSignedOffersGet(
     // One query per side so each cap is applied within a PRICE-ordered
     // slice (see MAX_BOOK_ROWS_PER_SIDE). `orderBy` is a whitelisted
     // literal chosen here, never caller input. Every stored order is the
-    // 31-field shape: the route writes nothing else, and migration 0078
-    // removed the pre-#1949 rows this query used to filter out (#1481).
+    // 35-field shape: the route writes nothing else, and migrations 0078
+    // and 0093 removed the older shapes (#1481, #3327).
     const perSideCap =
       signer !== null ? SIGNER_BOOK_ROWS_PER_SIDE : MAX_BOOK_ROWS_PER_SIDE;
     const sideQuery = (offerType: 0 | 1, orderBy: string) =>

@@ -3246,7 +3246,7 @@ async function runChainPass(
 // Phase A — offer-domain handler.
 // ──────────────────────────────────────────────────────────────────
 
-interface DecodedLog {
+export interface DecodedLog {
   eventName: string;
   args: Record<string, unknown>;
   blockNumber: bigint;
@@ -3879,6 +3879,13 @@ export async function markBorrowerFillsUnread(
  *   - `SignedOfferNonceBurned` — batch invalidation: EVERY still-active row
  *     for (signer, nonce) on this chain flips to 'nonce_burned' at once.
  *
+ *   - `SignedOfferCancelFloorRaised` (#3327) — the signer cancelled every
+ *     order with a nonce below `floor`: each still-active row of theirs on
+ *     this chain whose nonce is below it flips to 'nonce_burned'. The nonce
+ *     column is decimal TEXT of a uint256, so the comparison is made on
+ *     BigInt here rather than by a SQLite cast, which would lose precision
+ *     past 2^63.
+ *
  * Only-active guards keep terminal states sticky (a cancel after a full
  * fill, or a nonce burn after a cancel, is a no-op — first terminal wins,
  * matching the on-chain reality that a consumed order can't be re-consumed).
@@ -3893,7 +3900,7 @@ export async function markBorrowerFillsUnread(
  * they're handled here anyway because the `signed_offers` projection would
  * otherwise advertise consumed orders forever.
  */
-async function processSignedOfferLogs(
+export async function processSignedOfferLogs(
   logs: DecodedLog[],
   env: Env,
   chainId: number,
@@ -3905,6 +3912,7 @@ async function processSignedOfferLogs(
     'SignedOfferMatched',
     'SignedOfferCancelled',
     'SignedOfferNonceBurned',
+    'SignedOfferCancelFloorRaised',
   ]);
   // Replay in chain log order (the scan already delivers logs ordered by
   // (blockNumber, logIndex)): a match ratchet followed by a cancel in the
@@ -4074,6 +4082,28 @@ async function processSignedOfferLogs(
       } else {
         console.log(
           `[chainIndexer] SignedOfferNonceBurned(${signer}, ${nonce}) matched no active rows (chain ${chainId}) — no-op`,
+        );
+      }
+    } else if (log.eventName === 'SignedOfferCancelFloorRaised') {
+      const signer = (a.signer as string).toLowerCase();
+      const floor = a.floor as bigint;
+      const rows = await env.DB.prepare(
+        `SELECT order_hash, nonce FROM signed_offers
+         WHERE chain_id = ? AND signer = ? AND status = 'active'`,
+      )
+        .bind(chainId, signer)
+        .all<{ order_hash: string; nonce: string }>();
+      const below = (rows.results ?? []).filter((r) => BigInt(r.nonce) < floor);
+      if (below.length > 0) {
+        const stmt = env.DB.prepare(
+          `UPDATE signed_offers SET status = 'nonce_burned', updated_at = ?
+           WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
+        );
+        const results = await env.DB.batch(below.map((r) => stmt.bind(now, chainId, r.order_hash)));
+        for (const r of results) updates += r.meta?.changes ?? 0;
+      } else {
+        console.log(
+          `[chainIndexer] SignedOfferCancelFloorRaised(${signer}, ${floor}) matched no active rows (chain ${chainId}) — no-op`,
         );
       }
     }

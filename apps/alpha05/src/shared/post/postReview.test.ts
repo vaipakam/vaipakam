@@ -3,6 +3,7 @@ import { createParams, ZERO } from './postModel';
 import { changedBetween, judgeDryRun, judgeLimit, needsApproval, readLtv, promptCount, postBlockers, postRiskNeed, type PostReview } from './postReview';
 import { postReceipt } from './postReceipt';
 import { matchConsequences, rangeConsequences } from './requestReceipt';
+import { matchConsequences as lenderMatchConsequences } from './lenderPostReceipt';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -417,6 +418,16 @@ describe('what a match can lock (OFF-16)', () => {
     // An unpriced pair has no loan-to-value, but a match still keeps the rest committed to the request.
     expect(matchConsequences(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy)).toEqual(['request.loseMatchKeepsRest']);
     expect(matchConsequences(review({ risk: { ...review().risk, partialFill: null } }), null, copy)).toEqual(['request.loseMatchLocksLess', 'request.loseMatchKeepsRest']);
+  });
+  it('says a pro-rata match runs for the borrower’s term, never longer than the lender’s (#3615)', () => {
+    const base = review();
+    const proRata = { ...base, draft: { ...base.draft, parsed: { ...base.draft.parsed, fullTerm: false } } };
+    expect(matchConsequences(proRata, null, copy)).toEqual(['request.loseMatchLocksLess', 'request.loseMatchKeepsRest', 'request.proRataTermMatch']);
+    expect(matchConsequences(base, null, copy)).not.toContain('request.proRataTermMatch');
+    const lent = { ...proRata, draft: { ...proRata.draft, side: 'lender' as const } };
+    expect(lenderMatchConsequences(lent, null, copy)).toEqual(['lendOffer.loseMatch', 'lendOffer.loseProRataTerm']);
+    const full = { ...base, draft: { ...base.draft, side: 'lender' as const } };
+    expect(lenderMatchConsequences(full, null, copy)).toEqual(['lendOffer.loseMatch']);
   });
   it('states a start-of-loan limit that could not be read, never dropping the row', () => {
     const unread = postReceipt(review({ risk: { ...review().risk, start: { kind: 'unread' } } }), null, copy, true);

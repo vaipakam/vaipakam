@@ -28,11 +28,12 @@ export const SIGNED_FILL_KEY = 'desk.signedFill';
 type Hex = `0x${string}`;
 
 const STANDING_KEY: Readonly<
-  Record<Exclude<SignedStanding, 'partly-filled'>, 'signedBook.open' | 'signedBook.used' | 'signedBook.nonceDone' | 'signedBook.lapsed' | 'signedBook.unread'>
+  Record<Exclude<SignedStanding, 'partly-filled'>, 'signedBook.open' | 'signedBook.used' | 'signedBook.nonceDone' | 'signedBook.floorDone' | 'signedBook.lapsed' | 'signedBook.unread'>
 > = {
   open: 'signedBook.open',
   used: 'signedBook.used',
   'nonce-cancelled': 'signedBook.nonceDone',
+  'floor-cancelled': 'signedBook.floorDone',
   lapsed: 'signedBook.lapsed',
   unread: 'signedBook.unread',
 };

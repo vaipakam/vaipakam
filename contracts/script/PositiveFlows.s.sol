@@ -37,6 +37,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *             Staged (`run-staged.sh PositiveFlowsKeeperAutomation`).
  *           - PositiveFlowsOperatorAdmin: sanctions Tier-1 vs Tier-2, pauses,
  *             treasury accrual and withdrawal, an admin fee knob inside its bounds.
+ *             Staged (`run-staged.sh PositiveFlowsOperatorAdmin`).
  *           - PositiveFlowsPositionHolder: a transferred position NFT moves
  *             its side's authority and proceeds to the new holder (#848
  *             Phase 2).
@@ -84,7 +85,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         with `TermsAgeNeedsStagedRun` before anything is sent. The modules
  *         that are staged ({PositiveFlowsStaged}: BasicLifecycle,
  *         AdvancedCredit, LenderIntent, PositionHolder, KeeperAutomation,
- *         SwapToRepay, Timed) broadcast one
+ *         OperatorAdmin, SwapToRepay, Timed) broadcast one
  *         at a time through `script/positive-flows/run-staged.sh <module>`;
  *         the others run as this simulation only until they are staged.
  *

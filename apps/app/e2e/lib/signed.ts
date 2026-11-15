@@ -27,7 +27,7 @@ import { accountFor, type Role } from './wallets';
 
 const STUB_ORIGIN = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
-/** The 31-field wire order as the book serves it (mirror of the app's
+/** The 35-field wire order as the book serves it (mirror of the app's
  *  `SignedOrderWire` — decimal-string uints, lowercase addresses; #1949
  *  added the maker's three Full-tariff fields). */
 export interface WireOrder {
@@ -59,6 +59,11 @@ export interface WireOrder {
   creatorFull: boolean;
   creatorMaxCStar: string;
   creatorAllowFullDowngrade: boolean;
+  // #3327 — the maker's fee caps, taker binding and co-signer.
+  maxTreasuryFeeBps: string;
+  maxLoanInitiationFeeBps: string;
+  allowedTaker: string;
+  coSigner: string;
   signer: string;
   nonce: string;
   deadline: string;
@@ -131,6 +136,10 @@ export function wireToTyped(o: WireOrder) {
     creatorFull: o.creatorFull,
     creatorMaxCStar: BigInt(o.creatorMaxCStar),
     creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,
+    maxTreasuryFeeBps: Number(o.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: Number(o.maxLoanInitiationFeeBps),
+    allowedTaker: o.allowedTaker as `0x${string}`,
+    coSigner: o.coSigner as `0x${string}`,
     signer: o.signer as `0x${string}`,
     nonce: BigInt(o.nonce),
     deadline: BigInt(o.deadline),

@@ -1982,7 +1982,21 @@ contract OfferAcceptFacet is
         SignedOfferMakerShort,
         // The principal is worth less than the offer-book value floor
         // (`LibOfferAdmission.OfferBelowMinimumValue`).
-        SignedOfferBelowMinimumValue
+        SignedOfferBelowMinimumValue,
+        // #3327 — the order's own refusals added with the fee caps, the taker
+        // binding, the cancel floor and the co-signer, reported where the fill
+        // checks them (after the nonce, before the consumed hash). APPENDED;
+        // prior values stay stable.
+        // The order's nonce is below the signer's cancel floor.
+        SignedOfferBelowCancelFloor,
+        // A protocol fee (treasury or loan initiation) is above the cap the
+        // maker signed.
+        SignedOfferFeeAboveCap,
+        // The order names a taker other than this acceptor.
+        SignedOfferTakerNotAllowed,
+        // The order names a co-signer, and the fill carries no live
+        // co-signature from it.
+        SignedOfferCoSignatureInvalid
     }
 
     /// @notice Projection of the loan that would land if the supplied

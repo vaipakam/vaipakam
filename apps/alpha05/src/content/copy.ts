@@ -2923,6 +2923,7 @@ export const copy = {
     partlyFilled: A('Partly filled: matches took {{filled}} of {{ceiling}}, and the rest can still be filled until it lapses or you cancel it.'),
     used: B('Fully filled or cancelled on the chain; the offer book has not caught up.'),
     nonceDone: B('Stopped on the chain: its nonce was cancelled; the offer book has not caught up.'),
+    floorDone: B('Stopped on the chain: you cancelled every order below a nonce floor; the book has not caught up.'),
     lapsed: B('Lapsed on the chain’s clock: no one can fill it.'),
     unread: B('Its standing on the chain could not be read.'),
     cancel: B('Cancel on the chain'),
@@ -2958,6 +2959,7 @@ export const copy = {
     partlyFilled: A('Partly filled: matches took {{filled}} of {{ceiling}}; {{left}} can still be filled until it lapses or its maker cancels it.'),
     used: B('Filled or cancelled on the chain; the offer book has not caught up. No one can fill it.'),
     nonceDone: B('Stopped on the chain: its maker cancelled its nonce; the offer book has not caught up.'),
+    floorDone: B('Stopped on the chain: its maker cancelled every order below a nonce floor; the book lags.'),
     lapsed: B('Lapsed on the chain’s clock: no one can fill it.'),
     unread: B('Its standing on the chain could not be read.'),
     covers: A('The maker’s vault holds {{free}} free now, enough for the {{need}} a fill would draw.'),
@@ -3112,6 +3114,7 @@ export const copy = {
     unread: A('Where the chain stands on this order could not be read, so no cancel can be sent yet.'),
     used: A('The chain already holds this order as filled or cancelled, so there is nothing to cancel.'),
     nonceDone: A('This order’s nonce is already cancelled on the chain, so nothing can fill it.'),
+    floorDone: A('This order is below a nonce floor its signer set on the chain, so it is already cancelled and nothing can fill it.'),
     lapsed: A('This order has lapsed on the chain’s clock, so nothing can fill it and there is nothing to cancel.'),
     nonceNothingOpen: A('No order listed under this nonce can still be filled on the chain.'),
     pauseUnread: A('Whether the protocol is paused could not be read, so no cancel can be sent yet.'),
@@ -3132,6 +3135,9 @@ export const copy = {
     rowLapses: B('Fillable until'),
     rowFills: B('How it fills'),
     fillsWhole: B('Whole or not at all: one taker fills the whole amount.'),
+    rowFeeCaps: B('Fee limits'),
+    feeCaps: B('{{interest}} of interest, {{start}} to start a loan'),
+    feeCapsNote: A('These are the protocol fees now. If either rises above them, no one can fill this order while it stays higher, but the order becomes fillable again if the fee comes back down. To stop it for good, cancel it.'),
     rowNow: B('Set aside now'),
     nowNothing: B('Nothing. Signing costs no gas and moves nothing.'),
     rowAtFill: B('At a fill, from your own vault'),
@@ -3159,6 +3165,7 @@ export const copy = {
     refusedSignature: A('The offer book could not match the signature to your wallet, so it listed nothing.'),
     refusedUsed: A('The chain already holds this order as used or cancelled, so the offer book listed nothing.'),
     refusedLapsed: A('The offer book holds this order as already lapsed, so it listed nothing.'),
+    refusedCancelFloor: A('This order falls under a cancel-all you made earlier, so it was cancelled before it could be listed. Edit the ticket and sign again.'),
     refusedCode: A('The offer book refused it ({{code}}) and listed nothing.'),
     refusedForgotten: A('This app has dropped the signature, so the order cannot be sent again from here.'),
     unknown: A(
@@ -3956,6 +3963,9 @@ export const copy = {
     interestLabel: B('Interest if the borrower repays early'),
     fullTermOption: B("Full term: the borrower owes the whole term's interest"),
     partialOption: B('Let the borrower repay part early'),
+    proRataNote: A(
+      'With pro-rata interest, the term you set is the longest you lend for. A match can pair your offer with a pro-rata request for that term or a shorter one, and that loan runs for exactly the term the borrower asked for. A borrower who takes your offer directly gets your whole term.',
+    ),
     optionsSummary: B('Full-term interest keeps what you earn; the defaults are the common choice.'),
     optionsWhy: C(
       "Full-term interest means the borrower owes the whole term's interest even if they repay early, so an early repayment does not lower what you earn; pro-rata interest pays you only for the time the loan is open. Allowing partial repayments lets the borrower repay part of the loan early; with full-term interest, a partial repayment lowers the future interest on what it repays, and the full-term floor still applies to the rest. Each choice is fixed in the offer and binds the loan it opens.",
@@ -4123,6 +4133,9 @@ export const copy = {
     loseMatchUnread: A(
       'Whether matching is switched on for this network could not be read. While it is on, anyone may match your offer with a request, lending your whole amount at your rate against at least the collateral you ask for.',
     ),
+    loseProRataTerm: A(
+      'With pro-rata interest, {{days}} days is the longest you lend for: a match can pair this offer with a pro-rata request for a shorter term, and that loan runs, and earns you interest, only for the term the borrower asked for.',
+    ),
     loseBinding: A('Posting records a binding offer: any borrower may take it on these terms while it is open.'),
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this offer locks.'),
     blockRefused: A('The protocol refuses this offer: {{reason}}'),
@@ -4288,6 +4301,11 @@ export const copy = {
       SignedOfferUnsupportedShape: A('A signed order can be filled only as a loan of one token against another, with no refinance, and this order is not one.'),
       SignedOfferMakerShort: A('The maker’s vault does not hold free what this fill would draw from it, so a fill now would fail. It may succeed once the maker adds funds.'),
       SignedOfferBelowMinimumValue: A('This order’s amount is below the protocol’s minimum loan value now, so it cannot be filled.'),
+      // #3327 — the maker's own protections.
+      SignedOfferBelowCancelFloor: A('The maker cancelled every order signed with a nonce below a floor, and this order is one of them, so it can no longer be filled.'),
+      SignedOfferFeeAboveCap: A('A protocol fee is now above the limit the maker signed into this order, so the protocol will not fill it. It can be filled again only if the fee comes back down.'),
+      SignedOfferTakerNotAllowed: A('The maker reserved this order for one named taker, and you are not that taker, so you cannot fill it.'),
+      SignedOfferCoSignatureInvalid: A('This order needs a fresh approval from a co-signer the maker named, and this app cannot obtain one, so it cannot fill the order.'),
     },
     changedOffer: B('The offer'),
     changedPreview: B('What the offer gives you'),
@@ -4370,6 +4388,7 @@ export const copy = {
     interestLabel: B('Interest if you repay early'),
     fullTermOption: B("Full term: the whole term's interest is owed"),
     proRataOption: B('Pro-rata: only for the time the loan is open'),
+    proRataNote: A('With pro-rata interest, a match can also pair your request with a lender’s pro-rata offer for a longer term. Your loan always runs for exactly the term you ask for.'),
     partialOption: B('Allow partial repayments'),
     optionsSummary: B('Most lenders look for full-term interest; the defaults are the common choice.'),
     optionsWhy: C(
@@ -4446,6 +4465,7 @@ export const copy = {
     loseMatchKeepsRest: A(
       'Collateral a match does not lock stays with the request for later matches and comes back to your wallet only when the request closes or you cancel it, not after each match.',
     ),
+    proRataTermMatch: A('A match can pair this request with a lender’s pro-rata offer for a longer term; your loan still runs for exactly {{days}} days.'),
     loseDirectOver: A(
       "At today's prices a lender cannot take this directly: {{floor}} supports at most {{ceiling}}, less than the smallest amount. Only a match that locks more of your collateral can fill it.",
     ),

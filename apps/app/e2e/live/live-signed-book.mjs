@@ -416,6 +416,11 @@ function wireToStruct(o) {
     creatorFull: o.creatorFull,
     creatorMaxCStar: BigInt(o.creatorMaxCStar),
     creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,
+    // #3327 — the maker's fee caps, taker binding and co-signer.
+    maxTreasuryFeeBps: Number(o.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: Number(o.maxLoanInitiationFeeBps),
+    allowedTaker: o.allowedTaker,
+    coSigner: o.coSigner,
     signer: o.signer,
     nonce: BigInt(o.nonce),
     deadline: BigInt(o.deadline),

@@ -149,6 +149,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },
   SignedOfferCancelled: { label: 'Signed offer cancelled', category: 'offer', priority: 55 },
   SignedOfferNonceBurned: { label: 'Signed offer voided', category: 'offer', priority: 30 },
+  SignedOfferCancelFloorRaised: { label: 'Older signed offers cancelled', category: 'offer', priority: 30 },
   // VPFI / rewards / vault — surfaced in the wallet's OWN feed (the
   // indexer's pluckActivityRefs attributes these to the acting wallet;
   // apps/indexer/src/chainIndexer.ts). Without explicit labels they

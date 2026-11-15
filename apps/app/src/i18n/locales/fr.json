@@ -2062,7 +2062,11 @@
         "accept": "Remplir l'ordre",
         "accepting": "Remplissage…",
         "accepted": "Ordre signé rempli — le prêt est live.",
-        "close": "Fermer"
+        "close": "Fermer",
+        "restrictedBadgeTooltip": "Une offre signée que son créateur a limitée : elle est réservée à un portefeuille, ou chaque exécution exige l’accord de son cosignataire, que cette app ne peut pas encore demander. Elle compte dans la profondeur mais n’a pas de bouton Exécuter ici.",
+        "reservedForOtherTaker": "Cette offre est réservée à un autre portefeuille, elle ne peut donc pas être prise depuis celui-ci.",
+        "needsCoSigner": "Cette offre exige que le cosignataire de son créateur approuve chaque exécution, et cette app ne peut pas encore demander cette approbation, elle ne peut donc pas être prise ici.",
+        "feeAboveCap": "Les frais du protocole sont désormais plus élevés que ce que le créateur de cette offre a accepté, elle ne peut donc pas être prise tant qu’ils restent aussi élevés. Elle redevient disponible si les frais redescendent."
       },
       "chart": {
         "title": "Taux convenus",
@@ -2192,7 +2196,10 @@
         "netYield": "Si quelqu’un prend l’offre et que le prêt est remboursé, vous gagnez environ {{net}} % par an après les frais de protocole de {{feePct}} % sur vos intérêts.",
         "lifNote": "Frais de démarrage : {{feePct}} % du montant du prêt (environ {{amount}} {{symbol}}), facturés au démarrage du prêt.",
         "expiryGtcSignedHint": "Une offre signée gratuitement reste ouverte jusqu’à 7 jours, puis expire d’elle-même. Vous pouvez l’annuler avant (l’annulation coûte des frais de réseau).",
-        "gaslessBelowFloor": "Cet ordre est plus petit que la plus petite offre que le protocole accepte dans ce jeton, personne ne pourrait donc le prendre. Rien n’a été publié. Augmentez le montant et signez à nouveau."
+        "gaslessBelowFloor": "Cet ordre est plus petit que la plus petite offre que le protocole accepte dans ce jeton, personne ne pourrait donc le prendre. Rien n’a été publié. Augmentez le montant et signez à nouveau.",
+        "gaslessBelowCancelFloor": "Cet ordre tomberait sous une annulation globale faite plus tôt depuis votre portefeuille, il serait donc annulé dès sa publication. Rien n’a été publié. Veuillez signer à nouveau.",
+        "feesChanged": "Les frais du protocole ont changé après que vous avez vérifié cet ordre. Rien n’a été publié. Vérifiez les nouveaux frais et signez à nouveau.",
+        "feeCapNote": "Votre ordre signé ne s’exécute que tant que les frais du protocole restent au plus à ces niveaux : {{interestPct}} % des intérêts et {{startPct}} % au démarrage d’un prêt. Si l’un d’eux augmente, personne ne pourra le prendre tant qu’il reste plus élevé, mais il redevient disponible si ces frais redescendent. Pour l’arrêter définitivement, annulez-le."
       },
       "orders": {
         "loading": "Chargement de vos ordres ouverts…",
@@ -2853,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "Entrée de récompense scindée lors d’un transfert de position",
         "LenderEntryStamped": "Remise du prêteur enregistrée à la prise de la position",
         "Transfer": "Transfert",
-        "Approval": "Approbation"
+        "Approval": "Approbation",
+        "SignedOfferCancelFloorRaised": "Anciennes offres signées annulées"
       },
       "unavailableFallback": "Vos prêts et locations actuels sont toujours disponibles dans",
       "positionsLink": "Mes positions"

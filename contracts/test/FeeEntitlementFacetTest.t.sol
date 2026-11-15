@@ -193,6 +193,8 @@ contract FeeEntitlementFacetTest is SetupTest {
         o.creatorFull = full;
         o.creatorMaxCStar = maxCStar;
         o.creatorAllowFullDowngrade = allowDowngrade;
+        o.maxTreasuryFeeBps = type(uint16).max; // #3327: no fee cap in these suites
+        o.maxLoanInitiationFeeBps = type(uint16).max;
         o.signer = signedMaker;
         o.nonce = 1;
     }
@@ -235,7 +237,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 bucketBefore = _config().getRecycleBucket();
         vm.expectEmit(false, false, false, true, address(diamond));
         emit OfferCreatorFullTariffSet(0, true, c, false);
-        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL, _noAuth());
         assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "the signed maker's own C*, charged on a matched slice");
         assertEq(_config().getRecycleBucket() - bucketBefore, c, "absorbed once");
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
@@ -257,7 +259,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         bytes memory sig = _signMaker(o);
         address mVault = _vault(signedMaker);
         uint256 mBefore = vpfiToken.balanceOf(mVault);
-        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL, _noAuth());
         assertEq(vpfiToken.balanceOf(mVault), mBefore, "nothing charged");
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
         assertTrue(uint8(fe.lenderMode) != uint8(LibVaipakam.FeeEntitlementMode.Full), "not Full");
@@ -271,11 +273,11 @@ contract FeeEntitlementFacetTest is SetupTest {
         LibSignedOffer.SignedOffer memory o = _signedLender(PRINCIPAL, true, 0, false);
         bytes memory sig = _signMaker(o);
         vm.expectRevert(LibSignedOffer.SignedOfferFullNeedsMaxCStar.selector);
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL, _noAuth());
         LibAcceptTerms.AcceptTerms memory noTerms;
         vm.prank(borrower);
         vm.expectRevert(LibSignedOffer.SignedOfferFullNeedsMaxCStar.selector);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, noTerms, "");
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, noTerms, "", _noAuth());
     }
 
     /// A SLICE takes its pro-rata share of the signed ceiling (rounded up): two
@@ -290,10 +292,10 @@ contract FeeEntitlementFacetTest is SetupTest {
         bytes memory sig = _signMaker(o);
         address mVault = _vault(signedMaker);
         uint256 mBefore = vpfiToken.balanceOf(mVault);
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL, _noAuth());
         assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar, c, "half the order, half the ceiling");
         assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "the first slice charged within its share");
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL, _noAuth());
         assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 2).creatorMaxCStar, c, "the second slice too");
         assertEq(mBefore - vpfiToken.balanceOf(mVault), 2 * c, "two slices, the whole signed ceiling, no more");
     }
@@ -312,10 +314,10 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 signed = 2 * c + 1;
         LibSignedOffer.SignedOffer memory o = _signedLender(2 * PRINCIPAL, true, signed, false);
         bytes memory sig = _signMaker(o);
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL, _noAuth());
         uint256 first = OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar;
         assertEq(first, c + 1, "the first half takes its cumulative share, rounded up");
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL, _noAuth());
         uint256 second = OfferCancelFacet(address(diamond)).getOffer(b2 + 2).creatorMaxCStar;
         assertEq(second, c, "the second half takes only what is left");
         assertEq(first + second, signed, "the slices sum to the signed ceiling, never past it");
@@ -334,7 +336,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         bytes memory sig = _signMaker(o);
         address mVault = _vault(signedMaker);
         uint256 mBefore = vpfiToken.balanceOf(mVault);
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL, _noAuth());
         assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar, 1 << 255, "half the word, rounded up");
         assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "charged its C*, well inside the share");
     }
@@ -1690,5 +1692,9 @@ contract FeeEntitlementFacetTest is SetupTest {
         assertTrue(seen,
             "the VPFI-paid branch ran - peg armed and yieldVpfiDeducted > 0");
     }
+
+
+    /// @dev #3327: no co-signer named, so the fill authorisation is empty.
+    function _noAuth() internal pure returns (LibSignedOffer.FillAuth memory auth) {}
 
 }

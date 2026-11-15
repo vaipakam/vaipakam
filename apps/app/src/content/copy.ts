@@ -5611,6 +5611,16 @@ const copySource = {
         'Signed offers aren’t available on this deployment — its offer-book service isn’t set up — so this shows only offers posted on the blockchain.',
       rangedBadgeTooltip:
         'A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.',
+      // #3327 — a signed offer whose maker limited who may take it, or
+      // that needs a co-signer this app cannot ask yet: depth, no Fill.
+      restrictedBadgeTooltip:
+        'A signed offer its maker has limited: it is reserved for one wallet, or each fill needs approval from the maker’s co-signer, which this app can’t request yet. It counts as depth but has no Fill button here.',
+      reservedForOtherTaker:
+        'This offer is reserved for another wallet, so it can’t be taken from this one.',
+      needsCoSigner:
+        'This offer needs its maker’s co-signer to approve each fill, and this app can’t request that approval yet, so it can’t be taken here.',
+      feeAboveCap:
+        'The protocol fees are now higher than the maker of this offer agreed to, so it can’t be taken while they stay that high. It becomes takeable again if the fees come back down.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:
@@ -5812,6 +5822,14 @@ const copySource = {
       // order's smallest amount, since no taker could fill it directly.
       gaslessBelowFloor:
         'This order is smaller than the smallest offer the protocol accepts in this token, so no one could take it. Nothing was posted. Raise the amount and sign again.',
+      // #3327 — the ingest gate refuses an order below the signer's
+      // cancel floor (a cancel-all made earlier).
+      gaslessBelowCancelFloor:
+        'This order would fall under a cancel-all made from your wallet earlier, so it would be cancelled as soon as it was posted. Nothing was posted. Please sign again.',
+      // #3327 — the fees the review showed are the caps the order signs,
+      // so a change between review and signing stops the post.
+      feesChanged:
+        'The protocol fees changed after you reviewed this order. Nothing was posted. Check the new fees and sign again.',
       gaslessUnavailable:
         'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
       // Leg labels interpolated into securityBlocked / securityUnknown
@@ -5868,6 +5886,11 @@ const copySource = {
       lifNote: tmpl(
         `Starting fee: {{feePct}}% of the loan amount (about {{amount}} {{symbol}}), charged when the loan starts.`,
         ['feePct', 'amount', 'symbol'],
+      ),
+      // #3327 — a gasless order signs these fees as its caps.
+      feeCapNote: tmpl(
+        `Your signed order fills only while the protocol fees stay at or below these: {{interestPct}}% of interest and {{startPct}}% to start a loan. If either rises, no one can take it while it stays higher, but it becomes takeable again if the fee comes back down. To stop the order for good, cancel it.`,
+        ['interestPct', 'startPct'],
       ),
     },
     orders: {
@@ -6796,6 +6819,7 @@ const copySource = {
       SignedOfferMatched: 'Signed offers matched',
       SignedOfferCancelled: 'Signed offer cancelled',
       SignedOfferNonceBurned: 'Signed offer voided',
+      SignedOfferCancelFloorRaised: 'Older signed offers cancelled',
       InteractionRewardsClaimed: 'Rewards claimed',
       RewardDeliveredToVault: 'Rewards delivered to your vault',
       VPFIDepositedToVault: 'VPFI deposited to vault',

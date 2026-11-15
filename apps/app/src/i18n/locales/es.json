@@ -2062,7 +2062,11 @@
         "accept": "Llenar orden",
         "accepting": "Llenando…",
         "accepted": "Orden firmada llenada — el préstamo está activo.",
-        "close": "Cerrar"
+        "close": "Cerrar",
+        "restrictedBadgeTooltip": "Una oferta firmada que su creador ha limitado: está reservada para una cartera, o cada ejecución necesita la aprobación de su cofirmante, que esta app aún no puede solicitar. Cuenta como profundidad, pero aquí no tiene botón de Ejecutar.",
+        "reservedForOtherTaker": "Esta oferta está reservada para otra cartera, así que no se puede aceptar desde esta.",
+        "needsCoSigner": "Esta oferta necesita que el cofirmante de su creador apruebe cada ejecución, y esta app aún no puede solicitar esa aprobación, así que no se puede aceptar aquí.",
+        "feeAboveCap": "Las comisiones del protocolo son ahora más altas de lo que aceptó el creador de esta oferta, así que no se puede aceptar mientras sigan así. Vuelve a poder aceptarse si las comisiones bajan."
       },
       "chart": {
         "title": "Tasas acordadas",
@@ -2192,7 +2196,10 @@
         "netYield": "Si alguien acepta la oferta y el préstamo se devuelve, ganas alrededor de un {{net}}% al año tras la comisión del protocolo del {{feePct}}% sobre tus intereses.",
         "lifNote": "Comisión inicial: {{feePct}}% del importe del préstamo (unos {{amount}} {{symbol}}), cobrada cuando empieza el préstamo.",
         "expiryGtcSignedHint": "Una oferta firmada gratis sigue abierta hasta 7 días y luego caduca sola. Puedes cancelarla antes (cancelar requiere una comisión de red).",
-        "gaslessBelowFloor": "Esta orden es menor que la oferta más pequeña que el protocolo acepta en este token, así que nadie podría tomarla. No se publicó nada. Aumenta el monto y firma de nuevo."
+        "gaslessBelowFloor": "Esta orden es menor que la oferta más pequeña que el protocolo acepta en este token, así que nadie podría tomarla. No se publicó nada. Aumenta el monto y firma de nuevo.",
+        "gaslessBelowCancelFloor": "Esta orden quedaría cubierta por una cancelación total hecha antes desde tu cartera, así que se cancelaría en cuanto se publicara. No se publicó nada. Vuelve a firmar.",
+        "feesChanged": "Las comisiones del protocolo cambiaron después de que revisaras esta orden. No se publicó nada. Revisa las nuevas comisiones y vuelve a firmar.",
+        "feeCapNote": "Tu orden firmada solo se ejecuta mientras las comisiones del protocolo no superen estas: {{interestPct}} % de los intereses y {{startPct}} % al iniciar un préstamo. Si alguna sube, nadie podrá aceptarla mientras siga más alta, pero vuelve a poder aceptarse si la comisión baja. Para detenerla definitivamente, cancélala."
       },
       "orders": {
         "loading": "Cargando tus órdenes abiertas…",
@@ -2853,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "Entrada de recompensa dividida al transferir la posición",
         "LenderEntryStamped": "Descuento del prestamista registrado al tomar la posición",
         "Transfer": "Transferencia",
-        "Approval": "Aprobación"
+        "Approval": "Aprobación",
+        "SignedOfferCancelFloorRaised": "Ofertas firmadas anteriores canceladas"
       },
       "unavailableFallback": "Tus préstamos y alquileres actuales siempre están disponibles en",
       "positionsLink": "Mis posiciones"
