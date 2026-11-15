@@ -1737,6 +1737,35 @@ above. Each resolves here, so a route reviewer needs no private file:
   creator. A return it could not size is measured in the asset the offer
   itself can return, an ERC-20 or an NFT, and one that moved nothing is
   stated as nothing returned.
+- **RB-OFFER-EDIT** — the creator of an open loan offer or request can
+  change it in place (#3659): its rate range, its amount range and its token
+  collateral, through the protocol's `modifyOffer`, opened from the offer's
+  page and kept in its own store keyed by the offer. A refinance request
+  changes only its rate; a sale or early-close listing, an offer locked by a
+  standing sale order, a rental, an expired or ended offer, another
+  wallet's offer and a pause are refused by name, and the term and the
+  repayment options are said to stay as posted (to change those, cancel and
+  post again). The form starts from the offer as the chain holds it and
+  applies the protocol's own shape to the figures that change: a floor
+  above zero and not above its ceiling, a rate of at most 100% a year, one
+  amount for an all-or-nothing offer, one collateral figure for a lending
+  offer, and never below what is filled. The review is read at one block
+  and states each figure before and after, the term unchanged, and what
+  moves: a raised lending ceiling or request collateral ceiling pulls the
+  difference from the wallet into the vault through an exact approval (the
+  wallet's balance is checked first), a lowered one returns the difference
+  from the vault on the creator's payout route, and a rate change moves
+  nothing. It says that the offer cannot be taken for the protocol's
+  terms-age wait after the change (read, or said to be unread), that a
+  backstop opt-in ends, that filled loans keep their terms, and that a
+  full take before the change lands refuses it. The protocol's dry run
+  runs before the wallet opens; for a pull the approval does not cover, it
+  runs after the approval and before the change, and the receipt says so.
+  An approval the change did not use is put back. The finish card checks
+  the protocol's record of the new figures against the review and measures
+  what left or reached the wallet. The why-match panel's rate gap links to
+  this flow filled in with the rate that closes the gap: the bound of the
+  reader's range on the counterparty's side moves to their nearest bound.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether
@@ -2731,9 +2760,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   schedule), and any other refusal is given in the preview's own words. The
   count of open offers on the other side is shown, and the closest offers,
   each with its verdict, sit behind a tap. The page never promises a match,
-  and says that another taker can reach an offer first. Until this app can
-  change an open offer, a gap says the way to close it is to cancel and post
-  again. A failed index read says the closest offers are unknown, never that
+  and says that another taker can reach an offer first. A rate gap links to
+  the offer's change filled in with the rate that closes it (RB-OFFER-EDIT);
+  a term or option gap says those stay as posted, so closing it means
+  cancelling and posting again; any other gap links to the change unfilled.
+  A failed index read says the closest offers are unknown, never that
   there are none; an index that does not list the offer as open yet says it
   may be catching up. The Offers list links each open token-for-token offer
   the reader created to its page with one line, "Why isn’t it matching?".

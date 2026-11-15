@@ -11,6 +11,7 @@ import { useWorldRail } from '../reads/world/WorldRailContext';
 import { formatAge, formatBps } from '../ui/format';
 import { useNow } from '../ui/useNow';
 import type { StoredOffer } from './acceptTerms';
+import { useEditOfferHeld, type EditInput } from './EditOffer';
 import { indexReason } from './OfferBook';
 import { MATCH_CODE, readNearestIndex, readWhy, whyOf, type Counterparty, type Gap, type OptionGap, type Why } from './whyNotMatching';
 
@@ -32,8 +33,10 @@ const OPTION_KEY: Record<OptionGap, CopyKey> = {
  * and, for those, the protocol's own match preview, read at one block. It
  * states one gap, the first refusal of the closest open counterparty, or
  * that a pair would match now, or that nothing stands on the other side.
- * The list of closest offers sits behind a tap. It never promises a match,
- * and it says that this app cannot change an open offer yet.
+ * The list of closest offers sits behind a tap. It never promises a match.
+ * A rate gap links to the offer's change, filled in with the rate that
+ * closes it (#3659); a gap in the term or an option says those stay as
+ * posted, so closing it means cancelling and posting again.
  */
 export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chain: SupportedChain; own: OwnStateClient }) {
   const { text, format } = useCopy();
@@ -119,7 +122,7 @@ export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chai
               </ul>
             </details>
           )}
-          {why.kind === 'gap' && <p className="tier-b">{text('whyMatch.change')}</p>}
+          {why.kind === 'gap' && <GapAction gap={why.gap} offerId={offer.id} />}
         </>
       )}
     </section>
@@ -175,4 +178,38 @@ function GapLine({ gap, id, lend }: { gap: Gap; id: bigint; lend: boolean }) {
     case 'code':
       return <>{format('whyMatch.code', { id: id.toString(), reason: refusalText(gap.code, copy) })}</>;
   }
+}
+
+/** The figure that closes a rate gap: the bound of the reader's range on
+ *  the counterparty's side moves to the counterparty's nearest bound. Every
+ *  other bound stays, so the range stays well formed. */
+export function ratePrefill(gap: Extract<Gap, { kind: 'rate' }>): EditInput {
+  return gap.theirsHigh ? { rateMax: formatBps(gap.theirs) } : { rateMin: formatBps(gap.theirs) };
+}
+
+/** What the reader can do about the gap. */
+function GapAction({ gap, offerId }: { gap: Gap; offerId: bigint }) {
+  const { text, format } = useCopy();
+  const edit = useEditOfferHeld(offerId);
+  const open = (prefill?: EditInput) => {
+    edit.open(prefill);
+    // The change opens in the offer's action area below.
+    requestAnimationFrame(() => document.getElementById('offer-edit')?.scrollIntoView({ block: 'start' }));
+  };
+  if (gap.kind === 'rate')
+    return (
+      <p className="actions">
+        <button type="button" className="btn" onClick={() => open(ratePrefill(gap))} data-testid="why-match-change-rate">
+          {format(gap.theirsHigh ? 'whyMatch.changeRateMax' : 'whyMatch.changeRateMin', { rate: formatBps(gap.theirs) })}
+        </button>
+      </p>
+    );
+  if (gap.kind === 'term' || gap.kind === 'option') return <p className="tier-b">{text(gap.kind === 'term' ? 'whyMatch.termFixed' : 'whyMatch.optionFixed')}</p>;
+  return (
+    <p className="actions">
+      <button type="button" className="btn btn-link" onClick={() => open()} data-testid="why-match-change">
+        {text('whyMatch.changeOffer')}
+      </button>
+    </p>
+  );
 }

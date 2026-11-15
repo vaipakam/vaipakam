@@ -10,6 +10,7 @@ import { TakeRequest } from '../../shared/rent/TakeRequest';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { CancelOffer, useCancelOfferHeld } from '../../shared/offers/CancelOffer';
+import { EditOffer, useEditOfferHeld } from '../../shared/offers/EditOffer';
 import { HeldGuardFlow, PriceGuardSection, useGuardHeld } from '../../shared/offers/PriceGuard';
 import { readPriceGuard } from '../../shared/offers/priceGuard';
 import { roleTerms } from '../../shared/offers/acceptTerms';
@@ -168,6 +169,10 @@ function OfferBody({
   const held = useHeldFlows(d.id);
   const lend = o.offerType === OFFER_TYPE_LENDER;
   const erc20 = o.assetType === ASSET_ERC20;
+  // #3659: the creator may change an open loan offer or request in place
+  // (a refinance request's rate only); a sale or offset listing is fixed.
+  const editable = mine && d.state === 'open' && (d.purpose === 'plain' || d.purpose === 'refinance') && erc20;
+  const edit = useEditOfferHeld(d.id);
   const erc20Collateral = o.collateralAssetType === ASSET_ERC20;
   const unknown = text('receipt.unknown');
   const amt = (v: bigint) => offerAmount(o, v, meta, format);
@@ -259,6 +264,7 @@ function OfferBody({
             )}
           </p>
         )}
+        {(editable || edit.held) && walletChain && own && <EditAction id={d.id} chain={walletChain} own={own} meta={meta} />}
         {(action.kind === 'cancel' || action.kind === 'clean-up' || held.cancel) && walletChain && own && (
           <CancelAction id={d.id} cleanUp={action.kind === 'clean-up'} chain={walletChain} own={own} />
         )}
@@ -268,6 +274,22 @@ function OfferBody({
       </section>
       <WhyLink summaryKey="offerPage.whySummary" detailKey="offerPage.why" />
     </>
+  );
+}
+
+function EditAction({ id, chain, own, meta }: { id: bigint; chain: SupportedChain; own: OwnStateClient; meta: TokenMetaMap | null }) {
+  const { text } = useCopy();
+  const edit = useEditOfferHeld(id);
+  return (
+    <div id="offer-edit" data-testid="offer-edit">
+      {edit.held ? (
+        <EditOffer id={id} chain={chain} own={own} meta={meta} onClose={edit.close} />
+      ) : (
+        <button type="button" className="btn" onClick={() => edit.open()} data-testid="offer-page-edit">
+          {text('offerEdit.action')}
+        </button>
+      )}
+    </div>
   );
 }
 

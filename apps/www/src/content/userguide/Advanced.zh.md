@@ -2146,6 +2146,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 确认页在同一区块读取 `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` 以及创建者的 `getProtectedAccount`，然后试运行 `OfferCancelFacet.cancelOffer(id)`。该切面允许创建者的管理者随时取消，`expiresAt` 过后任何人都可取消；它会以 `OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` 拒绝，并在 `amountFilled == 0` 的报价创建不足 300 秒且未过期时以 `CancelCooldownActive` 拒绝，且受 `whenNotPaused` 限制。退回数额按切面自身的分支计算：ERC-20 借出报价退回借出资产的 `(amountMax 或 amount) - amountFilled`；NFT 借出报价退回其代币或 ERC-1155 数量；借款请求退回未使用的抵押品 `(collateralAmountMax 或 collateralAmount) - collateralAmountFilled` 或其 NFT，当 `refinanceCarryOver` 把抵押品留在贷款中时不退回；租赁请求退回 `amount × durationDays` 加上按 `rentalBufferBpsAtCreate` 计算的缓冲金。通过 `getOfferLinkedLoanId` 与贷款绑定的报价，或记录的缓冲率为零的租赁请求（此时协议使用当前费率），在签名前不计算。所有退回都经由金库提取离开创建者的金库，因此保护模式会将其排入队列，或在账户锁定期间留在金库中。仓位代币被注销。完成卡片读取 `OfferCanceled(offerId, creator)`、协议给创建者的付款记录，以及代币本身向创建者的转账。
 
+<a id="offer-edit"></a>
+
+### 修改报价
+
+`OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)`，其中 `validUntil` 取自链上时钟（#3412）。该 facet 只检查发生变化的组：每组的 `LibOfferShape` 规则（下限为正且不高于上限；全部或全无的 `fillMode` 只有一个金额；利率上限最多 10,000 bps；出借人只有一个抵押数字），不得低于 `amountFilled` 或 `collateralAmountFilled`，金额变化时检查付息周期规则和价值下限，金额或抵押变化时检查报价上下限。它拒绝非创建者、已接受的报价、已暂停的资产或协议、受制裁的调用者、已设置的 `parallelSaleOrderHash`、已消耗或已关联的出售载体以及抵销载体；带再融资标记的报价保持其金额和抵押。出借人的 ERC-20 报价结算 `amountMax` 的差额，以 ERC-20 作抵押的借款人 ERC-20 请求结算 `collateralAmountMax` 的差额：增加部分在钱包对 Diamond 的授权下由 `vaultDepositERC20` 从钱包拉取，减少部分以原因 `OFFER_REFUND` 经金库出账离开金库，保护模式会将其排队或扣留。修改会重新标记 `termsSetAt`，因此成交需等待 `getMinTermsAgeSec`，并清除 `backstopEligibleAfter`。审核在同一区块读取 `getOffer`、`getOffersWithState`、`getOfferLinkedLoanId`、`paused()`、`getMinTermsAgeSec`、创建者的保护账户，以及在需要拉取时钱包的余额和授权；它试运行 `modifyOffer`，当拉取超过授权时在精确授权之后试运行。完成卡片将 `OfferModified` 与审核内容比对，并计量代币转账和支付记录。撮合部分的利率差距会把读者区间中对手方一侧的边界填为对方最近的边界（#3659）。
+
 <a id="offers-price-guard"></a>
 
 ### 价格变动保护

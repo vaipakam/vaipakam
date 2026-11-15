@@ -2305,6 +2305,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 한 블록에서 `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()`, 생성자의 `getProtectedAccount`를 읽은 뒤 `OfferCancelFacet.cancelOffer(id)`를 시험 실행합니다. 파셋은 생성자의 관리자에게는 언제든, `expiresAt`이 지나면 누구에게나 취소를 허용합니다. `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`를 거부하고, `amountFilled == 0`인 오퍼가 300초 미만이며 만료되지 않았으면 `CancelCooldownActive`로 거부하며, `whenNotPaused`입니다. 반환액은 파셋 자체의 분기로 계산합니다. ERC-20 대출 오퍼는 대출 자산의 `(amountMax 또는 amount) - amountFilled`, NFT 대출 오퍼는 그 토큰 또는 ERC-1155 수량, 차입 요청은 쓰지 않은 담보 `(collateralAmountMax 또는 collateralAmount) - collateralAmountFilled` 또는 그 NFT(`refinanceCarryOver`가 담보를 대출에 남기면 없음), 대여 요청은 `amount × durationDays`에 `rentalBufferBpsAtCreate` 버퍼를 더한 값입니다. `getOfferLinkedLoanId`로 대출에 묶인 오퍼나 기록된 버퍼가 0인 대여 요청(이 경우 프로토콜은 현재 비율을 씀)은 서명 전에 계산하지 않습니다. 모든 반환은 볼트 출금을 통해 생성자의 볼트를 떠나므로, 보호 모드는 대기열에 넣거나 계정이 잠긴 동안 볼트에 둡니다. 포지션 토큰은 폐기됩니다. 완료 카드는 `OfferCanceled(offerId, creator)`, 생성자에 대한 프로토콜의 지급 기록, 생성자에게 간 토큰 자체의 전송을 읽습니다.
 
+<a id="offer-edit"></a>
+
+### 오퍼 변경
+
+`OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)`를 쓰며, `validUntil`은 체인의 시계에서 가져옵니다(#3412). 파셋은 바뀌는 묶음만 검사합니다. 각각에 대한 `LibOfferShape` 규칙(상한을 넘지 않는 양의 하한, 전부 아니면 무 `fillMode`에서는 금액 하나, 최대 10,000 bps의 이자율 상한, 대출자의 담보 수치 하나), `amountFilled`나 `collateralAmountFilled` 미만 금지, 금액 변경 시 주기 규칙과 가치 하한, 금액이나 담보 변경 시 오퍼 한도입니다. 생성자가 아닌 호출, 수락된 오퍼, 일시 중지된 자산이나 프로토콜, 제재 대상 호출자, 설정된 `parallelSaleOrderHash`, 소진되었거나 연결된 매각 수단, 상계 수단은 거절하며, 리파이낸스로 표시된 오퍼는 금액과 담보를 유지합니다. 대출자의 ERC-20 오퍼는 `amountMax`의 차이를, ERC-20 담보를 건 차입자의 ERC-20 요청은 `collateralAmountMax`의 차이를 정산합니다. 증가분은 지갑이 Diamond에 준 승인 아래 `vaultDepositERC20`으로 지갑에서 가져오고, 감소분은 사유 `OFFER_REFUND`로 볼트 출금 경로를 통해 나가며, 보호 모드는 이를 대기열에 넣거나 보류합니다. 변경은 `termsSetAt`을 다시 찍어 체결이 `getMinTermsAgeSec`만큼 기다리게 하고, `backstopEligibleAfter`를 지웁니다. 검토는 한 블록에서 `getOffer`, `getOffersWithState`, `getOfferLinkedLoanId`, `paused()`, `getMinTermsAgeSec`, 생성자의 보호 계정, 그리고 인출이 있으면 지갑의 잔액과 승인을 읽고, `modifyOffer`를 모의 실행합니다. 인출이 승인을 넘으면 정확한 승인 뒤에 실행합니다. 완료 카드는 `OfferModified`를 검토 내용과 비교하고 토큰 이전과 지급 기록을 측정합니다. 매칭 섹션의 이자율 차이는 독자 범위 중 상대편 쪽 경계를 상대의 가장 가까운 경계로 채웁니다(#3659).
+
 <a id="offers-price-guard"></a>
 
 ### 가격 변동 보호
