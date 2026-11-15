@@ -12,9 +12,13 @@
 import { parseAbi, type PublicClient } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { SUPPORTED_CHAINS, type SupportedChain } from '../../chain/chains';
-import { readVpfiHome, readVpfiTokenAt } from '../rewards/vpfiFacts';
+import { readVpfiHome } from '../rewards/vpfiFacts';
 
 type Hex = `0x${string}`;
+
+const DIAMOND = parseAbi(['function getVPFIToken() view returns (address)']);
+
+const ZERO = '0x0000000000000000000000000000000000000000';
 
 const TOKEN = parseAbi([
   'function name() view returns (string)',
@@ -68,10 +72,11 @@ async function fact<T>(p: Promise<T>): Promise<Fact<T>> {
 }
 
 export async function readVpfiToken(c: PublicClient, chain: SupportedChain, blockNumber: bigint): Promise<VpfiRead> {
-  // A token the protocol cannot name (unset, or a revert) is "none"; a
-  // source that failed to answer throws, and the caller states it unread.
-  const token = await readVpfiTokenAt(c, chain.diamondAddress, blockNumber);
-  if (token === null) return { kind: 'none' };
+  // Only a zero address the protocol actually returned is "none". A revert
+  // (a Diamond without the selector) or a source that failed to answer
+  // throws, and the caller states the token unread.
+  const token = await c.readContract({ address: chain.diamondAddress, abi: DIAMOND, functionName: 'getVPFIToken', blockNumber });
+  if (token.toLowerCase() === ZERO) return { kind: 'none' };
   const at = { address: token, abi: TOKEN, blockNumber } as const;
   const [home, name, symbol, decimals, supply, owner, paused] = await Promise.all([
     readVpfiHome(c, chain.diamondAddress, blockNumber).catch(() => null),

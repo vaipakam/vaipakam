@@ -76,6 +76,11 @@ describe('readVpfiToken', () => {
     expect(await readVpfiToken(c, chain, 77n)).toEqual({ kind: 'none' });
   });
 
+  it('never calls an unread token address unset: a failed read throws, so the page says unread', async () => {
+    const { c } = client(true, TOKEN, ['getVPFIToken']);
+    await expect(readVpfiToken(c, chain, 77n)).rejects.toThrow('getVPFIToken timed out');
+  });
+
   it('never reads a negative mintable figure, and none when a figure is unread', () => {
     expect(mintable({ cap: { ok: true, value: 5n }, initialMint: { ok: true, value: 0n }, minter: { ok: true, value: MINTER } }, { ok: true, value: 9n })).toBe(
       0n,

@@ -5726,6 +5726,7 @@ export const copy = {
         'Only the minter can mint, and only the token’s owner can change the minter. The owner shown is not the governance timelock this app’s record names, so this page cannot say such a change must wait.',
       ),
       paused: A('VPFI transfers are paused on {{chain}}.'),
+      pausedUnread: A('Whether VPFI transfers are paused on {{chain}} could not be read ({{reason}}).'),
       capDiffers: A('The token’s cap differs from the 230,000,000 the published allocation below divides.'),
       recordDiffers: A('The token the protocol names differs from the one this app’s deployment record names ({{record}}).'),
       addressesTitle: B('VPFI addresses'),

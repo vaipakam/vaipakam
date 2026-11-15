@@ -120,9 +120,15 @@ function TokenFacts({ chain, t, homeName, recorded }: { chain: SupportedChain; t
   const ownerIsTimelock = t.owner.ok && holderOf(t.owner.value, chain) === 'timelock';
   return (
     <>
-      {t.paused.ok && t.paused.value && (
+      {t.paused.ok ? (
+        t.paused.value && (
+          <Notice tone="warn" tier="A">
+            {format('analytics.vpfi.paused', { chain: chain.name })}
+          </Notice>
+        )
+      ) : (
         <Notice tone="warn" tier="A">
-          {format('analytics.vpfi.paused', { chain: chain.name })}
+          <span data-testid="analytics-vpfi-paused-unread">{format('analytics.vpfi.pausedUnread', { chain: chain.name, reason: t.paused.reason })}</span>
         </Notice>
       )}
       <dl className="facts" data-testid="analytics-vpfi">

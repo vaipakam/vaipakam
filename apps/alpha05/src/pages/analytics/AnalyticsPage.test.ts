@@ -214,7 +214,7 @@ describe('AnalyticsView', () => {
               decimals: { ok: true, value: 18 },
               supply: { ok: true, value: 23_000_000n * E18 },
               owner: { ok: true, value: TREASURY },
-              paused: { ok: true, value: false },
+              paused: { ok: false, reason: 'rpc down' },
               homeFacts: {
                 cap: { ok: true, value: 230_000_000n * E18 },
                 initialMint: { ok: true, value: 23_000_000n * E18 },
@@ -233,6 +233,8 @@ describe('AnalyticsView', () => {
     expect(out).toContain('undecided: governance has not chosen');
     expect(out.toLowerCase()).not.toContain('insurance');
     expect(out).not.toContain('differs from the 230,000,000');
+    // An unread pause state is said, never shown as not paused.
+    expect(out).toContain('Whether VPFI transfers are paused on Anvil could not be read (rpc down).');
   });
 
   it('gives a bridged network no cap of its own and says where the cap lives', () => {
