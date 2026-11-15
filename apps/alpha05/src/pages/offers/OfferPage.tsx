@@ -61,16 +61,25 @@ type RentalTake = 'listing' | 'request';
  * clean-up) and its take, including a take waiting on the Terms prompt. A
  * held flow keeps its panel whatever the offer's latest read says: its own
  * transaction changes the offer (a take fills it, a cancel ends it and may
- * clear its terms), and the creator may cancel under a reader's open review,
+ * clear its terms), and the creator may cancel under a reader's open review
+ * or a change still in flight,
  * so the panel stays, with its Close, until the reader closes it.
  */
-function useHeldFlows(id: bigint | null): { cancel: boolean; take: boolean; rental: RentalTake | null; closeCancel: () => void } {
+function useHeldFlows(id: bigint | null): { cancel: boolean; edit: boolean; take: boolean; rental: RentalTake | null; closeCancel: () => void; closeEdit: () => void } {
   const cancel = useCancelOfferHeld(id ?? 0n);
+  const edit = useEditOfferHeld(id ?? 0n);
   const [taking] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:offer`);
   const [pending] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:pending`);
   const [rental] = useStoredValue<RentalTake>(`${OFFERS_ACCEPT_KEY}:rental`);
   const key = id?.toString() ?? null;
-  return { cancel: id !== null && cancel.held, take: key !== null && (taking === key || pending === key), rental, closeCancel: () => cancel.setOpen(null) };
+  return {
+    cancel: id !== null && cancel.held,
+    edit: id !== null && edit.held,
+    take: key !== null && (taking === key || pending === key),
+    rental,
+    closeCancel: () => cancel.setOpen(null),
+    closeEdit: edit.close,
+  };
 }
 
 /** An offer number from the address bar, or null when it is not one. */
@@ -135,8 +144,9 @@ export function OfferPage() {
               {format('offerPage.noTerms', { id: id.toString(), chain: chain.name })}
             </p>
           )}
-          {d?.kind !== 'offer' && (held.cancel || held.take) && walletChain && heldOwn && (
+          {d?.kind !== 'offer' && (held.cancel || held.edit || held.take) && walletChain && heldOwn && (
             <section className="home-section" data-testid="offer-action">
+              {held.edit && <EditOffer id={id} chain={walletChain} own={heldOwn} meta={meta} onClose={held.closeEdit} />}
               {held.cancel && <CancelOffer id={id} chain={walletChain} own={heldOwn} onClose={held.closeCancel} />}
               {held.take && <TakeAction id={id} chain={walletChain} own={heldOwn} meta={meta} lend={held.rental !== 'request'} rental={held.rental} />}
             </section>

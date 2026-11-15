@@ -198,6 +198,10 @@ describe('editChanged', () => {
     expect(editChanged(a, review(o, t, {}, { paused: true }), copy)).toBe('offerEdit.changedPause');
     expect(editChanged(a, review(o, t, { balance: 1n }), copy)).toBe('repay.changedFunds');
     expect(editChanged(a, review(o, t, { dryRun: 'unread' }), copy)).toBe('offerEdit.changedVerdict');
+    // A protection delay changed under the review reopens it, though the route reads alike.
+    const guarded = { ...OPEN, enabled: true, delaySeconds: 3600 };
+    const g = review(o, t, { route: 'queued' }, { protection: guarded });
+    expect(editChanged(g, review(o, t, { route: 'queued' }, { protection: { ...guarded, delaySeconds: 7200 } }), copy)).toBe('queue.changedAccount');
   });
 });
 
@@ -206,10 +210,8 @@ describe('editReceipt', () => {
     const o = record();
     const r = editReceipt(review(o, with_(o, { interestRateBps: 400n })), words, copy);
     const rows = Object.fromEntries(r.rows.map((x) => [x.label, x.value]));
-    expect(rows['offerEdit.rowRate']).toEqual({
-      kind: 'text',
-      text: 'offerEdit.fromTo:{"before":"home.rateRange:{\\"min\\":\\"5%\\",\\"max\\":\\"8%\\"}","after":"home.rateRange:{\\"min\\":\\"4%\\",\\"max\\":\\"8%\\"}"}',
-    });
+    const rate = 'offerEdit.fromTo:{"before":"home.rateRange:{\\"min\\":\\"5%\\",\\"max\\":\\"8%\\"}","after":"home.rateRange:{\\"min\\":\\"4%\\",\\"max\\":\\"8%\\"}"}';
+    expect(rows['offerEdit.rowRate']).toEqual({ kind: 'text', text: rate, exact: rate });
     expect(rows['offerEdit.rowTerm']).toEqual({ kind: 'text', text: 'offerEdit.termSame:{"days":"30"}' });
     expect(rows['offerEdit.rowMoves']).toEqual({ kind: 'text', text: 'offerEdit.movesNothing' });
     expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerEdit.termsAge:'))).toBe(true);
@@ -227,6 +229,17 @@ describe('editReceipt', () => {
     const r = editReceipt(review(o, with_(o, { amountMax: 150n })), words, copy);
     expect(r.rows.find((x) => x.label === 'offerEdit.rowRelease')).toMatchObject({ value: { kind: 'amount', asset: TOKEN, amount: 50n } });
     expect(r.rows.find((x) => x.label === 'offerCancel.rowTo')).toBeDefined();
+  });
+  it('reads a change from the raw figures, and gives exact words, when the short words agree', () => {
+    const o = record();
+    const short: AmountWords = (_a, v, exact) => (exact ? `${v}` : 'about 100');
+    const r = editReceipt(review(o, with_(o, { amountMax: 201n })), short, copy);
+    const row = r.rows.find((x) => x.label === 'offerEdit.rowAmount');
+    expect(row?.binding).toBe(true);
+    expect(row?.value).toMatchObject({ kind: 'text', text: expect.stringMatching(/^offerEdit\.fromTo:/), exact: expect.stringContaining('201') });
+    const same = editReceipt(review(o, with_(o, { interestRateBps: 400n })), short, copy).rows.find((x) => x.label === 'offerEdit.rowAmount');
+    expect(same?.binding).toBe(false);
+    expect(same?.value).toMatchObject({ text: expect.stringMatching(/^offerEdit\.same:/) });
   });
   it('says a backstop opt-in ends', () => {
     const o = record({ backstopEligibleAfter: 5n });

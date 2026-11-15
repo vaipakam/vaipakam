@@ -32,7 +32,7 @@ import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { MAX_RATE_BPS } from '../post/postModel';
 import { payoutOutcomes, payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
-import { payoutLegs, routedDestination, routeNotes } from '../protection/payoutCopy';
+import { payoutLegs, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
 import { answerOrNull } from '../reads/answer';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
@@ -393,7 +393,7 @@ export function editChanged(a: EditReview, b: EditReview, copy: Pick<CopyAccess,
     (ao && bo && (termsKey(currentTerms(ao)) !== termsKey(currentTerms(bo)) || ao.amountFilled !== bo.amountFilled))
   )
     return text('offerEdit.changedOffer');
-  if (a.route !== b.route || a.facts.protection?.requireCosign !== b.facts.protection?.requireCosign) return text('queue.changedAccount');
+  if (routeChanged({ route: a.route, protection: a.facts.protection }, { route: b.route, protection: b.facts.protection })) return text('queue.changedAccount');
   if (a.facts.paused !== b.facts.paused) return text('offerEdit.changedPause');
   if (a.balance !== b.balance || a.allowance !== b.allowance || a.approvalSteps !== b.approvalSteps) return text('repay.changedFunds');
   if (verdict(a.dryRun) !== verdict(b.dryRun)) return text('offerEdit.changedVerdict');
@@ -418,12 +418,16 @@ export function editReceipt(r: EditReview, w: AmountWords, copy: Copy): Receipt 
   const rows: ReceiptRow[] = [];
   const consequences: string[] = [];
   const t = r.terms;
-  const change = (label: string, before: string, after: string) =>
-    rows.push({
-      label,
-      value: { kind: 'text', text: before === after ? format('offerEdit.same', { now: before }) : format('offerEdit.fromTo', { before, after }) },
-      binding: before !== after,
-    });
+  // Whether a row changed is read from the raw figures, never from the
+  // shortened words: two figures can shorten alike. Each row also carries its
+  // exact words for "Show exact figures".
+  const change = (label: string, changed: boolean, words: (exact: boolean) => [string, string]) => {
+    const say = (exact: boolean) => {
+      const [before, after] = words(exact);
+      return changed ? format('offerEdit.fromTo', { before, after }) : format('offerEdit.same', { now: before });
+    };
+    rows.push({ label, value: { kind: 'text', text: say(false), exact: say(true) }, binding: changed });
+  };
   rows.push({
     label: text('offerCancel.rowOffer'),
     value: { kind: 'text', text: format(o === null ? 'offerCancel.offerId' : isLender(o) ? 'offerCancel.offerLend' : 'offerCancel.offerBorrow', { id: r.offerId.toString() }) },
@@ -431,15 +435,21 @@ export function editReceipt(r: EditReview, w: AmountWords, copy: Copy): Receipt 
   });
   if (o !== null) {
     const shape = editShape(o);
-    change(text('offerEdit.rowRate'), rateText(o.interestRateBps, o.interestRateBpsMax, copy), rateText(t.interestRateBps, t.interestRateBpsMax, copy));
-    const lend = (v: bigint) => w(o.lendingAsset, v, false);
-    if (shape.amount) change(text('offerEdit.rowAmount'), rangeText(o.amount, o.amountMax, lend, copy), rangeText(t.amount, t.amountMax, lend, copy));
-    const coll = (v: bigint) => w(o.collateralAsset, v, false);
+    const rate = (): [string, string] => [rateText(o.interestRateBps, o.interestRateBpsMax, copy), rateText(t.interestRateBps, t.interestRateBpsMax, copy)];
+    change(text('offerEdit.rowRate'), o.interestRateBps !== t.interestRateBps || o.interestRateBpsMax !== t.interestRateBpsMax, rate);
+    if (shape.amount)
+      change(text('offerEdit.rowAmount'), o.amount !== t.amount || o.amountMax !== t.amountMax, (exact) => {
+        const lend = (v: bigint) => w(o.lendingAsset, v, exact);
+        return [rangeText(o.amount, o.amountMax, lend, copy), rangeText(t.amount, t.amountMax, lend, copy)];
+      });
     if (shape.collateral)
       change(
         text(isLender(o) ? 'offerEdit.rowCollateralAsked' : 'offerEdit.rowCollateral'),
-        rangeText(o.collateralAmount, o.collateralAmountMax, coll, copy),
-        rangeText(t.collateralAmount, t.collateralAmountMax, coll, copy),
+        o.collateralAmount !== t.collateralAmount || o.collateralAmountMax !== t.collateralAmountMax,
+        (exact) => {
+          const coll = (v: bigint) => w(o.collateralAsset, v, exact);
+          return [rangeText(o.collateralAmount, o.collateralAmountMax, coll, copy), rangeText(t.collateralAmount, t.collateralAmountMax, coll, copy)];
+        },
       );
     rows.push({ label: text('offerEdit.rowTerm'), value: { kind: 'text', text: format('offerEdit.termSame', { days: o.durationDays.toString() }) }, binding: false });
   }
