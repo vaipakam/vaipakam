@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
-import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
+import {PositiveFlowsStaged} from "./PositiveFlowsStaged.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
@@ -20,16 +20,28 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *
  *         The swap goes through a {FixedRateSwapAdapter} the scenario
  *         deploys and registers for its own run
- *         ({PositiveFlowsBase-_registerFixedRateAdapter}), priced at the
+ *         ({PositiveFlowsStaged-_registerRunSwapAdapter}), priced at the
  *         fixture's oracle rate, so the proceeds are known before the call. Each
  *         scenario then accounts for every unit of them: the lender's share,
  *         the treasury's share and the borrower's surplus must add up to
  *         exactly what the swap returned, and the collateral that was not
  *         sold stays the borrower's. The adapter is removed from the
  *         Diamond's swap list before the scenario ends.
- *         Fixture, runner and ids: {PositiveFlowsBase}.
+ *
+ *         Every scenario takes two steps (#3574): the first posts the offer;
+ *         the second, once its terms have stood the minimum age, registers
+ *         the adapter, opens the loan, swaps, checks the split, closes the
+ *         loan out and removes the adapter. The adapter is recorded as a
+ *         setting to put back, so a run that stops part-way through the
+ *         second step can be unwound (`unwind()`). `run()` is the simulation
+ *         and `stage()` the broadcastable run ({PositiveFlowsStaged},
+ *         `script/positive-flows/run-staged.sh`).
+ *         Fixture and ids: {PositiveFlowsBase}.
  */
-contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
+contract PositiveFlowsSwapToRepay is PositiveFlowsStaged {
+    /// @dev The offer the first step posts and the second fills.
+    string private constant OFFER = "offer";
+
     FixedRateSwapAdapter private adapter;
 
     function moduleName() public pure override returns (string memory) {
@@ -44,25 +56,43 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
             "PF-119, PF-114");
     }
 
-    function _runScenario(uint256 index) internal override {
+    /// @dev Post the offer; then fill it, swap and close out.
+    function _stepCount(uint256) internal pure override returns (uint256) {
+        return 2;
+    }
+
+    function _runStep(uint256 index, uint256 step) internal override {
+        if (step == 0) return _keep(OFFER, _postOffer(index));
         LibSwap.AdapterCall[] memory route;
-        (adapter, route) = _registerFixedRateAdapter();
-        if (index == 0) _swapToRepayFull(route);
-        else if (index == 1) _swapToRepayPartial(route);
+        (adapter, route) = _registerRunSwapAdapter();
+        uint256 loanId = _acceptAs(borrowerKey, _kept(OFFER), address(weth), COLLATERAL_AMOUNT);
+        console.log("Loan initiated:", loanId);
+        if (index == 0) _swapToRepayFull(loanId, route);
+        else if (index == 1) _swapToRepayPartial(loanId, route);
         else revert("PositiveFlowsSwapToRepay: no scenario at index");
         _removeFixedRateAdapter(adapter);
     }
 
+    /// @dev PF-118 lends on a full-term loan, so the payoff carries interest
+    ///      and the treasury takes a share of it; PF-119's lender opts into
+    ///      partial repayment.
+    function _postOffer(uint256 index) internal returns (uint256) {
+        LibVaipakam.CreateOfferParams memory offer = _lenderOfferStandard();
+        if (index == 0) offer.useFullTermInterest = true;
+        else offer.allowsPartialRepay = true;
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, offer.amount);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(offer, type(uint64).max);
+        vm.stopBroadcast();
+        console.log("Lender offer created:", offerId);
+        return offerId;
+    }
+
     // ─── PF-118 ───────────────────────────────────────────────────────────
 
-    /// @dev A full-term loan, so the payoff carries interest and the treasury
-    ///      takes a share of it. The borrower allows the whole collateral as
-    ///      the bound; the Diamond sells only the sized amount (#2317).
-    function _swapToRepayFull(LibSwap.AdapterCall[] memory route) internal {
-        LibVaipakam.CreateOfferParams memory offer = _lenderOfferStandard();
-        offer.useFullTermInterest = true;
-        uint256 loanId = _openLoan(offer);
-
+    /// @dev The borrower allows the whole collateral as the bound; the
+    ///      Diamond sells only the sized amount (#2317).
+    function _swapToRepayFull(uint256 loanId, LibSwap.AdapterCall[] memory route) internal {
         (uint256 toSell, uint256 minOut, uint256 required) =
             SwapToRepayFacet(diamond).previewSwapToRepayFull(loanId, COLLATERAL_AMOUNT);
         uint256 proceeds = adapter.quote(address(weth), address(usdc), toSell);
@@ -119,11 +149,7 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
     ///      day has accrued, so the interest share is 0 here and the whole
     ///      proceeds come off the principal; the accounting check does not
     ///      assume that.
-    function _swapToRepayPartial(LibSwap.AdapterCall[] memory route) internal {
-        LibVaipakam.CreateOfferParams memory offer = _lenderOfferStandard();
-        offer.allowsPartialRepay = true;
-        uint256 loanId = _openLoan(offer);
-        LibVaipakam.Loan memory before = LoanFacet(diamond).getLoanDetails(loanId);
+    function _swapToRepayPartial(uint256 loanId, LibSwap.AdapterCall[] memory route) internal {        LibVaipakam.Loan memory before = LoanFacet(diamond).getLoanDetails(loanId);
 
         uint256 sell = COLLATERAL_AMOUNT / 4;
         uint256 proceeds = adapter.quote(address(weth), address(usdc), sell);
@@ -154,16 +180,5 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
 
         _repayInFull(borrowerKey, loanId);
         _claimBoth(lenderKey, borrowerKey, loanId);
-    }
-
-    // ─── Helpers ──────────────────────────────────────────────────────────
-
-    function _openLoan(LibVaipakam.CreateOfferParams memory offer) internal returns (uint256 loanId) {
-        vm.startBroadcast(lenderKey);
-        usdc.approve(diamond, offer.amount);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(offer, type(uint64).max);
-        vm.stopBroadcast();
-        loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
-        console.log("Loan initiated:", loanId);
     }
 }
