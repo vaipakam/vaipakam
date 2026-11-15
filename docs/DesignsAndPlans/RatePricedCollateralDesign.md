@@ -40,7 +40,7 @@ Which kind to use is decided per token and chain. On the chain where the token i
 ## 4. Safeguards
 
 1. **The rate may not jump up.** The guard keeps the last accepted rate and its time. A read uses the lower of the reported rate and the last accepted rate grown at the largest daily rise **over the time since it was recorded, counted as at most one day**. An attacker who inflates a vault's share value in one transaction (for example by donating to it) gains nothing: the price moves by at most one day's bound, however old the stored point is. Anyone may call a function that records the current accepted rate (itself bounded the same way), so the stored point keeps up with honest growth; the hourly price checkpoint pass does it. If recording stops for several days the allowance does not build up: the accepted rate then catches up by at most one day's bound per recording and real time elapsed, which undervalues the collateral for a while and never overvalues it.
-2. **A drop is taken at once, and a large one stops trust.** A lower rate is used immediately, since it lowers the collateral's value. A single fall larger than the configured bound marks the token's price distrusted, with the same effect a distrusted price has today, until governance or the guardian confirms the new level.
+2. **A drop is taken at once, and a large one stops trust.** A lower rate is used immediately, since it lowers the collateral's value. A single fall larger than the configured bound marks the token's price distrusted, with the same effect a distrusted price has today, until the new level is confirmed. Confirming accepts **exactly the rate the source reports at that moment**; whoever confirms chooses no number. It is allowed only after the source has stayed at or below the pre-fall accepted rate, with no further fall past the bound, for a minimum observation time (a bounded guard setting, starting at six hours), and the accepted rate can never be set above the pre-fall one. The owner or the guardian may confirm on this one rule, and the confirmation is an event. The guardian's part is therefore a choice of timing inside a rule, not a power to set a price; without it a falling asset would stay unpriced for the whole governance delay and none of its loans could be closed out.
 3. **A stale rate is not used.** A rate feed older than its heartbeat, or a reader call that fails, gives no price, handled like any missing feed.
 4. **The market may say less.** Where a market feed for the token exists, the collateral value is the lower of the rate price and the market price. A token can trade below its redemption value when exits are slow, and a forced sale gets the market price.
 5. **The underlying keeps every check it has**: staleness, the secondary sources, the sequencer check.
@@ -52,7 +52,7 @@ Which kind to use is decided per token and chain. On the chain where the token i
 Under #3437 a loan carries the price guard's address and price version, and that design's rule 5 says any governance-settable state inside the guard must be versioned or stop-only. The rate binding is such state:
 
 - adding or changing a binding is a delayed guard change that raises the price version, so open loans keep reading the binding they opened with;
-- marking a token's price distrusted, and muting a rate source, are stop-only actions that reach every loan at once;
+- marking a token's price distrusted, and muting a rate source, are stop-only actions that reach every loan at once. A muted rate source leaves the token's price **distrusted**, not missing: a stop must never move a loan onto a different settlement route. Unmuting waits the delay;
 - the last accepted rate is measured state, not a setting. It is one value per token, shared by every version that uses the same binding, and a new binding starts its own.
 
 The hourly checkpoints and the calm test read the resulting price and need no change.
@@ -111,6 +111,5 @@ Add the rate-priced source kind to the price guard with the safeguards in sectio
 
 ## 11. Open items for the builder to raise, not decide silently
 
-- The first admitted tokens per chain and their bounds, as proposals under the checklist.
-- Whether the first version ships both source kinds or the rate feed alone.
-- Whether the first admitted tokens start with tighter concentration thresholds (`CollateralConcentrationDesign.md`, #3685).
+- Settled with the builder on 2026-11-15: the build admits no token (each comes later as a governance proposal with its checklist answers; testnets get one mock token); both source kinds ship, with one reader for the standard vault conversion function to start.
+- Rate-priced tokens start with concentration thresholds one step tighter, set per token in the concentration settings (`CollateralConcentrationDesign.md`, #3685), not in the guard.

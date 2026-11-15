@@ -31,6 +31,8 @@ Two governed thresholds, bounded and changed only behind the Timelock delay:
 | Caution | 5 times the depth reference | 2 to 20 |
 | High | 10 times the depth reference | above caution, up to 50 |
 
+Governance may set tighter multiples for a single asset, within the same bounds and behind the same delay; a rate-priced token (`RatePricedCollateralDesign.md`) starts one step tighter than the platform values. An asset with no override uses the platform values.
+
 The multiples are above one because only part of the pledged collateral is ever sold in one fall: loans open at different prices with different cushions.
 
 ## 3. The response
