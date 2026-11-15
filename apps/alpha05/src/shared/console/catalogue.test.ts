@@ -65,7 +65,18 @@ describe('writeValue', () => {
     expect(writeValue('graceBuckets', [], w)).toBe('None set: the built-in schedule applies (default)');
   });
   it('writes the grace schedule and a stored symbol', () => {
-    expect(writeValue('graceBuckets', [{ maxDurationDays: '30', graceSeconds: '86400' }], w)).toBe('loans up to 30 days: 24 h grace');
+    // Bounds are exclusive, and the final 0 is the catch-all for longer loans.
+    expect(
+      writeValue(
+        'graceBuckets',
+        [
+          { maxDurationDays: '30', graceSeconds: '86400' },
+          { maxDurationDays: '0', graceSeconds: '259200' },
+        ],
+        w,
+      ),
+    ).toBe('loans shorter than 30 days: 24 h grace; longer loans: 3 days grace');
+    expect(writeValue('graceBuckets', [{ maxDurationDays: '0', graceSeconds: '3600' }], w)).toBe('every loan: 1 h grace');
     expect(writeValue('numeraireSymbol', `0x${Buffer.from('USD').toString('hex').padEnd(64, '0')}`, w)).toBe('USD');
   });
   it('writes a value of the wrong kind raw, never coerced', () => {

@@ -214,7 +214,15 @@ export function writeValue(key: SettingKey, value: SettingValue, w: ValueWords):
       const days = bigOf(b.maxDurationDays ?? '');
       const grace = bigOf(b.graceSeconds ?? '');
       if (days === null || grace === null) return raw();
-      parts.push(w.format('console.value.graceBucket', { days: days.toString(), grace: formatSpan(Number(grace)) }));
+      const span = formatSpan(Number(grace));
+      // The protocol walks the schedule in order: a bound is exclusive (a
+      // loan shorter than it), and a bound of 0 is the catch-all for every
+      // longer loan, after which no entry applies.
+      if (days === 0n) {
+        parts.push(w.format(parts.length === 0 ? 'console.value.graceEvery' : 'console.value.graceRest', { grace: span }));
+        break;
+      }
+      parts.push(w.format('console.value.graceBucket', { days: days.toString(), grace: span }));
     }
     return parts.join('; ');
   }
