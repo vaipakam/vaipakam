@@ -114,10 +114,11 @@ export type OptionGap = 'interest-mode' | 'partial' | 'prepay' | 'cadence';
 
 /** The one gap the reader is told about. */
 export type Gap =
-  /** Rates do not meet: `theirs` is the best the counterparty offers the
-   *  reader (a request's highest rate, an offer's lowest), `mine` the
-   *  reader's own nearest bound. */
-  | { kind: 'rate'; theirs: bigint; mine: bigint }
+  /** The two rate ranges do not meet: `theirs` is the counterparty's bound
+   *  nearest the reader's range, `mine` the reader's own bound nearest
+   *  theirs. `theirsHigh` says the counterparty's range sits above the
+   *  reader's (else below). */
+  | { kind: 'rate'; theirs: bigint; mine: bigint; theirsHigh: boolean }
   /** Terms do not agree. `upTo` is set when a shorter request would do
    *  (the lender's pro-rata offer, #3615). */
   | { kind: 'term'; theirs: bigint; mine: bigint; upTo: boolean }
@@ -150,11 +151,32 @@ export function optionGap(a: StoredOffer, b: StoredOffer): OptionGap | null {
   return null;
 }
 
+/** An offer's rate ceiling; a max that reads below the min is taken as the min. */
+function maxRate(o: StoredOffer): bigint {
+  return o.interestRateBpsMax > o.interestRateBps ? o.interestRateBpsMax : o.interestRateBps;
+}
+
 /** The gap a refusal names, with its figures from the two offers. */
 export function gapOf(mine: StoredOffer, theirs: StoredOffer, code: number): Gap {
   const lend = mine.offerType === OFFER_TYPE_LENDER;
   if (code === MATCH_CODE.rate) {
-    return lend ? { kind: 'rate', theirs: theirs.interestRateBpsMax, mine: mine.interestRateBps } : { kind: 'rate', theirs: theirs.interestRateBps, mine: mine.interestRateBpsMax };
+    // The protocol refuses a pair whose two rate ranges do not intersect.
+    // Name the two bounds that fail to meet, on whichever side they miss;
+    // a refusal the ranges do not explain is stated by its code instead.
+    const [lender, borrower] = lend ? [mine, theirs] : [theirs, mine];
+    const lMin = lender.interestRateBps;
+    const lMax = maxRate(lender);
+    const bMin = borrower.interestRateBps;
+    const bMax = maxRate(borrower);
+    if (bMax < lMin) {
+      // The request's ceiling sits below the offer's floor.
+      return lend ? { kind: 'rate', theirs: bMax, mine: lMin, theirsHigh: false } : { kind: 'rate', theirs: lMin, mine: bMax, theirsHigh: true };
+    }
+    if (lMax < bMin) {
+      // The offer's ceiling sits below the request's floor.
+      return lend ? { kind: 'rate', theirs: bMin, mine: lMax, theirsHigh: true } : { kind: 'rate', theirs: lMax, mine: bMin, theirsHigh: false };
+    }
+    return { kind: 'code', code };
   }
   if (code === MATCH_CODE.duration) {
     // A pro-rata lender's term is the longest it lends for (#3615).
@@ -171,9 +193,11 @@ export function gapOf(mine: StoredOffer, theirs: StoredOffer, code: number): Gap
 /** The verdict: a pair the protocol would match first, else the closest
  *  open counterparty's first refusal. */
 export function whyOf(mine: StoredOffer, index: Extract<NearestIndex, { kind: 'ranked' }>, read: WhyRead): Why {
-  if (index.oppositeOpen === 0 || index.ids.length === 0) return { kind: 'none' };
+  // The switch is stated first: with matching off, no counterparty, now or
+  // later, opens a loan by match.
   if (read.switchOn === false) return { kind: 'switch-off' };
   if (read.switchOn === null) return { kind: 'switch-unread' };
+  if (index.oppositeOpen === 0 || index.ids.length === 0) return { kind: 'none' };
   const open = read.counterparties.filter((c) => c.state === 'open' && c.code !== null);
   const ok = open.find((c) => c.code === MATCH_CODE.ok && c.matchRateBps !== null);
   if (ok) return { kind: 'matchable', with: ok };

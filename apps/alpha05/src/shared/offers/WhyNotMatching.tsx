@@ -8,7 +8,8 @@ import { OFFER_TYPE_LENDER } from '../positions/model';
 import { worldKey } from '../reads/identityKey';
 import { useOwnRead } from '../reads/useOwnRead';
 import { useWorldRail } from '../reads/world/WorldRailContext';
-import { formatBps } from '../ui/format';
+import { formatAge, formatBps } from '../ui/format';
+import { useNow } from '../ui/useNow';
 import type { StoredOffer } from './acceptTerms';
 import { indexReason } from './OfferBook';
 import { MATCH_CODE, readNearestIndex, readWhy, whyOf, type Counterparty, type Gap, type OptionGap, type Why } from './whyNotMatching';
@@ -37,6 +38,7 @@ const OPTION_KEY: Record<OptionGap, CopyKey> = {
 export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chain: SupportedChain; own: OwnStateClient }) {
   const { text, format } = useCopy();
   const world = useWorldRail();
+  const nowMs = useNow();
   const diamond = chain.diamondAddress as Hex;
   const sameChain = world.chainId === chain.chainId;
   const index = useQuery({
@@ -50,9 +52,14 @@ export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chai
   const ranked = index.data?.kind === 'ranked' ? index.data : null;
   const ids = ranked?.ids ?? [];
   const chainRead = useOwnRead(['whyMatch', diamond, offer.id.toString(), ids.map(String).join(',')], (c) => readWhy(c, diamond, offer, ids, own.account), {
-    enabled: ranked !== null && ids.length > 0,
+    // Read even with no counterparty: the matching switch is stated on its
+    // own, since with matching off no counterparty ever opens a loan by match.
+    enabled: ranked !== null,
   });
-  const why: Why | null = ranked === null ? null : ids.length === 0 ? { kind: 'none' } : chainRead.data ? whyOf(offer, ranked, chainRead.data) : null;
+  const why: Why | null = ranked !== null && chainRead.data ? whyOf(offer, ranked, chainRead.data) : null;
+  // A refresh that failed behind a verdict already shown: the verdict stays,
+  // marked with its age and the failure.
+  const staleRead = chainRead.data !== null && chainRead.error !== null && chainRead.readAt !== null;
   const indexFailed = !sameChain || world.indexer.origin === null || index.status === 'error';
 
   return (
@@ -78,6 +85,11 @@ export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chai
           <p className="tier-a" data-testid="why-match-verdict" data-why={why.kind}>
             <WhyLine why={why} mine={offer} />
           </p>
+          {staleRead && (
+            <p className="tier-a notice-warn" data-testid="why-match-stale">
+              {format('whyMatch.stale', { reason: chainRead.error ?? '', age: formatAge(Math.max(0, Math.round((nowMs - (chainRead.readAt ?? 0)) / 1000))) })}
+            </p>
+          )}
           {ranked !== null && ranked.oppositeOpen > 0 && (
             <p className="tier-b" data-testid="why-match-standing">
               {format('whyMatch.standing', { count: String(ranked.oppositeOpen) })}
@@ -140,8 +152,10 @@ function GapLine({ gap, id, lend }: { gap: Gap; id: bigint; lend: boolean }) {
   const copy = useCopy();
   const { text, format } = copy;
   switch (gap.kind) {
-    case 'rate':
-      return <>{format(lend ? 'whyMatch.rateLender' : 'whyMatch.rateBorrower', { theirs: formatBps(gap.theirs), mine: formatBps(gap.mine) })}</>;
+    case 'rate': {
+      const key: CopyKey = lend ? (gap.theirsHigh ? 'whyMatch.rateLenderHigh' : 'whyMatch.rateLender') : gap.theirsHigh ? 'whyMatch.rateBorrower' : 'whyMatch.rateBorrowerLow';
+      return <>{format(key, { theirs: formatBps(gap.theirs), mine: formatBps(gap.mine) })}</>;
+    }
     case 'term': {
       const key: CopyKey = lend ? (gap.upTo ? 'whyMatch.termLenderUpTo' : 'whyMatch.termLender') : gap.upTo ? 'whyMatch.termBorrowerUpTo' : 'whyMatch.termBorrower';
       return <>{format(key, { theirs: gap.theirs.toString(), mine: gap.mine.toString() })}</>;

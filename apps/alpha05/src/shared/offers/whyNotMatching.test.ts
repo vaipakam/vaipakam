@@ -61,9 +61,23 @@ function indexer(body: unknown): IndexerClient {
 
 describe('why an offer is not matching (#3623)', () => {
   it('names the rate gap from the side the reader is on', () => {
-    expect(gapOf(mine, req(), MATCH_CODE.rate)).toEqual({ kind: 'rate', theirs: 600n, mine: 700n });
+    // The request's range sits below the lender's.
+    expect(gapOf(mine, req(), MATCH_CODE.rate)).toEqual({ kind: 'rate', theirs: 600n, mine: 700n, theirsHigh: false });
     const borrower = offer({ offerType: 1, interestRateBps: 300n, interestRateBpsMax: 400n });
-    expect(gapOf(borrower, offer({ id: 3n, interestRateBps: 500n, interestRateBpsMax: 550n }), MATCH_CODE.rate)).toEqual({ kind: 'rate', theirs: 500n, mine: 400n });
+    expect(gapOf(borrower, offer({ id: 3n, interestRateBps: 500n, interestRateBpsMax: 550n }), MATCH_CODE.rate)).toEqual({
+      kind: 'rate',
+      theirs: 500n,
+      mine: 400n,
+      theirsHigh: true,
+    });
+  });
+  it('names the bounds that miss when the request’s range sits above the lender’s', () => {
+    const lender = offer({ interestRateBps: 500n, interestRateBpsMax: 600n });
+    const high = req({ interestRateBps: 700n, interestRateBpsMax: 800n });
+    expect(gapOf(lender, high, MATCH_CODE.rate)).toEqual({ kind: 'rate', theirs: 700n, mine: 600n, theirsHigh: true });
+    expect(gapOf(high, lender, MATCH_CODE.rate)).toEqual({ kind: 'rate', theirs: 600n, mine: 700n, theirsHigh: false });
+    // A rate refusal the two ranges do not explain is stated by its code.
+    expect(gapOf(lender, req({ interestRateBps: 550n, interestRateBpsMax: 650n }), MATCH_CODE.rate)).toEqual({ kind: 'code', code: MATCH_CODE.rate });
   });
   it('names a term gap, as up-to when the lender is pro-rata', () => {
     expect(gapOf(mine, req({ durationDays: 45n }), MATCH_CODE.duration)).toEqual({ kind: 'term', theirs: 45n, mine: 30n, upTo: false });
@@ -89,6 +103,9 @@ describe('why an offer is not matching (#3623)', () => {
     expect(whyOf(mine, ranked(1), read([cp(req(), null)], false))).toEqual({ kind: 'switch-off' });
     expect(whyOf(mine, ranked(1), read([cp(req(), null)], null))).toEqual({ kind: 'switch-unread' });
     expect(whyOf(mine, ranked(1), read([cp(req(), null, 'cancelled')]))).toEqual({ kind: 'unread' });
+    // The switch is stated even when nothing stands on the other side.
+    expect(whyOf(mine, ranked(0), read([], false))).toEqual({ kind: 'switch-off' });
+    expect(whyOf(mine, ranked(0), read([], null))).toEqual({ kind: 'switch-unread' });
   });
   it('reads the index’s ranking and refuses an answer it cannot read', async () => {
     await expect(readNearestIndex(indexer({ eligible: true, candidates: [{ offerId: 4 }, { offerId: 9 }], oppositeOpen: 7 }), 1, 1n)).resolves.toEqual({
