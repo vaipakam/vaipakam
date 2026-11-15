@@ -742,11 +742,38 @@ async function previewMatch(
   }
 }
 
+/** The longest a match's receipt wait may run (#176). */
+const MATCH_RECEIPT_TIMEOUT_MS = 30_000;
+
+/** How long a receipt wait that must end by `deadlineMs` may run: the time
+ *  left, capped at {@link MATCH_RECEIPT_TIMEOUT_MS}, and at least 1 ms (a
+ *  zero timeout would mean none). A wait that times out leaves the match
+ *  uncertain, which the walks already handle by backing off both offers
+ *  (#3622 B2: a walk's submission must not outlive its share of the pass). */
+export function matchReceiptTimeoutMs(deadlineMs: number, nowMs: number): number {
+  return Math.max(1, Math.min(MATCH_RECEIPT_TIMEOUT_MS, deadlineMs - nowMs));
+}
+
+/** `p`, or `fallback` once `deadlineMs` passes, whichever comes first. The
+ *  call itself is not cancelled; its answer is just no longer waited for. */
+async function beforeDeadline<T>(p: Promise<T>, deadlineMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), Math.max(0, deadlineMs - Date.now()));
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function submitMatch(
   ctx: KeeperContext,
   lenderId: bigint,
   borrowerId: bigint,
   preview: MatchPreview,
+  deadlineMs: number,
 ): Promise<boolean> {
   const account = ctx.wallet.account;
   if (!account) return false;
@@ -794,14 +821,15 @@ async function submitMatch(
   //
   // Pattern mirrors `apps/keeper/src/dailyOracleSnapshot.ts:127` (the
   // existing sibling that waits for receipt before continuing). 30s
-  // timeout per match — bounded by chain block time × small constant.
+  // timeout per match, or less when the walk's deadline is nearer (#3622
+  // B2, `matchReceiptTimeoutMs`) — bounded by chain block time × small constant.
   // Worst-case tick duration: `MAX_SUBMITS_PER_TICK × ~block_time`,
   // which is acceptable given the cron cadence (the next cron either
   // overlaps via the Workers concurrency lock or starts fresh state).
   try {
     const receipt = await ctx.client.waitForTransactionReceipt({
       hash,
-      timeout: 30_000,
+      timeout: matchReceiptTimeoutMs(deadlineMs, Date.now()),
     });
     if (receipt.status !== 'success') {
       // On-chain revert — another keeper / a borrower cancel / a
@@ -1677,8 +1705,11 @@ async function readMinTermsAgeSec(ctx: KeeperContext): Promise<number> {
 /** The two chain calls the match walks make, passed in so the walks can be
  *  tested without a chain. */
 export interface MatchWalkIO {
-  preview(L: OfferLite, B: OfferLite): Promise<MatchPreview | null>;
-  submit(L: OfferLite, B: OfferLite, p: MatchPreview): Promise<boolean>;
+  /** The pair's preview, or null when it cannot be read by `deadlineMs`. */
+  preview(L: OfferLite, B: OfferLite, deadlineMs: number): Promise<MatchPreview | null>;
+  /** Submits the match; false when it failed or is still uncertain at
+   *  `deadlineMs` (the receipt wait ends there). */
+  submit(L: OfferLite, B: OfferLite, p: MatchPreview, deadlineMs: number): Promise<boolean>;
 }
 
 export interface MatchWalkArgs {
@@ -1690,10 +1721,13 @@ export interface MatchWalkArgs {
   /** The lane's caps; the walk gets the pass's whole caps less what the lane
    *  spent. */
   lane: FreshLaneBudget;
-  /** The pass's deadline. */
-  stop: () => boolean;
-  /** The lane's own share of the wall time, spent. */
-  laneStop: () => boolean;
+  /** When the pass must end (the chain budget or the run's deadline). */
+  passEndMs: number;
+  /** When the lane must end ({@link freshLaneDeadline}). Every lane call,
+   *  receipt waits included, is bounded by it, so the walk keeps its time. */
+  laneEndMs: number;
+  /** The clock (tests pass their own). */
+  now?: () => number;
   /** Called for each fresh offer a lane preview answered (other than
    *  `TermsTooFresh`): its one entry is used. */
   onEntered: (o: OfferLite) => void;
@@ -1725,7 +1759,11 @@ export interface MatchWalkResult {
  * previewed this pass.
  */
 export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResult> {
-  const { lenders, borrowers, run, fresh, lane, stop, io, log } = args;
+  const { lenders, borrowers, run, fresh, lane, io, log } = args;
+  const now = args.now ?? Date.now;
+  const stop = () => now() >= args.passEndMs;
+  const laneEnd = Math.min(args.laneEndMs, args.passEndMs);
+  const laneStop = () => now() >= laneEnd;
   let previews = 0;
   let submits = 0;
   let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
@@ -1744,10 +1782,14 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
   /** Previews one pair and submits it when the preview clears it. Returns
    *  the preview's code (null when it could not be read) and whether the
    *  pass must stop. */
-  const tryPair = async (L: OfferLite, B: OfferLite): Promise<{ code: number | null; stop: boolean }> => {
+  const tryPair = async (
+    L: OfferLite,
+    B: OfferLite,
+    deadlineMs: number,
+  ): Promise<{ code: number | null; stop: boolean }> => {
     previews += 1;
     tried.add(pairKey(L, B));
-    const p = await io.preview(L, B);
+    const p = await io.preview(L, B, deadlineMs);
     if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
       log("match pass: this keeper's fill capacity is spent; waiting for it to refill");
       capacitySpent = true;
@@ -1768,7 +1810,9 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
       return { code: p ? p.errorCode : null, stop: false };
     }
 
-    const ok = await io.submit(L, B, p);
+    // Out of time after the preview: nothing is sent, so nothing is uncertain.
+    if (now() >= deadlineMs) return { code: p.errorCode, stop: true };
+    const ok = await io.submit(L, B, p, deadlineMs);
     if (ok) {
       submits += 1;
       // Keep B's in-memory snapshot live so the later #625 intent-fill pass
@@ -1805,12 +1849,12 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
       deadA: (l) => doneLenders.has(l),
       skip: (l, b) =>
         (!isFresh(l) && !isFresh(b)) || uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b),
-      stop: () => stop() || args.laneStop(),
+      stop: laneStop,
       maxLive: lane.previews,
     })) {
       if (previews >= lane.previews || submits >= lane.submits) break;
-      if (stop() || args.laneStop()) break;
-      const r = await tryPair(L, B);
+      if (laneStop()) break;
+      const r = await tryPair(L, B, laneEnd);
       if (r.code !== null && r.code !== MATCH_ERR_TERMS_TOO_FRESH) {
         if (isFresh(L)) args.onEntered(L);
         if (isFresh(B)) args.onEntered(B);
@@ -1836,7 +1880,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
       if (previews >= MAX_PREVIEW_CALLS_PER_TICK) break;
       if (submits >= MAX_SUBMITS_PER_TICK) break;
       if (stop()) break;
-      const r = await tryPair(L, B);
+      const r = await tryPair(L, B, args.passEndMs);
       if (r.stop) break;
     }
   }
@@ -1891,12 +1935,12 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
     run,
     fresh,
     lane,
-    stop: overBudget,
-    laneStop: () => Date.now() >= laneEnd,
+    passEndMs: passEnd,
+    laneEndMs: laneEnd,
     onEntered: (o) => tracker.markEntered(o, nowSec),
     io: {
-      preview: (L, B) => previewMatch(ctx, L.id, B.id),
-      submit: (L, B, p) => submitMatch(ctx, L.id, B.id, p),
+      preview: (L, B, deadlineMs) => beforeDeadline(previewMatch(ctx, L.id, B.id), deadlineMs, null),
+      submit: (L, B, p, deadlineMs) => submitMatch(ctx, L.id, B.id, p, deadlineMs),
     },
     log: (line) => console.log(`[matcher] chain=${ctx.chainId} ${line}`),
   });

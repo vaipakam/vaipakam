@@ -16,6 +16,7 @@ import {
 import {
   MATCH_ERR_TERMS_TOO_FRESH,
   MAX_PREVIEW_CALLS_PER_TICK,
+  matchReceiptTimeoutMs,
   partitionByBucket,
   runMatchWalks,
   type MatchPreview,
@@ -62,8 +63,8 @@ function walkArgs(offers: OfferLite[], fresh: Set<string>, io: MatchWalkIO, run 
     run,
     fresh,
     lane: freshLaneBudget(FRESH_LANE_DEFAULT_SHARE, PASS),
-    stop: () => false,
-    laneStop: () => false,
+    passEndMs: Number.POSITIVE_INFINITY,
+    laneEndMs: Number.POSITIVE_INFINITY,
     onEntered: (o: OfferLite) => entered.push(o),
     io,
     log: () => {},
@@ -215,5 +216,42 @@ describe('runMatchWalks', () => {
       expect(without).toBeLessThanOrEqual(2);
       expect(withLane).toBeLessThanOrEqual(2);
     }
+  });
+
+  it('bounds a slow lane submission by the lane deadline, so the walk still runs', async () => {
+    // Pass: 10 s left; lane: 2.5 s. The fresh pair's preview clears and its
+    // receipt would take 30 s; the walk's resting pair must still be looked at.
+    let t = 0;
+    const deadlines: number[] = [];
+    const seen: string[] = [];
+    const ok: MatchPreview = { errorCode: 0, matchAmount: 1n, matchRateBps: 0n, reqCollateral: 0n, lenderRemainingPostMatch: 50n };
+    const io: MatchWalkIO = {
+      preview: async (L, B) => {
+        seen.push(`${L.id}:${B.id}`);
+        t += 100;
+        return L.id === 3n ? ok : { ...ok, errorCode: 4 };
+      },
+      submit: async (_L, _B, _p, deadlineMs) => {
+        deadlines.push(deadlineMs);
+        t = Math.min(t + 30_000, deadlineMs); // the receipt wait ends at its deadline
+        return false; // still uncertain
+      },
+    };
+    const offers = [
+      offer(1, addr(1), 0), offer(2, addr(2), 1),
+      offer(3, addr(3), 0, { asset: addr(0xb1) }), offer(4, addr(4), 1, { asset: addr(0xb1) }),
+    ];
+    const args = { ...walkArgs(offers, new Set(['4']), io), passEndMs: 10_000, laneEndMs: 2_500, now: () => t };
+    const r = await runMatchWalks(args);
+    expect(deadlines).toEqual([2_500]);
+    expect(seen).toEqual(['3:4', '1:2']);
+    expect(r.uncertainBorrowers.has('4')).toBe(true);
+    expect(t).toBeLessThan(10_000);
+  });
+
+  it('caps the receipt wait at the time left', () => {
+    expect(matchReceiptTimeoutMs(2_500, 1_000)).toBe(1_500);
+    expect(matchReceiptTimeoutMs(100_000, 0)).toBe(30_000);
+    expect(matchReceiptTimeoutMs(1_000, 5_000)).toBe(1);
   });
 });
