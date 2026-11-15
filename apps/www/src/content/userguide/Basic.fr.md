@@ -677,6 +677,14 @@ rien ne se passe on-chain.
 
 La page Alertes liste les alertes que l'index du protocole garde pour votre wallet sur le réseau où vous êtes, les plus récentes d'abord. C'est gratuit et il n'y a rien à souscrire. Une alerte est écrite quand un prêt démarre, est remboursé en partie ou en totalité, fait défaut ou est liquidé, approche de son échéance, entre dans son délai de grâce ou en sort, ou que sa santé passe sous 1,5, 1,2 ou 1,05, et quand une entrée de récompense approche de sa date limite de réclamation ou la dépasse. Chaque alerte ouvre le prêt, dont la page le lit sur la chaîne, ou Claims pour une récompense. La cloche à côté de votre wallet, en haut, compte les alertes arrivées depuis votre dernière ouverture de la page dans ce navigateur. Si l'index ne peut pas être lu, la page le dit au lieu d'afficher une boîte vide. Telegram, push, les alertes de santé et les rappels de paiement se configurent juste sous la boîte. Chaque alerte décrit la situation au moment où elle a été écrite ; ouvrez le prêt pour voir où il en est maintenant.
 
+<a id="activity-history"></a>
+
+### Votre activité
+
+La page Activité, accessible depuis Positions et depuis Alertes, liste tout ce qui a impliqué votre portefeuille sur le réseau actuel, du plus récent au plus ancien : les événements de tout prêt dans lequel vous avez détenu une position, et les événements qui nomment votre portefeuille, comme vos offres, votre coffre, vos réglages et vos récompenses. Chaque transaction tient sur une ligne, menée par ce qui s'est passé, le reste de la transaction étant replié dessous. Une ligne indique son prêt ou son offre, qui l'a envoyée et quand, et renvoie à la transaction.
+
+Un montant n'est affiché que si l'index en a enregistré un ; sinon, la ligne indique qu'aucun montant n'a été enregistré. Les événements des blocs les plus récents viennent en premier, marqués non définitifs, car un bloc peut encore changer. Un prêt dont la fin a été trouvée par une vérification, plutôt que vue comme un événement, le dit. Tant que l'index lit encore l'historique ancien, la page indique qu'une activité plus ancienne peut manquer, et une page à laquelle l'index n'a pas pu répondre n'est jamais présentée comme un historique vide.
+
 <a id="alerts-channels"></a>
 
 ### Telegram, push et alertes

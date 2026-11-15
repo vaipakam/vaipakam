@@ -1,0 +1,7 @@
+## New app: one wallet's whole history, served by the index
+
+The new app gains an Activity page, reached from Positions and from Alerts. It lists everything on the connected network that involved the wallet: the events on any loan it ever held a position in, and the events that name it, such as offers it posted, its vault, its settings and its rewards. Each transaction is one line, led by what happened, with the rest of that transaction folded under it. Every line names its loan or offer, who sent it, when, and links to the transaction.
+
+An amount is shown only when the index recorded one; otherwise the line says no amount was recorded, rather than working one out from raw event data. Events in the newest blocks are listed first and marked not final, with no time yet. A loan whose ending was found by the index's own check, rather than seen as an event, says what was and was not seen. Rows the app cannot read are counted, and an index that does not answer is never shown as an empty history.
+
+The index now answers for one wallet itself. Before, a client had to page the whole network's feed and keep the rows that were the wallet's, which on a busy network could only promise recent activity. The index records which wallets each event concerns, by the same rule the app uses, as it reads each event, and fills the same record from the history it already holds, a page at a time. Until that fill reaches the newest stored event, the index says its answer may be missing older rows, and the page says so too. Closes #3677.
