@@ -1,4 +1,4 @@
-## Thread — Time-based default sales name their caller in the liquidator count (PR #<n>)
+## Thread — Time-based default sales name their caller in the liquidator count (PR #3633)
 
 The liquidator count on the loan stats (#3366) treated the time-based default as a route whose caller is not recorded, and counted it from an event called `LoanLiquidated`. That event was declared on the default facet but never emitted, so every time-based default sale was missing from the figure, not just its caller.
 
