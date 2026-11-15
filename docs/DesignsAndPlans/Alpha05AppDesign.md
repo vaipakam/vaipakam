@@ -2781,7 +2781,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   listed under it. The wallet a line names is the one the shared actor rule
   files the event under, said as "recorded for", never as its sender. Every kind the index can file for a wallet
   has words (a test holds the catalog to the shared rule's kinds); a kind
-  without words is named, never hidden. An amount is shown only when the
+  without words is named, never hidden. A kind whose event states whether
+  its step worked (a retried collateral sale) reads that outcome from the
+  event and says which, or that it was not recorded; its line never reads as
+  done when the step failed. The index reads a wallet's page from that
+  wallet's own rows, so its cost follows the wallet's history, not the
+  network's. An amount is shown only when the
   index recorded one, otherwise the line says none was recorded, and a
   multi-copy token's unrecorded quantity is said, never read as one; events in
   blocks not yet final are marked so, with no time; a loan whose ending a

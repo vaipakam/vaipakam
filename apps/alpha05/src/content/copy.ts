@@ -2413,6 +2413,12 @@ export const copy = {
     repaired: B('Loan #{{id}} had ended ({{status}}) by block {{block}}, found by a check.'),
     repairedWhen: B('When and how it ended was not seen; the check read it at {{time}}.'),
     repairedNoTime: B('When and how it ended was not seen.'),
+    outcomes: {
+      ClaimRetryExecuted: {
+        succeeded: B('A retried sale of a loan’s collateral went through; the proceeds go to the parties.'),
+        failed: B('A retried sale of a loan’s collateral did not go through; the collateral is settled as it is.'),
+      },
+    },
     status: {
       repaid: B('repaid'),
       defaulted: B('defaulted'),
@@ -2446,7 +2452,7 @@ export const copy = {
       BorrowerFundsClaimed: B('The borrower claimed funds from a closed loan.'),
       BorrowerHeldExtraPaid: B('An amount held for the borrower after a sale was paid out.'),
       BorrowerSurplusClaimed: B('The borrower claimed what was left after a sale.'),
-      ClaimRetryExecuted: B('A retried collateral sale was carried out.'),
+      ClaimRetryExecuted: B('A sale of a loan’s collateral was retried; whether it went through was not recorded.'),
       CollateralAdded: B('Collateral was added to a loan.'),
       CollateralConsolidated: B('Collateral was moved together onto one position.'),
       CollateralSaleProceedsSplit: B('Collateral sale proceeds were divided between the parties.'),

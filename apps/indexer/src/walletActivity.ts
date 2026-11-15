@@ -172,12 +172,19 @@ export const WALLET_LOAN_CONDITION = `loan_id IN (SELECT lp.loan_id FROM loan_pa
 
 /**
  * One page of the wallet's final events, newest first: the union of the two
- * legs, each read to the page's limit on its own index, then joined back to
- * the event rows. Each leg returns at most `limit` keys below the cursor, so
- * the union's top `limit` is exact. The participant leg keeps only keys whose
- * event is still stored: a withdrawn phantom loan's events are deleted
- * (`loanOrphans.ts`) while their participant rows stay, and a key with no
- * event must not take a place in the page.
+ * legs, each read to the page's limit, then the event rows looked up by key.
+ * Each leg returns at most `limit` keys below the cursor, so the union's top
+ * `limit` is exact. The participant leg keeps only keys whose event is still
+ * stored: a withdrawn phantom loan's events are deleted (`loanOrphans.ts`)
+ * while their participant rows stay, and a key with no event must not take a
+ * place in the page.
+ *
+ * The work is bounded by the WALLET's history, never the chain's: every join
+ * is a `CROSS JOIN`, which SQLite never reorders, so each leg starts from the
+ * wallet's own rows (its participant rows on their primary key; its loans on
+ * `idx_loan_participants_wallet`, then each loan's events on
+ * `idx_activity_chain_loan`) and every event row is reached by its primary
+ * key. A quiet wallet on a busy chain reads almost nothing.
  */
 export function walletEventsPage(
   db: D1Database,
@@ -192,7 +199,7 @@ export function walletEventsPage(
       `WITH keys AS (
          SELECT block_number, log_index FROM (
            SELECT p.block_number, p.log_index FROM activity_participants p
-             JOIN activity_events pe
+            CROSS JOIN activity_events pe
                ON pe.chain_id = p.chain_id AND pe.block_number = p.block_number AND pe.log_index = p.log_index
             WHERE p.chain_id = ?1 AND p.wallet = ?2
               AND (?3 IS NULL OR (p.block_number, p.log_index) < (?3, ?4))
@@ -200,16 +207,16 @@ export function walletEventsPage(
             LIMIT ?5)
          UNION
          SELECT block_number, log_index FROM (
-           SELECT block_number, log_index FROM activity_events
-            WHERE chain_id = ?1
-              AND loan_id IN (SELECT lp.loan_id FROM loan_participants lp WHERE lp.chain_id = ?1 AND lp.wallet = ?2)
-              AND (?3 IS NULL OR (block_number, log_index) < (?3, ?4))
-            ORDER BY block_number DESC, log_index DESC
+           SELECT le.block_number, le.log_index
+             FROM (SELECT DISTINCT lp.loan_id FROM loan_participants lp WHERE lp.chain_id = ?1 AND lp.wallet = ?2) wl
+            CROSS JOIN activity_events le ON le.chain_id = ?1 AND le.loan_id = wl.loan_id
+            WHERE (?3 IS NULL OR (le.block_number, le.log_index) < (?3, ?4))
+            ORDER BY le.block_number DESC, le.log_index DESC
             LIMIT ?5)
        )
-       SELECT e.* FROM activity_events e
-         JOIN keys k ON k.block_number = e.block_number AND k.log_index = e.log_index
-        WHERE e.chain_id = ?1
+       SELECT e.* FROM keys k
+        CROSS JOIN activity_events e
+           ON e.chain_id = ?1 AND e.block_number = k.block_number AND e.log_index = k.log_index
         ORDER BY e.block_number DESC, e.log_index DESC
         LIMIT ?5`,
     )

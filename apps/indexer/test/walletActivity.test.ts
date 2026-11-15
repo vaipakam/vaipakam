@@ -16,6 +16,7 @@ import {
   ensureActivityParticipantsBackfill,
   eventParticipants,
   inlineParticipants,
+  walletEventsPage,
 } from '../src/walletActivity';
 import type { Env } from '../src/env';
 
@@ -136,6 +137,21 @@ describe('/activity?wallet=', () => {
     markDone(h);
     const { body } = await get(h, `wallet=${ME}&limit=2`);
     expect(body.events.map((e) => e.blockNumber)).toEqual([2, 1]);
+  });
+
+  it('reads only the wallet’s own rows, whatever the chain’s history (each event by its key)', () => {
+    const h = db();
+    let sql = '';
+    const capture = { prepare: (q: string) => ((sql = q), { bind: () => ({}) }) } as unknown as D1Database;
+    walletEventsPage(capture, BASE, ME, undefined, 50);
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(BASE, ME, null, null, 50) as Array<{ detail: string }>).map((r) => r.detail);
+    const events = plan.filter((d) => /^(SCAN|SEARCH) (pe|le|e)\b/.test(d));
+    expect(events).toHaveLength(3);
+    // No leg walks the chain's events: the participant check and the final
+    // read are primary-key lookups, the loan leg reads each loan's events.
+    expect(events.every((d) => d.startsWith('SEARCH'))).toBe(true);
+    expect(events.filter((d) => d.includes('(chain_id=? AND block_number=? AND log_index=?)'))).toHaveLength(2);
+    expect(events.filter((d) => d.includes('(chain_id=? AND loan_id=?)'))).toHaveLength(1);
   });
 
   it('refuses a wallet filter combined with another filter, and a malformed wallet', async () => {
