@@ -1173,7 +1173,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](11);
         selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
         selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -1182,6 +1182,10 @@ contract HelperTest {
         selectors[5] = SignedOfferFacet.signedOfferOrderHash.selector;
         selectors[6] = SignedOfferFacet.signedOfferFilledAmount.selector;
         selectors[7] = SignedOfferFacet.isSignedOfferNonceUsed.selector;
+        // #3327 — the cancel floor and its read.
+        selectors[8] = SignedOfferFacet.cancelSignedOffersBelow.selector;
+        selectors[9] = SignedOfferFacet.signedOfferCancelFloor.selector;
+        selectors[10] = SignedOfferFacet.hashSignedOfferFill.selector;
     }
 
     function getLenderIntentFacetSelectors()

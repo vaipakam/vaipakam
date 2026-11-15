@@ -2062,7 +2062,11 @@
         "accept": "Fill 订单",
         "accepting": "执行中…",
         "accepted": "签名订单已 fill — 贷款已 live。",
-        "close": "关闭"
+        "close": "关闭",
+        "restrictedBadgeTooltip": "其创建者设了限制的签名报价：它只保留给一个钱包，或每次成交都需要其联合签名人批准，而本应用暂时无法请求该批准。它计入深度，但此处没有成交按钮。",
+        "reservedForOtherTaker": "此报价保留给另一个钱包，因此无法用当前钱包接受。",
+        "needsCoSigner": "此报价的每次成交都需要其创建者的联合签名人批准，而本应用暂时无法请求该批准，因此无法在此接受。",
+        "feeAboveCap": "协议费用现已高于此报价创建者同意的上限，因此在费用保持这么高期间无法接受。如果费用回落，它可以再次被接受。"
       },
       "chart": {
         "title": "已达成的利率",
@@ -2192,7 +2196,10 @@
         "netYield": "如果有人接受报价且贷款得到偿还，扣除利息部分 {{feePct}}% 的协议费后，你每年约赚 {{net}}%。",
         "lifNote": "起始费：贷款金额的 {{feePct}}%（约 {{amount}} {{symbol}}），在贷款开始时收取。",
         "expiryGtcSignedHint": "免费签名报价最多保持开放 7 天，之后会自动过期。你也可以提前取消（取消需要支付网络费）。",
-        "gaslessBelowFloor": "此订单小于协议在该代币中接受的最小报价，因此无人能接受。未发布任何内容。请提高金额并重新签名。"
+        "gaslessBelowFloor": "此订单小于协议在该代币中接受的最小报价，因此无人能接受。未发布任何内容。请提高金额并重新签名。",
+        "gaslessBelowCancelFloor": "此订单会被你的钱包之前执行的全部取消所覆盖，因此一发布就会被取消。没有发布任何内容。请重新签名。",
+        "feesChanged": "在你审核此订单后协议费用发生了变化。没有发布任何内容。请查看新费用并重新签名。",
+        "feeCapNote": "只有当协议费用不高于以下水平时，你的签名订单才能成交：利息的 {{interestPct}}%，以及开始贷款时的 {{startPct}}%。任一费用上调后，在其保持较高期间没有人能接受它，但费用回落后它可以再次被接受。要彻底停止该订单，请取消它。"
       },
       "orders": {
         "loading": "正在加载您的未完成订单…",
@@ -2672,7 +2679,6 @@
         "LoanDefaulted": "贷款已违约",
         "OwedAtDefaultRecorded": "已记录违约时欠款",
         "OwedAtInternalMatchRecorded": "已记录内部撮合清偿金额",
-        "LoanLiquidated": "贷款已清算",
         "BackstopAbsorbedLoan": "贷款被 backstop 吸收",
         "LoanExtended": "贷款已延长",
         "LoanRefinanced": "贷款已再融资",
@@ -2854,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "仓位转让时奖励条目已拆分",
         "LenderEntryStamped": "接手仓位时已记录出借人折扣",
         "Transfer": "转账",
-        "Approval": "授权"
+        "Approval": "授权",
+        "SignedOfferCancelFloorRaised": "较早的签名报价已取消"
       },
       "unavailableFallback": "您的当前贷款和租赁始终可在这里查看",
       "positionsLink": "我的持仓"

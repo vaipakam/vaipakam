@@ -4,7 +4,7 @@
  *
  * Mirrors `contracts/src/libraries/LibSignedOffer.sol` exactly:
  *
- *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 31 fields in the SAME order
+ *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME order
  *     as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string
  *     (LibSignedOffer.sol:39-105). Field order is load-bearing — any drift
  *     silently changes every hash. The unit test
@@ -38,13 +38,13 @@ import {
   type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
 
-/** The 31-field SignedOffer typed-data description — struct order EXACTLY as
+/** The 35-field SignedOffer typed-data description — struct order EXACTLY as
  *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64).
  *  The list itself is `@vaipakam/lib/signedOfferWire`'s, the one statement of
  *  the stored order the POST route and the restore converter share (#1481). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 31 field names in canonical struct order, and the wire-shape order:
+/** The 35 field names in canonical struct order, and the wire-shape order:
  *  every uint as a decimal string, addresses as lowercase 0x-40-hex, bools as
  *  booleans. That is BOTH the POST body shape and the stored `order_json`
  *  shape — takers replay it verbatim into `acceptSignedOffer`. */
@@ -99,6 +99,10 @@ export function toTypedMessage(order: SignedOrderWire) {
     creatorFull: order.creatorFull,
     creatorMaxCStar: BigInt(order.creatorMaxCStar),
     creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
+    maxTreasuryFeeBps: Number(order.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: Number(order.maxLoanInitiationFeeBps),
+    allowedTaker: order.allowedTaker as Address,
+    coSigner: order.coSigner as Address,
     signer: order.signer as Address,
     nonce: BigInt(order.nonce),
     deadline: BigInt(order.deadline),

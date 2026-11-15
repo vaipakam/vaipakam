@@ -2002,7 +2002,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Borrow: شروط الطلب
 
-ينشر Basic طلبًا بقيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax`، و`fillMode` 1 (AON)، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` true. تُحوَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. يُحدّ `durationDays` بالحد الأقصى المضبوط المقروء من `getProtocolConfigBundle`. وقيمة `expiresAt` إما 0 (مفتوح حتى الإلغاء) وإما وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، لا يتجاوز `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا). القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+ينشر Basic طلبًا بقيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax`، و`fillMode` 1 (AON)، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` true. تُحوَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. يُحدّ `durationDays` بالحد الأقصى المضبوط المقروء من `getProtocolConfigBundle`. وقيمة `expiresAt` إما 0 (مفتوح حتى الإلغاء) وإما وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، لا يتجاوز `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا). القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false. عندما يكون `useFullTermInterest` خطأً في العرضين، يقبل `matchOffers` قيمة `durationDays` للمقترض مساويةً لقيمة المُقرض أو أقل منها، ويأخذ القرض قيمة المقترض (#3615)؛ أما القبول المباشر فيأخذ قيمة العرض نفسه.
 
 <a id="borrow-request-review"></a>
 
@@ -2080,7 +2080,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Lend: شروط العرض
 
-من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 1 (AON) ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0 ما لم يحدد الوضع المتقدم جدولًا، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full ما لم يخترها الوضع المتقدم. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 1 (AON) ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0 ما لم يحدد الوضع المتقدم جدولًا، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full ما لم يخترها الوضع المتقدم. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false. عندما يكون `useFullTermInterest` خطأً في العرضين، يقبل `matchOffers` قيمة `durationDays` للمقترض مساويةً لقيمة المُقرض أو أقل منها، ويأخذ القرض قيمة المقترض (#3615)؛ أما القبول المباشر فيأخذ قيمة العرض نفسه.
 
 <a id="rate-check"></a>
 
@@ -2195,6 +2195,8 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 تحمل `claimAsLender(loanId)` و`claimAsBorrower(loanId)` المُعدِّل `whenNotPaused` وتدفعان من خزنة الطرف المسجَّل لذلك الجانب (`loan.lender` / `loan.borrower`) إلى المستدعي، الذي يجب أن يكون `ownerOf` لرمز مركز ذلك الجانب. يمكن للمُقرض المطالبة على قرض بحالة Repaid أو Defaulted أو FallbackPending أو InternalMatched، وللمقترض على Repaid أو Defaulted أو InternalMatched فقط. ترفض مطالبة المُقرض سطرًا مُطالَبًا به سابقًا (`AlreadyClaimed`) قبل التحقق من الحامل، وجانبًا لا شيء مفتوح فيه (`NothingToClaim`) بعده؛ أما السطر الذي سجّله إغلاق قسري بقيمة صفر فيُنفَّذ مع ذلك ويُغلق المركز. لا ترفض مطالبة المقترض إلا إذا كان سطر الضمان وسطر الفائض كلاهما فارغين أو مُطالَبًا بهما، وتدفع كل سطر حسب علامته الخاصة، ومعهما الضمان الذي ما زال تحت رهن القرض برمز آخر.
 
 تقرأ المراجعة `getClaimable` (سطر المُقرض صافيًا بعد حصة البائعين السابقين، وبجانبه `getSellersShareOfLenderClaim`) و`getBorrowerSurplusClaim` و`getLoanCollateralLien`، وتشغّل المطالبة تجربةً مسبقة تطبّق أيضًا فحوص العقوبات. تتبع القائمة رمز المركز: تسرد `getUserDashboardClaimables` مطالبات الطرف المسجَّل، فيبقى السطر المُدرج فقط ما دامت المحفظة تحمل ذلك الجانب، أما المركز المحمول على قرض منتهٍ والمستلَم من شخص آخر فتُقرأ مطالبته مباشرة. تقرأ بطاقة الإنهاء `LenderFundsClaimed` / `BorrowerFundsClaimed` و`BorrowerSurplusClaimed` و`LoanSettled` وتحويلات الرمز إلى المحفظة؛ وللمستدعي في وضع الحساب المحمي تقرأ `PayoutQueued` (خزنة الحساب نفسه) أو `PayoutHeldInVault` (حساب مقفل أو طابور ممتلئ) أو `PaymentCreditedToVault` (خزنة طرف آخر). وعلى قرض بحالة FallbackPending قد تُجري مطالبة المُقرض مطابقةً داخلية لحظة المطالبة تعيد كتابة السطر، لذا تقارن بطاقة الإنهاء التحويلات بسجل البروتوكول نفسه.
+
+«Claim and withdraw» معاملتان. تُقيّد المطالبة المبلغ في خزنة الحائز الخاصة: تُسجَّل كل حركة على أنها `VaultOutflow` من الفئة PositionHolder، و`to` خزنة الحائز، و`ref` معرّف القرض، و`delivered` ما وصل. بعد تعدين المطالبة يجمع التطبيق `delivered` لكل أصل (لكل معرّف رمز في حالة NFT) عبر القروض المُطالب بها، ويفتح `withdrawFromVault` بذلك المبلغ، أصلًا واحدًا في كل مرة، بقراءات سحب الخزنة وتشغيله التجريبي نفسها: يظل `withdrawableNow` حدّه، ويظل الوضع المحمي يضعه في الطابور. يفعل «استلم كل شيء» الأمر نفسه لاستدعاءات القروض فيه فقط. يجمع «Ready to claim» دفعات كل جانب حكمُ مطالبته مفتوح الآن؛ ويُعدّ الجانب المنتظر أو الذي تعذّرت قراءته على حدة.
 
 <a id="claim-everything"></a>
 
@@ -2507,3 +2509,21 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 ### الاسترداد: كيف يُسجَّل التنصّل
 
 لا يحتاج `disownUntracked(kind, asset, tokenId)` إلا إلى خزنة ورقم غير محسوب أكبر من صفر. وليس فيه فحص إيقاف ولا فحص عقوبات ولا فحص مدير، فيستطيع استخدامه حتى المحفظة المستبدلة والخزنة المحظورة، ولا يتطلب توقيعًا. ويطلق `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`، وتقرأ بطاقة الختام المبلغ المسجّل من هذا الحدث في الإيصال.
+
+<a id="analytics-figures"></a>
+
+### التحليلات: كيف تُقرأ الأرقام
+
+تأخذ الصفحة أحدث كتلة وتقرأ كل واجهة عرض في الـDiamond عند رقم تلك الكتلة: `getProtocolStats` و`getProtocolTVL` و`getProtocolHealth` و`getGlobalCounts` (العروض المنشورة هي `totalOffersCreated`) و`getLifetimeLendingAssets` مع `getLifetimeLendingTotals` لكل أصل، و`getNumeraireSymbol`؛ وأول كتلة للنشر تأتي من سجل النشر. تُحسم كل مجموعة وحدها، فتُذكر الواجهة الفاشلة في مكانها. وتقيّم الصفحة أصل القرض والفائدة لكل أصل بـ`getNumeraireValue(asset, amount, false)` عند الكتلة نفسها، وهو التقريب الذي تستخدمه إجماليات البروتوكول، فتجتمع الأجزاء المقيّمة في `totalVolumeLentNumeraire` و`totalInterestPaidNumeraire`؛ ويُسمّى الأصل الذي يرتد تقييمه مستبعدًا. ولا تعرض الصفحة `defaultRateBps`: فعدّاده `terminalBadOrSettledCount` يرتفع حين يدخل قرض Defaulted أو Settled، والسداد العادي متبوعًا بالمطالبات يبلغ Settled أيضًا، فلا يفصل التعثر عن الإغلاق العادي. والقيمة الثالثة في `getProtocolTVL` عدد القروض المفتوحة بضمان NFT وليست قيمة. والفائدة هي `lifetimeInterestPaid`، تُكتب مع كل دفعة من المقترضين؛ واسترداد المقرض للضمان ليس منها.
+
+<a id="analytics-fees"></a>
+
+### التحليلات: كيف تُقرأ الرسوم والحفظ
+
+معدلات الرسوم هي `getTreasuryFeeBps` و`getLoanInitiationFeeBps`. وأرقام الرسوم هي `getTreasuryMetrics`: الإجمالي منذ البداية هو `feeLedgerTotal`، وأرقام اليوم والأسبوع تمسح سجل الرسوم من نهايته لعدد أقصاه `MAX_FEE_EVENTS_ITER` (10,000) إدخال، فهي بعد ذلك حد أدنى. يحمل كل إدخال قيمة الرسوم بالعملة المرجعية عند الاستحقاق وفق قاعدة أفضل جهد، و0 حين تعذّر تقييمها. والخزانة المعروضة هي `getTreasury`، العنوان الذي يسمّيه رمز الخزنة الحالي. والرسوم المأخوذة من خزنة تذهب إلى الخزانة التي يسمّيها رمز تلك الخزنة نفسه، ويقيّد `recordTreasuryAccrual` في `treasuryBalances` كلما وصلت رسوم إلى الـDiamond، لذلك قد تترك خزنة مثبّتة على رمز أقدم، أو إعداد سابق، رسومًا محتفظًا بها هناك أيًّا كان ما يقوله `getTreasury`. ولهذا تعرض الصفحة دائمًا الرقم المحتفظ به من `getTreasuryMetrics`، مجموعًا على أصول القروض المفتوحة فقط، مع آخر تحويل وأهداف `getTreasuryConvertConfig`. وتُعلَّم الخزانة التي تختلف عن سجل النشر.
+
+<a id="analytics-vpfi"></a>
+
+### التحليلات: كيف تُقرأ بيانات VPFI
+
+الرمز هو `getVPFIToken` في الـDiamond، والشبكة الأم هي `isCanonicalVpfiChain` الخاص به، وكلاهما عند كتلة الصفحة؛ والرمز الصفري يُقرأ على أنه غير مضبوط. ومن الرمز تقرأ الصفحة `name` و`symbol` و`decimals` و`totalSupply` و`owner` و`paused`، وعلى الشبكة الأم أيضًا `cap` و`INITIAL_MINT` و`minter`؛ والقابل للسك هو `cap` ناقص `totalSupply`، ولا ينزل تحت الصفر. و`mint` مفتوح لـ`minter` وحده، و`setMinter` لـ`owner` وحده، فلا ينتظر تغيير الساكّ الـtimelock إلا حين يكون `owner` هو `timelock` النشر. والرمز المجسور هو مرآة الحرق والسك، وعرضه هو ما أقفله مجمّع الشبكة الأم له. وقائمة العناوين هي `vpfiToken` في سجل النشر لكل شبكة مخدومة، وتُعلَّم أمًّا حيث لا يحمل السجل `vpfiMirror`. ويُعلَّم الرمز المختلف عن السجل، أو `cap` غير 230,000,000 VPFI.

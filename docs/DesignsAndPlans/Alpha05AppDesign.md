@@ -287,6 +287,43 @@ another party finalized between preview and signing is skipped, not fatal,
 and anything skipped stays listed to claim on its own; a failed leg never
 disappears.
 
+### RB-CLAIM-WITHDRAW — claim and withdraw as one action, stated as two steps
+
+A loan claim pays the position holder's own vault, and only a withdrawal
+takes it to the wallet (the step a protected account's delay gates). Every
+claim entry point (a payout's card on Claims, the loan page, Claim
+everything) offers the choice up front: "Claim and withdraw" leads, "Claim to
+my vault" keeps the payout there to lend or post as collateral. The review
+states which: the two steps and the second confirmation, or the choice to
+keep. Once the claim confirms, the app opens the ordinary vault withdrawal
+for exactly what the transaction's logs show the claim credited to the vault
+for the claimed loans, one asset at a time, each with its own review, dry
+run, protected-mode route and finish card; never for the amount the review
+promised. The credited assets are read from the transaction's own records,
+so a token a claim-time match paid in is found too; a credited asset whose
+standard the app cannot name is counted and left to the Vault page, never
+guessed. Kept payouts are said to be in the vault and the withdrawal is
+still offered. A withdrawal refused, failed or closed before it moved
+anything leaves the claim done and the money in the vault, said so, and is
+offered again; one that went through, was queued or could not be measured
+is never offered again, so a second confirmation cannot draw other funds.
+The withdrawals open only while the reader is connected as the network and
+account the claim ran for; otherwise that is said instead. The claim's
+finish card cannot be closed while a withdrawal it opened is out. In Claim
+everything only loan payouts are withdrawn; every other leg goes where its
+own row says, and the review says so. The wallet batching both steps into
+one confirmation is a follow-up; until then the wallet asks twice and the
+review says it will.
+
+"Ready to claim" leads Claims and Home: the per-asset total of every loan
+payout whose claim rule is open now (the same verdict its button reads),
+ERC-20 amounts summed, each NFT its own entry. A payout that waits, could
+not be read, or is a lender's on a loan in fallback (whose claim runs the
+match first, so its asset and amount are settled only then) is counted
+apart and named, never added in; an incomplete
+position walk is said to limit the total; and the total is never called
+received, since a claim pays the vault.
+
 ### RB-RAILS — three data rails
 
 | Rail | What | Source | Freshness |
@@ -1499,6 +1536,58 @@ above. Each resolves here, so a route reviewer needs no private file:
   `VaultBannedFromAdoption` or `UntrackedDisowned` for this account and
   asset. While the protocol is paused the page states the escape route
   (LN-57) and links the Vault page, which carries it.
+- **RB-ANALYTICS** — the Analytics page (RW-74, RW-75) is public: it
+  needs no wallet, reads through the network's read-only proxy or its
+  public endpoint (RB-PUBLIC), and lets the reader pick any network the
+  app serves, describing the screen's network until they do. Every figure
+  is read from the protocol contract at one block, and the page states
+  that block, its age (a block time ahead of the device clock is an
+  unknown age, never fresh), and the deployment's first block, where every
+  counter starts. Each group of figures stands on its own: a view that
+  failed is said to be unread in its place, a rate with nothing to divide
+  by (no loan opened, no priced collateral) says there is none yet, and
+  zero is shown only where the protocol answered zero. The lifetime totals
+  are valued now by the protocol's own rule, so the page lists each asset
+  ever lent with its own amounts and value at the same block, and names
+  every asset the rule cannot value as left out of the totals. Interest
+  counts what borrowers paid: a lender's recovery of collateral after a
+  default is not interest, and the page says so. Fees are valued when each
+  was collected, with their caveats beside them (an unvaluable fee counts
+  as nothing; the day and week windows are a lower bound past the scan
+  limit). Every figure is written with its significant digits, so an
+  amount under one cent is never shown as 0.00. No default rate is shown:
+  the protocol's counter for it also counts loans settled after an
+  ordinary repayment (#3616), and the page says so instead. The treasury
+  current vault code pays is named and linked, and the fees the protocol
+  contract holds are always shown with why (a vault on older code pays its
+  own code's treasury, and fees that reached the contract stay there),
+  counting only assets of open loans. A treasury that differs from the deployment record is
+  flagged. The pause is read at the same block: an unread pause is said,
+  never shown as not paused, and under a pause the page says whether
+  withdrawals of free holdings have reopened by the escape route, when
+  they do, or that none is scheduled, and points to the Vault page for the
+  reader's own account. The page says nothing comes from the indexer database, shows
+  no price, return, buyback or chart across networks, and states the
+  treasury is not invested to earn a return.
+- **RB-ANALYTICS-VPFI** — the Analytics page's VPFI section (RW-60) reads
+  the token the protocol names (`getVPFIToken`) from the token contract at
+  the page's block, and takes which network is VPFI's home from the
+  protocol's own flag (`isCanonicalVpfiChain`). Decimals are the token's
+  own; unread decimals show base units, never an assumed 18. Only the home
+  network shows the cap, what is still mintable under it, the launch mint
+  and the minter; every network shows its supply and the token's owner,
+  naming the protocol contract or the governance timelock when it is one.
+  A change of minter is said to wait out the timelock only when the owner
+  is the governance timelock. A bridged network says the cap belongs to
+  the home network and never shows a cap of zero; a network with no token
+  set says so; an unread fact is said to be unread. A token that differs
+  from the deployment record, or a cap that differs from the published
+  allocation, is flagged. The record's VPFI address on every served
+  network is listed with an explorer link and marked home or moved from
+  home. The published allocation is shown as caps on what may be minted,
+  the 24% reserve as undecided, the bug bounty as a multisig-held bucket
+  for security reports (never insurance), and no price, return or scarcity
+  claim is made.
 - **RB-ADDRESS-GUARD** — every address a user enters to receive funds or
   control (#3415) goes through one address box. It shows the address in
   full, with the first and last digits set apart and never shortened. It
@@ -2587,6 +2676,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   the same step on return, with no second signature or edit offered while
   the first may still complete. A listed order shows under the
   viewer's signed orders (RB-DESK-SIGNED).
+- **RB-PRORATA-TERM** — Where a lending offer or a borrow request
+  chooses pro-rata interest (#3615), the form says what that does to the
+  term as soon as it is chosen, and the review says it again. A lender is
+  told that the term it sets is the longest it lends for: a match can pair
+  its offer with a pro-rata request for that term or a shorter one, and
+  that loan runs, and earns interest, only for the borrower's term, while a
+  borrower who takes the offer directly gets the whole term. A borrower is
+  told that a match can also pair its request with a longer pro-rata
+  lender offer, and that its loan always runs for exactly the term it
+  asked for. Full-term interest keeps the terms equal, so nothing is added
+  for it. No figure changes: the review's interest figures are for the
+  offer's own term.
 
 ## 3. Companion specifications
 

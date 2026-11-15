@@ -2107,7 +2107,7 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 ### Borrow: リクエストの条件
 
-Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 1 (AON)、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。
+Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 1 (AON)、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。両方のオファーで `useFullTermInterest` が false の場合、`matchOffers` は貸し手以下の借り手の `durationDays` を認め、ローンは借り手の値を取ります（#3615）。直接の受諾ではオファー自身の値になります。
 
 <a id="borrow-request-review"></a>
 
@@ -2185,7 +2185,7 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 ### Lend: オファーの条件
 
-パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 1 (AON)（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
+パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 1 (AON)（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。両方のオファーで `useFullTermInterest` が false の場合、`matchOffers` は貸し手以下の借り手の `durationDays` を認め、ローンは借り手の値を取ります（#3615）。直接の受諾ではオファー自身の値になります。
 
 <a id="rate-check"></a>
 
@@ -2300,6 +2300,8 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 `claimAsLender(loanId)` と `claimAsBorrower(loanId)` には `whenNotPaused` が付いており、その側に記録された当事者(`loan.lender` / `loan.borrower`)のボールトから呼び出し元へ支払います。呼び出し元はその側のポジショントークンの `ownerOf` でなければなりません。貸し手は Repaid、Defaulted、FallbackPending、InternalMatched のローンで請求でき、借り手は Repaid、Defaulted、InternalMatched のみです。貸し手の請求は、請求済みの行(`AlreadyClaimed`)を保有者確認の前に、未払いのない側(`NothingToClaim`)をその後に拒否します。強制クローズがゼロで記録した行も実行され、ポジションを閉じます。借り手の請求は担保の行と余剰の行の両方が空か請求済みのときだけ拒否し、それぞれを各自のフラグで支払います。別のトークンでローンのリーエン下に残る担保も合わせて支払われます。
 
 確認画面は `getClaimable`(貸し手の行は過去の売り手分を差し引き済みで、`getSellersShareOfLenderClaim` を併記)、`getBorrowerSurplusClaim`、`getLoanCollateralLien` を読み、請求をドライランします。ドライランでは制裁チェックも適用されます。一覧はポジショントークンに従います。`getUserDashboardClaimables` は記録された当事者の請求を列挙するため、列挙された行はウォレットがその側を保有している間だけ残り、他人から受け取った終了済みローンのポジションは請求を直接読みます。完了カードは `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed`、`LoanSettled` と、ウォレットへのトークン送金を読みます。保護アカウントモードの呼び出し元の場合は `PayoutQueued`(アカウント自身のボールト)、`PayoutHeldInVault`(ロック中またはキューが満杯)、`PaymentCreditedToVault`(他の当事者のボールト)を読みます。FallbackPending のローンでは貸し手の請求が請求時の内部マッチを実行して行を書き換えることがあるため、完了カードは送金をプロトコル自身の記録と比較します。
+
+「Claim and withdraw」は二つの取引です。請求は保有者自身の保管庫に入金します。各移動は `VaultOutflow` としてクラス PositionHolder、`to` は保有者の保管庫、`ref` はローン ID、`delivered` は届いた額で記録されます。請求がマイニングされると、アプリは請求したローンについて資産ごと(NFT ならトークン ID ごと)に `delivered` を合計し、その額で `withdrawFromVault` を資産ごとに一つずつ開きます。読み取りと試行実行は保管庫の出金そのものと同じで、`withdrawableNow` が上限となり、保護モードは引き続きキューに入れます。「すべてを受け取る」はローンの呼び出しについてのみ同じことを行います。「Ready to claim」は請求の判定が今開いている各側の支払いを合計し、待っている側や読み取れなかった側は別に数えます。
 
 <a id="claim-everything"></a>
 
@@ -2612,3 +2614,21 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 ### リカバー：放棄の記録方法
 
 `disownUntracked(kind, asset, tokenId)` に必要なのはボールトと 0 を超える未計上の数値だけです。一時停止・制裁審査・管理者の確認はなく、置き換えられたウォレットや停止されたボールトでも使え、署名も不要です。`UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)` を発行し、完了カードはレシート内のこのイベントから記録された数量を読み取ります。
+
+<a id="analytics-figures"></a>
+
+### アナリティクス：数値の読み取り方
+
+ページは最新のブロックを取り、そのブロック番号ですべての Diamond のビューを読みます：`getProtocolStats`、`getProtocolTVL`、`getProtocolHealth`、`getGlobalCounts`（掲載オファー数は `totalOffersCreated`）、資産ごとの `getLifetimeLendingTotals` を伴う `getLifetimeLendingAssets`、そして `getNumeraireSymbol` です。デプロイの最初のブロックはデプロイ記録から取ります。各グループは個別に確定するため、失敗したビューはその場所で示されます。ページは各資産の累計元本と利息を同じブロックで `getNumeraireValue(asset, amount, false)` により評価します。これはプロトコルの合計と同じ丸めなので、評価された部分は `totalVolumeLentNumeraire` と `totalInterestPaidNumeraire` に一致します。評価がリバートする資産は除外として名前が示されます。`defaultRateBps` は表示しません。そのカウンター `terminalBadOrSettledCount` はローンが Defaulted または Settled に入ると増え、通常の返済に続く請求でも Settled に達するため、債務不履行と通常の終了を分けられないからです。`getProtocolTVL` の3つ目の値は NFT 担保の未完了ローンの件数で、価値ではありません。利息は借り手の支払いごとに記録される `lifetimeInterestPaid` で、貸し手による担保の回収は含まれません。
+
+<a id="analytics-fees"></a>
+
+### アナリティクス：手数料と保管の読み取り方
+
+手数料率は `getTreasuryFeeBps` と `getLoanInitiationFeeBps` です。手数料の数値は `getTreasuryMetrics` で、開始以来の合計は `feeLedgerTotal`、1日と1週間の数値は手数料台帳を末尾から最大 `MAX_FEE_EVENTS_ITER`（10,000）件まで走査するため、それを超えると下限になります。各台帳項目には、ベストエフォートのルールによる計上時点の基準通貨での価値が記録され、評価できなかった場合は 0 です。表示されるトレジャリーは `getTreasury`、現在のボールトコードが指すアドレスです。ボールトから徴収された手数料はそのボールト自身のコードが指すトレジャリーへ送られ、`recordTreasuryAccrual` は手数料が Diamond に届くたびに `treasuryBalances` に計上するため、古いコードに固定されたボールトや以前の設定によって、`getTreasury` が何を示していても手数料がそこに保有されることがあります。そのためページは常に `getTreasuryMetrics` の保有額を、未完了ローンの資産だけについて合計した値として、`getTreasuryConvertConfig` の最終変換と目標とともに表示します。デプロイ記録と異なるトレジャリーは警告されます。
+
+<a id="analytics-vpfi"></a>
+
+### アナリティクス：VPFI の情報の読み取り方
+
+トークンは Diamond の `getVPFIToken`、ホームネットワークはその `isCanonicalVpfiChain` で、どちらもページのブロックで読みます。ゼロのトークンは未設定として扱います。ページはトークンから `name`、`symbol`、`decimals`、`totalSupply`、`owner`、`paused` を読み、ホームネットワークでは `cap`、`INITIAL_MINT`、`minter` も読みます。ミント可能量は `cap` から `totalSupply` を引いたもので、ゼロを下回りません。`mint` は `minter` だけ、`setMinter` は `owner` だけが呼べるため、ミンターの変更がタイムロックを待つのは `owner` がデプロイの `timelock` の場合だけです。ブリッジされたトークンはバーン・アンド・ミントのミラーで、その供給量はホームのプールがそのためにロックした量です。アドレス一覧は対応ネットワークごとのデプロイ記録の `vpfiToken` で、記録に `vpfiMirror` がないものをホームとして示します。記録と異なるトークン、または 230,000,000 VPFI 以外の `cap` は警告されます。

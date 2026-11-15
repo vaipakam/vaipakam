@@ -985,6 +985,12 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           <input type="checkbox" checked={input.allowsPartialRepay} onChange={(e) => set({ allowsPartialRepay: e.target.checked })} data-testid="request-partial" />
           <span>{text(k.partialOption)}</span>
         </label>
+        {!input.fullTerm && (
+          <Notice tone="info" tier="A">
+            {/* #3615: a pro-rata match runs for the borrower's term, never longer than the lender's. */}
+            <span data-testid="request-prorata-term">{text(lender ? 'lendOffer.proRataNote' : 'request.proRataNote')}</span>
+          </Notice>
+        )}
         <WhyLink summaryKey={k.optionsSummary} detailKey={k.optionsWhy} />
       </fieldset>
 

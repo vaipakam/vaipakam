@@ -1912,14 +1912,15 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # periodic checkpoint a month after its loan opens, #3574); on Anvil the
 # runner steps the clock for those too. Its PF-116 changes the
 # periodic-interest switch, a swap adapter and the finer-cadence threshold
-# across a wait, and the record lists them under `restore_`: if that run is
-# abandoned, put them back with
-#   forge script script/positive-flows/PositiveFlowsTimed.s.sol --sig "unwind()" \
+# across a wait, and PositiveFlowsSwapToRepay registers a swap adapter for each
+# scenario. The record lists every such setting under `restore_`: if a run is
+# abandoned, put back whatever the chain still shows changed with
+#   forge script script/positive-flows/<module>.s.sol --sig "unwind()" \
 #     --rpc-url http://localhost:8545 --broadcast
 # before removing the record.
 # One module at a time, since each checks its actors' nonces:
 for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsLenderIntent \
-         PositiveFlowsPositionHolder PositiveFlowsTimed; do
+         PositiveFlowsPositionHolder PositiveFlowsSwapToRepay PositiveFlowsTimed; do
   bash script/positive-flows/run-staged.sh "$m" || break
 done
 

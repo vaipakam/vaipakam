@@ -18,7 +18,7 @@ import {
   type TicketMarket,
   type TicketMode,
 } from '../../shared/desk/ticket';
-import { signDraftFrom, type SignDraft } from '../../shared/desk/signNew';
+import { readSignTerms, signDraftFrom, type SignDraft } from '../../shared/desk/signNew';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { readTreasuryFeeBps } from '../../shared/offers/reads';
 import { PostOffer } from '../../shared/post/PostOffer';
@@ -159,7 +159,11 @@ export function OrderTicket({
       const next = ticketDraft(input, check, market, block.value.timestamp);
       // The order a signed review shows is built now, so what is reviewed
       // is what the wallet signs.
-      const signed = signing ? signDraftFrom(next, own.chainId, own.account) : null;
+      // #3327: the fee caps and the cancel floor are read now, so the order
+      // signs the fees the review shows and a nonce the floor has not burned.
+      const signTerms = signing ? await own.read((c) => readSignTerms(c, diamond, own.account)) : null;
+      if (!current()) return;
+      const signed = signTerms !== null ? signDraftFrom(next, own.chainId, own.account, signTerms.value) : null;
       // OFF-35: an offer is new exposure, so Terms not yet accepted are
       // accepted before its review opens.
       if (terms.data?.kind === 'needed') {
@@ -204,11 +208,23 @@ export function OrderTicket({
           own={own}
           onAccepted={() => {
             termsGate.end();
-            if (pendingDraft !== null) {
-              if (signing) setSignDraft(signDraftFrom(pendingDraft, own.chainId, own.account));
-              else setDraft(pendingDraft);
-            }
+            const waiting = pendingDraft;
             setPendingDraft(null);
+            if (waiting === null) return;
+            if (!signing) {
+              setDraft(waiting);
+              return;
+            }
+            // The fee caps and the cancel floor are read when the review
+            // opens, never carried across the Terms step.
+            own
+              .read((c) => readSignTerms(c, diamond, own.account))
+              .then((t) => {
+                if (mounted.current) setSignDraft(signDraftFrom(waiting, own.chainId, own.account, t.value));
+              })
+              .catch((err) => {
+                if (mounted.current) setOpening(refusalFromError(err).reason);
+              });
           }}
           onClose={() => {
             setPendingDraft(null);

@@ -79,7 +79,6 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // carries no value leg (the figure is stated on the claim), and the same
   // LOW priority keeps it from ever representing the transaction.
   OwedAtInternalMatchRecorded: { label: 'Amount cleared by internal matching recorded', category: 'loan-close', priority: 8 },
-  LoanLiquidated: { label: 'Loan liquidated', category: 'loan-default', priority: 90 },
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },
   LoanRefinanced: { label: 'Loan refinanced', category: 'loan-modify', priority: 85 },
@@ -150,6 +149,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },
   SignedOfferCancelled: { label: 'Signed offer cancelled', category: 'offer', priority: 55 },
   SignedOfferNonceBurned: { label: 'Signed offer voided', category: 'offer', priority: 30 },
+  SignedOfferCancelFloorRaised: { label: 'Older signed offers cancelled', category: 'offer', priority: 30 },
   // VPFI / rewards / vault — surfaced in the wallet's OWN feed (the
   // indexer's pluckActivityRefs attributes these to the acting wallet;
   // apps/indexer/src/chainIndexer.ts). Without explicit labels they

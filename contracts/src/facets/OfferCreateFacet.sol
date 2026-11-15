@@ -658,7 +658,7 @@ contract OfferCreateFacet is
     ///      there is no post-create moment for the standing-offer setter; the
     ///      three fields and the event are the setter's, so the accept's tariff
     ///      resolution and the indexer see one shape. The ceiling rule has ONE
-    ///      home, `LibSignedOffer.requireFullWellFormed`, run by both fill paths
+    ///      home, `LibSignedOffer.fillFailure`, run by every fill route
     ///      before any value moves; the materialize entries are Diamond-only, and
     ///      their third caller (the intent slice) passes no maker Full, so a
     ///      second check here would be a second statement of one rule. A slice's

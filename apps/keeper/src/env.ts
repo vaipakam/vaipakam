@@ -453,6 +453,13 @@ interface BaseEnv {
    *  24 to 180, default 60. A plain var; a value outside the bounds sends
    *  nothing, like every unreadable route setting. */
   PRIVATE_TX_PUBLIC_AFTER_SECONDS?: string;
+
+  /** #3622 B2 — the share of each matcher pass the fresh lane may spend on
+   *  new and re-priced offers (`freshLane.ts`): previews, submissions and
+   *  wall time alike. A decimal from 0 (lane off) to 0.5; unset or
+   *  unreadable is 0.25, and a value outside the range is clamped into it.
+   *  A plain var. */
+  MATCHER_FRESH_LANE_SHARE?: string;
 }
 
 /**
@@ -627,6 +634,7 @@ export const PLAIN_VAR_KEYS = [
   'DISCOUNT_PATH_CHAIN_IDS',
   'PRIVATE_TX_FALLBACK_CHAIN_IDS',
   'PRIVATE_TX_PUBLIC_AFTER_SECONDS',
+  'MATCHER_FRESH_LANE_SHARE',
 ] as const satisfies readonly (keyof BaseEnv)[];
 
 /** One plain-string knob's name. A reader that takes one of these, rather
@@ -832,6 +840,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     DISCOUNT_PATH_CHAIN_IDS: raw.DISCOUNT_PATH_CHAIN_IDS,
     PRIVATE_TX_FALLBACK_CHAIN_IDS: raw.PRIVATE_TX_FALLBACK_CHAIN_IDS,
     PRIVATE_TX_PUBLIC_AFTER_SECONDS: raw.PRIVATE_TX_PUBLIC_AFTER_SECONDS,
+    MATCHER_FRESH_LANE_SHARE: raw.MATCHER_FRESH_LANE_SHARE,
     // Resolved secrets.
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,

@@ -1,6 +1,8 @@
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { LoanClaim, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
+import { ClaimChoice } from '../../shared/claims/ClaimWithdraw';
+import type { ClaimMode } from '../../shared/claims/claimWithdraw';
 import { sideShown, type ClaimSide } from '../../shared/claims/loanClaim';
 import { useCopy } from '../../shared/copy/useCopy';
 import { claimVerdict } from '../../shared/eligibility/claim';
@@ -53,14 +55,26 @@ export function LoanClaims({ loanId, view: v, own, chain, meta, frozen }: LoanCl
       {active !== null ? (
         <LoanClaim loanId={loanId} side={active} chain={chain} own={own} meta={meta} onClose={() => flows[active].setOpen(null)} />
       ) : (
-        sides.map((s) => <SideRow key={s} side={s} view={v} own={own} frozen={frozen} onOpen={() => flows[s].setOpen(true)} />)
+        sides.map((s) => <SideRow key={s} side={s} view={v} own={own} frozen={frozen} onOpen={(mode) => flows[s].start(mode)} />)
       )}
     </section>
   );
 }
 
 /** One side's action, or the reason it is closed. */
-function SideRow({ side, view: v, own, frozen, onOpen }: { side: ClaimSide; view: LoanView; own: OwnStateClient; frozen: FrozenState | undefined; onOpen: () => void }) {
+function SideRow({
+  side,
+  view: v,
+  own,
+  frozen,
+  onOpen,
+}: {
+  side: ClaimSide;
+  view: LoanView;
+  own: OwnStateClient;
+  frozen: FrozenState | undefined;
+  onOpen: (mode: ClaimMode) => void;
+}) {
   const copy = useCopy();
   const { text } = copy;
   const nowMs = useNow();
@@ -71,13 +85,7 @@ function SideRow({ side, view: v, own, frozen, onOpen }: { side: ClaimSide; view
     nowMs,
   );
   if (verdict.state === 'open')
-    return (
-      <div className="position-action-row">
-        <button type="button" className="btn btn-primary" onClick={onOpen} data-testid={`loan-claim-open-${side}`}>
-          {text(side === 'lender' ? 'loanClaim.actionLender' : 'loanClaim.actionBorrower')}
-        </button>
-      </div>
-    );
+    return <ClaimChoice testId={`loan-claim-open-${side}`} label={text(side === 'lender' ? 'loanClaim.actionLender' : 'loanClaim.actionBorrower')} onStart={onOpen} />;
   return (
     <p className={verdict.state === 'unknown' ? 'tier-a' : 'tier-b'} data-testid={`loan-claim-refusal-${side}`} data-code={verdict.refusals[0]?.code}>
       {verdict.state === 'unknown' ? text('loanClaim.unknown') : verdict.refusals[0]?.reason}

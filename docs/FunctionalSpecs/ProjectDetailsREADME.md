@@ -813,6 +813,48 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   on-chain offers, the matcher, and the signed fill alike — so the last second
   of an offer's life is never fillable on one path and refused on another.
 
+  **Maker protections on a signed offer (#3327).** A signed offer lives off the
+  chain for as long as its maker leaves it, and anyone holding the signature
+  can fill it, so the maker binds four more terms into what they sign:
+
+  - **Fee caps.** The highest treasury fee on interest and the highest loan
+    initiation fee the maker accepts. A fill is refused while either protocol
+    fee is above its cap, so a fee raised after signing never lands on a loan
+    the maker did not agree to. An interface signs the fees it showed the
+    maker as the caps, and refuses to post an order when the fees moved
+    between the maker's review and the signature.
+    The refusal lasts only while the fee stays above the cap: if the fee comes
+    back down, the same unexpired offer is fillable again. Only cancelling the
+    offer stops it for good, and an interface must say so rather than imply
+    that a fee rise ended the offer.
+  - **Allowed taker.** Optionally, the one wallet that may fill the offer. On a
+    direct fill that is the wallet sending the fill; on a match it is the
+    creator of the counterparty offer, since the matcher is only a relay. Left
+    empty, anyone may fill.
+  - **Co-signer.** Optionally, a second key whose fresh approval each fill
+    needs. The approval names the offer, the taker, how much of the offer was
+    already filled, the amount this fill takes and a time it lapses, which may
+    be at most fifteen minutes away. Because every fill raises the amount
+    already filled, one approval can be spent on one fill only, even on an
+    offer filled in several slices; a stolen or leaked maker signature alone
+    cannot be filled. Left empty, no approval is
+    needed.
+  - **Cancel floor.** A maker can cancel, in one transaction, every offer they
+    signed with a nonce below a floor they choose. The floor only rises. An
+    interface draws a new offer's nonce at or above the floor, so a fresh
+    offer is never born cancelled, and the off-chain book drops every offer
+    below the floor as soon as it rises.
+
+  One fill rule decides all of these for every path (the direct fill, the
+  match and the accept preview), in one order: the offer's own state, the
+  deadline, the expiry, the cancelled nonce, the cancel floor, the treasury
+  cap, the initiation-fee cap, the taker, then the co-signature. The accept
+  preview reports each as its own refusal. An interface that cannot obtain a
+  co-signature, or is not the named taker, must say so and offer no fill
+  rather than send one that would fail. Changing the signed fields changes the
+  signature itself, so an offer signed before this change cannot be filled
+  after it; the book removes such offers.
+
 ### Standing lending intents (v1)
 
 - A lender may register a **standing lending intent** for an ERC-20 asset-pair:
@@ -3591,7 +3633,7 @@ General design requirements:
 - user-facing frontend helpers should prefer one bundled config read for mutable values and one bundled constants read for compile-time values, so a governance change or redeploy updates visible protocol numbers on next page load
 - the worker-backed indexer API may complement, but not replace, on-chain view verification. Expected REST surfaces include active offer lists and stats, offer lookup by id / creator, active loan lists, loan lookup by id / lender / borrower, filtered activity, and wallet claimability hints. These endpoints are cache / discovery surfaces; money-moving actions must still read directly from contracts or verify against the latest on-chain state.
 - the worker-backed indexer API should also expose aggregate analytics endpoints for loan stats, recent loans, recent offers, and per-day loan time-series buckets so public Analytics can avoid per-loan multicall walks during healthy worker operation.
-- the loan stats should also state how many distinct addresses carried out liquidations on the chain over the last 7 and 30 days (#3366). This figure is what decides when the liquidation bonus auction is worth building (#3355: at least five independent liquidators on the chain over 30 days). The protocol's own keeper is counted apart from third parties. The routes the auction threshold counts (Health-Factor liquidation, single and split; partial; discounted) are reported apart from the internal match and the periodic auto-liquidation, which are shown but not counted toward it. A liquidation whose on-chain record names no caller (today the time-based default) is counted only as an event and is never assigned to an address by inference. The figure also states what it does not establish: distinct addresses are not independent operators (one party can run several wallets), a flash-loan receiver contract counts as one address whoever operates it, and where a chain publishes no keeper address the keeper cannot be told apart from third parties.
+- the loan stats should also state how many distinct addresses carried out liquidations on the chain over the last 7 and 30 days (#3366). This figure is what decides when the liquidation bonus auction is worth building (#3355: at least five independent liquidators on the chain over 30 days). The protocol's own keeper is counted apart from third parties. The routes the auction threshold counts (Health-Factor liquidation, single and split; partial; discounted) are reported apart from the internal match, the periodic auto-liquidation and the time-based default's sale, which are shown but not counted toward it. Every counted route names its caller in its own on-chain record, and a caller is never assigned to an address by inference; the time-based default's sale is named by the forced-sale record every sale emits, and the same sale is never counted twice under two routes. A time-based default that sells nothing (an in-kind transfer of illiquid collateral, or a fallback entered because the collateral is unpriced or every swap failed) pays its caller nothing, is not a liquidator's sale, and is not counted; the figure says so. The figure also states what it does not establish: distinct addresses are not independent operators (one party can run several wallets), a flash-loan receiver contract counts as one address whoever operates it, and where a chain publishes no keeper address the keeper cannot be told apart from third parties.
 - every indexer read that names a chain must answer only for a chain the indexer is actually serving (the loan, offer, signed-offer, protocol-config and reward-metric reads all do). A request for a chain it is not indexing (no deployment, no RPC configured, or the RPC unavailable) is answered as unavailable, never as an empty list or a zero count, because an empty answer reads as "there is nothing here" when the truth is "this chain is not being served here". A read that must answer without waiting on the indexer's secret store (the recycling account) answers only for a chain it is configured to serve (a deployment and a configured RPC), and the series' own coverage and the indexer's ingest health say whether the record is current. A one-shot record the app sends for a chain (such as how a prepay match was found) is accepted for any chain the protocol is deployed on, whether or not the chain can be read at that moment, so a passing outage cannot lose it.
 - an aggregate answer that states how current it is (for example "counts current through block N") must take its figures and that position from one consistent view of the data, so it can never claim to include a block its figures do not yet reflect.
 - a labelled view of positional on-chain configuration must use the field names that were in force when the values were captured, and names are recorded only when the indexer can show that the contract code which answered at that block is the code its definition describes (for example, during an in-place upgrade the indexer has not caught up with, it cannot). When those names were not recorded, the labelled view is withheld (the raw values are still served) rather than labelled from a later definition that may order the fields differently.

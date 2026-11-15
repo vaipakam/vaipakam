@@ -81,6 +81,10 @@ export interface ActionFlowProps {
    *  could not preview it): a refusal the reader can act on is never a
    *  dead end. */
   recover?: ReactNode;
+  /** A step that follows this one is still running (the withdrawal a claim
+   *  opened, #3631): the finish card's Close waits for it, said why, so the
+   *  follow-on never loses its screen while it is out. */
+  closeHeld?: string | null;
 }
 
 /**
@@ -91,7 +95,22 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, publicQueue, recover }: ActionFlowProps) {
+export function ActionFlow({
+  tx,
+  identity,
+  reviewedFor,
+  receipt,
+  recheck,
+  describeAsset,
+  explorer,
+  next,
+  after,
+  onClose,
+  gate,
+  publicQueue,
+  recover,
+  closeHeld = null,
+}: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
@@ -298,8 +317,9 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
             {text('flow.transaction')} {txLink(phase.hash)}
           </p>
           {after?.(phase.outcome)}
+          {closeHeld !== null && <p className="tier-b">{closeHeld}</p>}
           <p className="actions">
-            <button type="button" className="btn" onClick={close}>
+            <button type="button" className="btn" onClick={close} disabled={closeHeld !== null}>
               {text('flow.close')}
             </button>
           </p>

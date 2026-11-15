@@ -192,6 +192,8 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
     );
   }
   out.push(copy.text('request.loseMatchKeepsRest'));
+  // #3615: a lender's longer pro-rata offer may match; the loan keeps this term.
+  if (!parsed.fullTerm) out.push(copy.format('request.proRataTermMatch', { days: String(parsed.durationDays) }));
   return out;
 }
 

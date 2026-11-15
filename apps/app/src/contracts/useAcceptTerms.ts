@@ -31,10 +31,13 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import {
   signedOrderHash,
+  signedOrderTakerRefusal,
   signedOrderTimeWindowsOpen,
   type SignedOrderWire,
   signedOfferCeiling,
 } from '../lib/signedOffer';
+import { readLiveProtocolFees } from '../data/fees';
+import { readSignedOfferCancelFloor, signedTakerRefusalMessage } from '../data/signedTakerRefusal';
 import { isAssetIlliquidLive, isMissingSelectorError } from './preflights';
 import { linkedOfferKind } from './linkedOfferKind';
 import {
@@ -751,6 +754,16 @@ export function useSignedOfferAcceptTermsSigning() {
       if (!signedOrderTimeWindowsOpen(o, chainNow)) {
         throw new Error(copy.desk.signed.gone);
       }
+      // #3327 — the maker's own limits: a named taker, a co-signer, the
+      // fee caps against the LIVE fees and the cancel floor. Each is a
+      // fill the contract refuses, so it is refused here before any
+      // signature or approval.
+      const [liveFees, cancelFloor] = await Promise.all([
+        readLiveProtocolFees(publicClient, diamondAddr),
+        readSignedOfferCancelFloor(publicClient, diamondAddr, o.signer as Address),
+      ]);
+      const refusal = signedOrderTakerRefusal(o, address, { fees: liveFees, cancelFloor });
+      if (refusal !== null) throw new Error(signedTakerRefusalMessage(refusal));
 
       // The compact fill confirm has NO surface for the in-kind
       // (illiquid) default disclosure, so it shows no leg as illiquid —

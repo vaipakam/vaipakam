@@ -2062,7 +2062,11 @@
         "accept": "Order ausführen",
         "accepting": "Wird ausgeführt…",
         "accepted": "Signierte Order ausgeführt — der Kredit ist live.",
-        "close": "Schließen"
+        "close": "Schließen",
+        "restrictedBadgeTooltip": "Ein signiertes Angebot, das sein Ersteller eingeschränkt hat: Es ist für eine Wallet reserviert, oder jede Ausführung braucht die Freigabe seines Mitunterzeichners, die diese App noch nicht anfordern kann. Es zählt zur Tiefe, hat hier aber keinen Ausführen-Button.",
+        "reservedForOtherTaker": "Dieses Angebot ist für eine andere Wallet reserviert und kann von dieser nicht angenommen werden.",
+        "needsCoSigner": "Dieses Angebot braucht für jede Ausführung die Freigabe des Mitunterzeichners seines Erstellers, und diese App kann diese Freigabe noch nicht anfordern, daher kann es hier nicht angenommen werden.",
+        "feeAboveCap": "Die Protokollgebühren sind jetzt höher, als der Ersteller dieses Angebots zugestimmt hat, daher kann es nicht angenommen werden, solange sie so hoch bleiben. Sinken die Gebühren wieder, kann es erneut angenommen werden."
       },
       "chart": {
         "title": "Vereinbarte Zinsen",
@@ -2192,7 +2196,10 @@
         "netYield": "Wenn jemand das Angebot annimmt und der Kredit zurückgezahlt wird, verdienen Sie nach der Protokollgebühr von {{feePct}} % auf Ihre Zinsen etwa {{net}} % pro Jahr.",
         "lifNote": "Startgebühr: {{feePct}} % des Kreditbetrags (etwa {{amount}} {{symbol}}), berechnet beim Start des Kredits.",
         "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Sie können es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr).",
-        "gaslessBelowFloor": "Dieser Auftrag ist kleiner als das kleinste Angebot, das das Protokoll in diesem Token annimmt, daher könnte ihn niemand annehmen. Es wurde nichts eingestellt. Erhöhe den Betrag und signiere erneut."
+        "gaslessBelowFloor": "Dieser Auftrag ist kleiner als das kleinste Angebot, das das Protokoll in diesem Token annimmt, daher könnte ihn niemand annehmen. Es wurde nichts eingestellt. Erhöhe den Betrag und signiere erneut.",
+        "gaslessBelowCancelFloor": "Diese Order fiele unter ein früheres Alles-Stornieren aus deiner Wallet und wäre sofort nach dem Einstellen storniert. Es wurde nichts eingestellt. Bitte signiere erneut.",
+        "feesChanged": "Die Protokollgebühren haben sich geändert, nachdem du diese Order geprüft hast. Es wurde nichts eingestellt. Prüfe die neuen Gebühren und signiere erneut.",
+        "feeCapNote": "Deine signierte Order wird nur ausgeführt, solange die Protokollgebühren höchstens so hoch bleiben: {{interestPct}} % der Zinsen und {{startPct}} % beim Start eines Kredits. Steigt eine davon, kann sie niemand annehmen, solange sie höher bleibt; sinkt die Gebühr wieder, ist sie erneut annehmbar. Um die Order endgültig zu stoppen, storniere sie."
       },
       "orders": {
         "loading": "Ihre offenen Orders werden geladen…",
@@ -2672,7 +2679,6 @@
         "LoanDefaulted": "Kredit ausgefallen",
         "OwedAtDefaultRecorded": "Betrag beim Ausfall festgehalten",
         "OwedAtInternalMatchRecorded": "Durch internes Matching getilgter Betrag festgehalten",
-        "LoanLiquidated": "Kredit liquidiert",
         "BackstopAbsorbedLoan": "Kredit vom Backstop absorbiert",
         "LoanExtended": "Kredit verlängert",
         "LoanRefinanced": "Kredit refinanziert",
@@ -2854,7 +2860,8 @@
         "RewardEntrySplitAtTransfer": "Belohnungseintrag bei einer Positionsübertragung aufgeteilt",
         "LenderEntryStamped": "Rabatt des Kreditgebers bei Übernahme der Position erfasst",
         "Transfer": "Übertragung",
-        "Approval": "Genehmigung"
+        "Approval": "Genehmigung",
+        "SignedOfferCancelFloorRaised": "Ältere signierte Angebote storniert"
       },
       "unavailableFallback": "Ihre aktuellen Kredite und Vermietungen sind jederzeit verfügbar auf",
       "positionsLink": "Meine Positionen"

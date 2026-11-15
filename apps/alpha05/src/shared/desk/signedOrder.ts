@@ -39,6 +39,16 @@ export function randomNonce(random: (bytes: Uint8Array<ArrayBuffer>) => Uint8Arr
   return bytes.reduce((n, b) => (n << 8n) | BigInt(b), 0n);
 }
 
+const MAX_UINT256 = (1n << 256n) - 1n;
+
+/** A random nonce at or above the signer's cancel floor and never past the
+ *  uint256 maximum: a floor near the top leaves less room than the draw, and
+ *  `floor + draw` would then be a nonce no signature can carry. */
+export function nonceAboveFloor(floor: bigint, draw: bigint = randomNonce()): bigint {
+  const room = MAX_UINT256 - floor;
+  return floor + (room >= draw ? draw : draw % (room + 1n));
+}
+
 /** The message viem's typed-data encoder takes for a wire order; the same
  *  struct `cancelSignedOffer` takes. */
 export function typedMessage(o: SignedOrderWire) {
@@ -71,6 +81,10 @@ export function typedMessage(o: SignedOrderWire) {
     creatorFull: o.creatorFull,
     creatorMaxCStar: BigInt(o.creatorMaxCStar),
     creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,
+    maxTreasuryFeeBps: Number(o.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: Number(o.maxLoanInitiationFeeBps),
+    allowedTaker: o.allowedTaker as Address,
+    coSigner: o.coSigner as Address,
     signer: o.signer as Address,
     nonce: BigInt(o.nonce),
     deadline: BigInt(o.deadline),

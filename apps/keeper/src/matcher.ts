@@ -24,10 +24,12 @@
  *   2. Page `getActiveOffersPaginated` for all live ids.
  *   3. Hydrate each id via `getOffer(id)`; split into lender / borrower.
  *   4. Bucket by the cheap continuity key (`(lendingAsset,
- *      collateralAsset, assetType, collateralAssetType, durationDays)`)
- *      so the cartesian shrinks to per-bucket nested loops.
- *   5. Within each bucket, `previewMatch(L, B)` until a pair returns
- *      `errorCode == 0` (Ok).
+ *      collateralAsset, assetType, collateralAssetType)`) so the cartesian
+ *      shrinks to per-bucket nested loops. The term is not in the key: a
+ *      pro-rata pair may match across terms (#3615), so {@link termsFit}
+ *      filters pairs instead.
+ *   5. Within each bucket, `previewMatch(L, B)` for every pair whose terms
+ *      fit, until a pair returns `errorCode == 0` (Ok).
  *   6. Submit `matchOffers(L, B)`. Reverts (lost a race, kill-switch
  *      off, …) are logged and treated as no-ops — next tick re-evaluates.
  *
@@ -56,6 +58,7 @@ import {
   AdminFacetABI,
   LenderIntentFacetABI,
   ClaimFacetABI,
+  ConfigFacetABI,
   DIAMOND_ABI_VIEM,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
@@ -63,6 +66,15 @@ import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
 import { pagedWalk, rotate, walkStart } from './rotate';
 import { fairPairs, pairSpaceFrom, type FairUnit } from './fairPairs';
+import {
+  DEFAULT_MIN_TERMS_AGE_SEC,
+  FreshLaneTracker,
+  freshBuckets,
+  freshLaneBudget,
+  freshLaneDeadline,
+  freshLaneShare,
+  type FreshLaneBudget,
+} from './freshLane';
 import { readCutoffMs, runIndex } from './runWindow';
 import { getChainConfigs } from './env';
 import {
@@ -135,6 +147,10 @@ const MATCH_ERR_SELF_TRADE = 11;
  *  capacity is spent: the same verdict for every pair this tick, so the match
  *  pass stops until the bucket refills. */
 const MATCH_ERR_CAPACITY_EXHAUSTED = 18;
+/** `LibOfferMatch.MatchError.TermsTooFresh` (#3443) — an offer's terms are
+ *  younger than the terms-age rule allows. The fresh lane does not count such
+ *  a preview as the offer's entry. */
+export const MATCH_ERR_TERMS_TOO_FRESH = 25;
 
 /** `LibVaipakam.OfferType`. */
 const OFFER_TYPE_LENDER = 0;
@@ -166,9 +182,14 @@ export interface OfferLite {
   fillMode: number; // 0 = Partial, 1 = Aon
   useFullTermInterest: boolean; // intent fills require this true
   allowsPartialRepay: boolean; // intent fills require this false
+  // #3622 B2 — when the offer was created and when its terms last changed
+  // (block timestamps, seconds). The fresh lane reads them to find new and
+  // re-priced offers.
+  createdAt: bigint;
+  termsSetAt: bigint;
 }
 
-interface MatchPreview {
+export interface MatchPreview {
   errorCode: number;
   matchAmount: bigint;
   matchRateBps: bigint;
@@ -410,8 +431,20 @@ function bucketKey(o: OfferLite): string {
     o.collateralAsset.toLowerCase(),
     o.assetType,
     o.collateralAssetType,
-    o.durationDays.toString(),
   ].join('|');
+}
+
+/**
+ * The match core's term rule (`LibOfferMatch`, #3615), checked before a
+ * preview is spent on a pair: equal terms always fit, and when both offers
+ * chose pro-rata interest a borrower term below the lender's fits too (the
+ * loan runs the borrower's term). A full-term pair still needs equal terms.
+ * The preview stays the authority; this only keeps pairs it would refuse
+ * from using the budget.
+ */
+export function termsFit(lender: OfferLite, borrower: OfferLite): boolean {
+  if (lender.durationDays === borrower.durationDays) return true;
+  return !lender.useFullTermInterest && !borrower.useFullTermInterest && borrower.durationDays < lender.durationDays;
 }
 
 function liftOffer(raw: Record<string, unknown>): OfferLite {
@@ -432,6 +465,8 @@ function liftOffer(raw: Record<string, unknown>): OfferLite {
     fillMode: Number(raw['fillMode']),
     useFullTermInterest: Boolean(raw['useFullTermInterest']),
     allowsPartialRepay: Boolean(raw['allowsPartialRepay']),
+    createdAt: BigInt((raw['createdAt'] as bigint | number | undefined) ?? 0),
+    termsSetAt: BigInt((raw['termsSetAt'] as bigint | number | undefined) ?? 0),
   };
 }
 
@@ -609,7 +644,7 @@ export function* intentFillUnits(
   }
 }
 
-function partitionByBucket(offers: readonly OfferLite[]): {
+export function partitionByBucket(offers: readonly OfferLite[]): {
   lenders: Map<string, OfferLite[]>;
   borrowers: Map<string, OfferLite[]>;
 } {
@@ -708,11 +743,38 @@ async function previewMatch(
   }
 }
 
+/** The longest a match's receipt wait may run (#176). */
+const MATCH_RECEIPT_TIMEOUT_MS = 30_000;
+
+/** How long a receipt wait that must end by `deadlineMs` may run: the time
+ *  left, capped at {@link MATCH_RECEIPT_TIMEOUT_MS}, and at least 1 ms (a
+ *  zero timeout would mean none). A wait that times out leaves the match
+ *  uncertain, which the walks already handle by backing off both offers
+ *  (#3622 B2: a walk's submission must not outlive its share of the pass). */
+export function matchReceiptTimeoutMs(deadlineMs: number, nowMs: number): number {
+  return Math.max(1, Math.min(MATCH_RECEIPT_TIMEOUT_MS, deadlineMs - nowMs));
+}
+
+/** `p`, or `fallback` once `deadlineMs` passes, whichever comes first. The
+ *  call itself is not cancelled; its answer is just no longer waited for. */
+async function beforeDeadline<T>(p: Promise<T>, deadlineMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), Math.max(0, deadlineMs - Date.now()));
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function submitMatch(
   ctx: KeeperContext,
   lenderId: bigint,
   borrowerId: bigint,
   preview: MatchPreview,
+  deadlineMs: number,
 ): Promise<boolean> {
   const account = ctx.wallet.account;
   if (!account) return false;
@@ -760,14 +822,15 @@ async function submitMatch(
   //
   // Pattern mirrors `apps/keeper/src/dailyOracleSnapshot.ts:127` (the
   // existing sibling that waits for receipt before continuing). 30s
-  // timeout per match — bounded by chain block time × small constant.
+  // timeout per match, or less when the walk's deadline is nearer (#3622
+  // B2, `matchReceiptTimeoutMs`) — bounded by chain block time × small constant.
   // Worst-case tick duration: `MAX_SUBMITS_PER_TICK × ~block_time`,
   // which is acceptable given the cron cadence (the next cron either
   // overlaps via the Workers concurrency lock or starts fresh state).
   try {
     const receipt = await ctx.client.waitForTransactionReceipt({
       hash,
-      timeout: 30_000,
+      timeout: matchReceiptTimeoutMs(deadlineMs, Date.now()),
     });
     if (receipt.status !== 'success') {
       // On-chain revert — another keeper / a borrower cancel / a
@@ -1610,8 +1673,232 @@ async function runIntentRollPass(
   }
 }
 
+/** One chain's fresh-lane record, kept for the life of the process
+ *  (#3622 B2). */
+const freshLaneTrackers = new Map<number, FreshLaneTracker>();
+
+function freshLaneTracker(chainId: number): FreshLaneTracker {
+  let t = freshLaneTrackers.get(chainId);
+  if (!t) {
+    t = new FreshLaneTracker();
+    freshLaneTrackers.set(chainId, t);
+  }
+  return t;
+}
+
+/** The chain's terms-age rule (`ConfigFacet.getMinTermsAgeSec`, #3443), or
+ *  the protocol default when it cannot be read. The preview stays the
+ *  authority: an offer the lane takes too early is answered `TermsTooFresh`
+ *  and stays fresh for the next pass. */
+async function readMinTermsAgeSec(ctx: KeeperContext): Promise<number> {
+  try {
+    const v = (await ctx.client.readContract({
+      address: ctx.diamond,
+      abi: ConfigFacetABI as Abi,
+      functionName: 'getMinTermsAgeSec',
+    })) as bigint | number;
+    return Number(v);
+  } catch {
+    return DEFAULT_MIN_TERMS_AGE_SEC;
+  }
+}
+
+/** The two chain calls the match walks make, passed in so the walks can be
+ *  tested without a chain. */
+export interface MatchWalkIO {
+  /** The pair's preview, or null when it cannot be read by `deadlineMs`. */
+  preview(L: OfferLite, B: OfferLite, deadlineMs: number): Promise<MatchPreview | null>;
+  /** Submits the match; false when it failed or is still uncertain at
+   *  `deadlineMs` (the receipt wait ends there). */
+  submit(L: OfferLite, B: OfferLite, p: MatchPreview, deadlineMs: number): Promise<boolean>;
+}
+
+export interface MatchWalkArgs {
+  lenders: ReadonlyMap<string, readonly OfferLite[]>;
+  borrowers: ReadonlyMap<string, readonly OfferLite[]>;
+  run: number;
+  /** The fresh lane's offer ids this pass ({@link FreshLaneTracker.select}). */
+  fresh: ReadonlySet<string>;
+  /** The lane's caps; the walk gets the pass's whole caps less what the lane
+   *  spent. */
+  lane: FreshLaneBudget;
+  /** When the pass must end (the chain budget or the run's deadline). */
+  passEndMs: number;
+  /** When the lane must end ({@link freshLaneDeadline}). Every lane call,
+   *  receipt waits included, is bounded by it, so the walk keeps its time. */
+  laneEndMs: number;
+  /** The clock (tests pass their own). */
+  now?: () => number;
+  /** Called for each fresh offer a lane preview answered (other than
+   *  `TermsTooFresh`): its one entry is used. */
+  onEntered: (o: OfferLite) => void;
+  io: MatchWalkIO;
+  log: (line: string) => void;
+}
+
+export interface MatchWalkResult {
+  previews: number;
+  submits: number;
+  lanePreviews: number;
+  /** Lane matches that landed. */
+  laneSubmits: number;
+  /** Lane submissions sent, landed or not; what the lane's quota counts. */
+  laneAttempts: number;
+  capacitySpent: boolean;
+  /** Borrowers left in flight by an uncertain submit; the intent pass passes
+   *  over them too. */
+  uncertainBorrowers: Set<string>;
+}
+
+/**
+ * The offer match's two walks over one chain's book (#3622 B2): the fresh
+ * lane, then the ordinary rotating walk (#3242 part 2), sharing one set of
+ * counters so the pass's caps hold across both.
+ *
+ * The lane walks only the buckets holding a new or re-priced offer, in the
+ * same creator-pair units, and only pairs with a fresh side, until it has
+ * spent its share of the previews, submissions or wall time. The walk then
+ * has the pass's whole caps less what the lane spent, so it never gets less
+ * than (1 - share) of them, and it passes over any pair the lane already
+ * previewed this pass.
+ */
+export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResult> {
+  const { lenders, borrowers, run, fresh, lane, io, log } = args;
+  const now = args.now ?? Date.now;
+  const stop = () => now() >= args.passEndMs;
+  const laneEnd = Math.min(args.laneEndMs, args.passEndMs);
+  const laneStop = () => now() >= laneEnd;
+  let previews = 0;
+  let submits = 0;
+  // Submissions SENT, successful or not: a reverted or uncertain match still
+  // spends gas, so the lane's submission quota counts these (#3622 B2).
+  let attempts = 0;
+  let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
+  // Codex #748 r3 — borrowers left in-flight by an UNCERTAIN matchOffers submit
+  // (broadcast fail / receipt timeout). Shared with the intent-fill pass so it
+  // doesn't queue a `matchIntent` for the same borrower while the offer-match
+  // tx may still mine.
+  const uncertainBorrowers = new Set<string>();
+  // A lender is `dead` once the walks are done with it for this run: fully
+  // filled, or backed off after an uncertain submit.
+  const doneLenders = new Set<OfferLite>();
+  // Pairs the lane previewed, so the walk does not preview them again.
+  const tried = new Set<string>();
+  const pairKey = (L: OfferLite, B: OfferLite) => `${L.id}:${B.id}`;
+
+  /** Previews one pair and submits it when the preview clears it. Returns
+   *  the preview's code (null when it could not be read) and whether the
+   *  pass must stop. */
+  const tryPair = async (
+    L: OfferLite,
+    B: OfferLite,
+    deadlineMs: number,
+  ): Promise<{ code: number | null; stop: boolean }> => {
+    previews += 1;
+    tried.add(pairKey(L, B));
+    const p = await io.preview(L, B, deadlineMs);
+    if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
+      log("match pass: this keeper's fill capacity is spent; waiting for it to refill");
+      capacitySpent = true;
+      return { code: p.errorCode, stop: true };
+    }
+    if (!p || p.errorCode !== MATCH_ERR_OK) {
+      // Defence-in-depth: the units never pair a creator with itself (#235 /
+      // #2760: the contract reverts `SelfTradeForbidden(party)` and
+      // `previewMatch` returns `MatchError.SelfTrade`), but log here anyway in
+      // case `getOffer` ever races against an in-flight ownership transfer or
+      // the OfferLite struct loses the `creator` field in a future refactor.
+      // Other typed errors are too noisy to log per-pair on a busy book; the
+      // observability story for those lives in the per-tick submits /
+      // previewCalls metric.
+      if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
+        log(`self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`);
+      }
+      return { code: p ? p.errorCode : null, stop: false };
+    }
+
+    // Out of time after the preview: nothing is sent, so nothing is uncertain.
+    if (now() >= deadlineMs) return { code: p.errorCode, stop: true };
+    attempts += 1;
+    const ok = await io.submit(L, B, p, deadlineMs);
+    if (ok) {
+      submits += 1;
+      // Keep B's in-memory snapshot live so the later #625 intent-fill pass
+      // sizes against B's true residual capacity, not its tick-start value
+      // (Codex #748 r1).
+      B.amountFilled += p.matchAmount;
+      // Issue #172 / #102 — borrower offers are not single-fill: the same
+      // lender may fan out across more borrowers this run, and the same
+      // borrower may still have room another lender could fill. The next
+      // `previewMatch` reads the updated on-chain state and returns the right
+      // overlap (or `AmountNoOverlap` / dust-close). The lender is done only
+      // when the preview reports it FULLY filled.
+      if (p.lenderRemainingPostMatch === 0n) doneLenders.add(L);
+      return { code: p.errorCode, stop: false };
+    }
+    // Codex #176 round-2 P1 — `submitMatch` returned false. The three causes
+    // (broadcast failure, on-chain revert, receipt timeout) all leave L's state
+    // uncertain: the tx may still be in flight, or another keeper / a borrower
+    // cancel raced us. Back off this lender for the run, so no duplicate match
+    // is queued against stale state.
+    //
+    // #748 r3 — also mark B uncertain, so neither another lender here nor the
+    // intent-fill pass fills the same borrower while this tx may still mine.
+    doneLenders.add(L);
+    uncertainBorrowers.add(B.id.toString());
+    return { code: p.errorCode, stop: false };
+  };
+
+  // 1. The fresh lane.
+  if (fresh.size > 0 && lane.previews > 0 && lane.submits > 0) {
+    const isFresh = (o: OfferLite) => fresh.has(o.id.toString());
+    const fb = freshBuckets(lenders, borrowers, fresh);
+    for (const [L, B] of fairPairs(offerMatchUnits(fb.lenders, fb.borrowers, run), {
+      deadA: (l) => doneLenders.has(l),
+      skip: (l, b) =>
+        (!isFresh(l) && !isFresh(b)) || uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b),
+      stop: laneStop,
+      maxLive: lane.previews,
+    })) {
+      if (previews >= lane.previews || attempts >= lane.submits) break;
+      if (laneStop()) break;
+      const r = await tryPair(L, B, laneEnd);
+      if (r.code !== null && r.code !== MATCH_ERR_TERMS_TOO_FRESH) {
+        if (isFresh(L)) args.onEntered(L);
+        if (isFresh(B)) args.onEntered(B);
+      }
+      if (r.stop) break;
+    }
+  }
+  const lanePreviews = previews;
+  const laneSubmits = submits;
+  const laneAttempts = attempts;
+
+  // 2. The ordinary walk. #3242 part 2 — the pairs are walked round-robin
+  // across pairs of CREATORS ({@link offerMatchUnits}), so one wallet's many
+  // offers cannot use up the preview budget before anyone else's are looked
+  // at. A borrower left in flight is passed over by every lender.
+  if (!capacitySpent) {
+    for (const [L, B] of fairPairs(offerMatchUnits(lenders, borrowers, run), {
+      deadA: (l) => doneLenders.has(l),
+      skip: (l, b) =>
+        uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b) || tried.has(pairKey(l, b)),
+      stop,
+      maxLive: MAX_PREVIEW_CALLS_PER_TICK,
+    })) {
+      if (previews >= MAX_PREVIEW_CALLS_PER_TICK) break;
+      if (submits >= MAX_SUBMITS_PER_TICK) break;
+      if (stop()) break;
+      const r = await tryPair(L, B, args.passEndMs);
+      if (r.stop) break;
+    }
+  }
+
+  return { previews, submits, lanePreviews, laneSubmits, laneAttempts, capacitySpent, uncertainBorrowers };
+}
+
 /** One pass over a chain's order book. */
-async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise<void> {
+async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, share: number): Promise<void> {
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
   // site checks `overBudget()` before doing more work.
@@ -1634,85 +1921,58 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
   }
   const { lenders, borrowers } = partitionByBucket(offers);
 
-  let previewCalls = 0;
-  let submits = 0;
-  // Codex #748 r3 — borrowers left in-flight by an UNCERTAIN matchOffers submit
-  // (broadcast fail / receipt timeout). Shared with the intent-fill pass so it
-  // doesn't queue a `matchIntent` for the same borrower while the offer-match
-  // tx may still mine.
-  const uncertainBorrowers = new Set<string>();
+  // #3622 B2 — the fresh lane's offers and caps for this pass.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const tracker = freshLaneTracker(ctx.chainId);
+  // The terms-age read is skipped when nothing changed recently, and bounded
+  // by the read cutoff otherwise (the default stands in past it), so it never
+  // spends the walk's time.
+  const fresh =
+    share > 0 && FreshLaneTracker.anyRecent(offers, nowSec)
+      ? tracker.select(
+          offers,
+          nowSec,
+          await beforeDeadline(
+            readMinTermsAgeSec(ctx),
+            Math.min(readCutoffMs(ctx.notAfterMs), tickStart + PER_CHAIN_WALL_TIME_BUDGET_MS),
+            DEFAULT_MIN_TERMS_AGE_SEC,
+          ),
+        )
+      : new Set<string>();
+  const lane = freshLaneBudget(share, {
+    previews: MAX_PREVIEW_CALLS_PER_TICK,
+    submits: MAX_SUBMITS_PER_TICK,
+  });
 
-  let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
-  // #3242 part 2 — the pairs are walked round-robin across pairs of CREATORS
-  // ({@link offerMatchUnits}), so one wallet's many offers cannot use up the
-  // preview budget before anyone else's are looked at. A lender is `dead` once
-  // the walk is done with it for this run: fully filled, or backed off after an
-  // uncertain submit. A borrower left in flight is passed over by every lender.
-  const doneLenders = new Set<OfferLite>();
-  for (const [L, B] of fairPairs(offerMatchUnits(lenders, borrowers, run), {
-    deadA: (l) => doneLenders.has(l),
-    skip: (_l, b) => uncertainBorrowers.has(b.id.toString()),
-    stop: overBudget,
-    maxLive: MAX_PREVIEW_CALLS_PER_TICK,
-  })) {
-    if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
-    if (submits >= MAX_SUBMITS_PER_TICK) break;
-    if (overBudget()) break;
-
-    previewCalls += 1;
-    const p = await previewMatch(ctx, L.id, B.id);
-    if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
-      console.log(
-        `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
-      );
-      capacitySpent = true;
-      break;
-    }
-    if (!p || p.errorCode !== MATCH_ERR_OK) {
-      // Defence-in-depth: the units never pair a creator with itself (#235 /
-      // #2760: the contract reverts `SelfTradeForbidden(party)` and
-      // `previewMatch` returns `MatchError.SelfTrade`), but log here anyway in
-      // case `getOffer` ever races against an in-flight ownership transfer or
-      // the OfferLite struct loses the `creator` field in a future refactor.
-      // Other typed errors are too noisy to log per-pair on a busy book; the
-      // observability story for those lives in the per-tick submits /
-      // previewCalls metric.
-      if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
-        console.log(
-          `[matcher] chain=${ctx.chainId} self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`,
-        );
-      }
-      continue;
-    }
-
-    const ok = await submitMatch(ctx, L.id, B.id, p);
-    if (ok) {
-      submits += 1;
-      // Keep B's in-memory snapshot live so the later #625 intent-fill pass
-      // sizes against B's true residual capacity, not its tick-start value
-      // (Codex #748 r1).
-      B.amountFilled += p.matchAmount;
-      // Issue #172 / #102 — borrower offers are not single-fill: the same
-      // lender may fan out across more borrowers this run, and the same
-      // borrower may still have room another lender could fill. The next
-      // `previewMatch` reads the updated on-chain state and returns the right
-      // overlap (or `AmountNoOverlap` / dust-close, which the `continue` above
-      // handles). The lender is done only when the preview reports it FULLY
-      // filled; anything smaller is left to the next preview to filter.
-      if (p.lenderRemainingPostMatch === 0n) doneLenders.add(L);
-      continue;
-    }
-    // Codex #176 round-2 P1 — `submitMatch` returned false. The three causes
-    // (broadcast failure, on-chain revert, receipt timeout) all leave L's state
-    // uncertain: the tx may still be in flight, or another keeper / a borrower
-    // cancel raced us. Back off this lender for the run, so no duplicate match
-    // is queued against stale state.
-    //
-    // #748 r3 — also mark B uncertain, so neither another lender here nor the
-    // intent-fill pass below fills the same borrower while this tx may still
-    // mine.
-    doneLenders.add(L);
-    uncertainBorrowers.add(B.id.toString());
+  // The lane's wall time is its share of what is LEFT of this pass, not of
+  // the whole budget: listing and hydration have already spent part of it,
+  // and the run's own deadline (#2572) can be shorter than the chain budget.
+  // Measured from here, the walk keeps (1 - share) of the time it really has.
+  const laneStart = Date.now();
+  const passEnd = Math.min(tickStart + PER_CHAIN_WALL_TIME_BUDGET_MS, ctx.notAfterMs);
+  const laneEnd = freshLaneDeadline(share, laneStart, passEnd);
+  const walk = await runMatchWalks({
+    lenders,
+    borrowers,
+    run,
+    fresh,
+    lane,
+    passEndMs: passEnd,
+    laneEndMs: laneEnd,
+    onEntered: (o) => tracker.markEntered(o, nowSec),
+    io: {
+      preview: (L, B, deadlineMs) => beforeDeadline(previewMatch(ctx, L.id, B.id), deadlineMs, null),
+      submit: (L, B, p, deadlineMs) => submitMatch(ctx, L.id, B.id, p, deadlineMs),
+    },
+    log: (line) => console.log(`[matcher] chain=${ctx.chainId} ${line}`),
+  });
+  const previewCalls = walk.previews;
+  let submits = walk.submits;
+  const { uncertainBorrowers, capacitySpent } = walk;
+  if (walk.lanePreviews > 0) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} fresh lane: ${fresh.size} new or re-priced offer(s), ${walk.lanePreviews} preview(s), ${walk.laneSubmits} match(es) of ${walk.laneAttempts} sent (caps ${lane.previews} / ${lane.submits})`,
+    );
   }
 
   // #625 WI-2c — auto-lend intent-fill pass. Reuses the hydrated borrower book
@@ -1771,6 +2031,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'matcher')) return;
   const chains: ChainConfig[] = getChainConfigs(env);
   const run = runIndex(tick, 60_000);
+  const share = freshLaneShare(env.MATCHER_FRESH_LANE_SHARE);
   // Chains side by side (#2572 r5, `runWindow.ts` rule 1): one deadline covers
   // the pass, so in series a slow chain would spend every later chain's window.
   await Promise.all(
@@ -1779,7 +2040,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
         const publicClient = createPublicClient({ transport: http(chain.rpc) });
         const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
         if (!ctx) return;
-        await runOfferMatcherTickForChain(ctx, run);
+        await runOfferMatcherTickForChain(ctx, run, share);
       } catch (err) {
         console.error(
           `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${summarizeFailure(err, 250)}`,

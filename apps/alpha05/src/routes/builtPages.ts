@@ -22,6 +22,9 @@ const GovernancePage = lazy(() => import('../pages/governance/GovernancePage').t
 /** The Console reads the price guard's ABI and the settings readers, which
  *  no other page needs, so it loads with the route too. */
 const ConsolePage = lazy(() => import('../pages/console/ConsolePage').then((m) => ({ default: m.ConsolePage })));
+/** Analytics is a public page most sessions never open, so it loads with
+ *  the route too. */
+const AnalyticsPage = lazy(() => import('../pages/analytics/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
 
 /** The page each BUILT route renders, by page-map path. A route not listed
  *  keeps its honest placeholder; `pageMap.test.ts` holds this map and the
@@ -45,4 +48,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/desk': DeskPage,
   '/console': ConsolePage,
   '/recover': RecoverPage,
+  '/analytics': AnalyticsPage,
 };
