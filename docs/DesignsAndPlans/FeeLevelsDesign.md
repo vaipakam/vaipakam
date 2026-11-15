@@ -55,7 +55,7 @@ Stated generically; no platform is named in the repository.
 | Fee constants and settings | Interest share default 5%; initiation fee settings (base rate, base term, yearly rate, the one-year point) with bounds, replacing the single rate. |
 | One library for the initiation fee rate | `rate(termDays)`; every charger and every preview reads it, so the amount shown is the amount charged. |
 | The borrower fee charge at acceptance | Reads the rate for the loan's term. |
-| Extension | Charges the difference for the added time through the same fee host. |
+| Extension | Charges the difference for the added time through the same fee host, marked as an extension fee so no treasury floor is taken from it. |
 | Loan record | The term the fee has been paid for, if the existing term field cannot serve. |
 | Views and previews | The fee as an amount and a rate for a given principal and term; the extension's added fee. |
 | Treasury fee host | The floor split of `ShortfallReserveDesign.md` section 8 (ships with the mainnet deploy). |
@@ -78,7 +78,7 @@ Per-loan stamping of the interest share stays as it is, so a later retune never 
 5. Early repayment returns no fee.
 6. A settings change does not reprice an open loan or its later extension's already-paid part.
 7. The interest share at 5% on every settlement path, stamped per loan.
-8. With the reserve split: treasury receives the floor first; a discounted fee reduces only the reserve's part.
+8. With the reserve split: treasury receives the floor first; a discounted fee reduces only the reserve's part. The floor on the initiation fee is taken once, at acceptance; an extension's added fee goes to the reserve whole, so one extension from 30 to 365 days and the same extension made a day at a time send the same totals to treasury and reserve.
 
 ## 8. Alternatives considered
 
