@@ -389,8 +389,15 @@ const VAULT_SETTING_OF: Partial<Record<PendingChange, number>> = { lowerDelay: 2
 export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: Hex, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
   const account = r.facts.account.toLowerCase();
-  const vault = r.facts.vault?.toLowerCase() ?? null;
   const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
+  // The account's vault: the one the review read, or, when the action
+  // created it, the one the Diamond's own creation event names for this
+  // account in these logs (Codex #3489 r13), so a switch-on whose later
+  // steps did not land is still measured from the vault it enabled.
+  const created = (parseEventLogs({ abi: FACTORY, logs: [...own], eventName: 'UserVaultCreated', strict: false }) as unknown as { args: Args }[]).find(
+    (e) => String(e.args.user ?? '').toLowerCase() === account,
+  );
+  const vault = r.facts.vault?.toLowerCase() ?? (created ? String(created.args.proxy).toLowerCase() : null);
   const events = (parseEventLogs({ abi: [...PROTECTED, ...PAYOUT] as Abi, logs: [...own], strict: false }) as unknown as { eventName: string; args: Args }[]).filter(
     (e) => String(e.args.account ?? '').toLowerCase() === account,
   );

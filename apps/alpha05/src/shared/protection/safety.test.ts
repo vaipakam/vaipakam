@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
-import { ProtectedAccountFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
@@ -254,5 +254,21 @@ describe('measureSafety: vault step landed, platform apply did not', () => {
     const legs = measureSafety(review('enable'), [on], DIAMOND, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
     expect(legs[1]).toMatchObject({ reason: 'safety.platformPending' });
+  });
+  it('a switch-on that also created the vault is measured from the vault the Diamond names (Codex #3489 r13)', () => {
+    const NEW_VAULT = '0x00000000000000000000000000000000000000b7' as Hex;
+    const factory = VaultFactoryFacetABI as Abi;
+    const createdBy = (user: Hex): Log =>
+      ({
+        address: DIAMOND,
+        topics: encodeEventTopics({ abi: factory, eventName: 'UserVaultCreated', args: { user } } as never),
+        data: encodeAbiParameters([{ type: 'address' }], [NEW_VAULT]),
+      }) as unknown as Log;
+    const on = { ...eventLog('ProtectionEnabled', {}, { types: [{ type: 'uint32' }, { type: 'address' }], values: [2 * DAY, ME] }, VAULT), address: NEW_VAULT } as Log;
+    const legs = measureSafety(review('enable', { vault: null }), [createdBy(ME), on], DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
+    expect(legs[1]).toMatchObject({ reason: 'safety.platformPending' });
+    // Another account's creation names no vault of this account's.
+    expect(measureSafety(review('enable', { vault: null }), [createdBy(OTHER), on], DIAMOND, copy)[0]?.status).toBe('not-done');
   });
 });
