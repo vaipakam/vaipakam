@@ -33,6 +33,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *             and the sale solvency floor on both sale routes.
  *           - PositiveFlowsVaultAndVpfi: stuck-token recovery, the
  *             sanctioned-source ban, disown, VPFI deposit and withdraw.
+ *             Staged (`run-staged.sh PositiveFlowsVaultAndVpfi`).
  *           - PositiveFlowsKeeperAutomation: keeper approval and execution.
  *             Staged (`run-staged.sh PositiveFlowsKeeperAutomation`).
  *           - PositiveFlowsOperatorAdmin: sanctions Tier-1 vs Tier-2, pauses,
@@ -82,12 +83,9 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         and a fill waits until the terms have stood the minimum age (#3412),
  *         which one `forge script --broadcast` cannot do between its own
  *         transactions; under `--broadcast` the first such fill stops the run
- *         with `TermsAgeNeedsStagedRun` before anything is sent. The modules
- *         that are staged ({PositiveFlowsStaged}: BasicLifecycle,
- *         AdvancedCredit, LenderIntent, PositionHolder, KeeperAutomation,
- *         OperatorAdmin, SwapToRepay, Timed) broadcast one
- *         at a time through `script/positive-flows/run-staged.sh <module>`;
- *         the others run as this simulation only until they are staged.
+ *         with `TermsAgeNeedsStagedRun` before anything is sent. Every
+ *         module is staged ({PositiveFlowsStaged}) and broadcasts one at a
+ *         time through `script/positive-flows/run-staged.sh <module>`.
  *
  *         `--disable-block-gas-limit` is REQUIRED, and is not a workaround for
  *         a contract fault: a forge script runs inside ONE simulated call
