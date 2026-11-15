@@ -21,6 +21,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 
 /// @title ForcedSaleTerminalTest
 /// @notice #2796 — the Health-Factor liquidation (single and split route) and
@@ -306,10 +307,12 @@ contract ForcedSaleTerminalTest is SetupTest {
         assertGe(lenderAmount, 1000 ether, "the lender recovers at least the principal");
     }
 
-    /// @dev §5.1 step 5: when every route fails, the whole collateral enters
-    ///      the fallback, as before the rule.
+    /// @dev §5.1 step 5: when every route fails and the fallback is open
+    ///      (#3538: an earlier failed sale is old enough), the whole
+    ///      collateral enters the fallback, as before the rule.
     function test_liquidation_allRoutesFail_fallbackTakesWholeCollateral() public {
         _collateralWorth(11_500);
+        LibTestFallbackGate.open(address(diamond), LOAN);
         ForcedSaleFacet.ForcedSalePlan memory p = _plan(ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation);
         assertLt(p.sell, PLEDGED, "fixture: the plan sells a slice");
         adapter.setShouldRevert(true);

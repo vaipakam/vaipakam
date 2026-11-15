@@ -45,6 +45,12 @@ contract TestMutatorFacet {
         LibPrepayCleanup.clearActiveListing(loan, loanId);
     }
 
+    /// @notice #3538 test-only — seed `loanId`'s failed-sale record, so a
+    ///         test can reach the in-kind fallback with one failing sale.
+    function setFallbackGate(uint256 loanId, LibVaipakam.FallbackGate memory g) external {
+        LibVaipakam.storageSlot().fallbackGate[loanId] = g;
+    }
+
     /// @notice Overwrite the entire Offer record at `offerId`.
     function setOffer(uint256 offerId, LibVaipakam.Offer memory data) external {
         LibVaipakam.storageSlot().offers[offerId] = data;

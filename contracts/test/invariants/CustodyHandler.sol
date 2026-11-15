@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestFallbackGate} from "../helpers/LibTestFallbackGate.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -318,6 +319,9 @@ contract CustodyHandler is Test {
         uint256 pastGrace = uint256(l.startTime) + l.durationDays * 1 days + PAST_EVERY_GRACE;
         if (pastGrace > block.timestamp) vm.warp(pastGrace);
         LibSwap.AdapterCall[] memory route = _adapterCalls(swapFails);
+        // #3538: a failing route here means to reach the fallback, so record the
+        // earlier failed sale the gate needs.
+        if (swapFails) LibTestFallbackGate.open(diamond, loanId);
         uint256 sellQuote = defaultQuote(diamond, loanId);
         try DefaultedFacet(diamond).triggerDefault(loanId, sellQuote, route) {
             if (_statusOf(loanId) == LibVaipakam.LoanStatus.FallbackPending) {
@@ -600,6 +604,9 @@ contract CustodyHandler is Test {
     function _liquidate(uint256 loanId, bool swapFails) internal returns (bool enteredFallback) {
         _setRisk(loanId, HF_LIQUIDATABLE, LTV_LIQUIDATABLE);
         LibSwap.AdapterCall[] memory route = _adapterCalls(swapFails);
+        // #3538: a failing route here means to reach the fallback, so record the
+        // earlier failed sale the gate needs.
+        if (swapFails) LibTestFallbackGate.open(diamond, loanId);
         uint256 sellQuote = liquidationQuote(diamond, loanId);
         try RiskFacet(diamond).triggerLiquidation(loanId, sellQuote, route) {
             LibVaipakam.LoanStatus st = _statusOf(loanId);

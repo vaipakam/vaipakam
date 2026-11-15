@@ -3,6 +3,8 @@
 pragma solidity ^0.8.29;
 
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
+import {LibFallbackGate} from "../src/libraries/LibFallbackGate.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
@@ -227,6 +229,10 @@ contract RiskFacetTest is Test {
     // address allowanceTarget = mockZeroExProxy; //makeAddr("allowanceTarget"); // Mock for tests
 
     function setUp() public {
+        // #3538: start the clock past the fallback gate's span, so a test that
+        // records an earlier failed sale (LibTestFallbackGate.open) never has
+        // to move the clock, and accrued interest stays what each test expects.
+        vm.warp(LibFallbackGate.MIN_SPAN);
         owner = address(this);
         lender = makeAddr("lender");
         (borrower, borrowerPk) = makeAddrAndKey("borrower");
@@ -2029,6 +2035,7 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -2305,6 +2312,7 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -2557,6 +2565,7 @@ contract RiskFacetTest is Test {
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
         calls[0] = LibSwap.AdapterCall({adapterIdx: idx, data: ""});
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -3113,6 +3122,7 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -3218,6 +3228,7 @@ contract RiskFacetTest is Test {
         // ever reaching our event. recordLogs + topic-0 search is
         // robust to the intervening events.
         vm.recordLogs();
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3341,6 +3352,7 @@ contract RiskFacetTest is Test {
             "nft update fail"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
@@ -3381,6 +3393,7 @@ contract RiskFacetTest is Test {
             "swap revert"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3434,6 +3447,7 @@ contract RiskFacetTest is Test {
             "swap revert"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3497,6 +3511,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             "swap revert"
         );
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3623,6 +3638,7 @@ contract RiskFacetTest is Test {
         );
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3718,6 +3734,7 @@ contract RiskFacetTest is Test {
             "nft update fail"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         RiskFacet(address(diamond)).triggerLiquidation(

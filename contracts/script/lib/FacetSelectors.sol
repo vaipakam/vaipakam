@@ -627,10 +627,12 @@ library FacetSelectors {
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = ForcedSaleFacet.sellToNeed.selector;
         s[1] = ForcedSaleFacet.payBorrowerWallet.selector;
         s[2] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        // #3538 — the sale's own frame while the fallback is not open.
+        s[3] = ForcedSaleFacet.sellOrRefuse.selector;
     }
 
     /// @notice Full external selector surface of {ForcedSalePreviewFacet} (2).
@@ -640,10 +642,12 @@ library FacetSelectors {
     ///         `LibForcedSalePlan`. Refreshed with ForcedSaleFacet (one rule
     ///         read by both): `RedeployFacets` cuts it from this list.
     function forcedSalePreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = ForcedSalePreviewFacet.previewForcedSale.selector;
         // #2697 — the discounted liquidation's figures, read by its
         // flash-loan receiver inside the liquidating transaction.
         s[1] = ForcedSalePreviewFacet.previewDiscountedLiquidation.selector;
+        // #3538 — where a loan stands on the way to the in-kind fallback.
+        s[2] = ForcedSalePreviewFacet.getFallbackGate.selector;
     }
 }

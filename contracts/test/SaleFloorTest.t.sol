@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -360,6 +361,7 @@ contract SaleFloorTest is SetupTest {
         _liquidatable();
         _twoCheckpoints();
         _tier(3);
+        LibTestFallbackGate.open(address(diamond), LOAN);
         _liquidateAtLoss(9_700);
         assertEq(uint256(_status()), uint256(LibVaipakam.LoanStatus.FallbackPending), "no sale at a 3% loss");
     }

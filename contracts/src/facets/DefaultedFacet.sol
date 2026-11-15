@@ -366,7 +366,12 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // zero DEX attempts. When every route fails the host returns
                 // with the whole collateral on the Diamond and the loan
                 // enters the fallback.
-                if (!_sellToNeed(loanId, sellAmount, adapterCalls)) {
+                (bool sold, bool deferred) = _sellToNeed(loanId, sellAmount, adapterCalls);
+                if (!sold) {
+                    // #3538 — every route failed but the fallback is not
+                    // open yet: the sale was undone and only the failure
+                    // recorded, so the loan stays Active.
+                    if (deferred) return;
                     _enterFallback(loanId);
                     // §3.8 — FallbackCustodyFacet.enterFallback transitioned the
                     // loan to FallbackPending; emit the matching state-change
@@ -686,13 +691,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///      the one forced-sale host ({ForcedSaleFacet.sellToNeed}). Its own
     ///      frame keeps the outcome decode off `triggerDefault`'s stack, which
     ///      sits near solc's ceiling.
-    /// @return sold False when every route failed: the whole collateral is
-    ///         on the Diamond with the lien released, for the fallback entry.
+    /// @return sold     False when every route failed. With `deferred`
+    ///                  false the whole collateral is on the Diamond with the
+    ///                  lien released, for the fallback entry.
+    /// @return deferred True when every route failed but the fallback is not
+    ///                  open yet (#3538): nothing moved.
     function _sellToNeed(
         uint256 loanId,
         uint256 sellAmount,
         LibSwap.AdapterCall[] calldata adapterCalls
-    ) private returns (bool sold) {
+    ) private returns (bool sold, bool deferred) {
         ForcedSaleFacet.ForcedSaleOutcome memory out = abi.decode(
             LibFacet.crossFacetCallReturn(
                 abi.encodeCall(
@@ -710,7 +718,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             (ForcedSaleFacet.ForcedSaleOutcome)
         );
-        return out.sold;
+        return (out.sold, out.fallbackDeferred);
     }
 
     /// @dev #407 PR 4 (T-407-B, 2026-06-12) — extracted from

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -197,6 +198,7 @@ contract BackstopAbsorbTest is SetupTest {
             "swap failed"
         );
         mockOraclePrice(mockCollateralERC20, collateralPrice, 8);
+        LibTestFallbackGate.open(address(diamond), id);
         uint256 sellQuote = defaultQuote(address(diamond), id);
         DefaultedFacet(address(diamond)).triggerDefault(id, sellQuote, defaultAdapterCalls());
         mockOraclePrice(mockCollateralERC20, PAR_PRICE, 8);

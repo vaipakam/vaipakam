@@ -6,6 +6,7 @@ import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
 import {LibForcedSalePlan} from "../libraries/LibForcedSalePlan.sol";
+import {LibFallbackGate} from "../libraries/LibFallbackGate.sol";
 import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -139,5 +140,30 @@ contract ForcedSalePreviewFacet {
         p.debt = debt;
         p.seized = seized;
         p.surplus = loan.collateralAmount - seized;
+    }
+
+    /**
+     * @notice #3538 — where `loanId` stands on the way to the in-kind
+     *         fallback. A terminal forced sale (HF liquidation, time-based
+     *         default) whose listed routes all fail moves the loan into the
+     *         fallback only when an earlier failed sale of it is at least
+     *         the minimum span old; before that the failed sale is undone
+     *         and recorded.
+     * @return failedSales     Failed sales in the current record (0 = none,
+     *                         or the last one is stale and the next failure
+     *                         starts a new record).
+     * @return firstFailAt     The first failure of the current record (0 if
+     *                         none).
+     * @return fallbackOpensAt The earliest time a failed sale opens the
+     *                         fallback; 0 when no failure is recorded yet,
+     *                         so the next failure only starts the span.
+     */
+    function getFallbackGate(uint256 loanId)
+        external
+        view
+        returns (uint256 failedSales, uint256 firstFailAt, uint256 fallbackOpensAt)
+    {
+        LibVaipakam.FallbackGate memory g = LibFallbackGate.current(loanId);
+        return (g.fails, g.firstFailAt, LibFallbackGate.opensAt(loanId));
     }
 }

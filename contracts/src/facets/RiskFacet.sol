@@ -676,11 +676,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // beside the collateral the sale did not take. When every route fails
         // it returns `sold = false` with the whole collateral on the Diamond,
         // and the loan enters the fallback exactly as before (#1005: an empty
-        // or all-disabled try-list reverts `NoEnabledSwapRoute` instead).
+        // or all-disabled try-list reverts `NoEnabledSwapRoute` instead) —
+        // once the fallback is open (#3538: an earlier failed sale of the
+        // loan at least `LibFallbackGate.MIN_SPAN` old). Before that, a
+        // failed sale is undone and only recorded (`fallbackDeferred`).
         ForcedSaleFacet.ForcedSaleOutcome memory out =
             _sellToNeed(loanId, sellAmount, adapterCalls);
         if (!out.sold) {
-            _enterFallback(loanId);
+            // #3538 — every route failed but the fallback is not open yet:
+            // the sale was undone and only the failure recorded.
+            if (!out.fallbackDeferred) _enterFallback(loanId);
             return;
         }
 

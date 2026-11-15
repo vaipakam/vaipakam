@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -116,6 +117,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             "swap failed"
         );
         uint256 diamond0 = ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
+
+        LibTestFallbackGate.open(address(diamond), 1);
 
         uint256 sellQuote = defaultQuote(address(diamond), 1);
         DefaultedFacet(address(diamond)).triggerDefault(1, sellQuote, defaultAdapterCalls());

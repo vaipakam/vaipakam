@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -1337,6 +1338,7 @@ contract DefaultedFacetTest is Test {
         );
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -2050,6 +2052,7 @@ contract DefaultedFacetTest is Test {
 
         // Pilot — primary-key-only payload + companion state-change event
         // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LiquidationFallback(loanId);
@@ -2686,6 +2689,7 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
@@ -3056,6 +3060,7 @@ contract DefaultedFacetTest is Test {
 
         // Pilot — primary-key-only payload + companion state-change event
         // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LiquidationFallback(loanId);
@@ -3237,6 +3242,7 @@ contract DefaultedFacetTest is Test {
             "nft update fail"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());

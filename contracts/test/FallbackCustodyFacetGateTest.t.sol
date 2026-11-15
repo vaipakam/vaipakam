@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -142,6 +143,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     ///      with the Diamond's balance unchanged by the entry.
     function _fcEnter() internal {
         uint256 heldBefore = _bal(address(diamond));
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         assertEq(

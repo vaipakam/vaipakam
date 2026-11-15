@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -181,6 +182,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _fcLoan(id);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + FC_PAST_EVERY_GRACE);
+        LibTestFallbackGate.open(address(diamond), id);
         uint256 sellQuote = defaultQuote(address(diamond), id);
         vm.recordLogs();
         DefaultedFacet(address(diamond)).triggerDefault(id, sellQuote, _fcRoute(true));
@@ -1110,6 +1112,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     ///      top-up does not cure it unless the cell restores them.
     function _fcLiquidateToFallback(uint256 loanId) internal {
         _fcSetRisk(loanId, FC_HF_LIQUIDATABLE, FC_LTV_LIQUIDATABLE);
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _fcRoute(true));
         assertEq(

@@ -37,6 +37,126 @@
   },
   {
     "type": "function",
+    "name": "sellOrRefuse",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum ForcedSaleFacet.ForcedSaleKind"
+      },
+      {
+        "name": "quotedSell",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "splits",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.SplitCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "splitAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ForcedSaleFacet.ForcedSaleOutcome",
+        "components": [
+          {
+            "name": "sold",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "collateralSold",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "proceeds",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderPaid",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "handlingFee",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "keeperBonus",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerExtra",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerExtraHeld",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "fallbackDeferred",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sellToNeed",
     "inputs": [
       {
@@ -144,11 +264,53 @@
             "name": "borrowerExtraHeld",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "fallbackDeferred",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ForcedSaleFallbackDeferred",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "failedSales",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fallbackOpensAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1537,6 +1699,17 @@
       },
       {
         "name": "most",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ForcedSaleRoutesFailed",
+    "inputs": [
+      {
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       }

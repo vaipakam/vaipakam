@@ -23,6 +23,7 @@ import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {LibForcedSalePlan} from "../libraries/LibForcedSalePlan.sol";
+import {LibFallbackGate} from "../libraries/LibFallbackGate.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -141,8 +142,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
     /// @notice What one forced sale did, returned to the caller.
     /// @param sold              False only when every failover route failed
-    ///                          on a terminal sale: nothing was paid, the
-    ///                          loan's lien is released and its whole
+    ///                          on a terminal sale. With `fallbackDeferred`
+    ///                          false the fallback is open: nothing was paid,
+    ///                          the loan's lien is released and its whole
     ///                          collateral is on the Diamond for the caller's
     ///                          fallback entry.
     /// @param collateralSold    Collateral that reached the Diamond and was sold.
@@ -155,6 +157,11 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /// @param keeperBonus       `B`, to the caller.
     /// @param borrowerExtra     `X` as the borrower got it.
     /// @param borrowerExtraHeld True when `X` was held for the claim.
+    /// @param fallbackDeferred  True when every route failed but the
+    ///                          fallback is not open yet (#3538): the sale
+    ///                          was undone, nothing moved, and only the
+    ///                          failure was recorded. The caller returns
+    ///                          without entering the fallback.
     struct ForcedSaleOutcome {
         bool sold;
         uint256 collateralSold;
@@ -164,6 +171,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 keeperBonus;
         uint256 borrowerExtra;
         bool borrowerExtraHeld;
+        bool fallbackDeferred;
     }
 
     /// @notice A sale was asked to sell `quoted`, outside the range the plan
@@ -173,6 +181,33 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /// @notice No sale of this kind is owed on the loan now (nothing is
     ///         owed, or the kind's own window is not open).
     error ForcedSaleNotDue(uint256 loanId, uint8 kind);
+
+    /// @notice #3538 — every listed route failed on a terminal sale whose
+    ///         fallback is not open yet. Raised inside {sellOrRefuse} only,
+    ///         and caught by {sellToNeed}, which records the failure.
+    error ForcedSaleRoutesFailed(uint256 loanId);
+
+    /// @notice #3538 — every listed swap route failed on a terminal forced
+    ///         sale, and the loan's in-kind fallback is not open yet, so the
+    ///         sale was undone and nothing moved. The loan stays as it was;
+    ///         anyone with a working route may sell it. A sale that fails at
+    ///         or after `fallbackOpensAt` moves the loan into the fallback.
+    /// @param loanId          The loan.
+    /// @param kind            Which forced sale ({ForcedSaleKind}).
+    /// @param failedSales     Failed sales in the loan's current record,
+    ///                        this one included.
+    /// @param fallbackOpensAt The earliest time a failed sale opens the
+    ///                        fallback (the first failure plus the minimum
+    ///                        span, `LibFallbackGate.MIN_SPAN`).
+    /// @param caller          Who submitted the sale.
+    /// @custom:event-category informational/liquidation
+    event ForcedSaleFallbackDeferred(
+        uint256 indexed loanId,
+        uint8 indexed kind,
+        uint256 failedSales,
+        uint256 fallbackOpensAt,
+        address indexed caller
+    );
 
     /// @notice Every figure of one forced sale. Nothing is left to be
     ///         inferred from balance changes.
@@ -258,10 +293,17 @@ contract ForcedSaleFacet is IVaipakamErrors {
      *            failover try-list, or for the split kind the caller's legs
      *            (atomic: any failure reverts the whole call).
      *         4. A failover with every route failed: periodic reverts
-     *            {PeriodicSettleSwapFailed} (nothing moves); terminal releases
-     *            the rest of the lien, brings the rest of the collateral to
-     *            the Diamond and returns `sold = false` for the caller's
-     *            fallback entry, which finds the loan's whole collateral there.
+     *            {PeriodicSettleSwapFailed} (nothing moves). Terminal, with
+     *            the fallback open ({LibFallbackGate.opensNow}, #3538):
+     *            releases the rest of the lien, brings the rest of the
+     *            collateral to the Diamond and returns `sold = false` for the
+     *            caller's fallback entry, which finds the loan's whole
+     *            collateral there. Terminal, with the fallback not open yet:
+     *            the sale runs in its own frame ({sellOrRefuse}), which
+     *            reverts {ForcedSaleRoutesFailed} and so undoes the pull;
+     *            the failure is recorded, {ForcedSaleFallbackDeferred} is
+     *            emitted and `fallbackDeferred = true` is returned with
+     *            nothing moved.
      *         5. Otherwise the division (see the contract notes), the kind's
      *            booking and {ForcedSaleSettled}. Each vault movement
      *            refreshes the owner's VPFI tier record at the write (#1820).
@@ -283,11 +325,69 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibSwap.SplitCall[] calldata splits,
         address keeper
     ) external onlySelf returns (ForcedSaleOutcome memory out) {
+        // Periodic and split sales never enter the fallback (periodic
+        // reverts, a split is atomic), so they need no gate.
+        if (kind != ForcedSaleKind.HealthFactorLiquidation && kind != ForcedSaleKind.TimeBasedDefault
+            || LibFallbackGate.opensNow(loanId))
+        {
+            return _sellToNeed(loanId, kind, quotedSell, adapterCalls, splits, keeper, false);
+        }
+        // #3538 — the fallback is not open: a sale whose routes all fail must
+        // change nothing but the record, so it runs in its own frame, which
+        // reverts on that outcome and undoes the pull and the lien change.
+        try ForcedSaleFacet(address(this)).sellOrRefuse(loanId, kind, quotedSell, adapterCalls, splits, keeper)
+            returns (ForcedSaleOutcome memory o)
+        {
+            return o;
+        } catch (bytes memory err) {
+            if (err.length != 36 || bytes4(err) != ForcedSaleRoutesFailed.selector) {
+                assembly ("memory-safe") {
+                    revert(add(err, 0x20), mload(err))
+                }
+            }
+        }
+        LibVaipakam.FallbackGate memory g = LibFallbackGate.recordFailure(loanId);
+        emit ForcedSaleFallbackDeferred(
+            loanId, uint8(kind), g.fails, uint256(g.firstFailAt) + LibFallbackGate.MIN_SPAN, keeper
+        );
+        out.fallbackDeferred = true;
+    }
+
+    /**
+     * @notice #3538 — {sellToNeed}'s sale, run in its own frame while the
+     *         loan's fallback is not open: the same sale, except that when
+     *         every route fails it reverts {ForcedSaleRoutesFailed} so the
+     *         pull and the lien change are undone.
+     * @dev    Self-call from {sellToNeed} only; same parameters.
+     */
+    function sellOrRefuse(
+        uint256 loanId,
+        ForcedSaleKind kind,
+        uint256 quotedSell,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        LibSwap.SplitCall[] calldata splits,
+        address keeper
+    ) external onlySelf returns (ForcedSaleOutcome memory) {
+        return _sellToNeed(loanId, kind, quotedSell, adapterCalls, splits, keeper, true);
+    }
+
+    /// @dev The sale itself. `refuseOnFail` (the fallback is not open):
+    ///      every route failing reverts instead of gathering for the fallback.
+    function _sellToNeed(
+        uint256 loanId,
+        ForcedSaleKind kind,
+        uint256 quotedSell,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        LibSwap.SplitCall[] calldata splits,
+        address keeper,
+        bool refuseOnFail
+    ) private returns (ForcedSaleOutcome memory out) {
         Job memory j;
         (j, out.collateralSold) = _open(loanId, kind, quotedSell, keeper);
         (out.sold, out.proceeds) = _sell(j, out.collateralSold, adapterCalls, splits);
         if (!out.sold) {
             if (kind == ForcedSaleKind.PeriodicSettlement) revert PeriodicSettleSwapFailed(loanId);
+            if (refuseOnFail) revert ForcedSaleRoutesFailed(loanId);
             _gatherForFallback(j, out.collateralSold);
             return out;
         }

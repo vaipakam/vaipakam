@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
@@ -233,6 +234,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function _enterFallback() internal returns (uint256 row) {
         _pastGrace();
         _failEverySwap();
+        LibTestFallbackGate.open(address(diamond), LOAN);
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         fallbackSell = sellQuote;
         vm.prank(makeAddr("defaultKeeper"));
@@ -258,6 +260,8 @@ contract MeasuredDeliveryTest is SetupTest {
         _scaffold(true);
         _pastGrace();
         _chargesFee(col, bVault);
+
+        LibTestFallbackGate.open(address(diamond), LOAN);
 
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
@@ -287,6 +291,8 @@ contract MeasuredDeliveryTest is SetupTest {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN),
             abi.encode(uint256(0.9e18))
         );
+
+        LibTestFallbackGate.open(address(diamond), LOAN);
 
         uint256 sellQuote = liquidationQuote(address(diamond), LOAN);
         vm.prank(makeAddr("liquidator"));
@@ -397,6 +403,8 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(col, address(0));
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(col, lVault);
+
+        LibTestFallbackGate.open(address(diamond), LOAN);
 
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
@@ -535,6 +543,8 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(0));
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(mockERC20, lVault);
+
+        LibTestFallbackGate.open(address(diamond), loanId);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());

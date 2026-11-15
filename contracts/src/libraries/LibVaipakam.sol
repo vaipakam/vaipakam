@@ -2839,6 +2839,16 @@ library LibVaipakam {
         uint40 at;
     }
 
+    /// @notice #3538 — the failed forced sales of one loan that open its
+    ///         in-kind fallback. See `Storage.fallbackGate`.
+    /// @dev    `firstFailAt` / `lastFailAt` are the first and latest sale in
+    ///         which every listed route failed; `fails` counts them. One slot.
+    struct FallbackGate {
+        uint40 firstFailAt;
+        uint40 lastFailAt;
+        uint32 fails;
+    }
+
     struct CachedTier {
         uint8 effectiveTier;
         uint40 lastUpdateSec;
@@ -8366,6 +8376,16 @@ library LibVaipakam {
         ///      `SignedOfferFacet.cancelSignedOffersBelow`; read by
         ///      `LibSignedOffer.fillFailure`. Appended — append-only.
         mapping(address => uint256) signedOfferNonceFloor;
+        /// @dev #3538 — per loan, the forced sales in which every listed swap
+        ///      route failed. A terminal forced sale (HF liquidation,
+        ///      time-based default) enters the in-kind fallback only once the
+        ///      record shows a failed sale at least `LibFallbackGate.MIN_SPAN`
+        ///      before the current one; until then a failed sale changes
+        ///      nothing but this record, so one caller-built try-list cannot
+        ///      push a loan into the fallback. Written only by
+        ///      `ForcedSaleFacet.sellToNeed` (and the test mutator); read
+        ///      through `LibFallbackGate`. Appended — append-only.
+        mapping(uint256 => FallbackGate) fallbackGate;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
