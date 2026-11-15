@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {Vm} from "forge-std/Vm.sol";
+import {InstantMarketBase} from "./InstantMarketTest.t.sol";
+import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
+import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
+import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+/**
+ * @title  InstantTakeoverTest
+ * @notice Instant market (#3656, design §7) — a lender hands an instant-market
+ *         loan to another lender's slot at face value.
+ */
+contract InstantTakeoverTest is InstantMarketBase {
+    uint256 internal constant PRINCIPAL = 1000 ether;
+
+    /// @dev `lender`'s slot lends PRINCIPAL to `taker` at 5%; `lender2` has a
+    ///      slot with the takeover consent unless `consent` is false.
+    function _openAndOffer(uint256 incomingRate, uint32 incomingDays, bool consent)
+        internal
+        returns (uint256 loanId)
+    {
+        _slot(lender, 500, PRINCIPAL, true);
+        _slotWith(lender2, incomingRate, PRINCIPAL, incomingDays, consent);
+        _age();
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](1);
+        srcs[0] = _src(lender);
+        (, InstantMarketFacet.InstantFill[] memory fills) = _borrow(_req(PRINCIPAL, 2000 ether, 700, PRINCIPAL), srcs);
+        loanId = fills[0].loanId;
+        // SetupTest pins the loan-to-value read at 66.66%; this loan's real
+        // figure is 50% (1:1 prices, 2:1 collateral), the slot's limit.
+        _mockLtv(MAX_INIT_LTV_BPS);
+    }
+
+    function _mockLtv(uint256 ltv) internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(ltv));
+    }
+
+    function _slotWith(address who, uint256 rateBps, uint256 maxExposure, uint32 maxDays, bool consent) internal {
+        vm.prank(who);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, 0, maxExposure, rateBps, MAX_INIT_LTV_BPS,
+            maxDays, MIN_FILL, false, 0, true, true, type(uint64).max
+        );
+        ERC20Mock(mockERC20).mint(who, maxExposure);
+        vm.prank(who);
+        ERC20(mockERC20).approve(address(diamond), maxExposure);
+        vm.prank(who);
+        LenderIntentFacet(address(diamond)).fundLenderIntent(mockERC20, mockCollateralERC20, 0, maxExposure);
+        if (consent) {
+            vm.prank(who);
+            InstantMarketFacet(address(diamond)).setInstantSlot(
+                mockERC20, mockCollateralERC20, 0, false, false, true, true, type(uint64).max
+            );
+        }
+    }
+
+    function _takeover(address caller, uint256 loanId, address incoming) internal {
+        vm.prank(caller);
+        InstantTakeoverFacet(address(diamond)).takeoverInstant(
+            loanId, incoming, 0, uint64(vm.getBlockTimestamp() + 1 hours)
+        );
+    }
+
+    /// @dev The incoming slot pays exactly the principal into the outgoing
+    ///      holder's vault; the position moves on the same loan record with
+    ///      every term unchanged; the outgoing holder's earned interest is
+    ///      reported as their seller claim; the ledger keeps the loan
+    ///      instant and slot-lent.
+    function test_takeoverMovesTheLoanAtFaceValue() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        LibVaipakam.Loan memory before = _loan(loanId);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+
+        uint256 holderVaultBefore = _vaultBal(lender, mockERC20);
+        uint256 incomingVaultBefore = _vaultBal(lender2, mockERC20);
+        vm.recordLogs();
+        _takeover(lender, loanId, lender2);
+
+        assertEq(_vaultBal(lender, mockERC20) - holderVaultBefore, PRINCIPAL, "holder paid face value");
+        assertEq(incomingVaultBefore - _vaultBal(lender2, mockERC20), PRINCIPAL, "slot capital paid it");
+
+        LibVaipakam.Loan memory afterLoan = _loan(loanId);
+        assertEq(afterLoan.lender, lender2, "position moved");
+        assertEq(afterLoan.borrower, taker, "borrower unchanged");
+        assertEq(afterLoan.principal, before.principal, "principal unchanged");
+        assertEq(afterLoan.interestRateBps, before.interestRateBps, "rate unchanged");
+        assertEq(afterLoan.durationDays, before.durationDays, "term unchanged");
+        assertEq(afterLoan.collateralAmount, before.collateralAmount, "collateral unchanged");
+
+        bool seen;
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] != InstantTakeoverFacet.InstantTakenOver.selector) continue;
+            (uint8 slot, uint256 paid, uint256 earned) = abi.decode(logs[i].data, (uint8, uint256, uint256));
+            assertEq(slot, 0);
+            assertEq(paid, PRINCIPAL, "paid reported");
+            assertGt(earned, 0, "earned interest left as a seller claim");
+            seen = true;
+        }
+        assertTrue(seen, "event emitted");
+
+        (, uint256 lent, uint256 fromSlots, uint256 instant) =
+            MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, mockCollateralERC20);
+        assertEq(lent, PRINCIPAL, "lent unchanged");
+        assertEq(fromSlots, PRINCIPAL, "still slot-lent, now from the incoming slot");
+        assertEq(instant, PRINCIPAL, "still instant");
+    }
+
+    function test_refusedWithoutTakeoverConsent() public {
+        uint256 loanId = _openAndOffer(500, TERM, false);
+        vm.expectRevert(InstantTakeoverFacet.InstantTakeoverNotOffered.selector);
+        _takeover(lender, loanId, lender2);
+    }
+
+    function test_refusedWhenLoanRateBelowSlotMinimum() public {
+        uint256 loanId = _openAndOffer(600, TERM, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(InstantTakeoverFacet.InstantTakeoverRateBelowSlot.selector, 500, 600)
+        );
+        _takeover(lender, loanId, lender2);
+    }
+
+    function test_refusedWhenDueDatePastSlotTerm() public {
+        uint256 loanId = _openAndOffer(500, 10, true);
+        vm.expectPartialRevert(InstantTakeoverFacet.InstantTakeoverTermPastSlot.selector);
+        _takeover(lender, loanId, lender2);
+    }
+
+    function test_refusedWhenLtvAboveSlotLimit() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        _mockLtv(MAX_INIT_LTV_BPS + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                InstantTakeoverFacet.InstantTakeoverLtvAboveSlot.selector, MAX_INIT_LTV_BPS + 1, MAX_INIT_LTV_BPS
+            )
+        );
+        _takeover(lender, loanId, lender2);
+    }
+
+    function test_refusedIntoTheBorrower() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.expectRevert(abi.encodeWithSelector(InstantTakeoverFacet.InstantTakeoverSameParty.selector, taker));
+        _takeover(lender, loanId, taker);
+    }
+
+    function test_refusedForANonInstantLoan() public {
+        vm.expectRevert(abi.encodeWithSelector(InstantTakeoverFacet.InstantLoanNotEligible.selector, 999));
+        _takeover(lender, 999, lender2);
+    }
+
+    function test_refusedWhenMarketOff() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.prank(owner);
+        InstantMarketFacet(address(diamond)).setInstantMarketEnabled(false);
+        vm.expectRevert(InstantMarketFacet.InstantMarketDisabled.selector);
+        _takeover(lender, loanId, lender2);
+    }
+
+    /// @dev Only the position's holder (or its direct-sale keeper) starts it.
+    function test_refusedForAStranger() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.expectRevert();
+        _takeover(lender2, loanId, lender2);
+    }
+}

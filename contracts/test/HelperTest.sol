@@ -120,6 +120,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1005,6 +1006,12 @@ contract HelperTest {
     function getInstantFillFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](1);
         selectors[0] = InstantFillFacet.fillInstant.selector;
+    }
+
+    /// @dev #3656 §7 — mirrors `DeployDiamond._getInstantTakeoverSelectors`.
+    function getInstantTakeoverFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = InstantTakeoverFacet.takeoverInstant.selector;
     }
 
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {

@@ -246,6 +246,8 @@ export interface DeploymentFacets {
   instantMarketFacet?: HexAddress;
   /** #3656 — one instant-borrow fill (Diamond-internal). */
   instantFillFacet?: HexAddress;
+  /** #3656 §7 — a lender's takeover at face value into another slot. */
+  instantTakeoverFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

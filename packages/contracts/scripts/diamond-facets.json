@@ -55,6 +55,7 @@
     "MarketLedgerFacet",
     "InstantMarketFacet",
     "InstantFillFacet",
+    "InstantTakeoverFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

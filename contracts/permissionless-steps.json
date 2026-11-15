@@ -141,6 +141,10 @@
       "class": "user",
       "why": "the slot owner's own instant-market consents"
     },
+    "InstantTakeoverFacet.takeoverInstant(uint256,address,uint8,uint64)": {
+      "class": "user",
+      "why": "the lender hands its own loan to a consenting slot; the caller is gated by the direct-sale verdict (the holder, or a keeper holding the holder's direct-sale mandate)"
+    },
     "LenderIntentFacet.rollIntentLoan(uint256)": {
       "class": "keeper",
       "pass": "matcher",

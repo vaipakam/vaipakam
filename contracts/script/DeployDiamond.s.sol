@@ -66,6 +66,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
@@ -560,6 +561,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             InstantMarketFacet(ArtifactDeploy.deploy(type(InstantMarketFacet).name));
         InstantFillFacet instantFillFacet =
             InstantFillFacet(ArtifactDeploy.deploy(type(InstantFillFacet).name));
+        InstantTakeoverFacet instantTakeoverFacet =
+            InstantTakeoverFacet(ArtifactDeploy.deploy(type(InstantTakeoverFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -608,7 +611,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -732,6 +735,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[118] = _buildCut(address(marketLedgerFacet), _getMarketLedgerSelectors());
         cuts[119] = _buildCut(address(instantMarketFacet), _getInstantMarketSelectors());
         cuts[120] = _buildCut(address(instantFillFacet), _getInstantFillSelectors());
+        cuts[121] = _buildCut(address(instantTakeoverFacet), _getInstantTakeoverSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1483,6 +1487,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("marketLedgerFacet", address(marketLedgerFacet));
         Deployments.writeFacet("instantMarketFacet", address(instantMarketFacet));
         Deployments.writeFacet("instantFillFacet", address(instantFillFacet));
+        Deployments.writeFacet("instantTakeoverFacet", address(instantTakeoverFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2374,6 +2379,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     function _getInstantFillSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = InstantFillFacet.fillInstant.selector;
+    }
+
+    /// @dev Selectors for `InstantTakeoverFacet` — a lender's takeover at
+    ///      face value into another lender's slot.
+    function _getInstantTakeoverSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = InstantTakeoverFacet.takeoverInstant.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {

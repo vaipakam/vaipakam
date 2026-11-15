@@ -92,6 +92,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -328,7 +329,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // totals and the Declared host; every selector is new (an Add).
     // 119 -> 121: InstantMarketFacet + InstantFillFacet (#3656) - the instant
     // borrow and its one-fill executor; every selector is new (an Add).
-    uint256 public constant EXPECTED_FACETS = 121;
+    // 121 -> 122: InstantTakeoverFacet (#3656 §7) - a lender's takeover at
+    // face value into another lender's slot; its selector is new (an Add).
+    uint256 public constant EXPECTED_FACETS = 122;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1386,6 +1389,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         items[120] = Item(
             "instantFillFacet", ArtifactDeploy.deploy(type(InstantFillFacet).name), _getInstantFillSelectors()
+        );
+        items[121] = Item(
+            "instantTakeoverFacet",
+            ArtifactDeploy.deploy(type(InstantTakeoverFacet).name),
+            _getInstantTakeoverSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

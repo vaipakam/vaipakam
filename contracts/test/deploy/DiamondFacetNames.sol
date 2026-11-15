@@ -131,7 +131,9 @@ abstract contract DiamondFacetNames {
     ///      common ledger).
     ///      119 → 121 with `InstantMarketFacet` and `InstantFillFacet` (#3656
     ///      — the instant borrow and its one-fill executor).
-    function cutFacetNames() internal pure returns (string[121] memory) {
+    ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
+    ///      at face value).
+    function cutFacetNames() internal pure returns (string[122] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -301,6 +303,7 @@ abstract contract DiamondFacetNames {
             // The instant market (#3656): borrower entry, and one fill.
             "InstantMarketFacet",
             "InstantFillFacet",
+            "InstantTakeoverFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

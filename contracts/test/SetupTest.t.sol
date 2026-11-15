@@ -52,6 +52,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -438,6 +439,7 @@ contract SetupTest is Test {
     MarketLedgerFacet marketLedgerFacet;
     InstantMarketFacet instantMarketFacet;
     InstantFillFacet instantFillFacet;
+    InstantTakeoverFacet instantTakeoverFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -621,6 +623,7 @@ contract SetupTest is Test {
         marketLedgerFacet = MarketLedgerFacet(ArtifactDeploy.deploy(type(MarketLedgerFacet).name));
         instantMarketFacet = InstantMarketFacet(ArtifactDeploy.deploy(type(InstantMarketFacet).name));
         instantFillFacet = InstantFillFacet(ArtifactDeploy.deploy(type(InstantFillFacet).name));
+        instantTakeoverFacet = InstantTakeoverFacet(ArtifactDeploy.deploy(type(InstantTakeoverFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -658,7 +661,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](123);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1188,6 +1191,11 @@ contract SetupTest is Test {
             facetAddress: address(instantFillFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getInstantFillFacetSelectors()
+        });
+        cuts[122] = IDiamondCut.FacetCut({
+            facetAddress: address(instantTakeoverFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInstantTakeoverFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
