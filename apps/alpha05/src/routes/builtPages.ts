@@ -18,6 +18,9 @@ import { VaultPage } from '../pages/vault/VaultPage';
 /** The governance page decodes calls against the Diamond's whole ABI, which
  *  no other page needs, so it loads with the route instead of with the app. */
 const GovernancePage = lazy(() => import('../pages/governance/GovernancePage').then((m) => ({ default: m.GovernancePage })));
+/** The Console reads the price guard's ABI and the settings readers, which
+ *  no other page needs, so it loads with the route too. */
+const ConsolePage = lazy(() => import('../pages/console/ConsolePage').then((m) => ({ default: m.ConsolePage })));
 
 /** The page each BUILT route renders, by page-map path. A route not listed
  *  keeps its honest placeholder; `pageMap.test.ts` holds this map and the
@@ -39,4 +42,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/rewards': RewardsPage,
   '/protection': ProtectionPage,
   '/desk': DeskPage,
+  '/console': ConsolePage,
 };

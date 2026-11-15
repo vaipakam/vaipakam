@@ -503,6 +503,9 @@ let signedBook = new Map();
 let signedBookLags = false;
 /** Order hashes held for a re-check after a reorganisation. */
 let signedReplay = new Set();
+/** RW-77 — the settings snapshot `/config/:chainId` answers, per chain; a
+ *  chain with none set answers that the index holds no snapshot. */
+let configSnapshots = new Map();
 
 const SIGNED_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 const SIGNED_CANCELLED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled'));
@@ -819,6 +822,7 @@ const server = http.createServer(async (req, res) => {
           '/signed-offers, /__stub/signed-offers',
           '/push/status, /link/telegram, /telegram/test, /unlink/telegram, /thresholds',
           '/__stub/agent',
+          '/config/:chainId, /__stub/config',
         ],
       });
       return;
@@ -835,6 +839,7 @@ const server = http.createServer(async (req, res) => {
       signedBook = new Map();
       signedBookLags = false;
       signedReplay = new Set();
+      configSnapshots = new Map();
       json(res, 200, { reset: true });
       return;
     }
@@ -870,6 +875,28 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === '/__stub/config' && req.method === 'POST') {
+      // The whole answer `/config/:chainId` gives for that chain, as the
+      // index writes it ({ chainId, available, values, ... }).
+      const next = JSON.parse(await readBody(req));
+      if (!Number.isSafeInteger(next.chainId) || typeof next.available !== 'boolean') {
+        json(res, 400, { error: 'config needs { chainId, available, ... }' });
+        return;
+      }
+      configSnapshots.set(next.chainId, next);
+      json(res, 200, { ok: true });
+      return;
+    }
+    const configPath = /^\/config\/(\d+)$/.exec(url.pathname);
+    if (configPath && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const chainId = Number(configPath[1]);
+      json(res, 200, configSnapshots.get(chainId) ?? { chainId, available: false });
       return;
     }
     if (url.pathname === '/assets/rankings' && req.method === 'GET') {

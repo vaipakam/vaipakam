@@ -2321,3 +2321,15 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 利率台：签名订单与链上取消
 
 列表读取该市场索引的 `/signed-offers`，并把 `signer` 设为你的钱包（每侧最多 500 行，并说明 `truncated`），因此其他挂单者的深度无法把你的订单挤出列表。每一行都必须能重新序列化为 31 个字段的规范传输格式，其 `orderHash` 必须等于根据订单重新计算的 EIP-712 结构哈希，并且必须指向你的钱包以及该市场的代币和期限；其他行都计为无法读取。报价簿只提供它认为有效且未过期的订单，并可能在两个方向上落后于链，因此每个订单的状态都在同一个区块读取：`signedOfferFilledAmount(orderHash)` 达到订单上限（`amountMax`，为零时为 `amount`）即为已使用（直接成交与 `cancelSignedOffer` 都写入上限），否则 `isSignedOfferNonceUsed(signer, nonce)` 为 nonce 已取消，否则当区块时间超过非零的 `expiresAt` 与 `deadline` 中较早者时为已过期，该数值大于零时为部分成交（撮合取走了一部分，其余仍可成交、可取消），其余为有效。取消单个订单发送 `cancelSignedOffer(order)`（仅签名者可调用）；按 nonce 取消发送 `invalidateSignedOfferNonce(nonce)`，在列出的有效订单中有两个或以上共用该 nonce 时提供，并在所有市场停止该钱包用该 nonce 签署的每个订单。协议暂停期间两者都会被拒绝。审核读取各订单状态和暂停状态，然后从你的钱包运行协议自身的试运行。成交本会扣取的金额：出借方为 `amountMax`（为零时为 `amount`），借款方为 `collateralAmountMax`（或 `collateralAmount`）。对部分成交的订单，审核会说明已成交的部分，以及其余部分仍可能扣取的金额：上限以下剩余的本金，或对借款方而言按订单自身比例对应的抵押品，向上取整。结果从交易自身由 Diamond 发出的 `SignedOfferCancelled` 或 `SignedOfferNonceBurned` 日志中读取，并按订单哈希或 nonce 以及你的钱包匹配。 在这个限于签名人的读取中，索引会以 `replayPending: true` 列出这些暂扣订单；该行说明在重新核对结束前订单不在共享簿中，而其状态仍来自上述链上读取；只有在最新状态仍可成交时，才补充说明签名仍可成交并继续提供取消。
+
+<a id="console-source"></a>
+
+### 协议控制台：快照还是链上
+
+控制台读取索引器的 `GET /config/:chainId`。只有当 `available` 为真、`stale` 为假、`updatedAt` 已设置且按设备时钟不超过 86,400 秒（允许超前最多 300 秒），并且存在 `values` 且没有 `bundleUnreported` 时，才使用快照。否则在最新区块读取：`getProtocolConfigBundle`（仅当该区块上其选择器的 `facetAddress` 等于本构建部署记录所列的 `configFacet` 时才带名称）、共享设置读取器的每个单值 getter，以及价格守卫的 getter。低于快照 `sourceBlock` 或 `staleAtBlock` 的区块视为失败。`unreported` 中的键列为未应答。全局暂停是在同一区块读取的 `paused()` 和 `pausedUntil()`；下一次自动暂停由 `autoPauseAvailableAt` 和 `autoPauseDurationSeconds` 得出。不含 `unreported` 的快照不会被使用。当 `getPauseIntervals` 的最后一个区间仍开放（结束值为 2^64−1）时，暂停视为管理暂停，此时同一区块的 `escapeOpensAt()` 给出逃生通道开启的时间。
+
+<a id="console-switches"></a>
+
+### 协议控制台：读取哪些开关
+
+从设置中读取：`partialFillEnabled`、`lenderIntentEnabled`、`autoLendEnabled` 和 `periodicInterestEnabled`（1a 类），`autoExtendEnabled` 和 `autoRefinanceEnabled`（1b 类），以及 `keepersPaused`（4 类）。本版本只列名称、不读取的有：完整费用费率、求解器容量限制、内部撮合清算与折价清算、抵押品出售挂单、后备支持选择加入、守护者奖励、风险访问门槛、费用折扣价格来源、奖励托管切换以及奖励领取期限。数值来自有效值 getter，因此治理未设置之处适用默认值；为零的利率模型、地址、符号或 id 写作未设置，为零的尘埃下限写作关闭，空的宽限期表写作内置默认值，为零的 `autoPauseAvailableAt` 写作从未。索引无法感知其变更的设置，在从快照显示时会加注。

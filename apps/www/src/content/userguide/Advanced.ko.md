@@ -2480,3 +2480,15 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 레이트 데스크: 서명 주문과 체인 상 취소
 
 목록은 `signer`를 여러분의 지갑으로 정해 그 마켓에 대한 인덱스의 `/signed-offers`를 읽습니다(쪽마다 최대 500행, `truncated`는 명시). 그래서 다른 메이커의 물량이 여러분의 주문을 밀어낼 수 없습니다. 각 행은 31개 필드의 정규 전송 형식으로 다시 직렬화되어야 하고, `orderHash`는 주문에서 다시 계산한 EIP-712 구조체 해시와 같아야 하며, 여러분의 지갑과 마켓의 토큰 및 기간을 담고 있어야 합니다. 그 밖의 행은 읽을 수 없는 행으로 셉니다. 북은 활성이고 만료되지 않은 주문만 제공하며 체인보다 양쪽 방향으로 늦을 수 있으므로, 각 주문의 상태는 한 블록에서 읽습니다. `signedOfferFilledAmount(orderHash)`가 주문의 상한(`amountMax`, 0이면 `amount`)에 이르면 사용됨(직접 체결과 `cancelSignedOffer`는 모두 상한을 씁니다), 아니면 `isSignedOfferNonceUsed(signer, nonce)`일 때 nonce 취소됨, 아니면 블록 시각이 0이 아닌 `expiresAt`과 `deadline` 중 이른 쪽을 지났을 때 만료됨, 그 값이 0보다 크면 일부 체결(매칭이 일부를 가져갔고 나머지는 여전히 체결·취소할 수 있음), 그 외에는 열림입니다. 주문 하나를 취소하면 `cancelSignedOffer(order)`를 보내고(서명자만), nonce로 취소하면 `invalidateSignedOfferNonce(nonce)`를 보냅니다. 후자는 게시된 열린 주문 둘 이상이 그 nonce를 공유할 때 제시되며, 지갑이 그 nonce로 서명한 모든 주문을 모든 마켓에서 멈춥니다. 프로토콜이 일시 정지된 동안에는 둘 다 거부됩니다. 검토는 상태와 일시 정지를 읽은 뒤 여러분의 지갑에서 프로토콜 자체의 모의 실행을 돌립니다. 체결이 가져갔을 금액은 대출자의 `amountMax`(0이면 `amount`) 또는 차입자의 `collateralAmountMax`(또는 `collateralAmount`)입니다. 일부 체결된 주문은 이미 체결된 몫과 나머지가 아직 가져갈 수 있는 금액만 검토에 표시합니다. 상한 아래 남은 원금, 차입자라면 주문 자체 비율에 따른 그 담보(올림)입니다. 결과는 Diamond가 낸 트랜잭션 자체의 `SignedOfferCancelled` 또는 `SignedOfferNonceBurned` 로그에서 읽고, 주문 해시나 nonce와 여러분의 지갑으로 맞춰 봅니다. 서명자로 한정한 이 조회에서 인덱스는 보류된 주문을 `replayPending: true`와 함께 나열합니다. 그 행은 재확인이 끝날 때까지 주문이 공유 북에서 빠져 있다고 알리며, 상태는 계속 위의 체인 조회에서 얻습니다. 아직 체결할 수 있는 최신 상태일 때만 서명이 여전히 체결될 수 있다고 덧붙이고 취소를 계속 제공합니다.
+
+<a id="console-source"></a>
+
+### 프로토콜 콘솔: 스냅샷 또는 체인
+
+콘솔은 인덱서의 `GET /config/:chainId`를 읽습니다. 스냅샷은 `available`이 참이고 `stale`이 거짓이며, `updatedAt`이 설정되어 기기 시계로 86,400초 이내(최대 300초 앞선 것은 허용)이고, `values`가 있으며 `bundleUnreported`가 없을 때만 사용합니다. 그렇지 않으면 최신 블록에서 읽습니다. `getProtocolConfigBundle`(그 블록에서 해당 셀렉터의 `facetAddress`가 이 빌드의 배포 기록이 지정한 `configFacet`과 같을 때만 이름을 붙임), 공유 설정 리더의 모든 단일 값 게터, 그리고 가격 가드의 게터입니다. 스냅샷의 `sourceBlock` 또는 `staleAtBlock`보다 낮은 블록은 실패로 간주합니다. `unreported`의 키는 응답 없음으로 나열합니다. 전역 일시 중지는 한 블록에서 읽은 `paused()`와 `pausedUntil()`이며, 다음 자동 일시 중지는 `autoPauseAvailableAt`과 `autoPauseDurationSeconds`로 정합니다. `unreported`가 없는 스냅샷은 쓰지 않습니다. `getPauseIntervals`의 마지막 구간이 열려 있으면(끝이 2^64−1) 관리자 일시 중지로 보며, 이때 같은 블록의 `escapeOpensAt()`이 비상 탈출 경로가 열리는 시점을 알려 줍니다.
+
+<a id="console-switches"></a>
+
+### 프로토콜 콘솔: 읽는 스위치
+
+설정에서 읽는 것: `partialFillEnabled`, `lenderIntentEnabled`, `autoLendEnabled`, `periodicInterestEnabled`(1a 등급), `autoExtendEnabled`, `autoRefinanceEnabled`(1b 등급), `keepersPaused`(4 등급). 이번 버전에서 이름만 표시하고 읽지 않는 것: 전체 수수료 요율, 솔버 용량 제한, 내부 매칭 청산과 할인 청산, 담보 매각 리스팅, 백스톱 참여, 키퍼 보상, 위험 접근 게이트, 수수료 할인 가격 출처, 보상 보관 전환, 보상 청구 기한. 값은 실효 게터에서 오므로 거버넌스가 정하지 않은 곳에는 기본값이 적용됩니다. 0인 금리 모델, 주소, 심볼, ID는 미설정으로, 0인 더스트 하한은 꺼짐으로, 빈 유예 일정은 내장 기본값으로, 0인 `autoPauseAvailableAt`은 없음으로 표시합니다. 인덱스가 변경을 들을 수 없는 설정은 스냅샷에서 보여 줄 때 표시가 붙습니다.

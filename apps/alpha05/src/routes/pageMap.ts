@@ -46,7 +46,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/rewards', name: 'Rewards', tier: 'basic', rows: 'RW VPFI, tiers, recycling', order: 12, built: true, nav: true, currentApp: '/vpfi' },
   { path: '/protection', name: 'Protection', tier: 'advanced', rows: 'ACC protected account mode', order: 13, built: true, nav: true, currentApp: '/vault/protection' },
   { path: '/desk', name: 'Desk', tier: 'advanced', rows: 'OFF markets, rate ladder, signed orders', order: 14, built: true, nav: true, currentApp: '/desk' },
-  { path: '/console', name: 'Console', tier: 'advanced', rows: 'ACC switches, keeper posture, pause', order: 15, built: false, nav: true, currentApp: '/protocol-console' },
+  { path: '/console', name: 'Console', tier: 'advanced', rows: 'ACC switches, keeper posture, pause', order: 15, built: true, nav: true, currentApp: '/protocol-console' },
   { path: '/recover', name: 'Recover', tier: 'advanced', rows: 'ACC/NFT adoption and disown', order: 16, built: false, nav: true, currentApp: '/recover' },
   { path: '/analytics', name: 'Analytics', tier: 'public', rows: 'metrics, transparency', order: 17, built: false, nav: true, currentApp: '/analytics' },
   { path: '/nft', name: 'Verifier', tier: 'public', rows: 'NFT position verifier', order: 18, built: false, nav: false, currentApp: '/nft' },
