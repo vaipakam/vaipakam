@@ -2413,6 +2413,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 確認画面は1つのブロックで `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` と作成者の `getProtectedAccount` を読み、`OfferCancelFacet.cancelOffer(id)` を試行実行します。ファセットは作成者のマネージャーにはいつでも、`expiresAt` を過ぎれば誰にでも取消を認めます。`OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` を拒否し、`amountFilled == 0` のオファーが300秒未満で期限内なら `CancelCooldownActive` を返し、`whenNotPaused` です。返却額はファセット自身の分岐で算出します。ERC-20の貸付オファーは貸付資産の `(amountMax または amount) - amountFilled`、NFTの貸付オファーはそのトークンまたはERC-1155の数量、借入リクエストは未使用の担保 `(collateralAmountMax または collateralAmount) - collateralAmountFilled` またはそのNFT（`refinanceCarryOver` で担保がローンに残る場合はなし）、レンタルリクエストは `amount × durationDays` に `rentalBufferBpsAtCreate` のバッファを加えた額です。`getOfferLinkedLoanId` でローンに結びつくオファーや、記録されたバッファがゼロのレンタルリクエスト（その場合プロトコルは現行率を使う）は署名前に算出しません。返却はすべてボールト出金を通じて作成者のボールトから出るため、保護モードではキューに入るか、ロック中はボールトに留まります。ポジショントークンは廃止されます。完了カードは `OfferCanceled(offerId, creator)`、作成者へのプロトコルの支払い記録、作成者へのトークン自身の送金を読みます。
 
+<a id="offer-edit"></a>
+
+### オファーを変更する
+
+`OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)` を使い、`validUntil` はチェーンの時刻から取ります（#3412）。ファセットは変わるグループだけを検査します。それぞれの `LibOfferShape` の規則（上限以下の正の下限、全部か無しの `fillMode` では金額が一つ、金利の上限は最大 10,000 bps、貸し手の担保の数値は一つ）、`amountFilled` や `collateralAmountFilled` を下回らないこと、金額の変更ではケイデンスの規則と価値の下限、金額や担保の変更ではオファーの上下限です。作成者以外、受け入れ済みのオファー、一時停止中の資産やプロトコル、制裁対象の呼び出し元、設定済みの `parallelSaleOrderHash`、消費済みまたはリンク済みの売却用オファー、オフセット用オファーは拒否され、借り換えの印が付いたオファーは金額と担保を保ちます。貸し手の ERC-20 オファーは `amountMax` の差を、ERC-20 担保の借り手の ERC-20 リクエストは `collateralAmountMax` の差を精算します。増加分はウォレットが Diamond に与えた承認のもとで `vaultDepositERC20` によりウォレットから引き出され、減少分は理由 `OFFER_REFUND` でボールトの出金経路から出ていき、保護モードはそれをキューに入れるか保留します。変更は `termsSetAt` を打ち直すため約定は `getMinTermsAgeSec` だけ待ち、`backstopEligibleAfter` は消去されます。確認画面は同じブロックで `getOffer`、`getOffersWithState`、`getOfferLinkedLoanId`、`paused()`、`getMinTermsAgeSec`、作成者の保護アカウント、引き出しがある場合はウォレットの残高と承認を読み、`modifyOffer` を試行します。引き出しが承認を超えるときは正確な承認の後に試行します。完了カードは `OfferModified` を確認内容と照合し、トークンの移転と支払い記録を計測します。マッチングのセクションの金利の差は、読者の範囲のうち相手側の境界を相手の最も近い境界で埋めます（#3659）。
+
 <a id="offers-price-guard"></a>
 
 ### 価格変動ガード
