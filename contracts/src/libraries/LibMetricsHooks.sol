@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibMarketLedger} from "./LibMarketLedger.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title LibMetricsHooks
@@ -116,6 +117,8 @@ library LibMetricsHooks {
         s.assetPairActiveLoanIds[loan.principalAsset][loan.collateralAsset].push(id);
         s.assetPairActiveLoanIdsPos[loan.principalAsset][loan.collateralAsset][id] =
             s.assetPairActiveLoanIds[loan.principalAsset][loan.collateralAsset].length;
+        // Instant market §8 — the loan now counts toward Lent.
+        LibMarketLedger.syncLoan(s, loan);
 
         // Unique-user tracking — both sides counted exactly once across
         // all their lifetime activity (offers + loans).
@@ -293,6 +296,9 @@ library LibMetricsHooks {
         if (!wasTerminal && isTerminal) {
             s.terminalBadOrSettledCount += 1;
         }
+        // Instant market §8 — a loan leaving the active set stops counting
+        // toward Lent (an Active <-> FallbackPending edge changes nothing).
+        LibMarketLedger.syncLoan(s, loan);
     }
 
     // ───────────────────────── Offer hooks ────────────────────────

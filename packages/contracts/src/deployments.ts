@@ -240,6 +240,8 @@ export interface DeploymentFacets {
   signedOfferMatchFacet?: HexAddress;
   /** #3410 — the loan clock's disclosure, split off LoanFacet. */
   loanClockFacet?: HexAddress;
+  /** Instant market §8 — the common ledger. */
+  marketLedgerFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

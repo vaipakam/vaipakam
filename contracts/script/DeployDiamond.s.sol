@@ -63,6 +63,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
@@ -548,6 +549,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
             SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #3410 — the loan clock's disclosure, split off LoanFacet (EIP-170).
         LoanClockFacet loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        // Instant market §8 — the common ledger's totals and the Declared host.
+        MarketLedgerFacet marketLedgerFacet =
+            MarketLedgerFacet(ArtifactDeploy.deploy(type(MarketLedgerFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -596,7 +600,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](119);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -717,6 +721,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
         cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
         cuts[117] = _buildCut(address(loanClockFacet), _getLoanClockSelectors());
+        cuts[118] = _buildCut(address(marketLedgerFacet), _getMarketLedgerSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1465,6 +1470,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
+        Deployments.writeFacet("marketLedgerFacet", address(marketLedgerFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2326,6 +2332,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = SignedOfferFacet.hashSignedOfferFill.selector;
         // #3327 part 2 — the digest a maker signs for a set of offers.
         s[11] = SignedOfferFacet.hashSignedOfferSet.selector;
+    }
+
+    /// @dev Selectors for `MarketLedgerFacet` — the instant market's common
+    ///      ledger (§8): its views, the Declared roll and the Declared host.
+    function _getMarketLedgerSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = MarketLedgerFacet.getMarketLedger.selector;
+        s[1] = MarketLedgerFacet.getPairLedger.selector;
+        s[2] = MarketLedgerFacet.rollDeclaredLedger.selector;
+        s[3] = MarketLedgerFacet.syncDeclared.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -345,6 +346,7 @@ contract LenderIntentFacet is
         // membership on funded capital blocks arbitrary zero-capital registrations
         // from bloating the global feed (Codex WI-2a r1).
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncDeclared(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — every (re)write of the intent resets its priority-routing opt-in,
         // so a replacement intent never inherits the old one and never spends the
         // owner's paid credits without a fresh opt-in ({setLenderIntentPriority}).
@@ -383,6 +385,7 @@ contract LenderIntentFacet is
         intent.active = false;
         // #625 WI-2a — now inactive ⇒ drop it from the discovery registry.
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncDeclared(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — a cancelled intent carries no priority opt-in.
         LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset, slot);
@@ -1217,5 +1220,22 @@ contract LenderIntentFacet is
                 ][key.slot]
             );
         }
+    }
+
+    /// @dev Instant market §8 — reconcile the slot's share of Declared on
+    ///      its one host, `MarketLedgerFacet`. A slot's declared figure
+    ///      depends only on `active`, `maxExposure` and `lendUntil`, and
+    ///      {setLenderIntent} and {cancelLenderIntent} are the only writers of
+    ///      those, so these are the only two callers. (Capital changes and
+    ///      fills move no declared figure.)
+    function _syncDeclared(address owner, address lendingAsset, address collateralAsset, uint8 slot)
+        private
+    {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                MarketLedgerFacet.syncDeclared.selector, owner, lendingAsset, collateralAsset, slot
+            ),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
     }
 }

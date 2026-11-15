@@ -6,6 +6,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
+import {LibMarketLedger} from "./LibMarketLedger.sol";
 import {SellerClaimFacet} from "../facets/SellerClaimFacet.sol";
 
 /**
@@ -234,6 +235,7 @@ library LibInterestLedger {
     ) internal {
         touch(s, loan);
         loan.principal -= cleared;
+        LibMarketLedger.syncLoan(s, loan); // Lent follows the open principal.
         if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
         LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
         l.principalOwed = l.principalOwed > delivered ? l.principalOwed - delivered : 0;
@@ -245,6 +247,7 @@ library LibInterestLedger {
     function writeOffPrincipal(LibVaipakam.Storage storage s, LibVaipakam.Loan storage loan) internal {
         touch(s, loan);
         loan.principal = 0;
+        LibMarketLedger.syncLoan(s, loan); // Lent follows the open principal.
     }
 
     /// @notice Sets `loan.interestRateBps`, checkpointing the old rate first.

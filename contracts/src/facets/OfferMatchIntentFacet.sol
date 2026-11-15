@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
@@ -259,6 +260,9 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // #625 WI-2c — register the loan in the roll-discovery set (removed when
         // its intentOrigin is cleared at terminal release / roll).
         LibVaipakam.addIntentLoan(loanId);
+        // Instant market §8 — the loan counts as lent from Auto-lend slots,
+        // fixed here at opening.
+        LibMarketLedger.markFromSlot(s, s.loans[loanId]);
 
         // Transient lender-slice cleanup (identical to the signed-lender path):
         // the slice is the match ACCEPTOR, so its own OfferCreated NFT + reverse-

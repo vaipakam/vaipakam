@@ -310,6 +310,7 @@ FACETS=(
   "SignedOfferMatchFacet"
   # The loan clock's disclosure, split off LoanFacet (#3410).
   "LoanClockFacet"
+  "MarketLedgerFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

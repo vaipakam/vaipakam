@@ -1537,6 +1537,37 @@ library LibVaipakam {
     ///         top. Reservation of in-flight principal reuses the encumbrance
     ///         sub-ledger (#407) via the materialized slice offer's principal
     ///         lien — no new lock type.
+    /// @dev Instant market §8 — one Declared counter (see `LibMarketLedger`).
+    ///      `nextDay` is the first day (numbered from 1 = 1970-01-01 UTC) whose
+    ///      expiry bucket is still in `total`; 0 = never written.
+    struct DeclaredCounter {
+        uint256 total;
+        uint64 nextDay;
+        mapping(uint64 => uint256) expiring;
+    }
+
+    /// @dev What one Auto-lend slot last added to Declared, and the day its
+    ///      fill window closes (0 = no lend-until time).
+    struct DeclaredRecord {
+        uint256 amount;
+        uint64 day;
+    }
+
+    /// @dev Instant market §8 — the Lent figures: `all` is the open principal
+    ///      of every active ERC-20 loan, `fromSlots` the part an Auto-lend slot
+    ///      fill opened.
+    struct LentTotals {
+        uint256 all;
+        uint256 fromSlots;
+    }
+
+    /// @dev What one loan last added to Lent, and whether a slot opened it
+    ///      (fixed at opening).
+    struct LentRecord {
+        uint256 amount;
+        bool fromSlot;
+    }
+
     struct LenderIntent {
         bool active; // false ⇒ no standing intent (default / cancelled)
         uint256 maxExposure; // hard cap on aggregate LIVE principal out from this intent
@@ -8411,6 +8442,24 @@ library LibVaipakam {
         ///      unchanged. Written only by `LibRefinanceRequest.record`.
         ///      Appended — append-only.
         mapping(uint256 => uint256) refinanceRequestTokenId;
+        /// @dev Instant market §8 — the common ledger's Declared total, per
+        ///      lending asset and per (lending asset, collateral asset), with
+        ///      the per-day expiry buckets that take a slot out once its fill
+        ///      window has closed. Written only by `LibMarketLedger`.
+        ///      Appended — append-only.
+        mapping(address => DeclaredCounter) declaredByAsset;
+        mapping(address => mapping(address => DeclaredCounter)) declaredByPair;
+        /// @dev Per Auto-lend slot (keyed by `intentKeyHash`), what it last
+        ///      added to Declared and in which day's bucket. Written only by
+        ///      `LibMarketLedger.syncIntent`.
+        mapping(bytes32 => DeclaredRecord) intentDeclaredRecord;
+        /// @dev Instant market §8 — the common ledger's Lent totals, per
+        ///      lending asset and per pair. Written only by `LibMarketLedger`.
+        mapping(address => LentTotals) lentByAsset;
+        mapping(address => mapping(address => LentTotals)) lentByPair;
+        /// @dev Per loan, what it last added to Lent and whether a slot
+        ///      opened it. Written only by `LibMarketLedger`.
+        mapping(uint256 => LentRecord) loanLentRecord;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

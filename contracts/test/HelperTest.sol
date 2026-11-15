@@ -117,6 +117,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -978,6 +979,14 @@ contract HelperTest {
 
     /// @dev #3410 — the loan clock's disclosure, split off LoanFacet.
     ///      Mirrors `DeployDiamond._getLoanClockSelectors`.
+    function getMarketLedgerFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = MarketLedgerFacet.getMarketLedger.selector;
+        selectors[1] = MarketLedgerFacet.getPairLedger.selector;
+        selectors[2] = MarketLedgerFacet.rollDeclaredLedger.selector;
+        selectors[3] = MarketLedgerFacet.syncDeclared.selector;
+    }
+
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](2);
         selectors[0] = LoanClockFacet.getLoanDeadlines.selector;
