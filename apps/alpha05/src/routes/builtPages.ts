@@ -1,4 +1,5 @@
 import { lazy, type ComponentType } from 'react';
+import { ActivityPage } from '../pages/activity/ActivityPage';
 import { AlertsPage } from '../pages/alerts/AlertsPage';
 import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { ClaimsPage } from '../pages/claims/ClaimsPage';
@@ -43,6 +44,7 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/offers': OffersPage,
   '/offers/:id': OfferPage,
   '/alerts': AlertsPage,
+  '/activity': ActivityPage,
   '/settings': SettingsPage,
   '/rent': RentPage,
   '/rewards': RewardsPage,

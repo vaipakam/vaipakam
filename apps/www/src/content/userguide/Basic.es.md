@@ -664,6 +664,14 @@ de peligro. No hay coste de gas; nada ocurre on-chain.
 
 La página Alertas muestra los avisos que el índice del protocolo guarda para tu wallet en la red en la que estás, los más recientes primero. Es gratis y no hay que darse de alta en nada. Se escribe un aviso cuando un préstamo empieza, se devuelve en parte o del todo, entra en impago o se liquida, se acerca a su vencimiento, entra en su periodo de gracia o sale de él, o su salud baja de 1,5, 1,2 o 1,05, y cuando una entrada de recompensa se acerca a su plazo de reclamación o lo pasa. Cada aviso abre el préstamo, cuya página lo lee de la cadena, o Claims para una recompensa. La campana junto a tu wallet, arriba, cuenta los avisos llegados desde la última vez que abriste la página en este navegador. Si el índice no se puede leer, la página lo dice en lugar de mostrar una bandeja vacía. Telegram, push, los avisos de salud y los recordatorios de pago se configuran justo debajo de la bandeja. Cada alerta describe cómo estaban las cosas cuando se escribió; abra el préstamo para ver cómo está ahora.
 
+<a id="activity-history"></a>
+
+### Tu actividad
+
+La página Actividad, a la que se llega desde Posiciones y desde Alertas, muestra todo lo que en la red actual involucró a tu billetera, lo más reciente primero: los eventos de cualquier préstamo en el que hayas tenido una posición y los eventos que nombran a tu billetera, como tus ofertas, tu bóveda, tus ajustes y tus recompensas. Cada transacción es una línea, encabezada por lo que ocurrió, con el resto de esa transacción plegado debajo. Una línea indica su préstamo u oferta, quién la envió y cuándo, y enlaza a la transacción.
+
+Un importe se muestra solo cuando el índice registró uno; si no, la línea dice que no se registró ningún importe. Los eventos de los bloques más recientes van primero, marcados como no definitivos, porque un bloque todavía puede cambiar. Un préstamo cuyo final encontró una comprobación, y no un evento, lo dice. Mientras el índice sigue leyendo el historial antiguo, la página dice que puede faltar actividad anterior, y una página que el índice no pudo responder nunca se muestra como un historial vacío.
+
 <a id="alerts-channels"></a>
 
 ### Telegram, push y avisos

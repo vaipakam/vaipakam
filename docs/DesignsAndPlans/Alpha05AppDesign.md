@@ -2769,6 +2769,21 @@ above. Each resolves here, so a route reviewer needs no private file:
   resumes: a connect the picker started (a phone connection prepares its
   link as the picker opens) can stay pending after the picker closes, and
   must never leave the visitor with a button that cannot be pressed.
+- **RB-ACTIVITY** — The Activity page (#3677) reads one wallet's history
+  from the index's own wallet filter, never by paging the whole network's feed
+  and keeping the rows that look like the wallet's. The index answers with the
+  events on any loan the wallet ever held a position in and the events that
+  name it by the shared participant rule, and says when its record of the
+  second part is still being filled from older history: the page then says
+  older activity may be missing and never claims the list is complete. Events
+  of one transaction are one line, led by the event that says what happened,
+  with the rest listed under it. Every kind the index can file for a wallet
+  has words (a test holds the catalog to the shared rule's kinds); a kind
+  without words is named, never hidden. An amount is shown only when the
+  index recorded one, otherwise the line says none was recorded; events in
+  blocks not yet final are marked so, with no time; a loan whose ending a
+  check found says what was and was not seen; a failed read is never shown
+  as an empty history, and unreadable rows are counted.
 
 ## 3. Companion specifications
 
