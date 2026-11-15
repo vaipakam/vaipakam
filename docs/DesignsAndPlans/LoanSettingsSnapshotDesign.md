@@ -64,10 +64,9 @@ A set is a small record in Diamond storage, numbered from 1:
 
 | Part | What it names |
 | --- | --- |
-| Price guard | The guard contract's address |
-| Price version | The guard's config epoch and the feed registry's epoch, as a pair (section 4) |
+| Price | The guard contract's address together with a price version on that guard: its config epoch and the feed registry's epoch (section 4). One part, never split |
 | Route set | An immutable ordered adapter list (section 5) |
-| Marketplace | Seaport and the conduit key (section 6) |
+| Marketplace | A numbered, immutable binding of Seaport, the conduit key and the listing executor built for them (section 6) |
 
 A loan stores only the set's number. The set is minted lazily: at loan
 creation the Diamond compares the live values with the newest set and mints a
@@ -199,14 +198,18 @@ makes it current. The old list is never edited.
 
 ## 6. Marketplace
 
-The set records Seaport and the conduit key. Every listing made for a loan
-(the borrower's own listing, the auto-list at the floor, the Dutch listing,
-the atomic sale) resolves the conduit from the loan's set, not from the live
-setting.
+The set records a marketplace: a numbered, immutable binding of Seaport,
+the conduit key and the listing executor built for that Seaport. A new
+executor or conduit is a new marketplace with a new number; an existing
+binding is never edited. Every listing made for a loan (the borrower's own
+listing, the auto-list at the floor, the Dutch listing, the atomic sale)
+takes the executor and the conduit from the loan's marketplace, not from the
+live setting, so a new listing on an older loan still goes through the
+executor that matches its Seaport.
 
 **A live listing keeps the settings it was made with.** Each listing already
 records its executor and its order context (Seaport, conduit, zone). That
-per-listing record stays as it is and does not fold into the set: a listing
+per-listing record stays as it is, separate from the loan's set: a listing
 is cancelled, filled and cleaned up through the executor and the conduit it
 was created on, whatever the loan's set says by then. A marketplace move
 therefore changes only listings created afterwards. The retirement of a
@@ -225,7 +228,11 @@ open loan, and does not move an open loan either.
 
 **Retirement.** Governance (the Timelock) may propose to retire one part:
 a price version (which retires every older one on that guard with it, by
-raising the guard's floor), a whole guard, a route set, or a marketplace.
+raising the guard's floor), a whole guard with every version on it, a route
+set, or a marketplace. The guard and the price version are one part: the
+replacement named for a price retirement is always a guard together with a
+version on that guard, so a loan moved off a retired guard lands on the new
+guard at a version the new guard can answer.
 
 - It waits at least 7 days. The guardian or the owner can cancel it. Anyone
   can execute it once due, and a keeper pass backs that step (shipped
@@ -331,6 +338,10 @@ fallback custody or past default cannot be moved.
   the loan at the settings it moved to.
 - A retired price version is refused by the guard for every caller; versions
   on two guards are never compared.
+- A loan moved off a retired guard lands on the named guard and a version of
+  that guard, and prices there.
+- A new listing on a loan opened before an executor change uses the loan's
+  marketplace executor.
 - An obligation handover keeps the loan's set, and the incoming borrower's
   vault validates the same named settings.
 - A live listing is cancelled and cleaned up through its original executor
