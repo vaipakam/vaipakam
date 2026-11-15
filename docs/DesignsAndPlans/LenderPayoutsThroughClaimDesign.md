@@ -1,7 +1,7 @@
-# Every lender payout goes through the position claim — design
+# Every loan payout goes through the position claim — design
 
 **Status:** owner direction and approval, 2026-11-15. Card #3629. Ready to build after the Auto-lend PRs (#3618 / #3619, #3626).
-**Scope:** payments owed to a lender position while its loan is still open. Payments that end a loan are already claim-only and are not changed.
+**Scope:** every payment a loan step makes to a loan party. The lender side is sections 2 to 3.5; the borrower side is section 3.6 (owner direction 2026-11-15: no loan step returns assets to a user's wallet without the claim). Payments that end a loan are already claim-only and are not changed. Payments to someone who is not a party to the loan (a liquidator's bonus, a keeper's fee, the treasury) are out of scope.
 **Related:** `AutoLendLendUntilDesign.md` section 9 (partial repayment on intent loans), `IdleLiquidityMatchingDesign.md`, the vault outflow policy (#3205), the protected-mode delay (#3206), the position lock (#3318).
 
 ## 1. The rule
@@ -87,10 +87,20 @@ This step is keeper-backed and state-changing, so it gets a row in `permissionle
 
 For each payment the events state: who paid, how much went to sellers, how much was held for the position and in whose vault. For each claim or re-commit: the loan, the holder or intent, the asset, the measured amount. No surface shows a held amount as received.
 
+### 3.6 Borrower side
+
+Scouted 2026-11-15. One helper pays a borrower's wallet directly: `LibCloseoutFreeze.payOrHoldBorrowerExtra`, which pushes the extra left over from a sale of the borrower's collateral to the current holder of the borrower position NFT (through the `ForcedSaleFacet.payBorrowerWallet` self-call). It has two callers: the periodic-interest forced sale (`ForcedSaleFacet`, the loan stays open) and the settlement of a prepay-listing collateral sale (`PrepayListingFacet`). When the holder is frozen, or the wallet push fails, the same helper already holds the extra instead: in the stored borrower's vault, reserved, on the loan's borrower surplus row, released by the borrower claim; an obligation handover pays a held extra into the exiting holder's vault (`payHeldBorrowerExtra`, through the position-holder outflow route).
+
+Rule: the held route becomes the only route. The wallet push, its self-call entry (`payBorrowerWallet`) and the Diamond-without-the-route fallback are deleted; `payOrHoldBorrowerExtra` becomes a plain hold. Everything else a loan step gives a borrower already lands in a vault (the loan principal at acceptance, released collateral, a terminal surplus).
+
+A held extra on an open loan must be claimable before the loan ends, as on the lender side: `claimHeldForBorrower(loanId)`, callable by the holder of the borrower NFT, built on the existing `payHeldBorrowerExtra` step (fail-closed frozen check, reservation released, row zeroed but not marked claimed, paid into the holder's vault through the position-holder route, which stamps the cooldown). The final borrower claim keeps folding an unclaimed row. The builder confirms whether the borrower claim is terminal-only today; if a mid-loan path already exists, it is reused and no entry is added.
+
+Tests: both callers leave nothing in the holder's wallet and the surplus row, vault balance and reservation rise by what arrived; a mid-loan claim pays the holder's vault once; a handover still pays the exiting holder; a sale or transfer of the borrower position inside the cooldown after a claim is refused; a frozen holder behaves as today. `ForcedSaleFacet` and `PrepayListingFacet` refresh together with the host, as today.
+
 ## 4. Spec and app
 
 - `ProjectDetailsREADME.md`: replace the "paths that pay the lender's wallet directly" sentence and state the rule in section 1; state the mid-loan claim and the intent re-commit. Record the change of intent with this decision's date, as the docs-versus-code rule requires.
-- App (alpha05): each lender position shows "ready to claim" with the amount; one action claims across positions; the copy says the claim moves the money into the holder's vault and that a withdrawal to the wallet follows the account's usual rules, including a protected account's delay. Borrower and renter screens stop saying a payment "goes to the lender's wallet". The indexer handles the new events (the event-coverage guard will require it).
+- App (alpha05, card #3631): "claim and withdraw" as one action. A claim moves money into the holder's vault and a withdrawal moves it to the wallet; the app offers both as one flow, states the two steps, and for a protected account shows that the withdrawal is queued for the account's delay. Each position (lender or borrower) shows "ready to claim" with the amount; one action claims across positions; the copy says the claim moves the money into the holder's vault and that a withdrawal to the wallet follows the account's usual rules, including a protected account's delay. Borrower and renter screens stop saying a payment "goes to the lender's wallet". The indexer handles the new events (the event-coverage guard will require it).
 - Keeper bot ABIs and frontend ABIs re-exported.
 
 ## 5. Reach
