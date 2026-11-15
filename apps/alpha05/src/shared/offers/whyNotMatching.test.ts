@@ -54,8 +54,9 @@ const cp = (o: StoredOffer, code: number | null, state: Counterparty['state'] = 
   code,
   matchRateBps,
 });
-const read = (counterparties: Counterparty[], switchOn: boolean | null = true): WhyRead => ({
+const read = (counterparties: Counterparty[], switchOn: boolean | null = true, me: StoredOffer = mine): WhyRead => ({
   block: 1n,
+  mine: me,
   switchOn,
   counterparties: counterparties.map((c, i) => (c.rank < 0 ? { ...c, rank: i } : c)),
   unread: 0,
@@ -101,24 +102,24 @@ describe('why an offer is not matching (#3623)', () => {
   });
   it('prefers a pair the protocol would match, then the closest open refusal', () => {
     const matchable = cp(req({ id: 3n }), MATCH_CODE.ok, 'open', 650n, 1);
-    expect(whyOf(mine, ranked(2), read([cp(req(), MATCH_CODE.rate), matchable]))).toEqual({ kind: 'matchable', with: matchable });
-    const why = whyOf(mine, ranked(2), read([cp(req(), null, 'accepted'), cp(req({ id: 3n }), MATCH_CODE.rate)]));
+    expect(whyOf(ranked(2), read([cp(req(), MATCH_CODE.rate), matchable]))).toEqual({ kind: 'matchable', with: matchable });
+    const why = whyOf(ranked(2), read([cp(req(), null, 'accepted'), cp(req({ id: 3n }), MATCH_CODE.rate)]));
     // The closer offer was read as taken, so the gap is the closest one.
     expect(why).toMatchObject({ kind: 'gap', gap: { kind: 'rate' }, closerUnknown: 0 });
   });
   it('says when closer offers got no answer, rather than calling a farther refusal the closest', () => {
     // #2 (rank 0) failed to read; #3 (rank 1) answered open with no verdict; #4 refuses on rate.
-    const why = whyOf(mine, ranked(3), read([cp(req({ id: 3n }), null, 'open', null, 1), cp(req({ id: 4n }), MATCH_CODE.rate, 'open', null, 2)]));
+    const why = whyOf(ranked(3), read([cp(req({ id: 3n }), null, 'open', null, 1), cp(req({ id: 4n }), MATCH_CODE.rate, 'open', null, 2)]));
     expect(why).toMatchObject({ kind: 'gap', with: { rank: 2 }, closerUnknown: 2 });
   });
   it('states an empty side, the switch and an unreadable list', () => {
-    expect(whyOf(mine, ranked(0), read([]))).toEqual({ kind: 'none' });
-    expect(whyOf(mine, ranked(1), read([cp(req(), null)], false))).toEqual({ kind: 'switch-off' });
-    expect(whyOf(mine, ranked(1), read([cp(req(), null)], null))).toEqual({ kind: 'switch-unread' });
-    expect(whyOf(mine, ranked(1), read([cp(req(), null, 'cancelled')]))).toEqual({ kind: 'unread' });
+    expect(whyOf(ranked(0), read([]))).toEqual({ kind: 'none' });
+    expect(whyOf(ranked(1), read([cp(req(), null)], false))).toEqual({ kind: 'switch-off' });
+    expect(whyOf(ranked(1), read([cp(req(), null)], null))).toEqual({ kind: 'switch-unread' });
+    expect(whyOf(ranked(1), read([cp(req(), null, 'cancelled')]))).toEqual({ kind: 'unread' });
     // The switch is stated even when nothing stands on the other side.
-    expect(whyOf(mine, ranked(0), read([], false))).toEqual({ kind: 'switch-off' });
-    expect(whyOf(mine, ranked(0), read([], null))).toEqual({ kind: 'switch-unread' });
+    expect(whyOf(ranked(0), read([], false))).toEqual({ kind: 'switch-off' });
+    expect(whyOf(ranked(0), read([], null))).toEqual({ kind: 'switch-unread' });
   });
   it('reads the index’s ranking and refuses an answer it cannot read', async () => {
     await expect(readNearestIndex(indexer({ eligible: true, candidates: [{ offerId: 4 }, { offerId: 9 }], oppositeOpen: 7 }), 1, 1n)).resolves.toEqual({

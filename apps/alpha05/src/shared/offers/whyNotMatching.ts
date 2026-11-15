@@ -76,6 +76,9 @@ export interface Counterparty {
 
 export interface WhyRead {
   block: bigint;
+  /** The reader's own offer, read at the same block as the verdicts, so a
+   *  gap is always explained from the terms the preview judged. */
+  mine: StoredOffer;
   /** The matching switch; null when unread. */
   switchOn: boolean | null;
   /** The counterparties read, in the index's order. */
@@ -84,12 +87,12 @@ export interface WhyRead {
   unread: number;
 }
 
-/** Reads every counterparty and asks the preview for each pair, at one
- *  block, as `sender` would send the match. */
-export async function readWhy(c: PublicClient, diamond: Hex, mine: StoredOffer, ids: readonly bigint[], sender: Hex): Promise<WhyRead> {
+/** Reads the reader's offer and every counterparty and asks the preview for
+ *  each pair, at one block, as `sender` would send the match. */
+export async function readWhy(c: PublicClient, diamond: Hex, mineId: bigint, ids: readonly bigint[], sender: Hex): Promise<WhyRead> {
   const block = await c.getBlockNumber();
   const at = { blockNumber: block };
-  const settings = await readMatchSettings(c, diamond, block);
+  const [mine, settings] = await Promise.all([readOffer(c, diamond, mineId, at), readMatchSettings(c, diamond, block)]);
   const lend = mine.offerType === OFFER_TYPE_LENDER;
   let unread = 0;
   const read = await Promise.all(
@@ -108,7 +111,7 @@ export async function readWhy(c: PublicClient, diamond: Hex, mine: StoredOffer, 
       }
     }),
   );
-  return { block, switchOn: settings.switchOn, counterparties: read.filter((x): x is Counterparty => x !== null), unread };
+  return { block, mine, switchOn: settings.switchOn, counterparties: read.filter((x): x is Counterparty => x !== null), unread };
 }
 
 /** A lifecycle option the two offers name differently. */
@@ -198,7 +201,8 @@ export function gapOf(mine: StoredOffer, theirs: StoredOffer, code: number): Gap
 
 /** The verdict: a pair the protocol would match first, else the closest
  *  open counterparty's first refusal. */
-export function whyOf(mine: StoredOffer, index: Extract<NearestIndex, { kind: 'ranked' }>, read: WhyRead): Why {
+export function whyOf(index: Extract<NearestIndex, { kind: 'ranked' }>, read: WhyRead): Why {
+  const { mine } = read;
   // The switch is stated first: with matching off, no counterparty, now or
   // later, opens a loan by match.
   if (read.switchOn === false) return { kind: 'switch-off' };

@@ -51,12 +51,17 @@ export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chai
   });
   const ranked = index.data?.kind === 'ranked' ? index.data : null;
   const ids = ranked?.ids ?? [];
-  const chainRead = useOwnRead(['whyMatch', diamond, offer.id.toString(), ids.map(String).join(',')], (c) => readWhy(c, diamond, offer, ids, own.account), {
+  // The verdict reads the reader's own offer at its own block; the terms in
+  // the key make a change to them (seen by the page's offer read) ask again.
+  const terms = [offer.interestRateBps, offer.interestRateBpsMax, offer.durationDays, offer.amount, offer.amountMax, offer.collateralAmount, offer.collateralAmountMax]
+    .map(String)
+    .join(',');
+  const chainRead = useOwnRead(['whyMatch', diamond, offer.id.toString(), terms, ids.map(String).join(',')], (c) => readWhy(c, diamond, offer.id, ids, own.account), {
     // Read even with no counterparty: the matching switch is stated on its
     // own, since with matching off no counterparty ever opens a loan by match.
     enabled: ranked !== null,
   });
-  const why: Why | null = ranked !== null && chainRead.data ? whyOf(offer, ranked, chainRead.data) : null;
+  const why: Why | null = ranked !== null && chainRead.data ? whyOf(ranked, chainRead.data) : null;
   // A refresh that failed behind a verdict already shown: the verdict stays,
   // marked with its age and the failure.
   const staleRead = chainRead.data !== null && chainRead.error !== null && chainRead.readAt !== null;
@@ -83,7 +88,7 @@ export function WhyNotMatching({ offer, chain, own }: { offer: StoredOffer; chai
       ) : (
         <>
           <p className="tier-a" data-testid="why-match-verdict" data-why={why.kind}>
-            <WhyLine why={why} mine={offer} />
+            <WhyLine why={why} mine={chainRead.data?.mine ?? offer} />
           </p>
           {why.kind === 'gap' && why.closerUnknown > 0 && (
             <p className="tier-a notice-warn" data-testid="why-match-closer-unknown">
