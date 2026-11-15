@@ -1,4 +1,4 @@
-## Thread — Pro-rata matches admit a shorter borrower term (PR #TBD)
+## Thread — Pro-rata matches admit a shorter borrower term (PR #3617)
 
 Two resting offers used to match only when they named exactly the same term. That is still the rule when both chose full-term interest, because there the term is part of the price: the borrower owes interest for all of it.
 
