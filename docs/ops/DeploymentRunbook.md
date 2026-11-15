@@ -1913,7 +1913,9 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # runner steps the clock for those too. Its PF-116 changes the
 # periodic-interest switch, a swap adapter and the finer-cadence threshold
 # across a wait, PositiveFlowsSwapToRepay registers a swap adapter for each
-# scenario, and PositiveFlowsKeeperAutomation approves a keeper across a wait.
+# scenario, PositiveFlowsKeeperAutomation approves a keeper across a wait, and
+# PositiveFlowsOperatorAdmin flags a wallet, pauses and changes the initiation
+# fee (its PF-324 holds the new fee across a wait).
 # Each stage's gas limits come from the node's estimate at send time
 # (`--skip-simulation`), because a price read needs a fixed gas reserve that
 # no multiplier on forge's measured use covers. The record lists every such setting under `restore_`: if a run is
@@ -1923,8 +1925,8 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # before removing the record.
 # One module at a time, since each checks its actors' nonces:
 for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsLenderIntent \
-         PositiveFlowsPositionHolder PositiveFlowsKeeperAutomation PositiveFlowsSwapToRepay \
-         PositiveFlowsTimed; do
+         PositiveFlowsPositionHolder PositiveFlowsKeeperAutomation PositiveFlowsOperatorAdmin \
+         PositiveFlowsSwapToRepay PositiveFlowsTimed; do
   bash script/positive-flows/run-staged.sh "$m" || break
 done
 
