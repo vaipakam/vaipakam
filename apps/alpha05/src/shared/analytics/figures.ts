@@ -15,6 +15,7 @@ import { AdminFacetABI, ConfigFacetABI, MetricsFacetABI, NumeraireConfigFacetABI
 import type { SupportedChain } from '../../chain/chains';
 import { isContractAnswer } from '../reads/answer';
 import { readTokenMeta, type TokenMetaMap } from '../reads/tokens';
+import { readVpfiToken, type VpfiRead } from './vpfiToken';
 
 type Hex = `0x${string}`;
 
@@ -104,6 +105,8 @@ export interface ProtocolFigures {
   feeRates: Figure<{ treasuryShareBps: bigint; loanStartFeeBps: bigint }>;
   treasury: Figure<TreasuryFigures>;
   convert: Figure<ConvertConfig>;
+  /** RW-60: the VPFI token's own facts, from the token contract. */
+  vpfi: Figure<VpfiRead>;
 }
 
 function reason(e: unknown): string {
@@ -165,7 +168,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
     return { rows, meta };
   };
 
-  const [deployedAt, symbol, stats, locked, health, offersPosted, assetRows, custody, feeRates, treasury, convert] = await Promise.allSettled([
+  const [deployedAt, symbol, stats, locked, health, offersPosted, assetRows, custody, feeRates, treasury, convert, vpfi] = await Promise.allSettled([
     c.getBlock({ blockNumber: BigInt(chain.deployBlock) }).then((b) => b.timestamp),
     read<Hex>(NUMERAIRE, 'getNumeraireSymbol').then((raw) => {
       const text = hexToString(raw, { size: 32 }).replace(/\0+$/, '');
@@ -213,6 +216,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
         lastConversionAt,
       }),
     ),
+    readVpfiToken(c, chain, blockNumber),
   ]);
 
   return {
@@ -228,6 +232,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
     feeRates: settle(feeRates),
     treasury: settle(treasury),
     convert: settle(convert),
+    vpfi: settle(vpfi),
   };
 }
 

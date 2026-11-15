@@ -2624,3 +2624,9 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 ### アナリティクス：手数料と保管の読み取り方
 
 手数料率は `getTreasuryFeeBps` と `getLoanInitiationFeeBps` です。手数料の数値は `getTreasuryMetrics` で、開始以来の合計は `feeLedgerTotal`、1日と1週間の数値は手数料台帳を末尾から最大 `MAX_FEE_EVENTS_ITER`（10,000）件まで走査するため、それを超えると下限になります。各台帳項目には、ベストエフォートのルールによる計上時点の基準通貨での価値が記録され、評価できなかった場合は 0 です。トレジャリーは `getTreasury`、現在のボールトコードが指すアドレスで、ページは保管先を示すためにそれを Diamond と比較します。Diamond と一致する場合にのみ `recordTreasuryAccrual` が `treasuryBalances` に計上するため、その場合にのみページは保有額を表示します。これは `getTreasuryMetrics` が未完了ローンの資産だけについて合計したもので、`getTreasuryConvertConfig` の最終変換と目標も併せて示します。デプロイ記録と異なるトレジャリーは警告されます。
+
+<a id="analytics-vpfi"></a>
+
+### アナリティクス：VPFI の情報の読み取り方
+
+トークンは Diamond の `getVPFIToken`、ホームネットワークはその `isCanonicalVpfiChain` で、どちらもページのブロックで読みます。ゼロのトークンは未設定として扱います。ページはトークンから `name`、`symbol`、`decimals`、`totalSupply`、`owner`、`paused` を読み、ホームネットワークでは `cap`、`INITIAL_MINT`、`minter` も読みます。ミント可能量は `cap` から `totalSupply` を引いたもので、ゼロを下回りません。`mint` は `minter` だけ、`setMinter` は `owner` だけが呼べるため、ミンターの変更がタイムロックを待つのは `owner` がデプロイの `timelock` の場合だけです。ブリッジされたトークンはバーン・アンド・ミントのミラーで、その供給量はホームのプールがそのためにロックした量です。アドレス一覧は対応ネットワークごとのデプロイ記録の `vpfiToken` で、記録に `vpfiMirror` がないものをホームとして示します。記録と異なるトークン、または 230,000,000 VPFI 以外の `cap` は警告されます。

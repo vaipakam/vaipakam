@@ -1523,6 +1523,25 @@ above. Each resolves here, so a route reviewer needs no private file:
   flagged. The page says nothing comes from the indexer database, shows
   no price, return, buyback or chart across networks, and states the
   treasury is not invested to earn a return.
+- **RB-ANALYTICS-VPFI** — the Analytics page's VPFI section (RW-60) reads
+  the token the protocol names (`getVPFIToken`) from the token contract at
+  the page's block, and takes which network is VPFI's home from the
+  protocol's own flag (`isCanonicalVpfiChain`). Decimals are the token's
+  own; unread decimals show base units, never an assumed 18. Only the home
+  network shows the cap, what is still mintable under it, the launch mint
+  and the minter; every network shows its supply and the token's owner,
+  naming the protocol contract or the governance timelock when it is one.
+  A change of minter is said to wait out the timelock only when the owner
+  is the governance timelock. A bridged network says the cap belongs to
+  the home network and never shows a cap of zero; a network with no token
+  set says so; an unread fact is said to be unread. A token that differs
+  from the deployment record, or a cap that differs from the published
+  allocation, is flagged. The record's VPFI address on every served
+  network is listed with an explorer link and marked home or moved from
+  home. The published allocation is shown as caps on what may be minted,
+  the 24% reserve as undecided, the bug bounty as a multisig-held bucket
+  for security reports (never insurance), and no price, return or scarcity
+  claim is made.
 - **RB-ADDRESS-GUARD** — every address a user enters to receive funds or
   control (#3415) goes through one address box. It shows the address in
   full, with the first and last digits set apart and never shortened. It

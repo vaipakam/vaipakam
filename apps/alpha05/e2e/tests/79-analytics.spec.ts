@@ -1,5 +1,5 @@
 /**
- * Analytics (RW-74, RW-75; RB-ANALYTICS): a public page, reached from the
+ * Analytics (RW-74, RW-75, RW-60; RB-ANALYTICS): a public page, reached from the
  * Advanced navigation or by direct link, with no wallet. Every figure is
  * read from the fixture chain at one block. Before any loan the rates say
  * there are none yet, never 0%; once a loan opens through the protocol's
@@ -40,6 +40,17 @@ test('with no loan yet the page reads the chain at one block and says there is n
   await expect(page.getByTestId('analytics-treasury-share')).toHaveText(`${Number(share) / 100}%`);
   // The custody of fees is stated, whichever it is.
   await expect(page.getByTestId('analytics-custody')).toHaveText(/Fees go straight to the treasury at|keeps the fees itself|No treasury is set/);
+
+  // RW-60: the fixture sets no VPFI token, and the page says so rather than
+  // showing a supply of zero. The home and bridged facts are held by the
+  // page's unit test and checked live against the testnets' real tokens.
+  expect(await sc.read<string>('getVPFIToken')).toBe('0x0000000000000000000000000000000000000000');
+  await expect(page.getByTestId('analytics-vpfi-none')).toHaveText('No VPFI token is set on Base Sepolia.');
+  await expect(page.getByTestId('analytics-vpfi-supply')).toHaveCount(0);
+  const allocation = page.getByTestId('analytics-vpfi-allocation');
+  await expect(allocation).toContainText('24% · 55,200,000 VPFI · undecided');
+  await expect(allocation).toContainText('100% · 230,000,000 VPFI');
+  await expect(allocation).not.toContainText(/insurance/i);
   await noOverflow(page);
 });
 

@@ -52,6 +52,7 @@ async function session(b, opts, label, [id, name]) {
   console.log(`assets (${cards.length}):`);
   for (const c of cards) console.log(`  ${await text(c)}`);
   console.log(`record differs: ${await text(p.getByTestId('analytics-record-differs')).catch(() => '(no)')}`);
+  console.log(`vpfi record differs: ${await text(p.getByTestId('analytics-vpfi-record-differs')).catch(() => '(no)')}`);
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
   await p.screenshot({ path: `${OUT}/live-analytics-${id}-${label}.png`, fullPage: true });
   console.log(`errors: ${JSON.stringify(errs)}`);

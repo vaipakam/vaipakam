@@ -3011,3 +3011,9 @@ The page takes the latest block and reads every Diamond view at that block numbe
 ### Analytics: How Fees and Custody Are Read
 
 The fee rates are `getTreasuryFeeBps` and `getLoanInitiationFeeBps`. The fee figures are `getTreasuryMetrics`: the total since the start is `feeLedgerTotal`, and the day and week figures tail-scan the fee ledger for at most `MAX_FEE_EVENTS_ITER` (10,000) entries, so past that they are a lower bound. Each ledger entry carries the fee's numeraire value at accrual through the best-effort rule, 0 when it could not be valued. The treasury is `getTreasury`, the address the current vault code names; the page compares it with the Diamond to state custody. Only when it equals the Diamond does `recordTreasuryAccrual` credit `treasuryBalances`, so only then does the page show the held figure, which `getTreasuryMetrics` sums over the assets of open loans only, with `getTreasuryConvertConfig`'s last conversion and targets. A treasury that differs from the deployment record is flagged.
+
+<a id="analytics-vpfi"></a>
+
+### Analytics: How the VPFI Facts Are Read
+
+The token is the Diamond's `getVPFIToken`, and the home network is its `isCanonicalVpfiChain`, both at the page's block; a zero token reads as none set. From the token the page reads `name`, `symbol`, `decimals`, `totalSupply`, `owner` and `paused`, and on the home network also `cap`, `INITIAL_MINT` and `minter`; mintable is `cap` less `totalSupply`, never below zero. `mint` is open only to `minter`, and `setMinter` only to `owner`, so a change of minter waits on the timelock only when `owner` is the deployment's `timelock`. A bridged token is the burn-and-mint mirror, whose supply is what the home pool locked for it. The address list is the deployment record's `vpfiToken` per served network, marked home where the record carries no `vpfiMirror`. A token that differs from the record, or a `cap` other than 230,000,000 VPFI, is flagged.

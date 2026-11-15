@@ -20,6 +20,7 @@ import { FormField } from '../../shared/ui/FormField';
 import { formatAge, formatBps, formatScaled, formatUtc, shortAddress } from '../../shared/ui/format';
 import { Notice } from '../../shared/ui/Notice';
 import { useNow } from '../../shared/ui/useNow';
+import { VpfiToken } from './VpfiToken';
 
 type Hex = `0x${string}`;
 
@@ -146,6 +147,7 @@ function Figures({ chain, f, rereadError, nowSec }: { chain: SupportedChain; f: 
       <OpenLoans f={f} />
       <Lifetime f={f} />
       <FeesAndTreasury chain={chain} f={f} />
+      <VpfiToken chain={chain} vpfi={f.vpfi} />
     </>
   );
 }

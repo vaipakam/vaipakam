@@ -2516,3 +2516,9 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 분석: 수수료와 보관을 읽는 방법
 
 수수료율은 `getTreasuryFeeBps`와 `getLoanInitiationFeeBps`입니다. 수수료 수치는 `getTreasuryMetrics`이며, 시작 이후 합계는 `feeLedgerTotal`이고, 하루와 한 주 수치는 수수료 원장을 끝에서부터 최대 `MAX_FEE_EVENTS_ITER`(10,000)개 항목까지 훑으므로 그 이상이면 하한입니다. 각 원장 항목은 최선 노력 규칙에 따른 발생 시점의 기준 통화 가치를 담고, 평가할 수 없었으면 0입니다. 트레저리는 `getTreasury`, 현재 볼트 코드가 지정하는 주소이며, 페이지는 보관 방식을 밝히려고 이를 Diamond와 비교합니다. Diamond와 같을 때만 `recordTreasuryAccrual`이 `treasuryBalances`에 적립하므로, 그때만 페이지가 보유 수치를 보여 줍니다. 이는 `getTreasuryMetrics`가 진행 중인 대출의 자산에 대해서만 합산한 값이며, `getTreasuryConvertConfig`의 마지막 전환과 목표도 함께 보여 줍니다. 배포 기록과 다른 트레저리는 표시됩니다.
+
+<a id="analytics-vpfi"></a>
+
+### 분석: VPFI 정보를 읽는 방법
+
+토큰은 Diamond의 `getVPFIToken`, 홈 네트워크는 그 `isCanonicalVpfiChain`이며, 둘 다 페이지의 블록에서 읽습니다. 0 주소 토큰은 설정되지 않은 것으로 봅니다. 페이지는 토큰에서 `name`, `symbol`, `decimals`, `totalSupply`, `owner`, `paused`를 읽고, 홈 네트워크에서는 `cap`, `INITIAL_MINT`, `minter`도 읽습니다. 발행 가능량은 `cap`에서 `totalSupply`를 뺀 값으로, 0 아래로 내려가지 않습니다. `mint`는 `minter`만, `setMinter`는 `owner`만 호출할 수 있으므로, 발행자 변경이 타임락을 기다리는 것은 `owner`가 배포의 `timelock`일 때뿐입니다. 브리지된 토큰은 소각·발행 미러이며, 그 공급량은 홈 풀이 그것을 위해 잠근 양입니다. 주소 목록은 지원 네트워크별 배포 기록의 `vpfiToken`이며, 기록에 `vpfiMirror`가 없는 곳을 홈으로 표시합니다. 기록과 다른 토큰이나 230,000,000 VPFI가 아닌 `cap`은 표시됩니다.

@@ -1644,3 +1644,9 @@ The Analytics page shows the protocol's own figures on one network, with no wall
 ### Analytics: Fees and the Treasury
 
 The fees section shows the treasury's share of interest and the loan start fee as set now, and the fees collected since the start, in the last day and in the last week. Each fee is valued in the reference currency when it was collected, so a later price change does not move it; a fee the protocol could not value then counts as nothing. The day and week figures count at most a fixed number of the newest fees, so with more than that in the window they are less than the real figure. The page names and links the treasury and says where fees are kept: when they go to an outside account, the protocol contract holds no fee balance; only when the contract keeps them itself does the page show a held balance, and that balance covers only assets of open loans. The treasury is not invested to earn a return.
+
+<a id="analytics-vpfi"></a>
+
+### Analytics: The VPFI Token
+
+The Analytics page's VPFI section reads the token the protocol names on the chosen network: its name, symbol, decimals and supply. VPFI is issued on one network, its home. There the page also shows the cap written into the token, what may still be minted under it, the amount minted at launch, the minter and the token's owner. Only the minter can mint, and only the owner can change the minter. On any other network the page shows the VPFI there and says the cap belongs to the home network, where each VPFI there is backed by one locked. Below that are the VPFI addresses on every network the app serves, and the published allocation of the 230,000,000 cap: each line is the most that may be minted for it, and the 24% reserve is undecided, with none minted until governance chooses.

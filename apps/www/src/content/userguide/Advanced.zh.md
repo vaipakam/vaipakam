@@ -2357,3 +2357,9 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 数据分析：费用与托管如何读取
 
 费率为 `getTreasuryFeeBps` 和 `getLoanInitiationFeeBps`。费用数据为 `getTreasuryMetrics`：自开始以来的总额是 `feeLedgerTotal`，一天和一周的数据从费用账本末尾最多扫描 `MAX_FEE_EVENTS_ITER`（10,000）条记录，超过后即为下限。每条账本记录按尽力而为规则记载费用计提时的参考货币价值，无法估值时为 0。国库为 `getTreasury`，即当前金库代码指定的地址；页面将其与 Diamond 比较以说明托管方式。只有与 Diamond 相同时，`recordTreasuryAccrual` 才会记入 `treasuryBalances`，因此只有此时页面才显示持有数额，该数额由 `getTreasuryMetrics` 仅对未结贷款的资产求和，并附上 `getTreasuryConvertConfig` 的最近一次兑换和目标。与部署记录不一致的国库会被标出。
+
+<a id="analytics-vpfi"></a>
+
+### 数据分析：VPFI 信息如何读取
+
+代币为 Diamond 的 `getVPFIToken`，主网络为其 `isCanonicalVpfiChain`，均在页面的区块读取；零地址代币视为未设置。页面从代币读取 `name`、`symbol`、`decimals`、`totalSupply`、`owner` 和 `paused`，在主网络还读取 `cap`、`INITIAL_MINT` 和 `minter`；可铸造量为 `cap` 减去 `totalSupply`，不会低于零。`mint` 只对 `minter` 开放，`setMinter` 只对 `owner` 开放，因此只有当 `owner` 是部署的 `timelock` 时，更换铸造者才需等待时间锁。跨链代币是销毁与铸造的镜像代币，其供应量为主网络资金池为其锁定的数量。地址列表为每个受支持网络在部署记录中的 `vpfiToken`，记录中没有 `vpfiMirror` 的标为主网络。与记录不一致的代币，或不等于 230,000,000 VPFI 的 `cap`，会被标出。

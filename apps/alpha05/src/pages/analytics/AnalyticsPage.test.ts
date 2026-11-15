@@ -48,6 +48,7 @@ function figures(over: Partial<ProtocolFigures> = {}): ProtocolFigures {
     feeRates: { ok: true, value: { treasuryShareBps: 200n, loanStartFeeBps: 20n } },
     treasury: { ok: true, value: { heldOnOpenLoanAssets: 0n, feesSinceStart: 0n, feesLastDay: 0n, feesLastWeek: 0n } },
     convert: { ok: true, value: { targets: [], lastConversionAt: 0n } },
+    vpfi: { ok: true, value: { kind: 'none' } },
     ...over,
   };
 }
@@ -163,5 +164,77 @@ describe('AnalyticsView', () => {
   it('says the reference currency is unnamed instead of guessing it', () => {
     const out = html(figures({ symbol: { ok: true, value: null } }));
     expect(out).toContain('reference currency not named');
+  });
+
+  it('shows the home network’s cap, mintable figure and minter, and the undecided reserve', () => {
+    const token = '0x00000000000000000000000000000000000000F1' as Hex;
+    const out = html(
+      figures({
+        vpfi: {
+          ok: true,
+          value: {
+            kind: 'token',
+            facts: {
+              token,
+              home: true,
+              name: { ok: true, value: 'Vaipakam DeFi Token' },
+              symbol: { ok: true, value: 'VPFI' },
+              decimals: { ok: true, value: 18 },
+              supply: { ok: true, value: 23_000_000n * E18 },
+              owner: { ok: true, value: TREASURY },
+              paused: { ok: true, value: false },
+              homeFacts: {
+                cap: { ok: true, value: 230_000_000n * E18 },
+                initialMint: { ok: true, value: 23_000_000n * E18 },
+                minter: { ok: true, value: DIAMOND },
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(out).toContain('230,000,000 VPFI');
+    expect(out).toContain('207,000,000 VPFI');
+    expect(out).toContain(`The protocol contract, ${DIAMOND}`);
+    expect(out).toContain('Anvil is VPFI’s home network');
+    expect(out).toContain('cannot say such a change must wait');
+    expect(out).toContain('undecided: governance has not chosen');
+    expect(out.toLowerCase()).not.toContain('insurance');
+    expect(out).not.toContain('differs from the 230,000,000');
+  });
+
+  it('gives a bridged network no cap of its own and says where the cap lives', () => {
+    const token = '0x00000000000000000000000000000000000000F1' as Hex;
+    const out = html(
+      figures({
+        vpfi: {
+          ok: true,
+          value: {
+            kind: 'token',
+            facts: {
+              token,
+              home: false,
+              name: { ok: true, value: 'VPFI' },
+              symbol: { ok: true, value: 'VPFI' },
+              decimals: { ok: false, reason: 'timeout' },
+              supply: { ok: true, value: 5n },
+              owner: { ok: true, value: TREASURY },
+              paused: { ok: true, value: true },
+              homeFacts: null,
+            },
+          },
+        },
+      }),
+    );
+    expect(out).toContain('Supply on this network');
+    expect(out).toContain('5 base units (decimals not read)');
+    expect(out).toContain('The cap belongs to');
+    expect(out).not.toContain('data-testid="analytics-vpfi-cap"');
+    expect(out).toContain('VPFI transfers are paused on Anvil.');
+  });
+
+  it('says a network has no VPFI token, or that it could not be read', () => {
+    expect(html(figures())).toContain('No VPFI token is set on Anvil.');
+    expect(html(figures({ vpfi: { ok: false, reason: 'upstream timeout' } }))).toContain('The VPFI token on Anvil could not be read (upstream timeout).');
   });
 });
