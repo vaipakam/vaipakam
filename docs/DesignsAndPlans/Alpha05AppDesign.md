@@ -2753,9 +2753,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   is public, needs no wallet, is linked from the footer, and adds a
   pegged token losing its value, a late or wrong price feed, tax and local
   rules, and the services run by others. No extra signature is asked per
-  loan: the signed review carries the line. Until the next Terms version
-  carries the list, accepting records the version in force, and the list is
-  shown with it rather than recorded by it.
+  loan: the signed review carries the line. The list is part of the Terms
+  text from version 2, so accepting that version records it, and a change to
+  the list is a new version that every wallet accepts again.
 
 ## 3. Companion specifications
 
