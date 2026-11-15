@@ -1673,3 +1673,15 @@ Ihr Tresor zählt nur, was über das Protokoll hineinkommt: eine Einzahlung, ein
 ### Wiederherstellen: ein Asset zurückweisen
 
 Ist etwas in Ihrem Tresor angekommen, das Sie nicht beanspruchen, weisen Sie es zurück. Das Zurückweisen hält auf der Chain für alle sichtbar fest, dass Sie es nicht beanspruchen. Es bewegt und schreibt nichts gut, und das Asset bleibt ungezählt in Ihrem Tresor. Es verlangt keine Erklärung, keine Signatur und keine Sanktionsprüfung und bleibt offen, solange das Protokoll pausiert, für eine ersetzte Wallet und für einen durch eine frühere Übernahme gesperrten Tresor.
+
+<a id="analytics-figures"></a>
+
+### Analysen: die öffentlichen Zahlen des Protokolls
+
+Die Seite Analysen zeigt die eigenen Zahlen des Protokolls in einem Netzwerk, ohne Wallet: offene Darlehen, seit Beginn eröffnete Darlehen und Angebote, die beteiligten Wallets, den durchschnittlich vereinbarten Zins, den Anteil der Darlehen, die mit Ausfall oder Liquidation endeten, den Wert offener Darlehen und die Verleihsummen seit Beginn. Wählen Sie jedes Netzwerk, das die App bedient. Jede Zahl wird zu einem einzigen Block aus dem Protokollvertrag gelesen, und die Seite nennt diesen Block, sein Alter und den Block, mit dem diese Bereitstellung begann und die Zähler starten. Eine nicht lesbare Zahl sagt das, statt null zu zeigen, und ein Satz ohne Teiler sagt, dass es noch keinen gibt. Werte stehen in der Referenzwährung des Protokolls, jetzt nach seiner eigenen Regel bewertet; ein Asset, das es nicht bewerten kann, zählt in einer Summe als nichts, und die Seite nennt dieses Asset und listet seine Beträge. Zinsen zählen, was Kreditnehmer gezahlt haben; Sicherheiten, die ein Kreditgeber nach einem Ausfall erhielt, sind keine Zinsen.
+
+<a id="analytics-fees"></a>
+
+### Analysen: Gebühren und die Treasury
+
+Der Gebührenabschnitt zeigt den Anteil der Treasury an den Zinsen und die Darlehensstartgebühr, wie sie jetzt eingestellt sind, sowie die seit Beginn, am letzten Tag und in der letzten Woche erhobenen Gebühren. Jede Gebühr wird zum Zeitpunkt ihrer Erhebung in der Referenzwährung bewertet, sodass eine spätere Preisänderung sie nicht verschiebt; eine Gebühr, die das Protokoll damals nicht bewerten konnte, zählt als nichts. Die Tages- und Wochenzahlen zählen höchstens eine feste Anzahl der neuesten Gebühren und liegen daher unter dem echten Wert, wenn mehr in den Zeitraum fallen. Die Seite nennt und verlinkt die Treasury und sagt, wo Gebühren liegen: Gehen sie an ein externes Konto, hält der Protokollvertrag keinen Gebührensaldo; nur wenn der Vertrag sie selbst behält, zeigt die Seite einen gehaltenen Saldo, und dieser umfasst nur Assets offener Darlehen. Die Treasury wird nicht angelegt, um einen Ertrag zu erzielen.

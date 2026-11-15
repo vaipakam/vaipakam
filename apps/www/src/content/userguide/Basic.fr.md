@@ -1669,3 +1669,15 @@ Votre coffre ne compte que ce qui y arrive par le protocole : un dépôt, un pr�
 ### Récupérer : renoncer à un actif
 
 Si votre coffre a reçu quelque chose que vous ne revendiquez pas, renoncez-y. Renoncer inscrit sur la chaîne, à la vue de tous, que vous ne le revendiquez pas. Rien n’est déplacé ni crédité, et l’actif reste dans votre coffre, non compté. Aucune déclaration, signature ni filtre de sanctions n’est demandé, et cela reste ouvert pendant une pause du protocole, pour un portefeuille remplacé et pour un coffre bloqué par une adoption antérieure.
+
+<a id="analytics-figures"></a>
+
+### Analyses : les chiffres publics du protocole
+
+La page Analyses affiche les chiffres du protocole lui-même sur un réseau, sans portefeuille : prêts ouverts, prêts et offres créés depuis le début, portefeuilles ayant participé, taux moyen convenu, part des prêts terminés en défaut ou en liquidation, valeur sur les prêts ouverts et totaux prêtés depuis le début. Choisissez n’importe quel réseau servi par l’application. Chaque chiffre est lu dans le contrat du protocole à un seul bloc, et la page indique ce bloc, son âge et le bloc où ce déploiement a commencé, là où démarrent les compteurs. Un chiffre illisible le dit au lieu d’afficher zéro, et un taux sans rien à diviser indique qu’il n’y en a pas encore. Les valeurs sont dans la monnaie de référence du protocole, évaluées maintenant selon sa propre règle ; un actif qu’il ne peut pas évaluer compte pour rien dans un total, et la page nomme cet actif et liste ses montants. Les intérêts comptent ce que les emprunteurs ont payé ; la garantie reçue par un prêteur après un défaut n’est pas un intérêt.
+
+<a id="analytics-fees"></a>
+
+### Analyses : les frais et la trésorerie
+
+La section des frais affiche la part de la trésorerie sur les intérêts et les frais d’ouverture de prêt tels que fixés maintenant, ainsi que les frais perçus depuis le début, sur le dernier jour et sur la dernière semaine. Chaque frais est évalué dans la monnaie de référence au moment de sa perception, si bien qu’un changement de prix ultérieur ne le modifie pas ; un frais que le protocole n’a pas pu évaluer alors compte pour rien. Les chiffres du jour et de la semaine comptent au plus un nombre fixe des frais les plus récents, et sont donc inférieurs au chiffre réel s’il y en a davantage sur la période. La page nomme et lie la trésorerie et indique où les frais sont conservés : lorsqu’ils vont à un compte extérieur, le contrat du protocole ne détient aucun solde de frais ; c’est seulement quand le contrat les garde lui-même que la page affiche un solde détenu, qui ne couvre que les actifs des prêts ouverts. La trésorerie n’est pas investie pour obtenir un rendement.

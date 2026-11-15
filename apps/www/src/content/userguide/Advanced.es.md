@@ -2791,3 +2791,15 @@ La cifra es `untrackedHolding(user, asset, tokenId)` (token 0 para un ERC-20), l
 ### Recuperar: cómo se registra una renuncia
 
 `disownUntracked(kind, asset, tokenId)` solo necesita una bóveda y una cifra sin contar mayor que cero. No tiene comprobación de pausa, filtro de sanciones ni comprobación de gestor, así que una cartera reemplazada y una bóveda bloqueada pueden usarlo, y no requiere firma. Emite `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, y la tarjeta final lee la cantidad registrada de ese evento en el recibo.
+
+<a id="analytics-figures"></a>
+
+### Analítica: cómo se leen las cifras
+
+La página toma el último bloque y lee cada vista del Diamond en ese número de bloque: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (las ofertas publicadas son `totalOffersCreated`), `getLifetimeLendingAssets` con `getLifetimeLendingTotals` por activo, y `getNumeraireSymbol`; el primer bloque del despliegue viene del registro de despliegue. Cada grupo se resuelve por separado, así que una vista fallida se indica en su lugar. La página valora el principal y el interés de cada activo con `getNumeraireValue(asset, amount, false)` en el mismo bloque, el redondeo que usan los totales del protocolo, de modo que las partes valoradas suman `totalVolumeLentNumeraire` y `totalInterestPaidNumeraire`; un activo cuya valoración revierte se nombra como excluido. `defaultRateBps` cuenta los préstamos que entraron en Defaulted o Settled sobre `totalLoansEverCreated`, y sin préstamos la página no muestra tipo. El tercer valor de `getProtocolTVL` es un recuento de préstamos abiertos con garantía NFT, no un valor. El interés es `lifetimeInterestPaid`, escrito a medida que pagan los prestatarios; la recuperación de garantía de un prestamista no está incluida.
+
+<a id="analytics-fees"></a>
+
+### Analítica: cómo se leen las comisiones y la custodia
+
+Los tipos de comisión son `getTreasuryFeeBps` y `getLoanInitiationFeeBps`. Las cifras de comisiones son `getTreasuryMetrics`: el total desde el inicio es `feeLedgerTotal`, y las cifras del día y la semana recorren el registro de comisiones desde el final como mucho `MAX_FEE_EVENTS_ITER` (10.000) entradas, así que más allá son un límite inferior. Cada entrada lleva el valor en numerario de la comisión al devengarse según la regla de mejor esfuerzo, 0 cuando no se pudo valorar. La tesorería es `getTreasury`, la dirección que nombra el código de bóveda actual; la página la compara con el Diamond para indicar la custodia. Solo cuando es igual al Diamond `recordTreasuryAccrual` abona `treasuryBalances`, así que solo entonces la página muestra la cifra retenida, que `getTreasuryMetrics` suma solo sobre los activos de préstamos abiertos, con la última conversión y los objetivos de `getTreasuryConvertConfig`. Una tesorería distinta del registro de despliegue se señala.

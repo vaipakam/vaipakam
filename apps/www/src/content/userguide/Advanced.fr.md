@@ -2811,3 +2811,15 @@ Le chiffre est `untrackedHolding(user, asset, tokenId)` (jeton 0 pour un ERC-20)
 ### Récupérer : comment une renonciation est enregistrée
 
 `disownUntracked(kind, asset, tokenId)` ne demande qu’un coffre et un chiffre non compté supérieur à zéro. Il n’a ni contrôle de pause, ni filtrage de sanctions, ni contrôle de gestionnaire : un portefeuille remplacé et un coffre bloqué peuvent donc l’utiliser, et aucune signature n’est requise. Il émet `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, et la carte finale lit le montant enregistré dans cet événement du reçu.
+
+<a id="analytics-figures"></a>
+
+### Analyses : comment les chiffres sont lus
+
+La page prend le dernier bloc et lit chaque vue du Diamond à ce numéro de bloc : `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (les offres publiées sont `totalOffersCreated`), `getLifetimeLendingAssets` avec `getLifetimeLendingTotals` par actif, et `getNumeraireSymbol` ; le premier bloc du déploiement vient du registre de déploiement. Chaque groupe se résout séparément, donc une vue en échec est signalée à sa place. La page évalue le principal et les intérêts de chaque actif avec `getNumeraireValue(asset, amount, false)` au même bloc, l’arrondi des totaux du protocole, si bien que les parties évaluées s’additionnent en `totalVolumeLentNumeraire` et `totalInterestPaidNumeraire` ; un actif dont l’évaluation échoue est nommé comme exclu. `defaultRateBps` compte les prêts passés en Defaulted ou Settled sur `totalLoansEverCreated`, et sans prêt la page n’affiche aucun taux. La troisième valeur de `getProtocolTVL` est un nombre de prêts ouverts avec garantie NFT, pas une valeur. Les intérêts sont `lifetimeInterestPaid`, écrits au fil des paiements ; la récupération de garantie d’un prêteur n’y figure pas.
+
+<a id="analytics-fees"></a>
+
+### Analyses : comment les frais et la garde sont lus
+
+Les taux de frais sont `getTreasuryFeeBps` et `getLoanInitiationFeeBps`. Les chiffres de frais sont `getTreasuryMetrics` : le total depuis le début est `feeLedgerTotal`, et les chiffres du jour et de la semaine parcourent le registre des frais depuis la fin sur au plus `MAX_FEE_EVENTS_ITER` (10 000) entrées, ce qui en fait au-delà une borne inférieure. Chaque entrée porte la valeur en numéraire du frais au moment de son accumulation selon la règle au mieux, 0 lorsqu’il n’a pas pu être évalué. La trésorerie est `getTreasury`, l’adresse que nomme le code de coffre actuel ; la page la compare au Diamond pour indiquer la garde. Ce n’est que lorsqu’elle est égale au Diamond que `recordTreasuryAccrual` crédite `treasuryBalances`, et c’est seulement alors que la page affiche le montant détenu, que `getTreasuryMetrics` additionne sur les seuls actifs des prêts ouverts, avec la dernière conversion et les cibles de `getTreasuryConvertConfig`. Une trésorerie différente du registre de déploiement est signalée.

@@ -1499,6 +1499,30 @@ above. Each resolves here, so a route reviewer needs no private file:
   `VaultBannedFromAdoption` or `UntrackedDisowned` for this account and
   asset. While the protocol is paused the page states the escape route
   (LN-57) and links the Vault page, which carries it.
+- **RB-ANALYTICS** — the Analytics page (RW-74, RW-75) is public: it
+  needs no wallet, reads through the network's read-only proxy or its
+  public endpoint (RB-PUBLIC), and lets the reader pick any network the
+  app serves, describing the screen's network until they do. Every figure
+  is read from the protocol contract at one block, and the page states
+  that block, its age (a block time ahead of the device clock is an
+  unknown age, never fresh), and the deployment's first block, where every
+  counter starts. Each group of figures stands on its own: a view that
+  failed is said to be unread in its place, a rate with nothing to divide
+  by (no loan opened, no priced collateral) says there is none yet, and
+  zero is shown only where the protocol answered zero. The lifetime totals
+  are valued now by the protocol's own rule, so the page lists each asset
+  ever lent with its own amounts and value at the same block, and names
+  every asset the rule cannot value as left out of the totals. Interest
+  counts what borrowers paid: a lender's recovery of collateral after a
+  default is not interest, and the page says so. Fees are valued when each
+  was collected, with their caveats beside them (an unvaluable fee counts
+  as nothing; the day and week windows are a lower bound past the scan
+  limit). The treasury is named and linked, its custody is disclosed, and
+  a held fee balance appears only when the protocol contract keeps the
+  fees itself. A treasury that differs from the deployment record is
+  flagged. The page says nothing comes from the indexer database, shows
+  no price, return, buyback or chart across networks, and states the
+  treasury is not invested to earn a return.
 - **RB-ADDRESS-GUARD** — every address a user enters to receive funds or
   control (#3415) goes through one address box. It shows the address in
   full, with the first and last digits set apart and never shortened. It

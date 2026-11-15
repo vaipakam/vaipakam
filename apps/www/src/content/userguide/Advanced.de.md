@@ -2801,3 +2801,15 @@ Die Zahl ist `untrackedHolding(user, asset, tokenId)` (Token 0 für ein ERC-20),
 ### Wiederherstellen: wie eine Zurückweisung festgehalten wird
 
 `disownUntracked(kind, asset, tokenId)` braucht nur einen Tresor und eine ungezählte Zahl über null. Es hat keine Pausenprüfung, keine Sanktionsprüfung und keine Verwalterprüfung, sodass eine ersetzte Wallet und ein gesperrter Tresor es nutzen können, und es verlangt keine Signatur. Es löst `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)` aus, und die Abschlusskarte liest den festgehaltenen Betrag aus diesem Event im Beleg.
+
+<a id="analytics-figures"></a>
+
+### Analysen: wie die Zahlen gelesen werden
+
+Die Seite nimmt den neuesten Block und liest jede Diamond-View zu dieser Blocknummer: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (veröffentlichte Angebote sind `totalOffersCreated`), `getLifetimeLendingAssets` mit `getLifetimeLendingTotals` je Asset und `getNumeraireSymbol`; der erste Block der Bereitstellung stammt aus dem Bereitstellungsdatensatz. Jede Gruppe wird für sich aufgelöst, sodass eine fehlgeschlagene View an ihrer Stelle genannt wird. Die Seite bewertet Kapital und Zinsen jedes Assets mit `getNumeraireValue(asset, amount, false)` im selben Block, mit der Rundung der Protokollsummen, sodass die bewerteten Teile `totalVolumeLentNumeraire` und `totalInterestPaidNumeraire` ergeben; ein Asset, dessen Bewertung revertiert, wird als ausgelassen genannt. `defaultRateBps` zählt Darlehen, die in Defaulted oder Settled übergingen, bezogen auf `totalLoansEverCreated`, und ohne Darlehen zeigt die Seite keinen Satz. Der dritte Wert von `getProtocolTVL` ist eine Anzahl offener Darlehen mit NFT-Sicherheit, kein Wert. Zinsen sind `lifetimeInterestPaid`, geschrieben bei jeder Zahlung; die Verwertung von Sicherheiten durch einen Kreditgeber ist nicht enthalten.
+
+<a id="analytics-fees"></a>
+
+### Analysen: wie Gebühren und Verwahrung gelesen werden
+
+Die Gebührensätze sind `getTreasuryFeeBps` und `getLoanInitiationFeeBps`. Die Gebührenzahlen sind `getTreasuryMetrics`: Die Summe seit Beginn ist `feeLedgerTotal`, und die Tages- und Wochenzahlen durchsuchen das Gebührenbuch vom Ende her über höchstens `MAX_FEE_EVENTS_ITER` (10.000) Einträge, darüber hinaus sind sie eine Untergrenze. Jeder Eintrag trägt den Numeraire-Wert der Gebühr bei Erfassung nach der Best-Effort-Regel, 0, wenn sie nicht bewertet werden konnte. Die Treasury ist `getTreasury`, die Adresse, die der aktuelle Tresorcode nennt; die Seite vergleicht sie mit dem Diamond, um die Verwahrung anzugeben. Nur wenn sie dem Diamond entspricht, schreibt `recordTreasuryAccrual` `treasuryBalances` gut, und nur dann zeigt die Seite den gehaltenen Betrag, den `getTreasuryMetrics` nur über die Assets offener Darlehen summiert, mit der letzten Umwandlung und den Zielen aus `getTreasuryConvertConfig`. Eine Treasury, die vom Bereitstellungsdatensatz abweicht, wird markiert.

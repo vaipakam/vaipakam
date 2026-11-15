@@ -2345,3 +2345,15 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 找回：放弃如何被记录
 
 `disownUntracked(kind, asset, tokenId)` 只需要一个金库和大于零的未计入数额。它没有暂停检查、制裁筛查或管理者检查，因此被替换的钱包和被禁止的金库也能使用，且不需要签名。它发出 `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`，完成卡片从收据中的该事件读取记录的数额。
+
+<a id="analytics-figures"></a>
+
+### 数据分析：数据如何读取
+
+页面取最新区块，并在该区块号读取每个 Diamond 视图：`getProtocolStats`、`getProtocolTVL`、`getProtocolHealth`、`getGlobalCounts`（已发布报价为 `totalOffersCreated`）、`getLifetimeLendingAssets` 及每个资产的 `getLifetimeLendingTotals`，以及 `getNumeraireSymbol`；部署的首个区块来自部署记录。每组单独确定，因此读取失败的视图会在原位说明。页面在同一区块用 `getNumeraireValue(asset, amount, false)` 对每个资产的累计本金和利息估值，这与协议总额使用的取整一致，因此估值部分相加等于 `totalVolumeLentNumeraire` 和 `totalInterestPaidNumeraire`；估值回退的资产会被列为未计入。`defaultRateBps` 以进入 Defaulted 或 Settled 的贷款除以 `totalLoansEverCreated`，没有贷款时页面不显示比率。`getProtocolTVL` 的第三个值是以 NFT 为抵押的未结贷款数量，不是价值。利息为 `lifetimeInterestPaid`，随借款人每次付款写入；出借人回收抵押品不计入其中。
+
+<a id="analytics-fees"></a>
+
+### 数据分析：费用与托管如何读取
+
+费率为 `getTreasuryFeeBps` 和 `getLoanInitiationFeeBps`。费用数据为 `getTreasuryMetrics`：自开始以来的总额是 `feeLedgerTotal`，一天和一周的数据从费用账本末尾最多扫描 `MAX_FEE_EVENTS_ITER`（10,000）条记录，超过后即为下限。每条账本记录按尽力而为规则记载费用计提时的参考货币价值，无法估值时为 0。国库为 `getTreasury`，即当前金库代码指定的地址；页面将其与 Diamond 比较以说明托管方式。只有与 Diamond 相同时，`recordTreasuryAccrual` 才会记入 `treasuryBalances`，因此只有此时页面才显示持有数额，该数额由 `getTreasuryMetrics` 仅对未结贷款的资产求和，并附上 `getTreasuryConvertConfig` 的最近一次兑换和目标。与部署记录不一致的国库会被标出。

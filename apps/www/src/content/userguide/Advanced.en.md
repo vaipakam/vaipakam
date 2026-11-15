@@ -2999,3 +2999,15 @@ The figure is `untrackedHolding(user, asset, tokenId)` (token 0 for an ERC-20), 
 ### Recover: How a Disowning Is Recorded
 
 `disownUntracked(kind, asset, tokenId)` needs only a vault and an uncounted figure above zero. It has no pause check, no sanctions screen and no manager check, so a replaced wallet and a barred vault can still use it, and it takes no signature. It emits `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, and the finish card reads the recorded amount from that event in the receipt.
+
+<a id="analytics-figures"></a>
+
+### Analytics: How the Figures Are Read
+
+The page takes the latest block and reads every Diamond view at that block number: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (offers posted is `totalOffersCreated`), `getLifetimeLendingAssets` with `getLifetimeLendingTotals` per asset, and `getNumeraireSymbol`; the deployment's first block comes from the deployment record. Each group settles on its own, so a failed view is stated in its place. The page values each asset's lifetime principal and interest with `getNumeraireValue(asset, amount, false)` at the same block, the rounding the protocol's totals use, so the valued parts add up to `totalVolumeLentNumeraire` and `totalInterestPaidNumeraire`; an asset whose valuation reverts is named as left out. `defaultRateBps` counts loans that entered Defaulted or Settled over `totalLoansEverCreated`, and with no loan opened the page shows no rate. `getProtocolTVL`'s third value is a count of open loans with NFT collateral, not a value. Interest is `lifetimeInterestPaid`, written as borrowers pay; a lender's recovery of collateral is not in it.
+
+<a id="analytics-fees"></a>
+
+### Analytics: How Fees and Custody Are Read
+
+The fee rates are `getTreasuryFeeBps` and `getLoanInitiationFeeBps`. The fee figures are `getTreasuryMetrics`: the total since the start is `feeLedgerTotal`, and the day and week figures tail-scan the fee ledger for at most `MAX_FEE_EVENTS_ITER` (10,000) entries, so past that they are a lower bound. Each ledger entry carries the fee's numeraire value at accrual through the best-effort rule, 0 when it could not be valued. The treasury is `getTreasury`, the address the current vault code names; the page compares it with the Diamond to state custody. Only when it equals the Diamond does `recordTreasuryAccrual` credit `treasuryBalances`, so only then does the page show the held figure, which `getTreasuryMetrics` sums over the assets of open loans only, with `getTreasuryConvertConfig`'s last conversion and targets. A treasury that differs from the deployment record is flagged.

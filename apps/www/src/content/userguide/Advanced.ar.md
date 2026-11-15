@@ -2507,3 +2507,15 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 ### الاسترداد: كيف يُسجَّل التنصّل
 
 لا يحتاج `disownUntracked(kind, asset, tokenId)` إلا إلى خزنة ورقم غير محسوب أكبر من صفر. وليس فيه فحص إيقاف ولا فحص عقوبات ولا فحص مدير، فيستطيع استخدامه حتى المحفظة المستبدلة والخزنة المحظورة، ولا يتطلب توقيعًا. ويطلق `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`، وتقرأ بطاقة الختام المبلغ المسجّل من هذا الحدث في الإيصال.
+
+<a id="analytics-figures"></a>
+
+### التحليلات: كيف تُقرأ الأرقام
+
+تأخذ الصفحة أحدث كتلة وتقرأ كل واجهة عرض في الـDiamond عند رقم تلك الكتلة: `getProtocolStats` و`getProtocolTVL` و`getProtocolHealth` و`getGlobalCounts` (العروض المنشورة هي `totalOffersCreated`) و`getLifetimeLendingAssets` مع `getLifetimeLendingTotals` لكل أصل، و`getNumeraireSymbol`؛ وأول كتلة للنشر تأتي من سجل النشر. تُحسم كل مجموعة وحدها، فتُذكر الواجهة الفاشلة في مكانها. وتقيّم الصفحة أصل القرض والفائدة لكل أصل بـ`getNumeraireValue(asset, amount, false)` عند الكتلة نفسها، وهو التقريب الذي تستخدمه إجماليات البروتوكول، فتجتمع الأجزاء المقيّمة في `totalVolumeLentNumeraire` و`totalInterestPaidNumeraire`؛ ويُسمّى الأصل الذي يرتد تقييمه مستبعدًا. ويحسب `defaultRateBps` القروض التي دخلت Defaulted أو Settled على `totalLoansEverCreated`، ودون قروض لا تعرض الصفحة نسبة. والقيمة الثالثة في `getProtocolTVL` عدد القروض المفتوحة بضمان NFT وليست قيمة. والفائدة هي `lifetimeInterestPaid`، تُكتب مع كل دفعة من المقترضين؛ واسترداد المقرض للضمان ليس منها.
+
+<a id="analytics-fees"></a>
+
+### التحليلات: كيف تُقرأ الرسوم والحفظ
+
+معدلات الرسوم هي `getTreasuryFeeBps` و`getLoanInitiationFeeBps`. وأرقام الرسوم هي `getTreasuryMetrics`: الإجمالي منذ البداية هو `feeLedgerTotal`، وأرقام اليوم والأسبوع تمسح سجل الرسوم من نهايته لعدد أقصاه `MAX_FEE_EVENTS_ITER` (10,000) إدخال، فهي بعد ذلك حد أدنى. يحمل كل إدخال قيمة الرسوم بالعملة المرجعية عند الاستحقاق وفق قاعدة أفضل جهد، و0 حين تعذّر تقييمها. والخزانة هي `getTreasury`، العنوان الذي يسمّيه رمز الخزنة الحالي؛ وتقارنه الصفحة بالـDiamond لتذكر الحفظ. ولا يقيّد `recordTreasuryAccrual` في `treasuryBalances` إلا حين يساوي الـDiamond، ولذلك لا تعرض الصفحة الرقم المحتفظ به إلا عندها، ويجمعه `getTreasuryMetrics` على أصول القروض المفتوحة فقط، مع آخر تحويل وأهداف `getTreasuryConvertConfig`. وتُعلَّم الخزانة التي تختلف عن سجل النشر.

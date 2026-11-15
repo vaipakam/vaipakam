@@ -1632,3 +1632,15 @@ Your vault counts only what reaches it through the protocol: a deposit, a loan, 
 ### Recover: Disowning an Asset
 
 If something reached your vault that you do not claim, disown it. Disowning records on the chain, for anyone to see, that you do not claim it. It moves and credits nothing, and the asset stays in your vault, uncounted. It asks no declaration, signature or sanctions screen, and it stays open while the protocol is paused, for a replaced wallet and for a vault an earlier adoption barred.
+
+<a id="analytics-figures"></a>
+
+### Analytics: The Protocol's Public Figures
+
+The Analytics page shows the protocol's own figures on one network, with no wallet needed: open loans, loans and offers ever made, the wallets that took part, the average agreed rate, the share of loans that ended in default or liquidation, the value on open loans and the lending totals since the start. Pick any network the app serves. Every figure is read from the protocol contract at one block, and the page says which block, how old it is, and the block this deployment began at, where the counters start. A figure that could not be read says so instead of showing zero, and a rate with nothing to divide by says there is none yet. Values are in the protocol's reference currency, valued now by its own rule; an asset it cannot value counts as nothing in a total, and the page names that asset and lists its amounts. Interest counts what borrowers paid; collateral a lender received after a default is not interest.
+
+<a id="analytics-fees"></a>
+
+### Analytics: Fees and the Treasury
+
+The fees section shows the treasury's share of interest and the loan start fee as set now, and the fees collected since the start, in the last day and in the last week. Each fee is valued in the reference currency when it was collected, so a later price change does not move it; a fee the protocol could not value then counts as nothing. The day and week figures count at most a fixed number of the newest fees, so with more than that in the window they are less than the real figure. The page names and links the treasury and says where fees are kept: when they go to an outside account, the protocol contract holds no fee balance; only when the contract keeps them itself does the page show a held balance, and that balance covers only assets of open loans. The treasury is not invested to earn a return.

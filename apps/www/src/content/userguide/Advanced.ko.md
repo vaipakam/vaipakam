@@ -2504,3 +2504,15 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 복구: 포기가 기록되는 방식
 
 `disownUntracked(kind, asset, tokenId)`에는 볼트와 0보다 큰 미반영 수치만 필요합니다. 일시 중지 확인, 제재 심사, 관리자 확인이 없어 교체된 지갑과 막힌 볼트도 쓸 수 있으며, 서명도 필요 없습니다. `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`를 내보내고, 완료 카드는 영수증의 이 이벤트에서 기록된 수량을 읽습니다.
+
+<a id="analytics-figures"></a>
+
+### 분석: 수치를 읽는 방법
+
+페이지는 최신 블록을 잡고 그 블록 번호에서 모든 Diamond 뷰를 읽습니다: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts`(게시된 오퍼는 `totalOffersCreated`), 자산별 `getLifetimeLendingTotals`와 함께 `getLifetimeLendingAssets`, 그리고 `getNumeraireSymbol`입니다. 배포의 첫 블록은 배포 기록에서 가져옵니다. 각 그룹은 따로 확정되므로 실패한 뷰는 그 자리에서 밝힙니다. 페이지는 각 자산의 누적 원금과 이자를 같은 블록에서 `getNumeraireValue(asset, amount, false)`로 평가하며, 이는 프로토콜 합계와 같은 반올림이므로 평가된 부분의 합은 `totalVolumeLentNumeraire`와 `totalInterestPaidNumeraire`가 됩니다. 평가가 되돌려지는 자산은 제외된 것으로 이름을 밝힙니다. `defaultRateBps`는 Defaulted 또는 Settled에 들어간 대출을 `totalLoansEverCreated`로 나눈 값이며, 대출이 없으면 페이지는 비율을 보여 주지 않습니다. `getProtocolTVL`의 세 번째 값은 NFT 담보 진행 대출의 개수이지 가치가 아닙니다. 이자는 차입자가 낼 때마다 기록되는 `lifetimeInterestPaid`이며, 대출자의 담보 회수는 포함되지 않습니다.
+
+<a id="analytics-fees"></a>
+
+### 분석: 수수료와 보관을 읽는 방법
+
+수수료율은 `getTreasuryFeeBps`와 `getLoanInitiationFeeBps`입니다. 수수료 수치는 `getTreasuryMetrics`이며, 시작 이후 합계는 `feeLedgerTotal`이고, 하루와 한 주 수치는 수수료 원장을 끝에서부터 최대 `MAX_FEE_EVENTS_ITER`(10,000)개 항목까지 훑으므로 그 이상이면 하한입니다. 각 원장 항목은 최선 노력 규칙에 따른 발생 시점의 기준 통화 가치를 담고, 평가할 수 없었으면 0입니다. 트레저리는 `getTreasury`, 현재 볼트 코드가 지정하는 주소이며, 페이지는 보관 방식을 밝히려고 이를 Diamond와 비교합니다. Diamond와 같을 때만 `recordTreasuryAccrual`이 `treasuryBalances`에 적립하므로, 그때만 페이지가 보유 수치를 보여 줍니다. 이는 `getTreasuryMetrics`가 진행 중인 대출의 자산에 대해서만 합산한 값이며, `getTreasuryConvertConfig`의 마지막 전환과 목표도 함께 보여 줍니다. 배포 기록과 다른 트레저리는 표시됩니다.
