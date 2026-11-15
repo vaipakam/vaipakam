@@ -318,18 +318,11 @@ contract PrecloseFacet is
             // LENDER (the vault owner) while pulling from the
             // borrower's allowance.
             // #998 S10 note: the frozen-claimant markers recorded at the top of
-            // precloseDirect protect the transferred-flagged-HOLDER case (stored
-            // `loan.lender` clean → this deposit succeeds → the marker freezes the
-            // flagged current holder's later claim). A flagged STORED `loan.lender`
-            // still bricks this deposit on `getOrCreateUserVault`'s Tier-1 screen —
-            // a PRE-EXISTING #821 completeness gap (the borrower's escape is
-            // `repayLoan`, which carries the exemption). Adding the receive-side
-            // exemption here overflows this EIP-170-maxed facet, so it is deferred
-            // to a follow-up that splits PrecloseFacet (see #1124).
+            // precloseDirect protect the transferred-flagged-HOLDER case (the
+            // marker freezes the flagged current holder's later claim).
             // #3178 — the close-out delivery route resolves the lender's vault
             // as a RECEIVER: neither its version nor a sanctions flag on the
-            // stored lender can block the borrower's early close (which also
-            // closes the flagged-lender half of #1124 for this leg).
+            // STORED lender can block the borrower's early close (#1124).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultDeliverERC20From.selector,
@@ -451,9 +444,9 @@ contract PrecloseFacet is
             // the stale address would price it off the seller's hold tier and,
             // once the peg is set, DEBIT the seller's VPFI vault for a discount
             // they don't receive. The discount must follow the party who is
-            // actually paid. (That the interim vault credit still resolves
-            // `loan.lender` is the pre-existing #1124 gap — this leg must not
-            // extend that gap into spending a non-participant's VPFI.)
+            // actually paid. (The interim vault credit still resolves
+            // `loan.lender`, whose vault the claim is paid from; this leg must
+            // not spend a non-participant's VPFI on that account.)
             {
                 (uint256 rentLenderExtra, uint256 rentNewTreasury) =
                     LibPreclose.resolveLenderYieldFee(

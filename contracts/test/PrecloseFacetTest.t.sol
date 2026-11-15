@@ -522,6 +522,45 @@ contract PrecloseFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
     }
 
+    /// @dev #1124 — a sanctions flag on the STORED lender must not block the
+    ///      borrower's early close: the lender's vault is resolved as a
+    ///      receiver (#3178), so the payoff lands there behind the claim gate.
+    function testPreclosedDirect_flaggedStoredLender_stillCloses() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+    }
+
+    /// @dev #1124 — the same for the NFT-rental leg: the prepay shares leave
+    ///      the renter's vault through the close-out host, which resolves the
+    ///      flagged stored lender's vault as a receiver.
+    function testPrecloseDirectNFTRental_flaggedStoredLender_stillCloses() public {
+        uint256 fullRental = PRINCIPAL * 30;
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+        vm.clearMockedCalls();
+    }
+
     // ─── Pass-2 A1/D5 (#1189): early-close late-fee parity + post-grace block ──
 
     /// @dev A `precloseDirect` past the grace window is blocked (parity with
