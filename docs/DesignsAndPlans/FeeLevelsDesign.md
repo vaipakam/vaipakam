@@ -33,6 +33,8 @@ Rules that follow:
 - **The term is the agreed term** the loan opens with: the borrower offer's term on a match or an Auto-lend fill, the accepted offer's term on a direct accept.
 - **Early repayment gives no refund**, on full-term and pro-rata loans alike. The review states this beside the amount. A borrower who wants flexibility takes a shorter term and extends.
 - **An extension pays for the added time only:** the fee at the new total term minus the fee at the term already paid for, on the principal outstanding at the extension, paid by the borrower when the extension takes effect. An extension that stays within the same rate (both terms at or under 30 days, or both at or over 365) pays nothing more.
+- **An extended loan never pays more than one loan of the same total term would have.** The difference rule makes the fee depend only on the total term, not on how it was reached. Extending is also cheaper than closing and borrowing again, which would pay a whole new fee.
+- **An automatic extension** (a keeper acting inside limits both holders set) collects the added fee from the borrower's own vault balance of the lending asset. The borrower's extension limits show the largest added fee they allow. If the balance is not there the extension does not happen and the loan stays on its existing due date; the keeper's advance alert names the amount needed. The fee is never added to the debt: that would put a platform charge into every settlement and liquidation path beside the lender's due.
 - **It cannot be avoided by chaining short loans:** twelve 30-day loans pay 2.4% in total against 0.5% for one year.
 - **A refinance and a new loan after a roll are new loans** and pay their own fee on their own term, as today.
 - **Discounts** apply to the whole fee as they do today, under the same ceiling.
@@ -72,7 +74,7 @@ Per-loan stamping of the interest share stays as it is, so a later retune never 
 1. Rate at 1, 30, 31, 197, 365 and 366 days; rounding never undercharges the floor.
 2. The charge at acceptance equals the preview, on a direct accept, a match and an Auto-lend fill.
 3. Discounts apply to the term-scaled fee under the existing ceiling.
-4. Extension: across the 30-day line, inside the slope, across the 365-day line, and within one rate (no charge); partial principal outstanding.
+4. Extension: across the 30-day line, inside the slope, across the 365-day line, and within one rate (no charge); partial principal outstanding; fees over any sequence of extensions sum to the fee of one loan of the total term; an automatic extension with the vault balance short is refused and changes nothing.
 5. Early repayment returns no fee.
 6. A settings change does not reprice an open loan or its later extension's already-paid part.
 7. The interest share at 5% on every settlement path, stamped per loan.
